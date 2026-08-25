@@ -199,8 +199,9 @@ impl SessionService {
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
-                // Replaced by a durable reservation when coordination is enabled.
-                generation: 0,
+                // Compatibility-stage provisioning carries no invented
+                // generation. Coordinated provisioning supplies a reservation.
+                generation: None,
                 size: TermSize {
                     cols: geometry.columns(),
                     rows: geometry.rows(),

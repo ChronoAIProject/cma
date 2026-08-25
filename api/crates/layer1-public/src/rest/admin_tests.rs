@@ -8,7 +8,7 @@ use super::*;
 
 use layer2_core::{
     ActivityAction, ActivityId, ActivityOutcome, ActivityTarget, DetailKey, EnvironmentProfileId,
-    KernelId, ProviderInventory, RuntimeEntry, SessionStatus,
+    KernelId, ProviderInventory, ProviderRuntimeGeneration, RuntimeEntry, SessionStatus,
 };
 
 fn inventory(providers: Vec<ProviderInventory>) -> RuntimeInventory {
@@ -19,9 +19,9 @@ fn observed_provider() -> ProviderInventory {
     ProviderInventory {
         kernel: KernelId::new("example-runtime"),
         view: ProviderView::Observed(vec![RuntimeEntry {
-            created_by: None,
+            created_by: Some("plane-a".into()),
             runtime: "runtime-1".into(),
-            generation: Some(7),
+            generation: ProviderRuntimeGeneration::Recorded(7),
             session: Some(SessionId("sesn_1".into())),
             owner: Some(SubjectId("subject-a".into())),
             status: Some(SessionStatus::Ready),
@@ -80,6 +80,8 @@ fn a_running_runtime_renders_with_the_session_and_the_owner_it_belongs_to() {
 
     assert_eq!(runtime["runtime"], "runtime-1");
     assert_eq!(runtime["generation"], 7);
+    assert_eq!(runtime["generation_state"], "recorded");
+    assert_eq!(runtime["created_by"], "plane-a");
     assert_eq!(runtime["session"], "sesn_1");
     assert_eq!(runtime["owner"], "subject-a");
     assert_eq!(runtime["status"], "ready");
@@ -94,7 +96,7 @@ fn a_runtime_nothing_accounts_for_says_so() {
         view: ProviderView::Observed(vec![RuntimeEntry {
             created_by: None,
             runtime: "runtime-stray".into(),
-            generation: None,
+            generation: ProviderRuntimeGeneration::Legacy,
             session: Some(SessionId("sesn_forgotten".into())),
             owner: None,
             status: None,
@@ -104,7 +106,28 @@ fn a_runtime_nothing_accounts_for_says_so() {
     let runtime = &json["providers"][0]["runtimes"][0];
 
     assert_eq!(runtime["unaccounted"], true);
+    assert_eq!(runtime["generation_state"], "legacy");
     assert!(runtime.get("owner").is_none(), "got {runtime}");
+}
+
+#[test]
+fn malformed_generation_metadata_is_not_rendered_as_legacy_absence() {
+    let view = InventoryView::render(inventory(vec![ProviderInventory {
+        kernel: KernelId::new("example-runtime"),
+        view: ProviderView::Observed(vec![RuntimeEntry {
+            created_by: Some("plane-a".into()),
+            runtime: "runtime-corrupt".into(),
+            generation: ProviderRuntimeGeneration::Malformed,
+            session: None,
+            owner: None,
+            status: None,
+        }]),
+    }]));
+    let json = serde_json::to_value(&view).expect("serialises");
+    let runtime = &json["providers"][0]["runtimes"][0];
+
+    assert_eq!(runtime["generation_state"], "malformed");
+    assert!(runtime.get("generation").is_none(), "got {runtime}");
 }
 
 #[test]
