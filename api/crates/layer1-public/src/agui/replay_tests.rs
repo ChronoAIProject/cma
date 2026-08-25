@@ -727,11 +727,9 @@ mod route_resume {
         let response = fixture
             .app
             .oneshot(
-                Request::get(
-                    "/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8",
-                )
-                .body(Body::empty())
-                .expect("request builds"),
+                Request::get("/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8")
+                    .body(Body::empty())
+                    .expect("request builds"),
             )
             .await
             .expect("router answers");

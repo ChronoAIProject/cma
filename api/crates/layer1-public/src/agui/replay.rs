@@ -138,10 +138,7 @@ pub(super) async fn replay(
     // Read once before answering, so a caller who may not see this session is
     // refused with a status rather than handed an empty stream that never says
     // why.
-    let first = state
-        .sessions
-        .events_since(&caller, &id, Some(seq))
-        .await?;
+    let first = state.sessions.events_since(&caller, &id, Some(seq)).await?;
 
     if seq > 0 {
         let head = state.sessions.event_log_head(&caller, &id).await?;
