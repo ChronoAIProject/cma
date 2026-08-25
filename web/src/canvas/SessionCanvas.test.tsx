@@ -482,7 +482,7 @@ describe('a conversation node — §13', () => {
   function conversationFleet() {
     const mock = new MockSession(transcriptNamed('plain-turn'));
     const node: LiveSession = {
-      session: { ...session('s-chat', 'running', 0), plane: 'conversation' },
+      session: { ...session(mock.id, 'running', 0), plane: 'conversation' },
       driver: null,
     };
     return { mock, node };
@@ -496,8 +496,8 @@ describe('a conversation node — §13', () => {
     render(
       <SessionCanvas
         nodes={[node]}
-        focusedId="s-chat"
-        focusHistory={['s-chat']}
+        focusedId={node.session.id}
+        focusHistory={[node.session.id]}
         onFocus={() => {}}
         onOpenToReply={() => {}}
         transport={mock.transport}
@@ -516,8 +516,8 @@ describe('a conversation node — §13', () => {
     render(
       <SessionCanvas
         nodes={[node]}
-        focusedId="s-chat"
-        focusHistory={['s-chat']}
+        focusedId={node.session.id}
+        focusHistory={[node.session.id]}
         onFocus={() => {}}
         onOpenToReply={onOpenToReply}
         transport={mock.transport}
@@ -525,7 +525,7 @@ describe('a conversation node — §13', () => {
     );
 
     await user.click(await screen.findByRole('button', { name: /open to reply/i }));
-    expect(onOpenToReply).toHaveBeenCalledWith('s-chat');
+    expect(onOpenToReply).toHaveBeenCalledWith(node.session.id);
   });
 
   it('says on the focused node that it is typing here', () => {
