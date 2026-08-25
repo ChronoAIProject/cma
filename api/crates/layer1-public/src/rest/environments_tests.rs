@@ -32,8 +32,8 @@ use super::router;
 use crate::{
     auth::AuthenticatedSubject,
     rest::environments_shapes::{
-        unknown_profile_field, AgentBody, NyxIdBody, PackageBody, ProfileRequest, ProfileView,
-        SizeBody, VariableBody,
+        decode_profile_request, unknown_profile_field, AgentBody, NyxIdBody, PackageBody,
+        ProfileRequest, ProfileView, SizeBody, VariableBody,
     },
 };
 
@@ -590,39 +590,32 @@ async fn a_field_complete_get_put_get_is_byte_identical() {
         .store
         .snapshot(&id)
         .expect("the created profile is stored");
-    let refused = send(
+    let echoed = send(
         &harness.app,
         Method::PUT,
         &profile_uri,
         Some(before.json.clone()),
     )
     .await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(refused.content_type.as_deref(), Some(PROBLEM_CONTENT_TYPE));
-    assert_eq!(refused.json["status"], 422);
-    assert_eq!(refused.json["code"], "invalid_request");
-    let rejected_field = refused.json["field"]
-        .as_str()
-        .expect("the server-owned field is identified");
-    assert!(
-        ["id", "mandatory", "created_at", "updated_at", "preferred"].contains(&rejected_field),
-        "a raw ProfileView is refused for a server-owned field, got {rejected_field}"
-    );
-    assert_eq!(refused.json["path"], rejected_field);
+    assert_eq!(echoed.status, StatusCode::OK);
+    assert_eq!(echoed.bytes, before.bytes);
     assert_eq!(harness.store.upserts.load(Ordering::SeqCst), 1);
     assert_eq!(harness.store.replacements.load(Ordering::SeqCst), 0);
     assert_eq!(
         harness.store.snapshot(&id),
-        Some(stored_before),
-        "schema rejection happens before any store mutation"
+        Some(stored_before.clone()),
+        "a literal ProfileView echo is a no-op with no store mutation"
     );
 
-    let echoed = writable_projection(&before.json);
+    let after_raw_echo = send(&harness.app, Method::GET, &profile_uri, None).await;
+    assert_eq!(after_raw_echo.bytes, before.bytes);
+
+    let writable = writable_projection(&before.json);
     assert_eq!(
-        echoed, submitted,
+        writable, submitted,
         "GET must render every field the write shape accepted"
     );
-    let replaced = send(&harness.app, Method::PUT, &profile_uri, Some(echoed)).await;
+    let replaced = send(&harness.app, Method::PUT, &profile_uri, Some(writable)).await;
     assert_eq!(replaced.status, StatusCode::OK);
     assert_eq!(replaced.json["agent"]["record_tool_bodies"], true);
     assert_eq!(
@@ -639,6 +632,130 @@ async fn a_field_complete_get_put_get_is_byte_identical() {
         after.bytes, before.bytes,
         "echoing every writable field must leave the complete ProfileView JSON byte-identical"
     );
+}
+
+#[tokio::test]
+async fn a_transformed_profile_view_cannot_overwrite_server_owned_fields() {
+    let harness = Harness::new();
+    harness.store.seed(seeded_profile());
+    let profile_uri = format!("/api/v1/environment-profiles/{PROFILE_ID}");
+    let before = send(&harness.app, Method::GET, &profile_uri, None).await;
+    assert_eq!(before.status, StatusCode::OK);
+
+    let mut transformed = before.json.clone();
+    transformed["name"] = json!("transformed profile");
+    transformed["mandatory"] = json!({
+        "packages": ["caller-cannot-replace-the-baseline"],
+        "skills": ["caller-cannot-replace-the-baseline"],
+    });
+    transformed["created_at"] = json!("2099-01-01T00:00:00Z");
+    transformed["updated_at"] = json!("2099-01-01T00:00:00Z");
+    transformed["preferred"] = json!(true);
+
+    let replaced = send(&harness.app, Method::PUT, &profile_uri, Some(transformed)).await;
+    assert_eq!(replaced.status, StatusCode::OK);
+    assert_eq!(replaced.json["id"], PROFILE_ID);
+    assert_eq!(replaced.json["name"], "transformed profile");
+    assert_eq!(replaced.json["created_at"], before.json["created_at"]);
+    assert_ne!(replaced.json["updated_at"], "2099-01-01T00:00:00Z");
+    assert_eq!(replaced.json["preferred"], false);
+    assert_eq!(
+        replaced.json["mandatory"],
+        json!({
+            "packages": ["platform-cli"],
+            "skills": ["mandatory-skill"],
+        })
+    );
+    assert_eq!(harness.store.replacements.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn replacement_refuses_mismatched_or_malformed_profile_view_metadata() {
+    for (label, mutate) in [
+        ("mismatched id", ("id", json!("envp_somebody_else"))),
+        ("non-string timestamp", ("created_at", json!(42))),
+        ("non-boolean preference", ("preferred", json!("yes"))),
+        ("null server-owned field", ("updated_at", Value::Null)),
+        (
+            "malformed mandatory shape",
+            ("mandatory", json!({ "packages": ["platform-cli"] })),
+        ),
+    ] {
+        let harness = Harness::new();
+        harness.store.seed(seeded_profile());
+        let before = harness
+            .store
+            .snapshot(PROFILE_ID)
+            .expect("the profile is stored");
+        let profile_uri = format!("/api/v1/environment-profiles/{PROFILE_ID}");
+        let mut view = send(&harness.app, Method::GET, &profile_uri, None)
+            .await
+            .json;
+        view[mutate.0] = mutate.1;
+
+        let refused = send(&harness.app, Method::PUT, &profile_uri, Some(view)).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{label} must be refused"
+        );
+        assert_eq!(refused.content_type.as_deref(), Some(PROBLEM_CONTENT_TYPE));
+        assert_eq!(refused.json["status"], 422);
+        assert_eq!(refused.json["code"], "invalid_request");
+        assert_eq!(harness.store.replacements.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            harness.store.snapshot(PROFILE_ID),
+            Some(before),
+            "{label} must not mutate storage"
+        );
+    }
+}
+
+#[tokio::test]
+async fn replacement_names_an_unknown_nested_mandatory_field() {
+    let harness = Harness::new();
+    harness.store.seed(seeded_profile());
+    let profile_uri = format!("/api/v1/environment-profiles/{PROFILE_ID}");
+    let mut view = send(&harness.app, Method::GET, &profile_uri, None)
+        .await
+        .json;
+    view["mandatory"]["servicez"] = json!([]);
+
+    let refused = send(&harness.app, Method::PUT, &profile_uri, Some(view)).await;
+    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(refused.content_type.as_deref(), Some(PROBLEM_CONTENT_TYPE));
+    assert_eq!(refused.json["code"], "invalid_request");
+    assert_eq!(refused.json["field"], "servicez");
+    assert_eq!(refused.json["path"], "mandatory.servicez");
+    assert_eq!(harness.store.replacements.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn create_still_refuses_server_owned_profile_view_fields() {
+    for field in ["id", "mandatory", "created_at", "updated_at", "preferred"] {
+        let harness = Harness::new();
+        let mut body = serde_json::to_value(field_complete_request()).expect("request serializes");
+        body[field] = match field {
+            "id" => json!(PROFILE_ID),
+            "mandatory" => json!({ "packages": [], "skills": [] }),
+            "created_at" | "updated_at" => json!("2026-08-25T00:00:00Z"),
+            "preferred" => json!(false),
+            _ => unreachable!(),
+        };
+
+        let refused = send(
+            &harness.app,
+            Method::POST,
+            "/api/v1/environment-profiles",
+            Some(body),
+        )
+        .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(refused.content_type.as_deref(), Some(PROBLEM_CONTENT_TYPE));
+        assert_eq!(refused.json["code"], "invalid_request");
+        assert_eq!(refused.json["field"], field);
+        assert_eq!(harness.store.len(), 0);
+    }
 }
 
 #[tokio::test]
@@ -997,7 +1114,8 @@ fn every_nested_profile_shape_identifies_an_unknown_field() {
             json!({ "name": "profile", "nyxid": { "serviceIds": ["calendar"] } }),
         ),
     ] {
-        let diagnostic = unknown_profile_field(&request).expect("the unknown field is located");
+        let diagnostic =
+            unknown_profile_field(&request, false).expect("the unknown field is located");
         assert_eq!(diagnostic.field.as_deref(), Some(unknown));
         assert_eq!(diagnostic.path.as_deref(), Some(path));
 
@@ -1018,7 +1136,8 @@ fn arbitrary_unknown_key_text_is_not_reflected_as_schema_metadata() {
     body.as_object_mut()
         .expect("the request is an object")
         .insert(submitted.into(), true.into());
-    let diagnostic = unknown_profile_field(&body).expect("the unknown field is still detected");
+    let diagnostic =
+        unknown_profile_field(&body, false).expect("the unknown field is still detected");
 
     assert!(diagnostic.field.is_none());
     assert!(diagnostic.path.is_none());
@@ -1147,16 +1266,13 @@ fn environment_profile_documentation_examples_follow_the_wire_types() {
         vec![profile_view.clone()],
         "the response example is produced by ProfileView's real serializer"
     );
-    serde_json::from_value::<ProfileRequest>(writable_projection(&profile_view))
-        .expect("a ProfileView's exact writable projection is a ProfileRequest");
-    let raw_view_refusal = serde_json::from_value::<ProfileRequest>(profile_view.clone())
-        .expect_err("server-owned ProfileView fields are not accepted write fields")
-        .to_string();
-    assert!(
-        ["id", "mandatory", "created_at", "updated_at", "preferred"]
-            .iter()
-            .any(|field| raw_view_refusal.contains(field)),
-        "the raw ProfileView refusal identifies a server-owned field: {raw_view_refusal}"
+    let (decoded, echoed_id) = decode_profile_request(profile_view.clone(), true)
+        .expect("a complete ProfileView is accepted by the replacement boundary");
+    assert_eq!(echoed_id.as_deref(), profile_view["id"].as_str());
+    assert_eq!(
+        serde_json::to_value(decoded).expect("decoded request serializes"),
+        writable_projection(&profile_view),
+        "server-owned fields are stripped without changing writable contents"
     );
     assert_eq!(
         marked_examples(section, "profile-list-response-example"),
