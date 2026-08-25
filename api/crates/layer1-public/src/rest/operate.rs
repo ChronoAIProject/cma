@@ -60,6 +60,7 @@ pub(super) struct InputRequest {
     /// Defaults to true, because a terminal client that sends a line means to
     /// submit it; a caller composing a command in pieces says so explicitly.
     #[serde(default = "yes")]
+    #[schema(default = true)]
     newline: bool,
 }
 
