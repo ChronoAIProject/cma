@@ -33,6 +33,7 @@ impl AuthState {
     ) -> Result<(), StoreError> {
         self.replace_subject_fact(subject, |state| {
             state.authorization = authorization.clone();
+            Ok(())
         })
         .await
     }

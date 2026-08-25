@@ -51,6 +51,7 @@ portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
+    "stream",
 ] }
 ring = "0.17.14"
 base64 = "0.22"
