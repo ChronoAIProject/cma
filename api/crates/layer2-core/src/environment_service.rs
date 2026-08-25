@@ -593,7 +593,7 @@ impl EnvironmentProfileService {
     ///
     /// Session views already hold the durable grant. This lookup supplies only
     /// display metadata for those identifiers, so an adapter can use the
-    /// registry's bounded single-skill route instead of paging every selectable
+    /// registry's bounded metadata search instead of paging every selectable
     /// skill on every session read.
     pub async fn describe_skills(
         &self,

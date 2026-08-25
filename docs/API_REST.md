@@ -797,20 +797,27 @@ detail is fixed and never reflects an upstream URL, cursor, or transport error.
 The route never presents the pages collected so far as a complete picker.
 
 Session reads do not repeat that full walk. Starting with the first rendered
-session and then each session's recorded skill order, CMA selects the first 100
-distinct skill ids or slugs for detail reads. A repeated id keeps its first
-position and consumes no second lookup. At most eight registry requests are in
-flight at once, and no more than 100 are made for one response, including a
-collection page containing the maximum 200 sessions.
+session and then each session's recorded skill order, CMA selects the first 50
+distinct skill ids or slugs for targeted keyword searches. A repeated id keeps
+its first position and consumes no second lookup. Search results are accepted
+only when their GUID or slug exactly equals the recorded grant; fuzzy-only hits
+never supply metadata. At most eight registry requests are in flight at once,
+and no more than 50 are made for one response, leaving headroom below Ornn's
+60-search-per-minute caller limit even for a collection page containing the
+maximum 200 sessions. These metadata searches never call Ornn's skill-detail
+route, which records authenticated reads as package pulls.
 
 Selected entries receive `agent.skills[].name` and `description` even when the
 skill would have appeared after the picker's first registry page. Entries after
-the first-100 budget are not looked up: they remain in their original positions
+the first-50 budget are not looked up: they remain in their original positions
 with the raw recorded `id` and `version`, and omit current catalogue metadata.
 The same raw fallback applies when the registry cannot be asked. If one selected
-skill has since been removed or is no longer visible, only that entry remains
-raw while descriptions for the other visible selected grants are still
-returned.
+skill has since been removed, is no longer visible, or yields only fuzzy hits on
+a terminal search page, only that entry remains raw while descriptions for the
+other exact, visible selected grants are still returned. If a fuzzy page says
+more matches remain before an exact match is found, CMA does not mistake that
+bounded partial search for proof of absence: enrichment fails visibly in logs
+and the whole rendered response keeps its raw grants.
 
 ---
 

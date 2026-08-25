@@ -74,10 +74,11 @@ pub trait SkillCatalog: Send + Sync {
 
     /// Describe only the skills a session says it was given.
     ///
-    /// Adapters with a single-resource read should override this so rendering a
-    /// session does not walk the whole picker catalogue. The default keeps
-    /// simple catalogues useful and filters by both accepted identifier forms:
-    /// profiles may hold either the registry's id or its human-facing name.
+    /// Adapters with a targeted, side-effect-free metadata lookup should
+    /// override this so rendering a session does not walk the whole picker
+    /// catalogue. The default keeps simple catalogues useful and filters by
+    /// both accepted identifier forms: profiles may hold either the registry's
+    /// id or its human-facing name.
     async fn describe(
         &self,
         subject: &SubjectId,
