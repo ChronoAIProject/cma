@@ -224,6 +224,7 @@ fn each_remaining_failure_has_its_own_code() {
         error_code(&CoreError::SessionTerminated),
         "session_terminated"
     );
+    assert_eq!(error_code(&CoreError::SessionRotating), "session_rotating");
     assert_eq!(
         error_code(&CoreError::RuntimeUnavailable("x".into())),
         "runtime_unavailable"

@@ -282,11 +282,23 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
+        // `is_interactive` names the wider UI state contract, but only a
+        // rotation changes this operation's existing answer: provisioning and
+        // idle sessions still fall through to their established runtime error.
+        if record.session.status.is_rotating() {
+            return Err(CoreError::SessionRotating);
+        }
         if !self.entries.read().await.contains_key(id) {
             self.readopt(&record).await?;
         }
         let entries = self.entries.read().await;
         let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+        // Recheck the live entry after readoption and after the durable read.
+        // A handover may have begun while either awaited operation was in
+        // flight, and its outgoing channel remains present until teardown.
+        if entry.session.status.is_rotating() {
+            return Err(CoreError::SessionRotating);
+        }
         entry.session.capabilities.require(capability)?;
         entry.conversation.clone().ok_or_else(|| {
             CoreError::RuntimeUnavailable("this session holds no conversation".into())
