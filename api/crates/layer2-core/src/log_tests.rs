@@ -390,7 +390,7 @@ async fn dropping_a_success_delivered_before_poll_runs_its_cleanup() {
     let delivery = super::CommitDelivery::retained(
         "delivered-output",
         "retained-ownership",
-        move |output, ownership| async move {
+        move |output, ownership| {
             assert_eq!(output, "delivered-output");
             assert_eq!(ownership, "retained-ownership");
             cleanup_flag.store(true, Ordering::SeqCst);
@@ -419,6 +419,49 @@ async fn dropping_a_success_delivered_before_poll_runs_its_cleanup() {
     })
     .await
     .expect("dropping an unpolled success launches its retained cleanup");
+}
+
+#[test]
+fn a_restartable_write_survives_its_worker_runtime_stopping_before_the_first_poll() {
+    let origin = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("origin runtime builds");
+    let store = Arc::new(FakeStore::default());
+    let seeded = record();
+    origin.block_on(store.seed(&seeded)).expect("seed record");
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    let mut commit = {
+        let _entered = origin.enter();
+        lane.enqueue_restartable_commit(seeded, vec![said(0, "survives-an-unpolled-worker")])
+    };
+
+    drop(origin);
+    assert!(
+        !lane
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .running,
+        "dropping an unpolled worker makes its queued lane restartable"
+    );
+
+    let replacement = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("replacement runtime builds");
+    replacement.block_on(async {
+        commit.restart();
+        let committed = tokio::time::timeout(Duration::from_secs(2), commit.committed())
+            .await
+            .expect("the replacement runtime restarts the queued write")
+            .expect("the retained write commits");
+        assert_eq!(committed.session.last_seq, 1);
+        let events = store.events_since(&id(), 0).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(format!("{:?}", events[0].kind).contains("survives-an-unpolled-worker"));
+    });
 }
 
 #[tokio::test]

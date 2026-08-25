@@ -120,8 +120,7 @@ impl SessionService {
         id: &SessionId,
         geometry: TerminalGeometry,
     ) -> Result<(), CoreError> {
-        let gate = self.lifecycle_gates.gate(id);
-        let lifecycle = gate.lock_owned().await;
+        let lifecycle = self.lock_lifecycle(id).await;
         self.may_drive_terminal(caller, id).await?;
         let commit = {
             let mut entries = self.entries.write().await;

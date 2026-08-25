@@ -343,8 +343,7 @@ impl SessionService {
         // installation boundary: publishing a live entry from the snapshot
         // passed to this task would otherwise revive a session after the
         // lifecycle operation had completed.
-        let installation_gate = self.lifecycle_gates.gate(&id);
-        let installation = installation_gate.lock().await;
+        let installation = self.lock_lifecycle(&id).await;
         let current = match self.store.get(&id).await {
             Ok(Some(record))
                 if record.session.status.wants_runtime()
