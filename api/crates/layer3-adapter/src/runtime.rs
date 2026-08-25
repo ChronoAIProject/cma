@@ -11,7 +11,7 @@
 //! given.
 
 use std::collections::BTreeMap;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroU64};
 
 use tokio::sync::mpsc;
 
@@ -63,6 +63,17 @@ pub enum RuntimeLossReason {
     Unrecognised,
 }
 
+/// Provider-visible runtime generation metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeGeneration {
+    /// The metadata is absent because the runtime predates generation fencing.
+    Legacy,
+    /// A valid non-zero durable generation.
+    Recorded(NonZeroU64),
+    /// Metadata was present but was zero, malformed, or outside the range.
+    Malformed,
+}
+
 /// One runtime the provider is running, as it describes it.
 ///
 /// Carries who created it as well as what it is for. A provider is shared: one
@@ -80,9 +91,9 @@ pub struct RuntimeListing {
     ///
     /// Handles are provider-owned and opaque, so a handle alone cannot prove
     /// that a census row belongs to the authority a control plane last read.
-    /// `None` identifies a runtime provisioned before generations crossed this
-    /// boundary; callers must treat it as legacy rather than guessing one.
-    pub generation: Option<u64>,
+    /// Legacy absence and malformed metadata remain distinct so neither can be
+    /// guessed into current authority.
+    pub generation: RuntimeGeneration,
     /// The control plane that created it, when it says.
     ///
     /// `None` means it predates this being recorded, which is a different
@@ -174,7 +185,9 @@ pub struct RuntimeSpec {
     /// Written into provider-visible metadata. Reconciliation can therefore
     /// distinguish an obsolete runtime from the current authority even when a
     /// stale census and a newer session record name the same session.
-    pub generation: u64,
+    /// `None` is used only by a compatibility-stage control plane. A
+    /// generation-aware provision must reserve a non-zero value first.
+    pub generation: Option<NonZeroU64>,
     /// Geometry to allocate the terminal at.
     pub size: TermSize,
     /// How much this runtime should reserve, or `None` for the deployment's.

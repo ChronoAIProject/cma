@@ -80,7 +80,7 @@ struct RuntimeCensus {
     /// no session is entitled to is still found and deleted.
     serving: HashSet<String>,
     /// Provider-visible generation for every listed runtime.
-    generations: HashMap<String, Option<u64>>,
+    generations: HashMap<String, layer3_adapter::RuntimeGeneration>,
     /// Why a runtime that is no longer serving stopped, where one was named.
     ///
     /// Populated only for a listing that reports itself not serving. A healthy
@@ -128,7 +128,7 @@ impl SessionService {
                 if session.as_deref().is_some_and(|s| entitled.contains(s)) {
                     continue;
                 }
-                let generation = view.generations.get(runtime).copied().flatten();
+                let generation = view.generations.get(runtime).copied();
                 tracing::warn!(
                     runtime = %runtime,
                     ?generation,

@@ -147,7 +147,9 @@ pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
 pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
 pub use ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
-pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
+pub use inventory::{
+    ProviderInventory, ProviderRuntimeGeneration, ProviderView, RuntimeEntry, RuntimeInventory,
+};
 pub use limits::SessionAllowance;
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use platform::{

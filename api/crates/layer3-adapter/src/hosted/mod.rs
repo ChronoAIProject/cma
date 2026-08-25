@@ -31,8 +31,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::{
-    AdapterError, RuntimeCapacity, RuntimeHandle, RuntimeListing, RuntimeSpec, SkillPackage,
-    TerminalInput,
+    AdapterError, RuntimeCapacity, RuntimeGeneration, RuntimeHandle, RuntimeListing, RuntimeSpec,
+    SkillPackage, TerminalInput,
 };
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
@@ -80,6 +80,18 @@ fn correlation_value(
         .cloned()
 }
 
+/// Decode a generation without conflating corrupt metadata with legacy absence.
+fn runtime_generation(metadata: &BTreeMap<String, String>) -> RuntimeGeneration {
+    match metadata.get(GENERATION_METADATA_KEY) {
+        None => RuntimeGeneration::Legacy,
+        Some(value) => value
+            .parse()
+            .ok()
+            .and_then(std::num::NonZeroU64::new)
+            .map_or(RuntimeGeneration::Malformed, RuntimeGeneration::Recorded),
+    }
+}
+
 /// Give new and old control planes the same ownership facts during rollout.
 fn provisioning_metadata(spec: &RuntimeSpec, kernel: &str) -> BTreeMap<String, String> {
     let mut metadata = BTreeMap::from([
@@ -90,11 +102,10 @@ fn provisioning_metadata(spec: &RuntimeSpec, kernel: &str) -> BTreeMap<String, S
         ),
         (KERNEL_METADATA_KEY.to_string(), kernel.to_string()),
         (LEGACY_KERNEL_METADATA_KEY.to_string(), kernel.to_string()),
-        (
-            GENERATION_METADATA_KEY.to_string(),
-            spec.generation.to_string(),
-        ),
     ]);
+    if let Some(generation) = spec.generation {
+        metadata.insert(GENERATION_METADATA_KEY.to_string(), generation.to_string());
+    }
     if let Some(creator) = spec.created_by.as_ref() {
         metadata.insert(CREATOR_METADATA_KEY.to_string(), creator.clone());
         metadata.insert(LEGACY_CREATOR_METADATA_KEY.to_string(), creator.clone());
@@ -622,10 +633,7 @@ impl HostedKernel {
                     SESSION_METADATA_KEY,
                     LEGACY_SESSION_METADATA_KEY,
                 ),
-                generation: s
-                    .metadata
-                    .get(GENERATION_METADATA_KEY)
-                    .and_then(|value| value.parse().ok()),
+                generation: runtime_generation(&s.metadata),
                 created_by: correlation_value(
                     &s.metadata,
                     CREATOR_METADATA_KEY,

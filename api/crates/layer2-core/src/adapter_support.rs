@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use layer3_adapter::{
-    AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeLossReason, RuntimeMode,
-    RuntimeSpec, TerminalChannel, TerminalOutput,
+    AdapterError, KernelAdapter, RuntimeGeneration, RuntimeHandle, RuntimeListing,
+    RuntimeLossReason, RuntimeMode, RuntimeSpec, TerminalChannel, TerminalOutput,
 };
 use tokio::sync::{mpsc, Mutex, Notify};
 
@@ -37,7 +37,7 @@ pub(crate) struct FakeAdapter {
     pub(crate) running: Mutex<HashMap<String, Option<String>>>,
     /// Provider-visible generation recorded for runtimes provisioned through
     /// the generation-aware contract. Directly seeded legacy fixtures omit it.
-    pub(crate) generations: Mutex<HashMap<String, u64>>,
+    pub(crate) generations: Mutex<HashMap<String, std::num::NonZeroU64>>,
     /// What each `open_conversation` was asked to rejoin, in order.
     ///
     /// `None` for a conversation being started; a name for one being taken
@@ -342,10 +342,12 @@ impl KernelAdapter for FakeAdapter {
         let mut running = self.running.lock().await;
         let handle = format!("runtime-{n}-for-{}", spec.session_id);
         running.insert(handle.clone(), Some(spec.session_id.clone()));
-        self.generations
-            .lock()
-            .await
-            .insert(handle.clone(), spec.generation);
+        if let Some(generation) = spec.generation {
+            self.generations
+                .lock()
+                .await
+                .insert(handle.clone(), generation);
+        }
         Ok(RuntimeHandle(handle))
     }
 
@@ -517,7 +519,10 @@ impl KernelAdapter for FakeAdapter {
             .map(|(h, s)| RuntimeListing {
                 handle: RuntimeHandle(h.clone()),
                 session: s.clone(),
-                generation: generations.get(h).copied(),
+                generation: generations
+                    .get(h)
+                    .copied()
+                    .map_or(RuntimeGeneration::Legacy, RuntimeGeneration::Recorded),
                 created_by: self.created_by.clone(),
                 // Serving unless this fake was told otherwise, so every
                 // existing test keeps describing a healthy sandbox and only a
