@@ -375,9 +375,9 @@ impl Baseline {
         services: impl IntoIterator<Item = ServiceId>,
     ) -> Self {
         Self {
-            packages: packages.into_iter().collect(),
-            skills: skills.into_iter().collect(),
-            services: services.into_iter().collect(),
+            packages: unique_by_identity(packages, |package| package.name.clone()),
+            skills: unique_by_identity(skills, |skill| skill.0.clone()),
+            services: unique_by_identity(services, |service| service.0.clone()),
         }
     }
 
@@ -445,6 +445,17 @@ impl Baseline {
         }
         spec.services.extend(chosen_services);
     }
+}
+
+fn unique_by_identity<T>(
+    entries: impl IntoIterator<Item = T>,
+    identity: impl Fn(&T) -> String,
+) -> Vec<T> {
+    let mut seen = HashSet::new();
+    entries
+        .into_iter()
+        .filter(|entry| seen.insert(identity(entry)))
+        .collect()
 }
 
 /// Everything a session's runtime is given, once a selection has been resolved.
