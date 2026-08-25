@@ -21,6 +21,7 @@ fn observed_provider() -> ProviderInventory {
         view: ProviderView::Observed(vec![RuntimeEntry {
             created_by: None,
             runtime: "runtime-1".into(),
+            generation: Some(7),
             session: Some(SessionId("sesn_1".into())),
             owner: Some(SubjectId("subject-a".into())),
             status: Some(SessionStatus::Ready),
@@ -78,6 +79,7 @@ fn a_running_runtime_renders_with_the_session_and_the_owner_it_belongs_to() {
     let runtime = &json["providers"][0]["runtimes"][0];
 
     assert_eq!(runtime["runtime"], "runtime-1");
+    assert_eq!(runtime["generation"], 7);
     assert_eq!(runtime["session"], "sesn_1");
     assert_eq!(runtime["owner"], "subject-a");
     assert_eq!(runtime["status"], "ready");
@@ -92,6 +94,7 @@ fn a_runtime_nothing_accounts_for_says_so() {
         view: ProviderView::Observed(vec![RuntimeEntry {
             created_by: None,
             runtime: "runtime-stray".into(),
+            generation: None,
             session: Some(SessionId("sesn_forgotten".into())),
             owner: None,
             status: None,

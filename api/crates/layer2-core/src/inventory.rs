@@ -25,6 +25,11 @@ use crate::session::SessionStatus;
 pub struct RuntimeEntry {
     /// The provider's own identifier for it. Opaque; never parsed.
     pub runtime: String,
+    /// Durable generation recorded by the provider, when this runtime has one.
+    ///
+    /// Absence marks a legacy runtime. It must stay visible as absence so an
+    /// operator or reclamation path cannot mistake it for current authority.
+    pub generation: Option<u64>,
     /// Which control plane created it, when the provider records one.
     ///
     /// A provider is shared, so an operator reading this may be looking at
@@ -145,6 +150,7 @@ impl SessionService {
                             let known = listing.session.as_deref().and_then(|s| owners.get(s));
                             RuntimeEntry {
                                 runtime: listing.handle.0,
+                                generation: listing.generation,
                                 // Which control plane created it, so an
                                 // operator reading a shared provider can tell
                                 // this deployment's sandboxes from another's

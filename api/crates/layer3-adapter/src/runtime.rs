@@ -76,6 +76,13 @@ pub struct RuntimeListing {
     pub handle: RuntimeHandle,
     /// The session it was provisioned for, when it says.
     pub session: Option<String>,
+    /// Durable generation of the runtime within its session, when recorded.
+    ///
+    /// Handles are provider-owned and opaque, so a handle alone cannot prove
+    /// that a census row belongs to the authority a control plane last read.
+    /// `None` identifies a runtime provisioned before generations crossed this
+    /// boundary; callers must treat it as legacy rather than guessing one.
+    pub generation: Option<u64>,
     /// The control plane that created it, when it says.
     ///
     /// `None` means it predates this being recorded, which is a different
@@ -162,6 +169,12 @@ impl RuntimeEnvironment {
 pub struct RuntimeSpec {
     /// Identifier of the session the runtime serves, for correlation only.
     pub session_id: String,
+    /// Durable generation reserved for this runtime within the session.
+    ///
+    /// Written into provider-visible metadata. Reconciliation can therefore
+    /// distinguish an obsolete runtime from the current authority even when a
+    /// stale census and a newer session record name the same session.
+    pub generation: u64,
     /// Geometry to allocate the terminal at.
     pub size: TermSize,
     /// How much this runtime should reserve, or `None` for the deployment's.
