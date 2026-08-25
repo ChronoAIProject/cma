@@ -19,9 +19,12 @@ fn documented_capability(source: &str) -> Result<serde_json::Value, String> {
         .split_once(SECTION)
         .map(|(_, section)| section)
         .ok_or_else(|| format!("docs/API_AGUI.md has no {SECTION:?} section"))?;
-    let section = remainder
-        .split_once("\n## ")
-        .map_or(remainder, |(section, _)| section);
+    let section_end = ["\n# ", "\n## "]
+        .into_iter()
+        .filter_map(|heading| remainder.find(heading))
+        .min()
+        .unwrap_or(remainder.len());
+    let section = &remainder[..section_end];
     let block = section
         .split_once(JSON_FENCE)
         .map(|(_, block)| block)
@@ -34,10 +37,14 @@ fn documented_capability(source: &str) -> Result<serde_json::Value, String> {
 
 #[test]
 fn deleting_the_documented_capability_block_fails_loudly() {
-    let source = "## 6. Capability document\n\nNo example.\n\n## 7. Notes\n\n```json\n{}\n```";
-    let error = documented_capability(source)
-        .expect_err("a later section's JSON must not look like the section 6 contract");
-    assert!(error.contains("no fenced JSON document"), "{error}");
+    for next_heading in ["## 7. Notes", "# Replacement document"] {
+        let source = format!(
+            "## 6. Capability document\n\nNo example.\n\n{next_heading}\n\n```json\n{{}}\n```"
+        );
+        let error = documented_capability(&source)
+            .expect_err("a later section's JSON must not look like the section 6 contract");
+        assert!(error.contains("no fenced JSON document"), "{error}");
+    }
 }
 
 #[tokio::test]
