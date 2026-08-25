@@ -293,6 +293,41 @@ describe('the SSE id identifies only a complete durable projection', () => {
       }),
     ]);
   });
+
+  it('rejects a complete body that switches threads between projections', () => {
+    const body = sse([
+      {
+        id: 1,
+        event: 'RUN_STARTED',
+        data: { type: 'RUN_STARTED', runId: 'run_1', threadId: 'sesn_1' },
+      },
+      {
+        id: 2,
+        event: 'RUN_FINISHED',
+        data: { type: 'RUN_FINISHED', runId: 'run_1', threadId: 'sesn_other' },
+      },
+    ]);
+
+    expect(() => parseEventStream(body)).toThrow('another threadId');
+  });
+
+  it('rejects prefixes whose numbered final belongs to another run', () => {
+    const body = sse([
+      {
+        event: 'FUTURE_PREFIX',
+        data: { type: 'FUTURE_PREFIX', runId: 'run_1', threadId: 'sesn_1' },
+      },
+      {
+        id: 2,
+        event: 'RUN_FINISHED',
+        data: { type: 'RUN_FINISHED', runId: 'run_2', threadId: 'sesn_1' },
+      },
+    ]);
+
+    expect(() => parseEventStream(body)).toThrow(
+      'AG-UI durable projection changed runId before its final frame',
+    );
+  });
 });
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));

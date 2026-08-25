@@ -20,7 +20,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function replay(session: MockSession) {
   const seen: AguiEvent[] = [];
   const statuses: string[] = [];
-  const connection = new AguiConnection(session.transport, 'sesn_1', {
+  const connection = new AguiConnection(session.transport, session.id, {
     backoffMs: 0,
     maxBackoffMs: 0,
     sleep: () => Promise.resolve(),
@@ -53,6 +53,16 @@ describe('every fixture', () => {
     // #77 is not running, so none of these is a recording. When one becomes a
     // recording this test is what makes the change visible.
     expect(TRANSCRIPTS.every((t) => t.provenance === 'authored')).toBe(true);
+  });
+
+  it('exposes the thread identity carried by every recorded frame', () => {
+    for (const transcript of TRANSCRIPTS) {
+      const session = new MockSession(transcript);
+      expect(
+        transcript.frames.every((frame) => frame.event.threadId === session.id),
+        transcript.name,
+      ).toBe(true);
+    }
   });
 
   it('replays through the real client', async () => {
@@ -196,14 +206,14 @@ describe('the mock drives the real client', () => {
     // A mock that refused would be asserting something about the control
     // plane it is in no position to know.
     const session = new MockSession(transcriptNamed('approval-granted'));
-    const operations = new AguiOperations('sesn_1', session.operations);
+    const operations = new AguiOperations(session.id, session.operations);
 
     await operations.resolveApproval('apr_7Q2', 'allow', 'run_5');
     await operations.interrupt();
 
     expect(session.sent.map((s) => s.path)).toEqual([
       '/api/v1/agui/run',
-      '/api/v1/sessions/sesn_1/interrupt',
+      `/api/v1/sessions/${session.id}/interrupt`,
     ]);
     expect(session.sent[0]?.body).toMatchObject({
       resume: [{ interruptId: 'apr_7Q2', payload: { decision: 'allow' } }],
@@ -228,7 +238,7 @@ describe('the mock drives the real client', () => {
   it('lets a test emit something the transcript could not express', async () => {
     const session = new MockSession(transcriptNamed('plain-turn'));
     const seen: AguiEvent[] = [];
-    const connection = new AguiConnection(session.transport, 'sesn_1', {
+    const connection = new AguiConnection(session.transport, session.id, {
       backoffMs: 0,
       sleep: () => Promise.resolve(),
     });
@@ -238,14 +248,14 @@ describe('the mock drives the real client', () => {
 
     // Whatever a component just did, answered live.
     session.emit(
-      { threadId: 'sesn_1', runId: 'run_1', seq: 99, type: 'RUN_ERROR', message: 'x' },
+      { threadId: session.id, runId: 'run_1', seq: 99, type: 'RUN_ERROR', message: 'x' },
       () => {},
     );
     await tick();
     stop();
 
     // It is in history, so a reconnect would find it.
-    const later = new AguiConnection(session.transport, 'sesn_1', {
+    const later = new AguiConnection(session.transport, session.id, {
       backoffMs: 0,
       sleep: () => Promise.resolve(),
     });

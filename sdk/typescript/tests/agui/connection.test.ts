@@ -108,12 +108,12 @@ function toolUpdate(seq: number, toolCallId: string, status: string) {
 /** Let the connection's own loop advance. */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function connect(fake: Fake) {
+function connect(fake: Fake, session = 'sesn_1') {
   const seen: AguiEvent[] = [];
   const statuses: string[] = [];
   const failures: LinkFailure[] = [];
   const errors: Error[] = [];
-  const connection = new AguiConnection(fake, 'sesn_1', {
+  const connection = new AguiConnection(fake, session, {
     backoffMs: 0,
     maxBackoffMs: 0,
     sleep: () => Promise.resolve(),
@@ -613,6 +613,30 @@ describe('a durable event that projects to several frames', () => {
     expect(connection.cursor).toBe(7);
   });
 
+  it('rejects a final from another thread before it can poison the session cursor', async () => {
+    const fake = new Fake();
+    fake.responses = [
+      [
+        {
+          type: 'FUTURE_PREFIX',
+          threadId: 'sesn_1',
+          runId: 'run_1',
+          seq: 0,
+        },
+        { type: 'RUN_FINISHED', threadId: 'sesn_other', runId: 'run_1', seq: 900 },
+      ],
+    ];
+
+    const { connection, errors, seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(statuses).toContain('failed'));
+    stop();
+
+    expect(connection.cursor).toBe(0);
+    expect(seen).toEqual([]);
+    expect(errors[0]).toBeInstanceOf(ProtocolError);
+    expect(errors[0]?.message).toContain('another threadId');
+  });
+
   it('replays an interrupted projection whole without delivering its prefix twice', async () => {
     const fake = new Fake();
     const start = {
@@ -817,7 +841,7 @@ describe('a durable event that projects to several frames', () => {
     fake.responses = [history];
     fake.onOpen = history.map((frame) => ({ ...frame, runId: 'run_live' }));
 
-    const { seen, statuses, stop } = connect(fake);
+    const { seen, statuses, stop } = connect(fake, 'sesn:opaque');
     await vi.waitFor(() => expect(statuses).toContain('live'));
     stop();
 

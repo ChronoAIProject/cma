@@ -125,7 +125,7 @@ function surface(
   );
   render(
     <ConversationSurface
-      session={session()}
+      session={{ ...session(), id: mock.id }}
       capabilities={capabilities}
       transport={mock.transport}
       operations={operations}

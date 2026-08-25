@@ -58,10 +58,18 @@ export class MockSession {
   #cursorAtDrop = 0;
   #dropsRemaining: number;
 
+  /** The session/thread identity recorded by this transcript. */
+  readonly id: string;
+
   constructor(
     private readonly transcript: Transcript,
     private readonly options: MockOptions = {},
   ) {
+    const threadId = transcript.frames[0]?.event.threadId;
+    if (typeof threadId !== 'string' || threadId.length === 0) {
+      throw new TypeError(`mock transcript ${transcript.name} has no threadId`);
+    }
+    this.id = threadId;
     this.#dropsRemaining = options.dropAfter === undefined ? 0 : 1;
   }
 

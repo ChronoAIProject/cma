@@ -235,7 +235,7 @@ export class AguiConnection {
          * history and opening a connection.
          */
         const pending: unknown[] = [];
-        const streamProjection = new ProjectionAssembler();
+        const streamProjection = new ProjectionAssembler(this.session);
         let live = false;
         let dropped = false;
         let dropCause: unknown;
@@ -277,7 +277,7 @@ export class AguiConnection {
           if (this.#closed) {
             return;
           }
-          const historyProjection = new ProjectionAssembler();
+          const historyProjection = new ProjectionAssembler(this.session);
           for (const raw of history) {
             if (this.#closed) {
               return;
