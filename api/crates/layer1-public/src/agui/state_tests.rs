@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use json_patch::Patch;
 use layer2_core::{
-    Event, EventKind, LiveFrame, ResourceReading, SessionId, SessionMode, SessionStatus,
+    Event, EventKind, LiveFrame, ResourceReading, SessionId, SessionMode, SessionStatus, StopReason,
 };
 use serde_json::{json, Value};
 
@@ -163,8 +163,7 @@ fn durable_state_deltas() -> Vec<crate::agui::project::AguiEvent> {
         .into_iter()
         .enumerate()
         .flat_map(|(offset, kind)| {
-            let name = format!("{kind:?}");
-            let events = project(
+            project(
                 &logged(offset as u64 + 1, kind),
                 "run_state_contract",
                 "sesn_state_contract",
@@ -172,27 +171,42 @@ fn durable_state_deltas() -> Vec<crate::agui::project::AguiEvent> {
             .events
             .into_iter()
             .filter(|event| event.kind == "STATE_DELTA")
-            .collect::<Vec<_>>();
-            assert!(
-                events.len() <= 1,
-                "{name} unexpectedly yielded several STATE_DELTA frames"
-            );
-            events
         })
         .collect()
+}
+
+/// One sample of every cursorless conversation frame.
+fn every_live_frame() -> Vec<LiveFrame> {
+    let frames = vec![
+        LiveFrame::TerminalOutput(b"terminal output".to_vec()),
+        LiveFrame::MessageDelta("message delta".into()),
+        LiveFrame::ThoughtDelta("reasoning delta".into()),
+        LiveFrame::AvailableCommands(Vec::new()),
+        LiveFrame::Exited {
+            code: Some(0),
+            reason: StopReason::EndTurn,
+        },
+    ];
+
+    for frame in &frames {
+        match frame {
+            LiveFrame::TerminalOutput(_)
+            | LiveFrame::MessageDelta(_)
+            | LiveFrame::ThoughtDelta(_)
+            | LiveFrame::AvailableCommands(_)
+            | LiveFrame::Exited { .. } => {}
+        }
+    }
+    frames
 }
 
 fn every_state_delta() -> Vec<crate::agui::project::AguiEvent> {
     let mut events = durable_state_deltas();
 
-    let commands = project_live(
-        &LiveFrame::AvailableCommands(Vec::new()),
-        "run_state_contract",
-        "sesn_state_contract",
-    )
-    .expect("available commands have an AG-UI projection");
-    assert_eq!(commands.kind, "STATE_DELTA");
-    events.push(commands);
+    events.extend(every_live_frame().into_iter().filter_map(|frame| {
+        project_live(&frame, "run_state_contract", "sesn_state_contract")
+            .filter(|event| event.kind == "STATE_DELTA")
+    }));
 
     let resources = project_reading(
         &ResourceReading {
@@ -248,6 +262,25 @@ fn canonical_state_delta_paths() -> BTreeSet<String> {
         .collect()
 }
 
+fn documented_state_delta_paths(document: &str) -> BTreeSet<String> {
+    const START: &str = "### `STATE_DELTA` paths\n\n";
+    let section = document
+        .split_once(START)
+        .unwrap_or_else(|| panic!("docs/API_AGUI.md has no §3 STATE_DELTA path section"))
+        .1;
+    let section = section
+        .split_once("\n### ")
+        .map_or(section, |(before_next_section, _)| before_next_section);
+
+    section
+        .lines()
+        .filter_map(|line| line.strip_prefix("| `"))
+        .filter_map(|row| row.split_once("` |").map(|(path, _)| path))
+        .filter(|path| path.starts_with('/'))
+        .map(str::to_string)
+        .collect()
+}
+
 fn assert_same_paths(label: &str, actual: &BTreeSet<String>, expected: &BTreeSet<String>) {
     let missing = expected.difference(actual).collect::<Vec<_>>();
     let unexpected = actual.difference(expected).collect::<Vec<_>>();
@@ -277,16 +310,23 @@ fn every_emitted_state_delta_applies_with_a_conforming_library() {
 }
 
 #[test]
-fn emitted_paths_match_the_canonical_vocabulary() {
+fn emitted_canonical_and_documented_paths_are_equal() {
     let emitted = emitted_state_delta_paths();
     let canonical = canonical_state_delta_paths();
+    let documented =
+        documented_state_delta_paths(include_str!("../../../../../docs/API_AGUI.md"));
 
     assert_eq!(
         canonical.len(),
         STATE_DELTA_PATHS.len(),
         "the canonical STATE_DELTA path table contains a duplicate"
     );
+    assert!(
+        !documented.is_empty(),
+        "the §3 STATE_DELTA path table yielded no documented paths"
+    );
     assert_same_paths("emitted", &emitted, &canonical);
+    assert_same_paths("documented", &documented, &canonical);
 }
 
 #[test]
