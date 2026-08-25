@@ -306,6 +306,22 @@ describe('request and response correlation', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('does not observe a fetch response that arrives after the deadline', async () => {
+    const fetched = deferred<Response>();
+    const responseObserver = vi.fn();
+    const config = resolveConfig({
+      fetch: vi.fn(() => fetched.promise) as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+
+    await expect(request(config, '/x', { timeoutMs: 5 })).rejects.toBeInstanceOf(TimeoutError);
+
+    fetched.resolve(new Response('{}', { status: 200 }));
+    await nextTurn();
+
+    expect(responseObserver).not.toHaveBeenCalled();
+  });
+
   it('does not consume a response after cancellation wins over its observer', async () => {
     const observer = deferred<void>();
     const observerStarted = deferred<void>();

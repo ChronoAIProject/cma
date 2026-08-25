@@ -250,6 +250,7 @@ async function connect(
           signal: controller.signal,
         },
       );
+      throwIfSignalAborted(controller.signal);
       const metadata = await observeResponse(config, received);
       throwIfSignalAborted(controller.signal);
       if (!received.ok) {

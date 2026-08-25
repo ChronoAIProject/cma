@@ -118,6 +118,7 @@ export function createAguiTransport(
           redirect: 'error',
           signal,
         });
+        throwIfSignalAborted(signal);
         const metadata = await observeResponse(config, response);
         throwIfSignalAborted(signal);
         await validateResponse(response, signal, metadata.requestId);
@@ -172,6 +173,7 @@ async function openStream(
         redirect: 'error',
         signal: controller.signal,
       });
+      throwIfSignalAborted(controller.signal);
       const metadata = await observeResponse(config, received);
       throwIfSignalAborted(controller.signal);
       await validateResponse(received, controller.signal, metadata.requestId);

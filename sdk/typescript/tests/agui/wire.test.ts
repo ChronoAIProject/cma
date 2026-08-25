@@ -375,6 +375,32 @@ describe('the live stream, not just the history read', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('does not observe a live handshake that arrives after its deadline', async () => {
+    const fetched = deferred<Response>();
+    const responseObserver = vi.fn();
+    const transport = createAguiTransport({
+      fetch: vi.fn(() => fetched.promise) as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const drops: unknown[] = [];
+    const stop = transport.open(
+      'sesn_1',
+      0,
+      () => undefined,
+      (cause) => drops.push(cause),
+      { timeoutMs: 5 },
+    );
+
+    await vi.waitFor(() => expect(drops).toHaveLength(1));
+    expect(drops[0]).toBeInstanceOf(TimeoutError);
+
+    fetched.resolve(eventStream(''));
+    await tick();
+    stop();
+
+    expect(responseObserver).not.toHaveBeenCalled();
+  });
+
   it('does not read a live body after its response observer times out', async () => {
     const observer = deferred<void>();
     const observerStarted = deferred<void>();
@@ -439,6 +465,27 @@ describe('the history read finishes', () => {
 
     expect(credential).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not observe a history response that arrives after cancellation', async () => {
+    const fetched = deferred<Response>();
+    const responseObserver = vi.fn();
+    const controller = new AbortController();
+    const fetch = vi.fn(() => fetched.promise);
+    const transport = createAguiTransport({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const pending = transport.history('sesn_1', 0, { signal: controller.signal });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+
+    controller.abort('cancelled while fetching history');
+
+    await expect(pending).rejects.toBeInstanceOf(RequestAborted);
+    fetched.resolve(eventStream(''));
+    await tick();
+
+    expect(responseObserver).not.toHaveBeenCalled();
   });
 
   it('does not read a history body after its response observer times out', async () => {
