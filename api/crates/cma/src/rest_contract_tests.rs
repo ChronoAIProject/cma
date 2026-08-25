@@ -1574,6 +1574,14 @@ async fn the_optional_ticket_body_distinguishes_empty_from_untyped() {
     let body = assert_problem(response, StatusCode::UNSUPPORTED_MEDIA_TYPE).await;
     assert_eq!(body["code"], "unsupported_media_type");
 
+    let response = app
+        .clone()
+        .oneshot(json_request(Method::POST, &uri, "null"))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "invalid_request");
+
     let planted = "not-a-real-ticket-secret";
     let response = app
         .oneshot(json_request(
@@ -1678,7 +1686,10 @@ async fn conformance_remains_public() {
             .is_some_and(|classes| !classes.is_empty()),
         "public conformance document must name at least one class: {body}"
     );
-    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        body["version"],
+        option_env!("CHRONO_BUILD").unwrap_or("development")
+    );
     assert!(
         body["build_sha"]
             .as_str()
@@ -1701,6 +1712,10 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         .expect("router answers");
     let document = assert_json(response, StatusCode::OK).await;
     assert_eq!(document["openapi"], "3.1.0");
+    assert_eq!(
+        document["info"]["version"],
+        option_env!("CHRONO_BUILD").unwrap_or("development")
+    );
 
     let paths = document["paths"]
         .as_object()
@@ -1751,6 +1766,31 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>(),
         expected
+    );
+
+    let discovery_schema =
+        &paths["/openapi.json"]["get"]["responses"]["200"]["content"]["application/json"]["schema"];
+    assert_eq!(
+        discovery_schema["$ref"], "#/components/schemas/OpenApiDocument",
+        "the discovery response must describe its JSON document: {discovery_schema}"
+    );
+
+    let transcript_schema = &paths["/api/v1/sessions/{id}/transcript"]["get"]["responses"]["200"]
+        ["content"]["application/octet-stream"]["schema"];
+    assert_eq!(
+        transcript_schema["$ref"], "#/components/schemas/TranscriptBody",
+        "the transcript response must reference its binary schema: {transcript_schema}"
+    );
+
+    let ticket_body = &paths["/api/v1/sessions/{id}/terminal-ticket"]["post"]["requestBody"];
+    assert_eq!(
+        ticket_body["required"], false,
+        "the ticket body may be omitted: {ticket_body}"
+    );
+    let ticket_schema = &ticket_body["content"]["application/json"]["schema"];
+    assert_eq!(
+        ticket_schema["$ref"], "#/components/schemas/TicketRequest",
+        "an explicit ticket body must be a non-null TicketRequest: {ticket_schema}"
     );
 
     let problem = &document["components"]["schemas"]["ProblemDocument"];
@@ -1806,9 +1846,77 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
     }
     assert_local_refs_resolve(&document, &document);
 
+    fn schema_allows_null(schema: &serde_json::Value) -> bool {
+        schema["nullable"] == true
+            || schema["type"] == "null"
+            || schema["type"]
+                .as_array()
+                .is_some_and(|types| types.iter().any(|kind| kind == "null"))
+            || ["oneOf", "anyOf"].iter().any(|composition| {
+                schema[*composition]
+                    .as_array()
+                    .is_some_and(|members| members.iter().any(schema_allows_null))
+            })
+    }
+
+    fn schema_has_minimum_one(schema: &serde_json::Value) -> bool {
+        schema["minimum"].as_u64() == Some(1)
+            || ["oneOf", "anyOf"].iter().any(|composition| {
+                schema[*composition]
+                    .as_array()
+                    .is_some_and(|members| members.iter().any(schema_has_minimum_one))
+            })
+    }
+
     let schemas = document["components"]["schemas"]
         .as_object()
         .expect("component schemas are an object");
+    let discovery_document = &schemas["OpenApiDocument"];
+    for required in ["openapi", "info", "paths"] {
+        assert!(
+            discovery_document["properties"].get(required).is_some(),
+            "OpenAPI discovery schema is missing {required}: {discovery_document}"
+        );
+    }
+
+    let transcript_body = &schemas["TranscriptBody"];
+    assert_eq!(transcript_body["type"], "string");
+    assert_eq!(transcript_body["format"], "binary");
+    assert!(
+        transcript_body.get("items").is_none(),
+        "the raw transcript must not be modeled as an integer array: {transcript_body}"
+    );
+
+    let change_request = &schemas["ChangeRequest"];
+    for optional in [
+        "briefing",
+        "deployment_capacity",
+        "size_bounds",
+        "live_sessions",
+    ] {
+        assert!(
+            !change_request["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|field| field == optional)),
+            "PATCH property {optional} must remain optional: {change_request}"
+        );
+    }
+    for non_nullable in ["briefing", "deployment_capacity", "size_bounds"] {
+        let property = &change_request["properties"][non_nullable];
+        assert!(
+            !schema_allows_null(property),
+            "PATCH property {non_nullable} must reject null: {property}"
+        );
+    }
+    let live_sessions = &change_request["properties"]["live_sessions"];
+    assert!(
+        schema_allows_null(live_sessions),
+        "live_sessions null removes the optional limit: {live_sessions}"
+    );
+    assert!(
+        schema_has_minimum_one(live_sessions),
+        "a non-null live_sessions limit must be positive: {live_sessions}"
+    );
     for (schema, expected_properties) in [
         (
             "SessionView",
@@ -2011,6 +2119,7 @@ async fn request_ids_cover_success_auth_and_routing_failures_and_echo_callers() 
     }
 
     let response = app
+        .clone()
         .oneshot(
             Request::get("/api/v1/conformance")
                 .header("x-request-id", "support-case-488")
@@ -2023,6 +2132,37 @@ async fn request_ids_cover_success_auth_and_routing_failures_and_echo_callers() 
         response.headers().get("x-request-id"),
         Some(&HeaderValue::from_static("support-case-488"))
     );
+
+    for unusable in [
+        HeaderValue::from_static(""),
+        HeaderValue::from_bytes(b" \t ").expect("whitespace is a valid header value"),
+        HeaderValue::from_bytes(&[0xff]).expect("opaque bytes are a valid header value"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/conformance")
+                    .header("x-request-id", unusable.clone())
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        let generated = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("an unusable request id is replaced with text");
+        assert_ne!(
+            response.headers().get("x-request-id"),
+            Some(&unusable),
+            "the unusable caller value must not be echoed"
+        );
+        assert!(
+            uuid::Uuid::parse_str(generated).is_ok(),
+            "the replacement must be a generated UUID: {generated:?}"
+        );
+    }
 }
 
 #[tokio::test]

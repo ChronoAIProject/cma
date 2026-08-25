@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use utoipa::ToSchema;
 
+use super::openapi_shapes;
+
 const MAX_DIAGNOSTIC_FIELD_BYTES: usize = 64;
 
 const PROFILE_FIELDS: &[&str] = &[
@@ -131,18 +133,22 @@ pub struct AgentBody {
     pub kernel: Option<String>,
     /// Which plane sessions from this profile are driven on.
     #[serde(default)]
+    #[schema(value_type = Option<openapi_shapes::SessionMode>)]
     pub mode: Option<SessionMode>,
     /// Model the agent selects.
     #[serde(default)]
     pub model: Option<String>,
     /// How hard it thinks.
     #[serde(default)]
+    #[schema(value_type = Option<openapi_shapes::ReasoningEffort>)]
     pub reasoning_effort: Option<ReasoningEffort>,
     /// How often it stops to ask.
     #[serde(default)]
+    #[schema(value_type = Option<openapi_shapes::PermissionMode>)]
     pub permission: Option<PermissionMode>,
     /// Whose model access it spends.
     #[serde(default)]
+    #[schema(value_type = Option<openapi_shapes::CredentialMode>)]
     pub credential: Option<CredentialMode>,
     /// How much a session from this profile reserves.
     #[serde(default)]
@@ -421,13 +427,18 @@ impl TryFrom<ProfileRequest> for EnvironmentProfileSpec {
 #[schema(as = ProfileAgentView)]
 pub struct AgentView {
     kernel: String,
+    #[schema(value_type = openapi_shapes::SessionMode)]
     mode: SessionMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[schema(value_type = openapi_shapes::ReasoningEffort)]
     reasoning_effort: ReasoningEffort,
+    #[schema(value_type = openapi_shapes::PermissionMode)]
     permission: PermissionMode,
+    #[schema(value_type = openapi_shapes::CredentialMode)]
     credential: CredentialMode,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::SessionSize>)]
     size: Option<SessionSize>,
     record_tool_bodies: bool,
     skills: Vec<String>,

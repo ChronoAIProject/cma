@@ -28,13 +28,11 @@ use serde::{Deserialize, Serialize};
 /// bounds mechanism that the administrator cannot change.
 // Deliberately no `Default`: `None` means the deployment's own reservation, and
 // a default value here would let a later `unwrap_or_default()` invent a size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSize {
     /// Processor time, in thousandths of one core.
-    #[schema(value_type = u32, minimum = 1)]
     pub cpu_millis: NonZeroU32,
     /// Working memory, in mebibytes.
-    #[schema(value_type = u32, minimum = 1)]
     pub memory_mib: NonZeroU32,
 }
 

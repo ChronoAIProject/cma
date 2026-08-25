@@ -41,7 +41,7 @@ pub use crate::pricing::{
 /// break a session: the prose around the list, the words the list is
 /// introduced by, and where the list sits. Whether the list exists is not
 /// theirs, and neither is what is in it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionBriefing {
     /// Prose placed above the reach section, in order.
     ///
@@ -81,7 +81,7 @@ pub struct SessionBriefing {
 /// One field per setting, so a client built before a setting existed cannot
 /// erase it and a client inventing one is refused rather than silently
 /// ignored. The struct grows; nothing here is a map.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PlatformSettings {
     #[serde(default)]
     pub briefing: SessionBriefing,
@@ -135,7 +135,6 @@ pub struct PlatformSettings {
     /// This is per subject. The core has no tenant, organization, or account
     /// grouping above `SubjectId`, so two subjects receive two limits.
     #[serde(default)]
-    #[schema(value_type = Option<u32>, minimum = 1)]
     pub live_sessions: Option<NonZeroU32>,
 }
 
