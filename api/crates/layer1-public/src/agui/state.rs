@@ -7,6 +7,29 @@
 
 use serde_json::Value;
 
+/// Every RFC 6901 path this build writes in an AG-UI `STATE_DELTA`.
+///
+/// The projection test derives the emitted set by exercising the durable and
+/// live lanes, then compares it with this table. The documentation test pins
+/// the public table to the same vocabulary.
+pub(super) const STATE_DELTA_PATHS: &[&str] = &[
+    "/availableCommands",
+    "/configOptions",
+    "/contextCompactions/-",
+    "/gaps/-",
+    "/memoryPressure",
+    "/mode",
+    "/plan",
+    "/planeChanges/-",
+    "/resources",
+    "/runtimeLosses/-",
+    "/signIn",
+    "/usage/contextUsed",
+    "/usage/contextWindow",
+    "/usage/inputTokens",
+    "/usage/outputTokens",
+];
+
 pub(super) const INITIAL_STATE_JSON: &str = r#"{
   "usage": {
     "inputTokens": null,
