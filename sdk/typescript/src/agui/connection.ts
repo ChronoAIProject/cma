@@ -8,6 +8,7 @@ import {
   ValidationError,
 } from '../errors.js';
 import type { OperationOptions } from '../http.js';
+import { isCursorlessInterfaceBoundary } from './cursor.js';
 import { toEvent, type AguiEvent } from './events.js';
 import { ProjectionAssembler } from './projection.js';
 
@@ -434,15 +435,17 @@ export class AguiConnection {
       return;
     }
     const first = events[0] as AguiEvent;
+    const firstKind = first.type === 'UNKNOWN' ? first.kind : first.type;
     /*
-     * Liveness passes straight through, touching neither the cursor nor the
-     * seen-set. It has no sequence — what it arrives with is whatever id the
-     * last durable frame carried — so recording it would mark a durable
-     * event as already delivered and drop the real one when it comes, and
-     * every piece of a message after the first would collide with the piece
-     * before it and be dropped in silence.
+     * Cursorless interface boundaries and liveness pass straight through,
+     * touching neither the cursor nor the seen-set. The former orders a
+     * continuation before its live frames; the latter has no log position.
+     * Recording either would turn a non-cursor into reconnect state.
      */
-    if (first.ephemeral === true) {
+    if (
+      first.ephemeral === true ||
+      isCursorlessInterfaceBoundary(firstKind, first.seq, first.ephemeral)
+    ) {
       onEvent(first);
       return;
     }

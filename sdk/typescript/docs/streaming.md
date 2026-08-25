@@ -111,6 +111,12 @@ cannot discover a prefix's occurrence identity without the rest of its projectio
 An incomplete captured body that stops before the numbered final is a protocol
 error.
 
+AG-UI also has one cursorless interface boundary: an unnumbered, non-live
+`RUN_STARTED` opens a continuation response that did not create a new durable
+turn. The SDK delivers it immediately and in order, but does not mark it
+ephemeral, deduplicate it, or advance the reconnect cursor. Every other durable
+singleton or final still requires a positive SSE id.
+
 ## Why the SDK owns the patches
 
 Earlier clients copied `STATE_DELTA` paths and wire fields into the frontend. That

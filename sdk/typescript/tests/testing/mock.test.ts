@@ -362,6 +362,33 @@ describe('the mock drives the real client', () => {
     expect(history).toEqual([transcript.frames[0]?.event]);
   });
 
+  it('delivers a cursorless interface boundary without retaining it in history', async () => {
+    const transcript = projectionTranscript('continuation-boundary', [
+      { type: 'RUN_STARTED', runId: 'run_resume', seq: 0 },
+      {
+        type: 'REASONING_MESSAGE_CONTENT',
+        runId: 'run_resume',
+        seq: 0,
+        messageId: 'reasoning_resume_1',
+        delta: 'Continuing.',
+        'cma:live': true,
+      },
+      { type: 'RUN_FINISHED', runId: 'run_resume', seq: 1 },
+    ]);
+    const session = new MockSession(transcript);
+    const { cursor, seen } = await replay(session);
+    const history = await session.transport.history(session.id, 0);
+
+    expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
+      'REASONING_MESSAGE_CONTENT',
+      'RUN_FINISHED',
+    ]);
+    expect(seen.map((event) => event.ephemeral === true)).toEqual([false, true, false]);
+    expect(cursor).toBe(1);
+    expect(history).toEqual([transcript.frames[2]?.event]);
+  });
+
   it('records what the operations sent, without answering for the control plane', async () => {
     // A mock that refused would be asserting something about the control
     // plane it is in no position to know.

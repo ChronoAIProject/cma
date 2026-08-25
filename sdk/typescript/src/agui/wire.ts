@@ -24,7 +24,7 @@ import {
   type OperationOptions,
 } from '../http.js';
 import type { AguiTransport } from './connection.js';
-import { canBeDurableProjectionPrefix } from './cursor.js';
+import { canBeDurableProjectionPrefix, isCursorlessInterfaceBoundary } from './cursor.js';
 import { toEvent, type AguiEvent } from './events.js';
 import { ProjectionAssembler } from './projection.js';
 
@@ -369,10 +369,10 @@ function frameFromMessage(message: EventSourceMessage): unknown {
 }
 
 function sequenceOf(raw: string | undefined, kind: string): number {
-  // Only the final frame of a durable projection is stamped. Zero is an
-  // internal sentinel for a leading durable frame and never a resume cursor.
+  // Only the final frame of a durable projection is stamped. Zero is also the
+  // cursorless continuation boundary; neither category is a resume cursor.
   if (raw === undefined) {
-    if (canBeDurableProjectionPrefix(kind)) {
+    if (canBeDurableProjectionPrefix(kind) || isCursorlessInterfaceBoundary(kind, 0, false)) {
       return 0;
     }
     throw new ProtocolError(`AG-UI durable ${kind} frame carried no sequence id`);
