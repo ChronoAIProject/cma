@@ -788,6 +788,136 @@ describe('a durable event that projects to several frames', () => {
     expect(seen[0]).toMatchObject({ type: 'UNKNOWN', kind: 'FUTURE_PREFIX', seq: 0 });
   });
 
+  it('gives every unknown prefix a stable occurrence identity and folds an overlap once', async () => {
+    const fake = new Fake();
+    const history = [
+      {
+        type: 'FUTURE:ALPHA',
+        threadId: 'sesn:opaque',
+        runId: 'sesn_1',
+        seq: 0,
+        futureValue: 'different kind',
+      },
+      {
+        type: 'FUTURE:REPEAT',
+        threadId: 'sesn:opaque',
+        runId: 'sesn_1',
+        seq: 0,
+        futureValue: 'identical occurrence',
+      },
+      {
+        type: 'FUTURE:REPEAT',
+        threadId: 'sesn:opaque',
+        runId: 'sesn_1',
+        seq: 0,
+        futureValue: 'identical occurrence',
+      },
+      { type: 'RUN_FINISHED', threadId: 'sesn:opaque', runId: 'sesn_1', seq: 7 },
+    ];
+    fake.responses = [history];
+    fake.onOpen = history.map((frame) => ({ ...frame, runId: 'run_live' }));
+
+    const { seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(statuses).toContain('live'));
+    stop();
+
+    expect(seen.map((event) => event.type)).toEqual([
+      'UNKNOWN',
+      'UNKNOWN',
+      'UNKNOWN',
+      'RUN_FINISHED',
+    ]);
+    const unknowns = seen.filter((event) => event.type === 'UNKNOWN');
+    expect(unknowns.map((event) => event.projectionId)).toEqual([
+      '["sesn:opaque",7,0,"FUTURE:ALPHA"]',
+      '["sesn:opaque",7,1,"FUTURE:REPEAT"]',
+      '["sesn:opaque",7,2,"FUTURE:REPEAT"]',
+    ]);
+
+    const state = fold([...seen, ...seen]);
+    expect(state.entries).toEqual([
+      expect.objectContaining({
+        kind: 'unknown',
+        id: '["sesn:opaque",7,0,"FUTURE:ALPHA"]',
+        eventKind: 'FUTURE:ALPHA',
+      }),
+      expect.objectContaining({
+        kind: 'unknown',
+        id: '["sesn:opaque",7,1,"FUTURE:REPEAT"]',
+        eventKind: 'FUTURE:REPEAT',
+      }),
+      expect.objectContaining({
+        kind: 'unknown',
+        id: '["sesn:opaque",7,2,"FUTURE:REPEAT"]',
+        eventKind: 'FUTURE:REPEAT',
+      }),
+    ]);
+  });
+
+  it('keeps unknown identities byte-identical while retrying only an unacknowledged frame', async () => {
+    const fake = new Fake();
+    const projection = [
+      {
+        type: 'FUTURE_FIRST',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 0,
+        futureValue: 1,
+      },
+      {
+        type: 'FUTURE_SECOND',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 0,
+        futureValue: 2,
+      },
+      { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_1', seq: 7 },
+    ];
+    fake.responses = [projection, projection];
+    let resume: () => void = () => {};
+    const paused = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      backoffMs: 0,
+      maxBackoffMs: 0,
+      sleep: () => paused,
+    });
+    const seen: AguiEvent[] = [];
+    const statuses: string[] = [];
+    const secondAttempts: string[] = [];
+    let failed = false;
+    const stop = connection.subscribe(
+      (event) => {
+        if (event.type === 'UNKNOWN' && event.kind === 'FUTURE_SECOND') {
+          secondAttempts.push(event.projectionId ?? 'missing');
+          if (!failed) {
+            failed = true;
+            throw new Error('consumer failed before acknowledging the second prefix');
+          }
+        }
+        seen.push(event);
+      },
+      (status) => statuses.push(status),
+    );
+
+    await vi.waitFor(() => expect(statuses).toContain('reconnecting'));
+    expect(seen.map((event) => event.type)).toEqual(['UNKNOWN']);
+    resume();
+    await vi.waitFor(() => expect(connection.cursor).toBe(7));
+    stop();
+
+    expect(secondAttempts).toEqual([
+      '["sesn_1",7,1,"FUTURE_SECOND"]',
+      '["sesn_1",7,1,"FUTURE_SECOND"]',
+    ]);
+    expect(seen.map((event) => event.type)).toEqual(['UNKNOWN', 'UNKNOWN', 'RUN_FINISHED']);
+    expect(seen.flatMap((event) => (event.type === 'UNKNOWN' ? [event.projectionId] : []))).toEqual(
+      ['["sesn_1",7,0,"FUTURE_FIRST"]', '["sesn_1",7,1,"FUTURE_SECOND"]'],
+    );
+    expect(fake.historyReads).toEqual([0, 0]);
+  });
+
   it('retries an unacknowledged prefix without advancing the cursor', async () => {
     const fake = new Fake();
     const message = committedMessage(7, 'm_7', 'retry the prefix');

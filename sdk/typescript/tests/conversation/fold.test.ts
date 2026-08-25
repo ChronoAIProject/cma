@@ -31,6 +31,30 @@ function delta(seq: number, path: string, value: unknown): AguiEvent {
 /** The stream as a client would have read it. */
 const stream = (events: readonly AguiEvent[]) => fold(events);
 
+describe('an unknown future event constructed directly', () => {
+  it('retains the legacy sequence identity when no connection metadata exists', () => {
+    const state = stream([
+      {
+        type: 'UNKNOWN',
+        seq: 7,
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        kind: 'FUTURE_EVENT',
+        raw: { type: 'FUTURE_EVENT', seq: 7 },
+      },
+    ]);
+
+    expect(state.entries).toEqual([
+      expect.objectContaining({
+        kind: 'unknown',
+        id: 'unknown-7',
+        eventKind: 'FUTURE_EVENT',
+        seq: 7,
+      }),
+    ]);
+  });
+});
+
 describe('a runtime the session lost', () => {
   it('folds the first loss into the conversation state', () => {
     const state = stream([

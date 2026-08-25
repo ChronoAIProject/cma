@@ -253,6 +253,14 @@ export interface UnknownEvent extends EventBase {
   readonly type: 'UNKNOWN';
   /** The kind as it arrived, so it can be shown and reported. */
   readonly kind: string;
+  /**
+   * Stable identity of this frame within one durable projection.
+   *
+   * Assigned by `AguiConnection` only after the numbered final frame reveals
+   * the projection's durable sequence. It is client metadata, not wire data;
+   * directly constructed events may omit it for backwards compatibility.
+   */
+  readonly projectionId?: string;
   /** The frame verbatim, so nothing is lost in the round trip. */
   readonly raw: Readonly<Record<string, unknown>>;
 }

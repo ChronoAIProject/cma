@@ -253,7 +253,7 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
       // a newer control plane is reporting is worth more than a tidy stream.
       return append(state, {
         kind: 'unknown',
-        id: `unknown-${String(event.seq)}`,
+        id: event.projectionId ?? `unknown-${String(event.seq)}`,
         eventKind: event.kind,
         seq: event.seq,
       });
