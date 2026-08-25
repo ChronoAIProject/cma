@@ -622,10 +622,9 @@ async fn reached(
 
 /// Name the skills each session was given, as far as the catalogue can say.
 ///
-/// Targeted lookups for distinct grants on the whole page, rather than one full
-/// catalogue walk per row. The adapter applies a total enrichment budget; any
-/// grants beyond it retain their recorded identifiers and versions. A catalogue
-/// that cannot be reached likewise costs the names and not the answer: the
+/// One bounded catalogue projection for the distinct grants on the whole page,
+/// rather than one provider request per grant or one walk per session. A
+/// catalogue that cannot be reached costs the names and not the answer: the
 /// identifiers were already on the view, and they are still true.
 ///
 /// Nothing here is asked unless some session actually carries a skill, so the
@@ -644,8 +643,7 @@ async fn skilled(
     }
 
     // Preserve first-seen order while deduplicating the whole rendered page.
-    // The adapter may issue one bounded metadata search per entry, so
-    // duplicates here would otherwise become duplicate upstream calls.
+    // Duplicates do not need a second match or a second result key.
     let mut seen = std::collections::HashSet::new();
     let mut requested = Vec::new();
     for view in views.iter() {
@@ -659,22 +657,14 @@ async fn skilled(
         }
     }
 
-    /*
-     * Keyed by identifier AND by name, because a profile stores neither
-     * consistently: the registry's own id is a GUID and what a profile holds
-     * is the slug, so a map keyed only on `id` never matched a single session
-     * and every skill came back unnamed. Both keys point at the same entry, so
-     * whichever a profile happens to hold resolves.
-     */
     let mut named: std::collections::HashMap<String, layer2_core::CatalogSkill> =
         std::collections::HashMap::new();
-    for skill in environments
+    for described in environments
         .describe_skills(caller, credential, &requested)
         .await
         .unwrap_or_default()
     {
-        named.insert(skill.name.clone(), skill.clone());
-        named.insert(skill.id.0.clone(), skill);
+        named.insert(described.requested.0, described.skill);
     }
 
     for view in views.iter_mut() {
@@ -682,8 +672,8 @@ async fn skilled(
             continue;
         };
         for skill in skills.iter_mut() {
-            // Missing catalogue metadata, including an entry outside the
-            // adapter's budget, must not remove or rewrite the durable grant.
+            // Missing or ambiguous catalogue metadata must not remove or
+            // rewrite the durable grant.
             let Some(known) = named.get(&skill.id) else {
                 continue;
             };
