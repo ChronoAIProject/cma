@@ -71,6 +71,21 @@ describe('anonymous deployment discovery', () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it('rejects a valid discovery body returned with a noncanonical success status', async () => {
+    const fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(CONFORMANCE), {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+
+    await expect(
+      readConformance(resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch })),
+    ).rejects.toThrow(/expected HTTP 200/i);
+  });
+
   it('rejects partial, empty, and expanded discovery documents', () => {
     for (const malformed of [
       null,

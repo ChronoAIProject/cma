@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAguiTransport, parseEventStream } from '../../src/agui/wire.js';
 import { toEvent } from '../../src/agui/events.js';
 import type { ResponseMetadata } from '../../src/config.js';
-import { ApiError, ProtocolError, TimeoutError } from '../../src/errors.js';
+import { ApiError, ProtocolError, RequestAborted, TimeoutError } from '../../src/errors.js';
 import type { OperationOptions } from '../../src/http.js';
 
 /**
@@ -151,6 +151,14 @@ describe('what the interface serves is what this client reads', () => {
 });
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
 
 function eventStream(body: string, requestId?: string): Response {
   const response = new Response(body, {
@@ -335,9 +343,134 @@ describe('the live stream, not just the history read', () => {
 
     expect(drops[0]).toBeInstanceOf(TimeoutError);
   });
+
+  it('does not continue a timed-out request-id hook into a late live handshake', async () => {
+    const requestId = deferred<string>();
+    const requestIdProvider = vi.fn(() => requestId.promise);
+    const credential = vi.fn(() => 'tok_late');
+    const fetch = vi.fn();
+    const transport = createAguiTransport({
+      credential,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+    });
+    const drops: unknown[] = [];
+    const stop = transport.open(
+      'sesn_1',
+      0,
+      () => undefined,
+      (cause) => drops.push(cause),
+      { timeoutMs: 5 },
+    );
+
+    await vi.waitFor(() => expect(drops).toHaveLength(1));
+    expect(drops[0]).toBeInstanceOf(TimeoutError);
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+
+    requestId.resolve('caller-agui-after-timeout');
+    await tick();
+    stop();
+
+    expect(credential).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not read a live body after its response observer times out', async () => {
+    const observer = deferred<void>();
+    const observerStarted = deferred<void>();
+    const responseObserver = vi.fn(() => {
+      observerStarted.resolve(undefined);
+      return observer.promise;
+    });
+    const getReader = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const transport = createAguiTransport({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const drops: unknown[] = [];
+    const stop = transport.open(
+      'sesn_1',
+      0,
+      () => undefined,
+      (cause) => drops.push(cause),
+      { timeoutMs: 50 },
+    );
+    await observerStarted.promise;
+
+    await vi.waitFor(() => expect(drops).toHaveLength(1));
+    expect(drops[0]).toBeInstanceOf(TimeoutError);
+
+    observer.resolve(undefined);
+    await tick();
+    stop();
+
+    expect(responseObserver).toHaveBeenCalledOnce();
+    expect(getReader).not.toHaveBeenCalled();
+  });
 });
 
 describe('the history read finishes', () => {
+  it('does not continue an aborted request-id hook into a late history request', async () => {
+    const requestId = deferred<string>();
+    const requestIdProvider = vi.fn(() => requestId.promise);
+    const credential = vi.fn(() => 'tok_late');
+    const fetch = vi.fn();
+    const controller = new AbortController();
+    const transport = createAguiTransport({
+      credential,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+    });
+    const pending = transport.history('sesn_1', 0, { signal: controller.signal });
+    await vi.waitFor(() => expect(requestIdProvider).toHaveBeenCalledOnce());
+
+    controller.abort('cancelled while resolving request id');
+
+    await expect(pending).rejects.toBeInstanceOf(RequestAborted);
+    requestId.resolve('caller-agui-history-after-abort');
+    await tick();
+
+    expect(credential).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not read a history body after its response observer times out', async () => {
+    const observer = deferred<void>();
+    const observerStarted = deferred<void>();
+    const responseObserver = vi.fn(() => {
+      observerStarted.resolve(undefined);
+      return observer.promise;
+    });
+    const getReader = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const transport = createAguiTransport({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const pending = transport.history('sesn_1', 0, { timeoutMs: 50 });
+    await observerStarted.promise;
+
+    await expect(pending).rejects.toBeInstanceOf(TimeoutError);
+    observer.resolve(undefined);
+    await tick();
+
+    expect(responseObserver).toHaveBeenCalledOnce();
+    expect(getReader).not.toHaveBeenCalled();
+  });
+
   it('retains a permanent HTTP status for the reconnect classifier', async () => {
     const fetch = vi.fn(() =>
       Promise.resolve(

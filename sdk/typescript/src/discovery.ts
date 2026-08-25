@@ -20,7 +20,9 @@ export async function readConformance(
   options: OperationOptions = {},
 ): Promise<Conformance> {
   const anonymous = { ...config, credential: undefined, cookies: false };
-  return toConformance(await request(anonymous, '/api/v1/conformance', options));
+  return toConformance(
+    await request(anonymous, '/api/v1/conformance', { ...options, expectedStatus: 200 }),
+  );
 }
 
 /** Decode the public discovery document without accepting partial build identity. */

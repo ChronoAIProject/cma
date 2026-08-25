@@ -13,9 +13,11 @@ import {
   CredentialError,
   DeploymentAtCapacity,
   ProtocolError,
+  RequestAborted,
   RequestIdError,
   ResponseObserverError,
   SessionLimitReached,
+  TimeoutError,
   TransportError,
   ValidationError,
 } from '../src/errors.js';
@@ -58,6 +60,16 @@ function recorder(
   });
   return { calls, impl: impl as unknown as typeof globalThis.fetch };
 }
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+const nextTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe('where the client points', () => {
   it('defaults to same-origin, which is what the dashboard needs', () => {
@@ -270,6 +282,60 @@ describe('request and response correlation', () => {
     const failure = await request(config, '/x').catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(ResponseObserverError);
     expect((failure as Error).cause).toBeInstanceOf(Error);
+    expect(getReader).not.toHaveBeenCalled();
+  });
+
+  it('does not continue to credentials or fetch after a request-id deadline', async () => {
+    const requestId = deferred<string>();
+    const requestIdProvider = vi.fn(() => requestId.promise);
+    const credential = vi.fn(() => 'tok_late');
+    const fetch = vi.fn();
+    const config = resolveConfig({
+      credential,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+    });
+
+    await expect(request(config, '/x', { timeoutMs: 5 })).rejects.toBeInstanceOf(TimeoutError);
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+
+    requestId.resolve('caller-after-timeout');
+    await nextTurn();
+
+    expect(credential).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not consume a response after cancellation wins over its observer', async () => {
+    const observer = deferred<void>();
+    const observerStarted = deferred<void>();
+    const responseObserver = vi.fn(() => {
+      observerStarted.resolve(undefined);
+      return observer.promise;
+    });
+    const getReader = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers(),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const controller = new AbortController();
+    const config = resolveConfig({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const pending = request(config, '/x', { signal: controller.signal });
+    await observerStarted.promise;
+
+    controller.abort('cancelled while observing');
+
+    await expect(pending).rejects.toBeInstanceOf(RequestAborted);
+    observer.resolve(undefined);
+    await nextTurn();
+
+    expect(responseObserver).toHaveBeenCalledOnce();
     expect(getReader).not.toHaveBeenCalled();
   });
 

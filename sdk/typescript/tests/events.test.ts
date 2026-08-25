@@ -67,6 +67,16 @@ async function take(events: AsyncIterable<SessionEvent>, count: number): Promise
   return received;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+const nextTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 describe('core event envelopes', () => {
   const known: readonly Record<string, unknown>[] = [
     { type: 'session_created' },
@@ -596,6 +606,59 @@ describe('the reconnecting event stream', () => {
     await expect(
       first(streamEvents(config, SESSION, { timeoutMs: 5, maxEmptyConnections: 1 })),
     ).rejects.toBeInstanceOf(TimeoutError);
+  });
+
+  it('does not continue a timed-out request-id hook into a late handshake', async () => {
+    const requestId = deferred<string>();
+    const requestIdProvider = vi.fn(() => requestId.promise);
+    const credential = vi.fn(() => 'tok_late');
+    const fetch = vi.fn();
+    const config = resolveConfig({
+      credential,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+    });
+
+    await expect(
+      first(streamEvents(config, SESSION, { timeoutMs: 5, maxEmptyConnections: 1 })),
+    ).rejects.toBeInstanceOf(TimeoutError);
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+
+    requestId.resolve('caller-event-after-timeout');
+    await nextTurn();
+
+    expect(credential).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not read a stream body after its response observer times out', async () => {
+    const observer = deferred<void>();
+    const observerStarted = deferred<void>();
+    const responseObserver = vi.fn(() => {
+      observerStarted.resolve(undefined);
+      return observer.promise;
+    });
+    const getReader = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const config = resolveConfig({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const pending = first(streamEvents(config, SESSION, { timeoutMs: 50, maxEmptyConnections: 1 }));
+    await observerStarted.promise;
+
+    await expect(pending).rejects.toBeInstanceOf(TimeoutError);
+    observer.resolve(undefined);
+    await nextTurn();
+
+    expect(responseObserver).toHaveBeenCalledOnce();
+    expect(getReader).not.toHaveBeenCalled();
   });
 
   it('aborts immediately while waiting to reconnect', async () => {
