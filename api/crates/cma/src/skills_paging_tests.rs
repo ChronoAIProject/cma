@@ -15,8 +15,8 @@ use axum::{Extension, Json, Router};
 use layer1_public::{auth::DelegatedCredential, AuthenticatedSubject};
 use layer2_core::{
     AgentConfiguration, Authorization, Baseline, Capability, EnvironmentProfile,
-    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileStore,
-    PlatformSettingsService, StoreError,
+    EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
+    EnvironmentProfileStore, Page, PageRequest, PlatformSettingsService, StoreError,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tower::ServiceExt;
@@ -199,6 +199,15 @@ impl EnvironmentProfileStore for EmptyProfiles {
         Ok(())
     }
 
+    async fn replace_content(
+        &self,
+        _id: &EnvironmentProfileId,
+        _content: &EnvironmentProfileSpec,
+        _updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        Ok(None)
+    }
+
     async fn get(
         &self,
         _id: &EnvironmentProfileId,
@@ -206,8 +215,35 @@ impl EnvironmentProfileStore for EmptyProfiles {
         Ok(None)
     }
 
-    async fn list_for(&self, _owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
-        Ok(Vec::new())
+    async fn list_for(
+        &self,
+        _owner: &SubjectId,
+        _page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError> {
+        Ok(Page {
+            items: Vec::new(),
+            next: None,
+        })
+    }
+
+    async fn set_preferred(
+        &self,
+        _owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError> {
+        if chosen.is_some() {
+            return Err(StoreError::Malformed(
+                "an empty store has no selectable profile".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn preferred_for(
+        &self,
+        _owner: &SubjectId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        Ok(None)
     }
 
     async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
