@@ -1,4 +1,5 @@
 import type { AguiTransport } from '../agui/connection.js';
+import { isCursorlessInterfaceBoundary } from '../agui/cursor.js';
 import { toEvent } from '../agui/events.js';
 import type { OperationTransport } from '../agui/operations.js';
 import { ProjectionAssembler } from '../agui/projection.js';
@@ -96,15 +97,25 @@ function durableProjections(
     [];
 
   transcript.frames.forEach((frame, index) => {
-    if (frame.event['cma:live'] === true) {
-      const live = toEvent(frame.event);
-      new ProjectionAssembler(expectedThreadId).accept(live);
-      if (live.seq !== 0) {
+    const event = toEvent(frame.event);
+    const kind = event.type === 'UNKNOWN' ? event.kind : event.type;
+    if (event.ephemeral === true) {
+      new ProjectionAssembler(expectedThreadId).accept(event);
+      if (event.seq !== 0) {
         throw new TypeError(`mock transcript ${transcript.name} gave liveness a durable sequence`);
       }
       return;
     }
-    if (Number(frame.event.seq ?? 0) === 0) {
+    if (isCursorlessInterfaceBoundary(kind, event.seq, event.ephemeral)) {
+      if (prefixes.length > 0) {
+        throw new TypeError(
+          `mock transcript ${transcript.name} put an interface boundary inside a durable projection`,
+        );
+      }
+      new ProjectionAssembler(expectedThreadId).accept(event);
+      return;
+    }
+    if (event.seq === 0) {
       prefixes.push({ index, event: frame.event });
       return;
     }
@@ -257,12 +268,16 @@ export class MockSession {
     };
   }
 
-  /** Emit liveness or one numbered durable frame that is not in the transcript. */
+  /** Emit liveness, an interface boundary, or one numbered durable frame. */
   emit(event: Readonly<Record<string, unknown>>, onFrame: (raw: unknown) => void): void {
-    if (event['cma:live'] === true) {
-      const live = toEvent(event);
-      new ProjectionAssembler(this.id).accept(live);
-      if (live.seq !== 0) {
+    const normalized = toEvent(event);
+    const kind = normalized.type === 'UNKNOWN' ? normalized.kind : normalized.type;
+    if (
+      normalized.ephemeral === true ||
+      isCursorlessInterfaceBoundary(kind, normalized.seq, normalized.ephemeral)
+    ) {
+      new ProjectionAssembler(this.id).accept(normalized);
+      if (normalized.ephemeral === true && normalized.seq !== 0) {
         throw new TypeError('mock liveness must have sequence zero');
       }
       onFrame(event);

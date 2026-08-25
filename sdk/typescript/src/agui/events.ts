@@ -13,7 +13,7 @@
 
 import { KNOWN_EVENTS, STATE_DELTA_PATCHES } from '../wire.js';
 import { ProtocolError } from '../errors.js';
-import { canBeDurableProjectionPrefix } from './cursor.js';
+import { canBeDurableProjectionPrefix, isCursorlessInterfaceBoundary } from './cursor.js';
 
 /** Every kind this build renders. The set grows; the handling does not break. */
 export type KnownEventType = (typeof KNOWN_EVENTS)[number];
@@ -34,9 +34,10 @@ interface EventBase {
    * global one**. A client that treated it as global would lose events in
    * exactly the window nobody tests.
    *
-   * Zero means this is a leading durable projection frame with no SSE id. It
-   * does not advance the cursor; the projection's final frame carries the
-   * positive sequence. Liveness also uses zero, distinguished by `ephemeral`.
+   * Zero has three explicit meanings, none of which advances the cursor: a
+   * leading durable projection frame whose final carries the positive
+   * sequence, liveness distinguished by `ephemeral`, or the non-live
+   * `RUN_STARTED` boundary that opens a continuation interface.
    */
   readonly seq: number;
   /**
@@ -302,7 +303,12 @@ export function toEvent(raw: unknown): AguiEvent {
   }
   const kind = nonEmptyString(frame.type, 'AG-UI type');
   const seq = sequence(frame.seq);
-  if (!ephemeral && seq === 0 && !canBeDurableProjectionPrefix(kind)) {
+  if (
+    !ephemeral &&
+    seq === 0 &&
+    !canBeDurableProjectionPrefix(kind) &&
+    !isCursorlessInterfaceBoundary(kind, seq, ephemeral)
+  ) {
     throw new ProtocolError(`AG-UI durable ${kind} frame cannot have sequence zero`);
   }
   const base = {

@@ -591,6 +591,49 @@ describe('liveness is not history', () => {
   });
 });
 
+describe('a cursorless interface boundary', () => {
+  it('delivers RUN_STARTED before liveness and advances only on the numbered ending', async () => {
+    const fake = new Fake();
+    fake.onOpen = [
+      { type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_resume', seq: 0 },
+      {
+        type: 'TEXT_MESSAGE_CONTENT',
+        threadId: 'sesn_1',
+        runId: 'run_resume',
+        seq: 0,
+        messageId: 'msg_live',
+        delta: 'continuing',
+        'cma:live': true,
+      },
+      { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_resume', seq: 7 },
+    ];
+    fake.responses = [[]];
+    const seen: AguiEvent[] = [];
+    const cursorAtDelivery: number[] = [];
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      backoffMs: 0,
+      maxBackoffMs: 0,
+      sleep: () => Promise.resolve(),
+    });
+    const stop = connection.subscribe((event) => {
+      seen.push(event);
+      cursorAtDelivery.push(connection.cursor);
+    });
+
+    await vi.waitFor(() => expect(connection.cursor).toBe(7));
+    stop();
+
+    expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
+      'TEXT_MESSAGE_CONTENT',
+      'RUN_FINISHED',
+    ]);
+    expect(seen.map((event) => event.ephemeral === true)).toEqual([false, true, false]);
+    expect(cursorAtDelivery).toEqual([0, 0, 0]);
+    expect(connection.cursor).toBe(7);
+  });
+});
+
 describe('a durable event that projects to several frames', () => {
   it('delivers every frame and advances only on the final one', async () => {
     const fake = new Fake();
