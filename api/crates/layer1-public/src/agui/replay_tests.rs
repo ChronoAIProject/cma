@@ -257,14 +257,45 @@ mod route_resume {
         SessionRecord, SessionService, SessionStatus, SessionStore, StoreError, StoredEvent,
         SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
     };
+    use serde::Deserialize;
     use serde_json::Value;
     use tower::ServiceExt;
 
     use crate::{agui, auth::AuthenticatedSubject, rest::SessionsState, tickets::TerminalTickets};
 
-    struct ReplayStore {
+    struct ReplayState {
         record: SessionRecord,
         events: Vec<Event>,
+    }
+
+    struct ReplayStore {
+        state: tokio::sync::RwLock<ReplayState>,
+    }
+
+    impl ReplayStore {
+        fn new(record: SessionRecord, events: Vec<Event>) -> Self {
+            Self {
+                state: tokio::sync::RwLock::new(ReplayState { record, events }),
+            }
+        }
+
+        async fn append(&self, event: Event) {
+            let mut state = self.state.write().await;
+            assert_eq!(event.session_id, state.record.session.id);
+            assert!(event.seq > state.record.session.last_seq);
+            state.record.session.last_seq = event.seq;
+            state.events.push(event);
+        }
+
+        async fn append_physical_only(&self, event: Event) {
+            let mut state = self.state.write().await;
+            assert_eq!(event.session_id, state.record.session.id);
+            state.events.push(event);
+        }
+
+        async fn advertise_head(&self, head: u64) {
+            self.state.write().await.record.session.last_seq = head;
+        }
     }
 
     #[async_trait::async_trait]
@@ -274,7 +305,8 @@ mod route_resume {
         }
 
         async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-            Ok((self.record.session.id == *id).then(|| self.record.clone()))
+            let state = self.state.read().await;
+            Ok((state.record.session.id == *id).then(|| state.record.clone()))
         }
 
         async fn list_for(
@@ -282,9 +314,10 @@ mod route_resume {
             owner: &SubjectId,
             _query: &SessionListQuery,
         ) -> Result<Page<SessionRecord>, StoreError> {
+            let state = self.state.read().await;
             Ok(Page {
-                items: (&self.record.session.owner == owner)
-                    .then(|| self.record.clone())
+                items: (&state.record.session.owner == owner)
+                    .then(|| state.record.clone())
                     .into_iter()
                     .collect(),
                 next: None,
@@ -299,8 +332,9 @@ mod route_resume {
             &self,
             _query: &SessionListQuery,
         ) -> Result<Page<SessionRecord>, StoreError> {
+            let state = self.state.read().await;
             Ok(Page {
-                items: vec![self.record.clone()],
+                items: vec![state.record.clone()],
                 next: None,
             })
         }
@@ -336,7 +370,8 @@ mod route_resume {
             id: &SessionId,
             after: u64,
         ) -> Result<Vec<StoredEvent>, StoreError> {
-            let mut events = self
+            let state = self.state.read().await;
+            let mut events = state
                 .events
                 .iter()
                 .filter(|event| event.session_id == *id && event.seq > after)
@@ -488,7 +523,16 @@ mod route_resume {
         }
     }
 
-    fn app() -> Router {
+    fn owner() -> SubjectId {
+        SubjectId("subject-route-resume".into())
+    }
+
+    struct Fixture {
+        app: Router,
+        store: Arc<ReplayStore>,
+    }
+
+    fn fixture(subject: SubjectId, authorization: Authorization) -> Fixture {
         let events = vec![
             durable(6, EventKind::TurnStarted),
             durable(
@@ -499,7 +543,7 @@ mod route_resume {
             ),
             durable(8, EventKind::TurnCompleted),
         ];
-        let owner = SubjectId("subject-route-resume".into());
+        let owner = owner();
         let record = SessionRecord::new(Session {
             options: Default::default(),
             id: SessionId("sesn_route_resume".into()),
@@ -523,7 +567,8 @@ mod route_resume {
             pricing: None,
             created_at: "2026-08-25T08:00:00Z".into(),
         });
-        let store: Arc<dyn SessionStore> = Arc::new(ReplayStore { record, events });
+        let store = Arc::new(ReplayStore::new(record, events));
+        let session_store: Arc<dyn SessionStore> = store.clone();
         let settings = Arc::new(PlatformSettingsService::unconfigured());
         let environments = EnvironmentProfileService::new(
             Arc::new(NoProfiles),
@@ -538,7 +583,7 @@ mod route_resume {
         let sessions = SessionService::new(
             Default::default(),
             screen_factory,
-            store,
+            session_store,
             SessionPorts::default(),
             Arc::clone(&environments),
             Deployment::default(),
@@ -549,11 +594,19 @@ mod route_resume {
             tickets: TerminalTickets::in_memory(),
             environments,
         };
-        let authorization = Authorization::from_capabilities([Capability::UseOwnSessions]);
 
-        agui::router(state)
+        let app = agui::router(state)
             .layer(Extension(authorization))
-            .layer(Extension(AuthenticatedSubject(owner)))
+            .layer(Extension(AuthenticatedSubject(subject)));
+        Fixture { app, store }
+    }
+
+    fn app() -> Router {
+        fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        )
+        .app
     }
 
     #[tokio::test]
@@ -598,11 +651,190 @@ mod route_resume {
             ]
         );
         assert_eq!(resumed[1].body["delta"], "nothing after the drop is lost");
+        assert_eq!(
+            resumed.iter().filter(|frame| frame.id == Some(7)).count(),
+            1,
+            "the event immediately after the cursor is delivered exactly once"
+        );
 
         let after_message = replay(&app, 7).await;
         assert_eq!(after_message.len(), 1);
         assert_eq!(after_message[0].id, Some(8));
         assert_eq!(after_message[0].body["type"], "RUN_FINISHED");
+    }
+
+    #[derive(Debug, serde::Serialize, Deserialize, PartialEq, Eq)]
+    struct CursorProblem {
+        #[serde(rename = "type")]
+        problem_type: String,
+        status: u16,
+        detail: String,
+        code: String,
+        head: u64,
+    }
+
+    #[tokio::test]
+    async fn cursors_beyond_the_head_are_typed_problems_not_sse_streams() {
+        for cursor in [9, u64::MAX] {
+            let response = app()
+                .oneshot(
+                    Request::get(format!(
+                        "/api/v1/agui/events?thread_id=sesn_route_resume&starting_after={cursor}"
+                    ))
+                    .body(Body::empty())
+                    .expect("request builds"),
+                )
+                .await
+                .expect("router answers");
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response.headers().get(header::CONTENT_TYPE),
+                Some(&header::HeaderValue::from_static(
+                    "application/problem+json"
+                )),
+                "the refusal happens before an SSE response opens"
+            );
+            let body = to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("the problem is small");
+            let problem: CursorProblem =
+                serde_json::from_slice(&body).expect("the problem is machine-readable");
+            assert_eq!(
+                problem.problem_type,
+                "https://spec.chrono-ai.fun/cma/1.0/problems/cursor-beyond-end"
+            );
+            assert_eq!(problem.status, StatusCode::BAD_REQUEST.as_u16());
+            assert_eq!(problem.code, "cursor_beyond_end");
+            assert_eq!(problem.head, 8);
+            assert!(problem.detail.contains(&cursor.to_string()), "{problem:?}");
+            assert!(problem.detail.contains("head 8"), "{problem:?}");
+
+            let round_tripped: CursorProblem = serde_json::from_value(
+                serde_json::to_value(&problem).expect("the client problem serializes"),
+            )
+            .expect("the client problem round-trips");
+            assert_eq!(round_tripped, problem);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cursor_at_the_head_follows_the_next_appended_event() {
+        let fixture = fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        let response = fixture
+            .app
+            .oneshot(
+                Request::get("/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static("text/event-stream"))
+        );
+
+        let mut body = response.into_body().into_data_stream();
+        fixture
+            .store
+            .append(durable(9, EventKind::TurnStarted))
+            .await;
+        let chunk = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .expect("the followed stream observes the next poll")
+            .expect("the followed stream stays open")
+            .expect("the event body is readable");
+        let frames = parse_sse(std::str::from_utf8(&chunk).expect("SSE is UTF-8"));
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].id, Some(9));
+        assert_eq!(frames[0].body["type"], "RUN_STARTED");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(750), body.next())
+                .await
+                .is_err(),
+            "the appended event is not delivered a second time"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unauthorised_cursor_is_concealed_before_validation() {
+        let response = fixture(
+            SubjectId("somebody-else".into()),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        )
+        .app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/agui/events?thread_id=sesn_route_resume&starting_after={}",
+                u64::MAX
+            ))
+            .body(Body::empty())
+            .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static(
+                "application/problem+json"
+            ))
+        );
+        let body: Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("the problem is small"),
+        )
+        .expect("the auth problem is JSON");
+        assert_eq!(body["code"], "session_not_found");
+        assert!(
+            body.get("head").is_none(),
+            "cursor validation must not disclose the session's durable head: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_event_log_grant_alone_can_validate_a_cross_owner_cursor() {
+        let app = fixture(
+            SubjectId("event-log-reader".into()),
+            Authorization::from_capabilities([Capability::ReadEventLog]),
+        )
+        .app;
+
+        let frames = replay(&app, 7).await;
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].id, Some(8));
+    }
+
+    #[tokio::test]
+    async fn validation_honours_both_physical_and_advertised_durable_tails() {
+        let fixture = fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        fixture
+            .store
+            .append_physical_only(durable(9, EventKind::TurnStarted))
+            .await;
+
+        let physical_tail = replay(&fixture.app, 9).await;
+        assert!(
+            physical_tail.is_empty(),
+            "a cursor at a physical tail that leads the session record is caught up, not invalid"
+        );
+
+        fixture.store.advertise_head(10).await;
+        let advertised_tail = replay(&fixture.app, 10).await;
+        assert!(
+            advertised_tail.is_empty(),
+            "an advertised legacy position remains reserved even when no event occupies it"
+        );
     }
 
     #[tokio::test]
