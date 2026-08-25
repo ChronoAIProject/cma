@@ -15,15 +15,18 @@ layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
 mongodb = { workspace = true }
 reqwest = { workspace = true }
+ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+thiserror = { workspace = true }
 tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what session cookies, OAuth
 # state and PKCE verifiers are drawn from. Already a workspace dependency.
 uuid = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 # Drives the composed REST router in public error-contract tests.

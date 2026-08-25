@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::auth::AuthenticatedCaller;
-use crate::rest::{OptionalJson, RequestFailure};
+use crate::rest::{OptionalJson, ProblemDocument, RequestFailure};
 use crate::tickets::TerminalTickets;
 
 /// Request body for an attach ticket.
@@ -50,7 +50,10 @@ pub struct TicketView {
     tag = "terminal",
     params(("id" = String, Path)),
     request_body(content = TicketRequest, content_type = "application/json"),
-    responses((status = 200, description = "Single-use terminal attachment ticket", body = TicketView))
+    responses(
+        (status = 200, description = "Single-use terminal attachment ticket", body = TicketView),
+        (status = 503, description = "Durable ticket store unavailable", body = ProblemDocument, content_type = "application/problem+json")
+    )
 )]
 pub(super) async fn terminal_ticket(
     State(service): State<Arc<SessionService>>,
@@ -78,7 +81,7 @@ pub(super) async fn terminal_ticket(
                 AttachmentClaim::Exclusive
             },
         )
-        .await;
+        .await?;
     Ok(Json(TicketView {
         ticket: issued.value,
         expires_at: issued.expires_at,

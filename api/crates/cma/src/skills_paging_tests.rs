@@ -193,7 +193,9 @@ fn public_skills_router(catalog: PlatformSkillCatalog) -> Router {
         Arc::new(PlatformSettingsService::unconfigured()),
     );
     layer1_public::rest::environments::router(environments)
-        .layer(Extension(DelegatedCredential("caller-token".into())))
+        .layer(Extension(DelegatedCredential::subject(
+            "caller-token".into(),
+        )))
         .layer(Extension(Authorization::from_capabilities([
             Capability::ManageOwnEnvironmentProfiles,
         ])))
