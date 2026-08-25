@@ -265,7 +265,12 @@ impl AuthState {
                     .map(|body| body.error),
                 Err(_) => None,
             };
-            if error_code.as_deref() == Some("invalid_grant") {
+            // Transport status has precedence over an OAuth-shaped body. A
+            // throttling response or provider outage cannot prove the grant
+            // is invalid, even when a proxy or provider emits that code.
+            let terminal_invalid_grant = status == reqwest::StatusCode::BAD_REQUEST
+                && error_code.as_deref() == Some("invalid_grant");
+            if terminal_invalid_grant {
                 self.finish_refresh_lease(subject, &holder, None, budget)
                     .await
                     .map_err(|error| {
@@ -372,12 +377,10 @@ mod tests {
     async fn reject_refresh(
         State(status): State<StatusCode>,
     ) -> (StatusCode, Json<serde_json::Value>) {
-        let error = if status == StatusCode::BAD_REQUEST {
-            "invalid_grant"
-        } else {
-            "temporarily_unavailable"
-        };
-        (status, Json(serde_json::json!({ "error": error })))
+        (
+            status,
+            Json(serde_json::json!({ "error": "invalid_grant" })),
+        )
     }
 
     async fn provider_replicas(
@@ -574,7 +577,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transient_http_rejections_retain_tokens_and_only_invalid_grant_revokes() {
+    async fn transient_status_precedes_invalid_grant_and_only_bad_request_revokes() {
         let subject = SubjectId("subject-transient".into());
         for status in [
             StatusCode::TOO_MANY_REQUESTS,

@@ -20,6 +20,7 @@ fn credential_state(generation: u64) -> SessionCredentialState {
     SessionCredentialState {
         session: SessionId("sesn_a".into()),
         generation,
+        request_bound_credential: None,
         current: None,
         pending: None,
         revoke_debt: Vec::new(),

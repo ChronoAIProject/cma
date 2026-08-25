@@ -54,6 +54,7 @@ fn current_state(session: &SessionId, owner: &SubjectId) -> SessionCredentialSta
     SessionCredentialState {
         session: session.clone(),
         generation: 0,
+        request_bound_credential: None,
         current: Some(DurableCredential {
             id: "provider-key".into(),
             value: SecretValue::new("session-key".into()),
@@ -73,6 +74,7 @@ fn debt_state(session: &SessionId, id: &str, owner: &SubjectId) -> SessionCreden
     SessionCredentialState {
         session: session.clone(),
         generation: 0,
+        request_bound_credential: None,
         current: None,
         pending: None,
         revoke_debt: vec![RevokeDebt {

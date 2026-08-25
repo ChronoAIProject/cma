@@ -285,6 +285,10 @@ pub struct SessionCredentialState {
     pub session: SessionId,
     /// Compare-and-swap generation.
     pub generation: u64,
+    /// Exact initiating bearer retained for no-issuer recovery.
+    ///
+    /// Absent means the session tracks its subject's renewable browser token.
+    pub request_bound_credential: Option<SecretValue>,
     /// Credential a runtime is currently entitled to present.
     pub current: Option<DurableCredential>,
     /// Replacement minted but not yet confirmed delivered.
@@ -301,6 +305,7 @@ impl SessionCredentialState {
     /// Whether this terminal fence has no credential work left to protect.
     pub(crate) fn is_settled_retired(&self) -> bool {
         self.retired
+            && self.request_bound_credential.is_none()
             && self.current.is_none()
             && self.pending.is_none()
             && self.revoke_debt.is_empty()

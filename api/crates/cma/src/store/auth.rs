@@ -69,6 +69,7 @@ const VERIFIER_FIELD: &str = "verifier";
 const ACCESS_TOKEN_FIELD: &str = "tokens.access_token";
 const REFRESH_TOKEN_FIELD: &str = "tokens.refresh_token";
 const CURRENT_VALUE_FIELD: &str = "current.value";
+const REQUEST_BOUND_VALUE_FIELD: &str = "request_bound_credential";
 const PENDING_VALUE_FIELD: &str = "pending.value";
 
 #[derive(Serialize, Deserialize)]
@@ -167,6 +168,8 @@ struct SessionCredentialDoc {
     #[serde(rename = "_id")]
     id: String,
     generation: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    request_bound_credential: Option<CipherEnvelope>,
     #[serde(default)]
     sweep_sequence: i64,
     current: Option<CredentialDoc>,
@@ -1898,6 +1901,7 @@ fn credential_state_to_doc(
     let SessionCredentialState {
         session,
         generation,
+        request_bound_credential,
         current,
         pending,
         mut revoke_debt,
@@ -1907,6 +1911,16 @@ fn credential_state_to_doc(
     let id = session.0;
     revoke_debt.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(SessionCredentialDoc {
+        request_bound_credential: request_bound_credential
+            .map(|value| {
+                cipher.seal(
+                    CREDENTIAL_KIND,
+                    id.as_bytes(),
+                    REQUEST_BOUND_VALUE_FIELD,
+                    value.expose(),
+                )
+            })
+            .transpose()?,
         current: current
             .map(|value| credential_to_doc(value, cipher, &id, CURRENT_VALUE_FIELD))
             .transpose()?,
@@ -1983,6 +1997,19 @@ fn credential_state_from_doc(
         revoke_debt.sort_by(|left, right| left.id.cmp(&right.id));
     }
     Ok(SessionCredentialState {
+        request_bound_credential: stored
+            .request_bound_credential
+            .map(|value| {
+                cipher
+                    .open(
+                        CREDENTIAL_KIND,
+                        id.as_bytes(),
+                        REQUEST_BOUND_VALUE_FIELD,
+                        value,
+                    )
+                    .map(SecretValue::new)
+            })
+            .transpose()?,
         current: stored
             .current
             .map(|value| credential_from_doc(value, cipher, &id, CURRENT_VALUE_FIELD))
