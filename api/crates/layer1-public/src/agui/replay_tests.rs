@@ -908,7 +908,7 @@ mod route_resume {
                 15,
                 EventKind::RuntimeLost {
                     runtime_id: "runtime_first".into(),
-                    cause: Some("displaced".into()),
+                    cause: Some(layer2_core::RuntimeLossCause::Displaced),
                 },
             ),
         ]);
