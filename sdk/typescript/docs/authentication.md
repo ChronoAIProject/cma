@@ -80,6 +80,17 @@ request is never sent, so this failure does not become an SDK `ApiError`. See th
 [cross-origin deployment guide](../../../docs/SDK.md#cross-origin-browser-deployments)
 for the operator setting and diagnostics.
 
+The same rule applies to AG-UI's run and session SSE responses. Native
+`EventSource` cannot send the configured Bearer credential, so it works only on
+the same-origin cookie path. Cross-origin frontends create the transport with
+`createAguiTransport(cma.config)` and pass it to `AguiConnection`; that transport
+uses `fetch`, sends `Authorization` on every stream and history request, and
+parses the response's `ReadableStream`. Pass the same config to `AguiOperations`
+for Bearer-authenticated run requests. The default `wireTransport` and
+`fetchTransport` values are the same-origin cookie instances. A terminal attach
+ticket is only for the WebSocket upgrade and is never an AG-UI credential. The
+complete route contract is in [AG-UI Authentication](../../../docs/API_AGUI.md#authentication).
+
 ## Reading authentication failures
 
 - HTTP `401` becomes `ApiError` with `isUnauthenticated === true`. Refresh or
