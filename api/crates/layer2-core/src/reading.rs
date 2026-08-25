@@ -142,11 +142,7 @@ impl SessionService {
     /// older writer advertised remains reserved even when its event was lost.
     /// The greater value is therefore the only head that rejects neither kind
     /// of valid cursor.
-    pub async fn event_log_head(
-        &self,
-        caller: &Caller,
-        id: &SessionId,
-    ) -> Result<u64, CoreError> {
+    pub async fn event_log_head(&self, caller: &Caller, id: &SessionId) -> Result<u64, CoreError> {
         let advertised = self
             .readable_event_log_record(caller, id)
             .await?
