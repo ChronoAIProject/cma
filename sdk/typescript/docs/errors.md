@@ -27,25 +27,38 @@ try {
   } else if (error instanceof RequestAborted) {
     console.log('cancelled by caller');
   } else if (error instanceof ApiError) {
-    console.log(error.status, error.code, error.message);
+    console.log(error.status, error.code, error.requestId, error.message);
   } else {
     throw error;
   }
 }
 ```
 
-| Error                  | Meaning                                                   | Retry decision                                            |
-| ---------------------- | --------------------------------------------------------- | --------------------------------------------------------- |
-| `CapabilityRefused`    | This session permanently lacks the named capability       | Never for this session                                    |
-| `SessionLimitReached`  | The owner already holds the live-session limit            | Stop a session or obtain the explicit exemption           |
-| `DeploymentAtCapacity` | Declared free CPU or memory is below the request          | Stop a session or request a smaller size                  |
-| `ApiError`             | Structured non-success response                           | Inspect `status`, `code`, and `isRetryable`               |
-| `ValidationError`      | Caller input cannot be represented                        | Fix the request                                           |
-| `CredentialError`      | Credential callback failed or returned an invalid value   | Repair or refresh credential state                        |
-| `RequestAborted`       | The caller cancelled the operation                        | Retry only if the caller still wants it                   |
-| `TimeoutError`         | The configured request deadline elapsed                   | Outcome may be unknown                                    |
-| `TransportError`       | No valid HTTP answer was obtained                         | A later attempt may work                                  |
-| `ProtocolError`        | A success, problem, or stream frame violated the contract | Do not retry blindly; investigate version or server drift |
+| Error                   | Meaning                                                   | Retry decision                                            |
+| ----------------------- | --------------------------------------------------------- | --------------------------------------------------------- |
+| `CapabilityRefused`     | This session permanently lacks the named capability       | Never for this session                                    |
+| `SessionLimitReached`   | The owner already holds the live-session limit            | Stop a session or obtain the explicit exemption           |
+| `DeploymentAtCapacity`  | Declared free CPU or memory is below the request          | Stop a session or request a smaller size                  |
+| `ApiError`              | Structured non-success response                           | Inspect `status`, `code`, and `isRetryable`               |
+| `ValidationError`       | Caller input cannot be represented                        | Fix the request                                           |
+| `CredentialError`       | Credential callback failed or returned an invalid value   | Repair or refresh credential state                        |
+| `RequestIdError`        | Request-id provider failed or returned an invalid value   | Repair the provider                                       |
+| `ResponseObserverError` | Response observer threw or rejected                       | Repair the observer; the response was not otherwise read  |
+| `RequestAborted`        | The caller cancelled the operation                        | Retry only if the caller still wants it                   |
+| `TimeoutError`          | The configured request deadline elapsed                   | Outcome may be unknown                                    |
+| `TransportError`        | No valid HTTP answer was obtained                         | A later attempt may work                                  |
+| `ProtocolError`         | A success, problem, or stream frame violated the contract | Do not retry blindly; investigate version or server drift |
+
+`ApiError` and its typed refusal subclasses expose the response's correlation id
+as `requestId`. That value comes only from the HTTP `X-Request-Id` response header,
+never from a `request_id` member in a problem body. A missing, blank, malformed, or
+otherwise unusable response header produces `undefined`; the SDK does not invent a
+response id or substitute the caller's request id.
+
+A configured `responseObserver` runs for every received HTTP response before the
+SDK makes a retry decision or decodes the status or body. If the observer throws or
+rejects, the operation stops with `ResponseObserverError`, whose `cause` preserves
+the observer failure.
 
 ## Retry discipline
 

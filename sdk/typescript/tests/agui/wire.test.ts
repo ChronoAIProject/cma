@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAguiTransport, parseEventStream } from '../../src/agui/wire.js';
 import { toEvent } from '../../src/agui/events.js';
+import type { ResponseMetadata } from '../../src/config.js';
 import { ApiError, ProtocolError, TimeoutError } from '../../src/errors.js';
+import type { OperationOptions } from '../../src/http.js';
 
 /**
  * The seam between what the interface serves and what this client reads.
@@ -150,11 +152,15 @@ describe('what the interface serves is what this client reads', () => {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function eventStream(body: string): Response {
-  return new Response(body, {
+function eventStream(body: string, requestId?: string): Response {
+  const response = new Response(body, {
     status: 200,
     headers: { 'content-type': 'text/event-stream; charset=utf-8' },
   });
+  if (requestId !== undefined) {
+    response.headers.set('x-request-id', requestId);
+  }
+  return response;
 }
 
 async function openBody(body: string, cursor = 0) {
@@ -256,6 +262,51 @@ describe('the live stream, not just the history read', () => {
     expect(new Headers(init.headers).get('last-event-id')).toBe('8');
   });
 
+  it('shares one request id across live and history reconnects and observes both', async () => {
+    const responses = [
+      eventStream('', 'response-agui-live'),
+      eventStream('', 'response-agui-history'),
+    ];
+    const fetch = vi.fn<typeof globalThis.fetch>(() => {
+      const response = responses.shift();
+      return response === undefined
+        ? Promise.reject(new Error('unexpected AG-UI request'))
+        : Promise.resolve(response);
+    });
+    const requestIdProvider = vi.fn(() => 'caller-agui-connection-488');
+    const observed: ResponseMetadata[] = [];
+    const transport = createAguiTransport({
+      cookies: false,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+      responseObserver: (metadata) => {
+        observed.push(metadata);
+      },
+    });
+    const options: OperationOptions = {};
+    const stop = transport.open(
+      'sesn_1',
+      0,
+      () => undefined,
+      () => undefined,
+      options,
+    );
+    await tick();
+    await tick();
+    stop();
+
+    await expect(transport.history('sesn_1', 0, options)).resolves.toEqual([]);
+
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+    expect(
+      fetch.mock.calls.map(([, init]) => new Headers(init?.headers).get('x-request-id')),
+    ).toEqual(['caller-agui-connection-488', 'caller-agui-connection-488']);
+    expect(observed).toEqual([
+      { status: 200, requestId: 'response-agui-live' },
+      { status: 200, requestId: 'response-agui-history' },
+    ]);
+  });
+
   it('keeps a failed handshake body inside the request deadline', async () => {
     const fetch = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
       const body = new ReadableStream<Uint8Array>({
@@ -296,7 +347,13 @@ describe('the history read finishes', () => {
             code: 'not_found',
             detail: 'this session no longer exists',
           }),
-          { status: 404, headers: { 'content-type': 'application/problem+json' } },
+          {
+            status: 404,
+            headers: {
+              'content-type': 'application/problem+json',
+              'x-request-id': 'response-agui-refusal',
+            },
+          },
         ),
       ),
     );
@@ -305,7 +362,11 @@ describe('the history read finishes', () => {
     const failure = await transport.history('sesn_1', 0).catch((cause: unknown) => cause);
 
     expect(failure).toBeInstanceOf(ApiError);
-    expect(failure).toMatchObject({ status: 404, message: 'this session no longer exists' });
+    expect(failure).toMatchObject({
+      status: 404,
+      message: 'this session no longer exists',
+      requestId: 'response-agui-refusal',
+    });
   });
 
   it('asks the route to stop at the end of the log', async () => {

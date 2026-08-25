@@ -1,4 +1,12 @@
-import { headersFor, urlOf, type ResolvedConfig } from './config.js';
+import {
+  headersFor,
+  observeResponse,
+  resolveRequestId,
+  responseRequestId,
+  urlOf,
+  type ResolvedConfig,
+  type ResponseMetadata,
+} from './config.js';
 import {
   ApiError,
   CapabilityRefused,
@@ -26,6 +34,8 @@ export const MAX_PAGE_SIZE = 200;
 export interface OperationOptions {
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  /** Correlation id for this complete operation, including pages and reconnects. */
+  readonly requestId?: string;
 }
 
 export interface RequestOptions extends OperationOptions {
@@ -61,15 +71,20 @@ export interface PageWalkOptions extends OperationOptions {
   readonly maxItems?: number;
 }
 
+interface CompletedResponse {
+  readonly response: Response;
+  readonly metadata: ResponseMetadata;
+}
+
 /** Open and validate an HTTP response without consuming its successful body. */
 export async function requestResponse(
   config: ResolvedConfig,
   path: string,
   options: RequestOptions = {},
 ): Promise<Response> {
-  return withDeadline(config, options, async (signal) => {
-    const response = await send(config, path, options, signal);
-    await requireSuccess(response, options.expectedStatus, signal);
+  return withDeadline(config, options, async (signal, requestId) => {
+    const { response, metadata } = await send(config, path, options, signal, requestId);
+    await requireSuccess(response, options.expectedStatus, signal, metadata.requestId);
     return response;
   });
 }
@@ -80,9 +95,9 @@ export async function request(
   path: string,
   options: RequestOptions = {},
 ): Promise<unknown> {
-  return withDeadline(config, options, async (signal) => {
-    const response = await send(config, path, options, signal);
-    await requireSuccess(response, options.expectedStatus, signal);
+  return withDeadline(config, options, async (signal, requestId) => {
+    const { response, metadata } = await send(config, path, options, signal, requestId);
+    await requireSuccess(response, options.expectedStatus, signal, metadata.requestId);
     if (response.status === 204) {
       return null;
     }
@@ -156,8 +171,8 @@ export async function requestPage<T>(
 ): Promise<Page<T>> {
   validateCollectionPath(collectionPath);
   const checkedTarget = validatePageTarget(target, collectionPath);
-  return withDeadline(config, options, (signal) =>
-    fetchPage(config, collectionPath, checkedTarget, decodePage, signal),
+  return withDeadline(config, options, (signal, requestId) =>
+    fetchPage(config, collectionPath, checkedTarget, decodePage, signal, requestId),
   );
 }
 
@@ -177,7 +192,7 @@ export async function requestPages<T>(
   const maxPages = walkBoundary(options.maxPages, DEFAULT_MAX_PAGES, 'maxPages');
   const maxItems = walkBoundary(options.maxItems, DEFAULT_MAX_ITEMS, 'maxItems');
 
-  return withDeadline(config, options, async (signal) => {
+  return withDeadline(config, options, async (signal, requestId) => {
     const visited = new Set<string>();
     const items: T[] = [];
     let pages = 0;
@@ -190,7 +205,14 @@ export async function requestPages<T>(
         throw new ProtocolError('pagination repeated a continuation link');
       }
       visited.add(next);
-      const page: Page<T> = await fetchPage(config, collectionPath, next, decodePage, signal);
+      const page: Page<T> = await fetchPage(
+        config,
+        collectionPath,
+        next,
+        decodePage,
+        signal,
+        requestId,
+      );
       pages += 1;
       if (page.items.length > maxItems - items.length) {
         throw new ProtocolError(`pagination exceeded its ${String(maxItems)}-item boundary`);
@@ -208,9 +230,9 @@ export async function requestVoid(
   path: string,
   options: RequestOptions = {},
 ): Promise<void> {
-  await withDeadline(config, options, async (signal) => {
-    const response = await send(config, path, options, signal);
-    await requireSuccess(response, options.expectedStatus, signal);
+  await withDeadline(config, options, async (signal, requestId) => {
+    const { response, metadata } = await send(config, path, options, signal, requestId);
+    await requireSuccess(response, options.expectedStatus, signal, metadata.requestId);
     const text = await readText(response, signal);
     if (text.trim() !== '') {
       throw new ProtocolError(`HTTP ${String(response.status)} unexpectedly carried a body`);
@@ -224,9 +246,9 @@ export async function requestBytes(
   path: string,
   options: RequestOptions = {},
 ): Promise<Uint8Array> {
-  return withDeadline(config, options, async (signal) => {
-    const response = await send(config, path, options, signal);
-    await requireSuccess(response, options.expectedStatus, signal);
+  return withDeadline(config, options, async (signal, requestId) => {
+    const { response, metadata } = await send(config, path, options, signal, requestId);
+    await requireSuccess(response, options.expectedStatus, signal, metadata.requestId);
     return readBytes(response, signal);
   });
 }
@@ -235,7 +257,7 @@ export async function requestBytes(
 export async function withDeadline<T>(
   config: ResolvedConfig,
   options: OperationOptions,
-  operation: (signal: AbortSignal) => Promise<T>,
+  operation: (signal: AbortSignal, requestId: string) => Promise<T>,
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? config.requestTimeoutMs;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
@@ -261,7 +283,9 @@ export async function withDeadline<T>(
 
   try {
     return await Promise.race([
-      Promise.resolve().then(() => operation(controller.signal)),
+      Promise.resolve().then(async () =>
+        operation(controller.signal, await resolveRequestId(config, options.requestId)),
+      ),
       aborted,
     ]);
   } catch (cause) {
@@ -293,7 +317,8 @@ async function send(
   path: string,
   options: RequestOptions,
   signal: AbortSignal,
-): Promise<Response> {
+  requestId: string,
+): Promise<CompletedResponse> {
   let body: string | undefined;
   if (options.body !== undefined) {
     try {
@@ -305,13 +330,14 @@ async function send(
       throw new ValidationError('request body could not be encoded as JSON');
     }
   }
-  return config.fetch(urlOf(config, path), {
+  const response = await config.fetch(urlOf(config, path), {
     method: options.method ?? 'GET',
-    headers: await headersFor(config, options.headers),
+    headers: await headersFor(config, options.headers, { requestId }),
     credentials: config.cookies ? 'include' : 'omit',
     body,
     signal,
   });
+  return { response, metadata: await observeResponse(config, response) };
 }
 
 async function responseJson(response: Response, signal: AbortSignal): Promise<unknown> {
@@ -370,9 +396,10 @@ async function requireSuccess(
   response: Response,
   expected: number | readonly number[] | undefined,
   signal?: AbortSignal,
+  requestId?: string,
 ): Promise<void> {
   if (!response.ok) {
-    throw await errorFromResponse(response, signal);
+    throw await errorFromResponse(response, signal, requestId);
   }
   if (expected === undefined) {
     return;
@@ -389,6 +416,7 @@ async function requireSuccess(
 export async function errorFromResponse(
   response: Response,
   signal?: AbortSignal,
+  requestId = responseRequestId(response),
 ): Promise<ApiError | ProtocolError> {
   const text = await readText(response, signal);
   let raw: unknown;
@@ -420,7 +448,7 @@ export async function errorFromResponse(
     const capability = nonEmptyText(body.capability);
     return capability === undefined
       ? new ProtocolError('capability_unsupported problem omitted its typed capability field')
-      : new CapabilityRefused(response.status, detail, capability);
+      : new CapabilityRefused(response.status, detail, capability, requestId);
   }
   if (code === 'session_limit_reached') {
     return new SessionLimitReached(
@@ -428,6 +456,7 @@ export async function errorFromResponse(
       detail,
       nonNegativeInteger(body.limit),
       nonNegativeInteger(body.live),
+      requestId,
     );
   }
   if (code === 'deployment_at_capacity') {
@@ -438,9 +467,10 @@ export async function errorFromResponse(
       nonNegativeInteger(body.requested_memory_mib),
       nonNegativeInteger(body.free_cpu_millis),
       nonNegativeInteger(body.free_memory_mib),
+      requestId,
     );
   }
-  return new ApiError(response.status, detail, code);
+  return new ApiError(response.status, detail, code, requestId);
 }
 
 async function readText(response: Response, signal?: AbortSignal): Promise<string> {
@@ -527,9 +557,16 @@ async function fetchPage<T>(
   target: string,
   decodePage: (body: unknown) => readonly T[],
   signal: AbortSignal,
+  requestId: string,
 ): Promise<Page<T>> {
-  const response = await send(config, target, { expectedStatus: 200 }, signal);
-  await requireSuccess(response, 200, signal);
+  const { response, metadata } = await send(
+    config,
+    target,
+    { expectedStatus: 200 },
+    signal,
+    requestId,
+  );
+  await requireSuccess(response, 200, signal, metadata.requestId);
   const items = decodePage(await responseJson(response, signal));
   if (items.length > MAX_PAGE_SIZE) {
     throw new ProtocolError(

@@ -28,6 +28,28 @@ the standard `Last-Event-ID` header. One overlapping frame is deduplicated. A fr
 that moves behind the cursor, names another session, disagrees with its SSE id, or
 malforms a known event is a `ProtocolError`; the SDK does not skip it silently.
 
+The stream is one logical operation for request correlation. Its
+`requestIdProvider` runs once before the first connection, and the SDK reuses that
+exact `X-Request-Id` on every reconnect. A caller can choose the value directly:
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+for await (const event of cma.streamEvents('sesn_example', {
+  requestId: 'support-stream-488',
+})) {
+  console.log(event.seq);
+}
+```
+
+AG-UI live connections and their history recovery use the same rule: all HTTP
+requests belonging to one connection operation send the one resolved caller
+request id. The configured `responseObserver` sees every connection response
+before the SDK inspects its status, decides whether to reconnect, or reads its
+body. Observer failures become `ResponseObserverError`; a missing or malformed
+response `X-Request-Id` is reported to the observer as `undefined`.
+
 ## Reconnect policy
 
 - Transport failures, `429`, and server failures are retried with bounded

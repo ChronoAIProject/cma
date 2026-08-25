@@ -1,7 +1,9 @@
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
 import {
   headersFor,
+  observeResponse,
   resolveConfig,
+  resolveRequestId,
   urlOf,
   type ClientConfig,
   type ResolvedConfig,
@@ -35,6 +37,16 @@ export function createAguiTransport(
   configOrOptions: ResolvedConfig | ClientConfig = {},
 ): AguiTransport {
   const config = isResolved(configOrOptions) ? configOrOptions : resolveConfig(configOrOptions);
+  const requestIds = new WeakMap<OperationOptions, Promise<string>>();
+  const requestIdFor = (options: OperationOptions): Promise<string> => {
+    const existing = requestIds.get(options);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const pending = resolveRequestId(config, options.requestId);
+    requestIds.set(options, pending);
+    return pending;
+  };
   return {
     open(session, cursor, onFrame, onDrop, options = {}) {
       const controller = new AbortController();
@@ -44,7 +56,14 @@ export function createAguiTransport(
 
       void (async () => {
         try {
-          const response = await openStream(config, session, cursor, options, controller);
+          const response = await openStream(
+            config,
+            session,
+            cursor,
+            options,
+            controller,
+            await requestIdFor(options),
+          );
           for await (const frame of framesFromBody(response)) {
             if (closed) {
               return;
@@ -81,16 +100,18 @@ export function createAguiTransport(
       };
     },
 
-    history(session, cursor, options = {}) {
-      return withDeadline(config, options, async (signal) => {
+    async history(session, cursor, options = {}) {
+      const requestId = await requestIdFor(options);
+      return withDeadline(config, { ...options, requestId }, async (signal) => {
         const response = await config.fetch(urlOf(config, streamPath(session, cursor, false)), {
           method: 'GET',
-          headers: await headersFor(config, { Accept: 'text/event-stream' }),
+          headers: await headersFor(config, { Accept: 'text/event-stream' }, { requestId }),
           credentials: config.cookies ? 'include' : 'omit',
           redirect: 'error',
           signal,
         });
-        await validateResponse(response);
+        const metadata = await observeResponse(config, response);
+        await validateResponse(response, metadata.requestId);
         const frames: unknown[] = [];
         for await (const frame of framesFromBody(response)) {
           frames.push(frame);
@@ -110,6 +131,7 @@ async function openStream(
   cursor: number,
   options: OperationOptions,
   controller: AbortController,
+  requestId: string,
 ): Promise<Response> {
   const timeoutMs = options.timeoutMs ?? config.requestTimeoutMs;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
@@ -123,15 +145,20 @@ async function openStream(
   try {
     const response = await config.fetch(urlOf(config, streamPath(session, cursor, true)), {
       method: 'GET',
-      headers: await headersFor(config, {
-        Accept: 'text/event-stream',
-        ...(cursor === 0 ? {} : { 'Last-Event-ID': String(cursor) }),
-      }),
+      headers: await headersFor(
+        config,
+        {
+          Accept: 'text/event-stream',
+          ...(cursor === 0 ? {} : { 'Last-Event-ID': String(cursor) }),
+        },
+        { requestId },
+      ),
       credentials: config.cookies ? 'include' : 'omit',
       redirect: 'error',
       signal: controller.signal,
     });
-    await validateResponse(response);
+    const metadata = await observeResponse(config, response);
+    await validateResponse(response, metadata.requestId);
     clearTimeout(timer);
     return response;
   } catch (cause) {
@@ -150,9 +177,9 @@ async function openStream(
   }
 }
 
-async function validateResponse(response: Response): Promise<void> {
+async function validateResponse(response: Response, requestId?: string): Promise<void> {
   if (!response.ok) {
-    throw await errorFromResponse(response);
+    throw await errorFromResponse(response, undefined, requestId);
   }
   if (response.status !== 200) {
     throw new ProtocolError(
@@ -306,7 +333,9 @@ function sequenceOf(raw: string | undefined): number {
 
 function isResolved(value: ResolvedConfig | ClientConfig): value is ResolvedConfig {
   return (
+    typeof (value as Partial<ResolvedConfig>).baseUrl === 'string' &&
     typeof (value as Partial<ResolvedConfig>).fetch === 'function' &&
+    typeof (value as Partial<ResolvedConfig>).requestIdProvider === 'function' &&
     typeof (value as Partial<ResolvedConfig>).requestTimeoutMs === 'number' &&
     typeof (value as Partial<ResolvedConfig>).cookies === 'boolean'
   );

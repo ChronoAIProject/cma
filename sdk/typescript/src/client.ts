@@ -11,6 +11,7 @@
  */
 
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
+import * as discovery from './discovery.js';
 import * as environment from './environment.js';
 import * as events from './events.js';
 import * as operations from './operations.js';
@@ -41,6 +42,7 @@ import type {
   TerminalGeometry,
 } from './operations.js';
 import type { KernelOffer, Session, SessionPlane } from './types.js';
+import type { Conformance } from './discovery.js';
 
 /**
  * A configured CMA client.
@@ -62,6 +64,11 @@ export class Cma {
   /** Where this client points and how it authenticates. */
   get config(): ResolvedConfig {
     return this.#config;
+  }
+
+  /** Public protocol and build discovery; no configured bearer is presented. */
+  readConformance(options: OperationOptions = {}): Promise<Conformance> {
+    return discovery.readConformance(this.#config, options);
   }
 
   /** Every environment profile owned by the authenticated subject. */

@@ -115,11 +115,18 @@ export class AguiConnection {
   /** Ends the current wait, so closing does not have to wait for a drop. */
   #wake: (() => void) | undefined;
 
+  private readonly options: ConnectionOptions;
+
   constructor(
     private readonly transport: AguiTransport,
     private readonly session: string,
-    private readonly options: ConnectionOptions = {},
-  ) {}
+    options: ConnectionOptions = {},
+  ) {
+    // A connection is one logical operation. Its private options object lets
+    // the built-in transport retain one correlation id across every live and
+    // history reconnect even when a caller reuses their input object elsewhere.
+    this.options = { ...options };
+  }
 
   /** The highest sequence delivered. Resumption state, and nothing else. */
   get cursor(): number {
