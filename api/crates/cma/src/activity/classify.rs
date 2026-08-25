@@ -163,8 +163,8 @@ fn classify_session_verb(method: &Method, verb: &str) -> Option<Action> {
         //
         // No body is read and no query is named. A ticket's value must never
         // reach a record, and the way that is guaranteed is that there is no
-        // field here for one to land in — `detail_from_query` names three keys
-        // and `ticket` is not among them.
+        // field here for one to land in — `detail_from_query` names three
+        // details (under four accepted keys) and `ticket` is not among them.
         (&Method::POST, "terminal-ticket") => Some(Action::SessionTerminalAttach),
         // The operating verbs. None of them reads a body, and that is the
         // point rather than an omission: what a caller sends to a session is
@@ -298,9 +298,11 @@ pub fn detail_from_body(action: Action, body: &[u8]) -> ActivityDetail {
 
 /// Read the parameters worth keeping out of a query string.
 ///
-/// Three keys, matched by name, and the two numeric ones only when they really
-/// are numbers. Anything else in the query is ignored, so a parameter added
-/// later cannot arrive in the record by accident.
+/// Three details, matched by name, and the two numeric ones only when they
+/// really are numbers. The cursor has a canonical spelling and a compatibility
+/// alias, both mapped onto the same allowlisted detail. Anything else in the
+/// query is ignored, so a parameter added later cannot arrive in the record by
+/// accident.
 ///
 /// Values are kept as the caller wrote them, escaping and all. Decoding them
 /// would mean this file interpreting a caller's text, and an identifier that
@@ -312,7 +314,9 @@ pub fn detail_from_query(query: Option<&str>, detail: &mut ActivityDetail) {
     };
     for (key, value) in query.split('&').filter_map(|p| p.split_once('=')) {
         match key {
-            "after" if value.parse::<u64>().is_ok() => detail.record(DetailKey::Cursor, value),
+            "starting_after" | "after" if value.parse::<u64>().is_ok() => {
+                detail.record(DetailKey::Cursor, value);
+            }
             "limit" if value.parse::<u64>().is_ok() => detail.record(DetailKey::Limit, value),
             // Which subject a reader narrowed the record to. An identifier, and
             // the one thing worth knowing about a filtered read.
