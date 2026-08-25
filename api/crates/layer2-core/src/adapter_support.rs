@@ -89,6 +89,10 @@ pub(crate) struct FakeAdapter {
     pub(crate) handovers: Mutex<Vec<Vec<u8>>>,
     /// Snapshot calls completed, so concurrency tests can wait for rehearsal.
     pub(crate) snapshot_calls: std::sync::atomic::AtomicUsize,
+    /// One-based snapshot call to pause, or zero when none is armed.
+    pub(crate) pause_snapshot_call: std::sync::atomic::AtomicUsize,
+    pub(crate) snapshot_paused: Notify,
+    pub(crate) snapshot_resume: Notify,
     /// When set, the runtime cannot hand its conversation over.
     pub(crate) refuse_snapshot: bool,
     /// The conversation this runtime is holding, once one has been opened.
@@ -157,6 +161,9 @@ impl Default for FakeAdapter {
             plane_switches: Mutex::default(),
             handovers: Mutex::default(),
             snapshot_calls: std::sync::atomic::AtomicUsize::new(0),
+            pause_snapshot_call: std::sync::atomic::AtomicUsize::new(0),
+            snapshot_paused: Notify::new(),
+            snapshot_resume: Notify::new(),
             refuse_snapshot: false,
             conversation: Mutex::default(),
             rejoined: Mutex::default(),
@@ -241,6 +248,29 @@ impl FakeAdapter {
             .lock()
             .await
             .insert(handle.to_string(), bytes.to_vec());
+    }
+
+    pub(crate) fn pause_snapshot_on_call(&self, call: usize) {
+        assert!(call > 0, "snapshot calls are numbered from one");
+        assert_eq!(
+            self.pause_snapshot_call
+                .swap(call, std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a snapshot pause is already armed"
+        );
+    }
+
+    pub(crate) async fn wait_until_snapshot_paused(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.snapshot_paused.notified(),
+        )
+        .await
+        .expect("rotation reached the selected snapshot");
+    }
+
+    pub(crate) fn resume_snapshot(&self) {
+        self.snapshot_resume.notify_one();
     }
 }
 
@@ -424,8 +454,23 @@ impl KernelAdapter for FakeAdapter {
             return Err(AdapterError::Unsupported("cannot capture".into()));
         }
         let snapshot = self.conversations.lock().await.get(&handle.0).cloned();
-        self.snapshot_calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let call = self
+            .snapshot_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        if self
+            .pause_snapshot_call
+            .compare_exchange(
+                call,
+                0,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
+        {
+            self.snapshot_paused.notify_one();
+            self.snapshot_resume.notified().await;
+        }
         Ok(snapshot)
     }
 

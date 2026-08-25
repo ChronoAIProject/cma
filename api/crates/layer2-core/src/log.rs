@@ -116,6 +116,18 @@ struct DeleteProgress {
 struct RecordChange {
     before: Box<SessionRecord>,
     fields: RecordFields,
+    /// A handover token this change must still own after any rebase.
+    ///
+    /// Kept separately from `before`: rejection repair rebuilds that snapshot
+    /// from the newest durable record, but doing so must never let an obsolete
+    /// finalizer or rollback inherit a newer handover's token.
+    rotation_precondition: Option<RotationPrecondition>,
+}
+
+#[derive(Clone)]
+struct RotationPrecondition {
+    claim: Option<String>,
+    status: crate::session::SessionStatus,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -127,6 +139,13 @@ struct RecordFields {
     runtime_loss: bool,
     runtime: bool,
     context: bool,
+    rotation: bool,
+}
+
+#[derive(Default)]
+struct CommitSemantics {
+    owned_fields: Option<RecordFields>,
+    rotation_precondition: Option<RotationPrecondition>,
 }
 
 struct EnqueuedCommit {
@@ -898,7 +917,42 @@ impl SessionLog {
     where
         F: FnOnce(u64),
     {
-        self.enqueue_commit_inner(mode, record, events, owned_fields, None, after_allocation)
+        self.enqueue_commit_inner(
+            mode,
+            record,
+            events,
+            CommitSemantics {
+                owned_fields,
+                ..CommitSemantics::default()
+            },
+            None,
+            after_allocation,
+        )
+    }
+
+    fn enqueue_commit_with_rotation<F>(
+        self: &Arc<Self>,
+        mode: CommitMode,
+        record: SessionRecord,
+        events: Vec<Event>,
+        owned_fields: RecordFields,
+        rotation_precondition: RotationPrecondition,
+        after_allocation: F,
+    ) -> EnqueuedCommit
+    where
+        F: FnOnce(u64),
+    {
+        self.enqueue_commit_inner(
+            mode,
+            record,
+            events,
+            CommitSemantics {
+                owned_fields: Some(owned_fields),
+                rotation_precondition: Some(rotation_precondition),
+            },
+            None,
+            after_allocation,
+        )
     }
 
     fn enqueue_retained_commit<F>(
@@ -916,7 +970,10 @@ impl SessionLog {
             mode,
             record,
             events,
-            owned_fields,
+            CommitSemantics {
+                owned_fields,
+                ..CommitSemantics::default()
+            },
             Some(retained),
             after_allocation,
         );
@@ -1001,7 +1058,7 @@ impl SessionLog {
         mode: CommitMode,
         mut record: SessionRecord,
         mut events: Vec<Event>,
-        owned_fields: Option<RecordFields>,
+        semantics: CommitSemantics,
         mut retained: Option<Box<dyn RetainedCommitWork>>,
         after_allocation: F,
     ) -> EnqueuedCommit
@@ -1126,9 +1183,14 @@ impl SessionLog {
                     .clone()
                     .or_else(|| state.durable.clone())
                     .map(|before| {
-                        let fields = owned_fields
+                        let fields = semantics
+                            .owned_fields
                             .unwrap_or_else(|| RecordFields::for_commit(&before, &record, &events));
-                        let change = Box::new(RecordChange { before, fields });
+                        let change = Box::new(RecordChange {
+                            before,
+                            fields,
+                            rotation_precondition: semantics.rotation_precondition,
+                        });
                         state.local_tail = Some(Box::new(change.next_local_tail(&record)));
                         change
                     })
@@ -1696,11 +1758,15 @@ impl SessionLog {
                         local_tail = Some(record.clone());
                         continue;
                     };
-                    let fields = change.as_deref().map_or_else(
-                        || RecordFields::for_commit(&before, record, events),
-                        |change| change.fields,
+                    let (fields, rotation_precondition) = change.as_deref().map_or_else(
+                        || (RecordFields::for_commit(&before, record, events), None),
+                        |change| (change.fields, change.rotation_precondition.clone()),
                     );
-                    let rebuilt = Box::new(RecordChange { before, fields });
+                    let rebuilt = Box::new(RecordChange {
+                        before,
+                        fields,
+                        rotation_precondition,
+                    });
                     local_tail = Some(Box::new(rebuilt.next_local_tail(record)));
                     *change = Some(rebuilt);
                 }
@@ -1987,6 +2053,73 @@ impl SessionService {
         Ok(())
     }
 
+    /// Complete a handover while preserving history written after its claim.
+    ///
+    /// The claim itself is the compare precondition. A later handover has a
+    /// different value even when it happens to target the same runtime and
+    /// lifecycle state, so an obsolete task cannot win an ABA race.
+    pub(crate) async fn complete_handover_durably(
+        &self,
+        record: &mut SessionRecord,
+        claimed: &SessionRecord,
+        events: Vec<Event>,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        let result = lane
+            .enqueue_commit_with_rotation(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                events,
+                RecordFields {
+                    plane: true,
+                    runtime: true,
+                    rotation: true,
+                    ..RecordFields::default()
+                },
+                RotationPrecondition {
+                    claim: claimed.rotation_claim.clone(),
+                    status: claimed.session.status,
+                },
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
+    /// Restore the old runtime only while this task still owns the handover.
+    pub(crate) async fn roll_back_handover_durably(
+        &self,
+        record: &mut SessionRecord,
+        claimed: &SessionRecord,
+        events: Vec<Event>,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        let result = lane
+            .enqueue_commit_with_rotation(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                events,
+                RecordFields {
+                    status: true,
+                    rotation: true,
+                    ..RecordFields::default()
+                },
+                RotationPrecondition {
+                    claim: claimed.rotation_claim.clone(),
+                    status: claimed.session.status,
+                },
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
     /// Persist an exact proposal whose required side effects outlive its waiter.
     pub(crate) fn persist_durably_with<T, H, F, Fut, R, RFut, U>(
         &self,
@@ -2238,7 +2371,17 @@ impl RecordChange {
             || self.fields.plane
             || self.fields.runtime_loss
             || (self.fields.status && !intended.session.status.wants_runtime());
-        let mut compatible = true;
+        // A rotation claim is also a strict lifecycle precondition. Unlike an
+        // ordinary selected field, an unchanged Rotating status is meaningful:
+        // another writer that settled the session must invalidate this task
+        // even if an older writer did not know to clear the new claim field.
+        let rotation_before = self
+            .rotation_precondition
+            .as_ref()
+            .map_or(&before.rotation_claim, |required| &required.claim);
+        let mut compatible = self.rotation_precondition.as_ref().is_none_or(|required| {
+            durable.rotation_claim == required.claim && durable.session.status == required.status
+        });
 
         compatible &= rebase_selected(
             plane,
@@ -2348,6 +2491,12 @@ impl RecordChange {
             &before.context_ref,
             &intended.context_ref,
         );
+        compatible &= rebase_selected(
+            self.fields.rotation,
+            &mut durable.rotation_claim,
+            rotation_before,
+            &intended.rotation_claim,
+        );
 
         if !compatible {
             return Err(StoreError::RevisionConflict { expected, actual });
@@ -2450,6 +2599,11 @@ impl RecordChange {
             self.fields.context,
             &mut target.context_ref,
             &intended.context_ref,
+        );
+        copy_selected(
+            self.fields.rotation,
+            &mut target.rotation_claim,
+            &intended.rotation_claim,
         );
     }
 }

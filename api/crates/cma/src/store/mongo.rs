@@ -147,6 +147,9 @@ struct SessionDoc {
     environment_profile: Option<String>,
     runtime_id: Option<String>,
     context_ref: Option<String>,
+    /// Absent on records written before durable handover claims existed.
+    #[serde(default)]
+    rotation_claim: Option<String>,
     /// Runtime version, rotation count and snapshot time.
     ///
     /// All optional so documents written before rotation existed still load. A
@@ -2867,6 +2870,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         environment_profile: s.environment_profile.as_ref().map(|p| p.0.clone()),
         runtime_id: r.runtime_id.clone(),
         context_ref: r.context_ref.clone(),
+        rotation_claim: r.rotation_claim.clone(),
         runtime_version: s.runtime_version.clone(),
         rotations: Some(i64::from(s.rotations)),
         rotated_at: s.rotated_at.clone(),
@@ -3107,6 +3111,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
         },
         runtime_id: d.runtime_id,
         context_ref: d.context_ref,
+        rotation_claim: d.rotation_claim,
         revision: u64::try_from(d.revision)
             .map_err(|_| StoreError::Malformed("session revision must not be negative".into()))?,
     })
