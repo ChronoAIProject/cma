@@ -7,9 +7,9 @@ use tokio::sync::Mutex;
 use super::*;
 use layer2_core::{
     AgentConfiguration, Authorization, Baseline, Capability, CatalogError, CatalogSkill,
-    EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileSpec, EnvironmentProfileStore,
-    GrantedSkill, Page, PageRequest, SkillCatalog, SkillId, StoreError, SubjectId, UserDirectory,
-    UserDirectoryStore,
+    DescribedSkill, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileSpec,
+    EnvironmentProfileStore, GrantedSkill, Page, PageRequest, SkillCatalog, SkillId, StoreError,
+    SubjectId, UserDirectory, UserDirectoryStore,
 };
 
 struct EmptyProfiles;
@@ -99,6 +99,7 @@ impl UserDirectoryStore for EmptyDirectory {
 struct TargetedDescriptions {
     calls: Mutex<Vec<(Option<String>, Vec<String>)>>,
     returned: Option<usize>,
+    descriptions: Option<Vec<DescribedSkill>>,
 }
 
 impl TargetedDescriptions {
@@ -106,6 +107,15 @@ impl TargetedDescriptions {
         Self {
             calls: Mutex::new(Vec::new()),
             returned: Some(returned),
+            descriptions: None,
+        }
+    }
+
+    fn returning(descriptions: Vec<DescribedSkill>) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            returned: None,
+            descriptions: Some(descriptions),
         }
     }
 }
@@ -125,11 +135,14 @@ impl SkillCatalog for TargetedDescriptions {
         _subject: &SubjectId,
         credential: Option<&str>,
         skills: &[SkillId],
-    ) -> Result<Vec<CatalogSkill>, CatalogError> {
+    ) -> Result<Vec<DescribedSkill>, CatalogError> {
         self.calls.lock().await.push((
             credential.map(str::to_string),
             skills.iter().map(|skill| skill.0.clone()).collect(),
         ));
+        if let Some(descriptions) = &self.descriptions {
+            return Ok(descriptions.clone());
+        }
         // Return in a different order to prove projection matches by identity,
         // while the request order itself remains deterministic.
         let selected: Vec<&SkillId> = skills
@@ -139,11 +152,14 @@ impl SkillCatalog for TargetedDescriptions {
         Ok(selected
             .into_iter()
             .rev()
-            .map(|skill| CatalogSkill {
-                id: SkillId::new(format!("guid-{}", skill.0)),
-                name: skill.0.clone(),
-                description: format!("Description for {}", skill.0),
-                access: None,
+            .map(|requested| DescribedSkill {
+                requested: requested.clone(),
+                skill: CatalogSkill {
+                    id: SkillId::new(format!("guid-{}", requested.0)),
+                    name: requested.0.clone(),
+                    description: format!("Description for {}", requested.0),
+                    access: None,
+                },
             })
             .collect())
     }
@@ -168,6 +184,19 @@ fn caller() -> Caller {
 }
 
 fn session(id: &str, skills: &[&str]) -> Session {
+    session_with_grants(
+        id,
+        skills
+            .iter()
+            .map(|skill| GrantedSkill {
+                id: SkillId::new(*skill),
+                version: Some("0.5".into()),
+            })
+            .collect(),
+    )
+}
+
+fn session_with_grants(id: &str, granted_skills: Vec<GrantedSkill>) -> Session {
     Session {
         id: SessionId(id.into()),
         owner: SubjectId("subject-a".into()),
@@ -184,15 +213,7 @@ fn session(id: &str, skills: &[&str]) -> Session {
         rotated_at: None,
         capabilities: Default::default(),
         granted_services: None,
-        granted_skills: Some(
-            skills
-                .iter()
-                .map(|skill| GrantedSkill {
-                    id: SkillId::new(*skill),
-                    version: Some("0.5".into()),
-                })
-                .collect(),
-        ),
+        granted_skills: Some(granted_skills),
         pricing: None,
         created_at: "2026-08-24T00:00:00Z".into(),
     }
@@ -285,4 +306,100 @@ async fn undescribed_overflow_keeps_every_recorded_skill_in_stable_order() {
     assert_eq!(second[1].name, None);
     assert_eq!(second[1].description, None);
     assert_eq!(second[1].version.as_deref(), Some("0.5"));
+}
+
+#[tokio::test]
+async fn an_ambiguous_slug_is_not_reintroduced_by_a_successful_guid_result() {
+    let catalog = Arc::new(TargetedDescriptions::returning(vec![DescribedSkill {
+        requested: SkillId::new("guid-a"),
+        skill: CatalogSkill {
+            id: SkillId::new("guid-a"),
+            name: "shared".into(),
+            description: "metadata for the exact GUID".into(),
+            access: None,
+        },
+    }]));
+    let environments = service(Arc::clone(&catalog));
+
+    let views = viewed(
+        &environments,
+        &UserDirectory::new(Arc::new(EmptyDirectory)),
+        &caller(),
+        Some("delegated-token"),
+        vec![session("sesn_collision", &["guid-a", "shared"])],
+    )
+    .await;
+
+    assert_eq!(
+        catalog.calls.lock().await[0].1,
+        ["guid-a", "shared"],
+        "both durable identifiers are resolved independently"
+    );
+    let skills = views[0].agent.skills.as_ref().expect("recorded skills");
+    assert_eq!(skills[0].id, "guid-a");
+    assert_eq!(skills[0].name.as_deref(), Some("shared"));
+    assert_eq!(
+        skills[0].description.as_deref(),
+        Some("metadata for the exact GUID")
+    );
+    assert_eq!(skills[0].version.as_deref(), Some("0.5"));
+    assert_eq!(skills[1].id, "shared");
+    assert_eq!(skills[1].name, None, "the ambiguous slug remains raw");
+    assert_eq!(skills[1].description, None);
+    assert_eq!(skills[1].version.as_deref(), Some("0.5"));
+}
+
+#[tokio::test]
+async fn one_hundred_caller_skills_plus_baseline_keep_order_id_version_and_metadata() {
+    let catalog = Arc::new(TargetedDescriptions::default());
+    let environments = service(Arc::clone(&catalog));
+    let mut grants = vec![GrantedSkill {
+        id: SkillId::new("mandatory-skill"),
+        version: Some("mandatory-version".into()),
+    }];
+    grants.extend((0..100).map(|number| GrantedSkill {
+        id: SkillId::new(format!("caller-skill-{number}")),
+        version: Some(format!("caller-version-{number}")),
+    }));
+
+    let views = viewed(
+        &environments,
+        &UserDirectory::new(Arc::new(EmptyDirectory)),
+        &caller(),
+        Some("delegated-token"),
+        vec![session_with_grants("sesn_boundary", grants)],
+    )
+    .await;
+
+    let calls = catalog.calls.lock().await;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].1.len(), 101);
+    assert_eq!(calls[0].1[0], "mandatory-skill");
+    for (number, requested) in calls[0].1.iter().skip(1).enumerate() {
+        assert_eq!(requested, &format!("caller-skill-{number}"));
+    }
+    drop(calls);
+
+    let skills = views[0].agent.skills.as_ref().expect("recorded skills");
+    assert_eq!(skills.len(), 101);
+    assert_eq!(skills[0].id, "mandatory-skill");
+    assert_eq!(skills[0].version.as_deref(), Some("mandatory-version"));
+    assert_eq!(skills[0].name.as_deref(), Some("mandatory-skill"));
+    assert_eq!(
+        skills[0].description.as_deref(),
+        Some("Description for mandatory-skill")
+    );
+    for (number, skill) in skills.iter().skip(1).enumerate() {
+        let durable = format!("caller-skill-{number}");
+        assert_eq!(skill.id, durable);
+        assert_eq!(
+            skill.version.as_deref(),
+            Some(format!("caller-version-{number}").as_str())
+        );
+        assert_eq!(skill.name.as_deref(), Some(durable.as_str()));
+        assert_eq!(
+            skill.description.as_deref(),
+            Some(format!("Description for {durable}").as_str())
+        );
+    }
 }

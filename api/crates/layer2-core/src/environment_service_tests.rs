@@ -312,6 +312,10 @@ async fn caller_limits_allow_exact_echoes_beside_the_current_baseline() {
             .count(),
         1
     );
+    assert_eq!(created.agent.skills[0].as_str(), "mandatory-skill");
+    for (number, skill) in created.agent.skills.iter().skip(1).enumerate() {
+        assert_eq!(skill.as_str(), format!("caller-skill-{number}"));
+    }
     assert_eq!(
         created
             .services
