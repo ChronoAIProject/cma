@@ -6,8 +6,55 @@ use axum::{
     Json,
 };
 use layer2_core::CoreError;
+use serde::Serialize;
+use utoipa::ToSchema;
 
 use super::PROBLEM_BASE;
+
+/// RFC 9457 problem details returned by every REST refusal.
+///
+/// The last fields are typed extensions used by particular domain refusals.
+/// They remain absent for other errors, so a generated client has one error
+/// type without losing the structured facts it can act on.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProblemDocument {
+    #[serde(rename = "type")]
+    problem_type: String,
+    title: String,
+    status: u16,
+    detail: String,
+    code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capability: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimension: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maximum: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_cpu_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_memory_mib: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    free_cpu_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    free_memory_mib: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quoted_rate_card: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rate_card: Option<String>,
+}
 
 /// An HTTP-level refusal raised outside a core operation.
 ///
@@ -191,13 +238,29 @@ pub(crate) fn problem_document(
     detail: &str,
     code: &str,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "type": format!("{PROBLEM_BASE}/{slug}"),
-        "title": slug.replace('-', " "),
-        "status": status.as_u16(),
-        "detail": detail,
-        "code": code,
+    serde_json::to_value(ProblemDocument {
+        problem_type: format!("{PROBLEM_BASE}/{slug}"),
+        title: slug.replace('-', " "),
+        status: status.as_u16(),
+        detail: detail.to_string(),
+        code: code.to_string(),
+        field: None,
+        path: None,
+        capability: None,
+        dimension: None,
+        requested: None,
+        minimum: None,
+        maximum: None,
+        limit: None,
+        live: None,
+        requested_cpu_millis: None,
+        requested_memory_mib: None,
+        free_cpu_millis: None,
+        free_memory_mib: None,
+        quoted_rate_card: None,
+        rate_card: None,
     })
+    .expect("a problem document is serializable")
 }
 
 /// Put a completed problem document on the wire with its registered media type.

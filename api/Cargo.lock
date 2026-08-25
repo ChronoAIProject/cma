@@ -1338,6 +1338,8 @@ dependencies = [
  "futures-util",
  "layer2-core",
  "mime",
+ "meteroid-utoipa",
+ "meteroid-utoipa-axum",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -1514,6 +1516,43 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "meteroid-utoipa"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e8d76067a4fda8a1df5c527a281b33ff59a367c1aa15448f2cdf9f0613ffc0f"
+dependencies = [
+ "indexmap 2.14.0",
+ "meteroid-utoipa-gen",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "meteroid-utoipa-axum"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41d6db2825cd609483be52cfca3c903426ff948c3dbabe2a8daccea9cb48c08b"
+dependencies = [
+ "axum",
+ "meteroid-utoipa",
+ "pastey",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
+name = "meteroid-utoipa-gen"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88cf5adc2ea4747f2c5679a663bd2a9284c783abe51dec1cfb6c976d34dd90e2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "mime"
@@ -1709,6 +1748,12 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
+
+[[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "pbkdf2"
@@ -2012,6 +2057,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "regex"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -2840,6 +2897,7 @@ dependencies = [
  "tower-service",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]

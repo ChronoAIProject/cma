@@ -33,7 +33,7 @@ use layer3_adapter::{
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tower::ServiceExt;
 
-use super::{rest_api_router, with_cors};
+use super::{rest_api_router, with_cors, with_request_context};
 use crate::activity::{self, ActivityRecorder};
 
 const OVERSIZED_BODY_LEN: usize = 2 * 1024 * 1024 + 1;
@@ -1002,12 +1002,14 @@ async fn seed_profiles(store: &MemoryProfiles, owner: &SubjectId, count: usize) 
 }
 
 fn next_link(headers: &HeaderMap) -> Option<String> {
-    let value = headers.get(header::LINK)?.to_str().expect("Link is text");
-    let target = value
-        .strip_prefix('<')
-        .and_then(|rest| rest.strip_suffix(">; rel=\"next\""))
-        .expect("Link has the RFC 8288 next relation shape");
-    Some(target.to_string())
+    headers.get_all(header::LINK).iter().find_map(|value| {
+        value
+            .to_str()
+            .expect("Link is text")
+            .strip_prefix('<')
+            .and_then(|rest| rest.strip_suffix(">; rel=\"next\""))
+            .map(str::to_string)
+    })
 }
 
 async fn get_collection(app: &Router, uri: &str) -> (Vec<serde_json::Value>, HeaderMap) {
@@ -1572,6 +1574,14 @@ async fn the_optional_ticket_body_distinguishes_empty_from_untyped() {
     let body = assert_problem(response, StatusCode::UNSUPPORTED_MEDIA_TYPE).await;
     assert_eq!(body["code"], "unsupported_media_type");
 
+    let response = app
+        .clone()
+        .oneshot(json_request(Method::POST, &uri, "null"))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "invalid_request");
+
     let planted = "not-a-real-ticket-secret";
     let response = app
         .oneshot(json_request(
@@ -1675,6 +1685,696 @@ async fn conformance_remains_public() {
             .as_array()
             .is_some_and(|classes| !classes.is_empty()),
         "public conformance document must name at least one class: {body}"
+    );
+    assert_eq!(
+        body["version"],
+        option_env!("CHRONO_BUILD").unwrap_or("development")
+    );
+    assert!(
+        body["build_sha"]
+            .as_str()
+            .is_some_and(|build| !build.is_empty()),
+        "conformance must identify the running build: {body}"
+    );
+}
+
+#[tokio::test]
+async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
+    let app = test_surface(false).app;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/openapi.json")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let document = assert_json(response, StatusCode::OK).await;
+    assert_eq!(document["openapi"], "3.1.0");
+    assert_eq!(
+        document["info"]["version"],
+        option_env!("CHRONO_BUILD").unwrap_or("development")
+    );
+
+    let paths = document["paths"]
+        .as_object()
+        .expect("OpenAPI paths are an object");
+    let expected: std::collections::BTreeSet<_> = [
+        "/openapi.json",
+        "/api/v1/pricing/quote",
+        "/api/v1/sessions",
+        "/api/v1/sessions/allowance",
+        "/api/v1/sessions/{id}",
+        "/api/v1/sessions/{id}/terminate",
+        "/api/v1/sessions/{id}/stop",
+        "/api/v1/sessions/{id}/plane",
+        "/api/v1/sessions/{id}/revive",
+        "/api/v1/sessions/{id}/terminal-ticket",
+        "/api/v1/sessions/{id}/input",
+        "/api/v1/sessions/{id}/interrupt",
+        "/api/v1/sessions/{id}/steer",
+        "/api/v1/sessions/{id}/resize",
+        "/api/v1/sessions/{id}/approvals/{request_id}",
+        "/api/v1/sessions/{id}/usage",
+        "/api/v1/sessions/{id}/resources",
+        "/api/v1/sessions/{id}/spend",
+        "/api/v1/sessions/{id}/screen",
+        "/api/v1/sessions/{id}/transcript",
+        "/api/v1/sessions/{id}/events",
+        "/api/v1/conformance",
+        "/api/v1/kernels",
+        "/api/v1/environment-profiles",
+        "/api/v1/environment-profiles/skills",
+        "/api/v1/environment-profiles/services",
+        "/api/v1/environment-profiles/{id}",
+        "/api/v1/environment-profiles/preferred",
+        "/api/v1/admin/users",
+        "/api/v1/admin/activity",
+        "/api/v1/admin/runtimes",
+        "/api/v1/admin/sessions",
+        "/api/v1/admin/sessions/{id}/stop",
+        "/api/v1/admin/sessions/{id}/terminate",
+        "/api/v1/admin/settings",
+        "/api/v1/admin/settings/reset",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        paths
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
+
+    let discovery_schema =
+        &paths["/openapi.json"]["get"]["responses"]["200"]["content"]["application/json"]["schema"];
+    assert_eq!(
+        discovery_schema["$ref"], "#/components/schemas/OpenApiDocument",
+        "the discovery response must describe its JSON document: {discovery_schema}"
+    );
+
+    let transcript_schema = &paths["/api/v1/sessions/{id}/transcript"]["get"]["responses"]["200"]
+        ["content"]["application/octet-stream"]["schema"];
+    assert_eq!(
+        transcript_schema["$ref"], "#/components/schemas/TranscriptBody",
+        "the transcript response must reference its binary schema: {transcript_schema}"
+    );
+
+    let ticket_body = &paths["/api/v1/sessions/{id}/terminal-ticket"]["post"]["requestBody"];
+    assert_eq!(
+        ticket_body["required"], false,
+        "the ticket body may be omitted: {ticket_body}"
+    );
+    let ticket_schema = &ticket_body["content"]["application/json"]["schema"];
+    assert_eq!(
+        ticket_schema["$ref"], "#/components/schemas/TicketRequest",
+        "an explicit ticket body must be a non-null TicketRequest: {ticket_schema}"
+    );
+
+    let profile_create_schema = &paths["/api/v1/environment-profiles"]["post"]["requestBody"]
+        ["content"]["application/json"]["schema"];
+    assert_eq!(
+        profile_create_schema,
+        &serde_json::json!({ "$ref": "#/components/schemas/ProfileRequest" }),
+        "profile creation accepts only ProfileRequest: {profile_create_schema}"
+    );
+    let profile_replacement_schema = &paths["/api/v1/environment-profiles/{id}"]["put"]
+        ["requestBody"]["content"]["application/json"]["schema"];
+    assert_eq!(
+        profile_replacement_schema,
+        &serde_json::json!({
+            "oneOf": [
+                { "$ref": "#/components/schemas/ProfileRequest" },
+                { "$ref": "#/components/schemas/ProfileView" }
+            ]
+        }),
+        "profile replacement accepts the writable request or a complete view: {profile_replacement_schema}"
+    );
+
+    let problem = &document["components"]["schemas"]["ProblemDocument"];
+    for required in ["type", "title", "status", "detail", "code"] {
+        assert!(
+            problem["properties"].get(required).is_some(),
+            "problem schema is missing {required}: {problem}"
+        );
+        assert!(
+            problem["required"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field == required)),
+            "problem schema does not require {required}: {problem}"
+        );
+    }
+    for optional in ["field", "path"] {
+        assert!(
+            problem["properties"].get(optional).is_some(),
+            "problem schema is missing the emitted {optional} extension: {problem}"
+        );
+        assert!(
+            !problem["required"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field == optional)),
+            "problem extension {optional} must remain optional: {problem}"
+        );
+    }
+    assert!(
+        problem["properties"].get("request_id").is_none(),
+        "request correlation belongs in the X-Request-Id header, not the problem body: {problem}"
+    );
+    assert_eq!(
+        document["components"]["responses"]["Problem"]["content"]["application/problem+json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/ProblemDocument"
+    );
+    assert_eq!(
+        document["components"]["responses"]["Problem"]["headers"]["X-Request-Id"]["schema"]["type"],
+        "string"
+    );
+    assert_eq!(
+        document["components"]["responses"]["Problem"]["headers"]["Link"]["schema"]["type"],
+        "string"
+    );
+
+    fn assert_local_refs_resolve(value: &serde_json::Value, document: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str) {
+                    let pointer = reference
+                        .strip_prefix('#')
+                        .expect("the generated document uses only local references");
+                    assert!(
+                        document.pointer(pointer).is_some(),
+                        "OpenAPI reference does not resolve: {reference}"
+                    );
+                }
+                for nested in object.values() {
+                    assert_local_refs_resolve(nested, document);
+                }
+            }
+            serde_json::Value::Array(array) => {
+                for nested in array {
+                    assert_local_refs_resolve(nested, document);
+                }
+            }
+            _ => {}
+        }
+    }
+    assert_local_refs_resolve(&document, &document);
+
+    fn schema_allows_null(schema: &serde_json::Value) -> bool {
+        schema["nullable"] == true
+            || schema["type"] == "null"
+            || schema["type"]
+                .as_array()
+                .is_some_and(|types| types.iter().any(|kind| kind == "null"))
+            || ["oneOf", "anyOf"].iter().any(|composition| {
+                schema[*composition]
+                    .as_array()
+                    .is_some_and(|members| members.iter().any(schema_allows_null))
+            })
+    }
+
+    fn schema_has_minimum_one(schema: &serde_json::Value) -> bool {
+        schema["minimum"].as_u64() == Some(1)
+            || ["oneOf", "anyOf"].iter().any(|composition| {
+                schema[*composition]
+                    .as_array()
+                    .is_some_and(|members| members.iter().any(schema_has_minimum_one))
+            })
+    }
+
+    let schemas = document["components"]["schemas"]
+        .as_object()
+        .expect("component schemas are an object");
+
+    fn assert_exact_schema_properties(
+        schemas: &serde_json::Map<String, serde_json::Value>,
+        schema: &str,
+        expected: &[&str],
+    ) {
+        let properties = schemas
+            .get(schema)
+            .unwrap_or_else(|| panic!("OpenAPI is missing the {schema} schema"))["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{schema} properties are an object"));
+        let actual = properties
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let expected = expected
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(actual, expected, "{schema} fields must remain exact");
+    }
+
+    for (schema, expected_properties) in [
+        (
+            "ProfileRequest",
+            &[
+                "name",
+                "variables",
+                "packages",
+                "agent",
+                "nyxid",
+                "agent_notes",
+            ][..],
+        ),
+        (
+            "ProfileView",
+            &[
+                "id",
+                "name",
+                "variables",
+                "packages",
+                "agent",
+                "nyxid",
+                "agent_notes",
+                "mandatory",
+                "created_at",
+                "updated_at",
+                "preferred",
+            ][..],
+        ),
+        (
+            "AgentBody",
+            &[
+                "kernel",
+                "mode",
+                "model",
+                "reasoning_effort",
+                "permission",
+                "credential",
+                "size",
+                "record_tool_bodies",
+                "skills",
+            ][..],
+        ),
+        (
+            "ProfileAgentView",
+            &[
+                "kernel",
+                "mode",
+                "model",
+                "reasoning_effort",
+                "permission",
+                "credential",
+                "size",
+                "record_tool_bodies",
+                "skills",
+            ][..],
+        ),
+        ("VariableBody", &["key", "value"][..]),
+        ("PackageBody", &["name", "version"][..]),
+        ("NyxIdBody", &["services"][..]),
+        ("NyxIdView", &["services"][..]),
+        ("SizeBody", &["cpu_millis", "memory_mib"][..]),
+        ("SessionSize", &["cpu_millis", "memory_mib"][..]),
+        ("MandatoryView", &["packages", "skills"][..]),
+    ] {
+        assert_exact_schema_properties(schemas, schema, expected_properties);
+    }
+
+    fn assert_only_schema_ref(schema: &serde_json::Value, expected: &str) {
+        fn collect_refs<'a>(
+            value: &'a serde_json::Value,
+            refs: &mut std::collections::BTreeSet<&'a str>,
+        ) {
+            match value {
+                serde_json::Value::Object(object) => {
+                    if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str)
+                    {
+                        refs.insert(reference);
+                    }
+                    for nested in object.values() {
+                        collect_refs(nested, refs);
+                    }
+                }
+                serde_json::Value::Array(array) => {
+                    for nested in array {
+                        collect_refs(nested, refs);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut actual = std::collections::BTreeSet::new();
+        collect_refs(schema, &mut actual);
+        assert_eq!(
+            actual,
+            std::collections::BTreeSet::from([expected]),
+            "schema must reference only {expected}: {schema}"
+        );
+    }
+
+    for (schema, property, reference) in [
+        (
+            "ProfileRequest",
+            "variables",
+            "#/components/schemas/VariableBody",
+        ),
+        (
+            "ProfileRequest",
+            "packages",
+            "#/components/schemas/PackageBody",
+        ),
+        ("ProfileRequest", "agent", "#/components/schemas/AgentBody"),
+        ("ProfileRequest", "nyxid", "#/components/schemas/NyxIdBody"),
+        (
+            "ProfileView",
+            "variables",
+            "#/components/schemas/VariableBody",
+        ),
+        (
+            "ProfileView",
+            "packages",
+            "#/components/schemas/PackageBody",
+        ),
+        (
+            "ProfileView",
+            "agent",
+            "#/components/schemas/ProfileAgentView",
+        ),
+        ("ProfileView", "nyxid", "#/components/schemas/NyxIdView"),
+        (
+            "ProfileView",
+            "mandatory",
+            "#/components/schemas/MandatoryView",
+        ),
+        ("AgentBody", "size", "#/components/schemas/SizeBody"),
+        (
+            "ProfileAgentView",
+            "size",
+            "#/components/schemas/SessionSize",
+        ),
+    ] {
+        assert_only_schema_ref(&schemas[schema]["properties"][property], reference);
+    }
+
+    let discovery_document = &schemas["OpenApiDocument"];
+    for required in ["openapi", "info", "paths"] {
+        assert!(
+            discovery_document["properties"].get(required).is_some(),
+            "OpenAPI discovery schema is missing {required}: {discovery_document}"
+        );
+    }
+
+    let transcript_body = &schemas["TranscriptBody"];
+    assert_eq!(transcript_body["type"], "string");
+    assert_eq!(transcript_body["format"], "binary");
+    assert!(
+        transcript_body.get("items").is_none(),
+        "the raw transcript must not be modeled as an integer array: {transcript_body}"
+    );
+
+    let change_request = &schemas["ChangeRequest"];
+    for optional in [
+        "briefing",
+        "deployment_capacity",
+        "size_bounds",
+        "live_sessions",
+    ] {
+        assert!(
+            !change_request["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|field| field == optional)),
+            "PATCH property {optional} must remain optional: {change_request}"
+        );
+    }
+    for non_nullable in ["briefing", "deployment_capacity", "size_bounds"] {
+        let property = &change_request["properties"][non_nullable];
+        assert!(
+            !schema_allows_null(property),
+            "PATCH property {non_nullable} must reject null: {property}"
+        );
+    }
+    let live_sessions = &change_request["properties"]["live_sessions"];
+    assert!(
+        schema_allows_null(live_sessions),
+        "live_sessions null removes the optional limit: {live_sessions}"
+    );
+    assert!(
+        schema_has_minimum_one(live_sessions),
+        "a non-null live_sessions limit must be positive: {live_sessions}"
+    );
+    for (schema, expected_properties) in [
+        (
+            "SessionView",
+            &["id", "status", "agent", "conforms_to", "reach"][..],
+        ),
+        (
+            "ActivityView",
+            &["id", "at", "action", "target", "outcome", "detail"][..],
+        ),
+        (
+            "PlatformSettings",
+            &[
+                "briefing",
+                "deployment_capacity",
+                "memory_pressure",
+                "pricing",
+                "size_bounds",
+                "live_sessions",
+            ][..],
+        ),
+        (
+            "MemoryPressurePolicy",
+            &[
+                "enter_permille",
+                "exit_permille",
+                "enter_samples",
+                "exit_samples",
+                "settle_seconds",
+            ][..],
+        ),
+    ] {
+        let schema = schemas
+            .get(schema)
+            .unwrap_or_else(|| panic!("OpenAPI is missing the {schema} schema"));
+        for property in expected_properties {
+            assert!(
+                schema["properties"].get(property).is_some(),
+                "{schema} is missing {property}: {schema}"
+            );
+        }
+    }
+    assert!(
+        schemas.contains_key("ActivityTarget"),
+        "the tagged activity target must remain typed"
+    );
+    for (schema, expected_properties) in [
+        (
+            "SessionAgentView",
+            &["permission", "reasoning_effort", "credential", "skills"][..],
+        ),
+        (
+            "SessionSkillView",
+            &["id", "version", "name", "description"][..],
+        ),
+        (
+            "CatalogSkillView",
+            &["id", "name", "description", "access"][..],
+        ),
+    ] {
+        let schema_properties = schemas
+            .get(schema)
+            .unwrap_or_else(|| panic!("OpenAPI is missing the distinct {schema} schema"))
+            ["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{schema} properties are an object"));
+        for property in expected_properties {
+            assert!(
+                schema_properties.contains_key(*property),
+                "{schema} is missing {property}"
+            );
+        }
+    }
+    assert_eq!(
+        schemas["SessionView"]["properties"]["agent"]["$ref"],
+        "#/components/schemas/SessionAgentView"
+    );
+    assert_eq!(
+        schemas["ProfileView"]["properties"]["agent"]["$ref"],
+        "#/components/schemas/ProfileAgentView"
+    );
+    assert_eq!(
+        schemas["InputRequest"]["properties"]["newline"]["default"], true,
+        "terminal input must advertise its runtime newline default"
+    );
+
+    let mut operations = 0;
+    let mut operation_ids = std::collections::BTreeSet::new();
+    for (template, item) in paths {
+        for method in ["get", "put", "post", "delete", "patch"] {
+            if item.get(method).is_none() {
+                continue;
+            }
+            operations += 1;
+            let operation = &item[method];
+            let operation_id = operation["operationId"]
+                .as_str()
+                .expect("every SDK operation has an identifier");
+            assert!(
+                operation_ids.insert(operation_id),
+                "duplicate OpenAPI operationId: {operation_id}"
+            );
+            assert_eq!(
+                operation["responses"]["default"]["$ref"], "#/components/responses/Problem",
+                "{method} {template} must type its refusals"
+            );
+            assert!(
+                operation["parameters"]
+                    .as_array()
+                    .is_some_and(|parameters| parameters.iter().any(|parameter| {
+                        parameter["name"] == "X-Request-Id"
+                            && parameter["in"] == "header"
+                            && parameter["required"] == false
+                    })),
+                "{method} {template} must document caller correlation"
+            );
+            for (status, response) in operation["responses"]
+                .as_object()
+                .expect("operation responses are an object")
+            {
+                if status == "default" {
+                    continue;
+                }
+                assert_eq!(
+                    response["headers"]["X-Request-Id"]["schema"]["type"], "string",
+                    "{method} {template} {status} must document correlation"
+                );
+                assert_eq!(
+                    response["headers"]["Link"]["schema"]["type"], "string",
+                    "{method} {template} {status} must document discovery links"
+                );
+            }
+            let path = template
+                .replace("{id}", "sesn_openapi_parity")
+                .replace("{request_id}", "approval_openapi_parity");
+            let request = Request::builder()
+                .method(
+                    Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+                        .expect("OpenAPI method is HTTP"),
+                )
+                .uri(path)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .expect("parity request builds");
+            let response = app.clone().oneshot(request).await.expect("router answers");
+            assert_ne!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "documented {method} {template} has no route"
+            );
+            assert_ne!(
+                response.status(),
+                StatusCode::METHOD_NOT_ALLOWED,
+                "documented {method} {template} has no matching method"
+            );
+        }
+    }
+    assert_eq!(operations, 43, "every REST operation must be documented");
+}
+
+#[tokio::test]
+async fn request_ids_cover_success_auth_and_routing_failures_and_echo_callers() {
+    let app = with_request_context(test_surface(false).app);
+    for (uri, status) in [
+        ("/api/v1/conformance", StatusCode::OK),
+        ("/api/v1/sessions", StatusCode::UNAUTHORIZED),
+        ("/api/v1/no-such-rest-route", StatusCode::NOT_FOUND),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(uri)
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), status, "for {uri}");
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok());
+        assert!(
+            request_id.is_some_and(|value| !value.is_empty()),
+            "{uri} must carry a minted request id"
+        );
+    }
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/conformance")
+                .header("x-request-id", "support-case-488")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(
+        response.headers().get("x-request-id"),
+        Some(&HeaderValue::from_static("support-case-488"))
+    );
+
+    for unusable in [
+        HeaderValue::from_static(""),
+        HeaderValue::from_bytes(b" \t ").expect("whitespace is a valid header value"),
+        HeaderValue::from_bytes(&[0xff]).expect("opaque bytes are a valid header value"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/conformance")
+                    .header("x-request-id", unusable.clone())
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        let generated = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("an unusable request id is replaced with text");
+        assert_ne!(
+            response.headers().get("x-request-id"),
+            Some(&unusable),
+            "the unusable caller value must not be echoed"
+        );
+        assert!(
+            uuid::Uuid::parse_str(generated).is_ok(),
+            "the replacement must be a generated UUID: {generated:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn rest_responses_advertise_profile_and_service_description_links() {
+    let response = test_surface(false)
+        .app
+        .oneshot(
+            Request::get("/api/v1/conformance")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let links = response
+        .headers()
+        .get_all(header::LINK)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert!(links.contains("rel=\"profile\""), "{links}");
+    assert!(
+        links.contains("</openapi.json>; rel=\"service-desc\""),
+        "{links}"
     );
 }
 

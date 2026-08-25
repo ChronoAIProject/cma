@@ -17,6 +17,9 @@ use layer2_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use utoipa::ToSchema;
+
+use super::openapi_shapes;
 
 const MAX_DIAGNOSTIC_FIELD_BYTES: usize = 64;
 
@@ -61,7 +64,7 @@ const NYXID_FIELDS: &[&str] = &["services"];
 const MANDATORY_FIELDS: &[&str] = &["packages", "skills"];
 
 /// A variable as this interface reads and writes it.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VariableBody {
     /// Variable name.
@@ -71,7 +74,7 @@ pub struct VariableBody {
 }
 
 /// A package as this interface reads and writes it.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackageBody {
     /// Package name.
@@ -82,7 +85,7 @@ pub struct PackageBody {
 }
 
 /// Request body for creating or replacing a profile.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRequest {
     /// Name the owner recognises it by.
@@ -110,7 +113,7 @@ pub struct ProfileRequest {
 }
 
 /// The platform-access half of a profile, as a caller supplies it.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NyxIdBody {
     /// Identifiers of the services to allow.
@@ -122,7 +125,7 @@ pub struct NyxIdBody {
 ///
 /// Every field defaults, so a client that cares about none of them sends a
 /// name and gets a profile that behaves the way the deployment says it should.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentBody {
     /// Which runtime implementation backs the session.
@@ -130,18 +133,22 @@ pub struct AgentBody {
     pub kernel: Option<String>,
     /// Which plane sessions from this profile are driven on.
     #[serde(default)]
+    #[schema(value_type = Option<openapi_shapes::SessionMode>)]
     pub mode: Option<SessionMode>,
     /// Model the agent selects.
     #[serde(default)]
     pub model: Option<String>,
     /// How hard it thinks.
     #[serde(default)]
+    #[schema(value_type = Option<openapi_shapes::ReasoningEffort>)]
     pub reasoning_effort: Option<ReasoningEffort>,
     /// How often it stops to ask.
     #[serde(default)]
+    #[schema(value_type = Option<openapi_shapes::PermissionMode>)]
     pub permission: Option<PermissionMode>,
     /// Whose model access it spends.
     #[serde(default)]
+    #[schema(value_type = Option<openapi_shapes::CredentialMode>)]
     pub credential: Option<CredentialMode>,
     /// How much a session from this profile reserves.
     #[serde(default)]
@@ -159,7 +166,7 @@ pub struct AgentBody {
 /// Two integers with their units in their names. A field called `cpu` carrying
 /// `1` is ambiguous between one core and one millicore, and the two differ by a
 /// factor of a thousand.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SizeBody {
     pub cpu_millis: u32,
@@ -416,29 +423,35 @@ impl TryFrom<ProfileRequest> for EnvironmentProfileSpec {
 /// Every field is present rather than skipped when it matches a default: this
 /// is what a client draws its controls from, and a form cannot preselect a
 /// value it was not sent.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(as = ProfileAgentView)]
 pub struct AgentView {
     kernel: String,
+    #[schema(value_type = openapi_shapes::SessionMode)]
     mode: SessionMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[schema(value_type = openapi_shapes::ReasoningEffort)]
     reasoning_effort: ReasoningEffort,
+    #[schema(value_type = openapi_shapes::PermissionMode)]
     permission: PermissionMode,
+    #[schema(value_type = openapi_shapes::CredentialMode)]
     credential: CredentialMode,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::SessionSize>)]
     size: Option<SessionSize>,
     record_tool_bodies: bool,
     skills: Vec<String>,
 }
 
 /// The platform-access half of a profile, as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct NyxIdView {
     services: Vec<String>,
 }
 
 /// A profile as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileView {
     id: String,
     name: String,
@@ -464,7 +477,7 @@ pub struct ProfileView {
 }
 
 /// The parts of a profile a caller may not remove.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, ToSchema)]
 pub struct MandatoryView {
     packages: Vec<String>,
     skills: Vec<String>,
@@ -529,14 +542,15 @@ impl ProfileView {
 /// stored profile: a client authoring its *first* profile has no profile to
 /// read them from, and would otherwise offer a form that quietly acquires
 /// entries the moment it is saved.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SkillCatalogView {
     pub(super) skills: Vec<SkillView>,
     pub(super) mandatory: MandatoryView,
 }
 
 /// A selectable skill as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(as = CatalogSkillView)]
 pub struct SkillView {
     id: String,
     name: String,
