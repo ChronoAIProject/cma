@@ -425,6 +425,7 @@ impl KernelAdapter for WireAdapter {
             .map(|(handle, session)| RuntimeListing {
                 handle: RuntimeHandle(handle.clone()),
                 session: Some(session.clone()),
+                generation: None,
                 created_by: None,
                 serving: true,
                 lost_because: None,

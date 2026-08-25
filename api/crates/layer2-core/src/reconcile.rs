@@ -79,6 +79,8 @@ struct RuntimeCensus {
     /// Reclaiming walks `owners` rather than this, so a stopped sandbox that
     /// no session is entitled to is still found and deleted.
     serving: HashSet<String>,
+    /// Provider-visible generation for every listed runtime.
+    generations: HashMap<String, Option<u64>>,
     /// Why a runtime that is no longer serving stopped, where one was named.
     ///
     /// Populated only for a listing that reports itself not serving. A healthy
@@ -126,8 +128,10 @@ impl SessionService {
                 if session.as_deref().is_some_and(|s| entitled.contains(s)) {
                     continue;
                 }
+                let generation = view.generations.get(runtime).copied().flatten();
                 tracing::warn!(
                     runtime = %runtime,
+                    ?generation,
                     session = session.as_deref().unwrap_or("<none>"),
                     "reclaiming a runtime no session is entitled to"
                 );
@@ -167,9 +171,11 @@ impl SessionService {
             let view = match adapter.list_runtimes().await {
                 Ok(runtimes) => {
                     let mut owners = HashMap::new();
+                    let mut generations = HashMap::new();
                     let mut serving = HashSet::new();
                     let mut stopped_because = HashMap::new();
                     for listing in runtimes {
+                        generations.insert(listing.handle.0.clone(), listing.generation);
                         // A runtime this control plane did not create is not
                         // its business. It still counts as alive — a session of
                         // ours pointing at it is not lost — but it is never
@@ -191,6 +197,7 @@ impl SessionService {
                     }
                     RuntimeCensus {
                         serving,
+                        generations,
                         stopped_because,
                         owners,
                         trusted: true,
@@ -201,6 +208,7 @@ impl SessionService {
                     tracing::warn!(kernel = %kernel, error = %e, "cannot enumerate runtimes");
                     RuntimeCensus {
                         serving: HashSet::new(),
+                        generations: HashMap::new(),
                         stopped_because: HashMap::new(),
                         owners: HashMap::new(),
                         trusted: false,
