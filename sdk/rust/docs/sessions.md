@@ -95,6 +95,8 @@ fn may_steer(session: &Session) -> bool {
 ```
 
 The server remains authoritative under a race and returns
-`Error::CapabilityRefused { capability }` when an operation was never granted.
+`Error::CapabilityRefused { capability, request_id }` when an operation was never
+granted. `request_id` is the optional `X-Request-Id` response header used for
+correlation.
 The complete lifecycle and capability model is in the
 [API overview](../../../docs/API_Overview.md#2-session-model).

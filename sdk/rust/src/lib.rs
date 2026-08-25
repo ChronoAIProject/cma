@@ -69,7 +69,7 @@ pub mod guides {
     pub mod reference {}
 }
 
-pub use client::{Client, ClientBuilder, RetryPolicy};
+pub use client::{Client, ClientBuilder, ResponseMetadata, RetryPolicy};
 pub use error::{Error, Result};
 pub use event::{
     AvailableCommand, ConfigOption, Event, EventKind, PlanStep, ProvisioningStage,
@@ -77,8 +77,9 @@ pub use event::{
 };
 pub use stream::EventStream;
 pub use types::{
-    Agent, ApprovalDecision, CreateSessionRequest, CredentialMode, MAX_PAGE_SIZE, MIN_PAGE_SIZE,
-    Page, PageContinuation, PageWalkLimits, PermissionMode, PublicIdentity, Reach, ReasoningEffort,
-    RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput, SessionPageRequest,
-    SessionPricing, SessionSize, SessionStatus, Skill, StopReason, TerminalGeometry, Usage,
+    Agent, ApprovalDecision, Conformance, CreateSessionRequest, CredentialMode, MAX_PAGE_SIZE,
+    MIN_PAGE_SIZE, Page, PageContinuation, PageWalkLimits, PermissionMode, PublicIdentity, Reach,
+    ReasoningEffort, RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput,
+    SessionPageRequest, SessionPricing, SessionSize, SessionStatus, Skill, StopReason,
+    TerminalGeometry, Usage,
 };

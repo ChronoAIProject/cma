@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { headersFor, resolveConfig, urlOf } from '../src/config.js';
+import {
+  headersFor,
+  resolveConfig,
+  responseRequestId,
+  urlOf,
+  type ResponseMetadata,
+} from '../src/config.js';
 import { request } from '../src/http.js';
 import {
   ApiError,
@@ -7,8 +13,13 @@ import {
   CredentialError,
   DeploymentAtCapacity,
   ProtocolError,
+  RequestAborted,
+  RequestIdError,
+  ResponseObserverError,
   SessionLimitReached,
+  TimeoutError,
   TransportError,
+  ValidationError,
 } from '../src/errors.js';
 
 /**
@@ -22,7 +33,10 @@ import {
  */
 
 /** A `fetch` that records what it was asked and answers what a test chose. */
-function recorder(answer: Partial<Response> & { json?: () => Promise<unknown> }) {
+function recorder(
+  answer: Partial<Response> & { json?: () => Promise<unknown> },
+  headers: HeadersInit = {},
+) {
   const calls: { url: string; init: RequestInit }[] = [];
   const impl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init: init ?? {} });
@@ -35,13 +49,27 @@ function recorder(answer: Partial<Response> & { json?: () => Promise<unknown> })
         body = 'not json';
       }
     }
+    const responseHeaders = new Headers({ 'content-type': 'application/json' });
+    for (const [name, value] of new Headers(headers)) {
+      responseHeaders.set(name, value);
+    }
     return new Response(body, {
       status,
-      headers: { 'content-type': 'application/json' },
+      headers: responseHeaders,
     });
   });
   return { calls, impl: impl as unknown as typeof globalThis.fetch };
 }
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+const nextTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe('where the client points', () => {
   it('defaults to same-origin, which is what the dashboard needs', () => {
@@ -154,6 +182,198 @@ describe('the credential', () => {
   });
 });
 
+describe('request and response correlation', () => {
+  it('sends a caller override exactly and does not consult the default provider', async () => {
+    const provider = vi.fn(() => 'provider-value');
+    const { calls, impl } = recorder({});
+    await request(resolveConfig({ fetch: impl, requestIdProvider: provider }), '/api/v1/sessions', {
+      requestId: 'Support.Case/488:Exact',
+    });
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(new Headers(calls[0]?.init.headers).get('x-request-id')).toBe('Support.Case/488:Exact');
+  });
+
+  it('rejects unusable caller and provider values before fetch', async () => {
+    for (const requestId of ['', ' padded ', 'line\nbreak', 'opaque-\u00ff']) {
+      const fetch = vi.fn();
+      await expect(
+        request(resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch }), '/x', {
+          requestId,
+        }),
+      ).rejects.toBeInstanceOf(ValidationError);
+      expect(fetch).not.toHaveBeenCalled();
+    }
+
+    for (const requestIdProvider of [
+      () => ' \t ',
+      () => 'opaque-\u00ff',
+      () => {
+        throw new Error('trace context unavailable');
+      },
+    ]) {
+      const fetch = vi.fn();
+      await expect(
+        request(
+          resolveConfig({
+            fetch: fetch as unknown as typeof globalThis.fetch,
+            requestIdProvider,
+          }),
+          '/x',
+        ),
+      ).rejects.toBeInstanceOf(RequestIdError);
+      expect(fetch).not.toHaveBeenCalled();
+    }
+  });
+
+  it('observes success metadata before attempting to decode the body', async () => {
+    let phase = 'received';
+    const encoded = new TextEncoder().encode('{not json');
+    const read = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        expect(phase).toBe('observed');
+        return Promise.resolve({ done: false, value: encoded });
+      })
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    const getReader = vi.fn(() => ({
+      cancel: () => Promise.resolve(),
+      read,
+      releaseLock: () => undefined,
+    }));
+    const response = {
+      body: { getReader },
+      headers: new Headers({ 'x-request-id': 'response-before-decode' }),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const observed: ResponseMetadata[] = [];
+    const config = resolveConfig({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver: (metadata) => {
+        expect(phase).toBe('received');
+        observed.push(metadata);
+        phase = 'observed';
+      },
+    });
+
+    await expect(request(config, '/x')).rejects.toBeInstanceOf(ProtocolError);
+    expect(observed).toEqual([{ status: 200, requestId: 'response-before-decode' }]);
+    expect(getReader).toHaveBeenCalledOnce();
+  });
+
+  it('reports observer failure explicitly without consuming the body', async () => {
+    const getReader = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers({ 'x-request-id': 'response-observer-failure' }),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const config = resolveConfig({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver: () => {
+        throw new Error('metadata sink unavailable');
+      },
+    });
+
+    const failure = await request(config, '/x').catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ResponseObserverError);
+    expect((failure as Error).cause).toBeInstanceOf(Error);
+    expect(getReader).not.toHaveBeenCalled();
+  });
+
+  it('does not continue to credentials or fetch after a request-id deadline', async () => {
+    const requestId = deferred<string>();
+    const requestIdProvider = vi.fn(() => requestId.promise);
+    const credential = vi.fn(() => 'tok_late');
+    const fetch = vi.fn();
+    const config = resolveConfig({
+      credential,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      requestIdProvider,
+    });
+
+    await expect(request(config, '/x', { timeoutMs: 5 })).rejects.toBeInstanceOf(TimeoutError);
+    expect(requestIdProvider).toHaveBeenCalledOnce();
+
+    requestId.resolve('caller-after-timeout');
+    await nextTurn();
+
+    expect(credential).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not observe a fetch response that arrives after the deadline', async () => {
+    const fetched = deferred<Response>();
+    const responseObserver = vi.fn();
+    const config = resolveConfig({
+      fetch: vi.fn(() => fetched.promise) as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+
+    await expect(request(config, '/x', { timeoutMs: 5 })).rejects.toBeInstanceOf(TimeoutError);
+
+    fetched.resolve(new Response('{}', { status: 200 }));
+    await nextTurn();
+
+    expect(responseObserver).not.toHaveBeenCalled();
+  });
+
+  it('does not consume a response after cancellation wins over its observer', async () => {
+    const observer = deferred<void>();
+    const observerStarted = deferred<void>();
+    const responseObserver = vi.fn(() => {
+      observerStarted.resolve(undefined);
+      return observer.promise;
+    });
+    const getReader = vi.fn();
+    const response = {
+      body: { getReader },
+      headers: new Headers(),
+      ok: true,
+      status: 200,
+    } as unknown as Response;
+    const fetch = vi.fn(() => Promise.resolve(response));
+    const controller = new AbortController();
+    const config = resolveConfig({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      responseObserver,
+    });
+    const pending = request(config, '/x', { signal: controller.signal });
+    await observerStarted.promise;
+
+    controller.abort('cancelled while observing');
+
+    await expect(pending).rejects.toBeInstanceOf(RequestAborted);
+    observer.resolve(undefined);
+    await nextTurn();
+
+    expect(responseObserver).toHaveBeenCalledOnce();
+    expect(getReader).not.toHaveBeenCalled();
+  });
+
+  it('treats missing, blank, malformed, and non-visible response ids as absent', () => {
+    const responseWith = (value: string | null): Response =>
+      ({ headers: { get: () => value } }) as unknown as Response;
+    expect(responseRequestId(responseWith('response-visible/488'))).toBe('response-visible/488');
+    for (const value of [null, '', ' \t ', 'line\nbreak', 'opaque-\u00ff']) {
+      expect(responseRequestId(responseWith(value))).toBeUndefined();
+    }
+    expect(
+      responseRequestId({
+        headers: {
+          get: () => {
+            throw new Error('bad headers');
+          },
+        },
+      } as unknown as Response),
+    ).toBeUndefined();
+  });
+});
+
 describe('cookies', () => {
   it('are included by default', async () => {
     const { calls, impl } = recorder({});
@@ -196,6 +416,30 @@ describe('what comes back', () => {
     );
   });
 
+  it('exposes a generic structured refusal response id and tolerates its absence', async () => {
+    const problem = {
+      status: 409,
+      detail: 'this session is already running',
+      code: 'turn_in_progress',
+    };
+    const correlated = recorder(
+      { ok: false, status: 409, json: () => Promise.resolve(problem) },
+      { 'x-request-id': 'response-api-488' },
+    );
+    const withId = await request(resolveConfig({ fetch: correlated.impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+    expect(withId).toBeInstanceOf(ApiError);
+    expect((withId as ApiError).requestId).toBe('response-api-488');
+
+    const uncorrelated = recorder({ ok: false, status: 409, json: () => Promise.resolve(problem) });
+    const withoutId = await request(resolveConfig({ fetch: uncorrelated.impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+    expect(withoutId).toBeInstanceOf(ApiError);
+    expect((withoutId as ApiError).requestId).toBeUndefined();
+  });
+
   it('falls back to the status when the body is not a problem document', async () => {
     const { impl } = recorder({
       ok: false,
@@ -211,21 +455,25 @@ describe('what comes back', () => {
     // sends — checked against `layer1-public`'s problem document rather than
     // guessed, after the first version of this read a field REST does not
     // send and so could never have fired.
-    const { impl } = recorder({
-      ok: false,
-      status: 422,
-      json: () =>
-        Promise.resolve({
-          detail: 'capability not supported: conversation',
-          code: 'capability_unsupported',
-          capability: 'conversation',
-        }),
-    });
+    const { impl } = recorder(
+      {
+        ok: false,
+        status: 422,
+        json: () =>
+          Promise.resolve({
+            detail: 'capability not supported: conversation',
+            code: 'capability_unsupported',
+            capability: 'conversation',
+          }),
+      },
+      { 'x-request-id': 'response-capability-488' },
+    );
     const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
       (cause: unknown) => cause,
     );
     expect(failure).toBeInstanceOf(CapabilityRefused);
     expect((failure as CapabilityRefused).capability).toBe('conversation');
+    expect((failure as CapabilityRefused).requestId).toBe('response-capability-488');
   });
 
   it('does not read a malformed request as a refusal', async () => {
@@ -257,39 +505,46 @@ describe('what comes back', () => {
   });
 
   it('carries a live-session refusal and both of its numbers', async () => {
-    const { impl } = recorder({
-      ok: false,
-      status: 409,
-      json: () =>
-        Promise.resolve({
-          detail: '3 of 3 sessions are already running for this owner',
-          code: 'session_limit_reached',
-          limit: 3,
-          live: 3,
-        }),
-    });
+    const { impl } = recorder(
+      {
+        ok: false,
+        status: 409,
+        json: () =>
+          Promise.resolve({
+            detail: '3 of 3 sessions are already running for this owner',
+            code: 'session_limit_reached',
+            limit: 3,
+            live: 3,
+          }),
+      },
+      { 'x-request-id': 'response-limit-488' },
+    );
     const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
       (cause: unknown) => cause,
     );
     expect(failure).toBeInstanceOf(SessionLimitReached);
     expect((failure as SessionLimitReached).limit).toBe(3);
     expect((failure as SessionLimitReached).live).toBe(3);
+    expect((failure as SessionLimitReached).requestId).toBe('response-limit-488');
   });
 
   it('carries a deployment-capacity refusal and all four of its figures', async () => {
-    const { impl } = recorder({
-      ok: false,
-      status: 503,
-      json: () =>
-        Promise.resolve({
-          detail: 'this deployment has no room for that session',
-          code: 'deployment_at_capacity',
-          requested_cpu_millis: 2_000,
-          requested_memory_mib: 4_096,
-          free_cpu_millis: 750,
-          free_memory_mib: 1_536,
-        }),
-    });
+    const { impl } = recorder(
+      {
+        ok: false,
+        status: 503,
+        json: () =>
+          Promise.resolve({
+            detail: 'this deployment has no room for that session',
+            code: 'deployment_at_capacity',
+            requested_cpu_millis: 2_000,
+            requested_memory_mib: 4_096,
+            free_cpu_millis: 750,
+            free_memory_mib: 1_536,
+          }),
+      },
+      { 'x-request-id': 'response-capacity-488' },
+    );
     const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
       (cause: unknown) => cause,
     );
@@ -301,6 +556,7 @@ describe('what comes back', () => {
       freeCpuMillis: 750,
       freeMemoryMib: 1_536,
       isRetryable: true,
+      requestId: 'response-capacity-488',
     });
   });
 

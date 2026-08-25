@@ -12,13 +12,14 @@ use axum::extract::{Path, State};
 use axum::Json;
 use layer2_core::{AttachmentClaim, CoreError, SessionId, SessionService};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::auth::AuthenticatedCaller;
 use crate::rest::{OptionalJson, RequestFailure};
 use crate::tickets::TerminalTickets;
 
 /// Request body for an attach ticket.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct TicketRequest {
     /// Whether this attachment should supersede whoever holds one.
     ///
@@ -30,7 +31,7 @@ pub struct TicketRequest {
 }
 
 /// An attach ticket, as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TicketView {
     ticket: String,
     expires_at: String,
@@ -43,6 +44,14 @@ pub struct TicketView {
 /// matters is the one `attach_terminal` performs on redemption. This one
 /// refuses early, so a caller who cannot attach is told now rather than
 /// through a socket that opens and closes.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/terminal-ticket",
+    tag = "terminal",
+    params(("id" = String, Path)),
+    request_body(content = TicketRequest, content_type = "application/json"),
+    responses((status = 200, description = "Single-use terminal attachment ticket", body = TicketView))
+)]
 pub(super) async fn terminal_ticket(
     State(service): State<Arc<SessionService>>,
     State(tickets): State<Arc<TerminalTickets>>,

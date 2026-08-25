@@ -18,6 +18,8 @@ pub enum Error {
     CapabilityRefused {
         /// The server's machine-readable capability name.
         capability: String,
+        /// Usable `X-Request-Id` response value, when present.
+        request_id: Option<String>,
     },
     /// The service refused a request with a machine-readable problem document.
     Api {
@@ -27,6 +29,8 @@ pub enum Error {
         code: String,
         /// Human-readable problem detail.
         message: String,
+        /// Usable `X-Request-Id` response value, when present.
+        request_id: Option<String>,
     },
     /// The request could not cross the HTTP boundary.
     Transport {
@@ -36,6 +40,11 @@ pub enum Error {
     /// The peer's response did not satisfy the CMA wire contract.
     Protocol {
         /// A description of the violated boundary rule.
+        message: String,
+    },
+    /// Response observation failed before retry or body handling.
+    Observer {
+        /// A description of the observer failure.
         message: String,
     },
 }
@@ -52,21 +61,29 @@ impl Error {
             message: message.into(),
         }
     }
+
+    pub(crate) fn observer(message: impl Into<String>) -> Self {
+        Self::Observer {
+            message: message.into(),
+        }
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CapabilityRefused { capability } => {
+            Self::CapabilityRefused { capability, .. } => {
                 write!(f, "session capability refused: {capability}")
             }
             Self::Api {
                 status,
                 code,
                 message,
+                ..
             } => write!(f, "CMA API error {status} ({code}): {message}"),
             Self::Transport { message } => write!(f, "CMA transport error: {message}"),
             Self::Protocol { message } => write!(f, "CMA protocol error: {message}"),
+            Self::Observer { message } => write!(f, "CMA response observer error: {message}"),
         }
     }
 }
@@ -82,14 +99,17 @@ mod tests {
         let errors = [
             Error::CapabilityRefused {
                 capability: "steer".into(),
+                request_id: Some("req-capability".into()),
             },
             Error::Api {
                 status: 409,
                 code: "invalid_state".into(),
                 message: "session is rotating".into(),
+                request_id: Some("req-api".into()),
             },
             Error::transport("connection closed"),
             Error::protocol("bad frame"),
+            Error::observer("sink unavailable"),
         ];
         for error in errors {
             assert!(!error.to_string().is_empty());

@@ -1,5 +1,11 @@
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
-import { headersFor, urlOf, type ResolvedConfig } from './config.js';
+import {
+  headersFor,
+  observeResponse,
+  resolveRequestId,
+  urlOf,
+  type ResolvedConfig,
+} from './config.js';
 import {
   ApiError,
   CmaError,
@@ -9,7 +15,12 @@ import {
   TransportError,
   ValidationError,
 } from './errors.js';
-import { errorFromResponse, type OperationOptions } from './http.js';
+import {
+  errorFromResponse,
+  raceWithAbortSignal,
+  throwIfSignalAborted,
+  type OperationOptions,
+} from './http.js';
 
 const MAX_EVENT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_INITIAL_BACKOFF_MS = 150;
@@ -114,6 +125,11 @@ async function* reconnectingEvents(
   options: StreamEventsOptions,
   policy: StreamPolicy,
 ): AsyncGenerator<SessionEvent> {
+  let requestId: Promise<string> | undefined;
+  const requestIdForOperation = () => {
+    requestId ??= resolveRequestId(config, options.requestId);
+    return requestId;
+  };
   let cursor = options.startingAfter ?? 0;
   let emptyConnections = 0;
   let failedAttempts = 0;
@@ -123,7 +139,7 @@ async function* reconnectingEvents(
     throwIfAborted(options.signal);
     let active: ActiveResponse;
     try {
-      active = await connect(config, sessionId, cursor, options);
+      active = await connect(config, sessionId, cursor, options, requestIdForOperation);
     } catch (cause) {
       if (!retryable(cause)) {
         throw cause;
@@ -139,7 +155,7 @@ async function* reconnectingEvents(
     let received = false;
     let disconnected = false;
     try {
-      for await (const frame of parseStream(active.response, sessionId, (retry) => {
+      for await (const frame of parseStream(active.response, active.signal, sessionId, (retry) => {
         serverRetryMs = retry;
       })) {
         if (frame.seq < cursor) {
@@ -185,6 +201,7 @@ async function* reconnectingEvents(
 
 interface ActiveResponse {
   readonly response: Response;
+  readonly signal: AbortSignal;
   close(): void;
 }
 
@@ -193,11 +210,13 @@ async function connect(
   sessionId: string,
   cursor: number,
   options: OperationOptions,
+  requestId: () => Promise<string>,
 ): Promise<ActiveResponse> {
   const timeoutMs = options.timeoutMs ?? config.requestTimeoutMs;
   if (!positiveInteger(timeoutMs)) {
     throw new ValidationError('timeoutMs must be a positive safe integer');
   }
+  throwIfAborted(options.signal);
   const controller = new AbortController();
   let timedOut = false;
   const onAbort = () => controller.abort(options.signal?.reason);
@@ -209,37 +228,52 @@ async function connect(
   const query = cursor === 0 ? '' : `?after=${String(cursor)}`;
 
   try {
-    const response = await config.fetch(
-      urlOf(config, `/api/v1/sessions/${encodeURIComponent(sessionId)}/events${query}`),
-      {
-        method: 'GET',
-        headers: await headersFor(config, {
+    const response = await raceWithAbortSignal(controller.signal, async () => {
+      const operationRequestId = await requestId();
+      throwIfSignalAborted(controller.signal);
+      const headers = await headersFor(
+        config,
+        {
           Accept: 'text/event-stream',
           ...(cursor === 0 ? {} : { 'Last-Event-ID': String(cursor) }),
-        }),
-        credentials: config.cookies ? 'include' : 'omit',
-        redirect: 'error',
-        signal: controller.signal,
-      },
-    );
-    if (!response.ok) {
-      throw await errorFromResponse(response);
-    }
-    if (response.status !== 200) {
-      throw new ProtocolError(
-        `event stream expected HTTP 200 but received ${String(response.status)}`,
+        },
+        { requestId: operationRequestId },
       );
-    }
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.split(';', 1)[0]?.trim().toLowerCase() !== 'text/event-stream') {
-      throw new ProtocolError(`event stream returned content type '${contentType}'`);
-    }
-    if (response.body === null) {
-      throw new ProtocolError('event stream response carried no body');
-    }
+      throwIfSignalAborted(controller.signal);
+      const received = await config.fetch(
+        urlOf(config, `/api/v1/sessions/${encodeURIComponent(sessionId)}/events${query}`),
+        {
+          method: 'GET',
+          headers,
+          credentials: config.cookies ? 'include' : 'omit',
+          redirect: 'error',
+          signal: controller.signal,
+        },
+      );
+      throwIfSignalAborted(controller.signal);
+      const metadata = await observeResponse(config, received);
+      throwIfSignalAborted(controller.signal);
+      if (!received.ok) {
+        throw await errorFromResponse(received, controller.signal, metadata.requestId);
+      }
+      if (received.status !== 200) {
+        throw new ProtocolError(
+          `event stream expected HTTP 200 but received ${String(received.status)}`,
+        );
+      }
+      const contentType = received.headers.get('content-type') ?? '';
+      if (contentType.split(';', 1)[0]?.trim().toLowerCase() !== 'text/event-stream') {
+        throw new ProtocolError(`event stream returned content type '${contentType}'`);
+      }
+      if (received.body === null) {
+        throw new ProtocolError('event stream response carried no body');
+      }
+      return received;
+    });
     clearTimeout(timer);
     return {
       response,
+      signal: controller.signal,
       close: () => {
         options.signal?.removeEventListener('abort', onAbort);
         controller.abort();
@@ -249,14 +283,14 @@ async function connect(
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', onAbort);
     controller.abort();
-    if (cause instanceof CmaError) {
-      throw cause;
-    }
     if (options.signal?.aborted === true) {
       throw new RequestAborted(undefined, { cause });
     }
     if (timedOut) {
       throw new TimeoutError(timeoutMs, { cause });
+    }
+    if (cause instanceof CmaError) {
+      throw cause;
     }
     throw new TransportError(`cannot open the event stream: ${messageOf(cause)}`, { cause });
   }
@@ -264,6 +298,7 @@ async function connect(
 
 async function* parseStream(
   response: Response,
+  signal: AbortSignal,
   sessionId: string,
   onRetry: (milliseconds: number) => void,
 ): AsyncGenerator<SessionEvent> {
@@ -296,7 +331,7 @@ async function* parseStream(
   const reader = body.getReader();
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await raceWithAbortSignal(signal, () => reader.read());
       if (done) {
         break;
       }
@@ -325,6 +360,9 @@ async function* parseStream(
       yield pending.shift() as SessionEvent;
     }
   } finally {
+    if (signal.aborted) {
+      await reader.cancel(signal.reason).catch(() => undefined);
+    }
     reader.releaseLock();
   }
 }
