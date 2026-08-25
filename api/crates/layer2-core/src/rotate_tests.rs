@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use layer3_adapter::ConversationInput;
+use layer3_adapter::{ConversationInput, TerminalInput};
 use tokio::sync::Notify;
 
 use crate::commit_fault_support::CommitFaultStore;
@@ -833,8 +833,14 @@ async fn a_session_moves_between_planes_and_stays_the_same_session() {
 async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
     let store = Arc::new(RotationStore::default());
     let adapter = switch_capable();
-    let (svc, alice, created, _) = started_adversarial(Arc::clone(&store), adapter).await;
-    let (outgoing_input, mut outgoing_runtime) = tokio::sync::mpsc::channel(8);
+    let (svc, alice, created, _) =
+        started_adversarial(Arc::clone(&store), Arc::clone(&adapter)).await;
+    let input_gate = svc.input_gates.gate(&created.id);
+    let (outgoing_input, mut outgoing_runtime) = tokio::sync::mpsc::channel(1);
+    outgoing_input
+        .send(TerminalInput::Signal("already queued".into()))
+        .await
+        .expect("outgoing runtime remains open");
     svc.entries
         .write()
         .await
@@ -842,10 +848,28 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
         .expect("outgoing entry is live")
         .input = Some(outgoing_input);
 
-    // The first write records Rotating and updates the live entry. Hold the
-    // second write so the old runtime and its input channel remain present for
-    // the whole assertion window.
-    store.arm_on_call(2);
+    // Let one operation pass its Ready check and clone the outgoing sender,
+    // then hold it inside delivery by keeping the channel full.
+    let crossing = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.send_input(&alice, &id, b"accepted before rotation".to_vec())
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while outgoing_runtime.sender_strong_count() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the accepted input waits inside the outgoing send");
+
+    // Rotation may rehearse while accepted input is in flight, but it must not
+    // publish Rotating until that input has reached the outgoing runtime.
+    store.arm_on_call(1);
     let moving = tokio::spawn({
         let svc = Arc::clone(&svc);
         let alice = alice.clone();
@@ -855,6 +879,57 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
                 .await
         }
     });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while adapter.snapshot_calls.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("rotation rehearses the handover");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            assert_eq!(
+                store.calls.load(Ordering::SeqCst),
+                0,
+                "rotation must wait for accepted input before publishing Rotating"
+            );
+            if input_gate.try_read().is_err() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("rotation queues behind the accepted input");
+
+    assert!(matches!(
+        outgoing_runtime.recv().await,
+        Some(TerminalInput::Signal(signal)) if signal == "already queued"
+    ));
+    crossing
+        .await
+        .expect("input task completes")
+        .expect("input accepted before rotation is delivered");
+    assert!(matches!(
+        outgoing_runtime.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == b"accepted before rotation"
+    ));
+
+    // The first write is paused before Rotating is durable, so the live entry
+    // must still be Ready even though rotation has won the input fence.
+    store.wait_until_held().await;
+    assert_eq!(
+        svc.get_session(&alice, &created.id)
+            .await
+            .expect("session remains readable before publication")
+            .status,
+        SessionStatus::Ready
+    );
+
+    // Hold the second write after Rotating has been published but before the
+    // old runtime and channel are removed. Nothing new may cross this window.
+    store.arm_on_call(2);
+    store.release.notify_one();
     store.wait_until_held().await;
     assert_eq!(
         svc.get_session(&alice, &created.id)
@@ -864,9 +939,9 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
         SessionStatus::Rotating
     );
 
+    let refused = b"must not arrive".to_vec();
     assert_eq!(
-        svc.send_input(&alice, &created.id, b"must not arrive".to_vec())
-            .await,
+        svc.send_input(&alice, &created.id, refused.clone()).await,
         Err(crate::error::CoreError::SessionRotating)
     );
     assert_eq!(
@@ -891,9 +966,21 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
         .await
         .expect("session can return to its terminal plane");
     await_usable(&svc, &alice, &created.id).await;
-    svc.send_input(&alice, &created.id, b"arrives after handover".to_vec())
+
+    let (replacement_input, mut replacement_runtime) = tokio::sync::mpsc::channel(1);
+    svc.entries
+        .write()
         .await
-        .expect("the same input succeeds after rotation");
+        .get_mut(&created.id)
+        .expect("replacement entry is live")
+        .input = Some(replacement_input);
+    svc.send_input(&alice, &created.id, refused.clone())
+        .await
+        .expect("the refused input succeeds after rotation");
+    assert!(matches!(
+        replacement_runtime.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == refused
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

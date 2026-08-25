@@ -181,12 +181,38 @@ impl SessionGates {
     }
 }
 
+/// Per-session boundary between accepted input and a rotation transition.
+///
+/// Input holds a read lease from its final state check through delivery. A
+/// rotation holds the write lease while publishing `Rotating` durably and in
+/// the live entry, so an operation accepted against the old runtime finishes
+/// before the handover window opens and no later operation can cross into it.
+#[derive(Default)]
+pub(crate) struct SessionInputGates {
+    held: StdMutex<HashMap<SessionId, Weak<RwLock<()>>>>,
+}
+
+impl SessionInputGates {
+    pub(crate) fn gate(&self, id: &SessionId) -> Arc<RwLock<()>> {
+        let mut held = self.held.lock().unwrap_or_else(|error| error.into_inner());
+        held.retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = held.get(id).and_then(Weak::upgrade) {
+            return gate;
+        }
+        let gate = Arc::new(RwLock::new(()));
+        held.insert(id.clone(), Arc::downgrade(&gate));
+        gate
+    }
+}
+
 /// The core service.
 pub struct SessionService {
     /// Live sessions, keyed by id. Only those with a running runtime appear.
     pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
     /// Serializes lifecycle decisions and installation for one session only.
     pub(crate) lifecycle_gates: SessionGates,
+    /// Fences runtime input delivery against the transition into rotation.
+    pub(crate) input_gates: SessionInputGates,
     /// The single writer of every session's event sequence.
     ///
     /// Owned by the durable lanes, so allocation and FIFO insertion share the

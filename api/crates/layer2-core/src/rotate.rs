@@ -252,10 +252,14 @@ impl SessionService {
             }
         };
 
-        // Announced now. Everything after this point is a handover the owner
-        // must not be typing into, and the interface cannot know to stop
-        // accepting input until it has been told.
-        let Some(rotating) = self.mark_rotating(&record, &change).await else {
+        // Announced now. The write lease waits for every operation already
+        // accepted against the old runtime to finish delivery, then prevents a
+        // later operation from passing its state check until both the durable
+        // and live views say `Rotating`.
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+        let marked = self.mark_rotating(&record, &change).await;
+        drop(input_fence);
+        let Some(rotating) = marked else {
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
                 "this session's handover could not be recorded, so it has not been moved".into(),

@@ -210,6 +210,7 @@ impl SessionService {
             self.supply_credential(id, &caller.subject).await;
         }
 
+        let input_fence = self.input_gates.gate(id).read_owned().await;
         let commit = {
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
@@ -316,6 +317,7 @@ impl SessionService {
                             tracing::warn!(session_id = %session_id, "runtime input channel closed");
                         }
                     }
+                    drop(input_fence);
 
                     let still_installed = service
                         .entries
