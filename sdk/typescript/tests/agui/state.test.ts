@@ -177,6 +177,7 @@ describe('the public AG-UI state fold', () => {
   it.each([
     { patches: [{ op: 'copy', from: '/constructor', path: '/extension' }] },
     { patches: [{ op: 'move', from: '/toString', path: '/extension' }] },
+    { patches: [{ op: 'copy', from: '/__proto__', path: '/extension' }] },
     { patches: [{ op: 'replace', path: '/toString', value: 'not inherited' }] },
     { patches: [{ op: 'remove', path: '/hasOwnProperty' }] },
     { patches: [{ op: 'test', path: '/constructor', value: {} }] },
@@ -268,19 +269,18 @@ describe('the public AG-UI state fold', () => {
     expect(() => applyStateDelta(cyclicState, [])).toThrow(ProtocolError);
   });
 
-  it.each([
-    { patches: [{ op: 'add', path: '/__proto__', value: { polluted: true } }] },
-    { patches: [{ op: 'add', path: '/extension/__proto__/polluted', value: true }] },
-    { patches: [{ op: 'copy', from: '/__proto__', path: '/extension' }] },
-    { patches: [{ op: 'move', from: '/__proto__/polluted', path: '/extension' }] },
-  ] satisfies readonly { readonly patches: readonly JsonPatch[] }[])(
-    'keeps source and target prototype pointer %# forbidden',
-    ({ patches }) => {
-      expect(() => applyStateDelta(initialState(), patches)).toThrow(ProtocolError);
-    },
-  );
+  it('treats __proto__ as an own JSON member without modifying either prototype', () => {
+    const next = applyStateDelta(initialState(), [
+      { op: 'add', path: '/__proto__', value: { polluted: 'own member' } },
+      { op: 'copy', from: '/__proto__/polluted', path: '/extension' },
+      { op: 'add', path: '/nested', value: {} },
+      { op: 'move', from: '/extension', path: '/nested/__proto__' },
+    ]);
 
-  it('does not modify the object prototype after rejected patches', () => {
+    expect(Object.prototype.hasOwnProperty.call(next, '__proto__')).toBe(true);
+    expect(Object.getPrototypeOf(next)).toBe(Object.prototype);
+    expect(next.__proto__).toEqual({ polluted: 'own member' });
+    expect(next.nested).toEqual(JSON.parse('{"__proto__":"own member"}'));
     expect(Object.prototype).not.toHaveProperty('polluted');
   });
 });
