@@ -55,8 +55,12 @@ pub(super) struct RunRequest {
     #[serde(rename = "threadId")]
     thread_id: String,
     /// The client's identifier for this turn, echoed on every event.
-    #[serde(rename = "runId")]
-    run_id: String,
+    ///
+    /// AG-UI permits it to be absent or null. In either case this service
+    /// mints one so the response carries a non-empty run identifier a client
+    /// can use.
+    #[serde(rename = "runId", default)]
+    run_id: Option<String>,
     /// The conversation. The last user message is this turn's input.
     #[serde(default)]
     messages: Vec<RunMessage>,
@@ -94,6 +98,11 @@ struct ResumePayload {
     decision: Option<String>,
 }
 
+/// A run identifier for a request that did not supply one.
+fn generated_run_id() -> String {
+    format!("run_{}", uuid::Uuid::new_v4().simple())
+}
+
 /// What a new thread is created with.
 ///
 /// Ignored on an existing one, because these are frozen at creation: changing
@@ -120,6 +129,17 @@ pub(super) async fn run(
     credential: Option<axum::Extension<DelegatedCredential>>,
     Json(body): Json<RunRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, std::convert::Infallible>>>, Problem> {
+    if body
+        .run_id
+        .as_ref()
+        .is_some_and(|run_id| run_id.trim().is_empty())
+    {
+        return Err(CoreError::InvalidRequest(
+            "runId must contain a non-whitespace character".into(),
+        )
+        .into());
+    }
+
     let requested = SessionId(body.thread_id.clone());
     let session = match service.get_session(&caller, &requested).await {
         Ok(session) => session,
@@ -167,6 +187,21 @@ pub(super) async fn run(
     // the prompt, the cursor, the events — belongs to the session that exists,
     // and the events carry its id so a client learns what its thread is called.
     let id = session.id.clone();
+    let run_id = match body.run_id.as_ref() {
+        Some(run_id) if run_id == &id.0 => {
+            return Err(CoreError::InvalidRequest(
+                "runId must differ from the effective threadId".into(),
+            )
+            .into());
+        }
+        Some(run_id) => run_id.clone(),
+        None => loop {
+            let generated = generated_run_id();
+            if generated != id.0 {
+                break generated;
+            }
+        },
+    };
 
     // Refused before anything is sent. A terminal session has no conversation
     // to run, and a stream that opened and then said nothing would look like
@@ -215,13 +250,7 @@ pub(super) async fn run(
     let resources = service.subscribe_resources(&caller, &id).await.ok();
 
     Ok(Sse::new(events(
-        service,
-        caller,
-        id,
-        body.run_id,
-        from,
-        watching,
-        resources,
+        service, caller, id, run_id, from, watching, resources,
     ))
     .keep_alive(KeepAlive::default()))
 }
