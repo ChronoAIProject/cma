@@ -761,6 +761,7 @@ impl KernelAdapter for TestKernel {
 struct TestSurface {
     app: Router,
     sessions: Arc<SessionService>,
+    tickets: Arc<TerminalTickets>,
     kernel: Arc<TestKernel>,
     store: Arc<MemorySessions>,
     profiles: Arc<MemoryProfiles>,
@@ -824,10 +825,11 @@ fn test_surface(authenticated: bool) -> TestSurface {
             Capability::ConfigurePlatform,
         ]),
     );
+    let tickets = TerminalTickets::in_memory();
     let public_state = layer1_public::rest::SessionsState {
         sessions: Arc::clone(&sessions),
         users: Arc::clone(&users),
-        tickets: TerminalTickets::in_memory(),
+        tickets: Arc::clone(&tickets),
         environments: Arc::clone(&environments),
     };
     let rest = rest_api_router(
@@ -858,6 +860,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     TestSurface {
         app,
         sessions,
+        tickets,
         kernel,
         store,
         profiles,
@@ -1054,6 +1057,9 @@ async fn create_ready_conversation_session(
     wait_until_ready(sessions, caller, &session.id).await;
     session.id
 }
+
+#[path = "agui_auth_contract_tests.rs"]
+mod agui_auth_contract_tests;
 
 async fn next_agui_frame(body: &mut BodyDataStream) -> serde_json::Value {
     loop {
@@ -1835,24 +1841,34 @@ async fn unlisted_origin_receives_no_cors_grant() {
         test_surface(true).app,
         vec![HeaderValue::from_static(LISTED_ORIGIN)],
     );
-    let response = app
-        .oneshot(preflight_request(
-            "/api/v1/sessions",
-            UNLISTED_ORIGIN,
-            Method::POST,
-            Some("authorization"),
-        ))
-        .await
-        .expect("router answers");
+    for (path, method, requested_headers) in [
+        ("/api/v1/sessions", Method::POST, "authorization"),
+        (
+            "/api/v1/agui/events?thread_id=sesn_cross_origin",
+            Method::GET,
+            "authorization,last-event-id",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(preflight_request(
+                path,
+                UNLISTED_ORIGIN,
+                method,
+                Some(requested_headers),
+            ))
+            .await
+            .expect("router answers");
 
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(
-        response
-            .headers()
-            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
-            .is_none(),
-        "an unlisted origin must not receive a browser grant"
-    );
+        assert_eq!(response.status(), StatusCode::OK, "for {path}");
+        assert!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none(),
+            "an unlisted origin must not receive a browser grant for {path}"
+        );
+    }
 }
 
 #[tokio::test]
