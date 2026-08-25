@@ -35,7 +35,7 @@ use crate::event::{Event, EventKind};
 use crate::ids::KernelId;
 use crate::service::SessionService;
 use crate::session::{RecoveryState, RuntimeLossCause, SessionSpec, SessionStatus};
-use crate::store::SessionRecord;
+use crate::store::{SessionRecord, StoreError};
 
 /// What a sweep did, for logging and for tests.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -280,7 +280,16 @@ impl SessionService {
                     .and_then(|view| view.stopped_because.get(&runtime))
                     .copied()
                     .map(RuntimeLossCause::from);
-                self.record_runtime_lost(&mut record, &runtime, cause).await;
+                if let Err(error) = self.record_runtime_lost(&mut record, &runtime, cause).await {
+                    tracing::error!(
+                        session_id = %id,
+                        runtime = %runtime,
+                        %error,
+                        "cannot record that this session's runtime is gone; deferring replacement"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
                 reclaimed.lost_runtimes += 1;
             }
         }
@@ -379,6 +388,28 @@ impl SessionService {
                     tracing::warn!(session_id = %id, error = %e, "cannot take over the runtime");
                 }
             }
+
+            // Readoption performs network work and can lose a race with a stop,
+            // termination, deletion, or replacement runtime. Never reprovision
+            // from the old sweep snapshot after that: reread the desired state
+            // and defer if it now names a different runtime.
+            let latest = match self.store.get(&id).await {
+                Ok(Some(latest)) if latest.session.status.wants_runtime() => latest,
+                Ok(_) => return,
+                Err(error) => {
+                    tracing::warn!(session_id = %id, %error, "cannot recheck the session after readoption failed");
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            if latest.runtime_id != record.runtime_id
+                || latest.session.kernel != record.session.kernel
+            {
+                tracing::debug!(session_id = %id, "the session changed while readoption was in flight; leaving its new state for the next pass");
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+            record = latest;
         }
 
         self.reprovision(record, reclaimed).await;
@@ -397,28 +428,17 @@ impl SessionService {
         record: &mut SessionRecord,
         runtime: &str,
         cause: Option<RuntimeLossCause>,
-    ) {
+    ) -> Result<(), StoreError> {
         let id = record.session.id.clone();
-        let seq = self.sequences.take(&id, record.session.last_seq, 1);
         let previous = record.runtime_id.take();
         let previous_state = record.session.recovery_state;
-        record.session.last_seq = seq;
         record.session.recovery_state = RecoveryState::Recovering;
-        if let Err(e) = self.store.upsert(record).await {
-            // Nothing was recorded, so nothing is claimed. Put the local copy
-            // back and let a later sweep establish the loss again.
-            record.runtime_id = previous;
-            record.session.recovery_state = previous_state;
-            tracing::error!(session_id = %id, runtime = %runtime, error = %e,
-                "cannot record that this session's runtime is gone");
-            return;
-        }
         if let Err(e) = self
-            .append_durably(
-                &id,
+            .persist_durably(
+                record,
                 vec![Event {
                     session_id: id.clone(),
-                    seq,
+                    seq: 0,
                     kind: EventKind::RuntimeLost {
                         runtime_id: runtime.to_string(),
                         cause,
@@ -428,11 +448,17 @@ impl SessionService {
             )
             .await
         {
-            tracing::error!(session_id = %id, error = %e,
-                "the runtime is gone and the log does not say so");
+            // Nothing was recorded, so nothing is claimed. Put the local copy
+            // back and let a later sweep establish the loss again.
+            record.runtime_id = previous;
+            record.session.recovery_state = previous_state;
+            tracing::error!(session_id = %id, runtime = %runtime, error = %e,
+                "cannot record that this session's runtime is gone");
+            return Err(e);
         }
         tracing::warn!(session_id = %id, runtime = %runtime, ?cause,
             "this session's runtime is gone");
+        Ok(())
     }
 
     /// Start a new runtime for a session that should have one.
@@ -457,7 +483,7 @@ impl SessionService {
             starting.session.status = SessionStatus::Provisioning;
         }
         starting.session.stop_reason = None;
-        if let Err(e) = self.store.upsert(&starting).await {
+        if let Err(e) = self.persist_durably(&mut starting, Vec::new()).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the restart");
             self.finish_start(&id).await;
             return;

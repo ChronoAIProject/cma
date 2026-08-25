@@ -11,11 +11,11 @@
 
 use std::sync::Arc;
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 
 use crate::ids::SessionId;
 use crate::service::SessionService;
-use crate::terminal::TerminalGeometry;
+use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// Why an attachment was taken away from whoever held it.
 ///
@@ -54,6 +54,14 @@ pub struct AttachmentHandle {
     /// drops its handle after its replacement is already live, and a release
     /// that did not check would detach the new client instead of the old one.
     pub(crate) generation: u64,
+    /// Identity of the live entry this lease was installed into.
+    ///
+    /// A delayed drop must not clear an attachment on a replacement entry that
+    /// happens to restart its generation counter at the same value.
+    pub(crate) entry_screen: Arc<Mutex<Box<dyn ScreenModel>>>,
+    /// Cancellation cleanup durably detaches explicitly, so it disarms the
+    /// ordinary asynchronous release before dropping an undeliverable handle.
+    pub(crate) release_on_drop: bool,
     /// Live terminal output for as long as the attachment is held.
     pub output: broadcast::Receiver<Vec<u8>>,
     /// Fires once when this attachment has been taken away, saying why.
@@ -76,13 +84,19 @@ pub struct AttachmentHandle {
 
 impl Drop for AttachmentHandle {
     fn drop(&mut self) {
+        if !self.release_on_drop {
+            return;
+        }
         let service = Arc::clone(&self.service);
         let id = self.session_id.clone();
         let generation = self.generation;
+        let entry_screen = Arc::clone(&self.entry_screen);
         // Release synchronously where possible; the lock is never held across
         // an await inside the service, so a blocking release cannot deadlock.
         tokio::spawn(async move {
-            service.release_attachment(&id, generation).await;
+            service
+                .release_attachment_from(&id, generation, &entry_screen)
+                .await;
         });
     }
 }

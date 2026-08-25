@@ -381,18 +381,12 @@ impl SessionService {
             );
             return;
         };
-        let seq = self.sequences.take(id, record.session.last_seq, 1);
-        record.session.last_seq = seq;
-        if let Err(e) = self.store.upsert(&record).await {
-            tracing::error!(session_id = %id, error = %e, "cannot advance the log position");
-            return;
-        }
         if let Err(e) = self
-            .append_durably(
-                id,
+            .persist_durably(
+                &mut record,
                 vec![Event {
                     session_id: id.clone(),
-                    seq,
+                    seq: 0,
                     kind,
                     appended_at: String::new(),
                 }],

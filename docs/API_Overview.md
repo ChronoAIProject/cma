@@ -122,7 +122,7 @@ Every terminal or paused state carries one: `end_turn`, `user_terminated`, `idle
 
 The event log is the single source of truth and the reason every interface can be a lossless projection.
 
-- **Append-only**, with a **monotonic `seq` per session**. Not a global sequence.
+- **Append-only**, with a **monotonic `seq` per session**. Not a global sequence. Per session, new events are committed and become readable in strictly increasing, contiguous `seq` order. A state-changing batch becomes durable atomically with its session record; retrying an uncertain result exposes neither a partial batch nor a repeated semantic event. A position already advertised by a deployment predating atomic commits remains reserved if its event was lost, so an upgrade never reuses a cursor a client may already hold.
 - Resumable: `?starting_after=<seq>` replays from a cursor. One integer of server state; no `Last-Event-ID` plumbing.
 - **Durable events are semantic.** The complete set, which is what `EventKind` holds and nothing more:
 

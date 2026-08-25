@@ -20,6 +20,7 @@ use crate::ids::SessionId;
 use crate::provision::PROVISION_ATTEMPTS;
 use crate::service::SessionService;
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
+use crate::store::StoreError;
 use crate::terminal::TerminalGeometry;
 
 const AT_CAPACITY_REASON: &str = "This deployment has no room for a session this size right now. Nothing is wrong with your session or your request — stop a session, or ask for a smaller one, and try again.";
@@ -165,7 +166,11 @@ impl SessionService {
                         reason = %failure.reason,
                         "this session cannot be started at all; not retrying"
                     );
-                    self.discard_runtime(&session.id, adapter).await;
+                    if let Err(error) = self.discard_runtime(&session.id, adapter).await {
+                        return Err(StartFailure::transient(format!(
+                            "the failed runtime could not be discarded safely: {error}"
+                        )));
+                    }
                     return Err(failure);
                 }
                 Err(failure) => {
@@ -176,7 +181,11 @@ impl SessionService {
                         reason = %failure.reason,
                         "could not start the runtime; trying again"
                     );
-                    self.discard_runtime(&session.id, adapter).await;
+                    if let Err(error) = self.discard_runtime(&session.id, adapter).await {
+                        return Err(StartFailure::transient(format!(
+                            "the failed runtime could not be discarded safely: {error}"
+                        )));
+                    }
                     last = failure;
                 }
             }
@@ -201,20 +210,24 @@ impl SessionService {
     /// Without this each retry strands the runtime the previous one created,
     /// which is how a session that eventually succeeds still costs several
     /// sandboxes.
-    async fn discard_runtime(&self, id: &SessionId, adapter: &Arc<dyn KernelAdapter>) {
-        let Ok(Some(mut record)) = self.store.get(id).await else {
-            return;
+    pub(crate) async fn discard_runtime(
+        &self,
+        id: &SessionId,
+        adapter: &Arc<dyn KernelAdapter>,
+    ) -> Result<(), StoreError> {
+        let Some(mut record) = self.store.get(id).await? else {
+            return Ok(());
         };
-        let Some(handle) = record.runtime_id.take().map(RuntimeHandle) else {
-            return;
+        let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
+            return Ok(());
         };
+        record.runtime_id = None;
+        self.persist_durably(&mut record, Vec::new()).await?;
+        self.entries.write().await.remove(id);
         if let Err(e) = adapter.terminate(&handle).await {
             tracing::warn!(session_id = %id, error = %e, "could not discard a failed runtime");
         }
-        if let Err(e) = self.store.upsert(&record).await {
-            tracing::error!(session_id = %id, error = %e, "cannot clear the discarded runtime");
-        }
-        self.entries.write().await.remove(id);
+        Ok(())
     }
 
     /// Give up on a session, saying why, and take any runtime down with it.
@@ -228,7 +241,7 @@ impl SessionService {
         adapter: &Arc<dyn KernelAdapter>,
         failure: &StartFailure,
         outcome: Abandonment,
-    ) {
+    ) -> Result<(), StoreError> {
         let reason = failure.reason.as_str();
         // A session that already existed survives this. Its runtime could not
         // be replaced, which is a fact about a provider at a moment, and
@@ -266,54 +279,45 @@ impl SessionService {
             true => (SessionStatus::Idle, StopReason::Error, RecoveryState::Idle),
         };
 
-        let runtime = match self.store.get(id).await {
-            Ok(Some(mut record)) => {
+        let runtime = match self.store.get(id).await? {
+            Some(mut record) => {
                 let handle = record.runtime_id.take().map(RuntimeHandle);
                 record.session.status = status;
                 record.session.stop_reason = Some(stop_reason);
                 record.session.recovery_state = recovery;
-                let seq = self.sequences.take(id, record.session.last_seq, 1);
-                record.session.last_seq = seq;
                 let session_id = record.session.id.clone();
-                if let Err(e) = self.store.upsert(&record).await {
-                    tracing::error!(session_id = %id, error = %e, "cannot record the failure");
-                }
-                if let Err(e) = self
-                    .append_durably(
-                        id,
-                        vec![crate::event::Event {
-                            session_id,
-                            seq,
-                            kind: EventKind::StatusChanged {
-                                status,
-                                stop_reason: Some(stop_reason),
-                                // The reason travels with the event so the person
-                                // watching learns what the log already knew —
-                                // and, where the session survives, that it
-                                // survived, because a stop reason of `error`
-                                // otherwise reads as the end of it.
-                                detail: Some(match keep {
-                                    false => reason.to_string(),
-                                    true => format!(
-                                        "{reason}. This session was not lost: it is                                          resting and will be tried again."
-                                    ),
-                                }),
-                                // Named where there is a name. This is the
-                                // whole point of carrying it this far: a
-                                // client can say *which* ability the session
-                                // lacked rather than "something went wrong".
-                                capability: failure.capability.clone(),
-                            },
-                            appended_at: String::new(),
-                        }],
-                    )
-                    .await
-                {
-                    tracing::error!(session_id = %id, error = %e, "cannot record the failure event");
-                }
+                self.persist_durably(
+                    &mut record,
+                    vec![crate::event::Event {
+                        session_id,
+                        seq: 0,
+                        kind: EventKind::StatusChanged {
+                            status,
+                            stop_reason: Some(stop_reason),
+                            // The reason travels with the event so the person
+                            // watching learns what the log already knew —
+                            // and, where the session survives, that it
+                            // survived, because a stop reason of `error`
+                            // otherwise reads as the end of it.
+                            detail: Some(match keep {
+                                false => reason.to_string(),
+                                true => format!(
+                                    "{reason}. This session was not lost: it is                                          resting and will be tried again."
+                                ),
+                            }),
+                            // Named where there is a name. This is the
+                            // whole point of carrying it this far: a
+                            // client can say *which* ability the session
+                            // lacked rather than "something went wrong".
+                            capability: failure.capability.clone(),
+                        },
+                        appended_at: String::new(),
+                    }],
+                )
+                .await?;
                 handle
             }
-            _ => None,
+            None => None,
         };
 
         self.entries.write().await.remove(id);
@@ -326,5 +330,6 @@ impl SessionService {
                 tracing::warn!(session_id = %id, error = %e, "could not tear down the runtime");
             }
         }
+        Ok(())
     }
 }

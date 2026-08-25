@@ -5,16 +5,50 @@
 //! person out of their own session when the client holding it has died in a
 //! way nothing has noticed yet.
 
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll, Wake, Waker};
 
 use layer3_adapter::TerminalOutput;
 
 use crate::attach::AttachmentClaim;
+use crate::commit_fault_support::CommitFaultStore;
 use crate::error::CoreError;
+use crate::event::{Event, EventKind};
+use crate::store::SessionStore;
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{
-    await_settled, service, service_on_version, spec, user, write_screen, FakeAdapter, FakeStore,
+    await_settled, service, service_on_version, service_over, spec, user, write_screen,
+    FakeAdapter, FakeStore,
 };
+
+struct WakeFlag(AtomicBool);
+
+impl Wake for WakeFlag {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+fn is_terminal_attachment(_record: &crate::store::SessionRecord, events: &[Event]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event.kind, EventKind::TerminalAttached))
+}
+
+fn is_terminal_attachment_change(_record: &crate::store::SessionRecord, events: &[Event]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event.kind,
+            EventKind::TerminalAttached | EventKind::TerminalDetached
+        )
+    })
+}
 
 /// A service with one running session, and its owner.
 async fn attached_session() -> (
@@ -119,18 +153,293 @@ async fn the_live_grant_is_rechecked_before_the_attachment_is_mutated() {
         Some(CoreError::CapabilityUnsupported("terminal".into()))
     );
 
-    let entries = svc.entries.read().await;
-    let entry = entries.get(&id).expect("session remains live");
-    assert_eq!(entry.session.geometry, TerminalGeometry::default());
-    assert!(entry.attached.is_none());
-    assert_eq!(entry.attachments_issued, 0);
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&id).expect("session remains live");
+        assert_eq!(entry.session.geometry, TerminalGeometry::default());
+        assert!(entry.attached.is_none());
+        assert_eq!(entry.attachments_issued, 0);
+    }
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
     assert!(
-        entry
-            .events
+        events
             .iter()
             .all(|event| !matches!(event.kind, crate::event::EventKind::TerminalAttached)),
         "the repeated gate must run before attachment state or events change"
     );
+}
+
+#[tokio::test]
+async fn a_conflicted_attachment_has_no_live_or_runtime_side_effects() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment,
+    ));
+    let svc = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let alice = user("attachment-conflict-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before_screen = svc
+        .screen_snapshot(&alice, &created.id)
+        .await
+        .expect("screen is readable");
+    let requested = TerminalGeometry::new(117, 39).expect("valid requested geometry");
+    let rival_geometry = TerminalGeometry::new(119, 41).expect("valid rival geometry");
+
+    store.pause_next();
+    let attach = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(&alice, &id, requested, AttachmentClaim::Exclusive)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+    let mut rival = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("rival reads the record");
+    rival.session.geometry = rival_geometry;
+    inner
+        .commit_session_idempotent("rival-terminal-attachment", &rival, &[])
+        .await
+        .expect("the rival geometry commits first");
+    store.release();
+
+    let error = attach
+        .await
+        .expect("attachment task completes")
+        .err()
+        .expect("the conflicted attachment is refused");
+    assert!(matches!(error, CoreError::RuntimeUnavailable(_)));
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("session remains live");
+        assert_eq!(entry.session.geometry, before_screen.geometry);
+        assert!(entry.attached.is_none());
+        assert_eq!(entry.attachments_issued, 0);
+        assert_eq!(
+            entry
+                .live
+                .as_ref()
+                .expect("runtime output is live")
+                .receiver_count(),
+            0,
+            "a refused attachment publishes no output subscriber"
+        );
+    }
+    assert_eq!(
+        svc.screen_snapshot(&alice, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        before_screen.geometry,
+        "the screen is resized only after the attachment is durable"
+    );
+    assert_eq!(
+        inner
+            .get(&created.id)
+            .await
+            .unwrap()
+            .expect("record remains present")
+            .session
+            .geometry,
+        rival_geometry
+    );
+    assert!(
+        svc.events_since(&alice, &created.id, None)
+            .await
+            .expect("history is readable")
+            .iter()
+            .all(|event| !matches!(event.kind, EventKind::TerminalAttached)),
+        "a refused attachment has no durable event"
+    );
+}
+
+#[tokio::test]
+async fn four_store_outages_leave_an_attachment_entirely_unpublished() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment,
+    ));
+    let svc = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let alice = user("attachment-outage-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_screen = svc
+        .screen_snapshot(&alice, &created.id)
+        .await
+        .expect("screen is readable");
+
+    store.fail_next(4);
+    let error = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::new(117, 39).expect("valid requested geometry"),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err()
+        .expect("the fourth unavailable response is reported");
+
+    assert!(matches!(error, CoreError::RuntimeUnavailable(_)));
+    assert_eq!(store.matched_calls(), 4);
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&created.id).expect("session remains live");
+    assert_eq!(entry.session.geometry, before.session.geometry);
+    assert!(entry.attached.is_none());
+    assert_eq!(entry.attachments_issued, 0);
+    drop(entries);
+    assert_eq!(
+        svc.screen_snapshot(&alice, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        before_screen.geometry
+    );
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.geometry, before.session.geometry);
+    assert_eq!(durable.session.last_seq, before.session.last_seq);
+    assert!(svc
+        .events_since(&alice, &created.id, None)
+        .await
+        .expect("history is readable")
+        .iter()
+        .all(|event| !matches!(event.kind, EventKind::TerminalAttached)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelling_after_attachment_install_retains_detach_when_the_entry_disappears() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment_change,
+    ));
+    let svc = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let alice = user("cancelled-attachment-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = inner.get(&created.id).await.unwrap().unwrap();
+    let lane = svc.event_logs.lane(&created.id);
+    let screen = {
+        let entries = svc.entries.read().await;
+        Arc::clone(&entries.get(&created.id).expect("live entry").screen)
+    };
+    let screen_guard = screen.lock().await;
+    let requested = TerminalGeometry::new(127, 49).expect("valid geometry");
+
+    store.pause_next();
+    let attach = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(&alice, &id, requested, AttachmentClaim::Exclusive)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+    // The next selected write is the compensating detach. Holding the screen
+    // keeps handle construction behind the live installation boundary.
+    store.pause_next();
+    store.release();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if svc
+                .entries
+                .read()
+                .await
+                .get(&created.id)
+                .and_then(|entry| entry.attached.as_ref())
+                .is_some()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the durable attachment is installed before handle construction");
+
+    let removed = svc
+        .entries
+        .write()
+        .await
+        .remove(&created.id)
+        .expect("reconciliation removes the original live entry");
+    assert_eq!(removed.attached.as_ref().map(|a| a.generation), Some(1));
+    drop(removed);
+    attach.abort();
+    let _ = attach.await;
+    drop(screen_guard);
+
+    store.wait_until_held().await;
+    let interim = inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap();
+    assert_eq!(interim.len(), 1);
+    assert!(matches!(
+        interim[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+    ));
+    store.fail_next(4);
+    store.release();
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let events = inner
+                .events_since(&created.id, before.session.last_seq)
+                .await
+                .unwrap();
+            if events.len() == 2 && lane.queued() == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the retained detach survives four temporary outages");
+
+    let events = inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap();
+    assert!(matches!(
+        events[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+    ));
+    assert!(matches!(
+        events[1].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+    ));
+    assert_eq!(store.matched_calls(), 6);
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+
+    let later = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("a later attachment can readopt and claim the terminal");
+    drop(later);
 }
 
 #[tokio::test]
@@ -281,6 +590,392 @@ async fn a_second_client_is_refused_while_one_holds_the_terminal() {
         .err(),
         Some(CoreError::AlreadyAttached)
     );
+}
+
+#[test]
+fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_runtime() {
+    let origin = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("origin runtime builds");
+    let (inner, svc, alice, created, before, attach) = origin.block_on(async {
+        let inner = Arc::new(FakeStore::default());
+        let svc = service(Arc::clone(&inner), Arc::new(FakeAdapter::default()));
+        let alice = user("outside-runtime-attachment-owner");
+        let created = svc.create_session(&alice, spec()).await.expect("created");
+        await_settled(&svc, &alice, &created.id).await;
+        let before = inner
+            .get(&created.id)
+            .await
+            .unwrap()
+            .expect("settled record exists");
+        let mut attach = Box::pin({
+            let svc = Arc::clone(&svc);
+            let alice = alice.clone();
+            let id = created.id.clone();
+            async move {
+                svc.attach_terminal(
+                    &alice,
+                    &id,
+                    TerminalGeometry::default(),
+                    AttachmentClaim::Exclusive,
+                )
+                .await
+            }
+        });
+        let woken = Arc::new(WakeFlag(AtomicBool::new(false)));
+        let waker = Waker::from(Arc::clone(&woken));
+        let mut context = Context::from_waker(&waker);
+        assert!(
+            matches!(attach.as_mut().poll(&mut context), Poll::Pending),
+            "the attachment waits for its durable commit"
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let installed = svc
+                    .entries
+                    .read()
+                    .await
+                    .get(&created.id)
+                    .is_some_and(|entry| entry.attached.is_some());
+                if installed && woken.0.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the successful attachment is buffered without being polled");
+        (inner, svc, alice, created, before, attach)
+    });
+
+    drop(origin);
+    assert!(
+        tokio::runtime::Handle::try_current().is_err(),
+        "the origin runtime is gone before the unread future is dropped"
+    );
+    drop(attach);
+
+    let replacement = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("replacement runtime builds");
+    replacement.block_on(async {
+        let later = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            svc.attach_terminal(
+                &alice,
+                &created.id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            ),
+        )
+        .await
+        .expect("the replacement runtime drains the abandoned attachment")
+        .expect("the next exclusive attachment is not permanently blocked");
+
+        let events = inner
+            .events_since(&created.id, before.session.last_seq)
+            .await
+            .expect("attachment events are readable");
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            events[0].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+        ));
+        assert!(matches!(
+            events[1].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+        ));
+        assert!(matches!(
+            events[2].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+        ));
+        drop(later);
+    });
+}
+
+#[tokio::test]
+async fn a_waiting_attach_takes_over_when_the_active_cleanup_drain_is_cancelled() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment_change,
+    ));
+    let svc = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let alice = user("cleanup-drain-takeover-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let mut attach = Box::pin({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(
+                &alice,
+                &id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+        }
+    });
+    let woken = Arc::new(WakeFlag(AtomicBool::new(false)));
+    let waker = Waker::from(Arc::clone(&woken));
+    let mut context = Context::from_waker(&waker);
+    assert!(matches!(attach.as_mut().poll(&mut context), Poll::Pending));
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let installed = svc
+                .entries
+                .read()
+                .await
+                .get(&created.id)
+                .is_some_and(|entry| entry.attached.is_some());
+            if installed && woken.0.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the successful attachment is buffered without being polled");
+
+    store.pause_next();
+    let first_service = Arc::clone(&svc);
+    let first_owner = alice.clone();
+    let first_id = created.id.clone();
+    let first = tokio::spawn(async move {
+        first_service
+            .attach_terminal(
+                &first_owner,
+                &first_id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while svc.event_logs.cleanup_drain_users(&created.id) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the first attach waits after observing an empty cleanup queue");
+    assert!(!first.is_finished());
+
+    std::thread::spawn(move || {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        drop(attach);
+    })
+    .join()
+    .expect("the unread attachment is handed to deferred cleanup");
+    store.wait_until_held().await;
+
+    let waiting_service = Arc::clone(&svc);
+    let waiting_owner = alice.clone();
+    let waiting_id = created.id.clone();
+    let waiting = tokio::spawn(async move {
+        waiting_service
+            .attach_terminal(
+                &waiting_owner,
+                &waiting_id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while svc.event_logs.cleanup_drain_users(&created.id) < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the second attach waits on the active cleanup drain");
+    assert!(!waiting.is_finished());
+
+    first.abort();
+    assert!(matches!(first.await, Err(error) if error.is_cancelled()));
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while svc.event_logs.cleanup_drain_users(&created.id) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the waiting attach takes ownership of the cleanup drain");
+    store.release();
+
+    let later = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+        .await
+        .expect("the replacement drain completes")
+        .expect("the waiting attach task remains live")
+        .expect("the terminal becomes exclusively attachable");
+    let events = inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .expect("attachment events are readable");
+    assert_eq!(events.len(), 3);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                )
+            })
+            .count(),
+        1,
+        "cleanup takeover must not duplicate the durable detach"
+    );
+    assert!(matches!(
+        events[2].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+    ));
+    assert_eq!(store.matched_calls(), 3);
+    drop(later);
+}
+
+#[test]
+fn a_detach_interrupted_after_store_commit_restarts_without_a_duplicate() {
+    let origin = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("origin runtime builds");
+    let (inner, store, svc, alice, created, before, attach) = origin.block_on(async {
+        let inner = Arc::new(FakeStore::default());
+        let store = Arc::new(CommitFaultStore::new(
+            Arc::clone(&inner),
+            is_terminal_attachment_change,
+        ));
+        let svc = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+        let alice = user("interrupted-cleanup-owner");
+        let created = svc.create_session(&alice, spec()).await.expect("created");
+        await_settled(&svc, &alice, &created.id).await;
+        let before = inner
+            .get(&created.id)
+            .await
+            .unwrap()
+            .expect("settled record exists");
+        let mut attach = Box::pin({
+            let svc = Arc::clone(&svc);
+            let alice = alice.clone();
+            let id = created.id.clone();
+            async move {
+                svc.attach_terminal(
+                    &alice,
+                    &id,
+                    TerminalGeometry::default(),
+                    AttachmentClaim::Exclusive,
+                )
+                .await
+            }
+        });
+        let woken = Arc::new(WakeFlag(AtomicBool::new(false)));
+        let waker = Waker::from(Arc::clone(&woken));
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(attach.as_mut().poll(&mut context), Poll::Pending));
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let installed = svc
+                    .entries
+                    .read()
+                    .await
+                    .get(&created.id)
+                    .is_some_and(|entry| entry.attached.is_some());
+                if installed && woken.0.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the first attachment success is buffered");
+        store.pause_after_next();
+        (inner, store, svc, alice, created, before, attach)
+    });
+
+    drop(origin);
+    assert!(tokio::runtime::Handle::try_current().is_err());
+    drop(attach);
+
+    let interrupted = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("interrupted cleanup runtime builds");
+    interrupted.block_on(async {
+        let task_service = Arc::clone(&svc);
+        let task_owner = alice.clone();
+        let task_id = created.id.clone();
+        tokio::spawn(async move {
+            task_service
+                .attach_terminal(
+                    &task_owner,
+                    &task_id,
+                    TerminalGeometry::default(),
+                    AttachmentClaim::Exclusive,
+                )
+                .await
+        });
+        store.wait_until_held().await;
+        let events = inner
+            .events_since(&created.id, before.session.last_seq)
+            .await
+            .expect("the committed detach is visible before its response");
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[1].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+        ));
+    });
+    drop(interrupted);
+
+    let replacement = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("replacement runtime builds");
+    replacement.block_on(async {
+        let later = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            svc.attach_terminal(
+                &alice,
+                &created.id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            ),
+        )
+        .await
+        .expect("the replacement runtime restarts the retained detach")
+        .expect("the terminal is attachable after cleanup replay");
+        let events = inner
+            .events_since(&created.id, before.session.last_seq)
+            .await
+            .expect("attachment events are readable");
+        assert_eq!(events.len(), 3, "the detach is idempotent across replay");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event.kind,
+                        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                    )
+                })
+                .count(),
+            1
+        );
+        assert!(matches!(
+            events[2].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+        ));
+        assert_eq!(store.matched_calls(), 4);
+        drop(later);
+    });
 }
 
 #[tokio::test]

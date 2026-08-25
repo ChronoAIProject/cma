@@ -89,18 +89,34 @@ impl SessionService {
         .await
         {
             Ok(Ok(())) => {}
-            Ok(Err(failure)) => self.abandon(&id, &adapter, &failure, outcome).await,
+            Ok(Err(failure)) => {
+                if let Err(error) = self.abandon(&id, &adapter, &failure, outcome).await {
+                    tracing::error!(
+                        session_id = %id,
+                        %error,
+                        "cannot record the runtime abandonment; leaving it intact"
+                    );
+                }
+            }
             Err(_) => {
-                self.abandon(
-                    &id,
-                    &adapter,
-                    &crate::provision_failure::StartFailure::transient(format!(
-                        "the runtime did not become usable within {}s",
-                        PROVISION_DEADLINE.as_secs()
-                    )),
-                    outcome,
-                )
-                .await
+                if let Err(error) = self
+                    .abandon(
+                        &id,
+                        &adapter,
+                        &crate::provision_failure::StartFailure::transient(format!(
+                            "the runtime did not become usable within {}s",
+                            PROVISION_DEADLINE.as_secs()
+                        )),
+                        outcome,
+                    )
+                    .await
+                {
+                    tracing::error!(
+                        session_id = %id,
+                        %error,
+                        "cannot record the timed-out runtime abandonment; leaving it intact"
+                    );
+                }
             }
         }
         // Released last, and on every path: while the claim is held the
@@ -113,33 +129,26 @@ impl SessionService {
     ///
     /// Written durably rather than pushed at whoever happens to be watching,
     /// so someone who opens the page mid-start still sees where it got to. A
-    /// step that cannot be recorded is logged and dropped: progress is
-    /// commentary, and failing a session because its commentary failed would
-    /// be absurd.
+    /// step that cannot be recorded is logged and retained for the next
+    /// session transaction: progress is commentary, and failing a session
+    /// because its commentary failed would be absurd.
     pub(crate) async fn note_progress(&self, id: &SessionId, stage: ProvisioningStage) {
         let Ok(Some(mut record)) = self.store.get(id).await else {
             return;
         };
-        let seq = self.sequences.take(id, record.session.last_seq, 1);
-        record.session.last_seq = seq;
-        if let Err(e) = self.store.upsert(&record).await {
-            tracing::warn!(session_id = %id, error = %e, "cannot record progress");
-            return;
-        }
-        if self
-            .append_durably(
-                id,
+        if let Err(error) = self
+            .persist_durably(
+                &mut record,
                 vec![Event {
                     session_id: id.clone(),
-                    seq,
+                    seq: 0,
                     kind: EventKind::Progress { stage },
                     appended_at: String::new(),
                 }],
             )
             .await
-            .is_err()
         {
-            tracing::warn!(session_id = %id, "cannot append progress");
+            tracing::warn!(session_id = %id, error = %error, "cannot record progress");
         }
     }
 
@@ -177,7 +186,7 @@ impl SessionService {
             "recording the skills this runtime was actually given"
         );
         record.session.granted_skills = Some(installed);
-        if let Err(e) = self.store.upsert(&record).await {
+        if let Err(e) = self.persist_durably(&mut record, Vec::new()).await {
             tracing::error!(
                 session_id = %id,
                 error = %e,
@@ -196,7 +205,7 @@ impl SessionService {
         // tell a session that is current from one that is behind. Without this
         // every session would look due for rotation forever.
         record.session.runtime_version = self.runtime_version.clone();
-        if let Err(e) = self.store.upsert(&record).await {
+        if let Err(e) = self.persist_durably(&mut record, Vec::new()).await {
             // Worth shouting about: the runtime exists and the record does not
             // name it, which is exactly the orphan reconciliation must catch.
             tracing::error!(session_id = %id, error = %e, "runtime provisioned but not recorded");
@@ -260,7 +269,7 @@ impl SessionService {
                     return Ok(current);
                 };
                 record.session.capabilities = settled;
-                if let Err(e) = self.store.upsert(&record).await {
+                if let Err(e) = self.persist_durably(&mut record, Vec::new()).await {
                     // Worth saying and not worth refusing over: the session
                     // works with the set in hand, and the next sweep settles
                     // it again.

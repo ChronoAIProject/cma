@@ -55,10 +55,17 @@ impl SessionService {
             skills,
             settings,
         } = ports;
+        let sequences = Arc::new(crate::sequence::Sequences::default());
+        let event_logs = Arc::new(crate::log::EventLogs::new(
+            Arc::clone(&store),
+            Arc::clone(&sequences),
+        ));
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
+            lifecycle_gates: Default::default(),
             skills,
-            sequences: Arc::new(crate::sequence::Sequences::default()),
+            sequences,
+            event_logs,
             starting: RwLock::new(HashSet::new()),
             rotation_refused: RwLock::new(HashSet::new()),
             adapters,
@@ -436,13 +443,45 @@ impl SessionService {
         };
 
         let mut record = SessionRecord::new(session.clone());
-        // Through the allocator like every other producer, even though nothing
-        // can yet be racing a session that did not exist a moment ago: a
-        // second place that decides what a sequence is, however safe today, is
-        // the shape of the defect this all exists to remove.
-        let first = self.sequences.take(&id, 0, 3);
-        record.session.last_seq = first + 2;
-        self.store.upsert(&record).await.map_err(store_failed)?;
+        if let Err(error) = self
+            .create_durably(
+                &mut record,
+                vec![
+                    Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::SessionCreated,
+                        appended_at: String::new(),
+                    },
+                    Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::StatusChanged {
+                            status: SessionStatus::Provisioning,
+                            stop_reason: None,
+                            detail: None,
+                            capability: None,
+                        },
+                        appended_at: String::new(),
+                    },
+                    Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::Progress {
+                            stage: crate::session::ProvisioningStage::Accepted,
+                        },
+                        appended_at: String::new(),
+                    },
+                ],
+            )
+            .await
+        {
+            // This identifier was generated for this request and never became
+            // a session the caller can use. Keeping its three reserved event
+            // positions would retain one strong map key per failed creation.
+            self.sequences.forget(&id);
+            return Err(store_failed(error));
+        }
         drop(capacity_guard);
         if let Some(error) = settings_fallback.as_ref() {
             tracing::error!(
@@ -452,38 +491,6 @@ impl SessionService {
             );
         }
         limit_guard.record_written(self.store.as_ref()).await;
-        self.append_durably(
-            &id,
-            vec![
-                Event {
-                    session_id: id.clone(),
-                    seq: first,
-                    kind: EventKind::SessionCreated,
-                    appended_at: String::new(),
-                },
-                Event {
-                    session_id: id.clone(),
-                    seq: first + 1,
-                    kind: EventKind::StatusChanged {
-                        status: SessionStatus::Provisioning,
-                        stop_reason: None,
-                        detail: None,
-                        capability: None,
-                    },
-                    appended_at: String::new(),
-                },
-                Event {
-                    session_id: id.clone(),
-                    seq: first + 2,
-                    kind: EventKind::Progress {
-                        stage: crate::session::ProvisioningStage::Accepted,
-                    },
-                    appended_at: String::new(),
-                },
-            ],
-        )
-        .await
-        .map_err(store_failed)?;
 
         // Detached deliberately. The caller's connection may end at any moment
         // and must not take the runtime with it.
