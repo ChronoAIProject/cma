@@ -205,7 +205,8 @@ JSON
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends build-essential python3; \
-    npm install --prefix /opt/dsh-install --no-audit --no-fund; \
+    NODE_OPTIONS=--max-old-space-size=4096 \
+        npm install --prefix /opt/dsh-install --no-audit --no-fund; \
     npm cache clean --force; \
     apt-get purge -y --auto-remove build-essential python3; \
     rm -rf /var/lib/apt/lists/*; \
