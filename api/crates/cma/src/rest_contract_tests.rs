@@ -1868,6 +1868,22 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         expected
     );
 
+    let event_parameters = paths["/api/v1/sessions/{id}/events"]["get"]["parameters"]
+        .as_array()
+        .expect("the event operation declares its parameters");
+    assert!(
+        event_parameters
+            .iter()
+            .any(|parameter| parameter["name"] == "starting_after"),
+        "the canonical event cursor is absent from OpenAPI: {event_parameters:?}"
+    );
+    assert!(
+        event_parameters
+            .iter()
+            .all(|parameter| parameter["name"] != "after"),
+        "the compatibility cursor alias must not be advertised: {event_parameters:?}"
+    );
+
     let discovery_schema =
         &paths["/openapi.json"]["get"]["responses"]["200"]["content"]["application/json"]["schema"];
     assert_eq!(
