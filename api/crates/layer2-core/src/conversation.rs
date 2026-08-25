@@ -84,6 +84,7 @@ impl SessionService {
         id: &SessionId,
         text: String,
     ) -> Result<(), CoreError> {
+        let _input_fence = self.input_gates.gate(id).read_owned().await;
         let input = self
             .conversation_input(caller, id, Capability::Conversation)
             .await?;
@@ -136,6 +137,7 @@ impl SessionService {
         caller: &Caller,
         id: &SessionId,
     ) -> Result<(), CoreError> {
+        let _input_fence = self.input_gates.gate(id).read_owned().await;
         let input = self
             .conversation_input(caller, id, Capability::Interrupt)
             .await?;
@@ -156,6 +158,7 @@ impl SessionService {
         request_id: String,
         decision: ApprovalDecision,
     ) -> Result<(), CoreError> {
+        let _input_fence = self.input_gates.gate(id).read_owned().await;
         let input = self
             .conversation_input(caller, id, Capability::Conversation)
             .await?;
