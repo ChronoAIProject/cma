@@ -30,14 +30,6 @@ impl SessionStore for MemorySessions {
         Ok(())
     }
 
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        self.0
-            .lock()
-            .await
-            .insert(record.session.id.clone(), record.clone());
-        Ok(())
-    }
-
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         Ok(self.0.lock().await.get(id).cloned())
     }
@@ -68,6 +60,38 @@ impl SessionStore for MemorySessions {
 
     async fn append_events(&self, _events: &[Event]) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        _write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        let revision = record
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+        let mut durable = record.clone();
+        durable.revision = revision;
+        if let Some(last) = events.last() {
+            durable.session.last_seq = last.seq;
+        }
+        self.0
+            .lock()
+            .await
+            .insert(record.session.id.clone(), durable);
+        Ok(revision)
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.commit_session_idempotent(write_id, record, events)
+            .await
     }
 
     async fn events_since(

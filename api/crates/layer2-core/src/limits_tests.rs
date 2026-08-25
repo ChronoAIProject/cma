@@ -65,13 +65,6 @@ impl SessionStore for ObservedStore {
         self.inner.ping().await
     }
 
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        if self.slow_writes {
-            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        }
-        self.inner.upsert(record).await
-    }
-
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         self.inner.get(id).await
     }
@@ -105,6 +98,31 @@ impl SessionStore for ObservedStore {
 
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
         self.inner.append_events(events).await
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .commit_session_idempotent(write_id, record, events)
+            .await
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        if self.slow_writes {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+        self.inner
+            .create_session_idempotent(write_id, record, events)
+            .await
     }
 
     async fn events_since(

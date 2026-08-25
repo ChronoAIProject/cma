@@ -44,6 +44,19 @@ data:
   # then refused on first write — which reads as a permissions problem rather
   # than the typo it is.
   CHRONO_MONGODB_DATABASE: "chrono-bot"
+  # One-time acknowledgement for upgrading writable `sessions` and
+  # `session_events` collections to their fenced v2 namespaces.
+  #
+  # Leave this empty during ordinary startup. Before setting it, stop every CMA
+  # replica that predates the namespace fence and wait for all of its MongoDB
+  # operations to finish. Then start exactly one replacement with the value
+  # `drained`. CMA cannot prove that external condition; the value is the
+  # operator's assertion that it has happened. Once startup has installed both
+  # read-only compatibility views, remove the value again. Completed stores do
+  # not require the acknowledgement on later starts. Keep the persisted cutover
+  # marker: it binds completion to the authoritative collection UUIDs so a lost
+  # or replaced namespace cannot be mistaken for a new empty database.
+  CHRONO_MONGODB_LEGACY_CUTOVER: ""
   # How many days a recorded action is kept before the database removes it.
   #
   # Every request this control plane serves is recorded — who asked, when, for

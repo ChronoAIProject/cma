@@ -124,10 +124,6 @@ impl SessionStore for NoSessions {
         Ok(())
     }
 
-    async fn upsert(&self, _record: &SessionRecord) -> Result<(), StoreError> {
-        Ok(())
-    }
-
     async fn get(&self, _id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         if let Some(gate) = self.claim_gate.as_ref() {
             // Reclamation reaches the store only after it has fetched and
@@ -161,6 +157,24 @@ impl SessionStore for NoSessions {
 
     async fn append_events(&self, _events: &[Event]) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        _write_id: &str,
+        record: &SessionRecord,
+        _events: &[Event],
+    ) -> Result<u64, StoreError> {
+        Ok(record.revision.saturating_add(1))
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        _write_id: &str,
+        record: &SessionRecord,
+        _events: &[Event],
+    ) -> Result<u64, StoreError> {
+        Ok(record.revision.saturating_add(1))
     }
 
     async fn events_since(

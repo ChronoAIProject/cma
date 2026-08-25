@@ -33,6 +33,7 @@ impl SessionService {
         id: &SessionId,
     ) -> Result<Session, CoreError> {
         caller.authorization.require(Capability::CreateSession)?;
+        let _lifecycle = self.lock_lifecycle(id).await;
         let record = self.record(id).await?;
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
@@ -62,15 +63,11 @@ impl SessionService {
         let mut starting = record.clone();
         starting.session.status = SessionStatus::Provisioning;
         starting.session.stop_reason = None;
-        let seq = self.sequences.take(id, starting.session.last_seq, 1);
-        starting.session.last_seq = seq;
-        self.store.upsert(&starting).await.map_err(store_failed)?;
-        limit_guard.record_written(self.store.as_ref()).await;
-        self.append_durably(
-            id,
+        self.persist_durably(
+            &mut starting,
             vec![Event {
                 session_id: id.clone(),
-                seq,
+                seq: 0,
                 kind: EventKind::StatusChanged {
                     status: SessionStatus::Provisioning,
                     stop_reason: None,
@@ -82,6 +79,7 @@ impl SessionService {
         )
         .await
         .map_err(store_failed)?;
+        limit_guard.record_written(self.store.as_ref()).await;
 
         let geometry = starting.session.geometry;
         let spec = SessionSpec {
@@ -115,46 +113,6 @@ impl SessionService {
 
         tracing::info!(session_id = %id, "session reviving");
         Ok(session)
-    }
-
-    /// Record that a session which was starting is now usable.
-    async fn settle_ready(&self, record: &SessionRecord) {
-        let mut settled = record.clone();
-        settled.session.status = SessionStatus::Ready;
-        settled.session.recovery_state = RecoveryState::Normal;
-        settled.session.stop_reason = None;
-        let id = settled.session.id.clone();
-        let seq = self.sequences.take(&id, settled.session.last_seq, 1);
-        settled.session.last_seq = seq;
-        if let Err(e) = self.store.upsert(&settled).await {
-            tracing::warn!(session_id = %id, error = %e, "cannot record the recovered status");
-            return;
-        }
-        if self
-            .append_durably(
-                &id,
-                vec![Event {
-                    session_id: id.clone(),
-                    seq,
-                    kind: EventKind::StatusChanged {
-                        status: SessionStatus::Ready,
-                        stop_reason: None,
-                        detail: None,
-                        capability: None,
-                    },
-                    appended_at: String::new(),
-                }],
-            )
-            .await
-            .is_err()
-        {
-            tracing::warn!(session_id = %id, "cannot append the recovered status");
-        }
-        if let Some(entry) = self.entries.write().await.get_mut(&id) {
-            entry.session.status = SessionStatus::Ready;
-            entry.session.recovery_state = RecoveryState::Normal;
-            entry.session.last_seq = seq;
-        }
     }
 
     /// Take an existing runtime back under management after losing track of it.
@@ -325,14 +283,71 @@ impl SessionService {
             .await
             .map(|e| e.variables.values().cloned().collect())
             .unwrap_or_default();
-        let mut adopted = record.session.clone();
+        // A sweep or request can spend long enough attaching for the durable
+        // desired state to change underneath it. Check again at the exact
+        // installation boundary, under the same per-session gate used by stop
+        // and termination, so neither can complete and then be locally undone
+        // by this stale snapshot. The service-wide entries lock is never held
+        // across the durable read or write.
+        let installation = self.lock_lifecycle(&id).await;
+        if self.entries.read().await.contains_key(&id) {
+            return Ok(());
+        }
+        let mut current = self
+            .store
+            .get(&id)
+            .await
+            .map_err(store_failed)?
+            .ok_or(CoreError::SessionNotFound)?;
+        if current.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if !current.session.status.wants_runtime()
+            || current.session.kernel != record.session.kernel
+            || current.runtime_id.as_deref() != Some(handle.0.as_str())
+        {
+            return Err(CoreError::RuntimeUnavailable(
+                "the session changed while its runtime was being reconnected".into(),
+            ));
+        }
+
+        // A reachable runtime proves that a recorded provisioning state has
+        // completed. Make that fact durable before publishing the entry; doing
+        // it afterwards leaves a window where a concurrent stop can commit
+        // idle and then be overwritten by this stale ready write.
+        if current.session.status == SessionStatus::Provisioning {
+            current.session.status = SessionStatus::Ready;
+            current.session.recovery_state = RecoveryState::Normal;
+            current.session.stop_reason = None;
+            self.persist_durably(
+                &mut current,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq: 0,
+                    kind: EventKind::StatusChanged {
+                        status: SessionStatus::Ready,
+                        stop_reason: None,
+                        detail: None,
+                        capability: None,
+                    },
+                    appended_at: String::new(),
+                }],
+            )
+            .await
+            .map_err(store_failed)?;
+        }
+
+        let owner = current.session.owner.clone();
+        let mut adopted = current.session.clone();
         adopted.capabilities = capabilities;
+        let event_log = self.event_logs.lane(&id);
+        event_log.observe_tail(adopted.last_seq);
+        event_log.observe_record(&current);
         let entry = SessionEntry {
             session: adopted,
-            sequences: Arc::clone(&self.sequences),
+            event_log,
             subject_credential: None,
             environment_values,
-            events: Vec::new(),
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
             input: terminal.as_ref().map(|c| c.input.clone()),
@@ -349,10 +364,11 @@ impl SessionService {
             context_reading: None,
             attached: None,
             attachments_issued: 0,
-            context_ref: record.context_ref.clone(),
+            context_ref: current.context_ref.clone(),
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
+        drop(installation);
         crate::resources::spawn_resource_watch(
             Arc::clone(self),
             id.clone(),
@@ -373,15 +389,7 @@ impl SessionService {
         // The sandbox kept running, but the credential it was given belonged to
         // a process that has gone. Without this the session answers every
         // prompt with an authorisation failure.
-        self.supply_credential(&id, &record.session.owner).await;
-
-        // A session recorded as still starting whose sandbox answers is not
-        // starting — it started, and the process that would have said so died.
-        // Leaving it as `provisioning` would show a working session as one
-        // stuck part-way.
-        if record.session.status == SessionStatus::Provisioning {
-            self.settle_ready(record).await;
-        }
+        self.supply_credential(&id, &owner).await;
 
         tracing::info!(session_id = %id, "reconnected to an existing runtime");
         Ok(())

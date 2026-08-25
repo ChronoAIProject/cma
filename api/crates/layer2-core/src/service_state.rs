@@ -1,13 +1,12 @@
 //! State owned by the core session service.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use layer3_adapter::{KernelAdapter, RuntimeHandle, TerminalInput};
 use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
 
 use crate::environment_service::EnvironmentProfileService;
-use crate::event::Event;
 use crate::ids::{KernelId, SessionId};
 use crate::platform_service::PlatformSettingsService;
 use crate::session::Session;
@@ -45,13 +44,8 @@ pub(crate) struct Attachment {
 /// rebuilt when a client attaches.
 pub(crate) struct SessionEntry {
     pub(crate) session: Session,
-    /// Where this session's event sequence is handed out.
-    ///
-    /// Service-wide rather than per-entry, and held here so that numbering an
-    /// event needs nothing but the entry already in hand. The alternative -
-    /// numbering off `session.last_seq` - is what let a live session and a
-    /// provisioning path each advance their own copy and land on one number.
-    pub(crate) sequences: Arc<crate::sequence::Sequences>,
+    /// This session's durable FIFO, kept alive while its runtime is live.
+    pub(crate) event_log: Arc<crate::log::SessionLog>,
     /// Owner-delegated credential last handed to the runtime. Held so a refresh
     /// can be pushed without the caller tracking which sessions exist.
     pub(crate) subject_credential: Option<String>,
@@ -60,7 +54,6 @@ pub(crate) struct SessionEntry {
     /// needs to replace an exact value wherever a tool echoes one, and the key
     /// is not what leaks.
     pub(crate) environment_values: Vec<String>,
-    pub(crate) events: Vec<Event>,
     pub(crate) screen: Arc<Mutex<Box<dyn ScreenModel>>>,
     pub(crate) runtime: Option<RuntimeHandle>,
     pub(crate) input: Option<mpsc::Sender<TerminalInput>>,
@@ -156,16 +149,51 @@ pub struct Deployment {
     pub adopts_untagged: bool,
 }
 
+/// Per-session desired-state and runtime-installation gates.
+///
+/// A gate may be held across store I/O, but the service-wide `entries` lock
+/// must never be. Callers acquire a gate before `entries`; no path acquires
+/// them in the opposite order. Weak values keep one-off lifecycle requests
+/// from turning the registry into a second session store.
+#[derive(Default)]
+pub(crate) struct SessionGates {
+    held: StdMutex<HashMap<SessionId, Weak<Mutex<()>>>>,
+}
+
+impl SessionGates {
+    pub(crate) fn gate(&self, id: &SessionId) -> Arc<Mutex<()>> {
+        let mut held = self.held.lock().unwrap_or_else(|error| error.into_inner());
+        held.retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = held.get(id).and_then(Weak::upgrade) {
+            return gate;
+        }
+        let gate = Arc::new(Mutex::new(()));
+        held.insert(id.clone(), Arc::downgrade(&gate));
+        gate
+    }
+
+    #[cfg(test)]
+    pub(crate) fn registry_len(&self) -> usize {
+        self.held
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .len()
+    }
+}
+
 /// The core service.
 pub struct SessionService {
     /// Live sessions, keyed by id. Only those with a running runtime appear.
     pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
+    /// Serializes lifecycle decisions and installation for one session only.
+    pub(crate) lifecycle_gates: SessionGates,
     /// The single writer of every session's event sequence.
     ///
-    /// Shared with each entry, so the conversation fold and the provisioning,
-    /// revival, retirement and rotation paths all number from one place. Two
-    /// of them numbering independently is what dropped a turn's events.
+    /// Owned by the durable lanes, so allocation and FIFO insertion share the
+    /// same per-session critical section.
     pub(crate) sequences: Arc<crate::sequence::Sequences>,
+    /// Pending history and the durable-write lane for each session.
+    pub(crate) event_logs: Arc<crate::log::EventLogs>,
     pub(crate) adapters: HashMap<KernelId, Arc<dyn KernelAdapter>>,
     pub(crate) screen_factory: ScreenFactory,
     /// The durable record. Source of truth for anything that outlives a process.

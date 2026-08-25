@@ -367,7 +367,7 @@ mod granted_services {
             .expect("reads")
             .expect("exists");
         record.session.granted_services = None;
-        store.upsert(&record).await.expect("writes");
+        store.seed(&record).await.expect("writes");
 
         let scoped = service.session_services(&session.id).await;
         assert!(
@@ -414,7 +414,7 @@ mod granted_services {
             .expect("exists");
         record.session.rotations += 1;
         record.session.runtime_version = Some("next".into());
-        store.upsert(&record).await.expect("writes");
+        store.seed(&record).await.expect("writes");
 
         let scoped = service.session_services(&session.id).await;
         assert!(scoped.contains(&ServiceId::new("github")));
@@ -680,7 +680,7 @@ mod session_sizes {
         assert!(removed.is_some(), "the fixture must first carry a size");
         record.session = serde_json::from_value(stored).expect("an older session reads");
         assert_eq!(record.session.options.size, None);
-        store.upsert(&record).await.expect("older record writes");
+        store.seed(&record).await.expect("older record writes");
 
         *adapter.last_spec.lock().await = None;
         drop(sessions);

@@ -175,61 +175,6 @@ impl SessionService {
         // plane's own name, rather than after its sandbox is gone.
         let capabilities = SessionCapabilities::granted(mode, adapter.capabilities())?;
 
-        // Prefer the in-place switch: it keeps the sandbox, its filesystem and
-        // its conversation exactly where they are. A kernel that cannot switch
-        // in place says so, and the rotation below is the fallback.
-        if let Some(old) = record.runtime_id.clone() {
-            let runtime_mode = match mode {
-                crate::options::SessionMode::Terminal => layer3_adapter::RuntimeMode::Terminal,
-                crate::options::SessionMode::Conversation => {
-                    layer3_adapter::RuntimeMode::Conversation
-                }
-            };
-            match adapter
-                .switch_plane(&RuntimeHandle(old), runtime_mode)
-                .await
-            {
-                Ok(()) => {
-                    // The surface changed under its owner, recorded with no
-                    // snapshot timestamp because nothing was carried.
-                    let mut moved = record.clone();
-                    moved.session.options.mode = mode;
-                    moved.session.capabilities = capabilities;
-                    moved.session.last_seq = self.sequences.take(id, moved.session.last_seq, 1);
-                    if let Err(e) = self.store.upsert(&moved).await {
-                        tracing::error!(session_id = %id, error = %e, "cannot record the in-place switch");
-                        return Err(CoreError::RuntimeUnavailable(
-                            "this session's move could not be recorded".into(),
-                        ));
-                    }
-                    if self
-                        .append_durably(
-                            id,
-                            vec![Event {
-                                session_id: id.clone(),
-                                seq: moved.session.last_seq,
-                                kind: EventKind::PlaneChanged {
-                                    from: record.session.options.mode,
-                                    to: mode,
-                                    snapshot_at: String::new(),
-                                },
-                                appended_at: String::new(),
-                            }],
-                        )
-                        .await
-                        .is_err()
-                    {
-                        tracing::warn!(session_id = %id, "cannot record the plane change");
-                    }
-                    return Ok(moved.session);
-                }
-                Err(layer3_adapter::AdapterError::Unsupported(_)) => {}
-                Err(e) => {
-                    tracing::warn!(session_id = %id, error = %e, "in-place switch failed; rotating instead");
-                }
-            }
-        }
-
         if !record.session.capabilities.snapshot {
             // The fail-safe. Both front-ends of the one kernel that serves
             // both planes read each other's conversations — established
@@ -343,24 +288,6 @@ impl SessionService {
             }
         }
 
-        /*
-         * The attachment goes with the sandbox it was made to, and its holder
-         * is told which handover took it: a terminal that ends saying nothing
-         * reads as broken, and one that ends claiming the owner opened it
-         * elsewhere sends them looking for a tab that does not exist.
-         */
-        if let Some(entry) = self.entries.write().await.remove(&id) {
-            if let Some(attached) = entry.attached.as_ref() {
-                let _ = attached.supersede.send(match &change {
-                    Handover::Version(_) => crate::lease::Detached::RuntimeReplaced,
-                    Handover::Plane { .. } => crate::lease::Detached::PlaneChanged,
-                });
-            }
-        }
-        if let Err(e) = adapter.terminate(&old).await {
-            tracing::warn!(session_id = %id, error = %e, "could not release the old runtime");
-        }
-
         let mut moved = rotating.clone();
         moved.runtime_id = None;
         match &change {
@@ -380,41 +307,48 @@ impl SessionService {
         }
         moved.session.rotations = moved.session.rotations.saturating_add(1);
         moved.session.rotated_at = Some(taken_at.clone());
-        moved.session.last_seq = self.sequences.take(&id, moved.session.last_seq, 1);
-        if let Err(e) = self.store.upsert(&moved).await {
+        let events = if let Handover::Plane { mode, .. } = &change {
+            vec![Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::PlaneChanged {
+                    from: record.session.options.mode,
+                    to: *mode,
+                    snapshot_at: taken_at.clone(),
+                },
+                appended_at: String::new(),
+            }]
+        } else {
+            Vec::new()
+        };
+        if let Err(e) = self.persist_durably(&mut moved, events).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the move");
+            self.restore_after_failed_move(&record, &old).await;
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
                 "this session's move could not be recorded".into(),
             ));
         }
-        if let Handover::Plane { mode, .. } = &change {
-            /*
-             * Durable, because the surface changed under its owner and the
-             * event log is what they read their session's history from. It
-             * carries both planes and the moment the conversation was taken,
-             * so somebody reading back knows what moved and what did not come
-             * with it.
-             */
-            if self
-                .append_durably(
-                    &id,
-                    vec![Event {
-                        session_id: id.clone(),
-                        seq: moved.session.last_seq,
-                        kind: EventKind::PlaneChanged {
-                            from: record.session.options.mode,
-                            to: *mode,
-                            snapshot_at: taken_at.clone(),
-                        },
-                        appended_at: String::new(),
-                    }],
-                )
-                .await
-                .is_err()
-            {
-                tracing::warn!(session_id = %id, "cannot record the plane change");
+
+        /*
+         * The attachment goes with the sandbox it was made to, and its holder
+         * is told which handover took it: a terminal that ends saying nothing
+         * reads as broken, and one that ends claiming the owner opened it
+         * elsewhere sends them looking for a tab that does not exist.
+         *
+         * This happens only after the move is durable. Until that transaction
+         * succeeds, the old entry and runtime are the complete rollback path.
+         */
+        if let Some(entry) = self.entries.write().await.remove(&id) {
+            if let Some(attached) = entry.attached.as_ref() {
+                let _ = attached.supersede.send(match &change {
+                    Handover::Version(_) => crate::lease::Detached::RuntimeReplaced,
+                    Handover::Plane { .. } => crate::lease::Detached::PlaneChanged,
+                });
             }
+        }
+        if let Err(e) = adapter.terminate(&old).await {
+            tracing::warn!(session_id = %id, error = %e, "could not release the old runtime");
         }
 
         let geometry = moved.session.geometry;
@@ -444,6 +378,60 @@ impl SessionService {
         Ok(moved.session)
     }
 
+    /// Put a handover back on its original runtime after the final move failed.
+    ///
+    /// The old runtime and its entry have not been touched yet. Restoring the
+    /// status makes their existing channels usable again; if this compensating
+    /// write is also unavailable, leaving both sides `Rotating` is coherent and
+    /// recoverable, while tearing anything down would not be.
+    async fn restore_after_failed_move(&self, original: &SessionRecord, old: &RuntimeHandle) {
+        let id = &original.session.id;
+        let mut current = match self.store.get(id).await {
+            Ok(Some(record)) => record,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::error!(session_id = %id, %error, "cannot read the failed handover for recovery");
+                return;
+            }
+        };
+        if current.session.status != SessionStatus::Rotating
+            || current.runtime_id.as_deref() != Some(old.0.as_str())
+        {
+            return;
+        }
+
+        current.session.status = original.session.status;
+        current.session.stop_reason = original.session.stop_reason;
+        let mut restored = current;
+        let event = Event {
+            session_id: id.clone(),
+            seq: 0,
+            kind: EventKind::StatusChanged {
+                status: original.session.status,
+                stop_reason: original.session.stop_reason,
+                detail: Some(
+                    "the handover could not be completed; continuing on the existing runtime"
+                        .into(),
+                ),
+                capability: None,
+            },
+            appended_at: String::new(),
+        };
+        match self.persist_durably(&mut restored, vec![event]).await {
+            Ok(()) => {
+                self.mark_entry(id, original.session.status, restored.session.last_seq)
+                    .await;
+            }
+            Err(error) => {
+                tracing::error!(
+                    session_id = %id,
+                    %error,
+                    "cannot restore the handover status; leaving the old runtime intact"
+                );
+            }
+        }
+    }
+
     /// Record that a session is mid-handover, and tell anyone watching.
     async fn mark_rotating(
         &self,
@@ -454,19 +442,12 @@ impl SessionService {
         rotating.session.status = SessionStatus::Rotating;
         rotating.session.stop_reason = None;
         let id = rotating.session.id.clone();
-        let seq = self.sequences.take(&id, rotating.session.last_seq, 1);
-        rotating.session.last_seq = seq;
-
-        if let Err(e) = self.store.upsert(&rotating).await {
-            tracing::error!(session_id = %id, error = %e, "cannot record the handover");
-            return None;
-        }
-        if self
-            .append_durably(
-                &id,
+        if let Err(e) = self
+            .persist_durably(
+                &mut rotating,
                 vec![Event {
                     session_id: id.clone(),
-                    seq,
+                    seq: 0,
                     kind: EventKind::StatusChanged {
                         status: SessionStatus::Rotating,
                         stop_reason: None,
@@ -477,10 +458,11 @@ impl SessionService {
                 }],
             )
             .await
-            .is_err()
         {
-            tracing::warn!(session_id = %id, "cannot announce the handover");
+            tracing::error!(session_id = %id, error = %e, "cannot record the handover");
+            return None;
         }
+        let seq = rotating.session.last_seq;
         self.mark_entry(&id, SessionStatus::Rotating, seq).await;
         Some(rotating)
     }
