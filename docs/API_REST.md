@@ -1003,6 +1003,8 @@ REST exposes these for clients that need terminal state without holding a stream
 
 The browser WebSocket API cannot set a header on an upgrade, so a bearer-authenticated frontend exchanges its credential here — over a route that *can* carry one — for a single-use, ~30-second, session- and subject-bound ticket, and presents that as `?ticket=…` on the upgrade. Same-origin cookie clients need none of this and attach unchanged.
 
+The ticket's bearer value is returned only to the caller. Durable custody records its one-way digest, session and subject binding, captured authorization and attachment claim, and expiry so another replica can consume it exactly once. A custody outage returns the typed, retryable `503 store_failed` problem on issue or redemption; it is not collapsed into an invalid-ticket `401`.
+
 `{"takeover": true}` supersedes whoever currently holds the attachment; the superseded client is sent a close frame naming the reason. Without it, attaching over a live attachment is a typed conflict.
 
 A session with no terminal capability is refused here with `capability_unsupported`, not issued a ticket for something it cannot do. The full contract, including what makes a ticket in a URL acceptable and what is never recorded, is in [API_PTY.md §2.1](./API_PTY.md).

@@ -17,6 +17,7 @@ use serde::Deserialize;
 /// outlives neither a long terminal session nor a long agent turn, and the only
 /// alternative to renewing it is interrupting the user.
 #[derive(Clone)]
+#[cfg(test)]
 pub struct SubjectTokens {
     /// Currently valid access token.
     pub access_token: String,
@@ -26,6 +27,7 @@ pub struct SubjectTokens {
     pub expires_at: std::time::Instant,
 }
 
+#[cfg(test)]
 impl std::fmt::Debug for SubjectTokens {
     /// Redacted: no `{:?}` may put a live token in a log.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -39,6 +41,7 @@ impl std::fmt::Debug for SubjectTokens {
     }
 }
 
+#[cfg(test)]
 impl SubjectTokens {
     /// Whether the access token should be renewed now.
     ///

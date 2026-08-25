@@ -7,6 +7,7 @@
 use axum::http::HeaderValue;
 
 use crate::auth::AuthMode;
+use crate::store::AuthEncryptionKey;
 
 /// Resolved configuration for the control plane.
 #[derive(Debug, Clone)]
@@ -104,6 +105,8 @@ pub struct Config {
     /// operator has already stopped every pre-cutover control plane and waited
     /// for its MongoDB operations to drain.
     pub mongodb_legacy_cutover: bool,
+    /// Dedicated key for recoverable authentication secrets stored in MongoDB.
+    pub auth_encryption_key: AuthEncryptionKey,
     /// How long a recorded action is kept.
     ///
     /// Configuration rather than a constant because how far back a deployment
@@ -250,6 +253,8 @@ impl Config {
             "CHRONO_MONGODB_LEGACY_CUTOVER",
             &var_or("CHRONO_MONGODB_LEGACY_CUTOVER", ""),
         )?;
+        let auth_encryption_key =
+            AuthEncryptionKey::from_base64(&require("CHRONO_AUTH_ENCRYPTION_KEY")?)?;
         // Ninety days by default: long enough to investigate something nobody
         // noticed at the time, short enough that a collection holding one
         // document per request does not grow without limit. A deployment with
@@ -336,6 +341,7 @@ impl Config {
             mongodb_uri,
             mongodb_database,
             mongodb_legacy_cutover,
+            auth_encryption_key,
             activity_retention,
             context_bucket,
             storage_client_id,
@@ -459,6 +465,10 @@ impl Config {
             mongodb_uri: "mongodb://h/db".into(),
             mongodb_database: "db".into(),
             mongodb_legacy_cutover: false,
+            auth_encryption_key: AuthEncryptionKey::from_base64(
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            )
+            .expect("test key has 32 decoded bytes"),
             activity_retention: std::time::Duration::from_secs(90 * 86_400),
             context_bucket: "bkt".into(),
             storage_client_id: "sa-id".into(),
