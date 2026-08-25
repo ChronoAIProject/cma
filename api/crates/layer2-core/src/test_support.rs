@@ -499,9 +499,11 @@ pub(crate) fn admin() -> Caller {
 /// Wait until a session has finished starting, whichever way it went.
 ///
 /// Creating a session now returns before its runtime exists, so a test that
-/// asserts on a running runtime has to wait for one. Polls the store rather
-/// than sleeping a fixed time, so it is neither flaky nor slower than the
-/// thing it waits for.
+/// asserts on a running runtime has to wait for one. Polls the store and the
+/// in-process bring-up claim rather than sleeping a fixed time, so it is
+/// neither flaky nor slower than the thing it waits for. A successful start
+/// records `Ready` before publishing its live entry, and the claim spans both
+/// boundaries.
 pub(crate) async fn await_settled(
     svc: &Arc<SessionService>,
     caller: &Caller,
@@ -509,13 +511,15 @@ pub(crate) async fn await_settled(
 ) -> crate::session::Session {
     for _ in 0..400 {
         if let Ok(s) = svc.get_session(caller, id).await {
-            if s.status != crate::session::SessionStatus::Provisioning {
+            if s.status != crate::session::SessionStatus::Provisioning
+                && !svc.starting.read().await.contains(id)
+            {
                 return s;
             }
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    panic!("session never left provisioning");
+    panic!("session never finished starting");
 }
 
 pub(crate) fn spec() -> SessionSpec {
