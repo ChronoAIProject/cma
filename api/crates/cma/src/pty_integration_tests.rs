@@ -393,10 +393,11 @@ type ClientSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn public_socket(fixture: &Fixture, id: &SessionId) -> (ClientSocket, TestServer) {
-    let tickets = layer1_public::tickets::TerminalTickets::new();
+    let tickets = layer1_public::tickets::TerminalTickets::in_memory();
     let ticket = tickets
         .issue(&fixture.caller, id, AttachmentClaim::Exclusive)
-        .await;
+        .await
+        .expect("ticket is stored");
     let app = layer1_public::pty::router(layer1_public::pty::TerminalState {
         sessions: Arc::clone(&fixture.service),
         tickets,
