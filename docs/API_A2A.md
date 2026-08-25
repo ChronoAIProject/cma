@@ -2,6 +2,8 @@
 
 **Priority 5 — for agent clients.**
 
+**This interface is not built yet.** Nothing below is served today; it is the design the implementation will be held to, and the endpoint refuses with `501` until then.
+
 A2A (Agent2Agent) lets another organisation's agent discover CMA (ChronoAI Managed Agent), delegate a coding task to it, and receive the result as artifacts. It is the interface for **agent-to-agent delegation across a trust boundary**, as distinct from [MCP](./API_MCP.md), where CMA is a tool inside someone else's agent loop.
 
 A2A is the only protocol in the stack that is genuinely standardised — Apache-2.0, governed by the Linux Foundation, with a published specification and versioned bindings. That is why it is worth implementing despite being lowest priority.
@@ -154,6 +156,6 @@ The Agent Card may be signed. If ChronoAI signs it, note that capability boolean
 
 ## 9. Conformance
 
-The core operations — send message, get task, list tasks, cancel task — are **not gated by any flag** and are implemented in full. There is no legal way to withhold them, and an interface that cannot serve all four must not be declared as an A2A interface at all.
+The future implementation must serve all four ungated core operations — send message, get task, list tasks, and cancel task — in full before CMA may declare an A2A interface. There is no legal way to withhold any of them.
 
-Capability-gated behaviour is declared truthfully in the card, and the specification's conformance suite is run in CI. Tests gated on a capability CMA does not offer are skipped rather than failed, which is the intended behaviour and not a gap in coverage.
+Before the interface may be declared, its capability-gated behaviour must be represented truthfully in the card and the specification's conformance suite must be added to CI. Tests gated on a capability CMA does not offer may then be skipped as the specification intends; ungated core operations must pass.
