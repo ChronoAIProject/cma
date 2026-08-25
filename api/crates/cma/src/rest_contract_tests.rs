@@ -6,6 +6,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
+    time::SystemTime,
 };
 
 use axum::{
@@ -20,12 +21,13 @@ use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
     EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
-    EnvironmentProfileStore, Event, EventKind, KernelId, Page, PageCursor, PageRequest,
-    PlatformSettingsService, RecoveryState, RegisteredUser, Reserved, ScreenFactory, ScreenModel,
-    ScreenSnapshot, ServiceCatalog, ServiceId, Session, SessionId, SessionListQuery, SessionMode,
-    SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore,
-    SkillCatalog, SkillId, SkillPack, SkillSource, StoreError, StoredEvent, SubjectId,
-    TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
+    EnvironmentProfileStore, Event, EventKind, KernelId, OperationClaim, OperationReservation,
+    OperationStore, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
+    RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
+    ServiceId, Session, SessionId, SessionListQuery, SessionMode, SessionPorts, SessionRecord,
+    SessionService, SessionSpec, SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack,
+    SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
+    UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -43,6 +45,94 @@ const UNLISTED_ORIGIN: &str = "https://unlisted.example";
 const TEST_SERVICE_ID: &str = "api-github";
 const TEST_SKILL_NAME: &str = "repository-review";
 const TEST_DELEGATED_CREDENTIAL: &str = "contract-delegated-credential";
+
+type OperationIdentity = (String, String, String);
+type HeldOperation = ([u8; 32], Option<Vec<u8>>, SystemTime);
+
+#[derive(Default)]
+struct MemoryOperations {
+    state: Mutex<HashMap<OperationIdentity, HeldOperation>>,
+    unavailable: AtomicBool,
+    completions_unavailable: AtomicBool,
+}
+
+impl MemoryOperations {
+    fn identity(claim: &OperationClaim) -> OperationIdentity {
+        (
+            claim.subject().0.clone(),
+            claim.operation().to_string(),
+            claim.key().to_string(),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl OperationStore for MemoryOperations {
+    async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(StoreError::Unavailable(
+                "test operation store is down".into(),
+            ));
+        }
+        let identity = Self::identity(claim);
+        let now = SystemTime::now();
+        let mut state = self.state.lock().await;
+        if state
+            .get(&identity)
+            .is_some_and(|(_, _, expires_at)| *expires_at <= now)
+        {
+            state.remove(&identity);
+        }
+        let Some((fingerprint, outcome, _)) = state.get(&identity) else {
+            state.insert(identity, (*claim.fingerprint(), None, claim.expires_at()));
+            return Ok(OperationReservation::Acquired);
+        };
+        if fingerprint != claim.fingerprint() {
+            return Ok(OperationReservation::FingerprintMismatch);
+        }
+        Ok(match outcome {
+            Some(outcome) => OperationReservation::Complete(outcome.clone()),
+            None => OperationReservation::Pending,
+        })
+    }
+
+    async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError> {
+        if self.unavailable.load(Ordering::SeqCst)
+            || self.completions_unavailable.load(Ordering::SeqCst)
+        {
+            return Err(StoreError::Unavailable(
+                "test operation store is down".into(),
+            ));
+        }
+        let mut state = self.state.lock().await;
+        let held = state
+            .get_mut(&Self::identity(claim))
+            .ok_or_else(|| StoreError::Malformed("test operation claim is missing".into()))?;
+        if held.2 != claim.expires_at() {
+            return Err(StoreError::Malformed(
+                "test operation claim was replaced".into(),
+            ));
+        }
+        if &held.0 != claim.fingerprint() {
+            return Err(StoreError::Malformed(
+                "test operation fingerprint changed".into(),
+            ));
+        }
+        match held.1.as_ref() {
+            Some(recorded) if recorded != &outcome => Err(StoreError::Malformed(
+                "test operation outcome changed".into(),
+            )),
+            Some(_) => Ok(()),
+            None if held.2 <= SystemTime::now() => Err(StoreError::Malformed(
+                "test operation claim expired before completion".into(),
+            )),
+            None => {
+                held.1 = Some(outcome);
+                Ok(())
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 struct MemorySessions {
@@ -639,6 +729,8 @@ impl ScreenModel for EmptyScreen {
 struct TestKernel {
     conversation_updates: Mutex<Option<mpsc::Sender<layer3_adapter::ConversationUpdate>>>,
     resource_samples: Mutex<Option<mpsc::Sender<layer3_adapter::ResourceSample>>>,
+    provisions: AtomicUsize,
+    conversation_inputs: Arc<AtomicUsize>,
 }
 
 impl TestKernel {
@@ -690,6 +782,7 @@ impl KernelAdapter for TestKernel {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
+        self.provisions.fetch_add(1, Ordering::SeqCst);
         Ok(RuntimeHandle(format!("runtime-{}", spec.session_id)))
     }
 
@@ -716,8 +809,15 @@ impl KernelAdapter for TestKernel {
         updates: mpsc::Sender<layer3_adapter::ConversationUpdate>,
     ) -> Result<layer3_adapter::ConversationChannel, AdapterError> {
         *self.conversation_updates.lock().await = Some(updates);
+        let received = Arc::clone(&self.conversation_inputs);
         Ok(layer3_adapter::ConversationChannel {
-            input: layer3_adapter::ConversationInputSender::spawn(8, |_input| async { Ok(()) }),
+            input: layer3_adapter::ConversationInputSender::spawn(8, move |_input| {
+                let received = Arc::clone(&received);
+                async move {
+                    received.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            }),
             conversation_id: Some("rest-contract-conversation".into()),
         })
     }
@@ -764,6 +864,7 @@ struct TestSurface {
     tickets: Arc<TerminalTickets>,
     kernel: Arc<TestKernel>,
     store: Arc<MemorySessions>,
+    operations: Arc<MemoryOperations>,
     profiles: Arc<MemoryProfiles>,
     catalogue: Arc<TestCatalogue>,
     directory: Arc<TestDirectory>,
@@ -797,6 +898,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     );
     let factory: ScreenFactory = Arc::new(|geometry| Box::new(EmptyScreen(geometry)));
     let store = Arc::new(MemorySessions::default());
+    let operations = Arc::new(MemoryOperations::default());
     let sessions = SessionService::new(
         adapters,
         factory,
@@ -831,6 +933,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         users: Arc::clone(&users),
         tickets: Arc::clone(&tickets),
         environments: Arc::clone(&environments),
+        operations: Arc::clone(&operations) as Arc<dyn OperationStore>,
     };
     let rest = rest_api_router(
         public_state.clone(),
@@ -863,6 +966,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         tickets,
         kernel,
         store,
+        operations,
         profiles,
         catalogue,
         directory,
@@ -875,6 +979,21 @@ fn json_request(method: Method, uri: &str, body: impl Into<Body>) -> Request<Bod
         .method(method)
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
+        .body(body.into())
+        .expect("request builds")
+}
+
+fn keyed_json_request(
+    method: Method,
+    uri: &str,
+    key: &str,
+    body: impl Into<Body>,
+) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", key)
         .body(body.into())
         .expect("request builds")
 }
@@ -1620,7 +1739,7 @@ async fn listed_origin_completes_an_authorized_http_cors_sequence() {
         .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
         .header(
             header::ACCESS_CONTROL_REQUEST_HEADERS,
-            "authorization,content-type",
+            "authorization,content-type,idempotency-key",
         )
         .send()
         .await
@@ -1651,6 +1770,11 @@ async fn listed_origin_completes_an_authorized_http_cors_sequence() {
         header::ACCESS_CONTROL_ALLOW_HEADERS,
         "content-type",
     );
+    assert_header_list_contains(
+        &headers,
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        "idempotency-key",
+    );
     assert_header_list_contains(&headers, header::ACCESS_CONTROL_ALLOW_METHODS, "POST");
     assert_eq!(
         headers
@@ -1664,6 +1788,7 @@ async fn listed_origin_completes_an_authorized_http_cors_sequence() {
         .header(header::ORIGIN, LISTED_ORIGIN)
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::AUTHORIZATION, "Bearer browser-fixture")
+        .header("idempotency-key", "browser-create")
         .body("{}")
         .send()
         .await
@@ -2310,6 +2435,27 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             .iter()
             .all(|parameter| parameter["name"] != "after"),
         "the compatibility cursor alias must not be advertised: {event_parameters:?}"
+    );
+
+    let mut keyed_operations = Vec::new();
+    for (path, path_item) in paths {
+        for method in ["get", "post", "put", "patch", "delete"] {
+            let Some(parameters) = path_item[method]["parameters"].as_array() else {
+                continue;
+            };
+            if parameters
+                .iter()
+                .any(|parameter| parameter["name"] == "Idempotency-Key")
+            {
+                keyed_operations.push(format!("{method} {path}"));
+            }
+        }
+    }
+    keyed_operations.sort();
+    assert_eq!(
+        keyed_operations,
+        ["post /api/v1/sessions", "post /api/v1/sessions/{id}/input",],
+        "only the two deduplicated operations may advertise Idempotency-Key"
     );
 
     let discovery_schema =
@@ -3660,4 +3806,340 @@ async fn well_formed_create_and_input_keep_their_success_statuses() {
         .await
         .expect("router answers");
     assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn one_create_key_returns_the_first_bytes_and_provisions_once() {
+    let TestSurface {
+        app, store, kernel, ..
+    } = test_surface(true);
+
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "create-retry-a",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let first_status = first.status();
+    let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+
+    let replay = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "create-retry-a",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let replay_status = replay.status();
+    let replay_body = to_bytes(replay.into_body(), usize::MAX).await.unwrap();
+
+    assert_eq!(first_status, StatusCode::CREATED);
+    assert_eq!(replay_status, first_status);
+    assert_eq!(
+        replay_body, first_body,
+        "the response body must replay verbatim"
+    );
+    assert_eq!(store.state.lock().await.records.len(), 1);
+    for _ in 0..100 {
+        if kernel.provisions.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn one_input_key_delivers_one_prompt() {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        kernel,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+    let uri = format!("/api/v1/sessions/{}/input", id.0);
+
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(keyed_json_request(
+                Method::POST,
+                &uri,
+                "prompt-retry-a",
+                r#"{"text":"act once"}"#,
+            ))
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert!(to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    for _ in 0..100 {
+        if kernel.conversation_inputs.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn different_create_keys_create_two_sessions() {
+    let TestSurface { app, store, .. } = test_surface(true);
+    for key in ["create-a", "create-b"] {
+        let response = app
+            .clone()
+            .oneshot(keyed_json_request(
+                Method::POST,
+                "/api/v1/sessions",
+                key,
+                "{}",
+            ))
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    assert_eq!(store.state.lock().await.records.len(), 2);
+}
+
+#[tokio::test]
+async fn malformed_operation_keys_are_named_bad_requests() {
+    let app = test_surface(true).app;
+    for key in ["", "contains space"] {
+        let response = app
+            .clone()
+            .oneshot(keyed_json_request(
+                Method::POST,
+                "/api/v1/sessions",
+                key,
+                "{}",
+            ))
+            .await
+            .expect("router answers");
+        let body = assert_problem(response, StatusCode::BAD_REQUEST).await;
+        assert_eq!(body["code"], "invalid_idempotency_key");
+    }
+}
+
+#[tokio::test]
+async fn an_in_flight_duplicate_is_a_named_conflict() {
+    use sha2::{Digest as _, Sha256};
+
+    let TestSurface {
+        app,
+        operations,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let fingerprint: [u8; 32] = Sha256::digest(b"{}").into();
+    let claim = OperationClaim::new(
+        caller.subject.clone(),
+        "session-create",
+        "still-running",
+        fingerprint,
+        SystemTime::now() + std::time::Duration::from_secs(86_400),
+    );
+    assert_eq!(
+        operations.reserve(&claim).await.unwrap(),
+        OperationReservation::Acquired
+    );
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "still-running",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::CONFLICT).await;
+    assert_eq!(body["code"], "idempotency_in_flight");
+    assert!(store.state.lock().await.records.is_empty());
+}
+
+#[tokio::test]
+async fn reusing_a_key_for_different_input_is_unprocessable() {
+    let TestSurface { app, store, .. } = test_surface(true);
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "changed-create",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(first.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "changed-create",
+            r#"{"cols":100,"rows":40}"#,
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "idempotency_key_reused");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+}
+
+#[tokio::test]
+async fn byte_different_bodies_do_not_replay_even_when_the_json_value_matches() {
+    let TestSurface { app, store, .. } = test_surface(true);
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "body-bytes",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(first.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "body-bytes",
+            "{ }",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "idempotency_key_reused");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+}
+
+#[tokio::test]
+async fn an_expired_key_is_reusable_and_a_stale_completion_cannot_replace_it() {
+    use sha2::{Digest as _, Sha256};
+
+    let operations = MemoryOperations::default();
+    let fingerprint: [u8; 32] = Sha256::digest(b"{}").into();
+    let expired = OperationClaim::new(
+        SubjectId("subject-a".into()),
+        "session-create",
+        "expired",
+        fingerprint,
+        SystemTime::UNIX_EPOCH,
+    );
+    assert_eq!(
+        operations.reserve(&expired).await.unwrap(),
+        OperationReservation::Acquired
+    );
+    let current = OperationClaim::new(
+        SubjectId("subject-a".into()),
+        "session-create",
+        "expired",
+        fingerprint,
+        SystemTime::now() + std::time::Duration::from_secs(86_400),
+    );
+    assert_eq!(
+        operations.reserve(&current).await.unwrap(),
+        OperationReservation::Acquired
+    );
+    assert!(operations
+        .complete(&expired, b"stale".to_vec())
+        .await
+        .is_err());
+    assert_eq!(
+        operations.reserve(&current).await.unwrap(),
+        OperationReservation::Pending
+    );
+}
+
+#[tokio::test]
+async fn an_unavailable_operation_store_fails_closed_before_creation() {
+    let TestSurface {
+        app,
+        operations,
+        store,
+        kernel,
+        ..
+    } = test_surface(true);
+    operations.unavailable.store(true, Ordering::SeqCst);
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "store-down",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::SERVICE_UNAVAILABLE).await;
+    assert_eq!(body["code"], "store_failed");
+    assert!(store.state.lock().await.records.is_empty());
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_failed_completion_keeps_the_claim_pending_and_prevents_a_second_create() {
+    let TestSurface {
+        app,
+        operations,
+        store,
+        kernel,
+        ..
+    } = test_surface(true);
+    operations
+        .completions_unavailable
+        .store(true, Ordering::SeqCst);
+
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "completion-down",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(first, StatusCode::SERVICE_UNAVAILABLE).await;
+    assert_eq!(body["code"], "store_failed");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+
+    operations
+        .completions_unavailable
+        .store(false, Ordering::SeqCst);
+    let retry = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "completion-down",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(retry, StatusCode::CONFLICT).await;
+    assert_eq!(body["code"], "idempotency_in_flight");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+    for _ in 0..100 {
+        if kernel.provisions.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 1);
 }
