@@ -94,6 +94,13 @@ The same-origin cookie clients that can use native `EventSource` do not receive 
 
 **The sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The sequence is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
 
+Every accepted run stream begins with `RUN_STARTED`. For an ordinary prompt it
+projects the durable `turn_started` boundary and carries that event's SSE `id`.
+For a continuation opened by `resume`, it is an interface-only boundary with no
+SSE `id`: it starts the new run around the turn already in progress and does not
+record or imply a second turn. A request refused before a stream opens returns
+an `application/problem+json` response and emits no `RUN_STARTED`.
+
 ### Running a turn
 
 ```http
@@ -142,6 +149,12 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 | Reasoning | `REASONING_MESSAGE_CONTENT` | what the agent is working through — **live lane only, never durable** |
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` | file edits, shell commands, MCP calls, their arguments and results |
 | State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
+
+`RUN_STARTED` is the first event on every run response. The owner's projected
+`TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END` echo follows
+it on a prompt run. On a continuation the opening event is synthetic and
+unnumbered, because the durable log already contains the turn boundary; it
+brackets the run without advancing a replay cursor.
 
 ### Canonical initial state
 
@@ -395,7 +408,13 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
      "resume": [{ "interruptId": "apr_7Q2", "status": "resolved",
                   "payload": { "decision": "allow" } }] }
 
-5. The session resumes and streams the continuation
+5. The session resumes and streams the continuation. Its first frame is the
+   run boundary, not another durable turn boundary:
+
+   RUN_STARTED { "threadId": "sesn_01JD8Z3K7",
+                 "runId": "run_01JD9A3" }   # no SSE id
+   ...continuation events...
+   RUN_FINISHED { ... }
 ```
 
 `reason` is `confirmation` where the runtime offered no description of what it wants, and `cma:<what the runtime called it>` where it did — `cma:command_execution`, `cma:file_write`, `cma:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
