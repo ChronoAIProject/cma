@@ -207,6 +207,12 @@ impl EnvironmentProfileService {
         }
     }
 
+    /// Apply the deployment-owned content and defaults projected on every read.
+    fn apply_deployment_defaults(&self, spec: &mut EnvironmentProfileSpec) {
+        self.baseline.apply(spec);
+        self.settle_kernel(spec);
+    }
+
     /// Project a stored profile through today's deployment-owned defaults.
     ///
     /// Profiles written before a baseline entry was introduced, or before
@@ -215,8 +221,7 @@ impl EnvironmentProfileService {
     /// not rewritten just because somebody viewed them.
     fn normalize_profile(&self, profile: EnvironmentProfile) -> EnvironmentProfile {
         let mut spec = profile.to_spec();
-        self.baseline.apply(&mut spec);
-        self.settle_kernel(&mut spec);
+        self.apply_deployment_defaults(&mut spec);
         EnvironmentProfile {
             name: spec.name,
             agent: spec.agent,
@@ -431,31 +436,35 @@ impl EnvironmentProfileService {
         &self,
         caller: &Caller,
         id: &EnvironmentProfileId,
-        mut spec: EnvironmentProfileSpec,
+        spec: EnvironmentProfileSpec,
     ) -> Result<EnvironmentProfile, CoreError> {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
         let existing = self.owned(caller, id).await?;
-        spec.validate_with_baseline(&self.baseline)?;
-        // Applied again on every write: this is what makes removing a mandatory
-        // entry impossible rather than merely discouraged.
-        self.baseline.apply(&mut spec);
-        self.settle_kernel(&mut spec);
-        spec.name = spec.name.trim().to_string();
+        let mut normalized_spec = spec.clone();
+        self.apply_deployment_defaults(&mut normalized_spec);
+        normalized_spec.name = normalized_spec.name.trim().to_string();
 
         // PUT remains a full replacement, but replacing a resource with its
-        // current normalized contents changes nothing. Avoiding the write also
-        // keeps its last-modified timestamp stable for an exact GET echo.
+        // current normalized contents changes nothing. Compare before bounded
+        // validation so a retired mandatory identity in a legacy profile does
+        // not make its exact projection un-echoable. Every changed replacement
+        // is still validated against today's baseline, where that retired
+        // identity is caller-controlled.
         let normalized_existing = self.normalize_profile(existing);
-        if normalized_existing.to_spec() == spec {
+        if normalized_existing.to_spec() == normalized_spec {
             return Ok(normalized_existing);
         }
+
+        // Changed writes retain the established validation contract: validate
+        // exactly what the caller supplied, then persist its normalized form.
+        spec.validate_with_baseline(&self.baseline)?;
 
         let updated_at = now_rfc3339();
         let profile = self
             .store
-            .replace_content(id, &spec, &updated_at)
+            .replace_content(id, &normalized_spec, &updated_at)
             .await
             .map_err(store_failed)?
             .ok_or(CoreError::EnvironmentProfileNotFound)?;
