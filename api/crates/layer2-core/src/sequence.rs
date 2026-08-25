@@ -25,13 +25,14 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::ids::SessionId;
+use crate::store::StoreError;
 
 /// The one place a session's next event sequence is decided.
 ///
-/// Synchronous on purpose. Numbering happens while the entries lock is held,
-/// and an allocator that had to be awaited would either force that lock open
-/// or push the numbering somewhere it could race again. The lock here is held
-/// across a map lookup and an addition, and never across an await.
+/// Synchronous on purpose. The durable lane holds its own session lock across
+/// numbering and FIFO insertion, so an allocator that had to be awaited would
+/// split the exact boundary that prevents enqueue inversion. The lock here is
+/// held across a map lookup and an addition, and never across an await.
 #[derive(Default)]
 pub(crate) struct Sequences {
     /// The highest sequence handed out for a session, while this process runs.
@@ -47,13 +48,29 @@ impl Sequences {
     /// record is what a freshly started process has to start from. Whichever
     /// is higher wins, so a caller holding a stale copy cannot pull the
     /// sequence backwards over one that has already been issued.
+    #[cfg(test)]
     pub(crate) fn take(&self, id: &SessionId, floor: u64, count: u64) -> u64 {
+        self.try_take(id, floor, count)
+            .expect("test sequence allocation stays within u64")
+    }
+
+    /// Checked form used by the durable lane.
+    pub(crate) fn try_take(
+        &self,
+        id: &SessionId,
+        floor: u64,
+        count: u64,
+    ) -> Result<u64, StoreError> {
         let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
         let last = issued.entry(id.clone()).or_insert(0);
         *last = (*last).max(floor);
-        let first = *last + 1;
-        *last += count;
-        first
+        let first = last
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+        *last = last
+            .checked_add(count)
+            .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+        Ok(first)
     }
 
     /// The highest sequence handed out, never below `floor`.
@@ -69,6 +86,38 @@ impl Sequences {
         *last
     }
 
+    /// The currently issued tail, without creating an allocator entry.
+    pub(crate) fn current(&self, id: &SessionId) -> Option<u64> {
+        self.issued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .copied()
+    }
+
+    /// Return an abandoned reservation to this session's lane.
+    ///
+    /// The lane serializes this with allocation and shifts every queued unit by
+    /// the same amount. Lowering is therefore safe here even though ordinary
+    /// observations may only move the allocator forward.
+    pub(crate) fn rewind(&self, id: &SessionId, count: u64) {
+        let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(last) = issued.get_mut(id) {
+            *last = last.saturating_sub(count);
+        }
+    }
+
+    /// Reconcile every reservation in a lane to a store-authoritative tail.
+    ///
+    /// Called only while the lane lock excludes allocation. Unlike `issued`,
+    /// this may move backward when a missing local write is being closed.
+    pub(crate) fn reconcile(&self, id: &SessionId, tail: u64) {
+        self.issued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.clone(), tail);
+    }
+
     /// Drop what is remembered about a session.
     ///
     /// Only for a session whose events are being deleted with it. A session
@@ -79,6 +128,11 @@ impl Sequences {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.issued.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 

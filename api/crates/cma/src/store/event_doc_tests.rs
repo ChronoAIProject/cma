@@ -40,6 +40,38 @@ fn a_written_event_reads_back_as_the_kind_it_was() {
 }
 
 #[test]
+fn every_new_event_carries_the_database_write_protocol() {
+    let document = to_document(&event(1, EventKind::SessionCreated)).expect("writes");
+    assert_eq!(
+        document.get_i32("_cma_write_protocol").unwrap(),
+        super::super::mongo::WRITE_PROTOCOL
+    );
+}
+
+#[test]
+fn an_event_from_before_the_write_protocol_marker_still_reads() {
+    let stored = from_document(doc! {
+        "session_id": "s-1",
+        "seq": 1_i64,
+        "kind": { "type": "session_created" },
+    })
+    .expect("legacy history remains readable through the cutover view");
+    assert_eq!(stored.seq, 1);
+    assert!(matches!(
+        stored.kind,
+        StoredEventKind::Known(EventKind::SessionCreated)
+    ));
+}
+
+#[test]
+fn an_event_sequence_above_bson_i64_is_refused_instead_of_wrapped() {
+    let oversized = event(i64::MAX as u64 + 1, EventKind::SessionCreated);
+
+    let error = to_document(&oversized).expect_err("the sequence cannot be stored faithfully");
+    assert!(error.to_string().contains("exceeds"));
+}
+
+#[test]
 fn every_current_variant_survives_the_round_trip() {
     let kinds = vec![
         EventKind::SessionCreated,

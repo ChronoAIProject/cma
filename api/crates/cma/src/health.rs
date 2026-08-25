@@ -78,10 +78,6 @@ mod tests {
             }
         }
 
-        async fn upsert(&self, _record: &SessionRecord) -> Result<(), StoreError> {
-            unreachable!("readiness must only ping the store")
-        }
-
         async fn get(&self, _id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
             unreachable!("readiness must only ping the store")
         }
@@ -103,6 +99,24 @@ mod tests {
         }
 
         async fn append_events(&self, _events: &[Event]) -> Result<(), StoreError> {
+            unreachable!("readiness must only ping the store")
+        }
+
+        async fn commit_session_idempotent(
+            &self,
+            _write_id: &str,
+            _record: &SessionRecord,
+            _events: &[Event],
+        ) -> Result<u64, StoreError> {
+            unreachable!("readiness must only ping the store")
+        }
+
+        async fn create_session_idempotent(
+            &self,
+            _write_id: &str,
+            _record: &SessionRecord,
+            _events: &[Event],
+        ) -> Result<u64, StoreError> {
             unreachable!("readiness must only ping the store")
         }
 
