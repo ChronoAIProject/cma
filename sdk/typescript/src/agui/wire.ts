@@ -24,7 +24,7 @@ import {
   type OperationOptions,
 } from '../http.js';
 import type { AguiTransport } from './connection.js';
-import { isDurableProjectionPrefix } from './cursor.js';
+import { canBeDurableProjectionPrefix } from './cursor.js';
 
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 
@@ -353,7 +353,7 @@ function sequenceOf(raw: string | undefined, kind: string): number {
   // Only the final frame of a durable projection is stamped. Zero is an
   // internal sentinel for a leading durable frame and never a resume cursor.
   if (raw === undefined) {
-    if (isDurableProjectionPrefix(kind)) {
+    if (canBeDurableProjectionPrefix(kind)) {
       return 0;
     }
     throw new ProtocolError(`AG-UI durable ${kind} frame carried no sequence id`);

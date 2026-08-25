@@ -106,7 +106,7 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 
 Not emitted **today**: `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim.
 
-A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
+A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively. That includes an unknown durable frame with no SSE `id`: an older client cannot know whether a future kind is a leading frame, so it retains the frame and groups it with the next numbered final just as it does a known leading frame.
 
 ### Reading history is a different request from watching
 
@@ -393,7 +393,7 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 - **Do not treat `RUN_FINISHED` as "session over."** Check `outcome`. An interrupt outcome means the session is alive and waiting for you.
 - **A dropped stream is not a cancellation.** The turn keeps running. Recover by reading the log, not by re-posting the run — and if you meant to stop it, say so with the interrupt route (§5).
 - **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`, not by POSTing the run again — which would start a second turn. Read the cursor off the last SSE `id`; it is not in the body.
-- **An SSE `id` acknowledges a whole durable projection.** Only its final frame carries the event sequence. If the connection drops after an earlier frame, the last id still names the preceding durable event, so replay sends the interrupted projection again from its first frame. Leading `TEXT_MESSAGE_*` or `TOOL_CALL_*` frames may therefore repeat after resume; deduplicate and upsert them by `messageId` or `toolCallId`. Do not advance the stored cursor for an unnumbered frame, and do not mistake one for `cma:live` — that marker is reserved for the non-durable lane described in §3.
+- **An SSE `id` acknowledges a whole durable projection.** Only its final frame carries the event sequence. If the connection drops after an earlier frame, the last id still names the preceding durable event, so replay sends the interrupted projection again from its first frame. Group the contiguous unnumbered durable frames with their next numbered final and deduplicate that complete projection by the final id. Do not deduplicate prefixes only by `messageId`, `toolCallId`, or kind: one tool call can have several distinct durable updates, and future unknown kinds may also be prefixes. Do not advance the stored cursor for an unnumbered frame, and do not mistake one for `cma:live` — that marker is reserved for the non-durable lane described in §3.
 - **`STATE_DELTA` patches, it does not replace.** Apply it to the last `STATE_SNAPSHOT`.
 
 ---

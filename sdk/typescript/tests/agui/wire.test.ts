@@ -211,8 +211,10 @@ describe('the SSE id identifies only a complete durable projection', () => {
     },
   );
 
-  it('rejects an omitted id for an unknown durable kind', () => {
-    expect(() => parseEventStream(literalFrame('SOMETHING_ADDED_LATER'))).toThrow(ProtocolError);
+  it('preserves an omitted id on an unknown durable prefix', () => {
+    expect(parseEventStream(literalFrame('SOMETHING_ADDED_LATER'))).toEqual([
+      expect.objectContaining({ type: 'SOMETHING_ADDED_LATER', seq: 0 }),
+    ]);
   });
 
   it.each([

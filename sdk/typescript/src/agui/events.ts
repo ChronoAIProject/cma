@@ -13,7 +13,7 @@
 
 import { KNOWN_EVENTS, STATE_DELTA_PATCHES } from '../wire.js';
 import { ProtocolError } from '../errors.js';
-import { isDurableProjectionPrefix } from './cursor.js';
+import { canBeDurableProjectionPrefix } from './cursor.js';
 
 /** Every kind this build renders. The set grows; the handling does not break. */
 export type KnownEventType = (typeof KNOWN_EVENTS)[number];
@@ -292,7 +292,7 @@ export function toEvent(raw: unknown): AguiEvent {
   }
   const kind = nonEmptyString(frame.type, 'AG-UI type');
   const seq = sequence(frame.seq);
-  if (!ephemeral && seq === 0 && !isDurableProjectionPrefix(kind)) {
+  if (!ephemeral && seq === 0 && !canBeDurableProjectionPrefix(kind)) {
     throw new ProtocolError(`AG-UI durable ${kind} frame cannot have sequence zero`);
   }
   const base = {
