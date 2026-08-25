@@ -10,10 +10,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
-use layer3_adapter::TerminalOutput;
+use layer3_adapter::{TermSize, TerminalInput, TerminalOutput};
 
 use crate::attach::AttachmentClaim;
 use crate::commit_fault_support::CommitFaultStore;
+use crate::conversation::ApprovalDecision;
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::store::SessionStore;
@@ -1145,11 +1146,367 @@ async fn the_client_holding_the_terminal_can_still_type_into_it() {
         .expect("and can stop what it started");
 }
 
+const ROTATION_BYTES: &[u8] = b"retry after rotation";
+const ROTATION_SIGNAL: &str = "INT";
+const ROTATION_PROMPT: &str = "wait for the replacement";
+const ROTATION_APPROVAL: &str = "approval-during-rotation";
+
+fn rotation_resize_geometry() -> TerminalGeometry {
+    TerminalGeometry::new(100, 30).expect("valid resize geometry")
+}
+
+fn rotation_attach_geometry() -> TerminalGeometry {
+    TerminalGeometry::new(120, 40).expect("valid attachment geometry")
+}
+
+async fn assert_every_runtime_operation_fails_with(
+    svc: &Arc<crate::service::SessionService>,
+    caller: &crate::authz::Caller,
+    id: &crate::ids::SessionId,
+    expected: CoreError,
+) {
+    assert_eq!(
+        svc.send_input(caller, id, ROTATION_BYTES.to_vec()).await,
+        Err(expected.clone())
+    );
+    assert_eq!(
+        svc.send_signal(caller, id, ROTATION_SIGNAL.into()).await,
+        Err(expected.clone())
+    );
+    assert_eq!(
+        svc.resize_terminal(caller, id, rotation_resize_geometry())
+            .await,
+        Err(expected.clone())
+    );
+    assert_eq!(
+        svc.terminal_is_held(caller, id).await,
+        Err(expected.clone())
+    );
+    assert_eq!(
+        svc.attach_terminal(
+            caller,
+            id,
+            rotation_attach_geometry(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err(),
+        Some(expected.clone())
+    );
+    assert_eq!(
+        svc.send_prompt(caller, id, ROTATION_PROMPT.into()).await,
+        Err(expected.clone())
+    );
+    assert_eq!(svc.interrupt_turn(caller, id).await, Err(expected.clone()));
+    assert_eq!(
+        svc.resolve_approval(
+            caller,
+            id,
+            ROTATION_APPROVAL.into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(expected)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_operation_sees_the_real_post_removal_rotation_gap_and_retries_on_the_replacement() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    let alice = user("rotating-terminal-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let (outgoing_input, mut outgoing_runtime) = tokio::sync::mpsc::channel(8);
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.runtime_version = Some("runtime:1".into());
+    store.seed(&record).await.expect("old version is durable");
+    {
+        let mut entries = svc.entries.write().await;
+        let outgoing = entries.get_mut(&created.id).expect("outgoing entry");
+        outgoing.session.runtime_version = Some("runtime:1".into());
+        outgoing.input = Some(outgoing_input.clone());
+    }
+
+    adapter.pause_next_provision();
+    svc.pause_next_live_install();
+    let reconciling = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        async move { svc.reconcile().await }
+    });
+    adapter.wait_until_provision_paused().await;
+
+    assert!(
+        !svc.entries.read().await.contains_key(&created.id),
+        "the outgoing entry is removed before replacement provisioning"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("rotation is readable")
+            .expect("session remains durable")
+            .session
+            .status,
+        crate::session::SessionStatus::Rotating
+    );
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &user("foreign-rotation-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
+    assert!(matches!(
+        outgoing_runtime.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+
+    adapter.resume_provision();
+    svc.wait_until_live_install_paused().await;
+    assert!(
+        !svc.entries.read().await.contains_key(&created.id),
+        "readiness is durable before the replacement entry is installed"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("readiness is readable")
+            .expect("session remains durable")
+            .session
+            .status,
+        crate::session::SessionStatus::Ready,
+        "the in-progress rotation marker spans the final durable/live disagreement"
+    );
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &user("foreign-ready-gap-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
+    assert!(matches!(
+        outgoing_runtime.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+    svc.resume_live_install();
+    assert_eq!(
+        reconciling
+            .await
+            .expect("reconciliation task completes")
+            .rotated_sessions,
+        1
+    );
+    let settled = await_settled(&svc, &alice, &created.id).await;
+    assert_eq!(settled.runtime_version.as_deref(), Some("runtime:2"));
+
+    let (replacement_input, mut replacement_runtime) = tokio::sync::mpsc::channel(8);
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("replacement entry")
+        .input = Some(replacement_input);
+    assert!(!svc
+        .terminal_is_held(&alice, &created.id)
+        .await
+        .expect("the replacement starts detached"));
+
+    svc.send_input(&alice, &created.id, ROTATION_BYTES.to_vec())
+        .await
+        .expect("the same terminal input succeeds after rotation");
+    svc.send_signal(&alice, &created.id, ROTATION_SIGNAL.into())
+        .await
+        .expect("the same signal succeeds after rotation");
+    svc.resize_terminal(&alice, &created.id, rotation_resize_geometry())
+        .await
+        .expect("the same resize succeeds after rotation");
+    let attachment = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            rotation_attach_geometry(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("the same attach succeeds after rotation");
+    assert!(svc
+        .terminal_is_held(&alice, &created.id)
+        .await
+        .expect("the replacement attachment is visible"));
+    assert_eq!(attachment.geometry, rotation_attach_geometry());
+
+    assert!(matches!(
+        replacement_runtime.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == ROTATION_BYTES
+    ));
+    assert!(matches!(
+        replacement_runtime.recv().await,
+        Some(TerminalInput::Signal(signal)) if signal == ROTATION_SIGNAL
+    ));
+    assert!(matches!(
+        replacement_runtime.recv().await,
+        Some(TerminalInput::Resize(size))
+            if size == TermSize {
+                cols: rotation_resize_geometry().columns(),
+                rows: rotation_resize_geometry().rows(),
+            }
+    ));
+    assert!(matches!(
+        replacement_runtime.recv().await,
+        Some(TerminalInput::Resize(size))
+            if size == TermSize {
+                cols: rotation_attach_geometry().columns(),
+                rows: rotation_attach_geometry().rows(),
+            }
+    ));
+    assert!(matches!(
+        outgoing_runtime.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restarted_rotation_stays_rotating_until_the_replacement_is_live() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("restarted-rotation-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    let outgoing = record
+        .runtime_id
+        .take()
+        .expect("the outgoing runtime was recorded");
+    record.session.status = crate::session::SessionStatus::Rotating;
+    store
+        .seed(&record)
+        .await
+        .expect("the post-removal rotation state is durable");
+    adapter.lose(&outgoing).await;
+    drop(first);
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    adapter.pause_next_provision();
+    restarted.pause_next_live_install();
+    let recovered = restarted.reconcile().await;
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    adapter.wait_until_provision_paused().await;
+
+    assert!(
+        !restarted.entries.read().await.contains_key(&created.id),
+        "the recovered replacement has not been provisioned yet"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("recovery is readable")
+            .expect("session remains durable")
+            .session
+            .status,
+        crate::session::SessionStatus::Provisioning,
+        "reconciliation rewrites the durable rotation state while recovery starts"
+    );
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &user("foreign-restarted-provision-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
+
+    adapter.resume_provision();
+    restarted.wait_until_live_install_paused().await;
+
+    assert!(
+        !restarted.entries.read().await.contains_key(&created.id),
+        "the recovered replacement is not live before installation"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("readiness is readable")
+            .expect("session remains durable")
+            .session
+            .status,
+        crate::session::SessionStatus::Ready,
+        "recovery rewrites the durable rotation state before live installation"
+    );
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &user("foreign-restarted-rotation-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
+
+    restarted.resume_live_install();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if restarted.entries.read().await.contains_key(&created.id)
+                && !restarted.rotation_in_progress(&created.id).await
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the recovered replacement becomes live and clears the marker");
+    restarted
+        .send_input(&alice, &created.id, ROTATION_BYTES.to_vec())
+        .await
+        .expect("input succeeds once the recovered replacement is live");
+}
+
 #[tokio::test]
-async fn every_terminal_operation_is_refused_while_rotating_and_reusable_afterward() {
+async fn a_missing_live_entry_preserves_durable_termination_and_owner_precedence() {
     let store = Arc::new(FakeStore::default());
     let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
-    let alice = user("rotating-terminal-owner");
+    let alice = user("terminated-missing-live-owner");
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
 
@@ -1158,75 +1515,28 @@ async fn every_terminal_operation_is_refused_while_rotating_and_reusable_afterwa
         .await
         .expect("readable")
         .expect("present");
-    record.session.status = crate::session::SessionStatus::Rotating;
-    store.seed(&record).await.expect("rotation is durable");
-    svc.entries
+    record.session.status = crate::session::SessionStatus::Terminated;
+    store.seed(&record).await.expect("termination is durable");
+    svc.entries.write().await.remove(&created.id);
+    svc.rotations_in_progress
         .write()
         .await
-        .get_mut(&created.id)
-        .expect("live entry")
-        .session
-        .status = crate::session::SessionStatus::Rotating;
+        .insert(created.id.clone());
 
-    assert_eq!(
-        svc.send_input(&alice, &created.id, b"must wait".to_vec())
-            .await,
-        Err(CoreError::SessionRotating)
-    );
-    assert_eq!(
-        svc.send_signal(&alice, &created.id, "INT".into()).await,
-        Err(CoreError::SessionRotating)
-    );
-    assert_eq!(
-        svc.resize_terminal(
-            &alice,
-            &created.id,
-            TerminalGeometry::new(100, 30).expect("valid"),
-        )
-        .await,
-        Err(CoreError::SessionRotating)
-    );
-    assert_eq!(
-        svc.terminal_is_held(&alice, &created.id).await,
-        Err(CoreError::SessionRotating)
-    );
-    assert_eq!(
-        svc.attach_terminal(
-            &alice,
-            &created.id,
-            TerminalGeometry::default(),
-            AttachmentClaim::Exclusive,
-        )
-        .await
-        .err(),
-        Some(CoreError::SessionRotating)
-    );
-
-    record.session.status = crate::session::SessionStatus::Ready;
-    store.seed(&record).await.expect("handover completed");
-    svc.entries
-        .write()
-        .await
-        .get_mut(&created.id)
-        .expect("replacement entry")
-        .session
-        .status = crate::session::SessionStatus::Ready;
-
-    svc.send_input(&alice, &created.id, b"retry now".to_vec())
-        .await
-        .expect("the same terminal input succeeds after rotation");
-    svc.send_signal(&alice, &created.id, "INT".into())
-        .await
-        .expect("the same signal succeeds after rotation");
-    let _attachment = svc
-        .attach_terminal(
-            &alice,
-            &created.id,
-            TerminalGeometry::default(),
-            AttachmentClaim::Exclusive,
-        )
-        .await
-        .expect("the same attach succeeds after rotation");
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &alice,
+        &created.id,
+        CoreError::SessionTerminated,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &user("foreign-terminated-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
 }
 
 #[tokio::test]

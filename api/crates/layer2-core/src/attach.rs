@@ -184,8 +184,17 @@ impl SessionService {
         if record.session.status.is_rotating() {
             return Err(CoreError::SessionRotating);
         }
+        let entries = self.entries.read().await;
+        let missing_live_entry = !entries.contains_key(id);
+        if missing_live_entry {
+            let rotation_in_progress = self.rotation_in_progress(id).await;
+            if rotation_in_progress {
+                return Err(CoreError::SessionRotating);
+            }
+        }
+        drop(entries);
         record.session.capabilities.require(Capability::Terminal)?;
-        if !self.entries.read().await.contains_key(id) {
+        if missing_live_entry {
             // The sandbox outlives this process, so a restart loses the
             // attachment and not the runtime. Re-adopting it here is what makes
             // a session survive a deployment: the alternative is a session that
@@ -213,7 +222,13 @@ impl SessionService {
         let input_fence = self.input_gates.gate(id).read_owned().await;
         let commit = {
             let mut entries = self.entries.write().await;
-            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
+            let Some(entry) = entries.get_mut(id) else {
+                let rotation_in_progress = self.rotation_in_progress(id).await;
+                drop(entries);
+                return Err(self
+                    .missing_live_session_error(caller, id, rotation_in_progress)
+                    .await);
+            };
             // Attaching is acting, not observing, so ownership is required
             // even for a privileged reader.
             if !entry.session.is_owned_by(&caller.subject) {

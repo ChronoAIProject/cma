@@ -122,12 +122,23 @@ impl SessionService {
         id: &SessionId,
         geometry: TerminalGeometry,
     ) -> Result<(), CoreError> {
+        // Installation holds the lifecycle gate across durable readiness and
+        // live publication. Check first so a resize observed in that final
+        // rotation gap is refused instead of waiting and crossing it. The
+        // fenced check below still closes a rotation that begins afterwards.
+        self.authorize(caller, id).await?;
         let lifecycle = self.lock_lifecycle(id).await;
         let input_fence = self.input_gates.gate(id).read_owned().await;
         self.may_drive_terminal(caller, id).await?;
         let commit = {
             let mut entries = self.entries.write().await;
-            let entry = entries.get_mut(id).ok_or(CoreError::SessionNotFound)?;
+            let Some(entry) = entries.get_mut(id) else {
+                let rotation_in_progress = self.rotation_in_progress(id).await;
+                drop(entries);
+                return Err(self
+                    .missing_live_session_error(caller, id, rotation_in_progress)
+                    .await);
+            };
             if !entry.session.is_owned_by(&caller.subject) {
                 return Err(CoreError::Forbidden);
             }
@@ -203,7 +214,13 @@ impl SessionService {
     async fn may_drive_terminal(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
         self.authorize(caller, id).await?;
         let entries = self.entries.read().await;
-        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+        let Some(entry) = entries.get(id) else {
+            let rotation_in_progress = self.rotation_in_progress(id).await;
+            drop(entries);
+            return Err(self
+                .missing_live_session_error(caller, id, rotation_in_progress)
+                .await);
+        };
         entry.session.capabilities.require(Capability::Terminal)
     }
 
@@ -224,7 +241,13 @@ impl SessionService {
     ) -> Result<bool, CoreError> {
         self.authorize(caller, id).await?;
         let entries = self.entries.read().await;
-        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+        let Some(entry) = entries.get(id) else {
+            let rotation_in_progress = self.rotation_in_progress(id).await;
+            drop(entries);
+            return Err(self
+                .missing_live_session_error(caller, id, rotation_in_progress)
+                .await);
+        };
         Ok(entry.attached.is_some())
     }
 

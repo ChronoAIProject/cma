@@ -11,7 +11,7 @@ use layer3_adapter::{
     AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeLossReason, RuntimeMode,
     RuntimeSpec, TerminalChannel, TerminalOutput,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Notify};
 
 /// An adapter that provisions nothing and records what it was asked to tear
 /// down, so teardown can be asserted without a sandbox.
@@ -71,6 +71,14 @@ pub(crate) struct FakeAdapter {
     /// runtime. This is what makes "the core retried" and "the core accepted
     /// the answer" tellable apart.
     pub(crate) provision_calls: std::sync::atomic::AtomicUsize,
+    /// Pauses the next provision call after it enters the adapter.
+    ///
+    /// Armed only by concurrency tests after the original runtime is live. A
+    /// rotation calls provision after removing that runtime's entry, making this
+    /// the deterministic post-removal, pre-replacement boundary those tests need.
+    pub(crate) pause_next_provision: std::sync::atomic::AtomicBool,
+    pub(crate) provision_paused: Notify,
+    pub(crate) provision_resume: Notify,
     /// What each runtime says its agent's conversation is.
     pub(crate) conversations: Mutex<HashMap<String, Vec<u8>>>,
     /// Whether this adapter would accept an in-place plane switch.
@@ -141,6 +149,9 @@ impl Default for FakeAdapter {
             last_spec: Mutex::default(),
             issued: std::sync::atomic::AtomicUsize::new(0),
             provision_calls: std::sync::atomic::AtomicUsize::new(0),
+            pause_next_provision: std::sync::atomic::AtomicBool::new(false),
+            provision_paused: Notify::new(),
+            provision_resume: Notify::new(),
             conversations: Mutex::default(),
             accept_plane_switch: false,
             plane_switches: Mutex::default(),
@@ -169,6 +180,28 @@ impl Default for FakeAdapter {
 }
 
 impl FakeAdapter {
+    pub(crate) fn pause_next_provision(&self) {
+        assert!(
+            !self
+                .pause_next_provision
+                .swap(true, std::sync::atomic::Ordering::SeqCst),
+            "a provision pause is already armed"
+        );
+    }
+
+    pub(crate) async fn wait_until_provision_paused(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.provision_paused.notified(),
+        )
+        .await
+        .expect("replacement provisioning reached the adapter");
+    }
+
+    pub(crate) fn resume_provision(&self) {
+        self.provision_resume.notify_one();
+    }
+
     /// Forget a runtime without being told to, as a provider does when a node
     /// is replaced underneath a sandbox.
     pub(crate) async fn lose(&self, handle: &str) {
@@ -224,6 +257,13 @@ impl KernelAdapter for FakeAdapter {
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
         self.provision_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self
+            .pause_next_provision
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.provision_paused.notify_one();
+            self.provision_resume.notified().await;
+        }
         if self.refuse_provision {
             return Err(AdapterError::Unavailable("no capacity".into()));
         }
