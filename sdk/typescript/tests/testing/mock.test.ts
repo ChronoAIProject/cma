@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { MockSession } from '../../src/testing/mock.js';
 import { AguiConnection } from '../../src/agui/connection.js';
 import { AguiOperations } from '../../src/agui/operations.js';
+import { fold } from '../../src/conversation/fold.js';
 import { TRANSCRIPTS, transcriptNamed } from '../../src/testing/transcripts.js';
 import type { AguiEvent } from '../../src/agui/events.js';
+import type { Transcript } from '../../src/testing/types.js';
 
 /**
  * The mock driver — #117.
@@ -34,6 +36,22 @@ async function replay(session: MockSession) {
   }
   stop();
   return { seen, statuses, cursor: connection.cursor };
+}
+
+function projectionTranscript(
+  name: string,
+  events: readonly Record<string, unknown>[],
+): Transcript {
+  return {
+    name,
+    about: 'A focused durable-projection reconnect fixture.',
+    provenance: 'authored',
+    source: 'sdk/typescript/tests/testing/mock.test.ts',
+    frames: events.map((event) => ({
+      afterMs: 0,
+      event: { threadId: 'sesn_projection_reconnect', ...event },
+    })),
+  };
 }
 
 describe('every fixture', () => {
@@ -179,27 +197,168 @@ describe('the cases the milestone needs', () => {
     ).toBe(true);
   });
 
-  it('covers a stream that dies mid-turn and reconnects', async () => {
-    // The one thing a mock can do that the wire cannot on demand.
-    const session = new MockSession(transcriptNamed('plain-turn'), { dropAfter: 2 });
-    const { seen, statuses } = await replay(session);
+  it.each([
+    ['TEXT_MESSAGE_START', 2],
+    ['TEXT_MESSAGE_CONTENT', 3],
+  ] as const)(
+    'replays a complete message after disconnecting after %s',
+    async (_prefix, dropAfter) => {
+      // The durable message already exists when the server begins projecting its
+      // cursorless prefixes. History must therefore return the whole projection
+      // after a drop at either prefix.
+      const session = new MockSession(transcriptNamed('plain-turn'), { dropAfter });
+      const { cursor, seen, statuses } = await replay(session);
+
+      expect(statuses).toContain('reconnecting');
+      expect(seen.map((event) => event.type)).toEqual([
+        'RUN_STARTED',
+        'TEXT_MESSAGE_START',
+        'TEXT_MESSAGE_CONTENT',
+        'TEXT_MESSAGE_END',
+        'RUN_FINISHED',
+      ]);
+      expect(seen.map((event) => event.seq)).toEqual([1, 0, 0, 2, 3]);
+      expect(cursor).toBe(3);
+      expect(fold(seen).entries).toEqual([
+        expect.objectContaining({
+          kind: 'message',
+          id: 'm_1',
+          role: 'assistant',
+          text: 'The auth module now uses the new token type. Two call sites changed.',
+          committed: true,
+          seq: 2,
+        }),
+      ]);
+    },
+  );
+
+  it('replays a complete tool start after disconnecting after TOOL_CALL_START', async () => {
+    const transcript = projectionTranscript('tool-start-prefix', [
+      { type: 'RUN_STARTED', runId: 'run_tool_start', seq: 1 },
+      {
+        type: 'TOOL_CALL_START',
+        runId: 'run_tool_start',
+        seq: 0,
+        toolCallId: 'tool_start_1',
+        toolCallName: 'cargo test',
+        'cma:toolKind': 'shell',
+      },
+      {
+        type: 'TOOL_CALL_ARGS',
+        runId: 'run_tool_start',
+        seq: 2,
+        toolCallId: 'tool_start_1',
+        delta: '{"package":"cma-sdk"}',
+        'cma:truncated': false,
+      },
+      { type: 'RUN_FINISHED', runId: 'run_tool_start', seq: 3 },
+    ]);
+    const { cursor, seen, statuses } = await replay(new MockSession(transcript, { dropAfter: 2 }));
 
     expect(statuses).toContain('reconnecting');
-    // Nothing lost and nothing doubled: the reconnect reads what had already
-    // happened out of history and picks the rest up live.
-    expect(seen.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
+      'TOOL_CALL_START',
+      'TOOL_CALL_ARGS',
+      'RUN_FINISHED',
+    ]);
+    expect(seen.map((event) => event.seq)).toEqual([1, 0, 2, 3]);
+    expect(seen.filter((event) => event.type === 'TOOL_CALL_START')).toHaveLength(1);
+    expect(cursor).toBe(3);
+    expect(fold(seen).entries).toEqual([
+      expect.objectContaining({
+        kind: 'tool',
+        id: 'tool_start_1',
+        toolKind: 'shell',
+        target: 'cargo test',
+        arguments: { text: '{"package":"cma-sdk"}', truncated: false },
+        seq: 2,
+      }),
+    ]);
+  });
+
+  it('replays a complete tool update after disconnecting after TOOL_CALL_END', async () => {
+    const transcript = projectionTranscript('tool-end-prefix', [
+      { type: 'RUN_STARTED', runId: 'run_tool_end', seq: 1 },
+      {
+        type: 'TOOL_CALL_START',
+        runId: 'run_tool_end',
+        seq: 2,
+        toolCallId: 'tool_end_1',
+        toolCallName: 'cargo test',
+        'cma:toolKind': 'shell',
+      },
+      {
+        type: 'TOOL_CALL_END',
+        runId: 'run_tool_end',
+        seq: 0,
+        toolCallId: 'tool_end_1',
+        'cma:status': 'ok',
+      },
+      {
+        type: 'TOOL_CALL_RESULT',
+        runId: 'run_tool_end',
+        seq: 3,
+        toolCallId: 'tool_end_1',
+        content: 'all tests passed',
+        'cma:truncated': false,
+      },
+      { type: 'RUN_FINISHED', runId: 'run_tool_end', seq: 4 },
+    ]);
+    const { cursor, seen, statuses } = await replay(new MockSession(transcript, { dropAfter: 3 }));
+
+    expect(statuses).toContain('reconnecting');
+    expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
+      'TOOL_CALL_START',
+      'TOOL_CALL_END',
+      'TOOL_CALL_RESULT',
+      'RUN_FINISHED',
+    ]);
+    expect(seen.map((event) => event.seq)).toEqual([1, 2, 0, 3, 4]);
+    expect(seen.filter((event) => event.type === 'TOOL_CALL_END')).toHaveLength(1);
+    expect(cursor).toBe(4);
+    expect(fold(seen).entries).toEqual([
+      expect.objectContaining({
+        kind: 'tool',
+        id: 'tool_end_1',
+        status: 'ok',
+        result: { text: 'all tests passed', truncated: false },
+      }),
+    ]);
   });
 });
 
 describe('the mock drives the real client', () => {
-  it('duplicates no protocol logic', async () => {
-    // The parsing, the cursor, the deduplication and the reconnect order are
-    // all `AguiConnection`'s. A frame that arrives twice is delivered once
-    // because the connection says so, not because the mock avoided it.
+  it('leaves projection assembly and cursor advancement to the real client', async () => {
+    // The mock supplies wire-shaped frames and complete history projections.
+    // Parsing, assembly, cursor advancement and deduplication remain the real
+    // connection's work.
     const session = new MockSession(transcriptNamed('plain-turn'));
     const { cursor, seen } = await replay(session);
-    expect(cursor).toBe(5);
-    expect(new Set(seen.map((e) => e.seq)).size).toBe(seen.length);
+    expect(cursor).toBe(3);
+    expect(seen.map((event) => event.seq)).toEqual([1, 0, 0, 2, 3]);
+  });
+
+  it('keeps liveness out of history and the cursor', async () => {
+    const transcript = projectionTranscript('live-tail', [
+      { type: 'RUN_STARTED', runId: 'run_live', seq: 1 },
+      {
+        type: 'REASONING_MESSAGE_CONTENT',
+        runId: 'run_live',
+        seq: 1,
+        messageId: 'reasoning_live_1',
+        delta: 'Still working.',
+        'cma:live': true,
+      },
+    ]);
+    const session = new MockSession(transcript);
+    const { cursor, seen } = await replay(session);
+    const history = await session.transport.history(session.id, 0);
+
+    expect(seen.map((event) => event.type)).toEqual(['RUN_STARTED', 'REASONING_MESSAGE_CONTENT']);
+    expect(cursor).toBe(1);
+    expect(history).toEqual([transcript.frames[0]?.event]);
   });
 
   it('records what the operations sent, without answering for the control plane', async () => {
