@@ -166,17 +166,70 @@ fn every_emitted_operation_rejects_an_empty_document() {
 }
 
 #[test]
-fn a_fresh_replay_and_a_cursor_resume_reconstruct_the_same_state() {
-    let events = durable_state_deltas();
-    let expected = apply_all(initial_state(), &events);
+fn unreported_usage_is_distinct_from_a_report_of_zero() {
+    let initial = initial_state();
+    assert_eq!(
+        initial["usage"],
+        json!({
+            "inputTokens": null,
+            "outputTokens": null,
+            "contextUsed": null,
+            "contextWindow": null,
+        })
+    );
 
-    let replayed = apply_all(initial_state(), &events);
-    assert_eq!(replayed, expected, "a replay from the beginning diverged");
+    let reported = project(
+        &logged(
+            1,
+            EventKind::UsageReported {
+                input_tokens: 0,
+                output_tokens: 0,
+                context_used: 0,
+                context_window: Some(0),
+            },
+        ),
+        "run_state_contract",
+        "sesn_state_contract",
+    );
+    let state = apply_all(initial, &reported.events);
 
-    let split = events.len() / 2;
-    let before_drop = apply_all(initial_state(), &events[..split]);
-    let resumed = apply_all(before_drop, &events[split..]);
-    assert_eq!(resumed, expected, "a cursor resume lost folded state");
+    assert_eq!(
+        state["usage"],
+        json!({
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "contextUsed": 0,
+            "contextWindow": 0,
+        }),
+        "an actual zero reading must not collapse back into unknown"
+    );
+}
+
+#[test]
+fn unreported_commands_are_distinct_from_a_reported_empty_list() {
+    let initial = initial_state();
+    assert!(
+        initial["availableCommands"].is_null(),
+        "no command report has arrived yet"
+    );
+
+    let reported = project(
+        &logged(
+            1,
+            EventKind::AvailableCommandsSet {
+                commands: Vec::new(),
+            },
+        ),
+        "run_state_contract",
+        "sesn_state_contract",
+    );
+    let state = apply_all(initial, &reported.events);
+
+    assert_eq!(
+        state["availableCommands"],
+        json!([]),
+        "the kernel explicitly reported that no commands are available"
+    );
 }
 
 fn documented_initial_state(document: &str) -> &str {

@@ -61,7 +61,19 @@ describe('the canonical AG-UI initial state', () => {
     first.usage.inputTokens = 99;
 
     expect(initialState().gaps).toEqual([]);
-    expect(initialState().usage.inputTokens).toBe(0);
+    expect(initialState().usage.inputTokens).toBeNull();
+  });
+
+  it('keeps unreported usage and commands distinct from zero and empty reports', () => {
+    const state = initialState();
+
+    expect(state.usage).toEqual({
+      inputTokens: null,
+      outputTokens: null,
+      contextUsed: null,
+      contextWindow: null,
+    });
+    expect(state.availableCommands).toBeNull();
   });
 });
 
@@ -137,19 +149,16 @@ describe('usage lands where the service writes it', () => {
       { op: 'replace', path: PATHS.contextUsed, value: 44 },
       { op: 'replace', path: PATHS.contextWindow, value: 200_000 },
     ];
-    let state = EMPTY;
-    for (const patch of frames) {
-      state = reduce(
-        state,
-        toEvent({
-          type: 'STATE_DELTA',
-          threadId: 'sesn_1',
-          runId: 'run_1',
-          seq: 5,
-          delta: [patch],
-        }),
-      );
-    }
+    const state = reduce(
+      EMPTY,
+      toEvent({
+        type: 'STATE_DELTA',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 5,
+        delta: frames,
+      }),
+    );
 
     expect(state.usage?.inputTokens).toBe(1200);
     expect(state.usage?.outputTokens).toBe(300);

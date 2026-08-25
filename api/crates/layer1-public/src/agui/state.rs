@@ -9,15 +9,15 @@ use serde_json::Value;
 
 pub(super) const INITIAL_STATE_JSON: &str = r#"{
   "usage": {
-    "inputTokens": 0,
-    "outputTokens": 0,
-    "contextUsed": 0,
+    "inputTokens": null,
+    "outputTokens": null,
+    "contextUsed": null,
     "contextWindow": null
   },
   "mode": null,
   "plan": null,
   "configOptions": null,
-  "availableCommands": [],
+  "availableCommands": null,
   "signIn": null,
   "gaps": [],
   "planeChanges": [],

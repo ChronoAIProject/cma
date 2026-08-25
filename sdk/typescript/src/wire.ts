@@ -18,16 +18,20 @@ export const STATE_DELTA_PATCHES = 'delta';
 
 /** The public document an AG-UI session's first `STATE_DELTA` patches. */
 export interface AguiState {
+  /** Additive protocol fields a newer control plane may introduce. */
+  [key: string]: unknown;
   usage: {
-    inputTokens: number;
-    outputTokens: number;
-    contextUsed: number;
+    /** Additive usage fields a newer control plane may introduce. */
+    [key: string]: unknown;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    contextUsed: number | null;
     contextWindow: number | null;
   };
   mode: unknown;
   plan: unknown;
   configOptions: unknown;
-  availableCommands: unknown[];
+  availableCommands: unknown[] | null;
   signIn: unknown;
   gaps: unknown[];
   planeChanges: unknown[];
@@ -46,15 +50,15 @@ export interface AguiState {
 export function initialState(): AguiState {
   return {
     usage: {
-      inputTokens: 0,
-      outputTokens: 0,
-      contextUsed: 0,
+      inputTokens: null,
+      outputTokens: null,
+      contextUsed: null,
       contextWindow: null,
     },
     mode: null,
     plan: null,
     configOptions: null,
-    availableCommands: [],
+    availableCommands: null,
     signIn: null,
     gaps: [],
     planeChanges: [],

@@ -240,6 +240,7 @@ export interface StateDelta extends EventBase {
 export interface JsonPatch {
   readonly op: string;
   readonly path: string;
+  readonly from?: string;
   readonly value?: unknown;
 }
 
@@ -470,14 +471,35 @@ function patches(raw: unknown): readonly JsonPatch[] {
   if (!Array.isArray(raw)) {
     throw new ProtocolError(`STATE_DELTA ${STATE_DELTA_PATCHES} was not a list`);
   }
-  return raw.map((entry): JsonPatch => {
-    const value = objectOf(entry, 'STATE_DELTA patch');
-    return {
-      op: nonEmptyString(value.op, 'STATE_DELTA patch op'),
-      path: nonEmptyString(value.path, 'STATE_DELTA patch path'),
-      value: value.value,
-    };
-  });
+  return raw.map(patch);
+}
+
+function patch(raw: unknown): JsonPatch {
+  const value = objectOf(raw, 'STATE_DELTA patch');
+  const op = nonEmptyString(value.op, 'STATE_DELTA patch op');
+  // The empty string is RFC 6902's pointer to the document root.
+  const path = requiredString(value.path, 'STATE_DELTA patch path');
+
+  switch (op) {
+    case 'add':
+    case 'replace':
+    case 'test':
+      return { op, path, value: requiredPatchValue(value) };
+    case 'copy':
+    case 'move':
+      return { op, path, from: requiredString(value.from, 'STATE_DELTA patch from') };
+    case 'remove':
+      return { op, path };
+    default:
+      throw new ProtocolError(`STATE_DELTA patch used unsupported operation '${op}'`);
+  }
+}
+
+function requiredPatchValue(patch: Record<string, unknown>): unknown {
+  if (!Object.prototype.hasOwnProperty.call(patch, 'value') || patch.value === undefined) {
+    throw new ProtocolError('STATE_DELTA patch value was missing');
+  }
+  return patch.value;
 }
 
 function objectOf(raw: unknown, name: string): Record<string, unknown> {

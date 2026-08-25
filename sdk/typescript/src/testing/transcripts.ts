@@ -288,7 +288,7 @@ export const REPORTS_USAGE: Transcript = {
       seq: 2,
       delta: [
         { op: 'replace', path: '/usage/inputTokens', value: 1840 },
-        { op: 'replace', path: '/usage/cost', value: '0.014' },
+        { op: 'add', path: '/usage/cost', value: '0.014' },
       ],
     }),
     frame(300, {
@@ -312,7 +312,7 @@ export const REPORTS_USAGE: Transcript = {
       seq: 4,
       delta: [
         { op: 'replace', path: '/usage/inputTokens', value: 2310 },
-        { op: 'replace', path: '/usage/cost', value: '0.019' },
+        { op: 'add', path: '/usage/cost', value: '0.019' },
       ],
     }),
     frame(20, { type: 'RUN_FINISHED', runId: 'run_9', seq: 5, outcome: { type: 'end_turn' } }),
@@ -672,7 +672,7 @@ export const FULL_CONVERSATION: Transcript = {
         { op: 'replace', path: '/usage/outputTokens', value: 1840 },
         { op: 'replace', path: '/usage/contextUsed', value: 24_800 },
         { op: 'replace', path: '/usage/contextWindow', value: 200_000 },
-        { op: 'replace', path: '/usage/cost', value: '0.087' },
+        { op: 'add', path: '/usage/cost', value: '0.087' },
         {
           op: 'replace',
           path: '/signIn',
