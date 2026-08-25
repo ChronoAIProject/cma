@@ -353,7 +353,7 @@ impl SessionService {
                 },
                 move |_error| async move {
                     rejected_service
-                        .synchronize_live_tail_for(&rejected_id, &rejected_screen)
+                        .synchronize_ordered_live_tail_for(&rejected_id, &rejected_screen)
                         .await;
                 },
                 move |result: Result<RetainedAttachment, CoreError>, mut ownership| {
