@@ -10,11 +10,19 @@ import type { AguiEvent, UnknownEvent } from './events.js';
  */
 export class ProjectionAssembler {
   readonly #prefixes: AguiEvent[] = [];
+  #threadId: string | undefined;
+
+  constructor(private readonly expectedThreadId?: string) {}
 
   /** Accept one normalized event and return only a complete unit for delivery. */
   accept(event: AguiEvent): readonly AguiEvent[] {
+    this.#acceptThread(event.threadId);
     if (event.ephemeral === true) {
       return [event];
+    }
+    const firstPrefix = this.#prefixes[0];
+    if (firstPrefix !== undefined && event.runId !== firstPrefix.runId) {
+      throw new ProtocolError('AG-UI durable projection changed runId before its final frame');
     }
     if (event.seq === 0) {
       this.#prefixes.push(event);
@@ -31,6 +39,14 @@ export class ProjectionAssembler {
     if (this.#prefixes.length > 0) {
       throw new ProtocolError(`${source} ended inside a durable projection`);
     }
+  }
+
+  #acceptThread(threadId: string): void {
+    const accepted = this.#threadId ?? this.expectedThreadId;
+    if (accepted !== undefined && threadId !== accepted) {
+      throw new ProtocolError('AG-UI stream carried a frame for another threadId');
+    }
+    this.#threadId = threadId;
   }
 }
 
