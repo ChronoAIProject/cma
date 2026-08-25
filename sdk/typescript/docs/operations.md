@@ -75,5 +75,5 @@ The TypeScript client also exposes environment-profile CRUD and catalogues,
 source for fields and refusal status:
 
 - [environment profiles](../../../docs/API_REST.md)
-- [pricing and usage](../../../docs/API_REST.md#7-pricing-and-usage)
-- [capability declaration](../../../docs/API_REST.md#8-capability-declaration)
+- [pricing and usage](../../../docs/API_REST.md#8-pricing-and-usage)
+- [capability declaration](../../../docs/API_REST.md#9-capability-declaration)

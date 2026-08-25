@@ -71,5 +71,5 @@ state before repeating create or another non-idempotent operation.
 
 The durable event stream performs its own bounded reconnects as documented in
 [Streaming](streaming.md). A server problem document that does not match the
-[REST error contract](../../../docs/API_REST.md#9-errors) becomes `ProtocolError`
+[REST error contract](../../../docs/API_REST.md#10-errors) becomes `ProtocolError`
 rather than an unreliable generic refusal.
