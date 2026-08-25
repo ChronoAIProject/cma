@@ -28,8 +28,8 @@ describe('browser compatibility observer', () => {
 
     expect(BROWSER_COMPATIBILITY_COUNTERS).toHaveLength(30);
     expect(new Set(paths).size).toBe(paths.length);
-    for (const { tuple, path } of BROWSER_COMPATIBILITY_COUNTERS) {
-      expect(path).toBe(`/__browser-compat/v1/${tuple.join('/')}`);
+    for (const { path } of BROWSER_COMPATIBILITY_COUNTERS) {
+      expect(path).toMatch(/^\/__bc\/v1\/[a-z-]+\/[a-z-]+\/[a-z]+$/);
     }
   });
 
@@ -41,7 +41,7 @@ describe('browser compatibility observer', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [path, options] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe('/__browser-compat/v1/appearance/canonical/read-ok');
+    expect(path).toBe('/__bc/v1/appearance/canonical/ro');
     expect(options).toEqual({
       method: 'POST',
       credentials: 'omit',
@@ -81,10 +81,23 @@ describe('browser compatibility observer', () => {
     observeBrowserCompatibility(['appearance', 'canonical', 'read-ok']);
 
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
-      '/__browser-compat/v1/appearance/canonical/read-ok',
-      '/__browser-compat/v1/pending-turn/historical-key/consumed',
+      '/__bc/v1/appearance/canonical/ro',
+      '/__bc/v1/pending-turn/historical-key/c',
     ]);
     expect('__cmaBrowserCompatibilityQueue' in window).toBe(false);
+  });
+
+  it('does not let a hostile inline queue accessor block startup', async () => {
+    Object.defineProperty(window, '__cmaBrowserCompatibilityQueue', {
+      configurable: true,
+      get() {
+        throw new TypeError('blocked global');
+      },
+    });
+    const { startBrowserCompatibilityMeasurement } = await subject();
+
+    expect(() => startBrowserCompatibilityMeasurement()).not.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('does not let synchronous or asynchronous request failure affect callers', async () => {

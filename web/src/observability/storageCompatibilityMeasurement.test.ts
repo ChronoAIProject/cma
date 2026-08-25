@@ -79,12 +79,12 @@ describe('storage compatibility measurement', () => {
 
     expect(paths()).toEqual(
       expect.arrayContaining([
-        '/__browser-compat/v1/appearance/historical-key/fallback-used',
-        '/__browser-compat/v1/terminal-theme/historical-key/fallback-used',
-        '/__browser-compat/v1/terminal-theme/historical-id/normalized',
-        '/__browser-compat/v1/view-mode/historical-key/fallback-used',
-        '/__browser-compat/v1/rail-collapsed/historical-key/fallback-used',
-        '/__browser-compat/v1/pending-turn/historical-key/consumed',
+        '/__bc/v1/appearance/historical-key/fu',
+        '/__bc/v1/terminal-theme/historical-key/fu',
+        '/__bc/v1/terminal-theme/historical-id/n',
+        '/__bc/v1/view-mode/historical-key/fu',
+        '/__bc/v1/rail-collapsed/historical-key/fu',
+        '/__bc/v1/pending-turn/historical-key/c',
       ]),
     );
     expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('private prompt text');
@@ -118,11 +118,11 @@ describe('storage compatibility measurement', () => {
       'pending-turn',
       'rail-collapsed',
     ]) {
-      expect(paths()).toContain(`/__browser-compat/v1/${key}/canonical/read-ok`);
+      expect(paths()).toContain(`/__bc/v1/${key}/canonical/ro`);
     }
-    expect(paths().some((path) => path.includes('/fallback-used'))).toBe(false);
-    expect(paths().some((path) => path.endsWith('/consumed'))).toBe(false);
-    expect(paths().some((path) => path.endsWith('/normalized'))).toBe(false);
+    expect(paths().some((path) => path.includes('/fu'))).toBe(false);
+    expect(paths().some((path) => path.endsWith('/c'))).toBe(false);
+    expect(paths().some((path) => path.endsWith('/n'))).toBe(false);
   });
 
   it('counts only a valid historical fallback after malformed canonical data', async () => {
@@ -130,11 +130,11 @@ describe('storage compatibility measurement', () => {
     const { loadArrangement } = await import('../sessions/arrangement');
 
     expect(loadArrangement()).toBe('list');
-    expect(paths()).not.toContain('/__browser-compat/v1/view-mode/historical-key/fallback-used');
+    expect(paths()).not.toContain('/__bc/v1/view-mode/historical-key/fu');
 
     window.localStorage.setItem('chrono-bot:view-mode', 'canvas');
     expect(loadArrangement()).toBe('canvas');
-    expect(paths()).toContain('/__browser-compat/v1/view-mode/historical-key/fallback-used');
+    expect(paths()).toContain('/__bc/v1/view-mode/historical-key/fu');
   });
 
   it('reports blocked reads for all five canonical readers without changing fallbacks', async () => {
@@ -167,12 +167,10 @@ describe('storage compatibility measurement', () => {
       'pending-turn',
       'rail-collapsed',
     ]) {
-      expect(paths(), `observed:\n${paths().join('\n')}`).toContain(
-        `/__browser-compat/v1/${key}/canonical/read-blocked`,
-      );
+      expect(paths(), `observed:\n${paths().join('\n')}`).toContain(`/__bc/v1/${key}/canonical/rb`);
     }
-    expect(paths().some((path) => path.includes('/fallback-used'))).toBe(false);
-    expect(paths().some((path) => path.endsWith('/consumed'))).toBe(false);
+    expect(paths().some((path) => path.includes('/fu'))).toBe(false);
+    expect(paths().some((path) => path.endsWith('/c'))).toBe(false);
   });
 
   it('reports blocked canonical writes without blocking browser behavior', async () => {
@@ -205,9 +203,7 @@ describe('storage compatibility measurement', () => {
       'pending-turn',
       'rail-collapsed',
     ]) {
-      expect(paths(), `observed:\n${paths().join('\n')}`).toContain(
-        `/__browser-compat/v1/${key}/canonical/write-blocked`,
-      );
+      expect(paths(), `observed:\n${paths().join('\n')}`).toContain(`/__bc/v1/${key}/canonical/wb`);
     }
   });
 
@@ -227,7 +223,7 @@ describe('storage compatibility measurement', () => {
 
     const { startBrowserCompatibilityMeasurement } = await import('./browserCompatibility');
     startBrowserCompatibilityMeasurement();
-    expect(paths()).toEqual(['/__browser-compat/v1/appearance/canonical/read-blocked']);
+    expect(paths()).toEqual(['/__bc/v1/appearance/canonical/rb']);
     expect(document.body).toHaveAttribute('data-ds-dark-theme');
   });
 });
