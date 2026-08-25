@@ -728,7 +728,7 @@ export const FULL_CONVERSATION: Transcript = {
     frame(160, {
       type: 'REASONING_MESSAGE_CONTENT',
       runId: 'run_full_2',
-      seq: 11,
+      seq: 0,
       messageId: 'full_reasoning_1',
       delta: 'Comparing the live stream with the replayed transcript.',
       'cma:live': true,
