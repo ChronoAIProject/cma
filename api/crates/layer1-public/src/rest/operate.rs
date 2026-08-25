@@ -29,18 +29,19 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::IntoResponse,
     Json,
 };
 use layer2_core::{
-    format_usd, ApprovalDecision, CoreError, ResourceReading, ResourceStatus, SessionCapability,
-    SessionId, SessionService, Spend, TerminalGeometry, Usage, CURRENCY,
+    format_usd, ApprovalDecision, CoreError, OperationStore, ResourceReading, ResourceStatus,
+    SessionCapability, SessionId, SessionService, Spend, TerminalGeometry, Usage, CURRENCY,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::auth::AuthenticatedCaller;
 
-use super::{Problem, RequestFailure};
+use super::{idempotency, Problem, RequestFailure};
 
 /// What a caller sends to a session.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -253,19 +254,58 @@ impl From<Spend> for SpendView {
     post,
     path = "/api/v1/sessions/{id}/input",
     tag = "operations",
-    params(("id" = String, Path)),
+    params(
+        ("id" = String, Path),
+        ("Idempotency-Key" = Option<String>, Header)
+    ),
     request_body = InputRequest,
-    responses((status = 202, description = "Input accepted"))
+    responses(
+        (status = 202, description = "Input accepted"),
+        (status = 400, description = "Malformed operation key"),
+        (status = 409, description = "Operation with this key is still running"),
+        (status = 422, description = "Operation key names a different request"),
+        (status = 503, description = "Operation store unavailable")
+    )
 )]
 pub(super) async fn input(
     State(service): State<Arc<SessionService>>,
+    State(operations): State<Arc<dyn OperationStore>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    key: idempotency::IdempotencyKey,
     Path(id): Path<String>,
-    body: Result<Json<InputRequest>, axum::extract::rejection::JsonRejection>,
-) -> Result<StatusCode, RequestFailure> {
-    let Json(body) = body?;
+    body: Result<idempotency::RequestBody<InputRequest>, super::BodyProblem>,
+) -> axum::response::Response {
+    let (body, fingerprint) = match body {
+        Ok(body) => body.into_parts(),
+        Err(error) => return RequestFailure::from(error).into_response(),
+    };
     let id = SessionId(id);
-    let session = service.get_session(&caller, &id).await?;
+    let guard = match idempotency::Idempotency::begin(
+        key,
+        operations,
+        &caller,
+        format!("session-input:{}", id.as_str()),
+        fingerprint,
+    )
+    .await
+    {
+        Ok(idempotency::Idempotency::Replay(response)) => return response,
+        Ok(guard) => guard,
+        Err(response) => return response,
+    };
+    let result = input_once(&service, &caller, &id, body)
+        .await
+        .map(IntoResponse::into_response);
+    guard.finish(result).await
+}
+
+async fn input_once(
+    service: &Arc<SessionService>,
+    caller: &layer2_core::Caller,
+    id: &SessionId,
+    body: InputRequest,
+) -> Result<StatusCode, RequestFailure> {
+    let session = service.get_session(caller, id).await?;
 
     if session.capabilities.holds(SessionCapability::Conversation) {
         if body.bytes_b64.is_some() {
@@ -277,7 +317,7 @@ pub(super) async fn input(
         let text = body
             .text
             .ok_or_else(|| CoreError::InvalidRequest("a prompt needs text to send".to_string()))?;
-        service.send_prompt(&caller, &id, text).await?;
+        service.send_prompt(caller, id, text).await?;
         return Ok(StatusCode::ACCEPTED);
     }
 
@@ -285,7 +325,7 @@ pub(super) async fn input(
     // client — one that were would be writing over its own attachment rather
     // than through this route — so its keystrokes would land inside an escape
     // sequence the holder is drawing.
-    if service.terminal_is_held(&caller, &id).await? {
+    if service.terminal_is_held(caller, id).await? {
         return Err(CoreError::AlreadyAttached.into());
     }
 
@@ -307,7 +347,7 @@ pub(super) async fn input(
             )
         }
     };
-    service.send_input(&caller, &id, bytes).await?;
+    service.send_input(caller, id, bytes).await?;
     Ok(StatusCode::ACCEPTED)
 }
 
