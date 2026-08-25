@@ -29,6 +29,7 @@ use crate::Reserved;
 struct RotationStore {
     inner: Arc<FakeStore>,
     pause_next: AtomicBool,
+    pause_call: AtomicUsize,
     entered: Notify,
     release: Notify,
     calls: AtomicUsize,
@@ -38,6 +39,11 @@ struct RotationStore {
 impl RotationStore {
     fn arm(&self) {
         assert!(!self.pause_next.swap(true, Ordering::SeqCst));
+    }
+
+    fn arm_on_call(&self, call: usize) {
+        assert!(call > 0, "store calls are numbered from one");
+        assert_eq!(self.pause_call.swap(call, Ordering::SeqCst), 0);
     }
 
     fn fail_next(&self, count: usize) {
@@ -51,8 +57,12 @@ impl RotationStore {
     }
 
     async fn before_commit(&self) -> Result<(), StoreError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        if self.pause_next.swap(false, Ordering::SeqCst) {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let pause_named_call = self
+            .pause_call
+            .compare_exchange(call, 0, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+        if self.pause_next.swap(false, Ordering::SeqCst) || pause_named_call {
             self.entered.notify_one();
             self.release.notified().await;
         }
@@ -817,6 +827,73 @@ async fn a_session_moves_between_planes_and_stays_the_same_session() {
     );
     assert!(entry.input.is_some());
     assert!(entry.conversation.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
+    let store = Arc::new(RotationStore::default());
+    let adapter = switch_capable();
+    let (svc, alice, created, _) = started_adversarial(Arc::clone(&store), adapter).await;
+    let (outgoing_input, mut outgoing_runtime) = tokio::sync::mpsc::channel(8);
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("outgoing entry is live")
+        .input = Some(outgoing_input);
+
+    // The first write records Rotating and updates the live entry. Hold the
+    // second write so the old runtime and its input channel remain present for
+    // the whole assertion window.
+    store.arm_on_call(2);
+    let moving = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.change_plane(&alice, &id, crate::options::SessionMode::Conversation)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+    assert_eq!(
+        svc.get_session(&alice, &created.id)
+            .await
+            .expect("rotating session is readable")
+            .status,
+        SessionStatus::Rotating
+    );
+
+    assert_eq!(
+        svc.send_input(&alice, &created.id, b"must not arrive".to_vec())
+            .await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.send_signal(&alice, &created.id, "INT".into()).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert!(matches!(
+        outgoing_runtime.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+
+    store.release.notify_one();
+    moving
+        .await
+        .expect("plane-change task completes")
+        .expect("handover completes");
+    await_usable(&svc, &alice, &created.id).await;
+
+    // Return to the terminal plane and retry the identical operation against a
+    // replacement runtime. Rotation is a transient refusal, not a terminal one.
+    svc.change_plane(&alice, &created.id, crate::options::SessionMode::Terminal)
+        .await
+        .expect("session can return to its terminal plane");
+    await_usable(&svc, &alice, &created.id).await;
+    svc.send_input(&alice, &created.id, b"arrives after handover".to_vec())
+        .await
+        .expect("the same input succeeds after rotation");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

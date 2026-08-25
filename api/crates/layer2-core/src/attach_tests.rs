@@ -1146,6 +1146,90 @@ async fn the_client_holding_the_terminal_can_still_type_into_it() {
 }
 
 #[tokio::test]
+async fn every_terminal_operation_is_refused_while_rotating_and_reusable_afterward() {
+    let store = Arc::new(FakeStore::default());
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let alice = user("rotating-terminal-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.status = crate::session::SessionStatus::Rotating;
+    store.seed(&record).await.expect("rotation is durable");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("live entry")
+        .session
+        .status = crate::session::SessionStatus::Rotating;
+
+    assert_eq!(
+        svc.send_input(&alice, &created.id, b"must wait".to_vec())
+            .await,
+        Err(CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.send_signal(&alice, &created.id, "INT".into()).await,
+        Err(CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.resize_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::new(100, 30).expect("valid"),
+        )
+        .await,
+        Err(CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.terminal_is_held(&alice, &created.id).await,
+        Err(CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err(),
+        Some(CoreError::SessionRotating)
+    );
+
+    record.session.status = crate::session::SessionStatus::Ready;
+    store.seed(&record).await.expect("handover completed");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("replacement entry")
+        .session
+        .status = crate::session::SessionStatus::Ready;
+
+    svc.send_input(&alice, &created.id, b"retry now".to_vec())
+        .await
+        .expect("the same terminal input succeeds after rotation");
+    svc.send_signal(&alice, &created.id, "INT".into())
+        .await
+        .expect("the same signal succeeds after rotation");
+    let _attachment = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("the same attach succeeds after rotation");
+}
+
+#[tokio::test]
 async fn whether_the_terminal_is_held_is_a_question_anyone_may_ask_of_their_own() {
     // Asked by an interface about to write on behalf of somebody who is not the
     // holder. A question rather than a refusal, because the answer differs by
