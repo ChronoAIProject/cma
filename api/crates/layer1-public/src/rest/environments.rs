@@ -14,8 +14,10 @@
 use std::{collections::HashSet, sync::Arc};
 
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
+    body::Bytes,
+    extract::{FromRequest, Path, Query, State},
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, put},
     Json, Router,
 };
@@ -24,13 +26,15 @@ use layer2_core::{
     PageCursor, PageRequest, MAX_PAGE_SIZE,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::rest::environments_shapes::{
-    MandatoryView, ProfileRequest, ProfileView, SkillCatalogView, SkillView,
+    unknown_profile_field, MandatoryView, ProfileRequest, ProfileView, SkillCatalogView, SkillView,
+    UnknownProfileField,
 };
 use crate::rest::pagination::PageParams;
-use crate::rest::{Problem, RequestFailure};
+use crate::rest::{problem_document, problem_response, BodyProblem, Problem, RequestFailure};
 
 /// Routes this resource contributes.
 ///
@@ -64,12 +68,89 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
 #[path = "environments_tests.rs"]
 mod route_tests;
 
+/// A profile body gets one additional diagnostic over the shared JSON
+/// extractor: an identifier-shaped unknown field is named without reflecting
+/// any value that appeared beneath it.
+struct ProfileBody(ProfileRequest);
+
+enum ProfileBodyProblem {
+    Body(BodyProblem),
+    Unknown(UnknownProfileField),
+}
+
+impl<S> FromRequest<S> for ProfileBody
+where
+    S: Send + Sync,
+{
+    type Rejection = ProfileBodyProblem;
+
+    async fn from_request(
+        request: axum::extract::Request,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        if !json_content_type(request.headers()) {
+            return Err(ProfileBodyProblem::Body(
+                BodyProblem::missing_json_content_type(),
+            ));
+        }
+        let bytes = Bytes::from_request(request, state).await.map_err(|error| {
+            let rejection = axum::extract::rejection::JsonRejection::from(error);
+            ProfileBodyProblem::Body(BodyProblem::from(rejection))
+        })?;
+        let Json(value) = Json::<Value>::from_bytes(&bytes)
+            .map_err(|error| ProfileBodyProblem::Body(error.into()))?;
+        if let Some(unknown) = unknown_profile_field(&value) {
+            return Err(ProfileBodyProblem::Unknown(unknown));
+        }
+        let Json(body) = Json::<ProfileRequest>::from_bytes(&bytes)
+            .map_err(|error| ProfileBodyProblem::Body(error.into()))?;
+        Ok(Self(body))
+    }
+}
+
+fn json_content_type(headers: &HeaderMap) -> bool {
+    let Some(content_type) = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<mime::Mime>().ok())
+    else {
+        return false;
+    };
+    content_type.type_() == mime::APPLICATION
+        && (content_type.subtype() == mime::JSON || content_type.suffix() == Some(mime::JSON))
+}
+
+impl IntoResponse for ProfileBodyProblem {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Body(problem) => problem.into_response(),
+            Self::Unknown(unknown) => {
+                let status = StatusCode::UNPROCESSABLE_ENTITY;
+                let mut body = problem_document(
+                    status,
+                    "invalid-request",
+                    "The JSON body does not match this operation's request schema.",
+                    "invalid_request",
+                );
+                if let Some(object) = body.as_object_mut() {
+                    if let Some(field) = unknown.field {
+                        object.insert("field".into(), field.into());
+                    }
+                    if let Some(path) = unknown.path {
+                        object.insert("path".into(), path.into());
+                    }
+                }
+                problem_response(status, body)
+            }
+        }
+    }
+}
+
 async fn create(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    body: Result<Json<ProfileRequest>, axum::extract::rejection::JsonRejection>,
+    ProfileBody(body): ProfileBody,
 ) -> Result<(StatusCode, Json<ProfileView>), RequestFailure> {
-    let Json(body) = body?;
     let profile = service.create(&caller, body.try_into()?).await?;
     Ok((
         StatusCode::CREATED,
@@ -172,9 +253,8 @@ async fn replace(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    body: Result<Json<ProfileRequest>, axum::extract::rejection::JsonRejection>,
+    ProfileBody(body): ProfileBody,
 ) -> Result<Json<ProfileView>, RequestFailure> {
-    let Json(body) = body?;
     let profile = service
         .update(&caller, &EnvironmentProfileId(id), body.try_into()?)
         .await?;
@@ -648,7 +728,12 @@ mod tests {
         )
         .expect("parses");
 
-        let refusal = create(State(service), AuthenticatedCaller(caller), Ok(Json(body))).await;
+        let refusal = create(
+            State(service),
+            AuthenticatedCaller(caller),
+            ProfileBody(body),
+        )
+        .await;
         let problem = match refusal {
             Err(problem) => problem,
             Ok(_) => panic!("a zero size must be refused"),

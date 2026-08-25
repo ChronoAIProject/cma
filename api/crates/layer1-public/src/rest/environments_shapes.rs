@@ -16,6 +16,33 @@ use layer2_core::{
     PermissionMode, ReasoningEffort, ServiceId, SessionMode, SessionSize, SkillId, SoftwarePackage,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+const MAX_DIAGNOSTIC_FIELD_BYTES: usize = 64;
+
+const PROFILE_FIELDS: &[&str] = &[
+    "name",
+    "variables",
+    "packages",
+    "agent",
+    "nyxid",
+    "agent_notes",
+];
+const VARIABLE_FIELDS: &[&str] = &["key", "value"];
+const PACKAGE_FIELDS: &[&str] = &["name", "version"];
+const AGENT_FIELDS: &[&str] = &[
+    "kernel",
+    "mode",
+    "model",
+    "reasoning_effort",
+    "permission",
+    "credential",
+    "size",
+    "record_tool_bodies",
+    "skills",
+];
+const SIZE_FIELDS: &[&str] = &["cpu_millis", "memory_mib"];
+const NYXID_FIELDS: &[&str] = &["services"];
 
 /// A variable as this interface reads and writes it.
 #[derive(Debug, Deserialize, Serialize)]
@@ -121,6 +148,110 @@ pub struct AgentBody {
 pub struct SizeBody {
     pub cpu_millis: u32,
     pub memory_mib: u32,
+}
+
+/// Schema metadata safe to add to an unknown-field problem document.
+///
+/// JSON object keys are still caller input. Only a short identifier-shaped key
+/// is returned; arbitrary prose, control characters, and unbounded keys stay
+/// behind the same fixed-detail refusal as every other invalid body.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct UnknownProfileField {
+    pub(super) field: Option<String>,
+    pub(super) path: Option<String>,
+}
+
+/// Locate an unknown field structurally, without inspecting or formatting any
+/// submitted scalar value.
+pub(super) fn unknown_profile_field(body: &Value) -> Option<UnknownProfileField> {
+    let profile = body.as_object()?;
+    if let Some(unknown) = unknown_in(profile, PROFILE_FIELDS, "") {
+        return Some(unknown);
+    }
+
+    for (index, variable) in profile
+        .get("variables")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if let Some(unknown) = variable
+            .as_object()
+            .and_then(|object| unknown_in(object, VARIABLE_FIELDS, &format!("variables[{index}]")))
+        {
+            return Some(unknown);
+        }
+    }
+
+    for (index, package) in profile
+        .get("packages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if let Some(unknown) = package
+            .as_object()
+            .and_then(|object| unknown_in(object, PACKAGE_FIELDS, &format!("packages[{index}]")))
+        {
+            return Some(unknown);
+        }
+    }
+
+    if let Some(agent) = profile.get("agent").and_then(Value::as_object) {
+        if let Some(unknown) = unknown_in(agent, AGENT_FIELDS, "agent") {
+            return Some(unknown);
+        }
+        if let Some(unknown) = agent
+            .get("size")
+            .and_then(Value::as_object)
+            .and_then(|size| unknown_in(size, SIZE_FIELDS, "agent.size"))
+        {
+            return Some(unknown);
+        }
+    }
+
+    profile
+        .get("nyxid")
+        .and_then(Value::as_object)
+        .and_then(|nyxid| unknown_in(nyxid, NYXID_FIELDS, "nyxid"))
+}
+
+fn unknown_in(
+    object: &Map<String, Value>,
+    accepted: &[&str],
+    parent: &str,
+) -> Option<UnknownProfileField> {
+    object
+        .keys()
+        .find(|key| !accepted.contains(&key.as_str()))
+        .map(|field| {
+            if reportable_field(field) {
+                let path = if parent.is_empty() {
+                    field.clone()
+                } else {
+                    format!("{parent}.{field}")
+                };
+                UnknownProfileField {
+                    field: Some(field.clone()),
+                    path: Some(path),
+                }
+            } else {
+                UnknownProfileField {
+                    field: None,
+                    path: None,
+                }
+            }
+        })
+}
+
+fn reportable_field(field: &str) -> bool {
+    !field.is_empty()
+        && field.len() <= MAX_DIAGNOSTIC_FIELD_BYTES
+        && field
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 impl TryFrom<ProfileRequest> for EnvironmentProfileSpec {
