@@ -166,7 +166,7 @@ fn every_emitted_operation_rejects_an_empty_document() {
 }
 
 #[test]
-fn unreported_usage_is_distinct_from_a_report_of_zero() {
+fn zero_token_counters_are_reports_while_zero_context_stays_unreported() {
     let initial = initial_state();
     assert_eq!(
         initial["usage"],
@@ -185,7 +185,7 @@ fn unreported_usage_is_distinct_from_a_report_of_zero() {
                 input_tokens: 0,
                 output_tokens: 0,
                 context_used: 0,
-                context_window: Some(0),
+                context_window: None,
             },
         ),
         "run_state_contract",
@@ -198,10 +198,54 @@ fn unreported_usage_is_distinct_from_a_report_of_zero() {
         json!({
             "inputTokens": 0,
             "outputTokens": 0,
-            "contextUsed": 0,
-            "contextWindow": 0,
+            "contextUsed": null,
+            "contextWindow": null,
         }),
-        "an actual zero reading must not collapse back into unknown"
+        "zero token totals are real, but zero context means no reading arrived"
+    );
+}
+
+#[test]
+fn zero_context_sentinel_preserves_the_last_reported_reading() {
+    let reported = project(
+        &logged(
+            1,
+            EventKind::UsageReported {
+                input_tokens: 31,
+                output_tokens: 12,
+                context_used: 42_100,
+                context_window: Some(200_000),
+            },
+        ),
+        "run_state_contract",
+        "sesn_state_contract",
+    );
+    let state = apply_all(initial_state(), &reported.events);
+
+    let contextless = project(
+        &logged(
+            2,
+            EventKind::UsageReported {
+                input_tokens: 0,
+                output_tokens: 0,
+                context_used: 0,
+                context_window: None,
+            },
+        ),
+        "run_state_contract",
+        "sesn_state_contract",
+    );
+    let state = apply_all(state, &contextless.events);
+
+    assert_eq!(
+        state["usage"],
+        json!({
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "contextUsed": 42_100,
+            "contextWindow": 200_000,
+        }),
+        "contextless turn accounting must retain the runtime's last reading"
     );
 }
 

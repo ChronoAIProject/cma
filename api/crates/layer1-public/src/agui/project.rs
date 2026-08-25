@@ -193,8 +193,16 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             let mut delta = vec![
                 serde_json::json!({ "op": "replace", "path": "/usage/inputTokens", "value": input_tokens }),
                 serde_json::json!({ "op": "replace", "path": "/usage/outputTokens", "value": output_tokens }),
-                serde_json::json!({ "op": "replace", "path": "/usage/contextUsed", "value": context_used }),
             ];
+            // Turn accounting uses zero to mean that it carried no context
+            // reading. Keep the initial or last real reading in that case.
+            if *context_used > 0 {
+                delta.push(serde_json::json!({
+                    "op": "replace",
+                    "path": "/usage/contextUsed",
+                    "value": context_used,
+                }));
+            }
             if let Some(window) = context_window {
                 delta.push(serde_json::json!({
                     "op": "replace",
