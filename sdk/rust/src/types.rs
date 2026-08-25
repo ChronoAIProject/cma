@@ -6,6 +6,40 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
+/// Anonymous deployment conformance and build discovery document.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Conformance {
+    /// Specification conformance classes implemented by this deployment.
+    #[serde(rename = "conformsTo")]
+    pub conforms_to: Vec<String>,
+    /// Deployment version string.
+    pub version: String,
+    /// Source revision used for this deployment.
+    pub build_sha: String,
+}
+
+impl Conformance {
+    pub(crate) fn validate(self) -> Result<Self> {
+        if self.conforms_to.is_empty()
+            || self
+                .conforms_to
+                .iter()
+                .any(|conformance| conformance.trim().is_empty())
+        {
+            return Err(Error::protocol(
+                "conformance response requires non-empty conformance identifiers",
+            ));
+        }
+        if self.version.trim().is_empty() || self.build_sha.trim().is_empty() {
+            return Err(Error::protocol(
+                "conformance response requires non-empty version and build_sha",
+            ));
+        }
+        Ok(self)
+    }
+}
+
 /// Stable identifier of a CMA session.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]

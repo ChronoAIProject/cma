@@ -3,18 +3,19 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use base64::Engine;
 use futures_util::StreamExt;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue, LINK, RETRY_AFTER};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderName, HeaderValue, LINK, RETRY_AFTER};
 use reqwest::{Method, Response, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    ApprovalDecision, CreateSessionRequest, Error, EventStream, MAX_PAGE_SIZE, Page,
+    ApprovalDecision, Conformance, CreateSessionRequest, Error, EventStream, MAX_PAGE_SIZE, Page,
     PageContinuation, PageWalkLimits, Result, ScreenSnapshot, Session, SessionId, SessionInput,
     SessionPageRequest, TerminalGeometry, Usage,
 };
@@ -22,8 +23,20 @@ use crate::{
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const USER_AGENT: &str = concat!("cma-sdk/", env!("CARGO_PKG_VERSION"));
+const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 type CredentialProvider = dyn Fn() -> std::result::Result<String, ()> + Send + Sync;
+type RequestIdProvider = dyn Fn() -> std::result::Result<String, ()> + Send + Sync;
+type ResponseObserver = dyn Fn(&ResponseMetadata) -> std::result::Result<(), String> + Send + Sync;
+
+/// Correlation metadata available as soon as an HTTP response is received.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResponseMetadata {
+    /// HTTP response status.
+    pub status: u16,
+    /// Visible, non-blank `X-Request-Id` response value, when usable.
+    pub request_id: Option<String>,
+}
 
 /// Retry behavior for transient request and stream failures.
 #[derive(Debug, Clone)]
@@ -128,6 +141,8 @@ impl Default for RetryPolicy {
 pub struct ClientBuilder {
     base_url: Url,
     credential_provider: Option<Arc<CredentialProvider>>,
+    request_id_provider: Option<Arc<RequestIdProvider>>,
+    response_observer: Option<Arc<ResponseObserver>>,
     request_timeout: Duration,
     retry_policy: RetryPolicy,
 }
@@ -143,6 +158,36 @@ impl ClientBuilder {
         F: Fn() -> std::result::Result<String, E> + Send + Sync + 'static,
     {
         self.credential_provider = Some(Arc::new(move || provider().map_err(|_| ())));
+        self
+    }
+
+    /// Supply a correlation-id callback for logical HTTP operations.
+    ///
+    /// The callback runs once before an operation's retry loop. Its exact
+    /// non-blank, HTTP-header-safe value is sent as `X-Request-Id` on every
+    /// attempt in that loop. Provider failure prevents the request from being
+    /// sent.
+    pub fn request_id_provider<F, E>(mut self, provider: F) -> Self
+    where
+        F: Fn() -> std::result::Result<String, E> + Send + Sync + 'static,
+    {
+        self.request_id_provider = Some(Arc::new(move || provider().map_err(|_| ())));
+        self
+    }
+
+    /// Observe metadata for every completed HTTP response before retry or decoding.
+    ///
+    /// Returning an error or panicking produces [`Error::Observer`] and stops
+    /// protocol handling for that response. The callback must not retain the
+    /// borrowed metadata.
+    pub fn response_observer<F, E>(mut self, observer: F) -> Self
+    where
+        F: Fn(&ResponseMetadata) -> std::result::Result<(), E> + Send + Sync + 'static,
+        E: fmt::Display,
+    {
+        self.response_observer = Some(Arc::new(move |metadata| {
+            observer(metadata).map_err(|error| error.to_string())
+        }));
         self
     }
 
@@ -163,9 +208,6 @@ impl ClientBuilder {
 
     /// Build the client and its rustls-backed HTTP transport.
     pub fn build(self) -> Result<Client> {
-        let credential_provider = self
-            .credential_provider
-            .ok_or_else(|| Error::protocol("a client requires a bearer credential provider"))?;
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .redirect(reqwest::redirect::Policy::none())
@@ -177,7 +219,9 @@ impl ClientBuilder {
             inner: Arc::new(ClientInner {
                 http,
                 base_url: self.base_url,
-                credential_provider,
+                credential_provider: self.credential_provider,
+                request_id_provider: self.request_id_provider,
+                response_observer: self.response_observer,
                 request_timeout: self.request_timeout,
                 retry_policy: self.retry_policy,
             }),
@@ -192,6 +236,14 @@ impl fmt::Debug for ClientBuilder {
             .field(
                 "credential_provider",
                 &self.credential_provider.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "request_id_provider",
+                &self.request_id_provider.as_ref().map(|_| "[configured]"),
+            )
+            .field(
+                "response_observer",
+                &self.response_observer.as_ref().map(|_| "[configured]"),
             )
             .field("request_timeout", &self.request_timeout)
             .field("retry_policy", &self.retry_policy)
@@ -208,7 +260,9 @@ pub struct Client {
 struct ClientInner {
     http: reqwest::Client,
     base_url: Url,
-    credential_provider: Arc<CredentialProvider>,
+    credential_provider: Option<Arc<CredentialProvider>>,
+    request_id_provider: Option<Arc<RequestIdProvider>>,
+    response_observer: Option<Arc<ResponseObserver>>,
     request_timeout: Duration,
     retry_policy: RetryPolicy,
 }
@@ -217,7 +271,30 @@ impl fmt::Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client")
             .field("base_url", &self.inner.base_url)
-            .field("credential_provider", &"[redacted]")
+            .field(
+                "credential_provider",
+                &self
+                    .inner
+                    .credential_provider
+                    .as_ref()
+                    .map(|_| "[redacted]"),
+            )
+            .field(
+                "request_id_provider",
+                &self
+                    .inner
+                    .request_id_provider
+                    .as_ref()
+                    .map(|_| "[configured]"),
+            )
+            .field(
+                "response_observer",
+                &self
+                    .inner
+                    .response_observer
+                    .as_ref()
+                    .map(|_| "[configured]"),
+            )
             .field("request_timeout", &self.inner.request_timeout)
             .field("retry_policy", &self.inner.retry_policy)
             .finish()
@@ -255,9 +332,19 @@ impl Client {
         Ok(ClientBuilder {
             base_url,
             credential_provider: None,
+            request_id_provider: None,
+            response_observer: None,
             request_timeout: DEFAULT_TIMEOUT,
             retry_policy: RetryPolicy::default(),
         })
+    }
+
+    /// Read this deployment's anonymous REST conformance document.
+    pub async fn read_conformance(&self) -> Result<Conformance> {
+        let conformance: Conformance = self
+            .request_json(Method::GET, &["conformance"], None, StatusCode::OK)
+            .await?;
+        conformance.validate()
     }
 
     /// Create a session.
@@ -612,11 +699,12 @@ impl Client {
         Ok(url)
     }
 
-    async fn execute<T, F, Fut>(&self, request: RequestSpec, decode: F) -> Result<T>
+    async fn execute<T, F, Fut>(&self, mut request: RequestSpec, decode: F) -> Result<T>
     where
         F: Fn(Response) -> Fut,
         Fut: Future<Output = Result<T>>,
     {
+        request.request_id = self.request_id_header()?;
         let attempts = self.inner.retry_policy.max_attempts;
         for attempt in 1..=attempts {
             let response = match self.send_once(&request).await {
@@ -628,6 +716,8 @@ impl Client {
                 }
                 Err(error) => return Err(error),
             };
+
+            self.observe_response(&response)?;
 
             if let Some(delay) = retry_after(&response)?
                 && attempt < attempts
@@ -653,8 +743,13 @@ impl Client {
         let mut builder = self
             .inner
             .http
-            .request(request.method.clone(), request.url.clone())
-            .header(AUTHORIZATION, authorization);
+            .request(request.method.clone(), request.url.clone());
+        if let Some(authorization) = authorization {
+            builder = builder.header(AUTHORIZATION, authorization);
+        }
+        if let Some(request_id) = &request.request_id {
+            builder = builder.header(X_REQUEST_ID, request_id.clone());
+        }
         if let Some(cursor) = request.last_event_id {
             builder = builder.header("last-event-id", cursor.to_string());
         }
@@ -675,9 +770,11 @@ impl Client {
             .map_err(|error| Error::transport(format!("event-stream handshake failed: {error}")))
     }
 
-    fn authorization_header(&self) -> Result<HeaderValue> {
-        let credential = (self.inner.credential_provider)()
-            .map_err(|_| Error::transport("credential provider failed"))?;
+    fn authorization_header(&self) -> Result<Option<HeaderValue>> {
+        let Some(provider) = &self.inner.credential_provider else {
+            return Ok(None);
+        };
+        let credential = provider().map_err(|_| Error::transport("credential provider failed"))?;
         if credential.is_empty() {
             return Err(Error::protocol(
                 "credential provider returned an empty bearer credential",
@@ -686,7 +783,42 @@ impl Client {
         let mut value = HeaderValue::from_str(&format!("Bearer {credential}"))
             .map_err(|_| Error::protocol("credential is not valid in an HTTP bearer header"))?;
         value.set_sensitive(true);
-        Ok(value)
+        Ok(Some(value))
+    }
+
+    fn request_id_header(&self) -> Result<Option<HeaderValue>> {
+        let Some(provider) = &self.inner.request_id_provider else {
+            return Ok(None);
+        };
+        let request_id = provider().map_err(|_| Error::transport("request-id provider failed"))?;
+        if request_id.trim().is_empty() {
+            return Err(Error::protocol(
+                "request-id provider returned an empty or blank value",
+            ));
+        }
+        HeaderValue::from_str(&request_id)
+            .map(Some)
+            .map_err(|_| Error::protocol("request id is not valid in an HTTP header"))
+    }
+
+    fn observe_response(&self, response: &Response) -> Result<()> {
+        let Some(observer) = &self.inner.response_observer else {
+            return Ok(());
+        };
+        let metadata = ResponseMetadata {
+            status: response.status().as_u16(),
+            request_id: response_request_id(response),
+        };
+        match catch_unwind(AssertUnwindSafe(|| observer(&metadata))) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(message)) if message.trim().is_empty() => {
+                Err(Error::observer("response observer failed"))
+            }
+            Ok(Err(message)) => Err(Error::observer(format!(
+                "response observer failed: {message}"
+            ))),
+            Err(_) => Err(Error::observer("response observer panicked")),
+        }
     }
 }
 
@@ -702,6 +834,7 @@ struct RequestSpec {
     body: Option<serde_json::Value>,
     streaming: bool,
     last_event_id: Option<u64>,
+    request_id: Option<HeaderValue>,
 }
 
 impl RequestSpec {
@@ -712,6 +845,7 @@ impl RequestSpec {
             body,
             streaming,
             last_event_id: None,
+            request_id: None,
         }
     }
 }
@@ -852,6 +986,7 @@ async fn decode_empty(response: Response, expected: StatusCode) -> Result<()> {
 
 async fn decode_problem(response: Response) -> Error {
     let response_status = response.status().as_u16();
+    let request_id = response_request_id(&response);
     let bytes = match read_bounded(response).await {
         Ok(bytes) => bytes,
         Err(error) => return error,
@@ -883,7 +1018,10 @@ async fn decode_problem(response: Response) -> Error {
     }
     if problem.code == "capability_unsupported" {
         return match problem.capability.filter(|name| !name.trim().is_empty()) {
-            Some(capability) => Error::CapabilityRefused { capability },
+            Some(capability) => Error::CapabilityRefused {
+                capability,
+                request_id,
+            },
             None => {
                 Error::protocol("capability_unsupported problem omitted its typed capability field")
             }
@@ -893,7 +1031,18 @@ async fn decode_problem(response: Response) -> Error {
         status: response_status,
         code: problem.code,
         message: problem.detail,
+        request_id,
     }
+}
+
+fn response_request_id(response: &Response) -> Option<String> {
+    let mut values = response.headers().get_all(&X_REQUEST_ID).iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    let value = value.to_str().ok()?;
+    (!value.trim().is_empty()).then(|| value.to_owned())
 }
 
 async fn read_bounded(response: Response) -> Result<Vec<u8>> {

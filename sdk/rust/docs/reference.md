@@ -14,10 +14,12 @@ release or docs.rs page. The integration files in this directory appear under
 `cma_sdk::guides`, and their code fences run during `cargo test --doc`.
 
 The public export list is in [`src/lib.rs`](../src/lib.rs). `Client` and
-`ClientBuilder` own transport configuration, `EventStream` owns the reconnecting
-stream, `types` are wire projections, and `Error` is the non-exhaustive failure
-boundary. The crate intentionally does not expose its internal HTTP, decoding, or
-stream-parser modules.
+`ClientBuilder` own transport configuration, `ResponseMetadata` is the
+pre-decoding response-correlation projection, `Conformance` is anonymous
+deployment discovery, `EventStream` owns the reconnecting stream, `types` are
+wire projections, and `Error` is the non-exhaustive failure boundary. The crate
+intentionally does not expose its internal HTTP, decoding, or stream-parser
+modules.
 
 Unknown event discriminators are retained in `EventKind::Unknown`; malformed known
 events and unknown session enum values fail as `Error::Protocol`. See
