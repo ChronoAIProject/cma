@@ -127,18 +127,21 @@ Top-level fields:
 
 Each writable list accepts at most 100 caller-controlled entries. `packages`,
 `skills`, and `nyxid.services` may render more than 100 entries after the
-deployment adds its mandatory baseline. To echo a read, construct the writable
-projection containing exactly `name`, `variables`, `packages`, `agent`, `nyxid`,
-and `agent_notes`. Do not send `id`, `mandatory`, `created_at`, `updated_at`, or
-`preferred`; these fields are server-owned and the closed request schema rejects
-them. An exact writable projection remains a no-op after the mandatory baseline
-grows, shrinks, or renames entries. Any changed replacement is validated against
-the current baseline: one occurrence of each current mandatory identifier is
+deployment adds its mandatory baseline. A replacement accepts either the six
+writable fields or the complete `ProfileView` returned by GET, so a client may
+literally GET, transform writable content, and PUT that object back. In the full
+view, `id` must match the path; `mandatory`, `created_at`, `updated_at`, and
+`preferred` are type-checked read-only echoes and never overwrite current
+server-owned state. Those five fields remain invalid on create. An exact raw-view
+or writable-projection echo remains a no-op after the mandatory baseline grows,
+shrinks, or renames entries. Any changed replacement is validated against the
+current baseline: one occurrence of each current mandatory identifier is
 deployment-owned, while duplicates and retired mandatory identities count toward
 the caller's limit.
 
 Every object in this request is closed: unknown fields are refused at the top
-level and inside `variables`, `packages`, `agent`, `agent.size`, and `nyxid`.
+level and inside `variables`, `packages`, `agent`, `agent.size`, `nyxid`, and a
+replacement view's `mandatory` object.
 Create and replace both return `422 invalid_request` rather than silently
 discarding a misspelling. For a short identifier-shaped unknown key, the
 problem document names it in `field` and gives its object location in `path`
@@ -168,7 +171,7 @@ Every accepted write field is rendered back. Server-owned fields are added:
 | `mandatory.packages` | Package names the deployment puts back on every write |
 | `mandatory.skills` | Skill identifiers the deployment puts back on every write |
 | `created_at` | Creation time, retained across replacement |
-| `updated_at` | Last content-changing replacement time; an exact writable-projection echo retains it |
+| `updated_at` | Last content-changing replacement time; an exact raw-view or writable-projection echo retains it |
 | `preferred` | Client-facing preselection state. A client may start its session form on this profile, but must still send its id in `POST /api/v1/sessions` |
 
 `agent.kernel`, `mode`, `reasoning_effort`, `permission`, `credential`,
@@ -313,10 +316,11 @@ Content-Type: application/json
 to their documented defaults, after which mandatory entries are merged back.
 The profile keeps its `id`, `created_at`, and `preferred` value. A malformed or
 unknown field returns `400` or `422`; an unknown or foreign id returns `404`.
-An exact writable-projection echo whose normalized contents already match
-performs no store write and retains `updated_at`, so the returned `ProfileView`
-stays byte-identical. That includes legacy profiles projected through a
-baseline or kernel that changed after they were stored.
+An exact complete-`ProfileView` echo (or its writable projection) whose normalized
+contents already match performs no store write and retains `updated_at`, so the
+returned `ProfileView` stays byte-identical. Read-only fields in a transformed
+view do not overwrite current server state. That includes legacy profiles
+projected through a baseline or kernel that changed after they were stored.
 
 ```http
 DELETE /api/v1/environment-profiles/{id}

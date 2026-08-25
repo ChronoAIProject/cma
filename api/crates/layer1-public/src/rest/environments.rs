@@ -16,7 +16,7 @@ use std::{collections::HashSet, sync::Arc};
 use axum::{
     body::Bytes,
     extract::{FromRequest, Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, put},
     Json, Router,
@@ -30,8 +30,8 @@ use serde_json::Value;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::rest::environments_shapes::{
-    unknown_profile_field, MandatoryView, ProfileRequest, ProfileView, SkillCatalogView, SkillView,
-    UnknownProfileField,
+    decode_profile_request, unknown_profile_field, MandatoryView, ProfileRequest, ProfileView,
+    SkillCatalogView, SkillView, UnknownProfileField,
 };
 use crate::rest::pagination::PageParams;
 use crate::rest::{problem_document, problem_response, BodyProblem, Problem, RequestFailure};
@@ -71,10 +71,14 @@ mod route_tests;
 /// A profile body gets one additional diagnostic over the shared JSON
 /// extractor: an identifier-shaped unknown field is named without reflecting
 /// any value that appeared beneath it.
-struct ProfileBody(ProfileRequest);
+struct ProfileBody {
+    request: ProfileRequest,
+    echoed_id: Option<String>,
+}
 
 enum ProfileBodyProblem {
     Body(BodyProblem),
+    InvalidSchema,
     Unknown(UnknownProfileField),
 }
 
@@ -88,6 +92,7 @@ where
         request: axum::extract::Request,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
+        let accepts_profile_view = request.method() == Method::PUT;
         if !json_content_type(request.headers()) {
             return Err(ProfileBodyProblem::Body(
                 BodyProblem::missing_json_content_type(),
@@ -99,12 +104,12 @@ where
         })?;
         let Json(value) = Json::<Value>::from_bytes(&bytes)
             .map_err(|error| ProfileBodyProblem::Body(error.into()))?;
-        if let Some(unknown) = unknown_profile_field(&value) {
+        if let Some(unknown) = unknown_profile_field(&value, accepts_profile_view) {
             return Err(ProfileBodyProblem::Unknown(unknown));
         }
-        let Json(body) = Json::<ProfileRequest>::from_bytes(&bytes)
-            .map_err(|error| ProfileBodyProblem::Body(error.into()))?;
-        Ok(Self(body))
+        let (request, echoed_id) = decode_profile_request(value, accepts_profile_view)
+            .map_err(|_| ProfileBodyProblem::InvalidSchema)?;
+        Ok(Self { request, echoed_id })
     }
 }
 
@@ -124,6 +129,7 @@ impl IntoResponse for ProfileBodyProblem {
     fn into_response(self) -> Response {
         match self {
             Self::Body(problem) => problem.into_response(),
+            Self::InvalidSchema => BodyProblem::invalid_data().into_response(),
             Self::Unknown(unknown) => {
                 let status = StatusCode::UNPROCESSABLE_ENTITY;
                 let mut body = problem_document(
@@ -149,9 +155,9 @@ impl IntoResponse for ProfileBodyProblem {
 async fn create(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    ProfileBody(body): ProfileBody,
+    ProfileBody { request, .. }: ProfileBody,
 ) -> Result<(StatusCode, Json<ProfileView>), RequestFailure> {
-    let profile = service.create(&caller, body.try_into()?).await?;
+    let profile = service.create(&caller, request.try_into()?).await?;
     Ok((
         StatusCode::CREATED,
         Json(ProfileView::render(profile, &service)),
@@ -253,10 +259,13 @@ async fn replace(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    ProfileBody(body): ProfileBody,
+    ProfileBody { request, echoed_id }: ProfileBody,
 ) -> Result<Json<ProfileView>, RequestFailure> {
+    if echoed_id.as_deref().is_some_and(|echoed| echoed != id) {
+        return Err(BodyProblem::invalid_data().into());
+    }
     let profile = service
-        .update(&caller, &EnvironmentProfileId(id), body.try_into()?)
+        .update(&caller, &EnvironmentProfileId(id), request.try_into()?)
         .await?;
     Ok(Json(ProfileView::render(profile, &service)))
 }
@@ -762,7 +771,10 @@ mod tests {
         let refusal = create(
             State(service),
             AuthenticatedCaller(caller),
-            ProfileBody(body),
+            ProfileBody {
+                request: body,
+                echoed_id: None,
+            },
         )
         .await;
         let problem = match refusal {
