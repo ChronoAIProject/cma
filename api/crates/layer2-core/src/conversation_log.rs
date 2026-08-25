@@ -235,6 +235,7 @@ impl SessionService {
 
     /// Record something the runtime is blocked on, and park the session.
     async fn fold_request(&self, id: &SessionId, request: PermissionRequest) {
+        let _input_fence = self.input_gates.gate(id).read_owned().await;
         {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
@@ -245,8 +246,11 @@ impl SessionService {
             // `RequiresAction` is the one stop reason that is explicitly not
             // terminal, which is what lets a client show this as a question
             // rather than as a session that died.
-            entry.session.status = SessionStatus::Idle;
-            entry.session.stop_reason = Some(StopReason::RequiresAction);
+            let rotating = entry.session.status.is_rotating();
+            if !rotating {
+                entry.session.status = SessionStatus::Idle;
+                entry.session.stop_reason = Some(StopReason::RequiresAction);
+            }
             append(
                 entry,
                 EventKind::ApprovalRequested {
@@ -255,15 +259,17 @@ impl SessionService {
                     detail: None,
                 },
             );
-            append(
-                entry,
-                EventKind::StatusChanged {
-                    status: SessionStatus::Idle,
-                    stop_reason: Some(StopReason::RequiresAction),
-                    detail: None,
-                    capability: None,
-                },
-            );
+            if !rotating {
+                append(
+                    entry,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Idle,
+                        stop_reason: Some(StopReason::RequiresAction),
+                        detail: None,
+                        capability: None,
+                    },
+                );
+            }
         }
         self.flush(id).await;
     }
@@ -274,6 +280,7 @@ impl SessionService {
     /// was interrupted and one that refused, and a client showing all three
     /// the same way is showing none of them.
     async fn fold_completion(&self, id: &SessionId, completed: PromptResponse) {
+        let _input_fence = self.input_gates.gate(id).read_owned().await;
         {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
@@ -305,18 +312,23 @@ impl SessionService {
             if let Some((_, content)) = entry.assembling.take() {
                 append(entry, EventKind::MessageCommitted { content });
             }
-            entry.session.status = SessionStatus::Ready;
-            entry.session.stop_reason = Some(reason);
+            let rotating = entry.session.status.is_rotating();
+            if !rotating {
+                entry.session.status = SessionStatus::Ready;
+                entry.session.stop_reason = Some(reason);
+            }
             append(entry, EventKind::TurnCompleted);
-            append(
-                entry,
-                EventKind::StatusChanged {
-                    status: SessionStatus::Ready,
-                    stop_reason: Some(reason),
-                    detail: None,
-                    capability: None,
-                },
-            );
+            if !rotating {
+                append(
+                    entry,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Ready,
+                        stop_reason: Some(reason),
+                        detail: None,
+                        capability: None,
+                    },
+                );
+            }
         }
         self.flush(id).await;
     }
@@ -416,6 +428,7 @@ impl SessionService {
     /// detail, which every interface already projects — so every caller is
     /// told the same thing without any interface being taught a new shape.
     async fn fold_failure(&self, id: &SessionId, message: String, capability: Option<String>) {
+        let _input_fence = self.input_gates.gate(id).read_owned().await;
         tracing::warn!(session_id = %id, %message, "a turn failed");
         {
             let mut entries = self.entries.write().await;
@@ -428,18 +441,23 @@ impl SessionService {
             if let Some((_, content)) = entry.assembling.take() {
                 append(entry, EventKind::MessageCommitted { content });
             }
-            entry.session.status = SessionStatus::Ready;
-            entry.session.stop_reason = Some(StopReason::Error);
+            let rotating = entry.session.status.is_rotating();
+            if !rotating {
+                entry.session.status = SessionStatus::Ready;
+                entry.session.stop_reason = Some(StopReason::Error);
+            }
             append(entry, EventKind::TurnCompleted);
-            append(
-                entry,
-                EventKind::StatusChanged {
-                    status: SessionStatus::Ready,
-                    stop_reason: Some(StopReason::Error),
-                    detail: Some(message),
-                    capability,
-                },
-            );
+            if !rotating {
+                append(
+                    entry,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Ready,
+                        stop_reason: Some(StopReason::Error),
+                        detail: Some(message),
+                        capability,
+                    },
+                );
+            }
         }
         self.flush(id).await;
     }
@@ -450,6 +468,7 @@ impl SessionService {
     /// which is indistinguishable from an agent that is simply slow. The
     /// reason it actually stopped for is recorded instead.
     async fn close_open_turn(&self, id: &SessionId) {
+        let _input_fence = self.input_gates.gate(id).read_owned().await;
         {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {

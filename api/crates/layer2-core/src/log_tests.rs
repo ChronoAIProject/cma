@@ -331,6 +331,7 @@ fn an_informational_event_does_not_claim_a_pending_status_change() {
     let message_change = super::RecordChange {
         before: Box::new(base.clone()),
         fields: super::RecordFields::for_events(&[said(1, "owner-message")]),
+        rotation_precondition: None,
     };
     let mut rival = base;
     rival.context_ref = Some("rival-state".into());
@@ -357,6 +358,7 @@ fn an_informational_event_does_not_claim_a_pending_status_change() {
             },
             appended_at: String::new(),
         }]),
+        rotation_precondition: None,
     };
     let after_status = status_change
         .apply(&intended, after_message)
