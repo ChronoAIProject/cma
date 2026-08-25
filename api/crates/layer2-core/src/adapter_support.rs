@@ -35,6 +35,9 @@ pub(crate) struct FakeAdapter {
     /// provisioned for. This is the provider's own view, which is the thing
     /// reconciliation compares the record against.
     pub(crate) running: Mutex<HashMap<String, Option<String>>>,
+    /// Provider-visible generation recorded for runtimes provisioned through
+    /// the generation-aware contract. Directly seeded legacy fixtures omit it.
+    pub(crate) generations: Mutex<HashMap<String, u64>>,
     /// What each `open_conversation` was asked to rejoin, in order.
     ///
     /// `None` for a conversation being started; a name for one being taken
@@ -146,6 +149,7 @@ impl Default for FakeAdapter {
             refuse_attach: false,
             senders: Mutex::default(),
             running: Mutex::default(),
+            generations: Mutex::default(),
             refuse_list: false,
             stopped: Mutex::default(),
             stopped_because: Mutex::default(),
@@ -338,6 +342,10 @@ impl KernelAdapter for FakeAdapter {
         let mut running = self.running.lock().await;
         let handle = format!("runtime-{n}-for-{}", spec.session_id);
         running.insert(handle.clone(), Some(spec.session_id.clone()));
+        self.generations
+            .lock()
+            .await
+            .insert(handle.clone(), spec.generation);
         Ok(RuntimeHandle(handle))
     }
 
@@ -446,6 +454,7 @@ impl KernelAdapter for FakeAdapter {
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
         self.terminated.lock().await.push(handle.0.clone());
         self.running.lock().await.remove(&handle.0);
+        self.generations.lock().await.remove(&handle.0);
         Ok(())
     }
 
@@ -499,6 +508,7 @@ impl KernelAdapter for FakeAdapter {
         // Both locks taken before the map, because the closure cannot await.
         let stopped = self.stopped.lock().await.clone();
         let stopped_because = self.stopped_because.lock().await.clone();
+        let generations = self.generations.lock().await.clone();
         Ok(self
             .running
             .lock()
@@ -507,6 +517,7 @@ impl KernelAdapter for FakeAdapter {
             .map(|(h, s)| RuntimeListing {
                 handle: RuntimeHandle(h.clone()),
                 session: s.clone(),
+                generation: generations.get(h).copied(),
                 created_by: self.created_by.clone(),
                 // Serving unless this fake was told otherwise, so every
                 // existing test keeps describing a healthy sandbox and only a

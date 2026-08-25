@@ -68,6 +68,7 @@ fn spec() -> RuntimeSpec {
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
+        generation: 0,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
         subject_credential: None,
@@ -199,12 +200,14 @@ fn sandboxes_do_not_expire_on_a_timer() {
 fn provisioning_writes_both_generations_of_correlation_metadata() {
     let mut request = spec();
     request.created_by = Some("test-plane".to_string());
+    request.generation = 17;
 
     assert_eq!(
         provisioning_metadata(&request, "test-kernel"),
         BTreeMap::from([
             ("cma/control-plane".to_string(), "test-plane".to_string()),
             ("cma/kernel".to_string(), "test-kernel".to_string()),
+            ("cma/runtime-generation".to_string(), "17".to_string()),
             ("cma/session".to_string(), "sesn_x".to_string()),
             (
                 "chrono-bot/control-plane".to_string(),
@@ -238,7 +241,8 @@ async fn a_stopped_hosted_listing_carries_liveness_and_loss_reason() {
             "status": {"state": "Failed", "reason": "Error"},
             "metadata": {
                 "chrono-bot/session": "sesn_x",
-                "chrono-bot/control-plane": "test-plane"
+                "chrono-bot/control-plane": "test-plane",
+                "cma/runtime-generation": "17"
             }
         }],
         "pagination": {
@@ -259,6 +263,7 @@ async fn a_stopped_hosted_listing_carries_liveness_and_loss_reason() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].session.as_deref(), Some("sesn_x"));
+    assert_eq!(listed[0].generation, Some(17));
     assert_eq!(listed[0].created_by.as_deref(), Some("test-plane"));
     assert!(!listed[0].serving);
     assert_eq!(listed[0].lost_because, Some(RuntimeLossReason::Failed));
@@ -295,6 +300,7 @@ async fn canonical_correlation_metadata_wins_over_historical_values() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].session.as_deref(), Some("sesn_current"));
+    assert_eq!(listed[0].generation, None);
     assert_eq!(listed[0].created_by.as_deref(), Some("current-plane"));
 }
 

@@ -251,6 +251,8 @@ impl AdminSessionView {
 pub struct RuntimeView {
     runtime: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    generation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     owner: Option<String>,
@@ -309,6 +311,7 @@ impl InventoryView {
                                 .map(|r| RuntimeView {
                                     unaccounted: r.is_unaccounted(),
                                     runtime: r.runtime,
+                                    generation: r.generation,
                                     session: r.session.map(|s| s.0),
                                     owner: r.owner.map(|o| o.0),
                                     status: r.status,
