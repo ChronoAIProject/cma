@@ -95,6 +95,15 @@ pub(crate) fn service_with_context(
     adapter: Arc<FakeAdapter>,
     context: Arc<dyn crate::store::ContextStore>,
 ) -> Arc<SessionService> {
+    service_over_with_context(store, adapter, context)
+}
+
+/// A transcript-capable service over an adversarial session store.
+pub(crate) fn service_over_with_context(
+    store: Arc<dyn crate::store::SessionStore>,
+    adapter: Arc<FakeAdapter>,
+    context: Arc<dyn crate::store::ContextStore>,
+) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);

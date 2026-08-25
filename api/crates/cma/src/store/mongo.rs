@@ -1,28 +1,50 @@
 //! Session records and event history, in MongoDB.
 //!
-//! Two collections. Sessions are keyed by their own id so an upsert is a
-//! replace. Events carry a compound unique index on `(session_id, seq)`, which
-//! is what makes the per-session sequence a guarantee rather than a hope: a
-//! duplicate sequence is rejected by the database, not merely unlikely.
+//! Sessions, events, and whole-write receipts live in three collections.
+//! Events carry a compound unique index on `(session_id, seq)`, which is what
+//! makes the per-session sequence a guarantee rather than a hope: a duplicate
+//! sequence is rejected by the database, not merely unlikely.
 
-use std::{future::Future, time::Duration};
+use std::{
+    collections::{BTreeMap, HashSet},
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use futures_util::TryStreamExt;
+use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
     store::{SessionRecord, SessionStore, StoreError},
     Event, Rate, RateCardId, Reserved, SessionId, SessionPricing, SessionStatus, StoredEvent,
     SubjectId,
 };
-use mongodb::bson::{doc, Document};
-use mongodb::options::{IndexOptions, ReplaceOptions};
+use mongodb::bson::{doc, Binary, Bson, Document};
+use mongodb::options::{
+    IndexOptions, InsertOneOptions, ReadConcern, ReplaceOptions, ValidationAction, ValidationLevel,
+    WriteConcern,
+};
+use mongodb::results::{CollectionSpecification, CollectionType};
 use mongodb::{Client, Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
 
 use super::event_doc;
 
-const SESSIONS: &str = "sessions";
-const EVENTS: &str = "session_events";
+const LEGACY_SESSIONS: &str = "sessions";
+const LEGACY_EVENTS: &str = "session_events";
+const SESSIONS: &str = "sessions_v2";
+const EVENTS: &str = "session_events_v2";
 const STORE_PING_TIMEOUT: Duration = Duration::from_secs(2);
+const STORE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+const HISTORY_AUDIT_INTERVAL: Duration = Duration::from_secs(30);
+const WRITES: &str = "session_writes";
+const TOMBSTONES: &str = "session_tombstones";
+const TRANSACTION_PROBE: &str = "_cma_transaction_probe";
+const NAMESPACE_CUTOVERS: &str = "_cma_session_namespace_cutovers";
+const NAMESPACE_CUTOVER_ID: &str = "sessions-v2";
+const NAMESPACE_CUTOVER_PROTOCOL: i32 = 1;
+const NAMESPACE_CUTOVER_OBSERVED_ORIGIN: &str = "observed-complete";
+pub(super) const WRITE_PROTOCOL: i32 = 1;
+const WRITE_PROTOCOL_FIELD: &str = "_cma_write_protocol";
 
 /// A granted skill as it is stored.
 ///
@@ -47,7 +69,7 @@ enum StoredSkill {
 /// BSON has no unsigned 64-bit integer, so this mirror is explicit and every
 /// conversion is checked. A price that cannot be represented is refused
 /// rather than clamped into a different charge.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PricingDoc {
     rate_card: String,
     cpu_micros_per_cpu_hour: i64,
@@ -68,6 +90,11 @@ struct ReservedCapacityDoc {
     unsized_sessions: i64,
     cpu_millis: i64,
     memory_mib: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionCountDoc {
+    count: i64,
 }
 
 impl StoredSkill {
@@ -93,10 +120,13 @@ impl StoredSkill {
 /// and this owns how it is written. `_id` carries the session id so the
 /// database enforces uniqueness rather than the application.
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionDoc {
     #[serde(rename = "_id")]
     id: String,
+    /// Absent on documents from before the versioned writer fence.
+    #[serde(rename = "_cma_write_protocol", default)]
+    write_protocol: i32,
     owner: String,
     kernel: String,
     status: String,
@@ -157,6 +187,27 @@ struct SessionDoc {
     /// which is a different fact from a price of nothing.
     #[serde(default)]
     pricing: Option<PricingDoc>,
+    /// Optimistic store revision. Documents from before revisions read as zero.
+    #[serde(default)]
+    revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionWriteDoc {
+    #[serde(rename = "_id")]
+    id: String,
+    #[serde(rename = "_cma_write_protocol", default)]
+    write_protocol: i32,
+    session_id: String,
+    revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionTombstoneDoc {
+    #[serde(rename = "_id")]
+    id: String,
+    #[serde(rename = "_cma_write_protocol")]
+    write_protocol: i32,
 }
 
 /// A MongoDB-backed session store.
@@ -165,10 +216,159 @@ struct SessionDoc {
 /// driver would otherwise decide for itself what an unreadable document means,
 /// and telling a newer vocabulary apart from real corruption is exactly the
 /// decision `event_doc` exists to make.
+#[derive(Clone)]
 pub struct MongoSessionStore {
+    client: Client,
     database: Database,
     sessions: Collection<SessionDoc>,
     events: Collection<Document>,
+    writes: Collection<SessionWriteDoc>,
+    tombstones: Collection<SessionTombstoneDoc>,
+    collection_ids: Arc<BTreeMap<String, Binary>>,
+    integrity: Arc<tokio::sync::Mutex<IntegrityAudit>>,
+    readiness_probe: Arc<tokio::sync::Semaphore>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct HistorySnapshot {
+    tombstones: HashSet<String>,
+    session_tails: BTreeMap<String, u64>,
+    event_tails: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Default)]
+struct IntegrityAudit {
+    checked_at: Option<Instant>,
+    last_error: Option<StoreError>,
+    snapshot: Option<HistorySnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CollectionContract {
+    kind: NamespaceKind,
+    validator: Option<Document>,
+    validation_level: Option<ValidationLevel>,
+    validation_action: Option<ValidationAction>,
+    uuid: Option<Binary>,
+}
+
+#[derive(Debug, Clone)]
+struct RequiredIndex {
+    collection: &'static str,
+    name: &'static str,
+    keys: Document,
+    unique: bool,
+}
+
+/// Proof that the driver completed and aborted a real transaction.
+struct TransactionQualified;
+
+impl TransactionQualified {
+    fn authorize(&self, action: NamespaceAction) -> NamespaceAction {
+        action
+    }
+}
+
+/// Proof that this namespace state is either new, complete, or explicitly
+/// authorized after every legacy writer was stopped and drained.
+#[derive(Debug)]
+struct NamespaceCutoverAuthorized;
+
+impl NamespaceCutoverAuthorized {
+    fn authorize(&self, action: NamespaceAction) -> NamespaceAction {
+        action
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NamespaceCutoverAuthorization {
+    Complete,
+    Proven,
+    RecordNewDatabase,
+    RecordOperatorDrain,
+    RecordCompletion {
+        origin: String,
+        collection_ids: BTreeMap<String, Binary>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NamespaceCutoverMarker {
+    InProgress {
+        origin: String,
+    },
+    Complete {
+        origin: String,
+        collection_ids: BTreeMap<String, Binary>,
+    },
+}
+
+struct EventTransaction {
+    events_collection: Collection<Document>,
+    sessions_collection: Collection<SessionDoc>,
+    writes_collection: Collection<SessionWriteDoc>,
+    tombstones_collection: Collection<SessionTombstoneDoc>,
+    id: SessionId,
+    write_id: String,
+    create: bool,
+    events: Vec<Event>,
+    documents: Vec<Document>,
+    record: SessionDoc,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NamespaceKind {
+    Collection,
+    View {
+        source: Option<String>,
+        pipeline_is_empty: bool,
+    },
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct NamespacePair {
+    legacy: Option<NamespaceKind>,
+    authoritative: Option<NamespaceKind>,
+    legacy_marked: bool,
+    authoritative_marked: bool,
+    legacy_fenced: bool,
+    authoritative_fenced: bool,
+    legacy_uuid: Option<Binary>,
+    authoritative_uuid: Option<Binary>,
+}
+
+#[derive(Debug, Default)]
+struct StoredEventSequence {
+    session_id: Option<String>,
+    next: u64,
+}
+
+#[derive(Debug)]
+struct CutoverEvent {
+    session_id: String,
+    seq: u64,
+    position: Document,
+    document: Document,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NamespaceAction {
+    CreateAuthoritative,
+    FenceLegacy,
+    RenameLegacy,
+    FenceAuthoritative,
+    CreateLegacyView,
+    FenceLateLegacy,
+    MergeLateLegacy,
+    Ready,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CutoverOwnerLookup {
+    Retry,
+    Present,
+    Absent,
 }
 
 impl MongoSessionStore {
@@ -177,76 +377,2240 @@ impl MongoSessionStore {
     ///
     /// Takes a client rather than a URI so one connection serves every store
     /// this deployment keeps in the same database. See `super::connect`.
-    pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
+    pub(super) async fn open(
+        client: &Client,
+        database: &str,
+        legacy_cutover_confirmed: bool,
+    ) -> Result<Self, StoreError> {
         let db = client.database(database);
-        let store = Self {
+        let mut store = Self {
+            client: client.clone(),
             sessions: db.collection(SESSIONS),
             events: db.collection(EVENTS),
+            writes: db.collection(WRITES),
+            tombstones: db.collection(TOMBSTONES),
             database: db,
+            collection_ids: Arc::new(BTreeMap::new()),
+            integrity: Arc::new(tokio::sync::Mutex::new(IntegrityAudit::default())),
+            readiness_probe: Arc::new(tokio::sync::Semaphore::new(1)),
         };
+        store
+            .validate_transaction_topology(STORE_OPEN_TIMEOUT)
+            .await?;
+        let qualification = store.qualify_transaction(STORE_OPEN_TIMEOUT).await?;
+        let cutover = store
+            .authorize_namespace_cutover(legacy_cutover_confirmed)
+            .await?;
+        store.ensure_tombstone_collection().await?;
+        // Legacy flushes mutate the session record before appending events, and
+        // legacy deletes remove the session before removing its events. First
+        // prove the pre-cutover owner relation, then fence session mutations in
+        // place. Validators do not stop deletes, so event history is moved to
+        // its protected namespace before the session collection is renamed.
+        store
+            .prepare_legacy_session_fence(&qualification, &cutover)
+            .await?;
+        store
+            .capture_legacy_events(&qualification, &cutover)
+            .await?;
+        // An old flush which passed the session fence may now append into a
+        // race-created legacy event spill. Keep that name writable until every
+        // position its record advertised has arrived, then freeze and absorb
+        // the spill before exposing the compatibility view.
+        store.verify_legacy_writers_drained().await?;
+        store
+            .ensure_versioned_namespace(&qualification, &cutover, LEGACY_EVENTS, EVENTS)
+            .await?;
+        store.reconcile_cutover_deletes().await?;
+        store
+            .ensure_versioned_namespace(&qualification, &cutover, LEGACY_SESSIONS, SESSIONS)
+            .await?;
+        // A legacy delete can remove its session after the first reconciliation
+        // and before the session rename. Once the view exists no further old
+        // delete can cross that boundary, so this closes the last such race.
+        store.reconcile_cutover_deletes().await?;
+        let cutover_collection_ids = store.finalize_namespace_cutover_marker().await?;
         store.ensure_indexes().await?;
+        store.install_protocol_validators().await?;
+        let collection_ids = store.authoritative_collection_ids().await?;
+        validate_completed_namespace_ids(&cutover_collection_ids, &collection_ids)?;
+        store
+            .verify_collection_contracts(Some(&collection_ids))
+            .await?;
+        store.verify_required_indexes().await?;
+        let snapshot = store.validate_post_fence_state().await?;
+        {
+            let mut integrity = store.integrity.lock().await;
+            integrity.checked_at = Some(Instant::now());
+            integrity.snapshot = Some(snapshot);
+        }
+        store.collection_ids = Arc::new(collection_ids);
         tracing::info!(database, "session store ready");
         Ok(store)
     }
 
-    async fn ensure_indexes(&self) -> Result<(), StoreError> {
-        // Unique per (session, seq): the database is what makes the per-session
-        // monotonic sequence a guarantee. Without it a racing append could
-        // duplicate a cursor position and a resuming client would silently
-        // skip or repeat history.
-        let seq = IndexModel::builder()
-            .keys(doc! { "session_id": 1, "seq": 1 })
-            .options(IndexOptions::builder().unique(true).build())
-            .build();
-        self.events
-            .create_index(seq)
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("event index: {e}")))?;
+    async fn validate_transaction_topology(&self, timeout: Duration) -> Result<(), StoreError> {
+        let store = self.clone();
+        bounded_store_check(
+            "MongoDB topology validation",
+            async move { store.validate_transaction_topology_unbounded().await },
+            timeout,
+        )
+        .await
+    }
 
-        let owner = IndexModel::builder()
-            .keys(doc! { "owner": 1, "created_at": -1 })
-            .build();
-        self.sessions
-            .create_index(owner)
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("session index: {e}")))?;
+    async fn validate_transaction_topology_unbounded(&self) -> Result<(), StoreError> {
+        let hello = self.database.run_command(doc! { "hello": 1_i32 }).await;
+        let reply = match hello {
+            Ok(reply) => reply,
+            Err(error) if command_error_code(&error) == Some(59) => {
+                // `hello` replaced `isMaster` after transactions already
+                // existed. Keep older transaction-capable replica sets usable.
+                self.database
+                    .run_command(doc! { "isMaster": 1_i32 })
+                    .await
+                    .map_err(|error| {
+                        StoreError::Unavailable(format!("MongoDB topology isMaster: {error}"))
+                    })?
+            }
+            Err(error) => {
+                return Err(StoreError::Unavailable(format!(
+                    "MongoDB topology hello: {error}"
+                )))
+            }
+        };
+        validate_transaction_topology_reply(&reply)
+    }
 
-        // Session creation matches this exact desired-state field before
-        // grouping reservations, so historical idle records never need to be
-        // scanned to answer whether another request fits.
-        self.sessions
-            .create_index(reservation_status_index())
+    async fn check_readiness(&self) -> Result<(), StoreError> {
+        self.database
+            .run_command(doc! { "ping": 1_i32 })
             .await
-            .map_err(|e| StoreError::Unavailable(format!("session status index: {e}")))?;
+            .map_err(|error| StoreError::Unavailable(format!("ping: {error}")))?;
+        self.validate_transaction_topology_unbounded().await?;
+        self.verify_versioned_namespaces().await?;
+        self.verify_collection_contracts(Some(self.collection_ids.as_ref()))
+            .await?;
+        self.verify_required_indexes().await?;
+        self.audit_history_if_due().await
+    }
+
+    async fn qualify_transaction(
+        &self,
+        timeout: Duration,
+    ) -> Result<TransactionQualified, StoreError> {
+        let client = self.client.clone();
+        let probe = self.database.collection::<Document>(TRANSACTION_PROBE);
+        bounded_store_check(
+            "MongoDB transaction qualification",
+            async move {
+                let mut session = client.start_session().await.map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "start MongoDB transaction qualification session: {error}"
+                    ))
+                })?;
+                session
+                    .start_transaction()
+                    .read_concern(ReadConcern::snapshot())
+                    .write_concern(WriteConcern::majority())
+                    .await
+                    .map_err(|error| {
+                        StoreError::Unavailable(format!(
+                            "start MongoDB transaction qualification: {error}"
+                        ))
+                    })?;
+
+                // Starting a driver transaction is local. The first operation is
+                // what proves that the selected server accepts transaction commands.
+                let operation = probe.find_one(doc! {}).session(&mut session).await;
+                let abort = session.abort_transaction().await;
+                operation.map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "execute MongoDB transaction qualification: {error}"
+                    ))
+                })?;
+                abort.map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "abort MongoDB transaction qualification: {error}"
+                    ))
+                })?;
+                Ok(())
+            },
+            timeout,
+        )
+        .await?;
+        Ok(TransactionQualified)
+    }
+
+    async fn authorize_namespace_cutover(
+        &self,
+        legacy_cutover_confirmed: bool,
+    ) -> Result<NamespaceCutoverAuthorized, StoreError> {
+        let sessions = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+        let events = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+        let marker = self.namespace_cutover_marker().await?;
+        let authorization = namespace_cutover_authorization(
+            &sessions,
+            &events,
+            legacy_cutover_confirmed,
+            marker.as_ref(),
+        )?;
+        match authorization {
+            NamespaceCutoverAuthorization::RecordNewDatabase => {
+                self.record_namespace_cutover_marker("new-database").await?;
+            }
+            NamespaceCutoverAuthorization::RecordOperatorDrain => {
+                self.record_namespace_cutover_marker("operator-drained")
+                    .await?;
+            }
+            NamespaceCutoverAuthorization::RecordCompletion {
+                origin,
+                collection_ids,
+            } => {
+                self.record_completed_namespace_cutover_marker(&origin, &collection_ids)
+                    .await?;
+            }
+            NamespaceCutoverAuthorization::Complete | NamespaceCutoverAuthorization::Proven => {}
+        }
+        Ok(NamespaceCutoverAuthorized)
+    }
+
+    async fn namespace_cutover_marker(&self) -> Result<Option<NamespaceCutoverMarker>, StoreError> {
+        let marker = self
+            .database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .find_one(doc! { "_id": NAMESPACE_CUTOVER_ID })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "read MongoDB namespace-cutover provenance: {error}"
+                ))
+            })?;
+        marker.map(validate_namespace_cutover_marker).transpose()
+    }
+
+    async fn record_namespace_cutover_marker(&self, origin: &str) -> Result<(), StoreError> {
+        if self.namespace_cutover_marker().await?.is_some() {
+            return Ok(());
+        }
+        let marker = namespace_cutover_marker_document(&NamespaceCutoverMarker::InProgress {
+            origin: origin.to_owned(),
+        })?;
+        let insert = self
+            .database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .insert_one(marker)
+            .with_options(
+                InsertOneOptions::builder()
+                    .write_concern(WriteConcern::majority())
+                    .build(),
+            )
+            .await;
+        match insert {
+            Ok(_) => Ok(()),
+            Err(insert_error) => {
+                if self.namespace_cutover_marker().await?.is_some() {
+                    // A concurrent opener established the same immutable proof.
+                    Ok(())
+                } else {
+                    Err(StoreError::Unavailable(format!(
+                        "record MongoDB namespace-cutover provenance before mutating legacy namespaces: {insert_error}"
+                    )))
+                }
+            }
+        }
+    }
+
+    async fn current_completed_namespace_ids(
+        &self,
+    ) -> Result<BTreeMap<String, Binary>, StoreError> {
+        let sessions = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+        let events = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+        completed_namespace_ids(&sessions, &events)?.ok_or_else(|| {
+            StoreError::Unavailable(
+                "MongoDB namespace cutover cannot be marked complete until both legacy names are read-only views of their authoritative collections"
+                    .into(),
+            )
+        })
+    }
+
+    async fn verify_current_completed_namespace_ids(
+        &self,
+        expected: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        let actual = self.current_completed_namespace_ids().await?;
+        validate_completed_namespace_ids(expected, &actual)
+    }
+
+    async fn record_completed_namespace_cutover_marker(
+        &self,
+        fallback_origin: &str,
+        expected: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        for _ in 0..4 {
+            // Do not bless UUIDs from a stale namespace snapshot. Recheck the
+            // complete pair immediately before each conditional marker write.
+            self.verify_current_completed_namespace_ids(expected)
+                .await?;
+            match self.namespace_cutover_marker().await? {
+                Some(NamespaceCutoverMarker::Complete { collection_ids, .. }) => {
+                    return validate_completed_namespace_ids(expected, &collection_ids);
+                }
+                Some(NamespaceCutoverMarker::InProgress { origin }) => {
+                    let marker = NamespaceCutoverMarker::Complete {
+                        origin: origin.clone(),
+                        collection_ids: expected.clone(),
+                    };
+                    let replacement = namespace_cutover_marker_document(&marker)?;
+                    let updated = self
+                        .database
+                        .collection::<Document>(NAMESPACE_CUTOVERS)
+                        .replace_one(
+                            doc! {
+                                "_id": NAMESPACE_CUTOVER_ID,
+                                "protocol": NAMESPACE_CUTOVER_PROTOCOL,
+                                "origin": &origin,
+                                "phase": "in-progress",
+                            },
+                            replacement,
+                        )
+                        .with_options(
+                            ReplaceOptions::builder()
+                                .upsert(false)
+                                .write_concern(WriteConcern::majority())
+                                .build(),
+                        )
+                        .await;
+                    match updated {
+                        Ok(result) if result.matched_count == 1 => continue,
+                        Ok(_) => continue,
+                        Err(error) => {
+                            if self.namespace_cutover_marker().await?.is_some() {
+                                continue;
+                            }
+                            return Err(StoreError::Unavailable(format!(
+                                "complete MongoDB namespace-cutover provenance: {error}"
+                            )));
+                        }
+                    }
+                }
+                None => {
+                    let marker = NamespaceCutoverMarker::Complete {
+                        origin: fallback_origin.to_owned(),
+                        collection_ids: expected.clone(),
+                    };
+                    let document = namespace_cutover_marker_document(&marker)?;
+                    let inserted = self
+                        .database
+                        .collection::<Document>(NAMESPACE_CUTOVERS)
+                        .insert_one(document)
+                        .with_options(
+                            InsertOneOptions::builder()
+                                .write_concern(WriteConcern::majority())
+                                .build(),
+                        )
+                        .await;
+                    match inserted {
+                        Ok(_) => continue,
+                        Err(error) => {
+                            if self.namespace_cutover_marker().await?.is_some() {
+                                continue;
+                            }
+                            return Err(StoreError::Unavailable(format!(
+                                "record completed MongoDB namespace-cutover provenance: {error}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB namespace-cutover provenance did not reach a stable completed state".into(),
+        ))
+    }
+
+    async fn finalize_namespace_cutover_marker(
+        &self,
+    ) -> Result<BTreeMap<String, Binary>, StoreError> {
+        let expected = self.current_completed_namespace_ids().await?;
+        self.record_completed_namespace_cutover_marker(
+            NAMESPACE_CUTOVER_OBSERVED_ORIGIN,
+            &expected,
+        )
+        .await?;
+        let Some(NamespaceCutoverMarker::Complete { collection_ids, .. }) =
+            self.namespace_cutover_marker().await?
+        else {
+            return Err(StoreError::Unavailable(
+                "MongoDB namespace-cutover provenance was not durably completed".into(),
+            ));
+        };
+        validate_completed_namespace_ids(&expected, &collection_ids)?;
+        self.verify_current_completed_namespace_ids(&collection_ids)
+            .await?;
+        Ok(collection_ids)
+    }
+
+    async fn prepare_legacy_session_fence(
+        &self,
+        qualification: &TransactionQualified,
+        cutover: &NamespaceCutoverAuthorized,
+    ) -> Result<(), StoreError> {
+        for _ in 0..12 {
+            let pair = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            match (&pair.legacy, &pair.authoritative) {
+                (None, None) => {
+                    self.verify_legacy_pre_cutover_owners().await?;
+                    return Ok(());
+                }
+                (Some(NamespaceKind::Collection), None) if pair.legacy_fenced => return Ok(()),
+                (Some(NamespaceKind::Collection), None) => {
+                    self.verify_legacy_pre_cutover_owners().await?;
+                    self.execute_namespace_action(
+                        qualification,
+                        cutover,
+                        NamespaceAction::FenceLegacy,
+                        LEGACY_SESSIONS,
+                        SESSIONS,
+                    )
+                    .await?;
+                }
+                (None, Some(NamespaceKind::Collection)) if pair.authoritative_fenced => {
+                    return Ok(())
+                }
+                (None, Some(NamespaceKind::Collection)) => {
+                    self.verify_legacy_pre_cutover_owners().await?;
+                    self.execute_namespace_action(
+                        qualification,
+                        cutover,
+                        NamespaceAction::FenceAuthoritative,
+                        LEGACY_SESSIONS,
+                        SESSIONS,
+                    )
+                    .await?;
+                }
+                (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection)) => {
+                    return Err(StoreError::Unavailable(
+                        "legacy MongoDB session collection reappeared after its authoritative namespace was established; this violates the drained-writer cutover precondition, so CMA will not merge or drop either collection"
+                            .into(),
+                    ))
+                }
+                (
+                    Some(NamespaceKind::View {
+                        source: Some(source),
+                        pipeline_is_empty: true,
+                    }),
+                    Some(NamespaceKind::Collection),
+                ) if source == SESSIONS && pair.authoritative_fenced => return Ok(()),
+                _ => {
+                    return Err(StoreError::Unavailable(format!(
+                    "MongoDB session namespace cannot establish the legacy-writer fence: {pair:?}"
+                )))
+                }
+            }
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB session namespace did not reach a stable pre-cutover fence".into(),
+        ))
+    }
+
+    async fn capture_legacy_events(
+        &self,
+        qualification: &TransactionQualified,
+        cutover: &NamespaceCutoverAuthorized,
+    ) -> Result<(), StoreError> {
+        for _ in 0..12 {
+            let pair = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+            let action = match (&pair.legacy, &pair.authoritative) {
+                (None, None) => NamespaceAction::CreateAuthoritative,
+                (Some(NamespaceKind::Collection), None) if !pair.legacy_marked => {
+                    self.install_namespace_marker(LEGACY_EVENTS, EVENTS).await?;
+                    continue;
+                }
+                (Some(NamespaceKind::Collection), None) => NamespaceAction::RenameLegacy,
+                (None, Some(NamespaceKind::Collection)) if !pair.authoritative_fenced => {
+                    NamespaceAction::FenceAuthoritative
+                }
+                (None, Some(NamespaceKind::Collection)) => return Ok(()),
+                (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection))
+                    if pair.authoritative_marked && !pair.authoritative_fenced =>
+                {
+                    NamespaceAction::FenceAuthoritative
+                }
+                (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection))
+                    if pair.authoritative_fenced =>
+                {
+                    return Ok(())
+                }
+                (
+                    Some(NamespaceKind::View {
+                        source: Some(source),
+                        pipeline_is_empty: true,
+                    }),
+                    Some(NamespaceKind::Collection),
+                ) if source == EVENTS && pair.authoritative_fenced => return Ok(()),
+                _ => {
+                    return Err(StoreError::Unavailable(format!(
+                        "MongoDB event namespace cannot establish a protected cutover capture: {pair:?}"
+                    )))
+                }
+            };
+            self.execute_namespace_action(qualification, cutover, action, LEGACY_EVENTS, EVENTS)
+                .await?;
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB event namespace did not reach a stable protected capture".into(),
+        ))
+    }
+
+    async fn verify_legacy_pre_cutover_owners(&self) -> Result<(), StoreError> {
+        let sessions = self.validated_cutover_session_tails().await?;
+        let events = self.validated_cutover_event_tails().await?;
+        let tombstones = self.validated_tombstone_ids().await?;
+        validate_legacy_pre_cutover_owners(&sessions, &events, &tombstones)
+    }
+
+    async fn reconcile_cutover_deletes(&self) -> Result<(), StoreError> {
+        let event_tails = self.validated_event_tails().await?;
+        let tombstones = self.validated_tombstone_ids().await?;
+        for id in event_tails.keys() {
+            if tombstones.contains(id) {
+                continue;
+            }
+            let owner_exists = self.cutover_session_owner_exists(id).await?;
+            if cutover_delete_requires_reconciliation(tombstones.contains(id), owner_exists) {
+                // The pre-cutover audit proved that every history had an owner
+                // before the session mutation fence. The only legacy operation
+                // still able to remove one after that fence is delete, so finish
+                // its second half transactionally and leave a permanent marker.
+                self.transactional_delete(&SessionId(id.clone())).await?;
+            }
+        }
         Ok(())
+    }
+
+    async fn cutover_session_owner_exists(&self, id: &str) -> Result<bool, StoreError> {
+        for _ in 0..12 {
+            let before = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            let owner_collection = cutover_session_owner_namespace(&before)?;
+            let owner = match owner_collection {
+                Some(collection) => Some((
+                    collection,
+                    self.database
+                        .collection::<Document>(collection)
+                        .find_one(doc! { "_id": id })
+                        .await,
+                )),
+                None => None,
+            };
+            // A concurrent opener can atomically rename the selected collection
+            // or recreate the compatibility view while the find is in flight.
+            // Never turn a miss (or a namespace error) into a tombstone until
+            // the namespace identity and shape are unchanged across the read.
+            let after = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            let owner_found = owner
+                .as_ref()
+                .is_some_and(|(_, result)| matches!(result, Ok(Some(_))));
+            match resolve_cutover_session_owner_lookup(&before, &after, owner_found)? {
+                CutoverOwnerLookup::Retry => continue,
+                CutoverOwnerLookup::Present | CutoverOwnerLookup::Absent => {}
+            }
+
+            let Some((collection, owner)) = owner else {
+                return Err(StoreError::Unavailable(format!(
+                    "MongoDB event history for session {id} has no fenced session owner namespace during cutover; refusing to infer a delete"
+                )));
+            };
+            return owner.map(|owner| owner.is_some()).map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "recheck legacy-delete owner {id} in {collection}: {error}"
+                ))
+            });
+        }
+        Err(StoreError::Unavailable(format!(
+            "MongoDB session owner namespace did not stabilize while reconciling legacy delete {id}"
+        )))
+    }
+
+    async fn verify_versioned_namespaces(&self) -> Result<(), StoreError> {
+        for (legacy, authoritative) in [(LEGACY_SESSIONS, SESSIONS), (LEGACY_EVENTS, EVENTS)] {
+            let pair = self.namespace_pair(legacy, authoritative).await?;
+            if next_namespace_action(&pair, legacy, authoritative)? != NamespaceAction::Ready {
+                return Err(StoreError::Unavailable(format!(
+                    "MongoDB legacy namespace {legacy} is no longer a read-only view of {authoritative}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    async fn ensure_versioned_namespace(
+        &self,
+        qualification: &TransactionQualified,
+        cutover: &NamespaceCutoverAuthorized,
+        legacy: &str,
+        authoritative: &str,
+    ) -> Result<(), StoreError> {
+        // Another replica may be performing the same cutover, and a process may
+        // have stopped after the rename but before creating the view. Re-read
+        // after every action. A protocol-fenced authoritative collection is the
+        // durable proof that another collection under the legacy name is a late
+        // old-writer spill from that exact gap; an unfenced pair stays
+        // ambiguous and is never guessed between.
+        for _ in 0..12 {
+            let before = self.namespace_pair(legacy, authoritative).await?;
+            let action = next_namespace_action(&before, legacy, authoritative)?;
+            if action == NamespaceAction::Ready {
+                return Ok(());
+            }
+
+            if let Err(error) = self
+                .execute_namespace_action(qualification, cutover, action, legacy, authoritative)
+                .await
+            {
+                let after = self.namespace_pair(legacy, authoritative).await?;
+                let after_action = next_namespace_action(&after, legacy, authoritative)?;
+                if after != before || after_action == NamespaceAction::Ready {
+                    continue;
+                }
+                return Err(StoreError::Unavailable(format!(
+                    "MongoDB namespace cutover {legacy} -> {authoritative} requires createCollection, renameCollectionSameDB, collMod, listCollections, find, insert, createIndex, and dropCollection privileges: {error}"
+                )));
+            }
+        }
+        Err(StoreError::Unavailable(format!(
+            "MongoDB namespace cutover {legacy} -> {authoritative} did not reach a stable state"
+        )))
+    }
+
+    async fn namespace_pair(
+        &self,
+        legacy: &str,
+        authoritative: &str,
+    ) -> Result<NamespacePair, StoreError> {
+        let mut cursor = self
+            .database
+            .list_collections()
+            .filter(doc! { "name": { "$in": [legacy, authoritative] } })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("list MongoDB session namespaces: {error}"))
+            })?;
+        let mut pair = NamespacePair::default();
+        while let Some(specification) = cursor.try_next().await.map_err(|error| {
+            StoreError::Unavailable(format!("MongoDB namespace cursor: {error}"))
+        })? {
+            let kind = namespace_kind(&specification);
+            let marked = namespace_has_protocol_validator(&specification, authoritative);
+            let fenced = namespace_is_protocol_fenced(&specification, authoritative);
+            if specification.name == legacy {
+                pair.legacy = Some(kind);
+                pair.legacy_marked = marked;
+                pair.legacy_fenced = fenced;
+                pair.legacy_uuid = specification.info.uuid.clone();
+            } else if specification.name == authoritative {
+                pair.authoritative = Some(kind);
+                pair.authoritative_marked = marked;
+                pair.authoritative_fenced = fenced;
+                pair.authoritative_uuid = specification.info.uuid.clone();
+            }
+        }
+        Ok(pair)
+    }
+
+    async fn execute_namespace_action(
+        &self,
+        qualification: &TransactionQualified,
+        cutover: &NamespaceCutoverAuthorized,
+        action: NamespaceAction,
+        legacy: &str,
+        authoritative: &str,
+    ) -> Result<(), StoreError> {
+        match qualification.authorize(cutover.authorize(action)) {
+            NamespaceAction::CreateAuthoritative => self
+                .database
+                .create_collection(authoritative)
+                .await
+                .map_err(|error| StoreError::Unavailable(error.to_string())),
+            NamespaceAction::FenceLegacy => {
+                self.install_namespace_fence(legacy, authoritative).await
+            }
+            NamespaceAction::RenameLegacy => {
+                let source = format!("{}.{}", self.database.name(), legacy);
+                let target = format!("{}.{}", self.database.name(), authoritative);
+                self.client
+                    .database("admin")
+                    .run_command(doc! {
+                        "renameCollection": source,
+                        "to": target,
+                        "dropTarget": false,
+                    })
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| StoreError::Unavailable(error.to_string()))
+            }
+            NamespaceAction::FenceAuthoritative => {
+                self.install_namespace_fence(authoritative, authoritative)
+                    .await
+            }
+            NamespaceAction::CreateLegacyView => self
+                .database
+                .create_collection(legacy)
+                .view_on(authoritative)
+                .pipeline(Vec::<Document>::new())
+                .await
+                .map_err(|error| StoreError::Unavailable(error.to_string())),
+            NamespaceAction::FenceLateLegacy => {
+                self.install_namespace_fence(legacy, authoritative).await
+            }
+            NamespaceAction::MergeLateLegacy => {
+                self.merge_late_legacy_namespace(legacy, authoritative)
+                    .await?;
+                self.database
+                    .collection::<Document>(legacy)
+                    .drop()
+                    .await
+                    .map_err(|error| StoreError::Unavailable(error.to_string()))
+            }
+            NamespaceAction::Ready => Ok(()),
+        }
+    }
+
+    async fn install_namespace_fence(
+        &self,
+        namespace: &str,
+        authoritative: &str,
+    ) -> Result<(), StoreError> {
+        let validator = expected_validator(authoritative).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "no MongoDB cutover fence is defined for {authoritative}"
+            ))
+        })?;
+        self.database
+            .run_command(doc! {
+                "collMod": namespace,
+                "validator": validator,
+                "validationLevel": "strict",
+                "validationAction": "error",
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "install old-writer fence on MongoDB collection {namespace}: {error}"
+                ))
+            })
+    }
+
+    async fn install_namespace_marker(
+        &self,
+        namespace: &str,
+        authoritative: &str,
+    ) -> Result<(), StoreError> {
+        let validator = expected_validator(authoritative).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "no MongoDB cutover marker is defined for {authoritative}"
+            ))
+        })?;
+        self.database
+            .run_command(doc! {
+                "collMod": namespace,
+                "validator": validator,
+                "validationLevel": "strict",
+                // The marker must travel with the collection through rename,
+                // while a legacy append already released by its session upsert
+                // must still be accepted. `warn` supplies that durable identity
+                // without changing write behaviour.
+                "validationAction": "warn",
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "install MongoDB cutover marker on {namespace}: {error}"
+                ))
+            })
+    }
+
+    async fn merge_late_legacy_namespace(
+        &self,
+        legacy: &str,
+        authoritative: &str,
+    ) -> Result<(), StoreError> {
+        match (legacy, authoritative) {
+            (LEGACY_EVENTS, EVENTS) => self.merge_late_legacy_events().await,
+            _ => Err(StoreError::Unavailable(format!(
+                "no MongoDB late-writer merge is defined for {legacy} -> {authoritative}"
+            ))),
+        }
+    }
+
+    async fn merge_late_legacy_events(&self) -> Result<(), StoreError> {
+        let position_index = required_indexes()
+            .into_iter()
+            .find(|required| required.collection == EVENTS && required.unique)
+            .expect("the authoritative event-position index is required");
+        let target = self.database.collection::<Document>(EVENTS);
+        target
+            .create_index(required_index_model(&position_index))
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "create event-position index before late-writer merge: {error}"
+                ))
+            })?;
+
+        let source = self.database.collection::<Document>(LEGACY_EVENTS);
+        let mut cursor = source
+            .find(doc! {})
+            .sort(doc! { "session_id": 1, "seq": 1 })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("read late legacy events during cutover: {error}"))
+            })?;
+        while let Some(document) = cursor.try_next().await.map_err(|error| {
+            StoreError::Unavailable(format!("late legacy event cursor during cutover: {error}"))
+        })? {
+            let event = normalize_cutover_event_document(document)?;
+            if let Some(existing) =
+                target
+                    .find_one(event.position.clone())
+                    .await
+                    .map_err(|error| {
+                        StoreError::Unavailable(format!(
+                            "check late legacy event {}:{} during cutover: {error}",
+                            event.session_id, event.seq
+                        ))
+                    })?
+            {
+                validate_same_cutover_event(&existing, &event.document)?;
+                continue;
+            }
+
+            if let Err(error) = target.insert_one(event.document.clone()).await {
+                // A concurrent opener can win the unique-position insert. Read
+                // its value and accept only the same event; never overwrite a
+                // different history entry merely because it has the same cursor.
+                let existing =
+                    target
+                        .find_one(event.position.clone())
+                        .await
+                        .map_err(|read_error| {
+                            StoreError::Unavailable(format!(
+                            "resolve concurrent late-event merge {}:{} after {error}: {read_error}",
+                            event.session_id, event.seq
+                        ))
+                        })?;
+                let Some(existing) = existing else {
+                    return Err(StoreError::Unavailable(format!(
+                        "merge late legacy event {}:{}: {error}",
+                        event.session_id, event.seq
+                    )));
+                };
+                validate_same_cutover_event(&existing, &event.document)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn verify_legacy_writers_drained(&self) -> Result<(), StoreError> {
+        let sessions = self.validated_cutover_session_tails().await?;
+        let events = self.validated_cutover_event_tails().await?;
+        validate_legacy_writer_drain(&sessions, &events)
+    }
+
+    async fn validated_cutover_session_tails(&self) -> Result<BTreeMap<String, u64>, StoreError> {
+        let pair = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+        let mut collections = Vec::new();
+        if matches!(pair.legacy, Some(NamespaceKind::Collection)) {
+            collections.push(LEGACY_SESSIONS);
+        }
+        if matches!(pair.authoritative, Some(NamespaceKind::Collection)) {
+            collections.push(SESSIONS);
+        }
+        if matches!(pair.legacy, Some(NamespaceKind::View { .. }))
+            && !matches!(pair.authoritative, Some(NamespaceKind::Collection))
+        {
+            return Err(StoreError::Unavailable(
+                "legacy MongoDB session view has no authoritative collection during cutover".into(),
+            ));
+        }
+
+        let mut tails = BTreeMap::<String, u64>::new();
+        for collection in collections {
+            let mut cursor = self
+                .database
+                .collection::<Document>(collection)
+                .find(doc! {})
+                .sort(doc! { "_id": 1 })
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "validate sessions in MongoDB cutover namespace {collection}: {error}"
+                    ))
+                })?;
+            while let Some(document) = cursor.try_next().await.map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "MongoDB cutover session cursor in {collection}: {error}"
+                ))
+            })? {
+                let (id, tail) = validate_stored_session_document(&document)?;
+                tails
+                    .entry(id)
+                    .and_modify(|existing| *existing = (*existing).max(tail))
+                    .or_insert(tail);
+            }
+        }
+        Ok(tails)
+    }
+
+    async fn validated_cutover_event_tails(&self) -> Result<BTreeMap<String, u64>, StoreError> {
+        let pair = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+        let mut collections = Vec::new();
+        if matches!(pair.legacy, Some(NamespaceKind::Collection)) {
+            collections.push(LEGACY_EVENTS);
+        }
+        if matches!(pair.authoritative, Some(NamespaceKind::Collection)) {
+            collections.push(EVENTS);
+        }
+        if matches!(pair.legacy, Some(NamespaceKind::View { .. }))
+            && !matches!(pair.authoritative, Some(NamespaceKind::Collection))
+        {
+            return Err(StoreError::Unavailable(
+                "legacy MongoDB event view has no authoritative collection during writer drain"
+                    .into(),
+            ));
+        }
+
+        let mut positions = BTreeMap::<(String, u64), Document>::new();
+        for collection in collections {
+            let mut cursor = self
+                .database
+                .collection::<Document>(collection)
+                .find(doc! {})
+                .sort(doc! { "session_id": 1, "seq": 1 })
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "validate events in MongoDB cutover namespace {collection}: {error}"
+                    ))
+                })?;
+            while let Some(document) = cursor.try_next().await.map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "MongoDB cutover event cursor in {collection}: {error}"
+                ))
+            })? {
+                let event = normalize_cutover_event_document(document)?;
+                let key = (event.session_id.clone(), event.seq);
+                if let Some(existing) = positions.get(&key) {
+                    validate_same_cutover_event(existing, &event.document)?;
+                } else {
+                    positions.insert(key, event.document);
+                }
+            }
+        }
+
+        let mut sequence = StoredEventSequence::default();
+        let mut tails = BTreeMap::new();
+        for document in positions.into_values() {
+            let (id, seq) = sequence.observe(&document)?;
+            tails.insert(id, seq);
+        }
+        Ok(tails)
+    }
+
+    async fn ensure_indexes(&self) -> Result<(), StoreError> {
+        for required in required_indexes() {
+            self.database
+                .collection::<Document>(required.collection)
+                .create_index(required_index_model(&required))
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "create required index {} on {}: {error}",
+                        required.name, required.collection
+                    ))
+                })?;
+        }
+        Ok(())
+    }
+
+    async fn ensure_tombstone_collection(&self) -> Result<(), StoreError> {
+        match self.database.create_collection(TOMBSTONES).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let found = self
+                    .namespace_pair(TOMBSTONES, "_cma_unused_tombstone_target")
+                    .await?;
+                if found.legacy == Some(NamespaceKind::Collection) {
+                    Ok(())
+                } else {
+                    Err(StoreError::Unavailable(format!(
+                        "create permanent session tombstone collection: {error}"
+                    )))
+                }
+            }
+        }
+    }
+
+    async fn install_protocol_validators(&self) -> Result<(), StoreError> {
+        for (collection, validator) in [
+            (SESSIONS, session_protocol_validator()),
+            (EVENTS, event_protocol_validator()),
+            (WRITES, write_protocol_validator()),
+            (TOMBSTONES, tombstone_protocol_validator()),
+        ] {
+            self.database
+                .run_command(doc! {
+                    "collMod": collection,
+                    "validator": validator,
+                    "validationLevel": "strict",
+                    "validationAction": "error",
+                })
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "install MongoDB write-protocol validator on {collection}; the database role requires collMod: {error}"
+                    ))
+                })?;
+        }
+        Ok(())
+    }
+
+    async fn collection_contracts(
+        &self,
+    ) -> Result<BTreeMap<String, CollectionContract>, StoreError> {
+        let mut cursor = self
+            .database
+            .list_collections()
+            .filter(doc! {
+                "name": { "$in": [SESSIONS, EVENTS, WRITES, TOMBSTONES] }
+            })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "list authoritative MongoDB collection contracts: {error}"
+                ))
+            })?;
+        let mut contracts = BTreeMap::new();
+        while let Some(specification) = cursor.try_next().await.map_err(|error| {
+            StoreError::Unavailable(format!(
+                "authoritative MongoDB collection contract cursor: {error}"
+            ))
+        })? {
+            contracts.insert(
+                specification.name.clone(),
+                collection_contract(&specification),
+            );
+        }
+        Ok(contracts)
+    }
+
+    async fn authoritative_collection_ids(&self) -> Result<BTreeMap<String, Binary>, StoreError> {
+        let contracts = self.collection_contracts().await?;
+        let mut ids = BTreeMap::new();
+        for collection in [SESSIONS, EVENTS, WRITES, TOMBSTONES] {
+            let contract = contracts.get(collection).ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "authoritative MongoDB collection {collection} is missing"
+                ))
+            })?;
+            let uuid = contract.uuid.clone().ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "authoritative MongoDB collection {collection} has no stable UUID"
+                ))
+            })?;
+            ids.insert(collection.to_owned(), uuid);
+        }
+        Ok(ids)
+    }
+
+    async fn verify_collection_contracts(
+        &self,
+        expected_ids: Option<&BTreeMap<String, Binary>>,
+    ) -> Result<(), StoreError> {
+        let contracts = self.collection_contracts().await?;
+        for collection in [SESSIONS, EVENTS, WRITES, TOMBSTONES] {
+            let contract = contracts.get(collection).ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "authoritative MongoDB collection {collection} is missing"
+                ))
+            })?;
+            validate_collection_contract(
+                collection,
+                contract,
+                expected_ids.and_then(|ids| ids.get(collection)),
+            )?;
+        }
+        Ok(())
+    }
+
+    async fn verify_required_indexes(&self) -> Result<(), StoreError> {
+        let required = required_indexes();
+        for collection in [EVENTS, WRITES, SESSIONS] {
+            let mut cursor = self
+                .database
+                .collection::<Document>(collection)
+                .list_indexes()
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!(
+                        "list required MongoDB indexes on {collection}: {error}"
+                    ))
+                })?;
+            let mut indexes = Vec::new();
+            while let Some(index) = cursor.try_next().await.map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "required MongoDB index cursor on {collection}: {error}"
+                ))
+            })? {
+                indexes.push(index);
+            }
+            for specification in required
+                .iter()
+                .filter(|required| required.collection == collection)
+            {
+                validate_required_index(specification, &indexes)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_post_fence_state(&self) -> Result<HistorySnapshot, StoreError> {
+        let mut tombstones = self.validated_tombstone_ids().await?;
+        let mut sessions = self.validated_session_tails().await?;
+        let mut event_tails = self.validated_event_tails().await?;
+
+        for (id, event_tail) in event_tails.clone() {
+            if sessions.contains_key(&id) || tombstones.contains(&id) {
+                continue;
+            }
+            // A new replica may have committed this session after the session
+            // scan began. Re-read only the apparent orphan after all old names
+            // are fenced, so an old writer cannot make the answer oscillate.
+            let owner = self
+                .sessions
+                .clone_with_type::<Document>()
+                .find_one(doc! { "_id": &id })
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!("recheck event-history owner {id}: {error}"))
+                })?;
+            if let Some(owner) = owner {
+                let (owner_id, owner_tail) = validate_stored_session_document(&owner)?;
+                sessions.insert(owner_id, owner_tail);
+            } else if self.is_tombstoned(&SessionId(id.clone())).await? {
+                tombstones.insert(id);
+            } else {
+                return Err(StoreError::Malformed(format!(
+                    "event history for session {id} ends at {event_tail} but has no session record or deletion tombstone after the writer fence"
+                )));
+            }
+        }
+
+        for (id, recorded_tail) in sessions.clone() {
+            if tombstones.contains(&id) {
+                continue;
+            }
+            let physical_tail = event_tails.get(&id).copied().unwrap_or(0);
+            if recorded_tail <= physical_tail {
+                continue;
+            }
+            if self.is_tombstoned(&SessionId(id.clone())).await? {
+                tombstones.insert(id);
+                continue;
+            }
+            let Some(record) = self
+                .sessions
+                .clone_with_type::<Document>()
+                .find_one(doc! { "_id": &id })
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!("recheck session tail for {id}: {error}"))
+                })?
+            else {
+                if self.is_tombstoned(&SessionId(id.clone())).await? {
+                    tombstones.insert(id);
+                    continue;
+                }
+                return Err(StoreError::Malformed(format!(
+                    "session {id} disappeared without a deletion tombstone during history validation"
+                )));
+            };
+            let (_, current_recorded_tail) = validate_stored_session_document(&record)?;
+            let current_physical_tail = self
+                .last_event_sequence(&SessionId(id.clone()))
+                .await?
+                .unwrap_or(0);
+            if current_recorded_tail > current_physical_tail {
+                return Err(StoreError::Malformed(format!(
+                    "session {id} advertises event {current_recorded_tail}, but contiguous physical history ends at {current_physical_tail} after the old writer was fenced"
+                )));
+            }
+            sessions.insert(id.clone(), current_recorded_tail);
+            if current_physical_tail == 0 {
+                event_tails.remove(&id);
+            } else {
+                event_tails.insert(id, current_physical_tail);
+            }
+        }
+        Ok(HistorySnapshot {
+            tombstones,
+            session_tails: sessions,
+            event_tails,
+        })
+    }
+
+    async fn audited_history_snapshot(
+        &self,
+        previous: Option<&HistorySnapshot>,
+    ) -> Result<HistorySnapshot, StoreError> {
+        let first = self.validate_post_fence_state().await;
+        if let Ok(snapshot) = first {
+            let progressed = previous
+                .map(|previous| validate_history_progress(previous, &snapshot).is_ok())
+                .unwrap_or(true);
+            if progressed {
+                return Ok(snapshot);
+            }
+        }
+
+        // A delete transaction can commit between the independent collection
+        // scans. Retry a suspicious result once so its permanent tombstone is
+        // visible before treating the apparent regression as corruption.
+        let snapshot = self.validate_post_fence_state().await?;
+        if let Some(previous) = previous {
+            validate_history_progress(previous, &snapshot)?;
+        }
+        Ok(snapshot)
+    }
+
+    async fn audit_history_if_due(&self) -> Result<(), StoreError> {
+        let previous = {
+            let audit = self.integrity.lock().await;
+            if let Some(cached) = audit.cached_result(Instant::now()) {
+                return cached;
+            }
+            audit.snapshot.clone()
+        };
+
+        let result = self.audited_history_snapshot(previous.as_ref()).await;
+        let checked_at = Instant::now();
+        let mut audit = self.integrity.lock().await;
+        match result {
+            Ok(snapshot) => {
+                audit.record_success(checked_at, snapshot);
+                Ok(())
+            }
+            Err(error) => {
+                audit.record_failure(checked_at, error);
+                Err(audit
+                    .last_error
+                    .clone()
+                    .expect("a failed integrity audit retains its error"))
+            }
+        }
+    }
+
+    async fn validated_tombstone_ids(&self) -> Result<HashSet<String>, StoreError> {
+        let mut cursor = self
+            .tombstones
+            .clone_with_type::<Document>()
+            .find(doc! {})
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("validate session tombstones: {error}"))
+            })?;
+        let mut ids = HashSet::new();
+        while let Some(document) = cursor.try_next().await.map_err(|error| {
+            StoreError::Unavailable(format!("session tombstone validation cursor: {error}"))
+        })? {
+            let id = document.get_str("_id").map(str::to_owned).map_err(|_| {
+                StoreError::Malformed("session tombstone _id must be a string".into())
+            })?;
+            if id.is_empty() {
+                return Err(StoreError::Malformed(
+                    "session tombstone _id must not be empty".into(),
+                ));
+            }
+            if !matches!(
+                document.get_i32(WRITE_PROTOCOL_FIELD),
+                Ok(protocol) if protocol == WRITE_PROTOCOL
+            ) {
+                return Err(StoreError::Malformed(format!(
+                    "session tombstone {id} does not carry write protocol {WRITE_PROTOCOL}"
+                )));
+            }
+            ids.insert(id);
+        }
+        Ok(ids)
+    }
+
+    async fn validated_session_tails(&self) -> Result<BTreeMap<String, u64>, StoreError> {
+        let mut cursor = self
+            .sessions
+            .clone_with_type::<Document>()
+            .find(doc! {})
+            .sort(doc! { "_id": 1 })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("validate session records: {error}"))
+            })?;
+        let mut tails = BTreeMap::new();
+        while let Some(document) = cursor.try_next().await.map_err(|error| {
+            StoreError::Unavailable(format!("session validation cursor: {error}"))
+        })? {
+            let (id, tail) = validate_stored_session_document(&document)?;
+            tails.insert(id, tail);
+        }
+        Ok(tails)
+    }
+
+    async fn validated_event_tails(&self) -> Result<BTreeMap<String, u64>, StoreError> {
+        let mut cursor = self
+            .events
+            .find(doc! {})
+            .sort(doc! { "session_id": 1, "seq": 1 })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("validate session event history: {error}"))
+            })?;
+        let mut sequence = StoredEventSequence::default();
+        let mut tails = BTreeMap::new();
+        while let Some(document) = cursor
+            .try_next()
+            .await
+            .map_err(|error| StoreError::Unavailable(format!("event validation cursor: {error}")))?
+        {
+            event_doc::from_document(document.clone())?;
+            let (id, seq) = sequence.observe(&document)?;
+            tails.insert(id, seq);
+        }
+        Ok(tails)
     }
 }
 
-async fn bounded_ping(
-    ping: impl Future<Output = mongodb::error::Result<Document>> + Send + 'static,
+impl IntegrityAudit {
+    fn cached_result(&self, now: Instant) -> Option<Result<(), StoreError>> {
+        let checked_at = self.checked_at?;
+        if now.saturating_duration_since(checked_at) >= HISTORY_AUDIT_INTERVAL {
+            return None;
+        }
+        if let Some(error) = &self.last_error {
+            return Some(Err(error.clone()));
+        }
+        self.snapshot.as_ref().map(|_| Ok(()))
+    }
+
+    fn record_success(&mut self, checked_at: Instant, snapshot: HistorySnapshot) {
+        self.checked_at = Some(checked_at);
+        self.last_error = None;
+        self.snapshot = Some(snapshot);
+    }
+
+    fn record_failure(&mut self, checked_at: Instant, error: StoreError) {
+        self.checked_at = Some(checked_at);
+        if self.last_error.is_none() {
+            self.last_error = Some(error);
+        }
+    }
+}
+
+fn collection_contract(specification: &CollectionSpecification) -> CollectionContract {
+    CollectionContract {
+        kind: namespace_kind(specification),
+        validator: specification.options.validator.clone(),
+        validation_level: specification.options.validation_level.clone(),
+        validation_action: specification.options.validation_action.clone(),
+        uuid: specification.info.uuid.clone(),
+    }
+}
+
+fn namespace_has_protocol_validator(
+    specification: &CollectionSpecification,
+    authoritative: &str,
+) -> bool {
+    specification.collection_type == CollectionType::Collection
+        && expected_validator(authoritative).is_some_and(|expected| {
+            specification
+                .options
+                .validator
+                .as_ref()
+                .is_some_and(|actual| documents_equivalent(actual, &expected))
+        })
+        && specification.options.validation_level == Some(ValidationLevel::Strict)
+}
+
+fn namespace_is_protocol_fenced(
+    specification: &CollectionSpecification,
+    authoritative: &str,
+) -> bool {
+    namespace_has_protocol_validator(specification, authoritative)
+        && specification.options.validation_action == Some(ValidationAction::Error)
+}
+
+fn expected_validator(collection: &str) -> Option<Document> {
+    match collection {
+        SESSIONS => Some(session_protocol_validator()),
+        EVENTS => Some(event_protocol_validator()),
+        WRITES => Some(write_protocol_validator()),
+        TOMBSTONES => Some(tombstone_protocol_validator()),
+        _ => None,
+    }
+}
+
+fn validate_collection_contract(
+    collection: &str,
+    actual: &CollectionContract,
+    expected_uuid: Option<&Binary>,
+) -> Result<(), StoreError> {
+    let expected_validator = expected_validator(collection).ok_or_else(|| {
+        StoreError::Unavailable(format!(
+            "no MongoDB collection contract is defined for {collection}"
+        ))
+    })?;
+    if actual.kind != NamespaceKind::Collection {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB namespace {collection} is not a collection"
+        )));
+    }
+    if !actual
+        .validator
+        .as_ref()
+        .is_some_and(|validator| documents_equivalent(validator, &expected_validator))
+    {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} has a changed write-protocol validator"
+        )));
+    }
+    if actual.validation_level != Some(ValidationLevel::Strict) {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} does not enforce strict validation"
+        )));
+    }
+    if actual.validation_action != Some(ValidationAction::Error) {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} does not reject invalid writes"
+        )));
+    }
+    let actual_uuid = actual.uuid.as_ref().ok_or_else(|| {
+        StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} has no stable UUID"
+        ))
+    })?;
+    if expected_uuid.is_some_and(|expected| expected != actual_uuid) {
+        return Err(StoreError::Unavailable(format!(
+            "authoritative MongoDB collection {collection} was replaced after startup"
+        )));
+    }
+    Ok(())
+}
+
+fn documents_equivalent(left: &Document, right: &Document) -> bool {
+    left.len() == right.len()
+        && left.iter().all(|(key, left)| {
+            right
+                .get(key)
+                .is_some_and(|right| bson_values_equivalent(left, right))
+        })
+}
+
+fn bson_values_equivalent(left: &Bson, right: &Bson) -> bool {
+    match (left, right) {
+        (Bson::Document(left), Bson::Document(right)) => documents_equivalent(left, right),
+        (Bson::Array(left), Bson::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| bson_values_equivalent(left, right))
+        }
+        _ => left == right,
+    }
+}
+
+fn required_indexes() -> [RequiredIndex; 4] {
+    [
+        RequiredIndex {
+            collection: EVENTS,
+            name: "session_id_1_seq_1",
+            keys: doc! { "session_id": 1, "seq": 1 },
+            unique: true,
+        },
+        RequiredIndex {
+            collection: WRITES,
+            name: "session_id_1",
+            keys: doc! { "session_id": 1 },
+            unique: false,
+        },
+        RequiredIndex {
+            collection: SESSIONS,
+            name: "owner_1_created_at_-1",
+            keys: doc! { "owner": 1, "created_at": -1 },
+            unique: false,
+        },
+        RequiredIndex {
+            collection: SESSIONS,
+            name: "status_1",
+            keys: doc! { "status": 1 },
+            unique: false,
+        },
+    ]
+}
+
+fn required_index_model(required: &RequiredIndex) -> IndexModel {
+    IndexModel::builder()
+        .keys(required.keys.clone())
+        .options(
+            IndexOptions::builder()
+                .name(required.name.to_owned())
+                .unique(required.unique)
+                .build(),
+        )
+        .build()
+}
+
+fn index_keys_equal(left: &Document, right: &Document) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right.iter()).all(
+            |((left_key, left_value), (right_key, right_value))| {
+                left_key == right_key && left_value == right_value
+            },
+        )
+}
+
+fn validate_required_index(
+    required: &RequiredIndex,
+    indexes: &[IndexModel],
+) -> Result<(), StoreError> {
+    let actual = indexes
+        .iter()
+        .find(|index| {
+            index
+                .options
+                .as_ref()
+                .and_then(|options| options.name.as_deref())
+                == Some(required.name)
+        })
+        .ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "required MongoDB index {} is missing from {}",
+                required.name, required.collection
+            ))
+        })?;
+    let options = actual.options.as_ref().ok_or_else(|| {
+        StoreError::Unavailable(format!(
+            "required MongoDB index {} on {} has no options",
+            required.name, required.collection
+        ))
+    })?;
+    let unique = options.unique.unwrap_or(false);
+    let weakened = options.sparse.unwrap_or(false)
+        || options.partial_filter_expression.is_some()
+        || options.hidden.unwrap_or(false)
+        || options.expire_after.is_some()
+        || options.collation.is_some();
+    if !index_keys_equal(&actual.keys, &required.keys) || unique != required.unique || weakened {
+        return Err(StoreError::Unavailable(format!(
+            "required MongoDB index {} on {} no longer has its exact key and constraint contract",
+            required.name, required.collection
+        )));
+    }
+    Ok(())
+}
+
+fn validate_legacy_pre_cutover_owners(
+    sessions: &BTreeMap<String, u64>,
+    events: &BTreeMap<String, u64>,
+    tombstones: &HashSet<String>,
+) -> Result<(), StoreError> {
+    if let Some((id, event_tail)) = events
+        .iter()
+        .find(|(id, _)| !sessions.contains_key(*id) && !tombstones.contains(*id))
+    {
+        return Err(StoreError::Unavailable(format!(
+            "legacy MongoDB history for session {id} ends at {event_tail} without its owner; retry after an in-flight legacy delete finishes"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_legacy_writer_drain(
+    sessions: &BTreeMap<String, u64>,
+    events: &BTreeMap<String, u64>,
+) -> Result<(), StoreError> {
+    if let Some((id, recorded_tail)) = sessions
+        .iter()
+        .find(|(id, recorded_tail)| events.get(*id).copied().unwrap_or(0) < **recorded_tail)
+    {
+        let event_tail = events.get(id).copied().unwrap_or(0);
+        return Err(StoreError::Unavailable(format!(
+            "legacy MongoDB writer drain is incomplete for session {id}: record advertises event {recorded_tail}, history currently ends at {event_tail}; retry after the in-flight legacy flush completes"
+        )));
+    }
+    Ok(())
+}
+
+fn cutover_delete_requires_reconciliation(tombstoned: bool, owner_exists: bool) -> bool {
+    !tombstoned && !owner_exists
+}
+
+fn validate_history_progress(
+    previous: &HistorySnapshot,
+    current: &HistorySnapshot,
+) -> Result<(), StoreError> {
+    for id in &previous.tombstones {
+        if !current.tombstones.contains(id) {
+            return Err(StoreError::Malformed(format!(
+                "permanent deletion tombstone for session {id} disappeared"
+            )));
+        }
+    }
+
+    for (id, previous_tail) in &previous.session_tails {
+        if current.tombstones.contains(id) {
+            continue;
+        }
+        let current_tail = current.session_tails.get(id).ok_or_else(|| {
+            StoreError::Malformed(format!(
+                "session {id} disappeared without a deletion tombstone"
+            ))
+        })?;
+        if current_tail < previous_tail {
+            return Err(StoreError::Malformed(format!(
+                "session {id} recorded tail decreased from {previous_tail} to {current_tail}"
+            )));
+        }
+    }
+
+    for (id, previous_tail) in &previous.event_tails {
+        if current.tombstones.contains(id) {
+            continue;
+        }
+        let current_tail = current.event_tails.get(id).ok_or_else(|| {
+            StoreError::Malformed(format!(
+                "event history for session {id} disappeared without a deletion tombstone"
+            ))
+        })?;
+        if current_tail < previous_tail {
+            return Err(StoreError::Malformed(format!(
+                "event history for session {id} decreased from {previous_tail} to {current_tail}"
+            )));
+        }
+    }
+
+    for (id, recorded_tail) in &current.session_tails {
+        if current.tombstones.contains(id) {
+            continue;
+        }
+        let physical_tail = current.event_tails.get(id).copied().unwrap_or(0);
+        if recorded_tail > &physical_tail {
+            return Err(StoreError::Malformed(format!(
+                "session {id} advertises event {recorded_tail}, but physical history ends at {physical_tail}"
+            )));
+        }
+    }
+    for (id, event_tail) in &current.event_tails {
+        if !current.session_tails.contains_key(id) && !current.tombstones.contains(id) {
+            return Err(StoreError::Malformed(format!(
+                "event history for session {id} ends at {event_tail} without a session record or deletion tombstone"
+            )));
+        }
+    }
+    Ok(())
+}
+
+async fn bounded_readiness_probe(
+    permit: Arc<tokio::sync::Semaphore>,
+    probe: impl Future<Output = Result<(), StoreError>> + Send + 'static,
     timeout: Duration,
 ) -> Result<(), StoreError> {
-    // MongoDB driver futures must be polled to completion. Timing out the
-    // JoinHandle detaches the task instead of cancelling the driver operation.
-    let ping = tokio::spawn(ping);
-    match tokio::time::timeout(timeout, ping).await {
-        Ok(Ok(Ok(_))) => Ok(()),
-        Ok(Ok(Err(error))) => Err(StoreError::Unavailable(format!("ping: {error}"))),
+    let deadline = tokio::time::Instant::now() + timeout;
+    let permit = permit.try_acquire_owned().map_err(|_| {
+        StoreError::Unavailable("MongoDB readiness probe is already in progress".into())
+    })?;
+    // MongoDB driver futures must be polled to completion. Timing out this
+    // JoinHandle detaches the whole probe with its permit still held, so a
+    // stalled driver operation cannot create a queue of detached audit tasks.
+    let probe = tokio::spawn(async move {
+        let _permit = permit;
+        probe.await
+    });
+    match tokio::time::timeout_at(deadline, probe).await {
+        Ok(Ok(result)) => result,
         Ok(Err(error)) => Err(StoreError::Unavailable(format!(
-            "ping task failed: {error}"
+            "MongoDB readiness probe task failed: {error}"
         ))),
         Err(_) => Err(StoreError::Unavailable(format!(
-            "ping timed out after {} ms",
+            "MongoDB readiness probe timed out after {} ms",
             timeout.as_millis()
         ))),
     }
 }
 
-fn reservation_status_index() -> IndexModel {
-    IndexModel::builder()
-        .keys(doc! { "status": 1 })
-        .options(IndexOptions::builder().name("status_1".to_string()).build())
-        .build()
+async fn bounded_store_check(
+    operation: &'static str,
+    check: impl Future<Output = Result<(), StoreError>> + Send + 'static,
+    timeout: Duration,
+) -> Result<(), StoreError> {
+    let check = tokio::spawn(check);
+    match tokio::time::timeout(timeout, check).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => Err(StoreError::Unavailable(format!(
+            "{operation} task failed: {error}"
+        ))),
+        Err(_) => Err(StoreError::Unavailable(format!(
+            "{operation} timed out after {} ms",
+            timeout.as_millis()
+        ))),
+    }
+}
+
+fn command_error_code(error: &mongodb::error::Error) -> Option<i32> {
+    match error.kind.as_ref() {
+        mongodb::error::ErrorKind::Command(command) => Some(command.code),
+        _ => None,
+    }
+}
+
+fn validate_transaction_topology_reply(reply: &Document) -> Result<(), StoreError> {
+    let replica_set = reply.get_str("setName").is_ok();
+    let mongos = reply
+        .get_str("msg")
+        .is_ok_and(|message| message == "isdbgrid");
+    if replica_set || mongos {
+        return Ok(());
+    }
+    Err(StoreError::Unavailable(
+        "MongoDB session persistence requires a replica set or mongos; standalone deployments do not support its transactions"
+            .into(),
+    ))
+}
+
+fn namespace_kind(specification: &CollectionSpecification) -> NamespaceKind {
+    match specification.collection_type {
+        CollectionType::Collection => NamespaceKind::Collection,
+        CollectionType::View => NamespaceKind::View {
+            source: specification.options.view_on.clone(),
+            pipeline_is_empty: specification
+                .options
+                .pipeline
+                .as_ref()
+                .is_none_or(Vec::is_empty),
+        },
+        _ => NamespaceKind::Unsupported,
+    }
+}
+
+fn namespace_cutover_marker_document(
+    marker: &NamespaceCutoverMarker,
+) -> Result<Document, StoreError> {
+    let (origin, phase, collection_ids) = match marker {
+        NamespaceCutoverMarker::InProgress { origin } => (origin, "in-progress", None),
+        NamespaceCutoverMarker::Complete {
+            origin,
+            collection_ids,
+        } => (origin, "complete", Some(collection_ids)),
+    };
+    validate_namespace_cutover_origin(origin, phase == "complete")?;
+    let mut document = doc! {
+        "_id": NAMESPACE_CUTOVER_ID,
+        "protocol": NAMESPACE_CUTOVER_PROTOCOL,
+        "origin": origin,
+        "phase": phase,
+    };
+    if let Some(collection_ids) = collection_ids {
+        let sessions = required_cutover_uuid(collection_ids, SESSIONS)?;
+        let events = required_cutover_uuid(collection_ids, EVENTS)?;
+        let mut stored = Document::new();
+        stored.insert(SESSIONS, sessions.clone());
+        stored.insert(EVENTS, events.clone());
+        document.insert("collection_uuids", stored);
+    }
+    Ok(document)
+}
+
+fn validate_namespace_cutover_marker(
+    document: Document,
+) -> Result<NamespaceCutoverMarker, StoreError> {
+    let id = document.get_str("_id").map_err(|_| {
+        StoreError::Malformed("MongoDB namespace-cutover marker _id must be a string".into())
+    })?;
+    let protocol = document.get_i32("protocol").map_err(|_| {
+        StoreError::Malformed("MongoDB namespace-cutover marker protocol must be an int".into())
+    })?;
+    let origin = document.get_str("origin").map_err(|_| {
+        StoreError::Malformed("MongoDB namespace-cutover marker origin must be a string".into())
+    })?;
+    let phase = document.get_str("phase").map_err(|_| {
+        StoreError::Malformed("MongoDB namespace-cutover marker phase must be a string".into())
+    })?;
+    if id != NAMESPACE_CUTOVER_ID || protocol != NAMESPACE_CUTOVER_PROTOCOL {
+        return Err(StoreError::Malformed(format!(
+            "MongoDB namespace-cutover marker is not the supported {NAMESPACE_CUTOVER_ID} protocol {NAMESPACE_CUTOVER_PROTOCOL} proof"
+        )));
+    }
+    match phase {
+        "in-progress" if document.len() == 4 => {
+            validate_namespace_cutover_origin(origin, false)?;
+            Ok(NamespaceCutoverMarker::InProgress {
+                origin: origin.to_owned(),
+            })
+        }
+        "complete" if document.len() == 5 => {
+            validate_namespace_cutover_origin(origin, true)?;
+            let stored = document.get_document("collection_uuids").map_err(|_| {
+                StoreError::Malformed(
+                    "completed MongoDB namespace-cutover marker must contain collection_uuids"
+                        .into(),
+                )
+            })?;
+            if stored.len() != 2 {
+                return Err(StoreError::Malformed(
+                    "completed MongoDB namespace-cutover marker must name exactly the two authoritative collection UUIDs"
+                        .into(),
+                ));
+            }
+            let collection_ids = BTreeMap::from([
+                (SESSIONS.to_owned(), stored_cutover_uuid(stored, SESSIONS)?),
+                (EVENTS.to_owned(), stored_cutover_uuid(stored, EVENTS)?),
+            ]);
+            Ok(NamespaceCutoverMarker::Complete {
+                origin: origin.to_owned(),
+                collection_ids,
+            })
+        }
+        _ => Err(StoreError::Malformed(
+            "MongoDB namespace-cutover marker has an unsupported phase or field set".into(),
+        )),
+    }
+}
+
+fn validate_namespace_cutover_origin(origin: &str, complete: bool) -> Result<(), StoreError> {
+    if matches!(origin, "new-database" | "operator-drained")
+        || (complete && origin == NAMESPACE_CUTOVER_OBSERVED_ORIGIN)
+    {
+        return Ok(());
+    }
+    Err(StoreError::Malformed(
+        "MongoDB namespace-cutover marker has an unsupported origin".into(),
+    ))
+}
+
+fn required_cutover_uuid<'a>(
+    collection_ids: &'a BTreeMap<String, Binary>,
+    collection: &str,
+) -> Result<&'a Binary, StoreError> {
+    let uuid = collection_ids.get(collection).ok_or_else(|| {
+        StoreError::Malformed(format!(
+            "completed MongoDB namespace-cutover marker is missing the {collection} UUID"
+        ))
+    })?;
+    validate_cutover_uuid(collection, uuid)?;
+    Ok(uuid)
+}
+
+fn stored_cutover_uuid(document: &Document, collection: &str) -> Result<Binary, StoreError> {
+    let uuid = match document.get(collection) {
+        Some(Bson::Binary(uuid)) => uuid.clone(),
+        _ => {
+            return Err(StoreError::Malformed(format!(
+                "completed MongoDB namespace-cutover marker {collection} UUID must be binary"
+            )))
+        }
+    };
+    validate_cutover_uuid(collection, &uuid)?;
+    Ok(uuid)
+}
+
+fn validate_cutover_uuid(collection: &str, uuid: &Binary) -> Result<(), StoreError> {
+    if uuid.subtype == mongodb::bson::spec::BinarySubtype::Uuid && uuid.bytes.len() == 16 {
+        return Ok(());
+    }
+    Err(StoreError::Malformed(format!(
+        "completed MongoDB namespace-cutover marker {collection} UUID is not a standard UUID"
+    )))
+}
+
+fn completed_namespace_ids(
+    sessions: &NamespacePair,
+    events: &NamespacePair,
+) -> Result<Option<BTreeMap<String, Binary>>, StoreError> {
+    let ready = matches!(
+        next_namespace_action(sessions, LEGACY_SESSIONS, SESSIONS),
+        Ok(NamespaceAction::Ready)
+    ) && matches!(
+        next_namespace_action(events, LEGACY_EVENTS, EVENTS),
+        Ok(NamespaceAction::Ready)
+    );
+    if !ready {
+        return Ok(None);
+    }
+    let sessions_uuid = sessions.authoritative_uuid.clone().ok_or_else(|| {
+        StoreError::Unavailable(
+            "completed MongoDB namespace cutover sessions_v2 collection has no stable UUID".into(),
+        )
+    })?;
+    let events_uuid = events.authoritative_uuid.clone().ok_or_else(|| {
+        StoreError::Unavailable(
+            "completed MongoDB namespace cutover session_events_v2 collection has no stable UUID"
+                .into(),
+        )
+    })?;
+    Ok(Some(BTreeMap::from([
+        (SESSIONS.to_owned(), sessions_uuid),
+        (EVENTS.to_owned(), events_uuid),
+    ])))
+}
+
+fn validate_completed_namespace_ids(
+    recorded: &BTreeMap<String, Binary>,
+    actual: &BTreeMap<String, Binary>,
+) -> Result<(), StoreError> {
+    for collection in [SESSIONS, EVENTS] {
+        let recorded_uuid = required_cutover_uuid(recorded, collection)?;
+        let actual_uuid = actual.get(collection).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "completed MongoDB namespace cutover no longer has authoritative collection {collection}; refusing to recreate or replace it"
+            ))
+        })?;
+        if actual_uuid != recorded_uuid {
+            return Err(StoreError::Unavailable(format!(
+                "completed MongoDB namespace cutover {collection} UUID no longer matches its durable completion record; refusing to accept replacement data"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn namespace_cutover_authorization(
+    sessions: &NamespacePair,
+    events: &NamespacePair,
+    legacy_cutover_confirmed: bool,
+    marker: Option<&NamespaceCutoverMarker>,
+) -> Result<NamespaceCutoverAuthorization, StoreError> {
+    let new_database = [sessions, events]
+        .iter()
+        .all(|pair| pair.legacy.is_none() && pair.authoritative.is_none());
+    let completed = completed_namespace_ids(sessions, events)?;
+    match marker {
+        Some(NamespaceCutoverMarker::Complete { collection_ids, .. }) => {
+            let actual = completed.as_ref().ok_or_else(|| {
+                StoreError::Unavailable(
+                    "completed MongoDB namespace cutover is no longer complete; refusing to recreate missing namespaces from an empty state"
+                        .into(),
+                )
+            })?;
+            validate_completed_namespace_ids(collection_ids, actual)?;
+            return Ok(NamespaceCutoverAuthorization::Complete);
+        }
+        Some(NamespaceCutoverMarker::InProgress { origin }) => {
+            if let Some(collection_ids) = completed {
+                return Ok(NamespaceCutoverAuthorization::RecordCompletion {
+                    origin: origin.clone(),
+                    collection_ids,
+                });
+            }
+            return Ok(NamespaceCutoverAuthorization::Proven);
+        }
+        None => {}
+    }
+    if let Some(collection_ids) = completed {
+        return Ok(NamespaceCutoverAuthorization::RecordCompletion {
+            origin: NAMESPACE_CUTOVER_OBSERVED_ORIGIN.to_owned(),
+            collection_ids,
+        });
+    }
+    if new_database {
+        return Ok(NamespaceCutoverAuthorization::RecordNewDatabase);
+    }
+    if legacy_cutover_confirmed {
+        return Ok(NamespaceCutoverAuthorization::RecordOperatorDrain);
+    }
+
+    Err(StoreError::Unavailable(
+        "legacy MongoDB session namespaces require an offline cutover: stop every pre-cutover CMA replica and wait for all of its MongoDB operations to finish, then start exactly one replacement with CHRONO_MONGODB_LEGACY_CUTOVER=drained; CMA cannot prove that external drain itself"
+            .into(),
+    ))
+}
+
+fn next_namespace_action(
+    pair: &NamespacePair,
+    legacy: &str,
+    authoritative: &str,
+) -> Result<NamespaceAction, StoreError> {
+    match (&pair.legacy, &pair.authoritative) {
+        (None, None) => Ok(NamespaceAction::CreateAuthoritative),
+        (Some(NamespaceKind::Collection), None) if !pair.legacy_fenced => {
+            Ok(NamespaceAction::FenceLegacy)
+        }
+        (Some(NamespaceKind::Collection), None) => Ok(NamespaceAction::RenameLegacy),
+        (None, Some(NamespaceKind::Collection)) if !pair.authoritative_fenced => {
+            Ok(NamespaceAction::FenceAuthoritative)
+        }
+        (None, Some(NamespaceKind::Collection)) => Ok(NamespaceAction::CreateLegacyView),
+        (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection))
+            if legacy == LEGACY_EVENTS
+                && authoritative == EVENTS
+                && pair.authoritative_fenced
+                && !pair.legacy_fenced =>
+        {
+            Ok(NamespaceAction::FenceLateLegacy)
+        }
+        (Some(NamespaceKind::Collection), Some(NamespaceKind::Collection))
+            if legacy == LEGACY_EVENTS
+                && authoritative == EVENTS
+                && pair.authoritative_fenced
+                && pair.legacy_fenced =>
+        {
+            Ok(NamespaceAction::MergeLateLegacy)
+        }
+        (
+            Some(NamespaceKind::View {
+                source: Some(source),
+                pipeline_is_empty: true,
+            }),
+            Some(NamespaceKind::Collection),
+        ) if source == authoritative && !pair.authoritative_fenced => {
+            Ok(NamespaceAction::FenceAuthoritative)
+        }
+        (
+            Some(NamespaceKind::View {
+                source: Some(source),
+                pipeline_is_empty: true,
+            }),
+            Some(NamespaceKind::Collection),
+        ) if source == authoritative => Ok(NamespaceAction::Ready),
+        _ => Err(StoreError::Unavailable(format!(
+            "MongoDB namespace cutover is ambiguous for {legacy} -> {authoritative}: {pair:?}; refusing to merge, replace, or drop data"
+        ))),
+    }
+}
+
+fn cutover_session_owner_namespace(
+    pair: &NamespacePair,
+) -> Result<Option<&'static str>, StoreError> {
+    match (&pair.legacy, &pair.authoritative) {
+        (None, None) => Ok(None),
+        (Some(NamespaceKind::Collection), None) if pair.legacy_fenced => {
+            Ok(Some(LEGACY_SESSIONS))
+        }
+        (None, Some(NamespaceKind::Collection)) if pair.authoritative_fenced => {
+            Ok(Some(SESSIONS))
+        }
+        (
+            Some(NamespaceKind::View {
+                source: Some(source),
+                pipeline_is_empty: true,
+            }),
+            Some(NamespaceKind::Collection),
+        ) if source == SESSIONS && pair.authoritative_fenced => Ok(Some(SESSIONS)),
+        _ => Err(StoreError::Unavailable(format!(
+            "MongoDB session owner namespace is ambiguous during cutover: {pair:?}; refusing delete reconciliation"
+        ))),
+    }
+}
+
+fn resolve_cutover_session_owner_lookup(
+    before: &NamespacePair,
+    after: &NamespacePair,
+    owner_found: bool,
+) -> Result<CutoverOwnerLookup, StoreError> {
+    let before_collection = cutover_session_owner_namespace(before)?;
+    // Validate the second snapshot even when it changed. In particular, a
+    // legacy collection appearing beside the authoritative collection must
+    // fail closed before an apparent owner miss can create a tombstone.
+    let after_collection = cutover_session_owner_namespace(after)?;
+    if before != after || before_collection != after_collection {
+        return Ok(CutoverOwnerLookup::Retry);
+    }
+    if before_collection.is_none() {
+        return Err(StoreError::Unavailable(
+            "MongoDB cutover has protected event history but no fenced session owner namespace; refusing to infer a delete"
+                .into(),
+        ));
+    }
+    Ok(if owner_found {
+        CutoverOwnerLookup::Present
+    } else {
+        CutoverOwnerLookup::Absent
+    })
+}
+
+fn normalize_cutover_event_document(mut document: Document) -> Result<CutoverEvent, StoreError> {
+    let event = event_doc::from_document(document.clone())?;
+    document.remove("_id");
+    document.insert(WRITE_PROTOCOL_FIELD, WRITE_PROTOCOL);
+    let position = doc! {
+        "session_id": &event.session_id.0,
+        "seq": i64::try_from(event.seq).map_err(|_| {
+            StoreError::Malformed(format!(
+                "late legacy event {}:{} exceeds MongoDB's sequence range",
+                event.session_id, event.seq
+            ))
+        })?,
+    };
+    Ok(CutoverEvent {
+        session_id: event.session_id.0,
+        seq: event.seq,
+        position,
+        document,
+    })
+}
+
+fn validate_same_cutover_event(left: &Document, right: &Document) -> Result<(), StoreError> {
+    let left = canonical_cutover_event(left.clone())?;
+    let right = canonical_cutover_event(right.clone())?;
+    if documents_equivalent(&left, &right) {
+        return Ok(());
+    }
+    let id = right
+        .get_str("session_id")
+        .unwrap_or("<invalid session id>");
+    let seq = right.get_i64("seq").unwrap_or(-1);
+    Err(StoreError::Malformed(format!(
+        "late legacy event {id}:{seq} conflicts with a different authoritative event at the same cursor"
+    )))
+}
+
+fn canonical_cutover_event(mut document: Document) -> Result<Document, StoreError> {
+    event_doc::from_document(document.clone())?;
+    document.remove("_id");
+    document.remove(WRITE_PROTOCOL_FIELD);
+    Ok(document)
+}
+
+fn protocol_validator(mut required: Vec<&str>, long_fields: &[&str]) -> Document {
+    required.insert(0, WRITE_PROTOCOL_FIELD);
+    let mut properties = Document::new();
+    properties.insert(
+        WRITE_PROTOCOL_FIELD,
+        Bson::Document(doc! {
+            "bsonType": "int",
+            "enum": [WRITE_PROTOCOL],
+        }),
+    );
+    for field in long_fields {
+        properties.insert(*field, Bson::Document(doc! { "bsonType": "long" }));
+    }
+    doc! {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": required,
+            "properties": properties,
+        }
+    }
+}
+
+fn session_protocol_validator() -> Document {
+    protocol_validator(vec!["revision"], &["revision"])
+}
+
+fn event_protocol_validator() -> Document {
+    protocol_validator(Vec::new(), &[])
+}
+
+fn write_protocol_validator() -> Document {
+    protocol_validator(Vec::new(), &[])
+}
+
+fn tombstone_protocol_validator() -> Document {
+    protocol_validator(Vec::new(), &[])
+}
+
+fn appended_event_session_update(record: &Document, tail: i64) -> Document {
+    let mut set = Document::new();
+    set.insert(WRITE_PROTOCOL_FIELD, WRITE_PROTOCOL);
+    if !record.contains_key("revision") {
+        // The first write touching a pre-revision record gives its absent
+        // revision the same explicit zero used by the legacy CAS filter.
+        set.insert("revision", 0_i64);
+    }
+    doc! {
+        "$set": set,
+        "$max": { "last_seq": tail },
+    }
+}
+
+impl StoredEventSequence {
+    fn observe(&mut self, document: &Document) -> Result<(String, u64), StoreError> {
+        let id = document
+            .get_str("session_id")
+            .map(str::to_owned)
+            .map_err(|_| StoreError::Malformed("event session_id must be a string".into()))?;
+        if id.is_empty() {
+            return Err(StoreError::Malformed(
+                "event session_id must not be empty".into(),
+            ));
+        }
+        let stored = document
+            .get_i64("seq")
+            .map_err(|_| StoreError::Malformed("event seq must be a 64-bit integer".into()))?;
+        let seq = u64::try_from(stored)
+            .map_err(|_| StoreError::Malformed("event seq must not be negative".into()))?;
+        let expected = if self.session_id.as_deref() == Some(id.as_str()) {
+            self.next
+        } else {
+            1
+        };
+        if seq != expected {
+            return Err(StoreError::Malformed(format!(
+                "event history for session {id} is not contiguous: expected {expected}, found {seq}"
+            )));
+        }
+        self.session_id = Some(id.clone());
+        self.next = seq
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+        Ok((id, seq))
+    }
+}
+
+fn validate_stored_session_document(document: &Document) -> Result<(String, u64), StoreError> {
+    let id = document
+        .get_str("_id")
+        .map(str::to_owned)
+        .map_err(|_| StoreError::Malformed("session _id must be a string".into()))?;
+    if id.is_empty() {
+        return Err(StoreError::Malformed(
+            "session _id must not be empty".into(),
+        ));
+    }
+    let tail = document
+        .get_i64("last_seq")
+        .map_err(|_| {
+            StoreError::Malformed(format!("session {id} last_seq must be a 64-bit integer"))
+        })
+        .and_then(|tail| {
+            u64::try_from(tail).map_err(|_| {
+                StoreError::Malformed(format!("session {id} last_seq must not be negative"))
+            })
+        })?;
+    match document.get("revision") {
+        None => {}
+        Some(Bson::Int64(revision)) if *revision >= 0 => {}
+        Some(Bson::Int64(_)) => {
+            return Err(StoreError::Malformed(format!(
+                "session {id} revision must not be negative"
+            )))
+        }
+        Some(_) => {
+            return Err(StoreError::Malformed(format!(
+                "session {id} revision must be a 64-bit integer"
+            )))
+        }
+    }
+    if let Some(protocol) = document.get(WRITE_PROTOCOL_FIELD) {
+        if protocol != &Bson::Int32(WRITE_PROTOCOL) {
+            return Err(StoreError::Malformed(format!(
+                "session {id} carries an unknown write protocol"
+            )));
+        }
+    }
+    let stored: SessionDoc = mongodb::bson::deserialize_from_document(document.clone())
+        .map_err(|error| StoreError::Malformed(format!("session {id}: {error}")))?;
+    from_doc(stored)?;
+    Ok((id, tail))
 }
 
 /// The duplicate-key code, which is the unique index on `(session_id, seq)`
@@ -255,32 +2619,212 @@ const DUPLICATE_KEY: i32 = 11000;
 
 /// Read a failed insert as a sequence collision, if that is what it was.
 ///
-/// `None` for anything else, so a store that is merely unreachable is still
-/// reported as unreachable. Only the compound unique index can produce this
-/// code on this collection, so a duplicate key here means one thing.
+/// False for anything else, so a store that is merely unreachable is still
+/// reported as unreachable. A sequence race is resolved from the durable tail
+/// by the core; whole-write idempotency is resolved separately by receipts.
 ///
-/// The batch is inserted ordered, so the first failing position is also the
-/// number of events the database accepted before it stopped — which is what a
-/// caller re-numbering the remainder needs, and the reason this returns a
-/// count rather than a bare marker.
-fn sequence_taken(error: &mongodb::error::Error, total: usize) -> Option<StoreError> {
+/// Event inserts run inside a transaction, so a duplicate aborts the entire
+/// batch. This helper only identifies the server error; the durable tail is
+/// read after the abort to construct the typed collision.
+fn sequence_taken(error: &mongodb::error::Error) -> bool {
     let mongodb::error::ErrorKind::InsertMany(ref failed) = *error.kind else {
-        return None;
+        return false;
     };
-    let written = failed
+    failed
         .write_errors
-        .as_ref()?
+        .as_ref()
+        .is_some_and(|errors| errors.iter().any(|error| error.code == DUPLICATE_KEY))
+}
+
+/// Refuse any batch that would make a higher sequence readable across a hole.
+///
+/// Checked as a batch before insertion so the refusal writes none of it. A
+/// lower sequence is `SequenceTaken`: it belongs behind the durable tail and
+/// the caller must rebase it. `NonContiguousAppend` is reserved for a forward
+/// gap whose missing lower writer may still be in flight.
+fn validate_contiguous_append(events: &[Event], last: Option<u64>) -> Result<(), StoreError> {
+    let Some(first) = events.first() else {
+        return Ok(());
+    };
+    let id = &first.session_id;
+    let mut expected = last
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+
+    for event in events {
+        if event.session_id != *id {
+            return Err(StoreError::Malformed(
+                "one event append batch named more than one session".into(),
+            ));
+        }
+        if event.seq < expected {
+            tracing::error!(
+                session_id = %id,
+                expected,
+                got = event.seq,
+                "refused an event sequence already below the durable tail"
+            );
+            return Err(StoreError::SequenceTaken {
+                expected,
+                got: event.seq,
+            });
+        }
+        if event.seq > expected {
+            tracing::error!(
+                session_id = %id,
+                expected,
+                got = event.seq,
+                "refused a non-contiguous event append"
+            );
+            return Err(StoreError::NonContiguousAppend {
+                expected,
+                got: event.seq,
+            });
+        }
+        expected = expected
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+    }
+    Ok(())
+}
+
+fn stored_event_tail(found: Option<Document>) -> Result<Option<u64>, StoreError> {
+    let Some(found) = found else {
+        return Ok(None);
+    };
+    let seq = found
+        .get_i64("seq")
+        .map_err(|_| StoreError::Malformed("event tail seq must be a 64-bit integer".into()))?;
+    u64::try_from(seq)
+        .map(Some)
+        .map_err(|_| StoreError::Malformed("event tail seq must not be negative".into()))
+}
+
+/// The next atomic writer starts after both facts an older deployment may have
+/// exposed: events that exist, and cursor positions its session record already
+/// advertised. The old two-step write could leave either one ahead of the
+/// other; taking the maximum preserves those cursors without allowing a new
+/// transaction to create another hole.
+fn durable_sequence_floor(
+    event_tail: Option<u64>,
+    recorded_tail: Option<i64>,
+) -> Result<u64, StoreError> {
+    let recorded_tail = recorded_tail
+        .map(|tail| {
+            u64::try_from(tail).map_err(|_| {
+                StoreError::Malformed("session event tail must not be negative".into())
+            })
+        })
+        .transpose()?
+        .unwrap_or(0);
+    Ok(event_tail.unwrap_or(0).max(recorded_tail))
+}
+
+fn resolved_transaction_tail(
+    id: &SessionId,
+    sequence_floor: u64,
+    requested_tail: u64,
+    events: &[Event],
+) -> Result<u64, StoreError> {
+    let durable_tail = events.last().map_or(sequence_floor, |event| event.seq);
+    let tail_matches = if events.is_empty() {
+        requested_tail <= sequence_floor
+    } else {
+        requested_tail == durable_tail
+    };
+    if !tail_matches {
+        return Err(StoreError::Malformed(format!(
+            "session {id} record tail {requested_tail} does not match durable tail {durable_tail}"
+        )));
+    }
+    Ok(durable_tail)
+}
+
+fn validate_transaction_input(
+    write_id: &str,
+    record: &SessionRecord,
+    events: &[Event],
+    create: bool,
+) -> Result<(), StoreError> {
+    if write_id.is_empty() {
+        return Err(StoreError::Malformed(
+            "session write ID must not be empty".into(),
+        ));
+    }
+    if record.session.id.0.is_empty() {
+        return Err(StoreError::Malformed("session id must not be empty".into()));
+    }
+    if events
         .iter()
-        .filter(|w| w.code == DUPLICATE_KEY)
-        .map(|w| w.index)
-        .min()?;
-    Some(StoreError::SequenceTaken { written, total })
+        .any(|event| event.session_id != record.session.id)
+    {
+        return Err(StoreError::Malformed(
+            "one durable session write named more than one session".into(),
+        ));
+    }
+    if create && record.revision != 0 {
+        return Err(StoreError::RevisionConflict {
+            expected: 0,
+            actual: record.revision,
+        });
+    }
+    Ok(())
+}
+
+fn receipt_revision(
+    receipt: &SessionWriteDoc,
+    write_id: &str,
+    id: &SessionId,
+) -> Result<u64, StoreError> {
+    if receipt.session_id != id.0 {
+        return Err(StoreError::Malformed(format!(
+            "session write ID {write_id} belongs to another session"
+        )));
+    }
+    u64::try_from(receipt.revision)
+        .map_err(|_| StoreError::Malformed("session write receipt revision is negative".into()))
+}
+
+fn next_stored_revision(actual: u64) -> Result<(u64, i64), StoreError> {
+    let revision = actual
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+    let stored = i64::try_from(revision)
+        .map_err(|_| StoreError::Malformed("session revision cannot be stored".into()))?;
+    Ok((revision, stored))
+}
+
+fn session_update_options() -> ReplaceOptions {
+    ReplaceOptions::builder().upsert(false).build()
+}
+
+fn session_revision_filter(id: &str, expected: i64) -> Document {
+    if expected == 0 {
+        // Records written before optimistic revisions have no `revision`
+        // field. Deserialization deliberately reads those as revision zero,
+        // so their first CAS must give the absent field the same meaning.
+        doc! {
+            "_id": id,
+            "$or": [
+                { "revision": 0_i64 },
+                { "revision": { "$exists": false } },
+            ],
+        }
+    } else {
+        doc! { "_id": id, "revision": expected }
+    }
+}
+
+fn stored_event_cursor(after: u64) -> Option<i64> {
+    i64::try_from(after).ok()
 }
 
 fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
     let s = &r.session;
     Ok(SessionDoc {
         id: s.id.0.clone(),
+        write_protocol: WRITE_PROTOCOL,
         owner: s.owner.0.clone(),
         kernel: s.kernel.0.clone(),
         status: serde_plain_string(&s.status)?,
@@ -291,7 +2835,12 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         },
         columns: s.geometry.columns() as u32,
         rows: s.geometry.rows() as u32,
-        last_seq: s.last_seq as i64,
+        last_seq: i64::try_from(s.last_seq).map_err(|_| {
+            StoreError::Malformed(format!(
+                "session event tail {} cannot be stored",
+                s.last_seq
+            ))
+        })?,
         created_at: s.created_at.clone(),
         options: Some(
             mongodb::bson::serialize_to_bson(&s.options)
@@ -321,6 +2870,9 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
                 .collect()
         }),
         pricing: s.pricing.as_ref().map(pricing_to_doc).transpose()?,
+        revision: i64::try_from(r.revision).map_err(|_| {
+            StoreError::Malformed(format!("session revision {} cannot be stored", r.revision))
+        })?,
     })
 }
 
@@ -397,6 +2949,45 @@ fn parse_plain<T: for<'de> Deserialize<'de>>(s: &str) -> Result<T, StoreError> {
         .map_err(|e| StoreError::Malformed(format!("{s:?}: {e}")))
 }
 
+fn validate_status_transition(id: &SessionId, current: &str, next: &str) -> Result<(), StoreError> {
+    let current: SessionStatus = parse_plain(current)?;
+    let next: SessionStatus = parse_plain(next)?;
+    if current.is_terminal() && !next.is_terminal() {
+        return Err(StoreError::SessionTerminated { id: id.clone() });
+    }
+    Ok(())
+}
+
+fn tombstone_lookup_stage() -> Document {
+    doc! {
+        "$lookup": {
+            "from": TOMBSTONES,
+            "localField": "_id",
+            "foreignField": "_id",
+            "as": "_cma_tombstones",
+        }
+    }
+}
+
+fn visible_sessions_pipeline(filter: Document) -> Vec<Document> {
+    vec![
+        doc! { "$match": filter },
+        tombstone_lookup_stage(),
+        doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } },
+        doc! { "$project": { "_cma_tombstones": 0 } },
+        doc! { "$sort": { "created_at": -1 } },
+    ]
+}
+
+fn visible_count_pipeline(filter: Document) -> Vec<Document> {
+    vec![
+        doc! { "$match": filter },
+        tombstone_lookup_stage(),
+        doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } },
+        doc! { "$group": { "_id": null, "count": { "$sum": 1_i64 } } },
+    ]
+}
+
 /// A bounded server-side sum of every durable promise that wants a runtime.
 fn reserved_capacity_pipeline() -> Result<Vec<Document>, StoreError> {
     let statuses = SessionStatus::WANTING_RUNTIME
@@ -406,6 +2997,8 @@ fn reserved_capacity_pipeline() -> Result<Vec<Document>, StoreError> {
 
     Ok(vec![
         doc! { "$match": { "status": { "$in": statuses } } },
+        tombstone_lookup_stage(),
+        doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } },
         doc! {
             "$group": {
                 "_id": null,
@@ -493,37 +3086,25 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
         },
         runtime_id: d.runtime_id,
         context_ref: d.context_ref,
+        revision: u64::try_from(d.revision)
+            .map_err(|_| StoreError::Malformed("session revision must not be negative".into()))?,
     })
 }
 
 #[async_trait::async_trait]
 impl SessionStore for MongoSessionStore {
     async fn ping(&self) -> Result<(), StoreError> {
-        let database = self.database.clone();
-        bounded_ping(
-            async move { database.run_command(doc! { "ping": 1_i32 }).await },
+        let store = self.clone();
+        bounded_readiness_probe(
+            Arc::clone(&self.readiness_probe),
+            async move { store.check_readiness().await },
             STORE_PING_TIMEOUT,
         )
         .await
     }
 
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        let doc = to_doc(record)?;
-        self.sessions
-            .replace_one(doc! { "_id": &doc.id }, &doc)
-            .with_options(ReplaceOptions::builder().upsert(true).build())
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("upsert: {e}")))?;
-        Ok(())
-    }
-
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        let found = self
-            .sessions
-            .find_one(doc! { "_id": &id.0 })
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("get: {e}")))?;
-        found.map(from_doc).transpose()
+        Ok(self.query(doc! { "_id": &id.0 }).await?.into_iter().next())
     }
 
     async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
@@ -535,11 +3116,22 @@ impl SessionStore for MongoSessionStore {
             .iter()
             .map(serde_plain_string)
             .collect::<Result<Vec<_>, _>>()?;
-        let count = self
+        let mut cursor = self
             .sessions
-            .count_documents(doc! { "owner": &owner.0, "status": { "$in": statuses } })
+            .aggregate(visible_count_pipeline(doc! {
+                "owner": &owner.0,
+                "status": { "$in": statuses },
+            }))
             .await
             .map_err(|e| StoreError::Unavailable(format!("count live sessions: {e}")))?;
+        let count = cursor
+            .try_next()
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("count live sessions cursor: {e}")))?
+            .map(mongodb::bson::deserialize_from_document::<SessionCountDoc>)
+            .transpose()
+            .map_err(|e| StoreError::Malformed(format!("live session count: {e}")))?
+            .map_or(0, |count| count.count);
         u32::try_from(count)
             .map_err(|_| StoreError::Malformed("live session count exceeds u32".into()))
     }
@@ -566,31 +3158,38 @@ impl SessionStore for MongoSessionStore {
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
-        self.sessions
-            .delete_one(doc! { "_id": &id.0 })
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("delete session: {e}")))?;
-        // History goes with it: keeping orphaned events would leave a record of
-        // work whose session the owner asked to be removed.
-        self.events
-            .delete_many(doc! { "session_id": &id.0 })
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("delete events: {e}")))?;
-        Ok(())
+        self.transactional_delete(id).await
     }
 
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
-        if events.is_empty() {
-            return Ok(());
+        self.transactional_events(events).await
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.transactional_commit(write_id, record, events, false)
+            .await
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.transactional_commit(write_id, record, events, true)
+            .await
+    }
+
+    async fn event_tail(&self, id: &SessionId) -> Result<u64, StoreError> {
+        if self.is_tombstoned(id).await? {
+            return Ok(0);
         }
-        let docs: Result<Vec<Document>, StoreError> =
-            events.iter().map(event_doc::to_document).collect();
-        let total = events.len();
-        self.events.insert_many(docs?).await.map_err(|e| {
-            sequence_taken(&e, total)
-                .unwrap_or_else(|| StoreError::Unavailable(format!("append events: {e}")))
-        })?;
-        Ok(())
+        Ok(self.last_event_sequence(id).await?.unwrap_or(0))
     }
 
     async fn events_since(
@@ -598,9 +3197,17 @@ impl SessionStore for MongoSessionStore {
         id: &SessionId,
         after: u64,
     ) -> Result<Vec<StoredEvent>, StoreError> {
+        if self.is_tombstoned(id).await? {
+            return Ok(Vec::new());
+        }
+        let Some(after) = stored_event_cursor(after) else {
+            // Mongo cannot contain an event above i64::MAX, so a cursor beyond
+            // that point is already past every representable event.
+            return Ok(Vec::new());
+        };
         let mut cursor = self
             .events
-            .find(doc! { "session_id": &id.0, "seq": { "$gt": after as i64 } })
+            .find(doc! { "session_id": &id.0, "seq": { "$gt": after } })
             .sort(doc! { "seq": 1 })
             .await
             .map_err(|e| StoreError::Unavailable(format!("events: {e}")))?;
@@ -617,11 +3224,452 @@ impl SessionStore for MongoSessionStore {
 }
 
 impl MongoSessionStore {
+    /// Atomically commit one exact writer-owned record/event unit.
+    ///
+    /// The receipt is part of the transaction. The driver's convenient runner
+    /// reruns the callback for `TransientTransactionError` and retries commit
+    /// resolution for `UnknownTransactionCommitResult`; either path therefore
+    /// finds the same receipt rather than repeating events or an old record.
+    async fn transactional_commit(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+        create: bool,
+    ) -> Result<u64, StoreError> {
+        validate_transaction_input(write_id, record, events, create)?;
+
+        let id = record.session.id.clone();
+        let documents = events
+            .iter()
+            .map(event_doc::to_document)
+            .collect::<Result<Vec<_>, _>>()?;
+        let record = to_doc(record)?;
+        let mut session = self.client.start_session().await.map_err(|error| {
+            StoreError::Unavailable(format!("start session write transaction: {error}"))
+        })?;
+        let transaction = EventTransaction {
+            events_collection: self.events.clone(),
+            sessions_collection: self.sessions.clone(),
+            writes_collection: self.writes.clone(),
+            tombstones_collection: self.tombstones.clone(),
+            id: id.clone(),
+            write_id: write_id.to_string(),
+            create,
+            events: events.to_vec(),
+            documents,
+            record,
+        };
+
+        let outcome = session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::majority())
+            .and_run(transaction, |session, transaction| {
+                async move {
+                    if transaction
+                        .tombstones_collection
+                        .find_one(doc! { "_id": &transaction.id.0 })
+                        .session(&mut *session)
+                        .await?
+                        .is_some()
+                    {
+                        return Err(mongodb::error::Error::custom(StoreError::SessionDeleted {
+                            id: transaction.id.clone(),
+                        }));
+                    }
+                    if let Some(receipt) = transaction
+                        .writes_collection
+                        .find_one(doc! { "_id": &transaction.write_id })
+                        .session(&mut *session)
+                        .await?
+                    {
+                        return receipt_revision(&receipt, &transaction.write_id, &transaction.id)
+                            .map_err(mongodb::error::Error::custom);
+                    }
+
+                    let existing = transaction
+                        .sessions_collection
+                        .find_one(doc! { "_id": &transaction.id.0 })
+                        .session(&mut *session)
+                        .await?;
+                    let actual = existing
+                        .as_ref()
+                        .map(|record| {
+                            u64::try_from(record.revision).map_err(|_| {
+                                mongodb::error::Error::custom(StoreError::Malformed(
+                                    "session revision must not be negative".into(),
+                                ))
+                            })
+                        })
+                        .transpose()?
+                        .unwrap_or(0);
+                    let expected = u64::try_from(transaction.record.revision).map_err(|_| {
+                        mongodb::error::Error::custom(StoreError::Malformed(
+                            "session revision must not be negative".into(),
+                        ))
+                    })?;
+                    if transaction.create {
+                        if existing.is_some() {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::RevisionConflict {
+                                    expected: 0,
+                                    actual,
+                                },
+                            ));
+                        }
+                    } else if existing.is_none() {
+                        return Err(mongodb::error::Error::custom(StoreError::SessionDeleted {
+                            id: transaction.id.clone(),
+                        }));
+                    } else if actual != expected {
+                        return Err(mongodb::error::Error::custom(
+                            StoreError::RevisionConflict { expected, actual },
+                        ));
+                    }
+                    if let Some(existing) = existing.as_ref() {
+                        validate_status_transition(
+                            &transaction.id,
+                            &existing.status,
+                            &transaction.record.status,
+                        )
+                        .map_err(mongodb::error::Error::custom)?;
+                    }
+
+                    let found = transaction
+                        .events_collection
+                        .find_one(doc! { "session_id": &transaction.id.0 })
+                        .sort(doc! { "seq": -1 })
+                        .projection(doc! { "_id": 0, "seq": 1 })
+                        .session(&mut *session)
+                        .await?;
+                    let event_tail =
+                        stored_event_tail(found).map_err(mongodb::error::Error::custom)?;
+                    let sequence_floor = durable_sequence_floor(
+                        event_tail,
+                        existing.as_ref().map(|record| record.last_seq),
+                    )
+                    .map_err(mongodb::error::Error::custom)?;
+                    validate_contiguous_append(&transaction.events, Some(sequence_floor))
+                        .map_err(mongodb::error::Error::custom)?;
+                    let durable_tail = resolved_transaction_tail(
+                        &transaction.id,
+                        sequence_floor,
+                        transaction.record.last_seq as u64,
+                        &transaction.events,
+                    )
+                    .map_err(mongodb::error::Error::custom)?;
+
+                    let (revision, revision_i64) =
+                        next_stored_revision(actual).map_err(mongodb::error::Error::custom)?;
+                    let mut durable = transaction.record.clone();
+                    durable.revision = revision_i64;
+                    durable.last_seq = i64::try_from(durable_tail).map_err(|_| {
+                        mongodb::error::Error::custom(StoreError::Malformed(format!(
+                            "session event tail {durable_tail} cannot be stored"
+                        )))
+                    })?;
+
+                    if !transaction.documents.is_empty() {
+                        transaction
+                            .events_collection
+                            .insert_many(transaction.documents.iter())
+                            .session(&mut *session)
+                            .await?;
+                    }
+                    if transaction.create {
+                        transaction
+                            .sessions_collection
+                            .insert_one(&durable)
+                            .session(&mut *session)
+                            .await?;
+                    } else {
+                        let replaced = transaction
+                            .sessions_collection
+                            .replace_one(
+                                session_revision_filter(&durable.id, transaction.record.revision),
+                                &durable,
+                            )
+                            .with_options(session_update_options())
+                            .session(&mut *session)
+                            .await?;
+                        if replaced.modified_count != 1 {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::RevisionConflict { expected, actual },
+                            ));
+                        }
+                    }
+                    transaction
+                        .writes_collection
+                        .insert_one(SessionWriteDoc {
+                            id: transaction.write_id.clone(),
+                            write_protocol: WRITE_PROTOCOL,
+                            session_id: transaction.id.0.clone(),
+                            revision: revision_i64,
+                        })
+                        .session(&mut *session)
+                        .await?;
+                    Ok(revision)
+                }
+                .boxed()
+            })
+            .await;
+
+        match outcome {
+            Ok(revision) => Ok(revision),
+            Err(error) => {
+                if let Some(error) = error.get_custom::<StoreError>() {
+                    return Err(error.clone());
+                }
+                if sequence_taken(&error) {
+                    if let Some(revision) = self.write_receipt(write_id, &id).await? {
+                        return Ok(revision);
+                    }
+                    if let Some(first) = events.first() {
+                        let expected = self
+                            .last_event_sequence(&id)
+                            .await?
+                            .unwrap_or(0)
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                StoreError::Malformed(format!("event sequence overflow for {id}"))
+                            })?;
+                        return Err(StoreError::SequenceTaken {
+                            expected,
+                            got: first.seq,
+                        });
+                    }
+                }
+                Err(StoreError::Unavailable(format!(
+                    "commit session write transaction: {error}"
+                )))
+            }
+        }
+    }
+
+    async fn transactional_events(&self, events: &[Event]) -> Result<(), StoreError> {
+        let Some(first) = events.first() else {
+            return Ok(());
+        };
+        let id = first.session_id.clone();
+        let documents = events
+            .iter()
+            .map(event_doc::to_document)
+            .collect::<Result<Vec<_>, _>>()?;
+        let context = (
+            self.events.clone(),
+            self.sessions.clone_with_type::<Document>(),
+            self.tombstones.clone(),
+            id.clone(),
+            events.to_vec(),
+            documents,
+        );
+        let mut session = self.client.start_session().await.map_err(|error| {
+            StoreError::Unavailable(format!("start event transaction: {error}"))
+        })?;
+        let outcome = session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::majority())
+            .and_run(
+                context,
+                |session, (collection, sessions, tombstones, id, events, documents)| {
+                    async move {
+                        if tombstones
+                            .find_one(doc! { "_id": &id.0 })
+                            .session(&mut *session)
+                            .await?
+                            .is_some()
+                        {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::SessionDeleted { id: (*id).clone() },
+                            ));
+                        }
+                        let found = collection
+                            .find_one(doc! { "session_id": &id.0 })
+                            .sort(doc! { "seq": -1 })
+                            .projection(doc! { "_id": 0, "seq": 1 })
+                            .session(&mut *session)
+                            .await?;
+                        let event_tail =
+                            stored_event_tail(found).map_err(mongodb::error::Error::custom)?;
+                        let recorded = sessions
+                            .find_one(doc! { "_id": &id.0 })
+                            .projection(doc! { "_id": 0, "last_seq": 1, "revision": 1 })
+                            .session(&mut *session)
+                            .await?;
+                        let recorded_tail = recorded
+                            .as_ref()
+                            .map(|record| {
+                                record.get_i64("last_seq").map_err(|_| {
+                                    mongodb::error::Error::custom(StoreError::Malformed(
+                                        "session event tail must be a 64-bit integer".into(),
+                                    ))
+                                })
+                            })
+                            .transpose()?;
+                        if recorded.is_none() {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::SessionDeleted { id: (*id).clone() },
+                            ));
+                        }
+                        let sequence_floor = durable_sequence_floor(event_tail, recorded_tail)
+                            .map_err(mongodb::error::Error::custom)?;
+                        validate_contiguous_append(events, Some(sequence_floor))
+                            .map_err(mongodb::error::Error::custom)?;
+                        collection
+                            .insert_many(documents.iter())
+                            .session(&mut *session)
+                            .await?;
+                        let appended_tail = i64::try_from(
+                            events
+                                .last()
+                                .expect("a raw append transaction is non-empty")
+                                .seq,
+                        )
+                        .map_err(|_| {
+                            mongodb::error::Error::custom(StoreError::Malformed(
+                                "event tail cannot be stored".into(),
+                            ))
+                        })?;
+                        let updated = sessions
+                            .update_one(
+                                doc! { "_id": &id.0 },
+                                appended_event_session_update(
+                                    recorded.as_ref().expect("presence checked above"),
+                                    appended_tail,
+                                ),
+                            )
+                            .session(&mut *session)
+                            .await?;
+                        if updated.matched_count != 1 {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::SessionDeleted { id: (*id).clone() },
+                            ));
+                        }
+                        Ok(())
+                    }
+                    .boxed()
+                },
+            )
+            .await;
+        match outcome {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                if let Some(error) = error.get_custom::<StoreError>() {
+                    return Err(error.clone());
+                }
+                if sequence_taken(&error) {
+                    let expected = self
+                        .last_event_sequence(&id)
+                        .await?
+                        .unwrap_or(0)
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            StoreError::Malformed(format!("event sequence overflow for {id}"))
+                        })?;
+                    return Err(StoreError::SequenceTaken {
+                        expected,
+                        got: first.seq,
+                    });
+                }
+                Err(StoreError::Unavailable(format!(
+                    "commit event transaction: {error}"
+                )))
+            }
+        }
+    }
+
+    async fn transactional_delete(&self, id: &SessionId) -> Result<(), StoreError> {
+        let context = (
+            self.sessions.clone(),
+            self.events.clone(),
+            self.writes.clone(),
+            self.tombstones.clone(),
+            id.clone(),
+        );
+        let mut session = self.client.start_session().await.map_err(|error| {
+            StoreError::Unavailable(format!("start session deletion transaction: {error}"))
+        })?;
+        session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::majority())
+            .and_run(
+                context,
+                |session, (sessions, events, writes, tombstones, id)| {
+                    async move {
+                        tombstones
+                            .replace_one(
+                                doc! { "_id": &id.0 },
+                                SessionTombstoneDoc {
+                                    id: id.0.clone(),
+                                    write_protocol: WRITE_PROTOCOL,
+                                },
+                            )
+                            .with_options(ReplaceOptions::builder().upsert(true).build())
+                            .session(&mut *session)
+                            .await?;
+                        sessions
+                            .delete_one(doc! { "_id": &id.0 })
+                            .session(&mut *session)
+                            .await?;
+                        events
+                            .delete_many(doc! { "session_id": &id.0 })
+                            .session(&mut *session)
+                            .await?;
+                        writes
+                            .delete_many(doc! { "session_id": &id.0 })
+                            .session(&mut *session)
+                            .await?;
+                        Ok(())
+                    }
+                    .boxed()
+                },
+            )
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("delete session transaction: {error}"))
+            })
+    }
+
+    async fn write_receipt(
+        &self,
+        write_id: &str,
+        id: &SessionId,
+    ) -> Result<Option<u64>, StoreError> {
+        if self.is_tombstoned(id).await? {
+            return Err(StoreError::SessionDeleted { id: id.clone() });
+        }
+        let found = self
+            .writes
+            .find_one(doc! { "_id": write_id })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("read session write receipt: {error}"))
+            })?;
+        let Some(receipt) = found else {
+            return Ok(None);
+        };
+        receipt_revision(&receipt, write_id, id).map(Some)
+    }
+
+    /// The highest event sequence currently readable for one session.
+    async fn last_event_sequence(&self, id: &SessionId) -> Result<Option<u64>, StoreError> {
+        let found = self
+            .events
+            .find_one(doc! { "session_id": &id.0 })
+            .sort(doc! { "seq": -1 })
+            .projection(doc! { "_id": 0, "seq": 1 })
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("read event tail: {e}")))?;
+        stored_event_tail(found)
+    }
+
     async fn query(&self, filter: Document) -> Result<Vec<SessionRecord>, StoreError> {
         let mut cursor = self
             .sessions
-            .find(filter)
-            .sort(doc! { "created_at": -1 })
+            .aggregate(visible_sessions_pipeline(filter))
             .await
             .map_err(|e| StoreError::Unavailable(format!("list: {e}")))?;
         let mut out = Vec::new();
@@ -630,9 +3678,21 @@ impl MongoSessionStore {
             .await
             .map_err(|e| StoreError::Unavailable(format!("list cursor: {e}")))?
         {
-            out.push(from_doc(d)?);
+            let stored = mongodb::bson::deserialize_from_document(d)
+                .map_err(|e| StoreError::Malformed(format!("session document: {e}")))?;
+            out.push(from_doc(stored)?);
         }
         Ok(out)
+    }
+
+    async fn is_tombstoned(&self, id: &SessionId) -> Result<bool, StoreError> {
+        self.tombstones
+            .find_one(doc! { "_id": &id.0 })
+            .await
+            .map(|found| found.is_some())
+            .map_err(|error| {
+                StoreError::Unavailable(format!("read session deletion fence: {error}"))
+            })
     }
 }
 
