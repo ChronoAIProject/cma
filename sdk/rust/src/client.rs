@@ -341,8 +341,12 @@ impl Client {
 
     /// Read this deployment's anonymous REST conformance document.
     pub async fn read_conformance(&self) -> Result<Conformance> {
+        let request = RequestSpec::new(Method::GET, self.endpoint(&["conformance"])?, None, false)
+            .anonymous();
         let conformance: Conformance = self
-            .request_json(Method::GET, &["conformance"], None, StatusCode::OK)
+            .execute(request, |response| async move {
+                decode_json(response, StatusCode::OK).await
+            })
             .await?;
         conformance.validate()
     }
@@ -739,7 +743,11 @@ impl Client {
     }
 
     async fn send_once(&self, request: &RequestSpec) -> Result<Response> {
-        let authorization = self.authorization_header()?;
+        let authorization = if request.authenticate {
+            self.authorization_header()?
+        } else {
+            None
+        };
         let mut builder = self
             .inner
             .http
@@ -832,6 +840,7 @@ struct RequestSpec {
     method: Method,
     url: Url,
     body: Option<serde_json::Value>,
+    authenticate: bool,
     streaming: bool,
     last_event_id: Option<u64>,
     request_id: Option<HeaderValue>,
@@ -843,10 +852,16 @@ impl RequestSpec {
             method,
             url,
             body,
+            authenticate: true,
             streaming,
             last_event_id: None,
             request_id: None,
         }
+    }
+
+    fn anonymous(mut self) -> Self {
+        self.authenticate = false;
+        self
     }
 }
 
