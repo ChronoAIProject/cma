@@ -77,7 +77,8 @@ pub use event::{
 };
 pub use stream::EventStream;
 pub use types::{
-    Agent, ApprovalDecision, CreateSessionRequest, CredentialMode, PermissionMode, PublicIdentity,
-    Reach, ReasoningEffort, RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput,
+    Agent, ApprovalDecision, CreateSessionRequest, CredentialMode, MAX_PAGE_SIZE, MIN_PAGE_SIZE,
+    Page, PageContinuation, PageWalkLimits, PermissionMode, PublicIdentity, Reach, ReasoningEffort,
+    RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput, SessionPageRequest,
     SessionPricing, SessionSize, SessionStatus, Skill, StopReason, TerminalGeometry, Usage,
 };

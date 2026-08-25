@@ -1,30 +1,35 @@
 //! REST projection of environment profiles.
 //!
 //! A plain resource collection: create, read, replace, remove, plus the
-//! catalogue a client picks skills from. Every handler is a thin translation
-//! onto one core call — the ownership rule, the validation and the
+//! catalogue a client picks skills from. Ownership, validation and the
 //! non-revocable baseline all live in Layer 2, so no interface can apply a
-//! different version of them.
+//! different version of them. The preference action also rebuilds its released
+//! `/v1` collection response from bounded Layer 2 list pages after the core
+//! mutation succeeds.
 //!
 //! Variable values travel in and out because a client that could not read back
 //! what it stored could not offer an edit form. They are never logged here,
 //! and the core's own `Debug` keeps them out of a log elsewhere.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, put},
     Json, Router,
 };
-use layer2_core::{EnvironmentProfileId, EnvironmentProfileService};
+use layer2_core::{
+    Caller, CoreError, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
+    PageCursor, PageRequest, MAX_PAGE_SIZE,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::rest::environments_shapes::{
     MandatoryView, ProfileRequest, ProfileView, SkillCatalogView, SkillView,
 };
+use crate::rest::pagination::PageParams;
 use crate::rest::{Problem, RequestFailure};
 
 /// Routes this resource contributes.
@@ -47,8 +52,9 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
          * A collection rather than a flag on one profile, because setting it
          * changes two records — the one taking it and the one giving it up —
          * and a `PUT` on a single profile would describe only half of that.
-         * The answer is the whole list, so a client never has to guess which
-         * other rows moved.
+         * The released /v1 answer is the complete post-write collection, so a
+         * client never has to guess which other rows moved. It is assembled
+         * through bounded list pages after the mutation succeeds.
          */
         .route("/api/v1/environment-profiles/preferred", put(prefer))
         .with_state(service)
@@ -70,13 +76,20 @@ async fn create(
 async fn list(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-) -> Result<Json<Vec<ProfileView>>, Problem> {
-    let profiles = service.list(&caller).await?;
-    Ok(Json(
-        profiles
-            .into_iter()
-            .map(|p| ProfileView::render(p, &service))
-            .collect(),
+    params: Result<Query<PageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<(axum::http::HeaderMap, Json<Vec<ProfileView>>), RequestFailure> {
+    let Query(params) = params?;
+    let profiles = service.list(&caller, &params.store_request()).await?;
+    let headers = params.next_headers("/api/v1/environment-profiles", profiles.next.as_ref());
+    Ok((
+        headers,
+        Json(
+            profiles
+                .items
+                .into_iter()
+                .map(|p| ProfileView::render(p, &service))
+                .collect(),
+        ),
     ))
 }
 
@@ -99,13 +112,47 @@ async fn prefer(
 ) -> Result<Json<Vec<ProfileView>>, RequestFailure> {
     let Json(body) = body?;
     let wanted = body.profile.map(EnvironmentProfileId);
-    let profiles = service.prefer(&caller, wanted.as_ref()).await?;
+    service.prefer(&caller, wanted.as_ref()).await?;
+    let profiles = complete_profile_collection(&service, &caller, wanted.as_ref()).await?;
     Ok(Json(
         profiles
             .into_iter()
             .map(|p| ProfileView::render(p, &service))
             .collect(),
     ))
+}
+
+/// Rebuild the released `/v1` action response without an unbounded store read.
+async fn complete_profile_collection(
+    service: &EnvironmentProfileService,
+    caller: &Caller,
+    pinned_preferred: Option<&EnvironmentProfileId>,
+) -> Result<Vec<EnvironmentProfile>, CoreError> {
+    let mut profiles = Vec::new();
+    let mut cursor: Option<PageCursor> = None;
+    let mut seen = HashSet::new();
+    loop {
+        let mut page = service
+            .list(caller, &PageRequest::new(MAX_PAGE_SIZE, cursor))
+            .await?;
+        // Another preference write may land between pages. `/v1` promises the
+        // post-write answer for this request, so every page is normalized to
+        // the winner this request validated and wrote rather than whichever
+        // winner happened to be visible during that individual page read.
+        for profile in &mut page.items {
+            profile.preferred = pinned_preferred == Some(&profile.id);
+        }
+        profiles.extend(page.items);
+        match page.next {
+            Some(next) if seen.insert(next.clone()) => cursor = Some(next),
+            Some(_) => {
+                return Err(CoreError::RuntimeUnavailable(
+                    "environment profile listing repeated its continuation cursor".into(),
+                ))
+            }
+            None => return Ok(profiles),
+        }
+    }
 }
 
 async fn read(
@@ -208,6 +255,8 @@ async fn skills(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use layer2_core::{
         CredentialMode, EnvironmentProfile, EnvironmentProfileSpec, EnvironmentVariable,
         PermissionMode, ReasoningEffort, SessionSize, SkillId, SoftwarePackage,
@@ -215,7 +264,9 @@ mod tests {
 
     use super::*;
     use axum::response::IntoResponse;
-    use layer2_core::{Baseline, CoreError, EnvironmentProfileStore, StoreError, SubjectId};
+    use layer2_core::{
+        Baseline, CoreError, EnvironmentProfileStore, Page, PageRequest, StoreError, SubjectId,
+    };
 
     /// A store that holds nothing, for the cases that never reach it.
     struct EmptyStore;
@@ -234,8 +285,30 @@ mod tests {
         async fn list_for(
             &self,
             _owner: &SubjectId,
-        ) -> Result<Vec<EnvironmentProfile>, StoreError> {
-            Ok(Vec::new())
+            _page: &PageRequest,
+        ) -> Result<Page<EnvironmentProfile>, StoreError> {
+            Ok(Page {
+                items: Vec::new(),
+                next: None,
+            })
+        }
+        async fn set_preferred(
+            &self,
+            _owner: &SubjectId,
+            chosen: Option<&EnvironmentProfileId>,
+        ) -> Result<(), StoreError> {
+            if chosen.is_some() {
+                return Err(StoreError::Malformed(
+                    "an empty store has no selectable profile".into(),
+                ));
+            }
+            Ok(())
+        }
+        async fn preferred_for(
+            &self,
+            _owner: &SubjectId,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
         }
         async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
             Ok(())
@@ -285,6 +358,109 @@ mod tests {
         // Building the router is what proves the two can coexist, and a
         // conflict would otherwise surface as a panic at startup.
         let _ = router(service());
+    }
+
+    #[tokio::test]
+    async fn the_compatibility_walk_rejects_a_longer_cursor_cycle() {
+        #[derive(Default)]
+        struct CyclingStore {
+            lists: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl EnvironmentProfileStore for CyclingStore {
+            async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
+                Ok(())
+            }
+
+            async fn get(
+                &self,
+                _id: &EnvironmentProfileId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
+            }
+
+            async fn list_for(
+                &self,
+                _owner: &SubjectId,
+                page: &PageRequest,
+            ) -> Result<Page<EnvironmentProfile>, StoreError> {
+                self.lists.fetch_add(1, Ordering::SeqCst);
+                let id = match page.cursor().map(|cursor| cursor.id.as_str()) {
+                    None => "cursor-a",
+                    Some("cursor-a") => "cursor-b",
+                    Some("cursor-b") => "cursor-a",
+                    Some(_) => {
+                        return Err(StoreError::Malformed(
+                            "the test received an unexpected cursor".into(),
+                        ))
+                    }
+                };
+                Ok(Page {
+                    items: Vec::new(),
+                    next: Some(PageCursor::new("2026-08-25T00:00:00Z", id)),
+                })
+            }
+
+            async fn set_preferred(
+                &self,
+                _owner: &SubjectId,
+                chosen: Option<&EnvironmentProfileId>,
+            ) -> Result<(), StoreError> {
+                if chosen.is_some() {
+                    return Err(StoreError::Malformed(
+                        "the cycling store has no selectable profile".into(),
+                    ));
+                }
+                Ok(())
+            }
+
+            async fn preferred_for(
+                &self,
+                _owner: &SubjectId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
+            }
+
+            async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
+                Ok(())
+            }
+        }
+
+        let store = Arc::new(CyclingStore::default());
+        let service = EnvironmentProfileService::new(
+            Arc::clone(&store) as Arc<dyn EnvironmentProfileStore>,
+            Baseline::default(),
+            None,
+            None,
+            Default::default(),
+            Arc::new(layer2_core::PlatformSettingsService::unconfigured()),
+        );
+        let caller = layer2_core::Caller::new(
+            SubjectId("subject-a".into()),
+            layer2_core::Authorization::from_capabilities([
+                layer2_core::Capability::ManageOwnEnvironmentProfiles,
+            ]),
+        );
+
+        let failure = match prefer(
+            State(service),
+            AuthenticatedCaller(caller),
+            Ok(Json(PreferredRequest { profile: None })),
+        )
+        .await
+        {
+            Err(failure) => failure,
+            Ok(_) => panic!("a repeated cursor must not produce a partial collection"),
+        };
+
+        match failure {
+            RequestFailure::Refused(Problem(CoreError::RuntimeUnavailable(detail))) => {
+                assert!(detail.contains("repeated its continuation cursor"));
+            }
+            _ => panic!("a cursor cycle must be reported as store unavailability"),
+        }
+        assert_eq!(store.lists.load(Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -390,8 +566,57 @@ mod tests {
             async fn list_for(
                 &self,
                 _owner: &SubjectId,
-            ) -> Result<Vec<EnvironmentProfile>, StoreError> {
-                Ok(self.0.lock().unwrap().clone())
+                page: &PageRequest,
+            ) -> Result<Page<EnvironmentProfile>, StoreError> {
+                let mut profiles = self.0.lock().unwrap().clone();
+                profiles.truncate(page.limit() as usize);
+                Ok(Page {
+                    items: profiles,
+                    next: None,
+                })
+            }
+
+            async fn set_preferred(
+                &self,
+                owner: &SubjectId,
+                chosen: Option<&EnvironmentProfileId>,
+            ) -> Result<(), StoreError> {
+                let mut profiles = self.0.lock().unwrap();
+                if let Some(id) = chosen {
+                    let selected = profiles
+                        .iter()
+                        .find(|profile| profile.id == *id && &profile.owner == owner);
+                    if selected.is_none() {
+                        return Err(StoreError::Malformed(
+                            "selected environment profile is not owned by the subject".into(),
+                        ));
+                    }
+                }
+                for profile in profiles
+                    .iter_mut()
+                    .filter(|profile| &profile.owner == owner)
+                {
+                    profile.preferred = chosen.is_some_and(|id| profile.id == *id);
+                }
+                Ok(())
+            }
+
+            async fn preferred_for(
+                &self,
+                owner: &SubjectId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(self
+                    .0
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|profile| &profile.owner == owner && profile.preferred)
+                    .max_by(|a, b| {
+                        a.updated_at
+                            .cmp(&b.updated_at)
+                            .then_with(|| a.id.0.cmp(&b.id.0))
+                    })
+                    .cloned())
             }
 
             async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {

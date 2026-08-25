@@ -41,9 +41,10 @@ async fn a_terminated_session_remains_listed_until_it_is_deleted() {
         .await
         .expect("terminates");
     assert_eq!(
-        svc.list_sessions(&caller)
+        svc.list_sessions(&caller, &crate::SessionListQuery::default())
             .await
             .expect("session list is readable")
+            .items
             .len(),
         1,
         "terminating must not remove the session"
@@ -53,9 +54,10 @@ async fn a_terminated_session_remains_listed_until_it_is_deleted() {
         .await
         .expect("deletes");
     assert!(
-        svc.list_sessions(&caller)
+        svc.list_sessions(&caller, &crate::SessionListQuery::default())
             .await
             .expect("session list is readable")
+            .items
             .is_empty(),
         "deleting must remove it"
     );

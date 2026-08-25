@@ -780,11 +780,11 @@ async fn stopping_keeps_the_session_and_releases_the_sandbox() {
     );
 
     let listed = svc
-        .list_sessions(&alice)
+        .list_sessions(&alice, &crate::SessionListQuery::default())
         .await
         .expect("session list is readable");
     assert!(
-        listed.iter().any(|s| s.id == created.id),
+        listed.items.iter().any(|s| s.id == created.id),
         "a stopped session must still be listed: stopping is not deleting"
     );
 }

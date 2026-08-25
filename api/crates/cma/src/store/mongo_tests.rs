@@ -1,7 +1,8 @@
 use super::*;
 use layer2_core::{
-    AgentOptions, Event, EventKind, KernelId, Rate, RateCardId, RecoveryState, Session, SessionId,
-    SessionPricing, SessionRecord, SessionStatus, StopReason, SubjectId, TerminalGeometry,
+    AgentOptions, Event, EventKind, KernelId, PageCursor, PageRequest, Rate, RateCardId,
+    RecoveryState, Session, SessionId, SessionListQuery, SessionPricing, SessionRecord,
+    SessionStatus, StopReason, SubjectId, TerminalGeometry,
 };
 use std::io::Write;
 use std::sync::{
@@ -1174,18 +1175,133 @@ fn current_session_documents_carry_the_write_protocol() {
 
 #[test]
 fn read_aggregations_hide_tombstoned_sessions() {
-    let listed = visible_sessions_pipeline(doc! { "owner": "subject" });
-    assert_eq!(listed[1], tombstone_lookup_stage());
+    let query = SessionListQuery::new(PageRequest::new(5, None), None);
+    let listed = session_page_pipeline(doc! { "owner": "subject" }, &query).unwrap();
+    assert_eq!(listed[0], doc! { "$match": { "owner": "subject" } });
+    assert_eq!(listed[1], doc! { "$sort": { "created_at": -1, "_id": -1 } });
+    assert_eq!(listed[2], tombstone_lookup_stage());
     assert_eq!(
-        listed[2],
+        listed[3],
         doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } }
     );
+    assert_eq!(listed[4], doc! { "$project": { "_cma_tombstones": 0 } });
+    assert_eq!(listed[5], doc! { "$limit": 6_i64 });
 
     let counted = visible_count_pipeline(doc! { "status": "ready" });
     assert_eq!(counted[1], tombstone_lookup_stage());
     assert_eq!(
         counted.last().unwrap(),
         &doc! { "$group": { "_id": null, "count": { "$sum": 1_i64 } } }
+    );
+}
+
+fn explain_cursor_stats(explain: &Document) -> &Document {
+    explain
+        .get_array("stages")
+        .expect("aggregate explain carries stages")
+        .iter()
+        .filter_map(Bson::as_document)
+        .find_map(|stage| stage.get_document("$cursor").ok())
+        .and_then(|cursor| cursor.get_document("executionStats").ok())
+        .expect("aggregate explain carries cursor execution statistics")
+}
+
+fn explain_count(stats: &Document, field: &str) -> i64 {
+    match stats.get(field) {
+        Some(Bson::Int32(value)) => i64::from(*value),
+        Some(Bson::Int64(value)) => *value,
+        other => panic!("execution statistic {field} is an integer, got {other:?}"),
+    }
+}
+
+fn contains_string_field(value: &Bson, field: &str, expected: &str) -> bool {
+    match value {
+        Bson::Document(document) => document.iter().any(|(name, value)| {
+            (name == field && value.as_str() == Some(expected))
+                || contains_string_field(value, field, expected)
+        }),
+        Bson::Array(values) => values
+            .iter()
+            .any(|value| contains_string_field(value, field, expected)),
+        _ => false,
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at MongoDB"]
+async fn real_session_page_uses_the_compound_index_before_tombstone_filtering() {
+    const MATCHES: usize = 5_000;
+    const EXAMINED_CEILING: i64 = 64;
+
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name MongoDB");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!("chrono_page_explain_{}_{}", std::process::id(), nonce);
+    let database = client.database(&database_name);
+    let sessions = database.collection::<Document>(SESSIONS);
+
+    database
+        .create_collection(TOMBSTONES)
+        .await
+        .expect("test tombstone collection creates");
+    sessions
+        .insert_many((0..MATCHES).map(|number| {
+            doc! {
+                "_id": format!("sesn_{number:05}"),
+                "owner": "subject-page-explain",
+                "status": "running",
+                "created_at": "2026-08-25T00:00:00Z",
+            }
+        }))
+        .await
+        .expect("test sessions seed");
+
+    let required = required_indexes()
+        .into_iter()
+        .find(|required| required.name == "owner_1_created_at_-1__id_-1")
+        .expect("owner pagination index is required");
+    sessions
+        .create_index(required_index_model(&required))
+        .await
+        .expect("owner pagination index creates");
+
+    let query = SessionListQuery::new(PageRequest::new(5, None), None);
+    let pipeline = session_page_pipeline(doc! { "owner": "subject-page-explain" }, &query)
+        .expect("page pipeline builds");
+    let explain = database
+        .run_command(doc! {
+            "explain": {
+                "aggregate": SESSIONS,
+                "pipeline": pipeline,
+                "cursor": {},
+            },
+            "verbosity": "executionStats",
+        })
+        .await
+        .expect("page aggregation explains");
+
+    let stats = explain_cursor_stats(&explain);
+    let keys = explain_count(stats, "totalKeysExamined");
+    let documents = explain_count(stats, "totalDocsExamined");
+    let uses_index =
+        contains_string_field(&Bson::Document(explain.clone()), "indexName", required.name);
+
+    database.drop().await.expect("temporary database drops");
+
+    assert!(uses_index, "page explain did not use {}", required.name);
+    assert!(
+        keys <= EXAMINED_CEILING,
+        "five-row page examined {keys} keys from {MATCHES} matches"
+    );
+    assert!(
+        documents <= EXAMINED_CEILING,
+        "five-row page examined {documents} documents from {MATCHES} matches"
     );
 }
 
@@ -1551,6 +1667,69 @@ async fn a_timed_out_readiness_probe_stays_single_flight_until_its_driver_work_f
     .await
     .expect("readiness recovers after the detached work finishes");
     assert_eq!(invocations.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn session_pages_fetch_one_sentinel_row_and_never_exceed_the_store_bound() {
+    let five = SessionListQuery::new(PageRequest::new(5, None), None);
+    let oversized = SessionListQuery::new(PageRequest::new(u32::MAX, None), None);
+
+    assert_eq!(session_page_fetch_limit(&five), 6);
+    assert_eq!(oversized.page.limit(), 200);
+    assert_eq!(session_page_fetch_limit(&oversized), 201);
+}
+
+#[test]
+fn session_page_filter_pushes_status_and_both_cursor_keys_into_mongo() {
+    let query = SessionListQuery::new(
+        PageRequest::new(
+            50,
+            Some(PageCursor::new("2026-08-24T10:11:12Z", "sesn_tied")),
+        ),
+        Some(SessionStatus::Running),
+    );
+
+    assert_eq!(
+        session_page_filter(doc! { "owner": "subject-a" }, &query).unwrap(),
+        doc! {
+            "owner": "subject-a",
+            "status": "running",
+            "$or": [
+                { "created_at": { "$lt": "2026-08-24T10:11:12Z" } },
+                {
+                    "created_at": "2026-08-24T10:11:12Z",
+                    "_id": { "$lt": "sesn_tied" },
+                },
+            ],
+        }
+    );
+    assert_eq!(session_page_sort(), doc! { "created_at": -1, "_id": -1 });
+}
+
+#[test]
+fn session_page_indexes_cover_owned_and_admin_queries_with_status() {
+    for (name, keys) in [
+        (
+            "owner_1_created_at_-1__id_-1",
+            doc! { "owner": 1, "created_at": -1, "_id": -1 },
+        ),
+        (
+            "owner_1_status_1_created_at_-1__id_-1",
+            doc! { "owner": 1, "status": 1, "created_at": -1, "_id": -1 },
+        ),
+        ("created_at_-1__id_-1", doc! { "created_at": -1, "_id": -1 }),
+        (
+            "status_1_created_at_-1__id_-1",
+            doc! { "status": 1, "created_at": -1, "_id": -1 },
+        ),
+    ] {
+        let required = required_indexes()
+            .into_iter()
+            .find(|required| required.collection == SESSIONS && required.name == name)
+            .unwrap_or_else(|| panic!("missing required pagination index {name}"));
+        assert_eq!(required.keys, keys);
+        assert!(!required.unique);
+    }
 }
 
 #[test]

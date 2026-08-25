@@ -26,6 +26,40 @@ async fn inspect(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+`list_sessions` follows the server's opaque `Link: rel="next"` continuations and
+returns only after every visible page has been validated. The compatibility walk
+refuses more than 100 pages or 20,000 retained rows by default. Use
+`list_sessions_with_limits` with `PageWalkLimits` when a smaller resource ceiling
+fits the caller.
+
+Use `list_session_page` when the caller should decide when to fetch more. A
+continuation is route-bound and opaque; pass it to `SessionPageRequest::continuing`
+without parsing it:
+
+```rust,no_run
+use cma_sdk::{Client, SessionPageRequest, SessionStatus};
+
+async fn running_page(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    let request = SessionPageRequest::new()
+        .with_status(SessionStatus::Running)?
+        .with_limit(50)?;
+    let first = client.list_session_page(request).await?;
+    println!("{}", first.items.len());
+
+    if let Some(next) = first.next {
+        let second = client
+            .list_session_page(SessionPageRequest::continuing(next))
+            .await?;
+        println!("{}", second.items.len());
+    }
+    Ok(())
+}
+```
+
+First-page limits are 1 through 200. `with_cursor` carries an opaque cursor
+received out of band; a server-issued continuation already contains the original
+status and limit and therefore cannot be combined with new filters.
+
 `quoted_rate_card` accepts a sealed identifier obtained outside this crate. This
 version does not expose the quote endpoint, environment-profile CRUD, session stop,
 revive, terminate, delete, or plane-change operations. Their absence is explicit;

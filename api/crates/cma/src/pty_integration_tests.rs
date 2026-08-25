@@ -8,9 +8,10 @@ use futures_util::{SinkExt, StreamExt};
 use layer2_core::{
     AgentConfiguration, AgentOptions, AttachmentClaim, Authorization, Baseline, Caller, Capability,
     Deployment, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-    EnvironmentProfileStore, Event, KernelId, PlatformSettingsService, Reserved, ScreenFactory,
-    ScreenModel, ScreenSnapshot, SessionId, SessionPorts, SessionRecord, SessionService,
-    SessionSpec, SessionStatus, SessionStore, StoreError, StoredEvent, SubjectId, TerminalGeometry,
+    EnvironmentProfileStore, Event, KernelId, Page, PageCursor, PageRequest,
+    PlatformSettingsService, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, SessionId,
+    SessionListQuery, SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus,
+    SessionStore, StoreError, StoredEvent, SubjectId, TerminalGeometry,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeSpec, TerminalChannel,
@@ -34,23 +35,32 @@ impl SessionStore for MemorySessions {
         Ok(self.0.lock().await.get(id).cloned())
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
-        Ok(self
-            .0
-            .lock()
-            .await
-            .values()
-            .filter(|record| &record.session.owner == owner)
-            .cloned()
-            .collect())
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError> {
+        Ok(page_sessions(
+            self.0
+                .lock()
+                .await
+                .values()
+                .filter(|record| &record.session.owner == owner)
+                .cloned()
+                .collect(),
+            query,
+        ))
     }
 
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
         Ok(Reserved::default())
     }
 
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
-        Ok(self.0.lock().await.values().cloned().collect())
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
+        Ok(page_sessions(
+            self.0.lock().await.values().cloned().collect(),
+            query,
+        ))
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
@@ -103,6 +113,35 @@ impl SessionStore for MemorySessions {
     }
 }
 
+fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> Page<SessionRecord> {
+    records.retain(|record| {
+        query
+            .status
+            .is_none_or(|status| record.session.status == status)
+            && query.page.cursor().is_none_or(|cursor| {
+                record.session.created_at < cursor.created_at
+                    || (record.session.created_at == cursor.created_at
+                        && record.session.id.0 < cursor.id)
+            })
+    });
+    records.sort_by(|a, b| {
+        b.session
+            .created_at
+            .cmp(&a.session.created_at)
+            .then_with(|| b.session.id.0.cmp(&a.session.id.0))
+    });
+    let has_more = records.len() > query.page.limit() as usize;
+    records.truncate(query.page.limit() as usize);
+    let next = has_more.then(|| {
+        let last = records.last().expect("a continuing page has a last row");
+        PageCursor::new(&last.session.created_at, &last.session.id.0)
+    });
+    Page {
+        items: records,
+        next,
+    }
+}
+
 #[derive(Default)]
 struct EmptyProfiles;
 
@@ -119,8 +158,35 @@ impl EnvironmentProfileStore for EmptyProfiles {
         Ok(None)
     }
 
-    async fn list_for(&self, _owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
-        Ok(Vec::new())
+    async fn list_for(
+        &self,
+        _owner: &SubjectId,
+        _page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError> {
+        Ok(Page {
+            items: Vec::new(),
+            next: None,
+        })
+    }
+
+    async fn set_preferred(
+        &self,
+        _owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError> {
+        if chosen.is_some() {
+            return Err(StoreError::Malformed(
+                "an empty store has no selectable profile".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn preferred_for(
+        &self,
+        _owner: &SubjectId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        Ok(None)
     }
 
     async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
