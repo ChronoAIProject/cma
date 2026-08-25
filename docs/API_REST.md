@@ -736,7 +736,7 @@ Content-Type: application/json
 
 **It is a rotation.** The session's conversation is captured, its sandbox is released, a replacement is started under the other front-end, and the agent resumes from the capture. The session keeps its identifier, its history, its configuration and its place in its owner's list; `rotations` and `rotated_at` move exactly as they do for a runtime upgrade, and `rotated_at` is the moment the conversation was taken — anything the agent did after it did not travel.
 
-**`200 OK`** returns the session mid-handover, `status: "rotating"`. During that window the server refuses prompts, approvals, interrupts, terminal input, resize, signals, and terminal attachment with `409 session-rotating`; the same operation may be retried after the session becomes usable again on its own. Clients should disable input for experience, but correctness does not depend on them doing so, and the event stream says when the handover ends.
+**`200 OK`** returns the session mid-handover, `status: "rotating"`. During that window the server refuses prompts, approvals, interrupts, terminal input, resize, signals, and terminal attachment with `409 session-rotating`; the same operation may be retried after the session becomes usable again on its own. A client that needs to time the retry can re-read this session until its status is no longer `rotating`, then act on the status it receives. Clients should disable input during that window for experience, but correctness does not depend on them doing so.
 
 The response still carries the session's creator, granted `reach`, and recorded
 installed skills, with catalogue names whenever available. A handover changes
