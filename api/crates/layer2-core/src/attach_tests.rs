@@ -695,6 +695,152 @@ fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_
     });
 }
 
+#[tokio::test]
+async fn a_waiting_attach_takes_over_when_the_active_cleanup_drain_is_cancelled() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment_change,
+    ));
+    let svc = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let alice = user("cleanup-drain-takeover-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let mut attach = Box::pin({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(
+                &alice,
+                &id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+        }
+    });
+    let woken = Arc::new(WakeFlag(AtomicBool::new(false)));
+    let waker = Waker::from(Arc::clone(&woken));
+    let mut context = Context::from_waker(&waker);
+    assert!(matches!(attach.as_mut().poll(&mut context), Poll::Pending));
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let installed = svc
+                .entries
+                .read()
+                .await
+                .get(&created.id)
+                .is_some_and(|entry| entry.attached.is_some());
+            if installed && woken.0.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the successful attachment is buffered without being polled");
+
+    store.pause_next();
+    let first_service = Arc::clone(&svc);
+    let first_owner = alice.clone();
+    let first_id = created.id.clone();
+    let first = tokio::spawn(async move {
+        first_service
+            .attach_terminal(
+                &first_owner,
+                &first_id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while svc.event_logs.cleanup_drain_users(&created.id) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the first attach waits after observing an empty cleanup queue");
+    assert!(!first.is_finished());
+
+    std::thread::spawn(move || {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        drop(attach);
+    })
+    .join()
+    .expect("the unread attachment is handed to deferred cleanup");
+    store.wait_until_held().await;
+
+    let waiting_service = Arc::clone(&svc);
+    let waiting_owner = alice.clone();
+    let waiting_id = created.id.clone();
+    let waiting = tokio::spawn(async move {
+        waiting_service
+            .attach_terminal(
+                &waiting_owner,
+                &waiting_id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while svc.event_logs.cleanup_drain_users(&created.id) < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the second attach waits on the active cleanup drain");
+    assert!(!waiting.is_finished());
+
+    first.abort();
+    assert!(matches!(first.await, Err(error) if error.is_cancelled()));
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while svc.event_logs.cleanup_drain_users(&created.id) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the waiting attach takes ownership of the cleanup drain");
+    store.release();
+
+    let later = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+        .await
+        .expect("the replacement drain completes")
+        .expect("the waiting attach task remains live")
+        .expect("the terminal becomes exclusively attachable");
+    let events = inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .expect("attachment events are readable");
+    assert_eq!(events.len(), 3);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                )
+            })
+            .count(),
+        1,
+        "cleanup takeover must not duplicate the durable detach"
+    );
+    assert!(matches!(
+        events[2].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+    ));
+    assert_eq!(store.matched_calls(), 3);
+    drop(later);
+}
+
 #[test]
 fn a_detach_interrupted_after_store_commit_restarts_without_a_duplicate() {
     let origin = tokio::runtime::Builder::new_current_thread()

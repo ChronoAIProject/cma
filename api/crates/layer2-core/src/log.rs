@@ -8,7 +8,7 @@
 //! process, while store revisions, atomic transactions, and contiguous appends
 //! arbitrate replicas.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -175,88 +175,133 @@ pub(crate) trait DeferredCleanup: Send {
 #[derive(Default)]
 struct DeferredCleanups {
     state: StdMutex<DeferredCleanupState>,
+    drains: StdMutex<HashMap<SessionId, Weak<CleanupGate>>>,
 }
 
 #[derive(Default)]
 struct DeferredCleanupState {
     pending: VecDeque<Box<dyn DeferredCleanup>>,
-    active: HashSet<SessionId>,
+}
+
+#[derive(Default)]
+struct CleanupGate {
+    lease: tokio::sync::Mutex<()>,
+    changed: tokio::sync::Notify,
 }
 
 impl DeferredCleanups {
     fn retain(self: &Arc<Self>, cleanup: Box<dyn DeferredCleanup>) {
         let id = cleanup.session_id().clone();
+        let gate = self.drain_gate(&id);
         self.state
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .pending
             .push_back(cleanup);
+        gate.changed.notify_waiters();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let cleanups = Arc::clone(self);
-            runtime.spawn(async move { cleanups.drain(&id).await });
+            runtime.spawn(async move { cleanups.drain_at(&id, &gate).await });
         }
     }
 
-    async fn drain(self: &Arc<Self>, id: &SessionId) {
+    async fn drain_at(self: &Arc<Self>, id: &SessionId, gate: &CleanupGate) {
+        let lease = gate.lease.lock().await;
+        CleanupDrain {
+            owner: Arc::clone(self),
+            gate,
+            id: id.clone(),
+            cleanup: None,
+            _lease: lease,
+        }
+        .finish()
+        .await;
+    }
+
+    fn drain_gate(&self, id: &SessionId) -> Arc<CleanupGate> {
+        let mut drains = self
+            .drains
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        drains.retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = drains.get(id).and_then(Weak::upgrade) {
+            return gate;
+        }
+        let gate = Arc::new(CleanupGate::default());
+        drains.insert(id.clone(), Arc::downgrade(&gate));
+        gate
+    }
+
+    fn has_pending(&self, id: &SessionId) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending
+            .iter()
+            .any(|cleanup| cleanup.session_id() == id)
+    }
+
+    #[cfg(test)]
+    fn drain_users(&self, id: &SessionId) -> usize {
+        self.drains
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(id)
+            .map_or(0, Weak::strong_count)
+    }
+}
+
+/// Serializes one session's drain and returns its current job before waking a waiter.
+struct CleanupDrain<'a> {
+    owner: Arc<DeferredCleanups>,
+    gate: &'a CleanupGate,
+    id: SessionId,
+    cleanup: Option<Box<dyn DeferredCleanup>>,
+    _lease: tokio::sync::MutexGuard<'a, ()>,
+}
+
+impl CleanupDrain<'_> {
+    async fn finish(mut self) {
         loop {
             let cleanup = {
-                let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-                if state.active.contains(id) {
-                    return;
-                }
-                let cleanup = state
+                let mut state = self
+                    .owner
+                    .state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                state
                     .pending
                     .iter()
-                    .position(|cleanup| cleanup.session_id() == id)
-                    .and_then(|position| state.pending.remove(position));
-                if cleanup.is_some() {
-                    state.active.insert(id.clone());
-                }
-                cleanup
+                    .position(|cleanup| cleanup.session_id() == &self.id)
+                    .and_then(|position| state.pending.remove(position))
             };
             let Some(cleanup) = cleanup else {
                 return;
             };
-            RunningCleanup {
-                owner: Arc::clone(self),
-                id: id.clone(),
-                cleanup: Some(cleanup),
-            }
-            .finish()
-            .await;
+            self.cleanup = Some(cleanup);
+            self.cleanup
+                .as_mut()
+                .expect("a retained cleanup runs at most once per attempt")
+                .attempt()
+                .await;
+            self.cleanup.take();
         }
     }
 }
 
-/// Returns a restartable job to its service-owned queue if this run is canceled.
-struct RunningCleanup {
-    owner: Arc<DeferredCleanups>,
-    id: SessionId,
-    cleanup: Option<Box<dyn DeferredCleanup>>,
-}
-
-impl RunningCleanup {
-    async fn finish(mut self) {
-        self.cleanup
-            .as_mut()
-            .expect("a retained cleanup runs at most once per attempt")
-            .attempt()
-            .await;
-        self.cleanup.take();
-    }
-}
-
-impl Drop for RunningCleanup {
+impl Drop for CleanupDrain<'_> {
     fn drop(&mut self) {
-        let mut state = self
-            .owner
-            .state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        state.active.remove(&self.id);
         if let Some(cleanup) = self.cleanup.take() {
-            state.pending.push_front(cleanup);
+            self.owner
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .pending
+                .push_front(cleanup);
+            self.gate.changed.notify_waiters();
         }
+        // `_lease` is a field, so Rust drops it only after this method returns.
+        // A woken waiter therefore always observes the interrupted job queued.
     }
 }
 
@@ -1434,8 +1479,21 @@ impl EventLogs {
         self.cleanups.retain(Box::new(cleanup));
     }
 
-    async fn drain_cleanups(&self, id: &SessionId) {
-        self.cleanups.drain(id).await;
+    fn cleanup_gate(&self, id: &SessionId) -> Arc<CleanupGate> {
+        self.cleanups.drain_gate(id)
+    }
+
+    async fn drain_cleanups_at(&self, id: &SessionId, gate: &CleanupGate) {
+        self.cleanups.drain_at(id, gate).await;
+    }
+
+    fn cleanup_pending(&self, id: &SessionId) -> bool {
+        self.cleanups.has_pending(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cleanup_drain_users(&self, id: &SessionId) -> usize {
+        self.cleanups.drain_users(id)
     }
 
     pub(crate) fn lane(&self, id: &SessionId) -> Arc<SessionLog> {
@@ -1464,8 +1522,32 @@ impl EventLogs {
 
 impl SessionService {
     pub(crate) async fn lock_lifecycle(&self, id: &SessionId) -> tokio::sync::OwnedMutexGuard<()> {
-        self.event_logs.drain_cleanups(id).await;
-        self.lifecycle_gates.gate(id).lock_owned().await
+        let cleanup_gate = self.event_logs.cleanup_gate(id);
+        let lifecycle_gate = self.lifecycle_gates.gate(id);
+        loop {
+            self.event_logs.drain_cleanups_at(id, &cleanup_gate).await;
+
+            // Register before inspecting the queue. A delivery dropped from a
+            // non-runtime thread can otherwise arrive after the empty drain and
+            // retain the lifecycle guard without any task available to run it.
+            let changed = cleanup_gate.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.event_logs.cleanup_pending(id) {
+                continue;
+            }
+
+            tokio::select! {
+                lifecycle = Arc::clone(&lifecycle_gate).lock_owned() => {
+                    if self.event_logs.cleanup_pending(id) {
+                        drop(lifecycle);
+                        continue;
+                    }
+                    return lifecycle;
+                }
+                () = &mut changed => {}
+            }
+        }
     }
 
     pub(crate) async fn create_durably(
