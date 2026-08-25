@@ -30,6 +30,13 @@ use crate::{InterfaceProfile, Operation};
 
 mod attach;
 
+#[cfg(feature = "test-support")]
+mod test_support;
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use test_support::OperationGate;
+
 use attach::serve;
 
 /// Conformance classes this interface satisfies.
