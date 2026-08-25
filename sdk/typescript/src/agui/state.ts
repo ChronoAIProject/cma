@@ -122,11 +122,6 @@ function pointerFrom(raw: JsonValue | undefined, index: number, member: 'from' |
           .slice(1)
           .split('/')
           .map((token) => decodeToken(token, index));
-  if (tokens.includes('__proto__')) {
-    throw new ProtocolError(
-      `AG-UI state patch ${String(index)} ${member} attempted prototype access`,
-    );
-  }
   return { raw, tokens };
 }
 
