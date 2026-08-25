@@ -24,6 +24,9 @@ use tower::ServiceExt;
 use super::*;
 use crate::store::token::StaticToken;
 
+const SEARCH_FIXTURE_PATH: &str = "/api/v1/proxy/s/ornn-api/api/v1/skill-search";
+const DETAIL_FIXTURE_PREFIX: &str = "/api/v1/proxy/s/ornn-api/api/v1/skills/";
+
 #[derive(Debug)]
 struct RecordedRequest {
     uri: String,
@@ -32,6 +35,7 @@ struct RecordedRequest {
 
 struct Reply {
     path: Option<String>,
+    query: Option<String>,
     status: StatusCode,
     body: serde_json::Value,
 }
@@ -40,17 +44,23 @@ impl Reply {
     fn ok(body: serde_json::Value) -> Self {
         Self {
             path: None,
+            query: None,
             status: StatusCode::OK,
             body,
         }
     }
 
-    fn at(path: &str, status: StatusCode, body: serde_json::Value) -> Self {
+    fn search(query: &str, status: StatusCode, body: serde_json::Value) -> Self {
         Self {
-            path: Some(path.to_string()),
+            path: Some(SEARCH_FIXTURE_PATH.to_string()),
+            query: Some(query.to_string()),
             status,
             body,
         }
+    }
+
+    fn search_ok(query: &str, body: serde_json::Value) -> Self {
+        Self::search(query, StatusCode::OK, body)
     }
 }
 
@@ -60,16 +70,23 @@ struct RegistryFixture {
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
 }
 
-struct BlockedDetail {
+struct BlockedSearch {
     skill: String,
     release: oneshot::Sender<()>,
 }
 
 #[derive(Clone)]
 struct BlockingRegistryFixture {
-    started: mpsc::UnboundedSender<BlockedDetail>,
+    started: mpsc::UnboundedSender<BlockedSearch>,
     current: Arc<AtomicUsize>,
     maximum: Arc<AtomicUsize>,
+}
+
+fn query_from_uri(uri: &str, key: &str) -> Option<String> {
+    reqwest::Url::parse(&format!("http://registry.test{uri}"))
+        .expect("fixture recorded a path and query")
+        .query_pairs()
+        .find_map(|(name, value)| (name == key).then(|| value.into_owned()))
 }
 
 async fn answer(State(fixture): State<RegistryFixture>, request: Request) -> impl IntoResponse {
@@ -83,36 +100,36 @@ async fn answer(State(fixture): State<RegistryFixture>, request: Request) -> imp
             .map(str::to_string),
     });
     let mut replies = fixture.replies.lock().await;
-    let reply_index = replies
-        .iter()
-        .position(|reply| reply.path.as_ref().is_none_or(|path| path == &request_path));
+    let reply_index = replies.iter().position(|reply| {
+        reply.path.as_ref().is_none_or(|path| path == &request_path)
+            && reply.query.as_ref().is_none_or(|query| {
+                query_from_uri(&request.uri().to_string(), "q").as_deref() == Some(query.as_str())
+            })
+    });
     let reply = reply_index
         .and_then(|index| replies.remove(index))
         .unwrap_or_else(|| Reply {
             path: None,
+            query: None,
             status: StatusCode::INTERNAL_SERVER_ERROR,
             body: serde_json::json!({ "error": "unexpected request" }),
         });
     (reply.status, Json(reply.body))
 }
 
-async fn answer_blocked_detail(
+async fn answer_blocked_search(
     State(fixture): State<BlockingRegistryFixture>,
     request: Request,
 ) -> impl IntoResponse {
-    let skill = request
-        .uri()
-        .path()
-        .rsplit('/')
-        .next()
-        .expect("detail path has a final segment")
-        .to_string();
+    assert_eq!(request.uri().path(), SEARCH_FIXTURE_PATH);
+    let skill = query_from_uri(&request.uri().to_string(), "q")
+        .expect("targeted search carries the recorded skill as q");
     let current = fixture.current.fetch_add(1, Ordering::SeqCst) + 1;
     fixture.maximum.fetch_max(current, Ordering::SeqCst);
     let (release, blocked) = oneshot::channel();
     fixture
         .started
-        .send(BlockedDetail {
+        .send(BlockedSearch {
             skill: skill.clone(),
             release,
         })
@@ -120,14 +137,15 @@ async fn answer_blocked_detail(
     let _ = blocked.await;
     fixture.current.fetch_sub(1, Ordering::SeqCst);
 
-    Json(serde_json::json!({
-        "data": {
+    Json(page(
+        vec![serde_json::json!({
             "guid": format!("guid-{skill}"),
             "name": skill,
-            "description": "blocked detail response"
-        },
-        "error": null
-    }))
+            "description": "blocked search response"
+        })],
+        false,
+        None,
+    ))
 }
 
 async fn registry(
@@ -157,7 +175,7 @@ async fn registry(
 
 async fn blocking_registry() -> (
     String,
-    mpsc::UnboundedReceiver<BlockedDetail>,
+    mpsc::UnboundedReceiver<BlockedSearch>,
     Arc<AtomicUsize>,
     Arc<AtomicUsize>,
     tokio::task::JoinHandle<()>,
@@ -175,7 +193,7 @@ async fn blocking_registry() -> (
         .expect("bind blocking registry fixture");
     let address = listener.local_addr().expect("fixture address");
     let app = Router::new()
-        .fallback(any(answer_blocked_detail))
+        .fallback(any(answer_blocked_search))
         .with_state(fixture);
     let server = tokio::spawn(async move {
         axum::serve(listener, app)
@@ -287,17 +305,11 @@ fn rows(start: usize, count: usize) -> Vec<serde_json::Value> {
     (start..start + count).map(row).collect()
 }
 
-fn detail_replies(count: usize) -> Vec<Reply> {
+fn search_replies(count: usize) -> Vec<Reply> {
     (0..count)
         .map(|number| {
-            Reply::at(
-                &format!("/api/v1/proxy/s/ornn-api/api/v1/skills/skill-{number}"),
-                StatusCode::OK,
-                serde_json::json!({
-                    "data": row(number),
-                    "error": null
-                }),
-            )
+            let skill = format!("skill-{number}");
+            Reply::search_ok(&skill, page(vec![row(number)], false, None))
         })
         .collect()
 }
@@ -335,9 +347,18 @@ fn parsed(request: &RecordedRequest) -> reqwest::Url {
 }
 
 fn query(request: &RecordedRequest, key: &str) -> Option<String> {
-    parsed(request)
-        .query_pairs()
-        .find_map(|(name, value)| (name == key).then(|| value.into_owned()))
+    query_from_uri(&request.uri, key)
+}
+
+fn assert_targeted_search(request: &RecordedRequest, skill: &str) {
+    let parsed = parsed(request);
+    assert_eq!(parsed.path(), SEARCH_FIXTURE_PATH);
+    assert!(!parsed.path().starts_with(DETAIL_FIXTURE_PREFIX));
+    assert_eq!(query(request, "q").as_deref(), Some(skill));
+    assert_eq!(query(request, "query"), None, "legacy query is not emitted");
+    assert_eq!(query(request, "scope").as_deref(), Some(SCOPE));
+    assert_eq!(query(request, "mode").as_deref(), Some("keyword"));
+    assert_eq!(query(request, "limit").as_deref(), Some("100"));
 }
 
 #[tokio::test]
@@ -669,15 +690,21 @@ async fn missing_data_is_a_failure_not_an_empty_catalogue() {
 }
 
 #[tokio::test]
-async fn describing_an_out_of_page_slug_uses_one_targeted_read_and_never_searches() {
-    let (base, requests, server) = registry(vec![Reply::ok(serde_json::json!({
-        "data": {
-            "guid": "guid-outside",
-            "name": "outside-first-page",
-            "description": "Description from the detail route"
-        },
-        "error": null
-    }))])
+async fn describing_an_out_of_page_slug_uses_safe_search_and_never_calls_detail() {
+    let fuzzy = serde_json::json!({
+        "guid": "guid-fuzzy",
+        "name": "outside-first-page-helper",
+        "description": "A fuzzy result must not win"
+    });
+    let exact = serde_json::json!({
+        "guid": "guid-outside",
+        "name": "outside-first-page",
+        "description": "Description from side-effect-free search"
+    });
+    let (base, requests, server) = registry(vec![Reply::search_ok(
+        "outside-first-page",
+        page(vec![fuzzy, exact], false, None),
+    )])
     .await;
 
     let described = catalog(&base)
@@ -690,20 +717,16 @@ async fn describing_an_out_of_page_slug_uses_one_targeted_read_and_never_searche
             ],
         )
         .await
-        .expect("targeted detail");
+        .expect("targeted metadata search");
 
     assert_eq!(described.len(), 1, "duplicate grants are fetched once");
     assert_eq!(
         described[0].description,
-        "Description from the detail route"
+        "Description from side-effect-free search"
     );
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 1);
-    assert_eq!(
-        parsed(&requests[0]).path(),
-        "/api/v1/proxy/s/ornn-api/api/v1/skills/outside-first-page"
-    );
-    assert!(!requests[0].uri.contains("skill-search"));
+    assert_targeted_search(&requests[0], "outside-first-page");
     assert_eq!(
         requests[0].authorization.as_deref(),
         Some("Bearer caller-token")
@@ -712,26 +735,49 @@ async fn describing_an_out_of_page_slug_uses_one_targeted_read_and_never_searche
 }
 
 #[tokio::test]
+async fn fuzzy_only_search_hits_never_enrich_a_recorded_grant() {
+    let fuzzy = serde_json::json!({
+        "guid": "guid-fuzzy",
+        "name": "requested-skill-helper",
+        "description": "Mentions requested-skill but is not it"
+    });
+    let (base, requests, server) = registry(vec![Reply::search_ok(
+        "requested-skill",
+        page(vec![fuzzy], false, None),
+    )])
+    .await;
+
+    let described = catalog(&base)
+        .describe(
+            &SubjectId("subject-a".into()),
+            Some("caller-token"),
+            &[SkillId::new("requested-skill")],
+        )
+        .await
+        .expect("a terminal fuzzy-only page means the exact grant is absent");
+
+    assert!(described.is_empty());
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_targeted_search(&requests[0], "requested-skill");
+    server.abort();
+}
+
+#[tokio::test]
 async fn one_missing_grant_does_not_hide_another_grants_description() {
-    let missing_path = "/api/v1/proxy/s/ornn-api/api/v1/skills/removed-skill";
-    let visible_path = "/api/v1/proxy/s/ornn-api/api/v1/skills/visible-skill";
     let (base, requests, server) = registry(vec![
-        Reply::at(
-            missing_path,
-            StatusCode::NOT_FOUND,
-            serde_json::json!({ "code": "skill_not_found" }),
-        ),
-        Reply::at(
-            visible_path,
-            StatusCode::OK,
-            serde_json::json!({
-                "data": {
+        Reply::search_ok("removed-skill", page(Vec::new(), false, None)),
+        Reply::search_ok(
+            "visible-skill",
+            page(
+                vec![serde_json::json!({
                     "guid": "guid-visible",
                     "name": "visible-skill",
                     "description": "This description remains available"
-                },
-                "error": null
-            }),
+                })],
+                false,
+                None,
+            ),
         ),
     ])
     .await;
@@ -753,21 +799,21 @@ async fn one_missing_grant_does_not_hide_another_grants_description() {
     );
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 2);
-    assert!(requests
-        .iter()
-        .any(|request| parsed(request).path() == missing_path));
-    assert!(requests
-        .iter()
-        .any(|request| parsed(request).path() == visible_path));
+    for skill in ["removed-skill", "visible-skill"] {
+        let request = requests
+            .iter()
+            .find(|request| query(request, "q").as_deref() == Some(skill))
+            .expect("each distinct grant is searched once");
+        assert_targeted_search(request, skill);
+    }
     server.abort();
 }
 
 #[tokio::test]
-async fn a_non_not_found_detail_failure_remains_a_loud_catalogue_error() {
+async fn a_non_successful_metadata_search_remains_a_loud_catalogue_error() {
     const PRIVATE_UPSTREAM_MARKER: &str = "provider-body-must-not-be-consumed";
-    let path = "/api/v1/proxy/s/ornn-api/api/v1/skills/unavailable-skill";
-    let (base, requests, server) = registry(vec![Reply::at(
-        path,
+    let (base, requests, server) = registry(vec![Reply::search(
+        "unavailable-skill",
         StatusCode::BAD_GATEWAY,
         serde_json::json!({ "error": PRIVATE_UPSTREAM_MARKER }),
     )])
@@ -780,7 +826,7 @@ async fn a_non_not_found_detail_failure_remains_a_loud_catalogue_error() {
             &[SkillId::new("unavailable-skill")],
         )
         .await
-        .expect_err("only a 404 means one recorded grant is missing");
+        .expect_err("a failed search is not proof that the grant is missing");
 
     assert!(
         matches!(error, CatalogError::Unavailable(_)),
@@ -790,14 +836,46 @@ async fn a_non_not_found_detail_failure_remains_a_loud_catalogue_error() {
     assert!(!error.to_string().contains(PRIVATE_UPSTREAM_MARKER));
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 1);
-    assert_eq!(parsed(&requests[0]).path(), path);
+    assert_targeted_search(&requests[0], "unavailable-skill");
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_fuzzy_page_with_more_results_is_not_treated_as_exactly_missing() {
+    let fuzzy = serde_json::json!({
+        "guid": "guid-fuzzy",
+        "name": "requested-skill-helper",
+        "description": "fuzzy"
+    });
+    let (base, requests, server) = registry(vec![Reply::search_ok(
+        "requested-skill",
+        page(vec![fuzzy], true, Some("more-fuzzy-results".into())),
+    )])
+    .await;
+
+    let error = catalog(&base)
+        .describe(
+            &SubjectId("subject-a".into()),
+            Some("caller-token"),
+            &[SkillId::new("requested-skill")],
+        )
+        .await
+        .expect_err("an exact match may remain outside the bounded search page");
+
+    assert!(matches!(error, CatalogError::Malformed(_)), "got {error:?}");
+    assert!(error
+        .to_string()
+        .contains("did not resolve within 100 matches"));
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_targeted_search(&requests[0], "requested-skill");
     server.abort();
 }
 
 #[tokio::test]
 async fn description_lookups_below_the_ceiling_call_every_distinct_skill_once() {
     let count = 3;
-    let (base, requests, server) = registry(detail_replies(count)).await;
+    let (base, requests, server) = registry(search_replies(count)).await;
 
     let described = catalog(&base)
         .describe(
@@ -806,9 +884,18 @@ async fn description_lookups_below_the_ceiling_call_every_distinct_skill_once() 
             &skill_ids(count),
         )
         .await
-        .expect("all detail reads fit below the ceiling");
+        .expect("all metadata searches fit below the ceiling");
 
-    assert_eq!(requests.lock().await.len(), count);
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), count);
+    for number in 0..count {
+        let skill = format!("skill-{number}");
+        let request = requests
+            .iter()
+            .find(|request| query(request, "q").as_deref() == Some(skill.as_str()))
+            .expect("each distinct skill is searched once");
+        assert_targeted_search(request, &skill);
+    }
     assert_eq!(
         described
             .iter()
@@ -821,7 +908,8 @@ async fn description_lookups_below_the_ceiling_call_every_distinct_skill_once() 
 
 #[tokio::test]
 async fn description_lookups_at_the_ceiling_call_every_distinct_skill_once() {
-    let (base, requests, server) = registry(detail_replies(DESCRIPTION_LOOKUP_LIMIT)).await;
+    assert_eq!(DESCRIPTION_LOOKUP_LIMIT, 50);
+    let (base, requests, server) = registry(search_replies(DESCRIPTION_LOOKUP_LIMIT)).await;
 
     let described = catalog(&base)
         .describe(
@@ -832,7 +920,14 @@ async fn description_lookups_at_the_ceiling_call_every_distinct_skill_once() {
         .await
         .expect("the exact ceiling is accepted");
 
-    assert_eq!(requests.lock().await.len(), DESCRIPTION_LOOKUP_LIMIT);
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), DESCRIPTION_LOOKUP_LIMIT);
+    assert!(requests
+        .iter()
+        .all(|request| parsed(request).path() == SEARCH_FIXTURE_PATH));
+    assert!(requests
+        .iter()
+        .all(|request| !parsed(request).path().starts_with(DETAIL_FIXTURE_PREFIX)));
     assert_eq!(described.len(), DESCRIPTION_LOOKUP_LIMIT);
     assert_eq!(described.first().expect("first").name, "skill-0");
     assert_eq!(
@@ -844,7 +939,7 @@ async fn description_lookups_at_the_ceiling_call_every_distinct_skill_once() {
 
 #[tokio::test]
 async fn description_lookups_over_the_ceiling_use_the_first_distinct_skills_only() {
-    let (base, requests, server) = registry(detail_replies(DESCRIPTION_LOOKUP_LIMIT)).await;
+    let (base, requests, server) = registry(search_replies(DESCRIPTION_LOOKUP_LIMIT)).await;
     let mut requested = vec![
         SkillId::new("skill-0"),
         SkillId::new("skill-1"),
@@ -863,11 +958,17 @@ async fn description_lookups_over_the_ceiling_use_the_first_distinct_skills_only
         .await
         .expect("overflow is intentionally left undescribed");
 
+    let requests = requests.lock().await;
     assert_eq!(
-        requests.lock().await.len(),
+        requests.len(),
         DESCRIPTION_LOOKUP_LIMIT,
         "duplicates and overflow must not become provider calls"
     );
+    assert!(requests.iter().all(|request| {
+        let searched = query(request, "q").expect("targeted search carries q");
+        searched != format!("skill-{DESCRIPTION_LOOKUP_LIMIT}")
+            && searched != format!("skill-{}", DESCRIPTION_LOOKUP_LIMIT + 1)
+    }));
     assert_eq!(described.len(), DESCRIPTION_LOOKUP_LIMIT);
     assert_eq!(
         described
@@ -887,7 +988,7 @@ async fn description_lookups_over_the_ceiling_use_the_first_distinct_skills_only
 }
 
 #[tokio::test]
-async fn an_eighth_in_flight_detail_blocks_the_ninth_until_one_finishes() {
+async fn an_eighth_in_flight_search_blocks_the_ninth_until_one_finishes() {
     let (base, mut started, current, maximum, server) = blocking_registry().await;
     let operation = tokio::spawn(async move {
         catalog(&base)
@@ -901,13 +1002,13 @@ async fn an_eighth_in_flight_detail_blocks_the_ninth_until_one_finishes() {
     let mut blocked = HashMap::new();
 
     for _ in 0..DESCRIPTION_LOOKUP_CONCURRENCY {
-        let detail = tokio::time::timeout(std::time::Duration::from_secs(1), started.recv())
+        let search = tokio::time::timeout(std::time::Duration::from_secs(1), started.recv())
             .await
-            .expect("eight detail handlers start")
+            .expect("eight search handlers start")
             .expect("blocking registry remains connected");
         assert!(
-            blocked.insert(detail.skill, detail.release).is_none(),
-            "each selected detail starts once"
+            blocked.insert(search.skill, search.release).is_none(),
+            "each selected search starts once"
         );
     }
     assert_eq!(
@@ -922,17 +1023,17 @@ async fn an_eighth_in_flight_detail_blocks_the_ninth_until_one_finishes() {
         tokio::time::timeout(std::time::Duration::from_millis(250), started.recv())
             .await
             .is_err(),
-        "the ninth detail must remain gated while eight handlers are blocked"
+        "the ninth search must remain gated while eight handlers are blocked"
     );
 
     blocked
         .remove("skill-0")
-        .expect("the ordered first detail is blocked")
+        .expect("the ordered first search is blocked")
         .send(())
-        .expect("release the first detail");
+        .expect("release the first search");
     let ninth = tokio::time::timeout(std::time::Duration::from_secs(1), started.recv())
         .await
-        .expect("the ninth detail starts after one completion")
+        .expect("the ninth search starts after one completion")
         .expect("blocking registry remains connected");
     assert_eq!(ninth.skill, "skill-8");
     assert!(blocked.insert(ninth.skill, ninth.release).is_none());
@@ -946,13 +1047,13 @@ async fn an_eighth_in_flight_detail_blocks_the_ninth_until_one_finishes() {
     );
 
     for release in blocked.into_values() {
-        release.send(()).expect("release remaining detail");
+        release.send(()).expect("release remaining search");
     }
     let described = tokio::time::timeout(std::time::Duration::from_secs(1), operation)
         .await
         .expect("description call completes")
         .expect("description task does not panic")
-        .expect("released detail responses are valid");
+        .expect("released search responses are valid");
     assert_eq!(
         described
             .iter()
