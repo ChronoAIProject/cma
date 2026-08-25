@@ -57,6 +57,12 @@ describe("the conversation's context", () => {
     const conversation = await conversationFrom('context-with-window');
     const { container } = render(<Context granted usage={conversation.usage} />);
 
+    expect(conversation.aguiState.usage).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      contextUsed: 42_100,
+      contextWindow: 200_000,
+    });
     expect(screen.getByText('42.1K / 200K context')).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/\b0\b/);
     expect(screen.getByRole('progressbar', { name: 'Conversation context used' })).toHaveAttribute(

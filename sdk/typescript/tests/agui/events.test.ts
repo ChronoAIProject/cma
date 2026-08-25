@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toEvent } from '../../src/agui/events.js';
+import { initialConversation, reduce } from '../../src/conversation/fold.js';
 import { ProtocolError } from '../../src/errors.js';
 import { KNOWN_EVENTS } from '../../src/wire.js';
 
@@ -217,5 +218,84 @@ describe('a state delta', () => {
     expect(() => toEvent({ ...base, type: 'STATE_DELTA', delta: [{ nonsense: true }] })).toThrow(
       ProtocolError,
     );
+  });
+
+  it('rejects operation metadata inherited through a patch prototype', () => {
+    const inheritedOperation = Object.create({ op: 'remove', path: '/mode' }) as object;
+    const inheritedFrom = Object.assign(Object.create({ from: '/mode' }) as object, {
+      op: 'copy',
+      path: '/extension',
+    });
+
+    expect(() => toEvent({ ...base, type: 'STATE_DELTA', delta: [inheritedOperation] })).toThrow(
+      ProtocolError,
+    );
+    expect(() => toEvent({ ...base, type: 'STATE_DELTA', delta: [inheritedFrom] })).toThrow(
+      ProtocolError,
+    );
+  });
+
+  it('preserves from and accepts the empty pointer to the document root', () => {
+    const event = toEvent({
+      ...base,
+      type: 'STATE_DELTA',
+      delta: [{ op: 'copy', from: '/mode', path: '' }],
+    });
+    if (event.type !== 'STATE_DELTA') {
+      throw new Error('expected a state delta');
+    }
+    expect(event.patch[0]).toMatchObject({ op: 'copy', from: '/mode', path: '' });
+  });
+
+  it('preserves each RFC 6902 operation shape through the production fold', () => {
+    const event = toEvent({
+      ...base,
+      type: 'STATE_DELTA',
+      delta: [
+        { op: 'add', path: '/extension', value: { source: 'copy me' } },
+        { op: 'replace', path: '/mode', value: null },
+        { op: 'copy', from: '/extension/source', path: '/extension/copied' },
+        { op: 'move', from: '/extension/copied', path: '/extension/moved' },
+        { op: 'test', path: '/mode', value: null },
+        { op: 'remove', path: '/extension/source' },
+      ],
+    });
+    if (event.type !== 'STATE_DELTA') {
+      throw new Error('expected a state delta');
+    }
+
+    expect(event.patch).toStrictEqual([
+      { op: 'add', path: '/extension', value: { source: 'copy me' } },
+      { op: 'replace', path: '/mode', value: null },
+      { op: 'copy', from: '/extension/source', path: '/extension/copied' },
+      { op: 'move', from: '/extension/copied', path: '/extension/moved' },
+      { op: 'test', path: '/mode', value: null },
+      { op: 'remove', path: '/extension/source' },
+    ]);
+    const conversation = reduce(initialConversation(), event);
+    expect(conversation.aguiState.extension).toEqual({ moved: 'copy me' });
+    expect(conversation.aguiState.mode).toBeNull();
+  });
+
+  it.each(['add', 'replace', 'test'])('requires an explicit value for %s', (op) => {
+    expect(() => toEvent({ ...base, type: 'STATE_DELTA', delta: [{ op, path: '/mode' }] })).toThrow(
+      ProtocolError,
+    );
+  });
+
+  it.each(['copy', 'move'])('requires from for %s', (op) => {
+    expect(() =>
+      toEvent({ ...base, type: 'STATE_DELTA', delta: [{ op, path: '/extension' }] }),
+    ).toThrow(ProtocolError);
+  });
+
+  it('reports a non-string from pointer', () => {
+    expect(() =>
+      toEvent({
+        ...base,
+        type: 'STATE_DELTA',
+        delta: [{ op: 'copy', from: 7, path: '/copied' }],
+      }),
+    ).toThrow(ProtocolError);
   });
 });
