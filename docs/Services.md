@@ -26,6 +26,11 @@ Answered **as the caller**, with their own delegated credential, because which s
 
 A deployment with no catalogue configured answers `ServiceAvailability::NoCatalogue` (`layer2-core/src/environment_catalog.rs`) rather than an error. Nothing about that stops a session starting — see §4.
 
+That no-catalogue case is distinct from an outage of a configured catalogue.
+The direct picker route returns `503 service_catalogue_unavailable` when it
+cannot ask for the caller's services; this route-specific response is
+documented with the [Services catalogue](./API_REST.md#services-catalogue).
+
 ### 2. A profile records a selection
 
 `EnvironmentProfileSpec::services` and `EnvironmentProfile::services` (`layer2-core/src/environment.rs`). The wire shape is the

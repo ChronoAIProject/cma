@@ -51,7 +51,7 @@ pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
             get(read).put(replace).delete(remove),
         )
         /*
-         * Which profile this owner's sessions start from.
+         * Which profile clients should preselect for this owner.
          *
          * A collection rather than a flag on one profile, because setting it
          * changes two records — the one taking it and the one giving it up —
@@ -178,12 +178,12 @@ async fn list(
     ))
 }
 
-/// Which profile the caller's sessions should start from.
+/// Which profile clients should preselect for the caller.
 ///
-/// `null` is a value rather than an omission: it clears the preference and
-/// returns them to the deployment's own defaults, which is a choice somebody
-/// makes rather than the absence of one. `deny_unknown_fields` so a caller who
-/// spells the field wrong is told, instead of silently clearing it.
+/// `null` is a value rather than an omission: it clears the preselection. The
+/// server never substitutes this value into a session-create request;
+/// `deny_unknown_fields` ensures a misspelling is reported instead of silently
+/// clearing it.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreferredRequest {

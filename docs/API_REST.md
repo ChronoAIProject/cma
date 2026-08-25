@@ -157,13 +157,19 @@ Every accepted write field is rendered back. Server-owned fields are added:
 | `mandatory.skills` | Skill identifiers the deployment puts back on every write |
 | `created_at` | Creation time, retained across replacement |
 | `updated_at` | Last content-changing replacement time; an exact echo retains it |
-| `preferred` | Whether sessions that name no profile start from this one |
+| `preferred` | Client-facing preselection state. A client may start its session form on this profile, but must still send its id in `POST /api/v1/sessions` |
 
 `agent.kernel`, `mode`, `reasoning_effort`, `permission`, `credential`,
 `record_tool_bodies`, and `skills` are always present. `agent.model` and
 `agent.size` are omitted when no value was selected. `packages[].version` is
 likewise omitted for an unpinned package. A boolean such as
 `record_tool_bodies` is never made ambiguous by omission.
+
+A profile stored before the deployment added a mandatory entry or began
+settling kernels is projected through the current baseline and configured
+kernel when read. This does not rewrite the stored record or advance
+`updated_at`; it gives legacy and newly written profiles the same echoable wire
+shape.
 
 **`mandatory` marks entries, not a special profile.** Omitting a mandatory
 package or skill from a replacement does not remove it; the service merges it
@@ -296,6 +302,8 @@ The profile keeps its `id`, `created_at`, and `preferred` value. A malformed or
 unknown field returns `400` or `422`; an unknown or foreign id returns `404`.
 An echo whose normalized writable contents already match performs no store
 write and retains `updated_at`, so the complete response stays byte-identical.
+That includes legacy profiles projected through a baseline or kernel that
+changed after they were stored.
 
 ```http
 DELETE /api/v1/environment-profiles/{id}
@@ -334,7 +342,9 @@ needed before the first profile exists:
 
 `access` is optional display text supplied by the catalogue. A deployment with
 no skill catalogue returns the same shape with an empty `skills` array; profile
-writes remain available.
+writes remain available. If a configured skill catalogue cannot be read, this
+route returns a `503 runtime_unavailable` problem document; retrying the picker
+request is appropriate.
 
 ### Services catalogue
 
@@ -362,12 +372,19 @@ deployment mandates:
 `description` is optional. The catalogue is queried as the caller because its
 answer depends on their grants. With no service catalogue configured, the
 route returns `200` with an empty `services` array; profiles still store service
-selections and sessions still honour them.
+selections and sessions still honour them. That absence is distinct from a
+configured catalogue outage: when the catalogue cannot be asked, this route
+returns a `503 service_catalogue_unavailable` problem document and the caller
+should retry.
 
 ### Preferred profile
 
-Preference is a collection-level PUT because selecting one profile also clears
-the previous winner. It is not a writable flag on an individual profile.
+Preference is client-facing preselection state. It is a collection-level PUT
+because selecting one profile also clears the previous winner; it is not a
+writable flag on an individual profile. A client may initialize its session
+form from the selected profile, but it must send that id explicitly as
+`environment_profile` when creating a session. The service never consults this
+state for an unqualified create, which always uses deployment defaults.
 
 ```http
 PUT /api/v1/environment-profiles/preferred
@@ -434,10 +451,9 @@ Clearing is expressed with an explicit `null` value:
 ```
 
 It returns the same complete collection with every row carrying
-`preferred: false`, and sessions that name no profile return to the deployment's
-defaults. The `/v1` response is intentionally complete for clients that replace
-their loaded collection with it; it is assembled through bounded owner-list
-pages even though the final JSON array has no profile-count limit.
+`preferred: false`. The `/v1` response is intentionally complete for clients
+that replace their loaded collection with it; it is assembled through bounded
+owner-list pages even though the final JSON array has no profile-count limit.
 
 ---
 

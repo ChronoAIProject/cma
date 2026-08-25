@@ -74,6 +74,30 @@ impl ServiceCatalog for DocumentationCatalog {
     }
 }
 
+struct UnavailableCatalog;
+
+#[async_trait::async_trait]
+impl SkillCatalog for UnavailableCatalog {
+    async fn available(
+        &self,
+        _subject: &SubjectId,
+        _credential: Option<&str>,
+    ) -> Result<Vec<CatalogSkill>, CatalogError> {
+        Err(CatalogError::Unavailable("test skill outage".into()))
+    }
+}
+
+#[async_trait::async_trait]
+impl ServiceCatalog for UnavailableCatalog {
+    async fn available(
+        &self,
+        _subject: &SubjectId,
+        _credential: Option<&str>,
+    ) -> Result<Vec<CatalogService>, CatalogError> {
+        Err(CatalogError::Unavailable("test service outage".into()))
+    }
+}
+
 #[derive(Default)]
 struct RecordingProfileStore {
     profiles: Mutex<HashMap<String, EnvironmentProfile>>,
@@ -210,8 +234,24 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let store = Arc::new(RecordingProfileStore::default());
         let catalog = Arc::new(DocumentationCatalog);
+        let skills: Arc<dyn SkillCatalog> = catalog.clone();
+        let services: Arc<dyn ServiceCatalog> = catalog;
+        Self::with_catalogs(Some(skills), Some(services))
+    }
+
+    fn with_unavailable_catalogs() -> Self {
+        let catalog = Arc::new(UnavailableCatalog);
+        let skills: Arc<dyn SkillCatalog> = catalog.clone();
+        let services: Arc<dyn ServiceCatalog> = catalog;
+        Self::with_catalogs(Some(skills), Some(services))
+    }
+
+    fn with_catalogs(
+        skills: Option<Arc<dyn SkillCatalog>>,
+        services: Option<Arc<dyn ServiceCatalog>>,
+    ) -> Self {
+        let store = Arc::new(RecordingProfileStore::default());
         let service = EnvironmentProfileService::new(
             Arc::clone(&store) as Arc<dyn EnvironmentProfileStore>,
             Baseline::new(
@@ -219,8 +259,8 @@ impl Harness {
                 [SkillId::new("mandatory-skill")],
                 [ServiceId::new("mandatory-service")],
             ),
-            Some(Arc::clone(&catalog) as Arc<dyn SkillCatalog>),
-            Some(catalog as Arc<dyn ServiceCatalog>),
+            skills,
+            services,
             AgentConfiguration {
                 kernel: KernelId::new("deployment-kernel"),
                 ..Default::default()
@@ -386,6 +426,17 @@ fn seeded_profile() -> EnvironmentProfile {
     }
 }
 
+fn legacy_profile() -> EnvironmentProfile {
+    let mut profile = seeded_profile();
+    profile.name = "legacy profile".into();
+    profile.packages.clear();
+    profile.agent.kernel = KernelId::default();
+    profile.agent.skills.clear();
+    profile.services.clear();
+    profile.updated_at = "2025-01-01T00:00:00Z".into();
+    profile
+}
+
 fn documented_profile(preferred: bool) -> EnvironmentProfile {
     EnvironmentProfile {
         id: EnvironmentProfileId("envp_example".into()),
@@ -513,6 +564,55 @@ async fn a_field_complete_get_put_get_is_byte_identical() {
         after.bytes, before.bytes,
         "echoing every writable field must leave the complete ProfileView JSON byte-identical"
     );
+}
+
+#[tokio::test]
+async fn a_legacy_get_put_get_is_byte_identical_after_deployment_defaults_change() {
+    let harness = Harness::new();
+    harness.store.seed(legacy_profile());
+    let stored_before = harness
+        .store
+        .snapshot(PROFILE_ID)
+        .expect("the legacy record is stored");
+    let profile_uri = format!("/api/v1/environment-profiles/{PROFILE_ID}");
+
+    let before = send(&harness.app, Method::GET, &profile_uri, None).await;
+    assert_eq!(before.status, StatusCode::OK);
+    assert_eq!(before.json["agent"]["kernel"], "deployment-kernel");
+    assert_eq!(before.json["packages"], json!([{ "name": "platform-cli" }]));
+    assert_eq!(before.json["agent"]["skills"], json!(["mandatory-skill"]));
+    assert_eq!(
+        before.json["nyxid"]["services"],
+        json!(["mandatory-service"])
+    );
+    let listed = send(
+        &harness.app,
+        Method::GET,
+        "/api/v1/environment-profiles",
+        None,
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK);
+    assert_eq!(listed.json, json!([before.json.clone()]));
+
+    let replaced = send(
+        &harness.app,
+        Method::PUT,
+        &profile_uri,
+        Some(writable_projection(&before.json)),
+    )
+    .await;
+    assert_eq!(replaced.status, StatusCode::OK);
+    assert_eq!(replaced.bytes, before.bytes);
+    assert_eq!(harness.store.upserts.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        harness.store.snapshot(PROFILE_ID),
+        Some(stored_before),
+        "normalizing a legacy read and echo does not migrate storage or advance updated_at"
+    );
+
+    let after = send(&harness.app, Method::GET, &profile_uri, None).await;
+    assert_eq!(after.bytes, before.bytes);
 }
 
 #[tokio::test]
@@ -848,6 +948,31 @@ async fn documented_collection_catalogue_and_preference_responses_are_served() {
         .expect("preference response is a collection")
         .iter()
         .all(|profile| profile["preferred"] == false));
+}
+
+#[tokio::test]
+async fn configured_catalogue_outages_are_route_specific_503_problem_documents() {
+    let section = environment_profile_documentation();
+    assert!(section.contains("`503 runtime_unavailable`"));
+    assert!(section.contains("`503 service_catalogue_unavailable`"));
+    let harness = Harness::with_unavailable_catalogs();
+
+    for (uri, code) in [
+        ("/api/v1/environment-profiles/skills", "runtime_unavailable"),
+        (
+            "/api/v1/environment-profiles/services",
+            "service_catalogue_unavailable",
+        ),
+    ] {
+        let response = send(&harness.app, Method::GET, uri, None).await;
+        assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        assert_eq!(
+            response.content_type.as_deref(),
+            Some(PROBLEM_CONTENT_TYPE),
+            "{uri}"
+        );
+        assert_eq!(response.json["code"], code, "{uri}");
+    }
 }
 
 #[tokio::test]
