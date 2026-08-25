@@ -32,7 +32,7 @@ describe('Node-only create, stream, interrupt smoke', () => {
           }),
         );
       }
-      if (url.endsWith('/sessions/sesn_fixture/events?after=7')) {
+      if (url.endsWith('/sessions/sesn_fixture/events?starting_after=7')) {
         return Promise.resolve(
           new Response(
             `id: ${String(event.seq)}\ndata: ${JSON.stringify(fixture('event.json'))}\n\n`,
