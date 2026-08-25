@@ -79,6 +79,8 @@ pub(crate) struct FakeAdapter {
     pub(crate) plane_switches: Mutex<Vec<(String, RuntimeMode)>>,
     /// Conversations handed to newly provisioned runtimes, in order.
     pub(crate) handovers: Mutex<Vec<Vec<u8>>>,
+    /// Snapshot calls completed, so concurrency tests can wait for rehearsal.
+    pub(crate) snapshot_calls: std::sync::atomic::AtomicUsize,
     /// When set, the runtime cannot hand its conversation over.
     pub(crate) refuse_snapshot: bool,
     /// The conversation this runtime is holding, once one has been opened.
@@ -143,6 +145,7 @@ impl Default for FakeAdapter {
             accept_plane_switch: false,
             plane_switches: Mutex::default(),
             handovers: Mutex::default(),
+            snapshot_calls: std::sync::atomic::AtomicUsize::new(0),
             refuse_snapshot: false,
             conversation: Mutex::default(),
             rejoined: Mutex::default(),
@@ -380,7 +383,10 @@ impl KernelAdapter for FakeAdapter {
         if self.refuse_snapshot {
             return Err(AdapterError::Unsupported("cannot capture".into()));
         }
-        Ok(self.conversations.lock().await.get(&handle.0).cloned())
+        let snapshot = self.conversations.lock().await.get(&handle.0).cloned();
+        self.snapshot_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(snapshot)
     }
 
     async fn switch_plane(

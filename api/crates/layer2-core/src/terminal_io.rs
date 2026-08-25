@@ -90,6 +90,7 @@ impl SessionService {
         id: &SessionId,
         bytes: Vec<u8>,
     ) -> Result<(), CoreError> {
+        let _input_fence = self.input_gates.gate(id).read_owned().await;
         self.may_drive_terminal(caller, id).await?;
         self.forward_input(id, TerminalInput::Bytes(bytes)).await;
         Ok(())
@@ -106,6 +107,7 @@ impl SessionService {
         id: &SessionId,
         signal: String,
     ) -> Result<(), CoreError> {
+        let _input_fence = self.input_gates.gate(id).read_owned().await;
         self.may_drive_terminal(caller, id).await?;
         self.forward_input(id, TerminalInput::Signal(signal)).await;
         Ok(())
@@ -121,6 +123,7 @@ impl SessionService {
         geometry: TerminalGeometry,
     ) -> Result<(), CoreError> {
         let lifecycle = self.lock_lifecycle(id).await;
+        let input_fence = self.input_gates.gate(id).read_owned().await;
         self.may_drive_terminal(caller, id).await?;
         let commit = {
             let mut entries = self.entries.write().await;
@@ -177,6 +180,7 @@ impl SessionService {
                     } else {
                         Err(CoreError::SessionNotFound)
                     };
+                    drop(input_fence);
                     (result, lifecycle)
                 },
                 move |_error| async move {
