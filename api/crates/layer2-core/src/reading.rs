@@ -12,7 +12,7 @@ use crate::event::{Event, StoredEvent};
 use crate::ids::SessionId;
 use crate::service::{store_failed, SessionService};
 use crate::session::Session;
-use crate::store::{Page, SessionListQuery};
+use crate::store::{Page, SessionListQuery, SessionRecord};
 
 impl SessionService {
     /// Read a session, scoped to its owner.
@@ -69,6 +69,19 @@ impl SessionService {
         })
     }
 
+    /// Load the record behind an event-log read, enforcing that log's grant.
+    async fn readable_event_log_record(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SessionRecord, CoreError> {
+        let record = self.record(id).await?;
+        if !caller.may_read_event_log_owned_by(&record.session.owner) {
+            return Err(CoreError::Forbidden);
+        }
+        Ok(record)
+    }
+
     /// Every session there is, whoever owns it.
     ///
     /// Distinct from `list_sessions` because it refuses a caller who is not
@@ -107,10 +120,7 @@ impl SessionService {
         id: &SessionId,
         after: Option<u64>,
     ) -> Result<Vec<Event>, CoreError> {
-        let record = self.record(id).await?;
-        if !caller.may_read_event_log_owned_by(&record.session.owner) {
-            return Err(CoreError::Forbidden);
-        }
+        self.readable_event_log_record(caller, id).await?;
         let stored = self
             .store
             .events_since(id, after.unwrap_or(0))
@@ -120,6 +130,30 @@ impl SessionService {
             .into_iter()
             .filter_map(StoredEvent::into_known)
             .collect())
+    }
+
+    /// Highest durable sequence the event log for this session has reached.
+    ///
+    /// Scoped exactly like [`Self::events_since`]. In particular, a caller
+    /// granted cross-owner event-log reads does not also need the separate
+    /// cross-owner session-read grant merely to validate a replay position.
+    ///
+    /// The physical tail can lead a whole-record write, while a position an
+    /// older writer advertised remains reserved even when its event was lost.
+    /// The greater value is therefore the only head that rejects neither kind
+    /// of valid cursor.
+    pub async fn event_log_head(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<u64, CoreError> {
+        let advertised = self
+            .readable_event_log_record(caller, id)
+            .await?
+            .session
+            .last_seq;
+        let physical = self.store.event_tail(id).await.map_err(store_failed)?;
+        Ok(advertised.max(physical))
     }
 
     /// Watch what is happening on a session, as it happens.
