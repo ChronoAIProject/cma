@@ -17,6 +17,7 @@ pub(crate) struct CommitFaultStore {
     pub(crate) inner: Arc<FakeStore>,
     matches: fn(&SessionRecord, &[Event]) -> bool,
     pause_next: AtomicBool,
+    pause_after_next: AtomicBool,
     failures: AtomicUsize,
     matched_calls: AtomicUsize,
     entered: Notify,
@@ -32,6 +33,7 @@ impl CommitFaultStore {
             inner,
             matches,
             pause_next: AtomicBool::new(false),
+            pause_after_next: AtomicBool::new(false),
             failures: AtomicUsize::new(0),
             matched_calls: AtomicUsize::new(0),
             entered: Notify::new(),
@@ -41,6 +43,10 @@ impl CommitFaultStore {
 
     pub(crate) fn pause_next(&self) {
         assert!(!self.pause_next.swap(true, Ordering::SeqCst));
+    }
+
+    pub(crate) fn pause_after_next(&self) {
+        assert!(!self.pause_after_next.swap(true, Ordering::SeqCst));
     }
 
     pub(crate) fn fail_next(&self, count: usize) {
@@ -87,6 +93,13 @@ impl CommitFaultStore {
         }
         Ok(())
     }
+
+    async fn after_commit(&self, record: &SessionRecord, events: &[Event]) {
+        if (self.matches)(record, events) && self.pause_after_next.swap(false, Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -126,9 +139,12 @@ impl SessionStore for CommitFaultStore {
         events: &[Event],
     ) -> Result<u64, StoreError> {
         self.before_commit(record, events).await?;
-        self.inner
+        let revision = self
+            .inner
             .commit_session_idempotent(write_id, record, events)
-            .await
+            .await?;
+        self.after_commit(record, events).await;
+        Ok(revision)
     }
 
     async fn create_session_idempotent(
@@ -138,9 +154,12 @@ impl SessionStore for CommitFaultStore {
         events: &[Event],
     ) -> Result<u64, StoreError> {
         self.before_commit(record, events).await?;
-        self.inner
+        let revision = self
+            .inner
             .create_session_idempotent(write_id, record, events)
-            .await
+            .await?;
+        self.after_commit(record, events).await;
+        Ok(revision)
     }
 
     async fn events_since(
