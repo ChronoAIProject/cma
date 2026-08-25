@@ -16,7 +16,7 @@ fn baseline() -> Baseline {
     Baseline::new(
         [SoftwarePackage::new("platform-cli")],
         [SkillId::new("mandatory-one"), SkillId::new("mandatory-two")],
-        [],
+        [ServiceId::new("mandatory-service")],
     )
 }
 
@@ -125,10 +125,16 @@ fn oversized_lists_are_rejected_per_list() {
         .map(|i| SkillId::new(format!("s{i}")))
         .collect();
     assert!(skills.validate().is_err());
+
+    let mut services = spec("many");
+    services.services = (0..=MAX_ENTRIES)
+        .map(|i| ServiceId::new(format!("service-{i}")))
+        .collect();
+    assert!(services.validate().is_err());
 }
 
 #[test]
-fn blank_packages_and_skills_are_rejected() {
+fn blank_packages_skills_and_services_are_rejected() {
     let mut packages = spec("blank");
     packages.packages.push(SoftwarePackage::new("  "));
     assert!(packages.validate().is_err());
@@ -136,6 +142,90 @@ fn blank_packages_and_skills_are_rejected() {
     let mut skills = spec("blank");
     skills.agent.skills.push(SkillId::new(""));
     assert!(skills.validate().is_err());
+
+    let mut services = spec("blank");
+    services.services.push(ServiceId::new("  "));
+    assert!(services.validate().is_err());
+}
+
+#[test]
+fn normalized_limits_discount_one_copy_of_each_distinct_mandatory_entry() {
+    let baseline = Baseline::new(
+        [SoftwarePackage::new("mandatory-package")],
+        [SkillId::new("mandatory-skill")],
+        [ServiceId::new("mandatory-service")],
+    );
+    let mut normalized = spec("at the boundary");
+    normalized
+        .packages
+        .push(SoftwarePackage::new("mandatory-package"));
+    normalized
+        .packages
+        .extend((0..MAX_ENTRIES).map(|i| SoftwarePackage::new(format!("caller-package-{i}"))));
+    normalized
+        .agent
+        .skills
+        .push(SkillId::new("mandatory-skill"));
+    normalized
+        .agent
+        .skills
+        .extend((0..MAX_ENTRIES).map(|i| SkillId::new(format!("caller-skill-{i}"))));
+    normalized
+        .services
+        .push(ServiceId::new("mandatory-service"));
+    normalized
+        .services
+        .extend((0..MAX_ENTRIES).map(|i| ServiceId::new(format!("caller-service-{i}"))));
+
+    normalized
+        .validate_with_baseline(&baseline)
+        .expect("100 caller entries remain valid beside the baseline");
+
+    let mut too_many_packages = normalized.clone();
+    too_many_packages
+        .packages
+        .push(SoftwarePackage::new("caller-package-overflow"));
+    assert!(too_many_packages.validate_with_baseline(&baseline).is_err());
+
+    let mut too_many_skills = normalized.clone();
+    too_many_skills
+        .agent
+        .skills
+        .push(SkillId::new("caller-skill-overflow"));
+    assert!(too_many_skills.validate_with_baseline(&baseline).is_err());
+
+    let mut too_many_services = normalized;
+    too_many_services
+        .services
+        .push(ServiceId::new("caller-service-overflow"));
+    assert!(too_many_services.validate_with_baseline(&baseline).is_err());
+}
+
+#[test]
+fn repeated_mandatory_identifiers_cannot_bypass_normalized_limits() {
+    let baseline = Baseline::new(
+        [SoftwarePackage::new("mandatory-package")],
+        [SkillId::new("mandatory-skill")],
+        [ServiceId::new("mandatory-service")],
+    );
+
+    let mut packages = spec("duplicates");
+    packages.packages = (0..MAX_ENTRIES + 2)
+        .map(|_| SoftwarePackage::new("mandatory-package"))
+        .collect();
+    assert!(packages.validate_with_baseline(&baseline).is_err());
+
+    let mut skills = spec("duplicates");
+    skills.agent.skills = (0..MAX_ENTRIES + 2)
+        .map(|_| SkillId::new("mandatory-skill"))
+        .collect();
+    assert!(skills.validate_with_baseline(&baseline).is_err());
+
+    let mut services = spec("duplicates");
+    services.services = (0..MAX_ENTRIES + 2)
+        .map(|_| ServiceId::new("mandatory-service"))
+        .collect();
+    assert!(services.validate_with_baseline(&baseline).is_err());
 }
 
 #[test]

@@ -16,7 +16,7 @@ use std::collections::HashSet;
 
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::directory::{DirectoryQuery, RegisteredUser};
-use crate::environment::{EnvironmentProfile, ServiceId};
+use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
 use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
 use crate::session::{Session, SessionStatus};
@@ -440,8 +440,23 @@ pub trait SessionStore: Send + Sync {
 /// hold a different opinion about who may read what.
 #[async_trait::async_trait]
 pub trait EnvironmentProfileStore: Send + Sync {
-    /// Create or replace a profile.
+    /// Create a profile with a new identifier.
     async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError>;
+
+    /// Atomically replace caller-controlled content on an existing profile.
+    ///
+    /// Implementations must update only the fields carried by `content` plus
+    /// `updated_at`. The current `owner`, `created_at`, and `preferred` values
+    /// are server-owned and must survive even when they changed after the
+    /// service read the row. This operation must never upsert: `Ok(None)` means
+    /// the identifier no longer exists, while `Ok(Some(_))` returns the complete
+    /// post-update row including its current server-owned fields.
+    async fn replace_content(
+        &self,
+        id: &EnvironmentProfileId,
+        content: &EnvironmentProfileSpec,
+        updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError>;
 
     /// Read one profile, whoever owns it.
     async fn get(
