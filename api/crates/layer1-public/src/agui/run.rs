@@ -46,7 +46,7 @@ use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 
 use super::project::project;
 use super::resources::{next_frame, project_reading, Woke, POLL_INTERVAL};
-use super::Problem;
+use super::{Problem, KEEPALIVE_INTERVAL};
 
 /// One run, as a client posts it.
 #[derive(Debug, Deserialize)]
@@ -252,7 +252,7 @@ pub(super) async fn run(
     Ok(Sse::new(events(
         service, caller, id, run_id, from, watching, resources,
     ))
-    .keep_alive(KeepAlive::default()))
+    .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL)))
 }
 
 /// What the owner decided, read from the protocol's own vocabulary.
