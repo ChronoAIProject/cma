@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{FromRef, FromRequest, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -34,6 +34,7 @@ pub use problems::{HttpProblem, Problem};
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::tickets::TerminalTickets;
 use crate::{InterfaceProfile, Operation};
+use pagination::SessionPageParams;
 
 /// Base URI for problem types this interface returns.
 pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/problems";
@@ -900,6 +901,7 @@ fn json_problem_response(status: StatusCode, kind: JsonProblemKind) -> Response 
 /// beside this one.
 pub mod environments;
 mod environments_shapes;
+mod pagination;
 
 /// What somebody running the service can see and do.
 ///
@@ -1096,18 +1098,23 @@ async fn list(
     State(environments): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<axum::Extension<DelegatedCredential>>,
-) -> Result<ProjectedSessions, Problem> {
-    let sessions = service.list_sessions(&caller).await?;
+    params: Result<Query<SessionPageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<(HeaderMap, ProjectedSessions), RequestFailure> {
+    let Query(params) = params?;
+    let sessions = service
+        .list_sessions(&caller, &params.store_query())
+        .await?;
+    let headers = params.next_headers("/api/v1/sessions", sessions.next.as_ref());
     let credential = credential.map(|axum::Extension(c)| c.0);
     let views = viewed(
         &environments,
         &users,
         &caller,
         credential.as_deref(),
-        sessions,
+        sessions.items,
     )
     .await;
-    Ok(views)
+    Ok((headers, views))
 }
 
 async fn read(

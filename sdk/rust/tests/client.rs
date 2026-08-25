@@ -11,8 +11,9 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
 use cma_sdk::{
-    ApprovalDecision, Client, CreateSessionRequest, Error, Event, EventKind, RetryPolicy,
-    ScreenSnapshot, Session, SessionId, SessionInput, TerminalGeometry, Usage,
+    ApprovalDecision, Client, CreateSessionRequest, Error, Event, EventKind, MAX_PAGE_SIZE,
+    PageWalkLimits, RetryPolicy, ScreenSnapshot, Session, SessionId, SessionInput,
+    SessionPageRequest, SessionStatus, TerminalGeometry, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -331,6 +332,205 @@ async fn every_required_operation_uses_the_server_fixture_shape() {
         serde_json::from_slice::<serde_json::Value>(&requests[7].body).expect("steer body is JSON"),
         serde_json::json!({ "text": "Only inspect src/auth." })
     );
+}
+
+#[tokio::test]
+async fn list_sessions_finds_next_after_unrelated_link_header_fields() {
+    let older = SESSIONS.replace("sesn_fixture", "sesn_older");
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, SESSIONS)
+            .header(
+                "link",
+                "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\"",
+            )
+            .header(
+                "link",
+                "</api/v1/sessions?limit=50&cursor=opaque>; rel=\"next\"",
+            ),
+        StubResponse::json(StatusCode::OK, &older),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let sessions = client.list_sessions().await.expect("both pages list");
+
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        ["sesn_fixture", "sesn_older"]
+    );
+    assert_eq!(
+        stub.requests()
+            .await
+            .iter()
+            .map(|request| request.uri.to_string())
+            .collect::<Vec<_>>(),
+        [
+            "/proxy/api/v1/sessions",
+            "/proxy/api/v1/sessions?limit=50&cursor=opaque",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn list_sessions_accepts_an_unrelated_link_on_the_final_page() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, SESSIONS).header(
+        "link",
+        "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\"",
+    )])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let sessions = client.list_sessions().await.expect("the final page lists");
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(stub.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn list_session_page_exposes_filters_and_an_opaque_manual_continuation() {
+    let older = SESSIONS.replace("sesn_fixture", "sesn_older");
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, SESSIONS).header(
+            "link",
+            "</api/v1/sessions?status=running&limit=1&cursor=opaque-next>; rel=\"next\"",
+        ),
+        StubResponse::json(StatusCode::OK, &older),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+    let request = SessionPageRequest::new()
+        .with_status(SessionStatus::Running)
+        .expect("a first-page status filter is accepted")
+        .with_limit(1)
+        .expect("one is within the page bound")
+        .with_cursor("opaque start")
+        .expect("an opaque cursor is accepted");
+
+    let first = client
+        .list_session_page(request)
+        .await
+        .expect("first page lists");
+    assert_eq!(first.items[0].id.as_str(), "sesn_fixture");
+    let next = first.next.expect("first page continues");
+    assert!(
+        SessionPageRequest::continuing(next.clone())
+            .with_status(SessionStatus::Ready)
+            .is_err()
+    );
+    let last = client
+        .list_session_page(SessionPageRequest::continuing(next))
+        .await
+        .expect("manual continuation lists");
+    assert_eq!(last.items[0].id.as_str(), "sesn_older");
+    assert!(last.next.is_none());
+
+    assert_eq!(
+        stub.requests()
+            .await
+            .iter()
+            .map(|request| request.uri.to_string())
+            .collect::<Vec<_>>(),
+        [
+            "/proxy/api/v1/sessions?status=running&limit=1&cursor=opaque+start",
+            "/proxy/api/v1/sessions?status=running&limit=1&cursor=opaque-next",
+        ]
+    );
+}
+
+#[test]
+fn bounded_page_and_walk_options_reject_invalid_edges() {
+    assert!(SessionPageRequest::new().with_limit(0).is_err());
+    assert!(
+        SessionPageRequest::new()
+            .with_limit(MAX_PAGE_SIZE + 1)
+            .is_err()
+    );
+    assert!(SessionPageRequest::new().with_cursor("").is_err());
+    assert!(PageWalkLimits::new(0, 1).is_err());
+    assert!(PageWalkLimits::new(1, 0).is_err());
+}
+
+#[tokio::test]
+async fn list_sessions_enforces_page_item_and_loop_boundaries() {
+    let continuing = StubResponse::json(StatusCode::OK, SESSIONS)
+        .header("link", "</api/v1/sessions?cursor=again>; rel=\"next\"");
+    let page_stub = Stub::start([continuing.clone()]).await;
+    let (page_client, _) = stub_client(&page_stub, 1);
+    assert!(matches!(
+        page_client
+            .list_sessions_with_limits(PageWalkLimits::new(1, 10).expect("valid limits"))
+            .await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(page_stub.requests().await.len(), 1);
+
+    let two = format!("[{SESSION},{SESSION}]")
+        .replace("\"id\": \"sesn_fixture\"", "\"id\": \"sesn_second\"");
+    let item_stub = Stub::start([StubResponse::json(StatusCode::OK, &two)]).await;
+    let (item_client, _) = stub_client(&item_stub, 1);
+    assert!(matches!(
+        item_client
+            .list_sessions_with_limits(PageWalkLimits::new(2, 1).expect("valid limits"))
+            .await,
+        Err(Error::Protocol { .. })
+    ));
+
+    let loop_stub = Stub::start([continuing.clone(), continuing]).await;
+    let (loop_client, _) = stub_client(&loop_stub, 1);
+    assert!(matches!(
+        loop_client.list_sessions().await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(loop_stub.requests().await.len(), 2);
+}
+
+#[tokio::test]
+async fn list_sessions_refuses_a_link_that_could_redirect_the_bearer_credential() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, SESSIONS).header(
+        "link",
+        "<https://outside.example/api/v1/sessions?cursor=x>; rel=\"next\"",
+    )])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.list_sessions().await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(stub.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn list_sessions_refuses_a_link_to_a_different_control_plane_route() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, SESSIONS).header(
+        "link",
+        "</api/v1/environment-profiles?cursor=x>; rel=\"next\"",
+    )])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.list_sessions().await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(stub.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn list_sessions_refuses_a_malformed_entry_that_declares_next() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, SESSIONS)
+        .header("link", "/api/v1/sessions?cursor=x; rel=\"next\"")])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.list_sessions().await,
+        Err(Error::Protocol { .. })
+    ));
+    assert_eq!(stub.requests().await.len(), 1);
 }
 
 #[tokio::test]

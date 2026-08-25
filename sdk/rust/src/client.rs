@@ -1,5 +1,6 @@
 //! HTTP client, authentication, and retry policy.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -7,14 +8,15 @@ use std::time::{Duration, SystemTime};
 
 use base64::Engine;
 use futures_util::StreamExt;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue, RETRY_AFTER};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue, LINK, RETRY_AFTER};
 use reqwest::{Method, Response, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    ApprovalDecision, CreateSessionRequest, Error, EventStream, Result, ScreenSnapshot, Session,
-    SessionId, SessionInput, TerminalGeometry, Usage,
+    ApprovalDecision, CreateSessionRequest, Error, EventStream, MAX_PAGE_SIZE, Page,
+    PageContinuation, PageWalkLimits, Result, ScreenSnapshot, Session, SessionId, SessionInput,
+    SessionPageRequest, TerminalGeometry, Usage,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -289,12 +291,87 @@ impl Client {
         session.validate()
     }
 
+    /// Read one bounded session page.
+    pub async fn list_session_page(&self, page: SessionPageRequest) -> Result<Page<Session>> {
+        let url = match page.continuation() {
+            Some(continuation) => self.session_page_url(continuation.as_str())?,
+            None => {
+                let mut url = self.endpoint(&["sessions"])?;
+                if page.status().is_some() || page.limit().is_some() || page.cursor().is_some() {
+                    let mut query = url.query_pairs_mut();
+                    if let Some(status) = page.status() {
+                        query.append_pair("status", status.query_value());
+                    }
+                    if let Some(limit) = page.limit() {
+                        query.append_pair("limit", &limit.to_string());
+                    }
+                    if let Some(cursor) = page.cursor() {
+                        query.append_pair("cursor", cursor);
+                    }
+                }
+                url
+            }
+        };
+        let request = RequestSpec::new(Method::GET, url, None, false);
+        let (items, next): (Vec<Session>, Option<String>) = self
+            .execute(request, |response| async move {
+                decode_json_page(response, StatusCode::OK).await
+            })
+            .await?;
+        if items.len() > usize::from(MAX_PAGE_SIZE) {
+            return Err(Error::protocol(format!(
+                "session page exceeded the {MAX_PAGE_SIZE}-item server boundary"
+            )));
+        }
+        let items = items
+            .into_iter()
+            .map(Session::validate)
+            .collect::<Result<Vec<_>>>()?;
+        let next = match next {
+            Some(target) => {
+                self.session_page_url(&target)?;
+                Some(PageContinuation::new(target))
+            }
+            None => None,
+        };
+        Ok(Page { items, next })
+    }
+
     /// List every session visible to the current caller.
     pub async fn list_sessions(&self) -> Result<Vec<Session>> {
-        let sessions: Vec<Session> = self
-            .request_json(Method::GET, &["sessions"], None, StatusCode::OK)
-            .await?;
-        sessions.into_iter().map(Session::validate).collect()
+        self.list_sessions_with_limits(PageWalkLimits::default())
+            .await
+    }
+
+    /// List every visible session within explicit page and retained-item ceilings.
+    pub async fn list_sessions_with_limits(&self, limits: PageWalkLimits) -> Result<Vec<Session>> {
+        let mut request = SessionPageRequest::new();
+        let mut visited = HashSet::new();
+        let mut sessions = Vec::new();
+        for page_number in 1..=limits.max_pages() {
+            let page = self.list_session_page(request).await?;
+            if page.items.len() > limits.max_items().saturating_sub(sessions.len()) {
+                return Err(Error::protocol(format!(
+                    "pagination exceeded its {}-item boundary",
+                    limits.max_items()
+                )));
+            }
+            sessions.extend(page.items);
+            let Some(next) = page.next else {
+                return Ok(sessions);
+            };
+            if page_number == limits.max_pages() {
+                return Err(Error::protocol(format!(
+                    "pagination exceeded its {}-page boundary",
+                    limits.max_pages()
+                )));
+            }
+            if !visited.insert(next.as_str().to_owned()) {
+                return Err(Error::protocol("pagination repeated a continuation link"));
+            }
+            request = SessionPageRequest::continuing(next);
+        }
+        Err(Error::protocol("pagination exhausted its page boundary"))
     }
 
     /// Read one session.
@@ -517,6 +594,24 @@ impl Client {
         Ok(url)
     }
 
+    fn session_page_url(&self, target: &str) -> Result<Url> {
+        if !target.starts_with('/') || target.starts_with("//") {
+            return Err(Error::protocol(
+                "pagination next link left the control plane",
+            ));
+        }
+        let parsed = Url::parse(&format!("http://pagination.invalid{target}"))
+            .map_err(|_| Error::protocol("pagination next link was not a valid URI"))?;
+        if parsed.path() != "/api/v1/sessions" || parsed.fragment().is_some() {
+            return Err(Error::protocol(
+                "pagination next link left the session collection",
+            ));
+        }
+        let mut url = self.endpoint(&["sessions"])?;
+        url.set_query(parsed.query());
+        Ok(url)
+    }
+
     async fn execute<T, F, Fut>(&self, request: RequestSpec, decode: F) -> Result<T>
     where
         F: Fn(Response) -> Fut,
@@ -652,6 +747,85 @@ async fn decode_json<T: DeserializeOwned>(response: Response, expected: StatusCo
             "success response does not match its JSON wire shape: {error}"
         ))
     })
+}
+
+async fn decode_json_page<T: DeserializeOwned>(
+    response: Response,
+    expected: StatusCode,
+) -> Result<(T, Option<String>)> {
+    let status = response.status();
+    if !status.is_success() {
+        return Err(decode_problem(response).await);
+    }
+    if status != expected {
+        return Err(Error::protocol(format!(
+            "operation expected status {} but received {}",
+            expected.as_u16(),
+            status.as_u16()
+        )));
+    }
+    let next = response_next_link(&response)?;
+    let bytes = read_bounded(response).await?;
+    let body = serde_json::from_slice(&bytes).map_err(|error| {
+        Error::protocol(format!(
+            "success response does not match its JSON wire shape: {error}"
+        ))
+    })?;
+    Ok((body, next))
+}
+
+fn response_next_link(response: &Response) -> Result<Option<String>> {
+    for value in response.headers().get_all(LINK) {
+        let value = value
+            .to_str()
+            .map_err(|_| Error::protocol("pagination Link header was not visible ASCII"))?;
+        for entry in value.split(',') {
+            let Some(rest) = entry.trim().strip_prefix('<') else {
+                if link_declares_next(entry)? {
+                    return Err(Error::protocol("pagination next link was malformed"));
+                }
+                continue;
+            };
+            let Some((target, parameters)) = rest.split_once('>') else {
+                if link_declares_next(rest)? {
+                    return Err(Error::protocol("pagination next link was malformed"));
+                }
+                continue;
+            };
+            if link_declares_next(parameters)? {
+                return Ok(Some(target.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn link_declares_next(parameters: &str) -> Result<bool> {
+    for parameter in parameters.split(';') {
+        let Some((name, value)) = parameter.split_once('=') else {
+            continue;
+        };
+        if !name.trim().eq_ignore_ascii_case("rel") {
+            continue;
+        }
+        let value = value.trim();
+        let relations = if let Some(quoted) = value.strip_prefix('"') {
+            quoted.strip_suffix('"').ok_or_else(|| {
+                Error::protocol("pagination Link header carried a malformed relation")
+            })?
+        } else {
+            if value.is_empty() || value.contains('"') {
+                return Err(Error::protocol(
+                    "pagination Link header carried a malformed relation",
+                ));
+            }
+            value
+        };
+        return Ok(relations
+            .split_ascii_whitespace()
+            .any(|relation| relation.eq_ignore_ascii_case("next")));
+    }
+    Ok(false)
 }
 
 async fn decode_empty(response: Response, expected: StatusCode) -> Result<()> {

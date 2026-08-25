@@ -4,6 +4,7 @@ import {
   createEnvironmentProfile,
   deleteEnvironmentProfile,
   listEnvironmentProfiles,
+  listEnvironmentProfilesPage,
   preferEnvironmentProfile,
   readEnvironmentProfile,
   readServiceCatalogue,
@@ -170,6 +171,90 @@ describe('environment profile responses', () => {
 });
 
 describe('the environment profile routes', () => {
+  it('exposes one bounded profile page and follows its opaque target manually', async () => {
+    const second = { ...PROFILE, id: 'envp_2', name: 'Older profile' };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([PROFILE]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            link: '</api/v1/environment-profiles?limit=1&cursor=opaque-next>; rel="next"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([second]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    const first = await listEnvironmentProfilesPage(config, { limit: 1, cursor: 'opaque start' });
+    expect(first.items.map(({ id }) => id)).toEqual(['envp_1']);
+    const next = first.next;
+    expect(next).toBeDefined();
+    if (next === undefined) {
+      throw new Error('first page did not carry its continuation');
+    }
+    const last = await listEnvironmentProfilesPage(config, { next });
+    expect(last.items.map(({ id }) => id)).toEqual(['envp_2']);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/environment-profiles?limit=1&cursor=opaque+start',
+      '/api/v1/environment-profiles?limit=1&cursor=opaque-next',
+    ]);
+  });
+
+  it('follows profile continuation links without changing the public list shape', async () => {
+    const second = { ...PROFILE, id: 'envp_2', name: 'Older profile' };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([PROFILE]), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            link: '</api/v1/environment-profiles?limit=50&cursor=opaque>; rel="next"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([second]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+
+    const profiles = await listEnvironmentProfiles(
+      resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch }),
+    );
+
+    expect(profiles.map(({ id }) => id)).toEqual(['envp_1', 'envp_2']);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/environment-profiles',
+      '/api/v1/environment-profiles?limit=50&cursor=opaque',
+    ]);
+  });
+
+  it('reads the complete post-write profile collection from the preference action', async () => {
+    const previous = { ...PROFILE, preferred: false };
+    const unchanged = { ...PROFILE, id: 'envp_2', preferred: false };
+    const selected = { ...PROFILE, id: 'envp_51', preferred: true };
+    const fetch = vi.fn().mockResolvedValue(json([previous, unchanged, selected]));
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    const profiles = await preferEnvironmentProfile(config, selected.id);
+
+    expect(profiles.map(({ id, preferred }) => ({ id, preferred }))).toEqual([
+      { id: 'envp_1', preferred: false },
+      { id: 'envp_2', preferred: false },
+      { id: 'envp_51', preferred: true },
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('covers list, read, create, replace, delete, prefer, and both catalogues', async () => {
     const { calls, config } = service();
 
@@ -255,6 +340,9 @@ describe('the environment profile routes', () => {
     const cma = new Cma(config);
 
     await expect(cma.listEnvironmentProfiles()).resolves.toHaveLength(1);
+    await expect(cma.listEnvironmentProfilesPage({ limit: 1 })).resolves.toMatchObject({
+      items: [{ id: 'envp_1' }],
+    });
     await expect(cma.readSkillCatalogue()).resolves.toMatchObject({ skills: expect.any(Array) });
   });
 });

@@ -17,7 +17,18 @@
 import { toCapabilities } from './agui/index.js';
 import type { ResolvedConfig } from './config.js';
 import { ProtocolError, ValidationError } from './errors.js';
-import { request, requestBytes, requestVoid, type OperationOptions } from './http.js';
+import {
+  pageTarget,
+  request,
+  requestBytes,
+  requestPage,
+  requestPages,
+  requestVoid,
+  type OperationOptions,
+  type Page,
+  type PageRequest,
+  type PageWalkOptions,
+} from './http.js';
 import { PRICING_WIRE } from './wire.js';
 import type {
   CredentialMode,
@@ -59,6 +70,16 @@ const LIFECYCLES: readonly SessionLifecycle[] = [
   'idle',
   'terminated',
 ];
+
+const SESSION_COLLECTION = '/api/v1/sessions';
+
+/** Lifecycle values the server accepts as an exact session-list filter. */
+export type SessionListStatus = Exclude<SessionLifecycle, 'unknown'>;
+
+/** Position and optional exact status filter for one bounded session page. */
+export interface SessionPageRequest extends PageRequest {
+  readonly status?: SessionListStatus;
+}
 
 /** Exact `StopReason` spellings serialized by layer2-core. */
 export const STOP_REASONS = [
@@ -320,17 +341,33 @@ function rotatedAt(raw: unknown): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
-/** Sessions belonging to the authenticated subject, newest first. */
-export async function listSessions(
-  config: ResolvedConfig,
-  options: OperationOptions = {},
-): Promise<readonly Session[]> {
-  const body = await request(config, '/api/v1/sessions', { ...options, expectedStatus: 200 });
+function sessionList(body: unknown): readonly Session[] {
   const items = (body as { sessions?: unknown })?.sessions ?? body;
   if (!Array.isArray(items)) {
     throw new ProtocolError('session list was not a list');
   }
   return items.map(toSession);
+}
+
+/** Read one bounded page of sessions belonging to the authenticated subject. */
+export async function listSessionPage(
+  config: ResolvedConfig,
+  page: SessionPageRequest = {},
+  options: OperationOptions = {},
+): Promise<Page<Session>> {
+  if (page.status !== undefined && !LIFECYCLES.includes(page.status)) {
+    throw new ValidationError('session page status was not a known lifecycle');
+  }
+  const target = pageTarget(SESSION_COLLECTION, page, { status: page.status });
+  return requestPage(config, SESSION_COLLECTION, target, sessionList, options);
+}
+
+/** Sessions belonging to the authenticated subject, newest first. */
+export async function listSessions(
+  config: ResolvedConfig,
+  options: PageWalkOptions = {},
+): Promise<readonly Session[]> {
+  return requestPages(config, SESSION_COLLECTION, sessionList, options);
 }
 
 /** The authenticated subject's current live-session allowance. */

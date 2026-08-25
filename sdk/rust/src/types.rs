@@ -177,6 +177,176 @@ pub enum SessionStatus {
     Terminated,
 }
 
+impl SessionStatus {
+    pub(crate) const fn query_value(self) -> &'static str {
+        match self {
+            Self::Provisioning => "provisioning",
+            Self::Ready => "ready",
+            Self::Running => "running",
+            Self::Rotating => "rotating",
+            Self::Idle => "idle",
+            Self::Terminated => "terminated",
+        }
+    }
+}
+
+/// Smallest page accepted by CMA's bounded collections.
+pub const MIN_PAGE_SIZE: u16 = 1;
+
+/// Largest page accepted by CMA's bounded collections.
+pub const MAX_PAGE_SIZE: u16 = 200;
+
+/// Opaque, route-bound target for the next page returned by CMA.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PageContinuation(String);
+
+impl PageContinuation {
+    pub(crate) fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    /// Borrow the opaque target for logging or persistence without interpreting it.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// One bounded collection response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page<T> {
+    /// Validated rows in stable server order.
+    pub items: Vec<T>,
+    /// Route-bound target for another page, when more rows exist.
+    pub next: Option<PageContinuation>,
+}
+
+/// Exact filter and position for one bounded session page.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionPageRequest {
+    status: Option<SessionStatus>,
+    limit: Option<u16>,
+    cursor: Option<String>,
+    continuation: Option<PageContinuation>,
+}
+
+impl SessionPageRequest {
+    /// Start a first-page request with no filter and the server's default limit.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Narrow the first page to one exact lifecycle state.
+    pub fn with_status(mut self, status: SessionStatus) -> Result<Self> {
+        if self.continuation.is_some() {
+            return Err(Error::protocol(
+                "a pagination continuation cannot be combined with a status filter",
+            ));
+        }
+        self.status = Some(status);
+        Ok(self)
+    }
+
+    /// Set a first-page size from 1 through 200.
+    pub fn with_limit(mut self, limit: u16) -> Result<Self> {
+        if !(MIN_PAGE_SIZE..=MAX_PAGE_SIZE).contains(&limit) {
+            return Err(Error::protocol(format!(
+                "session page limit must be from {MIN_PAGE_SIZE} through {MAX_PAGE_SIZE}"
+            )));
+        }
+        if self.continuation.is_some() {
+            return Err(Error::protocol(
+                "a pagination continuation cannot be combined with a page limit",
+            ));
+        }
+        self.limit = Some(limit);
+        Ok(self)
+    }
+
+    /// Resume a first-page query from an opaque cursor supplied out of band.
+    pub fn with_cursor(mut self, cursor: impl Into<String>) -> Result<Self> {
+        let cursor = cursor.into();
+        if cursor.is_empty() {
+            return Err(Error::protocol("session page cursor must not be empty"));
+        }
+        if self.continuation.is_some() {
+            return Err(Error::protocol(
+                "a pagination continuation cannot be combined with a cursor",
+            ));
+        }
+        self.cursor = Some(cursor);
+        Ok(self)
+    }
+
+    /// Follow a route-bound continuation returned by [`Page::next`].
+    pub fn continuing(continuation: PageContinuation) -> Self {
+        Self {
+            continuation: Some(continuation),
+            ..Self::default()
+        }
+    }
+
+    /// Exact lifecycle filter, when this is a first-page request.
+    pub fn status(&self) -> Option<SessionStatus> {
+        self.status
+    }
+
+    /// Requested first-page size, or `None` for the server default.
+    pub fn limit(&self) -> Option<u16> {
+        self.limit
+    }
+
+    /// Opaque first-page cursor supplied by the caller.
+    pub fn cursor(&self) -> Option<&str> {
+        self.cursor.as_deref()
+    }
+
+    /// Server-issued continuation target, when following a previous page.
+    pub fn continuation(&self) -> Option<&PageContinuation> {
+        self.continuation.as_ref()
+    }
+}
+
+/// Finite resource ceilings for the compatibility list-all session operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageWalkLimits {
+    max_pages: usize,
+    max_items: usize,
+}
+
+impl PageWalkLimits {
+    /// Build non-zero page and retained-item ceilings.
+    pub fn new(max_pages: usize, max_items: usize) -> Result<Self> {
+        if max_pages == 0 || max_items == 0 {
+            return Err(Error::protocol(
+                "pagination walk limits must both be non-zero",
+            ));
+        }
+        Ok(Self {
+            max_pages,
+            max_items,
+        })
+    }
+
+    /// Maximum responses accepted by one list-all operation.
+    pub fn max_pages(self) -> usize {
+        self.max_pages
+    }
+
+    /// Maximum validated rows retained by one list-all operation.
+    pub fn max_items(self) -> usize {
+        self.max_items
+    }
+}
+
+impl Default for PageWalkLimits {
+    fn default() -> Self {
+        Self {
+            max_pages: 100,
+            max_items: 20_000,
+        }
+    }
+}
+
 /// Operational health reported beside lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

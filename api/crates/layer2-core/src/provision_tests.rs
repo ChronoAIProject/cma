@@ -591,7 +591,7 @@ async fn an_unknown_kernel_is_refused_immediately_rather_than_asynchronously() {
 
     assert!(result.is_err());
     assert!(
-        store.list_all().await.expect("readable").is_empty(),
+        store.scan_all().await.expect("readable").is_empty(),
         "a refused request must leave no record behind"
     );
 }
@@ -802,7 +802,7 @@ async fn a_session_its_kernel_cannot_be_is_refused_while_someone_is_listening() 
         crate::error::CoreError::CapabilityUnsupported("conversation".into())
     );
     assert!(
-        store.list_all().await.expect("readable").is_empty(),
+        store.scan_all().await.expect("readable").is_empty(),
         "a refused request must leave no record behind"
     );
     assert_eq!(

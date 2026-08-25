@@ -17,11 +17,18 @@ import * as operations from './operations.js';
 import * as resources from './resources.js';
 import * as sessions from './sessions.js';
 import type { SessionResourceStatus } from './resources.js';
-import type { CreateSession, PricingQuote, SessionAllowance, SessionSpend } from './sessions.js';
-import type { OperationOptions } from './http.js';
+import type {
+  CreateSession,
+  PricingQuote,
+  SessionAllowance,
+  SessionPageRequest,
+  SessionSpend,
+} from './sessions.js';
+import type { OperationOptions, Page, PageWalkOptions } from './http.js';
 import type {
   EnvironmentProfile,
   EnvironmentProfileDraft,
+  EnvironmentProfilePageRequest,
   ServiceCatalogue,
   SkillCatalogue,
 } from './environment.js';
@@ -58,8 +65,16 @@ export class Cma {
   }
 
   /** Every environment profile owned by the authenticated subject. */
-  listEnvironmentProfiles(options: OperationOptions = {}): Promise<readonly EnvironmentProfile[]> {
+  listEnvironmentProfiles(options: PageWalkOptions = {}): Promise<readonly EnvironmentProfile[]> {
     return environment.listEnvironmentProfiles(this.#config, options);
+  }
+
+  /** One bounded profile page, with an opaque continuation when more exist. */
+  listEnvironmentProfilesPage(
+    page: EnvironmentProfilePageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<EnvironmentProfile>> {
+    return environment.listEnvironmentProfilesPage(this.#config, page, options);
   }
 
   /** Read one owned environment profile. */
@@ -89,7 +104,7 @@ export class Cma {
     return environment.deleteEnvironmentProfile(this.#config, id, options);
   }
 
-  /** Set the preferred profile, or clear the preference with `null`. */
+  /** Set the preference and receive the complete post-write profile collection. */
   preferEnvironmentProfile(
     id: string | null,
     options: OperationOptions = {},
@@ -108,8 +123,16 @@ export class Cma {
   }
 
   /** Sessions belonging to the authenticated subject, newest first. */
-  listSessions(options: OperationOptions = {}): Promise<readonly Session[]> {
+  listSessions(options: PageWalkOptions = {}): Promise<readonly Session[]> {
     return sessions.listSessions(this.#config, options);
+  }
+
+  /** One bounded session page, optionally narrowed to one exact lifecycle. */
+  listSessionPage(
+    page: SessionPageRequest = {},
+    options: OperationOptions = {},
+  ): Promise<Page<Session>> {
+    return sessions.listSessionPage(this.#config, page, options);
   }
 
   /** The authenticated subject's advisory live-session allowance. */

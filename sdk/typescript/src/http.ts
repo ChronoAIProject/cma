@@ -13,6 +13,14 @@ import {
 } from './errors.js';
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const DEFAULT_MAX_PAGES = 100;
+const DEFAULT_MAX_ITEMS = 20_000;
+
+/** Smallest page a bounded collection accepts. */
+export const MIN_PAGE_SIZE = 1;
+
+/** Largest page a bounded collection accepts. */
+export const MAX_PAGE_SIZE = 200;
 
 /** Deadline and cancellation controls shared by every operation. */
 export interface OperationOptions {
@@ -27,6 +35,32 @@ export interface RequestOptions extends OperationOptions {
   readonly expectedStatus?: number | readonly number[];
 }
 
+declare const continuationBrand: unique symbol;
+
+/** Opaque, route-bound target for the next page returned by CMA. */
+export type PageContinuation = string & { readonly [continuationBrand]: true };
+
+/** Caller-controlled position within one bounded collection. */
+export interface PageRequest {
+  readonly limit?: number;
+  readonly cursor?: string;
+  readonly next?: PageContinuation;
+}
+
+/** One bounded collection response. */
+export interface Page<T> {
+  readonly items: readonly T[];
+  readonly next?: PageContinuation;
+}
+
+/** Resource ceilings for a compatibility operation that aggregates every page. */
+export interface PageWalkOptions extends OperationOptions {
+  /** Maximum responses to accept before refusing an unexpectedly long walk. */
+  readonly maxPages?: number;
+  /** Maximum decoded rows to retain across the complete operation. */
+  readonly maxItems?: number;
+}
+
 /** Open and validate an HTTP response without consuming its successful body. */
 export async function requestResponse(
   config: ResolvedConfig,
@@ -35,7 +69,7 @@ export async function requestResponse(
 ): Promise<Response> {
   return withDeadline(config, options, async (signal) => {
     const response = await send(config, path, options, signal);
-    await requireSuccess(response, options.expectedStatus);
+    await requireSuccess(response, options.expectedStatus, signal);
     return response;
   });
 }
@@ -48,11 +82,11 @@ export async function request(
 ): Promise<unknown> {
   return withDeadline(config, options, async (signal) => {
     const response = await send(config, path, options, signal);
-    await requireSuccess(response, options.expectedStatus);
+    await requireSuccess(response, options.expectedStatus, signal);
     if (response.status === 204) {
       return null;
     }
-    const text = await readText(response);
+    const text = await readText(response, signal);
     if (text.trim() === '') {
       return null;
     }
@@ -64,6 +98,110 @@ export async function request(
   });
 }
 
+/**
+ * Build a bounded collection target without interpreting an opaque continuation.
+ *
+ * A continuation is already a complete route-bound target and therefore cannot
+ * be combined with first-page filters. The server owns everything inside it.
+ */
+export function pageTarget(
+  collectionPath: string,
+  page: PageRequest = {},
+  filters: Readonly<Record<string, string | undefined>> = {},
+): string {
+  validateCollectionPath(collectionPath);
+  const hasFilters = Object.values(filters).some((value) => value !== undefined);
+  if (page.next !== undefined) {
+    if (page.limit !== undefined || page.cursor !== undefined || hasFilters) {
+      throw new ValidationError('a pagination continuation cannot be combined with page filters');
+    }
+    return validatePageTarget(page.next, collectionPath);
+  }
+
+  const params = new URLSearchParams();
+  for (const [name, value] of Object.entries(filters)) {
+    if (value !== undefined) {
+      params.set(name, value);
+    }
+  }
+  if (page.limit !== undefined) {
+    if (
+      !Number.isSafeInteger(page.limit) ||
+      page.limit < MIN_PAGE_SIZE ||
+      page.limit > MAX_PAGE_SIZE
+    ) {
+      throw new ValidationError(
+        `page limit must be an integer from ${String(MIN_PAGE_SIZE)} through ${String(MAX_PAGE_SIZE)}`,
+      );
+    }
+    params.set('limit', String(page.limit));
+  }
+  if (page.cursor !== undefined) {
+    if (page.cursor === '') {
+      throw new ValidationError('page cursor must not be empty');
+    }
+    params.set('cursor', page.cursor);
+  }
+  const query = params.toString();
+  return query === '' ? collectionPath : `${collectionPath}?${query}`;
+}
+
+/** Fetch and validate exactly one bounded collection page. */
+export async function requestPage<T>(
+  config: ResolvedConfig,
+  collectionPath: string,
+  target: string,
+  decodePage: (body: unknown) => readonly T[],
+  options: OperationOptions = {},
+): Promise<Page<T>> {
+  validateCollectionPath(collectionPath);
+  const checkedTarget = validatePageTarget(target, collectionPath);
+  return withDeadline(config, options, (signal) =>
+    fetchPage(config, collectionPath, checkedTarget, decodePage, signal),
+  );
+}
+
+/** Walk one array collection through the server's RFC 8288 next links. */
+export async function requestPages<T>(
+  config: ResolvedConfig,
+  path: string,
+  decodePage: (body: unknown) => readonly T[],
+  options: PageWalkOptions = {},
+): Promise<readonly T[]> {
+  const collectionPath = path.split('?', 1)[0];
+  if (collectionPath === undefined) {
+    throw new ValidationError('paginated request paths must begin with a slash');
+  }
+  validateCollectionPath(collectionPath);
+  const first = validatePageTarget(path, collectionPath);
+  const maxPages = walkBoundary(options.maxPages, DEFAULT_MAX_PAGES, 'maxPages');
+  const maxItems = walkBoundary(options.maxItems, DEFAULT_MAX_ITEMS, 'maxItems');
+
+  return withDeadline(config, options, async (signal) => {
+    const visited = new Set<string>();
+    const items: T[] = [];
+    let pages = 0;
+    let next: string | undefined = first;
+    while (next !== undefined) {
+      if (pages >= maxPages) {
+        throw new ProtocolError(`pagination exceeded its ${String(maxPages)}-page boundary`);
+      }
+      if (visited.has(next)) {
+        throw new ProtocolError('pagination repeated a continuation link');
+      }
+      visited.add(next);
+      const page: Page<T> = await fetchPage(config, collectionPath, next, decodePage, signal);
+      pages += 1;
+      if (page.items.length > maxItems - items.length) {
+        throw new ProtocolError(`pagination exceeded its ${String(maxItems)}-item boundary`);
+      }
+      items.push(...page.items);
+      next = page.next;
+    }
+    return items;
+  });
+}
+
 /** Make one request whose successful response must not carry a body. */
 export async function requestVoid(
   config: ResolvedConfig,
@@ -72,8 +210,8 @@ export async function requestVoid(
 ): Promise<void> {
   await withDeadline(config, options, async (signal) => {
     const response = await send(config, path, options, signal);
-    await requireSuccess(response, options.expectedStatus);
-    const text = await readText(response);
+    await requireSuccess(response, options.expectedStatus, signal);
+    const text = await readText(response, signal);
     if (text.trim() !== '') {
       throw new ProtocolError(`HTTP ${String(response.status)} unexpectedly carried a body`);
     }
@@ -88,8 +226,8 @@ export async function requestBytes(
 ): Promise<Uint8Array> {
   return withDeadline(config, options, async (signal) => {
     const response = await send(config, path, options, signal);
-    await requireSuccess(response, options.expectedStatus);
-    return readBytes(response);
+    await requireSuccess(response, options.expectedStatus, signal);
+    return readBytes(response, signal);
   });
 }
 
@@ -115,22 +253,33 @@ export async function withDeadline<T>(
     timedOut = true;
     controller.abort();
   }, timeoutMs);
+  let rejectForAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    rejectForAbort = () => reject(abortError(controller.signal));
+    controller.signal.addEventListener('abort', rejectForAbort, { once: true });
+  });
 
   try {
-    return await operation(controller.signal);
+    return await Promise.race([
+      Promise.resolve().then(() => operation(controller.signal)),
+      aborted,
+    ]);
   } catch (cause) {
-    if (cause instanceof CmaError) {
-      throw cause;
-    }
     if (isAborted(options.signal)) {
       throw new RequestAborted(undefined, { cause });
     }
     if (timedOut) {
       throw new TimeoutError(timeoutMs, { cause });
     }
+    if (cause instanceof CmaError) {
+      throw cause;
+    }
     throw new TransportError(`cannot reach the control plane: ${messageOf(cause)}`, { cause });
   } finally {
     clearTimeout(timer);
+    if (rejectForAbort !== undefined) {
+      controller.signal.removeEventListener('abort', rejectForAbort);
+    }
     options.signal?.removeEventListener('abort', onAbort);
   }
 }
@@ -165,12 +314,65 @@ async function send(
   });
 }
 
+async function responseJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  const text = await readText(response, signal);
+  if (text.trim() === '') {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (cause) {
+    throw new ProtocolError('success response was not valid JSON', { cause });
+  }
+}
+
+function nextPagePath(link: string | null, collectionPath: string): PageContinuation | undefined {
+  if (link === null) {
+    return undefined;
+  }
+  for (const entry of link.split(',')) {
+    const match = /^\s*<([^>]*)>(.*)$/.exec(entry);
+    if (match === null) {
+      if (linkRelations(entry)?.includes('next') === true) {
+        throw new ProtocolError('pagination next link was malformed');
+      }
+      continue;
+    }
+    const target = match[1];
+    const parameters = match[2] ?? '';
+    if (linkRelations(parameters)?.includes('next') !== true) {
+      continue;
+    }
+    if (target === undefined || !target.startsWith(`${collectionPath}?`) || target.includes('#')) {
+      throw new ProtocolError('pagination next link left its collection');
+    }
+    return target as PageContinuation;
+  }
+  return undefined;
+}
+
+function linkRelations(parameters: string): readonly string[] | undefined {
+  const marker = /(?:^|;)\s*rel\s*=/i.exec(parameters);
+  if (marker === null) {
+    return undefined;
+  }
+  const relation = /(?:^|;)\s*rel\s*=\s*(?:"([^"]*)"|([^";\s]+))\s*(?=;|$)/i.exec(parameters);
+  if (relation === null) {
+    throw new ProtocolError('pagination Link header carried a malformed relation');
+  }
+  return (relation[1] ?? relation[2] ?? '')
+    .split(/\s+/)
+    .filter((name) => name !== '')
+    .map((name) => name.toLowerCase());
+}
+
 async function requireSuccess(
   response: Response,
   expected: number | readonly number[] | undefined,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!response.ok) {
-    throw await errorFromResponse(response);
+    throw await errorFromResponse(response, signal);
   }
   if (expected === undefined) {
     return;
@@ -184,8 +386,11 @@ async function requireSuccess(
 }
 
 /** Decode one RFC 9457-style failure without inferring types from prose. */
-export async function errorFromResponse(response: Response): Promise<ApiError | ProtocolError> {
-  const text = await readText(response);
+export async function errorFromResponse(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<ApiError | ProtocolError> {
+  const text = await readText(response, signal);
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -238,8 +443,8 @@ export async function errorFromResponse(response: Response): Promise<ApiError | 
   return new ApiError(response.status, detail, code);
 }
 
-async function readText(response: Response): Promise<string> {
-  const bytes = await readBytes(response);
+async function readText(response: Response, signal?: AbortSignal): Promise<string> {
+  const bytes = await readBytes(response, signal);
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch (cause) {
@@ -247,7 +452,7 @@ async function readText(response: Response): Promise<string> {
   }
 }
 
-async function readBytes(response: Response): Promise<Uint8Array> {
+async function readBytes(response: Response, signal?: AbortSignal): Promise<Uint8Array> {
   const declared = contentLength(response);
   if (declared !== undefined && declared > MAX_RESPONSE_BYTES) {
     throw new ProtocolError(`response exceeds the ${String(MAX_RESPONSE_BYTES)}-byte boundary`);
@@ -261,7 +466,7 @@ async function readBytes(response: Response): Promise<Uint8Array> {
   let size = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readChunk(reader, signal);
       if (done) {
         break;
       }
@@ -273,6 +478,9 @@ async function readBytes(response: Response): Promise<Uint8Array> {
       chunks.push(value);
     }
   } finally {
+    if (signal?.aborted === true) {
+      await reader.cancel(signal.reason).catch(() => undefined);
+    }
     reader.releaseLock();
   }
 
@@ -283,6 +491,83 @@ async function readBytes(response: Response): Promise<Uint8Array> {
     offset += chunk.byteLength;
   }
   return body;
+}
+
+async function readChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal | undefined,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal === undefined) {
+    return reader.read();
+  }
+  if (signal.aborted) {
+    throw abortError(signal);
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (complete: () => void) => {
+      if (!settled) {
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        complete();
+      }
+    };
+    const onAbort = () => finish(() => reject(abortError(signal)));
+    signal.addEventListener('abort', onAbort, { once: true });
+    reader.read().then(
+      (result) => finish(() => resolve(result)),
+      (cause: unknown) => finish(() => reject(cause)),
+    );
+  });
+}
+
+async function fetchPage<T>(
+  config: ResolvedConfig,
+  collectionPath: string,
+  target: string,
+  decodePage: (body: unknown) => readonly T[],
+  signal: AbortSignal,
+): Promise<Page<T>> {
+  const response = await send(config, target, { expectedStatus: 200 }, signal);
+  await requireSuccess(response, 200, signal);
+  const items = decodePage(await responseJson(response, signal));
+  if (items.length > MAX_PAGE_SIZE) {
+    throw new ProtocolError(
+      `pagination page exceeded the ${String(MAX_PAGE_SIZE)}-item server boundary`,
+    );
+  }
+  const next = nextPagePath(response.headers.get('link'), collectionPath);
+  return next === undefined ? { items } : { items, next };
+}
+
+function validateCollectionPath(path: string): void {
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('?') || path.includes('#')) {
+    throw new ValidationError('paginated collection paths must be absolute paths without a query');
+  }
+}
+
+function validatePageTarget(target: string, collectionPath: string): string {
+  if (
+    (target !== collectionPath && !target.startsWith(`${collectionPath}?`)) ||
+    target.includes('#')
+  ) {
+    throw new ValidationError('pagination target left its collection');
+  }
+  return target;
+}
+
+function walkBoundary(value: number | undefined, fallback: number, name: string): number {
+  const chosen = value ?? fallback;
+  if (!Number.isSafeInteger(chosen) || chosen <= 0) {
+    throw new ValidationError(`${name} must be a positive safe integer`);
+  }
+  return chosen;
+}
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('the operation was aborted', 'AbortError');
 }
 
 function contentLength(response: Response): number | undefined {

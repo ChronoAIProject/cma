@@ -16,9 +16,10 @@ use axum::{
 };
 use layer2_core::{
     AgentConfiguration, Baseline, Deployment, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentProfileService, EnvironmentProfileStore, Event, PlatformSettingsService, Reserved,
-    ScreenFactory, ScreenModel, ScreenSnapshot, SessionId, SessionPorts, SessionRecord,
-    SessionService, SessionStore, StoreError, StoredEvent, SubjectId, TerminalGeometry,
+    EnvironmentProfileService, EnvironmentProfileStore, Event, Page, PageRequest,
+    PlatformSettingsService, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, SessionId,
+    SessionListQuery, SessionPorts, SessionRecord, SessionService, SessionStore, StoreError,
+    StoredEvent, SubjectId, TerminalGeometry,
 };
 use tokio::sync::{Mutex, Semaphore};
 
@@ -139,16 +140,26 @@ impl SessionStore for NoSessions {
         Ok(None)
     }
 
-    async fn list_for(&self, _owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
-        Ok(Vec::new())
+    async fn list_for(
+        &self,
+        _owner: &SubjectId,
+        _query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError> {
+        Ok(Page {
+            items: Vec::new(),
+            next: None,
+        })
     }
 
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
         Ok(Reserved::default())
     }
 
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
-        Ok(Vec::new())
+    async fn list_all(&self, _query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
+        Ok(Page {
+            items: Vec::new(),
+            next: None,
+        })
     }
 
     async fn delete(&self, _id: &SessionId) -> Result<(), StoreError> {
@@ -201,8 +212,35 @@ impl EnvironmentProfileStore for NoProfiles {
         Ok(None)
     }
 
-    async fn list_for(&self, _owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
-        Ok(Vec::new())
+    async fn list_for(
+        &self,
+        _owner: &SubjectId,
+        _page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError> {
+        Ok(Page {
+            items: Vec::new(),
+            next: None,
+        })
+    }
+
+    async fn set_preferred(
+        &self,
+        _owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError> {
+        if chosen.is_some() {
+            return Err(StoreError::Malformed(
+                "an empty store has no selectable profile".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn preferred_for(
+        &self,
+        _owner: &SubjectId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        Ok(None)
     }
 
     async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
