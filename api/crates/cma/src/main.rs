@@ -70,6 +70,10 @@ fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     ]
 }
 
+fn interface_is_served(interface: &dyn InterfaceProfile) -> bool {
+    !matches!(interface.interface_id(), "mcp" | "a2a")
+}
+
 /// Compose the REST surface before protocol-specific and browser routes join it.
 ///
 /// The three Layer 1 routers have different state, so the binary is where they
@@ -196,11 +200,19 @@ async fn main() {
     );
 
     for iface in interfaces() {
-        tracing::info!(
-            interface = iface.interface_id(),
-            operations = iface.operations().len(),
-            "interface projected"
-        );
+        if interface_is_served(iface.as_ref()) {
+            tracing::info!(
+                interface = iface.interface_id(),
+                operations = iface.operations().len(),
+                "interface served"
+            );
+        } else {
+            tracing::info!(
+                interface = iface.interface_id(),
+                operations = iface.operations().len(),
+                "interface declared, not yet served"
+            );
+        }
     }
 
     let adapters = crate::kernels::registry(&config);
@@ -450,6 +462,8 @@ async fn main() {
                     tickets: Arc::clone(&tickets),
                 },
             ))
+            .merge(layer1_public::mcp::router())
+            .merge(layer1_public::a2a::router())
             .merge(auth::router(Arc::clone(&auth_state)))
             // Ordered deliberately. A layer added later wraps the ones before it,
             // so identity is established first and recording sees both who called
@@ -510,6 +524,10 @@ async fn shutdown_signal() {
 #[cfg(test)]
 #[path = "rest_contract_tests.rs"]
 mod rest_contract_tests;
+
+#[cfg(test)]
+#[path = "interface_contract_tests.rs"]
+mod interface_contract_tests;
 
 #[cfg(test)]
 mod tests {
