@@ -289,9 +289,10 @@ impl EnvironmentProfileService {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
-        // Validated before the baseline is merged, so a caller is never told
-        // their request is too large because of entries the platform added.
-        spec.validate()?;
+        // One mandatory occurrence per distinct identity is deployment-owned.
+        // This accepts 100 caller entries both before and after the baseline is
+        // rendered into an echo, without letting duplicates evade the bound.
+        spec.validate_with_baseline(&self.baseline)?;
         self.baseline.apply(&mut spec);
         self.settle_kernel(&mut spec);
 
@@ -436,7 +437,7 @@ impl EnvironmentProfileService {
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
         let existing = self.owned(caller, id).await?;
-        spec.validate()?;
+        spec.validate_with_baseline(&self.baseline)?;
         // Applied again on every write: this is what makes removing a mandatory
         // entry impossible rather than merely discouraged.
         self.baseline.apply(&mut spec);
@@ -451,22 +452,16 @@ impl EnvironmentProfileService {
             return Ok(normalized_existing);
         }
 
-        let profile = EnvironmentProfile {
-            id: normalized_existing.id,
-            owner: normalized_existing.owner,
-            name: spec.name,
-            variables: spec.variables,
-            packages: spec.packages,
-            agent: spec.agent,
-            services: spec.services,
-            agent_notes: spec.agent_notes,
-            created_at: normalized_existing.created_at,
-            updated_at: now_rfc3339(),
-            // Carried across an edit. Editing a profile is not changing the
-            // client's preselection.
-            preferred: normalized_existing.preferred,
-        };
-        self.store.upsert(&profile).await.map_err(store_failed)?;
+        let updated_at = now_rfc3339();
+        let profile = self
+            .store
+            .replace_content(id, &spec, &updated_at)
+            .await
+            .map_err(store_failed)?
+            .ok_or(CoreError::EnvironmentProfileNotFound)?;
+        // The store preserves server-owned state atomically and returns what is
+        // current after the write, including a preference changed concurrently.
+        let profile = self.normalize_profile(profile);
         self.warn_ungranted(caller, None, &profile.services).await;
         self.warn_out_of_bounds(caller, profile.agent.size).await;
         tracing::info!(profile_id = %profile.id, owner = %profile.owner, "environment profile replaced");

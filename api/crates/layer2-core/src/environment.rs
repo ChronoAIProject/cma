@@ -16,7 +16,7 @@
 //! * **Values are never rendered.** A variable's value is exactly the place a
 //!   caller will put a token, so `Debug` redacts it and nothing here logs one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -143,9 +143,22 @@ pub struct EnvironmentProfileSpec {
 impl EnvironmentProfileSpec {
     /// Reject anything that cannot be stored or handed to a runtime.
     ///
-    /// Runs before the baseline is applied, so a caller is never told their
-    /// request is too large because of entries the platform added.
+    /// This baseline-free form is useful to code that owns no deployment
+    /// configuration. Profile services use `validate_with_baseline` so a
+    /// normalized response remains echoable after mandatory entries are added.
     pub fn validate(&self) -> Result<(), CoreError> {
+        self.validate_with_baseline(&Baseline::default())
+    }
+
+    /// Reject invalid content while treating one copy of each mandatory entry
+    /// as deployment-owned rather than caller-controlled.
+    ///
+    /// GET includes today's baseline, so the same validator must accept both a
+    /// fresh request with 100 caller entries and an exact echo of its normalized
+    /// response. Only one occurrence per distinct mandatory identity is
+    /// discounted; repeated mandatory identifiers still consume the caller's
+    /// bound and cannot be used to grow a request without limit.
+    pub fn validate_with_baseline(&self, baseline: &Baseline) -> Result<(), CoreError> {
         let name = self.name.trim();
         if name.is_empty() {
             return Err(CoreError::InvalidRequest("name must not be empty".into()));
@@ -156,9 +169,6 @@ impl EnvironmentProfileSpec {
             )));
         }
         check_length("variables", self.variables.len())?;
-        check_length("packages", self.packages.len())?;
-        check_length("skills", self.agent.skills.len())?;
-        check_length("services", self.services.len())?;
 
         let mut seen: Vec<&str> = Vec::with_capacity(self.variables.len());
         for variable in &self.variables {
@@ -205,8 +215,41 @@ impl EnvironmentProfileSpec {
                 ));
             }
         }
+
+        check_baseline_aware_length(
+            "packages",
+            self.packages.iter().map(|package| package.name.as_str()),
+            baseline
+                .packages
+                .iter()
+                .map(|package| package.name.as_str()),
+        )?;
+        check_baseline_aware_length(
+            "skills",
+            self.agent.skills.iter().map(|skill| skill.0.as_str()),
+            baseline.skills.iter().map(|skill| skill.0.as_str()),
+        )?;
+        check_baseline_aware_length(
+            "services",
+            self.services.iter().map(|service| service.0.as_str()),
+            baseline.services.iter().map(|service| service.0.as_str()),
+        )?;
         Ok(())
     }
+}
+
+fn check_baseline_aware_length<'entry, 'mandatory>(
+    what: &str,
+    entries: impl IntoIterator<Item = &'entry str>,
+    mandatory: impl IntoIterator<Item = &'mandatory str>,
+) -> Result<(), CoreError> {
+    let mandatory: HashSet<&str> = mandatory.into_iter().collect();
+    let mut discounted = HashSet::new();
+    let caller_controlled = entries
+        .into_iter()
+        .filter(|entry| !(mandatory.contains(*entry) && discounted.insert(*entry)))
+        .count();
+    check_length(what, caller_controlled)
 }
 
 fn check_length(what: &str, len: usize) -> Result<(), CoreError> {
@@ -292,6 +335,22 @@ impl EnvironmentProfile {
             services: self.services.clone(),
             agent_notes: self.agent_notes.clone(),
         }
+    }
+
+    /// Replace caller-controlled content without touching server-owned state.
+    ///
+    /// Store implementations use this in their in-memory doubles to mirror the
+    /// atomic database operation. Identity, ownership, creation time, and
+    /// client preselection remain exactly as they are at the instant of the
+    /// replacement.
+    pub fn apply_content(&mut self, content: &EnvironmentProfileSpec, updated_at: &str) {
+        self.name = content.name.clone();
+        self.agent = content.agent.clone();
+        self.variables = content.variables.clone();
+        self.packages = content.packages.clone();
+        self.services = content.services.clone();
+        self.agent_notes = content.agent_notes.clone();
+        self.updated_at = updated_at.to_string();
     }
 }
 

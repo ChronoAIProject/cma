@@ -18,12 +18,13 @@ use layer1_public::{auth::DelegatedCredential, tickets::TerminalTickets, Authent
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
-    EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileStore,
-    Event, KernelId, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
-    RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
-    ServiceId, Session, SessionId, SessionListQuery, SessionPorts, SessionRecord, SessionService,
-    SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack, SkillSource, StoreError,
-    StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
+    EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
+    EnvironmentProfileStore, Event, KernelId, Page, PageCursor, PageRequest,
+    PlatformSettingsService, RecoveryState, RegisteredUser, Reserved, ScreenFactory, ScreenModel,
+    ScreenSnapshot, ServiceCatalog, ServiceId, Session, SessionId, SessionListQuery, SessionPorts,
+    SessionRecord, SessionService, SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack,
+    SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
+    UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -354,6 +355,20 @@ impl EnvironmentProfileStore for MemoryProfiles {
             .await
             .insert(profile.id.0.clone(), profile.clone());
         Ok(())
+    }
+
+    async fn replace_content(
+        &self,
+        id: &EnvironmentProfileId,
+        content: &EnvironmentProfileSpec,
+        updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        let mut records = self.records.lock().await;
+        let Some(profile) = records.get_mut(&id.0) else {
+            return Ok(None);
+        };
+        profile.apply_content(content, updated_at);
+        Ok(Some(profile.clone()))
     }
 
     async fn get(
