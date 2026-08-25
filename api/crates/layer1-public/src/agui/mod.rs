@@ -33,6 +33,9 @@ use crate::rest::{Problem, SessionsState};
 use crate::{InterfaceProfile, Operation};
 
 mod capabilities;
+#[cfg(test)]
+#[path = "contract_tests.rs"]
+mod contract_tests;
 mod frame;
 mod live;
 mod project;
