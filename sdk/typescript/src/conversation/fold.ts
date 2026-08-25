@@ -1,15 +1,6 @@
 import type { AguiEvent } from '../agui/index.js';
-import { GAP_VALUE_FRAMES, PATHS } from '../wire.js';
-import {
-  EMPTY,
-  type AvailableCommand,
-  type ConfigOption,
-  type Conversation,
-  type Entry,
-  type MessageEntry,
-  type PlanStep,
-} from './model.js';
-import { memoryPressureFrom, resourcesFrom } from './resources.js';
+import { initialConversation, type Conversation, type Entry, type MessageEntry } from './model.js';
+import { reduceStateDelta } from './state.js';
 
 /**
  * The conversation, folded out of the event stream — `Web_Style.md` §18.1.
@@ -31,20 +22,6 @@ import { memoryPressureFrom, resourcesFrom } from './resources.js';
  */
 
 export * from './model.js';
-
-/**
- * The two halves of a turn's token count, added where both are known.
- *
- * `undefined` while neither has arrived: §18.5 is explicit that absence is a
- * fact rather than a zero, and a total shown before the service reported one
- * would be this client inventing a figure.
- */
-function totalOf(input: number | undefined, output: number | undefined): number | undefined {
-  if (input === undefined && output === undefined) {
-    return undefined;
-  }
-  return (input ?? 0) + (output ?? 0);
-}
 
 /**
  * Fold one event into the conversation.
@@ -246,7 +223,7 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
       return { ...state, reasoning: { text: (state.reasoning?.text ?? '') + event.delta } };
 
     case 'STATE_DELTA':
-      return applyPatches(state, event);
+      return reduceStateDelta(state, event);
 
     case 'UNKNOWN':
       // Shown rather than dropped. The emitted set grows additively, and what
@@ -266,7 +243,10 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
 }
 
 /** Fold a whole stream. What history and a live connection both go through. */
-export function fold(events: Iterable<AguiEvent>, from: Conversation = EMPTY): Conversation {
+export function fold(
+  events: Iterable<AguiEvent>,
+  from: Conversation = initialConversation(),
+): Conversation {
   let state = from;
   for (const event of events) {
     state = reduce(state, event);
@@ -302,210 +282,4 @@ function upsertMessage(state: Conversation, message: MessageEntry): Conversation
   const entries = [...state.entries];
   entries[at] = message;
   return { ...state, entries };
-}
-
-/**
- * Apply modeled `STATE_DELTA` paths defensively and ignore the rest.
- * Resource readings replace whole, pressure null clears, and the latest
- * replayed runtime loss is the one the surface needs to show.
- */
-function applyPatches(
-  state: Conversation,
-  event: Extract<AguiEvent, { type: 'STATE_DELTA' }>,
-): Conversation {
-  let next = state;
-  for (const patch of event.patch) {
-    /*
-     * The paths the service actually writes, from `wire.ts`. These were
-     * spelled here as `/usage/tokens` and `/usage/cost` while the service
-     * writes `/usage/inputTokens`, `/usage/outputTokens`,
-     * `/usage/contextUsed` and `/usage/contextWindow` — so every patch fell
-     * through to the ignored branch and no session ever reported what it had
-     * spent.
-     *
-     * Tokens are summed rather than shown apart: §18.5 asks for the count and
-     * the cost, and a reader watching a turn wants what it consumed, not a
-     * breakdown they have to add up themselves.
-     */
-    if (patch.path === PATHS.resources) {
-      next = { ...next, resources: resourcesFrom(patch.value) };
-    } else if (patch.path === PATHS.memoryPressure) {
-      next = { ...next, memoryPressure: memoryPressureFrom(patch.value) };
-    } else if (patch.path === PATHS.inputTokens && typeof patch.value === 'number') {
-      next = {
-        ...next,
-        usage: {
-          ...next.usage,
-          inputTokens: patch.value,
-          tokens: totalOf(patch.value, next.usage?.outputTokens),
-        },
-      };
-    } else if (patch.path === PATHS.outputTokens && typeof patch.value === 'number') {
-      next = {
-        ...next,
-        usage: {
-          ...next.usage,
-          outputTokens: patch.value,
-          tokens: totalOf(next.usage?.inputTokens, patch.value),
-        },
-      };
-    } else if (
-      patch.path === PATHS.contextUsed &&
-      typeof patch.value === 'number' &&
-      patch.value > 0
-    ) {
-      // Turn accounting writes zero when it has no reading. Preserve the last
-      // real reading just as the core fold does; zero is absence, not a reset.
-      next = { ...next, usage: { ...next.usage, contextUsed: patch.value } };
-    } else if (
-      patch.path === PATHS.contextWindow &&
-      typeof patch.value === 'number' &&
-      patch.value > 0
-    ) {
-      next = { ...next, usage: { ...next.usage, contextWindow: patch.value } };
-    } else if (patch.path === PATHS.signIn && typeof patch.value === 'object') {
-      /*
-       * The agent is waiting for its owner to sign in somewhere else.
-       *
-       * Kept as state rather than folded into the stream: nobody said it, and
-       * putting it among the turns would mix a thing the reader must act on
-       * into the record of what the agent produced.
-       *
-       * Read defensively. A value missing its address is dropped rather than
-       * drawn, because a sign-in card with nowhere to go is worse than none —
-       * it tells somebody to act and gives them no way to.
-       */
-      const value = patch.value as { url?: unknown; code?: unknown; message?: unknown } | null;
-      const url = typeof value?.url === 'string' ? value.url : undefined;
-      next = {
-        ...next,
-        signIn:
-          url === undefined
-            ? undefined
-            : {
-                url,
-                code: typeof value?.code === 'string' ? value.code : undefined,
-                message: typeof value?.message === 'string' ? value.message : undefined,
-              },
-      };
-    } else if (patch.path === PATHS.cost && typeof patch.value === 'string') {
-      next = { ...next, usage: { ...next.usage, cost: patch.value } };
-    } else if (patch.path === PATHS.mode && typeof patch.value === 'string') {
-      next = { ...next, mode: patch.value };
-    } else if (patch.path === PATHS.plan && Array.isArray(patch.value)) {
-      next = {
-        ...next,
-        plan: patch.value.flatMap((entry): PlanStep[] => {
-          if (typeof entry !== 'object' || entry === null) {
-            return [];
-          }
-          const value = entry as Record<string, unknown>;
-          const title = typeof value.title === 'string' ? value.title : '';
-          const status = typeof value.status === 'string' ? value.status : '';
-          return title === '' ? [] : [{ title, status }];
-        }),
-      };
-    } else if (patch.path === PATHS.configOptions && Array.isArray(patch.value)) {
-      next = {
-        ...next,
-        configOptions: patch.value.flatMap((entry): ConfigOption[] => {
-          if (typeof entry !== 'object' || entry === null) {
-            return [];
-          }
-          const value = entry as Record<string, unknown>;
-          const id = typeof value.id === 'string' ? value.id : '';
-          const name = typeof value.name === 'string' ? value.name : '';
-          const kind = typeof value.kind === 'string' ? value.kind : '';
-          return id === '' ? [] : [{ id, name, kind }];
-        }),
-      };
-    } else if (patch.path === PATHS.availableCommands && Array.isArray(patch.value)) {
-      next = {
-        ...next,
-        availableCommands: patch.value.flatMap((entry): AvailableCommand[] => {
-          if (typeof entry !== 'object' || entry === null) {
-            return [];
-          }
-          const value = entry as Record<string, unknown>;
-          const name = typeof value.name === 'string' ? value.name : '';
-          const description = typeof value.description === 'string' ? value.description : '';
-          return name === '' ? [] : [{ name, description }];
-        }),
-      };
-    } else if (patch.path === PATHS.contextCompactions) {
-      const value = (
-        typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
-      ) as Record<string, unknown>;
-      const was = typeof value.was === 'number' ? value.was : undefined;
-      const now = typeof value.now === 'number' ? value.now : undefined;
-      // A boundary without either side of the fall explains nothing, so a
-      // malformed projection is dropped rather than drawn as a partial fact.
-      if (was !== undefined && now !== undefined) {
-        const window =
-          typeof value.window === 'number' && value.window > 0 ? value.window : undefined;
-        next = append(next, {
-          kind: 'contextCompaction',
-          id: `context-compaction-${String(event.seq)}`,
-          was,
-          now,
-          window,
-          seq: event.seq,
-        });
-      }
-    } else if (patch.path.startsWith(PATHS.runtimeLosses.replace('/-', ''))) {
-      const value = (
-        typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
-      ) as Record<string, unknown>;
-      const runtime = typeof value.runtime === 'string' ? value.runtime : undefined;
-      if (runtime !== undefined) {
-        next = {
-          ...next,
-          runtimeLoss: {
-            runtime,
-            cause: typeof value.cause === 'string' ? value.cause : undefined,
-            noticedAt: typeof value.noticedAt === 'string' ? value.noticedAt : undefined,
-            seq: event.seq,
-          },
-        };
-      }
-    } else if (patch.path.startsWith('/planeChanges')) {
-      /*
-       * §18.6: drawn as a rule across the stream at the snapshot moment, not
-       * as a status chip. Anything the agent did after that moment did not
-       * travel, and a gap somebody can see is one they can recognise.
-       *
-       * An in-place switch carries no snapshot timestamp because nothing was
-       * carried, and draws no boundary: a boundary drawn where nothing was lost
-       * teaches an owner to distrust boundaries that mean something.
-       */
-      const value = (
-        typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
-      ) as Record<string, unknown>;
-      const snapshotAt = typeof value.snapshotAt === 'string' ? value.snapshotAt : undefined;
-      if (snapshotAt !== undefined && snapshotAt !== '') {
-        next = append(next, {
-          kind: 'gap',
-          id: `plane-${String(event.seq)}`,
-          rotatedAt: snapshotAt,
-          movedTo: typeof value.to === 'string' ? value.to : undefined,
-          seq: event.seq,
-        });
-      }
-    } else if (patch.path === PATHS.gaps) {
-      const value = (
-        typeof patch.value === 'object' && patch.value !== null ? patch.value : {}
-      ) as Record<string, unknown>;
-      const frameCount = value[GAP_VALUE_FRAMES];
-      next = append(next, {
-        kind: 'gap',
-        id: `gap-${String(event.seq)}`,
-        frames:
-          typeof frameCount === 'number' && Number.isSafeInteger(frameCount) && frameCount >= 0
-            ? frameCount
-            : undefined,
-        seq: event.seq,
-      });
-    }
-  }
-  return next;
 }

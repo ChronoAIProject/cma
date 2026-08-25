@@ -253,12 +253,12 @@ mod route_resume {
         EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
         EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind, KernelId, Page,
         PageRequest, PlatformSettingsService, RecoveryState, RegisteredUser, Reserved,
-        ScreenFactory, Session, SessionCapabilities, SessionId, SessionListQuery, SessionPorts,
-        SessionRecord, SessionService, SessionStatus, SessionStore, StoreError, StoredEvent,
-        SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
+        ScreenFactory, Session, SessionCapabilities, SessionId, SessionListQuery, SessionMode,
+        SessionPorts, SessionRecord, SessionService, SessionStatus, SessionStore, StoreError,
+        StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
     };
     use serde::Deserialize;
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use tower::ServiceExt;
 
     use crate::{agui, auth::AuthenticatedSubject, rest::SessionsState, tickets::TerminalTickets};
@@ -543,7 +543,16 @@ mod route_resume {
             ),
             durable(8, EventKind::TurnCompleted),
         ];
+        fixture_with(events, subject, authorization)
+    }
+
+    fn fixture_with(
+        events: Vec<Event>,
+        subject: SubjectId,
+        authorization: Authorization,
+    ) -> Fixture {
         let owner = owner();
+        let last_seq = events.last().map_or(0, |event| event.seq);
         let record = SessionRecord::new(Session {
             options: Default::default(),
             id: SessionId("sesn_route_resume".into()),
@@ -553,7 +562,7 @@ mod route_resume {
             recovery_state: RecoveryState::Idle,
             stop_reason: None,
             geometry: TerminalGeometry::default(),
-            last_seq: 8,
+            last_seq,
             environment_profile: None,
             runtime_version: None,
             rotations: 0,
@@ -601,12 +610,32 @@ mod route_resume {
         Fixture { app, store }
     }
 
+    fn app_with(events: Vec<Event>) -> Router {
+        fixture_with(
+            events,
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        )
+        .app
+    }
+
     fn app() -> Router {
         fixture(
             owner(),
             Authorization::from_capabilities([Capability::UseOwnSessions]),
         )
         .app
+    }
+
+    fn fold_state(mut state: Value, frames: &[WireFrame]) -> Value {
+        for frame in frames {
+            assert_eq!(frame.body["type"], "STATE_DELTA", "{}", frame.body);
+            let patch: json_patch::Patch = serde_json::from_value(frame.body["delta"].clone())
+                .unwrap_or_else(|error| panic!("{} carried an invalid patch: {error}", frame.body));
+            json_patch::patch(&mut state, &patch)
+                .unwrap_or_else(|error| panic!("{} did not apply: {error}", frame.body));
+        }
+        state
     }
 
     #[tokio::test]
@@ -834,6 +863,70 @@ mod route_resume {
         assert!(
             advertised_tail.is_empty(),
             "an advertised legacy position remains reserved even when no event occupies it"
+        );
+    }
+
+    #[tokio::test]
+    async fn state_fold_converges_across_a_production_route_cursor_resume() {
+        let app = app_with(vec![
+            durable(3, EventKind::ConversationGap { frames: 4 }),
+            durable(
+                7,
+                EventKind::PlaneChanged {
+                    from: SessionMode::Terminal,
+                    to: SessionMode::Conversation,
+                    snapshot_at: "2026-08-25T08:59:57Z".into(),
+                },
+            ),
+            durable(
+                11,
+                EventKind::ContextCompacted {
+                    was: 1_800,
+                    now: 420,
+                    window: Some(2_000),
+                },
+            ),
+            durable(
+                15,
+                EventKind::RuntimeLost {
+                    runtime_id: "runtime_first".into(),
+                    cause: Some("displaced".into()),
+                },
+            ),
+        ]);
+
+        let full = replay(&app, 0).await;
+        assert_eq!(
+            full.iter().map(|frame| frame.id).collect::<Vec<_>>(),
+            vec![Some(3), Some(7), Some(11), Some(15)]
+        );
+        let full_state = fold_state(agui::initial_state(), &full);
+
+        let retained = fold_state(agui::initial_state(), &full[..2]);
+        let resumed = replay(&app, 7).await;
+        let resumed_state = fold_state(retained, &resumed);
+
+        assert_eq!(resumed_state, full_state);
+        assert_eq!(full_state["gaps"], json!([{ "frames": 4 }]));
+        assert_eq!(
+            full_state["planeChanges"],
+            json!([{
+                "from": "terminal",
+                "to": "conversation",
+                "snapshotAt": "2026-08-25T08:59:57Z",
+            }])
+        );
+        assert_eq!(
+            full_state["contextCompactions"],
+            json!([{ "was": 1_800, "now": 420, "window": 2_000 }])
+        );
+        assert_eq!(
+            full_state["runtimeLosses"],
+            json!([{
+                "runtime": "runtime_first",
+                "cause": "displaced",
+                "noticedAt": "2026-08-25T09:00:15Z",
+            }])
         );
     }
 

@@ -148,15 +148,15 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 ```json
 {
   "usage": {
-    "inputTokens": 0,
-    "outputTokens": 0,
-    "contextUsed": 0,
+    "inputTokens": null,
+    "outputTokens": null,
+    "contextUsed": null,
     "contextWindow": null
   },
   "mode": null,
   "plan": null,
   "configOptions": null,
-  "availableCommands": [],
+  "availableCommands": null,
   "signIn": null,
   "gaps": [],
   "planeChanges": [],
@@ -170,8 +170,10 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 `STATE_SNAPSHOT` is not emitted. Create this document once for each session and
 apply every `STATE_DELTA` to it, in stream order, with RFC 6902 semantics. The
 parents and replace targets are present deliberately: applying the same patches
-to `{}` is invalid JSON Patch. A `null` value means no value has been reported;
-in particular, a `null` `/usage/contextWindow` is "not stated", never zero.
+to `{}` is invalid JSON Patch. A `null` value means no value has been reported.
+That includes each usage field and `availableCommands`: reported zero usage and
+a reported empty command list arrive as `0` and `[]`, respectively, and remain
+observably different from an unknown value.
 
 For a replay from the beginning, discard the old state and start from this
 document again. When resuming after a cursor, retain the state already folded
