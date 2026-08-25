@@ -16,6 +16,55 @@
 /** Where an AG-UI event's RFC 6902 patches live — `docs/API_AGUI.md` §3. */
 export const STATE_DELTA_PATCHES = 'delta';
 
+/** The public document an AG-UI session's first `STATE_DELTA` patches. */
+export interface AguiState {
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    contextUsed: number;
+    contextWindow: number | null;
+  };
+  mode: unknown;
+  plan: unknown;
+  configOptions: unknown;
+  availableCommands: unknown[];
+  signIn: unknown;
+  gaps: unknown[];
+  planeChanges: unknown[];
+  contextCompactions: unknown[];
+  runtimeLosses: unknown[];
+  memoryPressure: unknown;
+  resources: unknown;
+}
+
+/**
+ * Return a fresh copy of `docs/API_AGUI.md` §3's canonical initial state.
+ *
+ * JSON Patch implementations commonly mutate their target. A factory keeps
+ * one session's fold from becoming the next session's starting document.
+ */
+export function initialState(): AguiState {
+  return {
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      contextUsed: 0,
+      contextWindow: null,
+    },
+    mode: null,
+    plan: null,
+    configOptions: null,
+    availableCommands: [],
+    signIn: null,
+    gaps: [],
+    planeChanges: [],
+    contextCompactions: [],
+    runtimeLosses: [],
+    memoryPressure: null,
+    resources: null,
+  };
+}
+
 /** The one field in a `/gaps/-` value, as emitted by `agui/project.rs`. */
 export const GAP_VALUE_FRAMES = 'frames';
 

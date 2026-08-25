@@ -143,6 +143,40 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` | file edits, shell commands, MCP calls, their arguments and results |
 | State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
 
+### Canonical initial state
+
+```json
+{
+  "usage": {
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "contextUsed": 0,
+    "contextWindow": null
+  },
+  "mode": null,
+  "plan": null,
+  "configOptions": null,
+  "availableCommands": [],
+  "signIn": null,
+  "gaps": [],
+  "planeChanges": [],
+  "contextCompactions": [],
+  "runtimeLosses": [],
+  "memoryPressure": null,
+  "resources": null
+}
+```
+
+`STATE_SNAPSHOT` is not emitted. Create this document once for each session and
+apply every `STATE_DELTA` to it, in stream order, with RFC 6902 semantics. The
+parents and replace targets are present deliberately: applying the same patches
+to `{}` is invalid JSON Patch. A `null` value means no value has been reported;
+in particular, a `null` `/usage/contextWindow` is "not stated", never zero.
+
+For a replay from the beginning, discard the old state and start from this
+document again. When resuming after a cursor, retain the state already folded
+through that cursor and apply only the later deltas.
+
 Not emitted **today**: `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim.
 
 A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively. That includes an unknown durable frame with no SSE `id`: an older client cannot know whether a future kind is a leading frame, so it retains the frame and groups it with the next numbered final just as it does a known leading frame.
@@ -446,7 +480,7 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 
   Parsing the raw fields removes the inherited-`lastEventId` ambiguity native `EventSource` creates. The SDK's fetch transport reconstructs each request with its current cursor, while `AguiConnection` performs the open-stream-before-history ordering, projection grouping, acknowledgement, deduplication, and retry policy.
 - **The events route identifies replay, not a run.** Route provenance is authoritative: every AG-UI event frame in both its initial history and followed tail carries the effective `threadId` as `runId`, because no one run owns the whole session history. The run route rejects explicit blank identifiers and `runId == threadId`, and its generated identifiers are also kept distinct, so equality is an exclusive replay-envelope signature on accepted responses. Do not derive conversation or per-run rendering state from it. The repository TypeScript SDK follows this rule: `AguiConnection` assembles each complete durable projection around its numbered final frame, preserves an unacknowledged projection for exact retry, and advances the cursor only after every callback accepts it; the conversation fold ignores `runId`, so run-stream and replay envelopes render the same conversation.
-- **`STATE_DELTA` patches, it does not replace.** Apply it to the last `STATE_SNAPSHOT`.
+- **`STATE_DELTA` patches, it does not replace.** Apply deltas in order to the canonical initial state defined in §3; no `STATE_SNAPSHOT` arrives.
 
 ---
 

@@ -10,6 +10,7 @@ import {
 import { toEvent } from '../src/agui/events.js';
 import { toSession } from '../src/sessions.js';
 import { EMPTY, reduce } from '../src/conversation/fold.js';
+import { initialState } from '../src/index.js';
 
 /**
  * The wire, pinned.
@@ -41,6 +42,26 @@ describe('a STATE_DELTA carries its patches under the name the service uses', ()
       return;
     }
     expect(event.patch).toHaveLength(1);
+  });
+});
+
+describe('the canonical AG-UI initial state', () => {
+  it('is the exact document published by the service contract', () => {
+    const document = readFileSync(new URL('../../../docs/API_AGUI.md', import.meta.url), 'utf8');
+    const marker = '### Canonical initial state\n\n```json\n';
+    const published = document.split(marker)[1]?.split('\n```')[0];
+
+    expect(published, 'docs/API_AGUI.md has no canonical initial-state block').toBeDefined();
+    expect(initialState()).toEqual(JSON.parse(published ?? 'null'));
+  });
+
+  it('returns fresh arrays for every session fold', () => {
+    const first = initialState();
+    first.gaps.push({ frames: 1 });
+    first.usage.inputTokens = 99;
+
+    expect(initialState().gaps).toEqual([]);
+    expect(initialState().usage.inputTokens).toBe(0);
   });
 });
 

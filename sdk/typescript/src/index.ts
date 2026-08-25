@@ -192,6 +192,8 @@ export {
   PRICING_WIRE,
   STATE_DELTA_PATCHES,
   frameKey,
+  initialState,
+  type AguiState,
 } from './wire.js';
 
 /*
