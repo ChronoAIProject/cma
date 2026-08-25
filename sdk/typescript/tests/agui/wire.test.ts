@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAguiTransport, parseEventStream } from '../../src/agui/wire.js';
+import { parseEventStream } from '../../src/index.js';
 import { toEvent } from '../../src/agui/events.js';
+import { createAguiTransport, parseEventFrames } from '../../src/agui/wire.js';
 import type { ResponseMetadata } from '../../src/config.js';
+import { fold } from '../../src/conversation/fold.js';
 import { ApiError, ProtocolError, RequestAborted, TimeoutError } from '../../src/errors.js';
 import type { OperationOptions } from '../../src/http.js';
+import { KNOWN_EVENTS } from '../../src/wire.js';
 
 /**
  * The seam between what the interface serves and what this client reads.
@@ -22,18 +25,49 @@ import type { OperationOptions } from '../../src/http.js';
  */
 
 /** An SSE body exactly as the replay route writes it. */
-function sse(records: readonly { id: number; event: string; data: unknown }[]): string {
+function sse(records: readonly { id?: number; event: string; data: unknown }[]): string {
   return records
-    .map((r) => `id: ${String(r.id)}\nevent: ${r.event}\ndata: ${JSON.stringify(r.data)}\n\n`)
+    .map(
+      (r) =>
+        `${r.id === undefined ? '' : `id: ${String(r.id)}\n`}event: ${r.event}\ndata: ${JSON.stringify(r.data)}\n\n`,
+    )
     .join('');
 }
 
+const durableProjectionPrefixes = [
+  'TEXT_MESSAGE_START',
+  'TEXT_MESSAGE_CONTENT',
+  'TOOL_CALL_START',
+  'TOOL_CALL_END',
+] as const;
+const durableProjectionPrefixSet = new Set<string>(durableProjectionPrefixes);
+const durableFinalOrSingletonKinds = KNOWN_EVENTS.filter(
+  (kind) => !durableProjectionPrefixSet.has(kind),
+);
+const invalidSequenceLines = [
+  'id:',
+  'id: 0',
+  'id: -1',
+  'id: 01',
+  'id: nope',
+  'id: 9007199254740992',
+] as const;
+
+function literalFrame(kind: string, idLine?: string, live = false): string {
+  const frame = {
+    type: kind,
+    runId: 'run_1',
+    threadId: 'sesn_1',
+    ...(live ? { 'cma:live': true } : {}),
+  };
+  return `${idLine === undefined ? '' : `${idLine}\n`}data: ${JSON.stringify(frame)}\n\n`;
+}
+
 describe('what the interface serves is what this client reads', () => {
-  it('reads a projected turn without falling through to unknown', () => {
+  it('reads a projected turn and advances only after a projection is complete', () => {
     const body = sse([
       { id: 1, event: 'RUN_STARTED', data: { type: 'RUN_STARTED', runId: 'r', threadId: 's' } },
       {
-        id: 2,
         event: 'TEXT_MESSAGE_START',
         data: {
           type: 'TEXT_MESSAGE_START',
@@ -44,7 +78,6 @@ describe('what the interface serves is what this client reads', () => {
         },
       },
       {
-        id: 3,
         event: 'TEXT_MESSAGE_CONTENT',
         data: {
           type: 'TEXT_MESSAGE_CONTENT',
@@ -55,20 +88,36 @@ describe('what the interface serves is what this client reads', () => {
         },
       },
       {
-        id: 4,
+        id: 2,
+        event: 'TEXT_MESSAGE_END',
+        data: {
+          type: 'TEXT_MESSAGE_END',
+          runId: 'r',
+          threadId: 's',
+          messageId: 'msg_2',
+        },
+      },
+      {
+        id: 3,
         event: 'RUN_FINISHED',
         data: { type: 'RUN_FINISHED', runId: 'r', threadId: 's', outcome: { type: 'end_turn' } },
       },
     ]);
 
-    const events = parseEventStream(body).map(toEvent);
+    const events = parseEventStream(body);
 
     expect(events.map((e) => e.type)).toEqual([
       'RUN_STARTED',
       'TEXT_MESSAGE_START',
       'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
       'RUN_FINISHED',
     ]);
+    expect(events.map((e) => e.seq)).toEqual([1, 0, 0, 2, 3]);
+    expect(events.slice(1, 3).every((event) => event.ephemeral !== true)).toBe(true);
+    expect(parseEventFrames(body).slice(1, 3)).not.toContainEqual(
+      expect.objectContaining({ 'cma:live': true }),
+    );
     expect(events.some((e) => e.type === 'UNKNOWN')).toBe(false);
   });
 
@@ -98,7 +147,7 @@ describe('what the interface serves is what this client reads', () => {
       },
     ]);
 
-    const [event] = parseEventStream(body).map(toEvent);
+    const [event] = parseEventStream(body);
 
     expect(event?.type).toBe('TOOL_CALL_START');
     expect(event?.type === 'TOOL_CALL_START' && event.target).toBe('Read file src/main.rs');
@@ -120,7 +169,7 @@ describe('what the interface serves is what this client reads', () => {
       },
     ]);
 
-    const events = parseEventStream(body).map(toEvent);
+    const events = parseEventStream(body);
 
     expect(events.map((e) => e.seq)).toEqual([41, 42]);
   });
@@ -147,6 +196,137 @@ describe('what the interface serves is what this client reads', () => {
       '\nid: 3\nevent: RUN_FINISHED\ndata: {"type":"RUN_FINISHED","runId":"r","threadId":"s"}\n';
 
     expect(() => parseEventStream(body)).toThrow(ProtocolError);
+  });
+});
+
+describe('the SSE id identifies only a complete durable projection', () => {
+  it.each(durableProjectionPrefixes)('accepts an omitted id for durable prefix %s', (kind) => {
+    expect(parseEventFrames(literalFrame(kind))).toEqual([
+      expect.objectContaining({ type: kind, seq: 0 }),
+    ]);
+  });
+
+  it.each(durableFinalOrSingletonKinds)(
+    'rejects an omitted id for durable final or singleton %s',
+    (kind) => {
+      expect(() => parseEventFrames(literalFrame(kind))).toThrow(ProtocolError);
+    },
+  );
+
+  it('preserves an omitted id on an unknown durable prefix', () => {
+    expect(parseEventFrames(literalFrame('SOMETHING_ADDED_LATER'))).toEqual([
+      expect.objectContaining({ type: 'SOMETHING_ADDED_LATER', seq: 0 }),
+    ]);
+  });
+
+  it.each([
+    ['known prefix', 'TEXT_MESSAGE_START'],
+    ['known final', 'TEXT_MESSAGE_END'],
+    ['unknown kind', 'SOMETHING_ADDED_LATER'],
+  ] as const)('rejects invalid ids on a %s', (_class, kind) => {
+    for (const idLine of invalidSequenceLines) {
+      expect(() => parseEventFrames(literalFrame(kind, idLine))).toThrow(ProtocolError);
+    }
+  });
+
+  it.each([...KNOWN_EVENTS, 'SOMETHING_ADDED_LATER'] as const)(
+    'accepts a positive safe id for durable kind %s',
+    (kind) => {
+      expect(parseEventFrames(literalFrame(kind, 'id: 7'))).toEqual([
+        expect.objectContaining({ type: kind, seq: 7 }),
+      ]);
+    },
+  );
+
+  it('accepts an omitted id for an explicitly live frame', () => {
+    expect(parseEventFrames(literalFrame('STATE_DELTA', undefined, true))).toEqual([
+      expect.objectContaining({ type: 'STATE_DELTA', seq: 0, 'cma:live': true }),
+    ]);
+  });
+
+  it.each([...invalidSequenceLines, 'id: 7'])(
+    'rejects a present id on an explicitly live frame (%s)',
+    (idLine) => {
+      expect(() => parseEventFrames(literalFrame('STATE_DELTA', idLine, true))).toThrow(
+        ProtocolError,
+      );
+    },
+  );
+
+  it('rejects a complete body that ends before a durable projection gets its id', () => {
+    expect(() => parseEventStream(literalFrame('FUTURE_PREFIX'))).toThrow(
+      'AG-UI event stream ended inside a durable projection',
+    );
+  });
+
+  it('retains repeated unknown prefixes through the public parser and fold', () => {
+    const body = sse([
+      {
+        event: 'FUTURE_REPEAT',
+        data: { type: 'FUTURE_REPEAT', runId: 'run_1', threadId: 'sesn:opaque' },
+      },
+      {
+        event: 'FUTURE_REPEAT',
+        data: { type: 'FUTURE_REPEAT', runId: 'run_1', threadId: 'sesn:opaque' },
+      },
+      {
+        id: 7,
+        event: 'RUN_FINISHED',
+        data: { type: 'RUN_FINISHED', runId: 'run_1', threadId: 'sesn:opaque' },
+      },
+    ]);
+
+    const events = parseEventStream(body);
+    const unknowns = events.filter((event) => event.type === 'UNKNOWN');
+    expect(unknowns.map((event) => event.projectionId)).toEqual([
+      '["sesn:opaque",7,0,"FUTURE_REPEAT"]',
+      '["sesn:opaque",7,1,"FUTURE_REPEAT"]',
+    ]);
+    expect(fold([...events, ...events]).entries).toEqual([
+      expect.objectContaining({
+        id: '["sesn:opaque",7,0,"FUTURE_REPEAT"]',
+        eventKind: 'FUTURE_REPEAT',
+      }),
+      expect.objectContaining({
+        id: '["sesn:opaque",7,1,"FUTURE_REPEAT"]',
+        eventKind: 'FUTURE_REPEAT',
+      }),
+    ]);
+  });
+
+  it('rejects a complete body that switches threads between projections', () => {
+    const body = sse([
+      {
+        id: 1,
+        event: 'RUN_STARTED',
+        data: { type: 'RUN_STARTED', runId: 'run_1', threadId: 'sesn_1' },
+      },
+      {
+        id: 2,
+        event: 'RUN_FINISHED',
+        data: { type: 'RUN_FINISHED', runId: 'run_1', threadId: 'sesn_other' },
+      },
+    ]);
+
+    expect(() => parseEventStream(body)).toThrow('another threadId');
+  });
+
+  it('rejects prefixes whose numbered final belongs to another run', () => {
+    const body = sse([
+      {
+        event: 'FUTURE_PREFIX',
+        data: { type: 'FUTURE_PREFIX', runId: 'run_1', threadId: 'sesn_1' },
+      },
+      {
+        id: 2,
+        event: 'RUN_FINISHED',
+        data: { type: 'RUN_FINISHED', runId: 'run_2', threadId: 'sesn_1' },
+      },
+    ]);
+
+    expect(() => parseEventStream(body)).toThrow(
+      'AG-UI durable projection changed runId before its final frame',
+    );
   });
 });
 

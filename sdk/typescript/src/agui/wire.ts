@@ -24,6 +24,9 @@ import {
   type OperationOptions,
 } from '../http.js';
 import type { AguiTransport } from './connection.js';
+import { canBeDurableProjectionPrefix } from './cursor.js';
+import { toEvent, type AguiEvent } from './events.js';
+import { ProjectionAssembler } from './projection.js';
 
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 
@@ -273,8 +276,25 @@ async function* framesFromBody(response: Response, signal: AbortSignal): AsyncGe
   }
 }
 
-/** Parse a complete SSE body with the same strict boundary as the live stream. */
-export function parseEventStream(body: string): unknown[] {
+/**
+ * Parse a complete SSE body into occurrence-aware AG-UI events.
+ *
+ * Durable prefixes are held until their numbered final frame arrives, matching
+ * `AguiConnection`. In particular, repeated unknown prefixes receive distinct
+ * stable `projectionId` values before callers pass them to `fold`.
+ */
+export function parseEventStream(body: string): AguiEvent[] {
+  const assembler = new ProjectionAssembler();
+  const events: AguiEvent[] = [];
+  for (const frame of parseEventFrames(body)) {
+    events.push(...assembler.accept(toEvent(frame)));
+  }
+  assembler.assertComplete('AG-UI event stream');
+  return events;
+}
+
+/** Parse a complete SSE body at the raw transport boundary. @internal */
+export function parseEventFrames(body: string): unknown[] {
   const frames: unknown[] = [];
   let failure: ProtocolError | undefined;
   const parser = parserFor(
@@ -340,16 +360,24 @@ function frameFromMessage(message: EventSourceMessage): unknown {
     );
   }
   if (frame['cma:live'] === true) {
-    if (message.id !== undefined && message.id !== '') {
+    if (message.id !== undefined) {
       throw new ProtocolError('AG-UI liveness frame unexpectedly carried a sequence id');
     }
     return { ...frame, seq: 0 };
   }
-  return { ...frame, seq: sequenceOf(message.id) };
+  return { ...frame, seq: sequenceOf(message.id, type) };
 }
 
-function sequenceOf(raw: string | undefined): number {
-  if (raw === undefined || !/^[1-9]\d*$/.test(raw)) {
+function sequenceOf(raw: string | undefined, kind: string): number {
+  // Only the final frame of a durable projection is stamped. Zero is an
+  // internal sentinel for a leading durable frame and never a resume cursor.
+  if (raw === undefined) {
+    if (canBeDurableProjectionPrefix(kind)) {
+      return 0;
+    }
+    throw new ProtocolError(`AG-UI durable ${kind} frame carried no sequence id`);
+  }
+  if (!/^[1-9]\d*$/.test(raw)) {
     throw new ProtocolError(`AG-UI durable frame id '${raw ?? ''}' was not a positive sequence`);
   }
   const value = Number(raw);

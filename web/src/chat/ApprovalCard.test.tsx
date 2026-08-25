@@ -28,7 +28,7 @@ async function conversationFrom(name: string, options: { dropAfter?: number; upT
     options.upTo === undefined ? full : { ...full, frames: full.frames.slice(0, options.upTo) };
   const session = new MockSession(transcript, { dropAfter: options.dropAfter });
   const seen: AguiEvent[] = [];
-  const connection = new AguiConnection(session.transport, 'sesn_1', {
+  const connection = new AguiConnection(session.transport, session.id, {
     backoffMs: 0,
     sleep: () => Promise.resolve(),
   });
@@ -228,7 +228,7 @@ describe('in the stream', () => {
 
   it('sends the decision through the client unchanged', async () => {
     const { session, conversation } = await conversationFrom('approval-granted', { upTo: 2 });
-    const operations = new AguiOperations('sesn_1', session.operations);
+    const operations = new AguiOperations(session.id, session.operations);
 
     await operations.resolveApproval(conversation.pending?.id ?? '', 'abort', 'run_9');
 

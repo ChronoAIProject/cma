@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AguiConnection, type AguiTransport, type LinkFailure } from '../../src/agui/connection.js';
 import type { AguiEvent } from '../../src/agui/events.js';
+import { fold } from '../../src/conversation/fold.js';
 import { ApiError, ProtocolError, RequestAborted, ValidationError } from '../../src/errors.js';
 
 /**
@@ -60,15 +61,59 @@ function text(seq: number, body: string) {
   };
 }
 
+function committedMessage(seq: number, messageId: string, body: string) {
+  return [
+    {
+      type: 'TEXT_MESSAGE_START',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      messageId,
+      role: 'assistant',
+    },
+    {
+      type: 'TEXT_MESSAGE_CONTENT',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      messageId,
+      delta: body,
+    },
+    { type: 'TEXT_MESSAGE_END', threadId: 'sesn_1', runId: 'run_1', seq, messageId },
+  ] as const;
+}
+
+function toolUpdate(seq: number, toolCallId: string, status: string) {
+  return [
+    {
+      type: 'TOOL_CALL_END',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      toolCallId,
+      'cma:status': status,
+    },
+    {
+      type: 'TOOL_CALL_RESULT',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq,
+      toolCallId,
+      content: `${status} result`,
+      'cma:truncated': false,
+    },
+  ] as const;
+}
+
 /** Let the connection's own loop advance. */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function connect(fake: Fake) {
+function connect(fake: Fake, session = 'sesn_1') {
   const seen: AguiEvent[] = [];
   const statuses: string[] = [];
   const failures: LinkFailure[] = [];
   const errors: Error[] = [];
-  const connection = new AguiConnection(fake, 'sesn_1', {
+  const connection = new AguiConnection(fake, session, {
     backoffMs: 0,
     maxBackoffMs: 0,
     sleep: () => Promise.resolve(),
@@ -326,6 +371,38 @@ describe('the reconnect order', () => {
     expect(errors[0]).toBeInstanceOf(ProtocolError);
     expect(statuses).toContain('failed');
   });
+
+  it('fails once without reconnecting on an impossible unnumbered final', async () => {
+    const fake = new Fake();
+    fake.responses = [
+      [
+        {
+          type: 'TEXT_MESSAGE_END',
+          threadId: 'sesn_1',
+          runId: 'run_1',
+          seq: 0,
+          messageId: 'm_impossible',
+        },
+        text(1, 'must not be delivered'),
+      ],
+    ];
+    const { errors, seen, statuses, stop } = connect(fake);
+
+    await vi.waitFor(() =>
+      expect(statuses.filter((status) => status === 'failed')).toHaveLength(1),
+    );
+    await tick();
+    await tick();
+    stop();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(ProtocolError);
+    expect(errors[0]?.message).toContain('TEXT_MESSAGE_END');
+    expect(seen).toEqual([]);
+    expect(statuses).not.toContain('reconnecting');
+    expect(fake.opens).toBe(1);
+    expect(fake.historyReads).toEqual([0]);
+  });
 });
 
 describe('history and stream agree', () => {
@@ -502,21 +579,14 @@ describe('liveness is not history', () => {
 });
 
 describe('a durable event that projects to several frames', () => {
-  it('delivers every one of them, not just the first', async () => {
-    // The defect this exists for: a committed message projects to
-    // TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT and TEXT_MESSAGE_END, and all
-    // three carry the sequence of the event they came from — that sequence is
-    // the cursor a reconnect resumes on. Deduplicated by sequence alone, the
-    // START was delivered and its siblings dropped as duplicates, so every
-    // agent message opened and then received none of its own text: the chat
-    // surface drew an empty turn for an agent that had answered.
+  it('delivers every frame and advances only on the final one', async () => {
     const fake = new Fake();
     fake.onOpen = [
       {
         type: 'TEXT_MESSAGE_START',
         threadId: 'sesn_1',
         runId: 'run_1',
-        seq: 7,
+        seq: 0,
         messageId: 'm_7',
         role: 'assistant',
       },
@@ -524,13 +594,13 @@ describe('a durable event that projects to several frames', () => {
         type: 'TEXT_MESSAGE_CONTENT',
         threadId: 'sesn_1',
         runId: 'run_1',
-        seq: 7,
+        seq: 0,
         messageId: 'm_7',
         delta: 'hello',
       },
       { type: 'TEXT_MESSAGE_END', threadId: 'sesn_1', runId: 'run_1', seq: 7, messageId: 'm_7' },
     ];
-    const { seen, stop } = connect(fake);
+    const { connection, seen, stop } = connect(fake);
     await tick();
     stop();
 
@@ -539,6 +609,449 @@ describe('a durable event that projects to several frames', () => {
       'TEXT_MESSAGE_CONTENT',
       'TEXT_MESSAGE_END',
     ]);
+    expect(seen.map((event) => event.seq)).toEqual([0, 0, 7]);
+    expect(connection.cursor).toBe(7);
+  });
+
+  it('rejects a final from another thread before it can poison the session cursor', async () => {
+    const fake = new Fake();
+    fake.responses = [
+      [
+        {
+          type: 'FUTURE_PREFIX',
+          threadId: 'sesn_1',
+          runId: 'run_1',
+          seq: 0,
+        },
+        { type: 'RUN_FINISHED', threadId: 'sesn_other', runId: 'run_1', seq: 900 },
+      ],
+    ];
+
+    const { connection, errors, seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(statuses).toContain('failed'));
+    stop();
+
+    expect(connection.cursor).toBe(0);
+    expect(seen).toEqual([]);
+    expect(errors[0]).toBeInstanceOf(ProtocolError);
+    expect(errors[0]?.message).toContain('another threadId');
+  });
+
+  it('replays an interrupted projection whole without delivering its prefix twice', async () => {
+    const fake = new Fake();
+    const start = {
+      type: 'TEXT_MESSAGE_START',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      messageId: 'm_7',
+      role: 'assistant',
+    };
+    const content = {
+      type: 'TEXT_MESSAGE_CONTENT',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 0,
+      messageId: 'm_7',
+      delta: 'nothing after the drop is lost',
+    };
+    const end = {
+      type: 'TEXT_MESSAGE_END',
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      seq: 7,
+      messageId: 'm_7',
+    };
+    fake.responses = [
+      [{ type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_1', seq: 6 }],
+      [start, content, end, text(8, 'the next event')],
+    ];
+
+    const { connection, seen, stop } = connect(fake);
+    await vi.waitFor(() => expect(connection.cursor).toBe(6));
+
+    fake.frames?.(start);
+    expect(connection.cursor).toBe(6);
+
+    fake.drop?.('the connection closed after START');
+    await vi.waitFor(() => expect(connection.cursor).toBe(8));
+    stop();
+
+    expect(fake.openCursors).toEqual([0, 6]);
+    expect(fake.historyReads).toEqual([0, 6]);
+    expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
+      'TEXT_MESSAGE_CONTENT',
+    ]);
+    expect(seen.filter((event) => event.type === 'TEXT_MESSAGE_START')).toHaveLength(1);
+  });
+
+  it('folds a normal history and buffered-stream overlap exactly once', async () => {
+    const fake = new Fake();
+    const turn = [
+      { type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_1', seq: 1 },
+      ...committedMessage(2, 'm_2', 'one answer'),
+      {
+        type: 'RUN_FINISHED',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 3,
+      },
+    ];
+    fake.onOpen = turn;
+    fake.responses = [turn];
+
+    const { seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(statuses).toContain('live'));
+    stop();
+
+    expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
+      'RUN_FINISHED',
+    ]);
+    expect(fold(seen).entries).toEqual([
+      expect.objectContaining({
+        kind: 'message',
+        id: 'm_2',
+        text: 'one answer',
+        committed: true,
+        seq: 2,
+      }),
+    ]);
+  });
+
+  it('retains every completed projection until a multi-projection overlap drains', async () => {
+    const fake = new Fake();
+    const turn = [
+      { type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_1', seq: 1 },
+      ...committedMessage(2, 'm_2', 'first'),
+      ...committedMessage(3, 'm_3', 'second'),
+      { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_1', seq: 4 },
+    ];
+    fake.onOpen = turn;
+    fake.responses = [turn];
+
+    const { connection, seen, statuses, stop } = connect(fake);
+    await vi.waitFor(() => expect(statuses).toContain('live'));
+    stop();
+
+    expect(connection.cursor).toBe(4);
+    expect(seen.map((event) => event.seq)).toEqual([1, 0, 0, 2, 0, 0, 3, 4]);
+    expect(fold(seen).entries).toEqual([
+      expect.objectContaining({ id: 'm_2', text: 'first', committed: true, seq: 2 }),
+      expect.objectContaining({ id: 'm_3', text: 'second', committed: true, seq: 3 }),
+    ]);
+  });
+
+  it('preserves repeated durable updates for the same tool call', async () => {
+    const fake = new Fake();
+    fake.responses = [
+      [...toolUpdate(2, 'call-1', 'running'), ...toolUpdate(3, 'call-1', 'completed')],
+    ];
+
+    const { connection, seen, stop } = connect(fake);
+    await vi.waitFor(() => expect(connection.cursor).toBe(3));
+    stop();
+
+    expect(seen.flatMap((event) => (event.type === 'TOOL_CALL_END' ? [event.status] : []))).toEqual(
+      ['running', 'completed'],
+    );
+    expect(
+      seen.flatMap((event) => (event.type === 'TOOL_CALL_RESULT' ? [event.content] : [])),
+    ).toEqual(['running result', 'completed result']);
+  });
+
+  it('deduplicates history overlap by projection occurrence, then keeps a newer same-call update', async () => {
+    const fake = new Fake();
+    const running = toolUpdate(2, 'call-1', 'running');
+    const completed = toolUpdate(3, 'call-1', 'completed');
+    fake.responses = [[...running]];
+    fake.onOpen = [...running, ...completed];
+
+    const { connection, seen, stop } = connect(fake);
+    await vi.waitFor(() => expect(connection.cursor).toBe(3));
+    stop();
+
+    expect(seen.flatMap((event) => (event.type === 'TOOL_CALL_END' ? [event.status] : []))).toEqual(
+      ['running', 'completed'],
+    );
+    expect(seen.map((event) => event.type)).toEqual([
+      'TOOL_CALL_END',
+      'TOOL_CALL_RESULT',
+      'TOOL_CALL_END',
+      'TOOL_CALL_RESULT',
+    ]);
+  });
+
+  it('delivers an unknown cursorless future prefix without advancing early', async () => {
+    const fake = new Fake();
+    fake.responses = [
+      [
+        {
+          type: 'FUTURE_PREFIX',
+          threadId: 'sesn_1',
+          runId: 'run_1',
+          seq: 0,
+          futureValue: 7,
+        },
+        { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_1', seq: 1 },
+      ],
+    ];
+
+    const { connection, seen, stop } = connect(fake);
+    await vi.waitFor(() => expect(connection.cursor).toBe(1));
+    stop();
+
+    expect(seen.map((event) => event.type)).toEqual(['UNKNOWN', 'RUN_FINISHED']);
+    expect(seen[0]).toMatchObject({ type: 'UNKNOWN', kind: 'FUTURE_PREFIX', seq: 0 });
+  });
+
+  it('gives every unknown prefix a stable occurrence identity and folds an overlap once', async () => {
+    const fake = new Fake();
+    const history = [
+      {
+        type: 'FUTURE:ALPHA',
+        threadId: 'sesn:opaque',
+        runId: 'sesn_1',
+        seq: 0,
+        futureValue: 'different kind',
+      },
+      {
+        type: 'FUTURE:REPEAT',
+        threadId: 'sesn:opaque',
+        runId: 'sesn_1',
+        seq: 0,
+        futureValue: 'identical occurrence',
+      },
+      {
+        type: 'FUTURE:REPEAT',
+        threadId: 'sesn:opaque',
+        runId: 'sesn_1',
+        seq: 0,
+        futureValue: 'identical occurrence',
+      },
+      { type: 'RUN_FINISHED', threadId: 'sesn:opaque', runId: 'sesn_1', seq: 7 },
+    ];
+    fake.responses = [history];
+    fake.onOpen = history.map((frame) => ({ ...frame, runId: 'run_live' }));
+
+    const { seen, statuses, stop } = connect(fake, 'sesn:opaque');
+    await vi.waitFor(() => expect(statuses).toContain('live'));
+    stop();
+
+    expect(seen.map((event) => event.type)).toEqual([
+      'UNKNOWN',
+      'UNKNOWN',
+      'UNKNOWN',
+      'RUN_FINISHED',
+    ]);
+    const unknowns = seen.filter((event) => event.type === 'UNKNOWN');
+    expect(unknowns.map((event) => event.projectionId)).toEqual([
+      '["sesn:opaque",7,0,"FUTURE:ALPHA"]',
+      '["sesn:opaque",7,1,"FUTURE:REPEAT"]',
+      '["sesn:opaque",7,2,"FUTURE:REPEAT"]',
+    ]);
+
+    const state = fold([...seen, ...seen]);
+    expect(state.entries).toEqual([
+      expect.objectContaining({
+        kind: 'unknown',
+        id: '["sesn:opaque",7,0,"FUTURE:ALPHA"]',
+        eventKind: 'FUTURE:ALPHA',
+      }),
+      expect.objectContaining({
+        kind: 'unknown',
+        id: '["sesn:opaque",7,1,"FUTURE:REPEAT"]',
+        eventKind: 'FUTURE:REPEAT',
+      }),
+      expect.objectContaining({
+        kind: 'unknown',
+        id: '["sesn:opaque",7,2,"FUTURE:REPEAT"]',
+        eventKind: 'FUTURE:REPEAT',
+      }),
+    ]);
+  });
+
+  it('keeps unknown identities byte-identical while retrying only an unacknowledged frame', async () => {
+    const fake = new Fake();
+    const projection = [
+      {
+        type: 'FUTURE_FIRST',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 0,
+        futureValue: 1,
+      },
+      {
+        type: 'FUTURE_SECOND',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 0,
+        futureValue: 2,
+      },
+      { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_1', seq: 7 },
+    ];
+    fake.responses = [projection, projection];
+    let resume: () => void = () => {};
+    const paused = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      backoffMs: 0,
+      maxBackoffMs: 0,
+      sleep: () => paused,
+    });
+    const seen: AguiEvent[] = [];
+    const statuses: string[] = [];
+    const secondAttempts: string[] = [];
+    let failed = false;
+    const stop = connection.subscribe(
+      (event) => {
+        if (event.type === 'UNKNOWN' && event.kind === 'FUTURE_SECOND') {
+          secondAttempts.push(event.projectionId ?? 'missing');
+          if (!failed) {
+            failed = true;
+            throw new Error('consumer failed before acknowledging the second prefix');
+          }
+        }
+        seen.push(event);
+      },
+      (status) => statuses.push(status),
+    );
+
+    await vi.waitFor(() => expect(statuses).toContain('reconnecting'));
+    expect(seen.map((event) => event.type)).toEqual(['UNKNOWN']);
+    resume();
+    await vi.waitFor(() => expect(connection.cursor).toBe(7));
+    stop();
+
+    expect(secondAttempts).toEqual([
+      '["sesn_1",7,1,"FUTURE_SECOND"]',
+      '["sesn_1",7,1,"FUTURE_SECOND"]',
+    ]);
+    expect(seen.map((event) => event.type)).toEqual(['UNKNOWN', 'UNKNOWN', 'RUN_FINISHED']);
+    expect(seen.flatMap((event) => (event.type === 'UNKNOWN' ? [event.projectionId] : []))).toEqual(
+      ['["sesn_1",7,0,"FUTURE_FIRST"]', '["sesn_1",7,1,"FUTURE_SECOND"]'],
+    );
+    expect(fake.historyReads).toEqual([0, 0]);
+  });
+
+  it('retries an unacknowledged prefix without advancing the cursor', async () => {
+    const fake = new Fake();
+    const message = committedMessage(7, 'm_7', 'retry the prefix');
+    fake.responses = [message, message];
+    let resume: () => void = () => {};
+    const paused = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      backoffMs: 0,
+      maxBackoffMs: 0,
+      sleep: () => paused,
+    });
+    const seen: AguiEvent[] = [];
+    const statuses: string[] = [];
+    let startAttempts = 0;
+    const stop = connection.subscribe(
+      (event) => {
+        if (event.type === 'TEXT_MESSAGE_START') {
+          startAttempts += 1;
+          if (startAttempts === 1) {
+            throw new Error('consumer failed before acknowledging START');
+          }
+        }
+        seen.push(event);
+      },
+      (status) => statuses.push(status),
+    );
+
+    await vi.waitFor(() => expect(statuses).toContain('reconnecting'));
+    expect(connection.cursor).toBe(0);
+    expect(seen).toEqual([]);
+    resume();
+    await vi.waitFor(() => expect(connection.cursor).toBe(7));
+    stop();
+
+    expect(startAttempts).toBe(2);
+    expect(seen.map((event) => event.type)).toEqual([
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
+    ]);
+    expect(fake.historyReads).toEqual([0, 0]);
+  });
+
+  it('retries only an unacknowledged final and advances after it succeeds', async () => {
+    const fake = new Fake();
+    const message = committedMessage(7, 'm_7', 'retry the final');
+    fake.responses = [message, message];
+    let resume: () => void = () => {};
+    const paused = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const connection = new AguiConnection(fake, 'sesn_1', {
+      backoffMs: 0,
+      maxBackoffMs: 0,
+      sleep: () => paused,
+    });
+    const seen: AguiEvent[] = [];
+    const statuses: string[] = [];
+    let endAttempts = 0;
+    const stop = connection.subscribe(
+      (event) => {
+        if (event.type === 'TEXT_MESSAGE_END') {
+          endAttempts += 1;
+          if (endAttempts === 1) {
+            throw new Error('consumer failed before acknowledging END');
+          }
+        }
+        seen.push(event);
+      },
+      (status) => statuses.push(status),
+    );
+
+    await vi.waitFor(() => expect(statuses).toContain('reconnecting'));
+    expect(connection.cursor).toBe(0);
+    expect(seen.map((event) => event.type)).toEqual(['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT']);
+    resume();
+    await vi.waitFor(() => expect(connection.cursor).toBe(7));
+    stop();
+
+    expect(endAttempts).toBe(2);
+    expect(seen.map((event) => event.type)).toEqual([
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+      'TEXT_MESSAGE_END',
+    ]);
+    expect(fake.historyReads).toEqual([0, 0]);
+  });
+
+  it('stops between projection frames when a consumer unsubscribes', async () => {
+    const fake = new Fake();
+    fake.responses = [committedMessage(7, 'm_7', 'must not be delivered')];
+    const connection = new AguiConnection(fake, 'sesn_1');
+    const seen: AguiEvent[] = [];
+    const statuses: string[] = [];
+    let stop: () => void = () => undefined;
+    stop = connection.subscribe(
+      (event) => {
+        seen.push(event);
+        stop();
+      },
+      (status) => statuses.push(status),
+    );
+
+    await vi.waitFor(() => expect(statuses).toContain('closed'));
+
+    expect(seen.map((event) => event.type)).toEqual(['TEXT_MESSAGE_START']);
+    expect(connection.cursor).toBe(0);
+    expect(fake.opens).toBe(1);
   });
 
   it('still drops a frame the reconnect overlap replays', async () => {
