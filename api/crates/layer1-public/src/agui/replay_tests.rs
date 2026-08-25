@@ -229,3 +229,313 @@ fn a_drop_mid_projection_resumes_the_event_whole() {
     assert_eq!(after_message[0].kind, "RUN_FINISHED");
     assert_eq!(after_message[0].seq, Some(8));
 }
+
+mod route_resume {
+    use std::sync::Arc;
+
+    use axum::{
+        body::{to_bytes, Body},
+        http::{header, Request, StatusCode},
+        Extension, Router,
+    };
+    use layer2_core::{
+        AgentConfiguration, Authorization, Baseline, Capability, Deployment, DirectoryQuery,
+        EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
+        EnvironmentProfileStore, Event, EventKind, KernelId, PlatformSettingsService,
+        RecoveryState, RegisteredUser, Reserved, ScreenFactory, Session, SessionCapabilities,
+        SessionId, SessionPorts, SessionRecord, SessionService, SessionStatus, SessionStore,
+        StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
+    };
+    use serde_json::Value;
+    use tower::ServiceExt;
+
+    use crate::{agui, auth::AuthenticatedSubject, rest::SessionsState, tickets::TerminalTickets};
+
+    struct ReplayStore {
+        record: SessionRecord,
+        events: Vec<Event>,
+    }
+
+    #[async_trait::async_trait]
+    impl SessionStore for ReplayStore {
+        async fn ping(&self) -> Result<(), StoreError> {
+            Ok(())
+        }
+
+        async fn upsert(&self, _record: &SessionRecord) -> Result<(), StoreError> {
+            panic!("the replay fixture is read-only")
+        }
+
+        async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
+            Ok((self.record.session.id == *id).then(|| self.record.clone()))
+        }
+
+        async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
+            Ok((&self.record.session.owner == owner)
+                .then(|| self.record.clone())
+                .into_iter()
+                .collect())
+        }
+
+        async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
+            Ok(Reserved::default())
+        }
+
+        async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
+            Ok(vec![self.record.clone()])
+        }
+
+        async fn delete(&self, _id: &SessionId) -> Result<(), StoreError> {
+            panic!("the replay fixture is read-only")
+        }
+
+        async fn append_events(&self, _events: &[Event]) -> Result<(), StoreError> {
+            panic!("the replay fixture is read-only")
+        }
+
+        async fn events_since(
+            &self,
+            id: &SessionId,
+            after: u64,
+        ) -> Result<Vec<StoredEvent>, StoreError> {
+            let mut events = self
+                .events
+                .iter()
+                .filter(|event| event.session_id == *id && event.seq > after)
+                .cloned()
+                .map(StoredEvent::from)
+                .collect::<Vec<_>>();
+            events.sort_by_key(|event| event.seq);
+            Ok(events)
+        }
+    }
+
+    struct NoProfiles;
+
+    #[async_trait::async_trait]
+    impl EnvironmentProfileStore for NoProfiles {
+        async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
+            Ok(())
+        }
+
+        async fn get(
+            &self,
+            _id: &EnvironmentProfileId,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
+        }
+
+        async fn list_for(
+            &self,
+            _owner: &SubjectId,
+        ) -> Result<Vec<EnvironmentProfile>, StoreError> {
+            Ok(Vec::new())
+        }
+
+        async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
+            Ok(())
+        }
+    }
+
+    struct NoDirectory;
+
+    #[async_trait::async_trait]
+    impl UserDirectoryStore for NoDirectory {
+        async fn record_sign_in(&self, _user: &RegisteredUser) -> Result<(), StoreError> {
+            Ok(())
+        }
+
+        async fn recent(&self, _query: &DirectoryQuery) -> Result<Vec<RegisteredUser>, StoreError> {
+            Ok(Vec::new())
+        }
+
+        async fn by_subjects(
+            &self,
+            _subjects: &[SubjectId],
+        ) -> Result<Vec<RegisteredUser>, StoreError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Debug)]
+    struct WireFrame {
+        id: Option<u64>,
+        body: Value,
+    }
+
+    fn parse_sse(wire: &str) -> Vec<WireFrame> {
+        wire.split("\n\n")
+            .filter_map(|frame| {
+                let mut id = None;
+                let mut data = Vec::new();
+                for line in frame.lines() {
+                    if let Some(value) = line.strip_prefix("id:") {
+                        id = Some(
+                            value
+                                .trim()
+                                .parse::<u64>()
+                                .expect("the SSE id is a sequence"),
+                        );
+                    } else if let Some(value) = line.strip_prefix("data:") {
+                        data.push(value.trim_start());
+                    }
+                }
+                (!data.is_empty()).then(|| WireFrame {
+                    id,
+                    body: serde_json::from_str(&data.join("\n"))
+                        .expect("the route emits JSON SSE data"),
+                })
+            })
+            .collect()
+    }
+
+    async fn replay(app: &Router, starting_after: u64) -> Vec<WireFrame> {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/agui/events?thread_id=sesn_route_resume&starting_after={starting_after}&follow=false"
+                ))
+                .body(Body::empty())
+                .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static("text/event-stream"))
+        );
+        let body = to_bytes(response.into_body(), 128 * 1024)
+            .await
+            .expect("the bounded replay is small");
+        parse_sse(std::str::from_utf8(&body).expect("SSE is UTF-8"))
+    }
+
+    fn durable(seq: u64, kind: EventKind) -> Event {
+        Event {
+            session_id: SessionId("sesn_route_resume".into()),
+            seq,
+            kind,
+            appended_at: format!("2026-08-25T09:00:{seq:02}Z"),
+        }
+    }
+
+    fn app() -> Router {
+        let events = vec![
+            durable(6, EventKind::TurnStarted),
+            durable(
+                7,
+                EventKind::MessageCommitted {
+                    content: "nothing after the drop is lost".into(),
+                },
+            ),
+            durable(8, EventKind::TurnCompleted),
+        ];
+        let owner = SubjectId("subject-route-resume".into());
+        let record = SessionRecord::new(Session {
+            options: Default::default(),
+            id: SessionId("sesn_route_resume".into()),
+            owner: owner.clone(),
+            kernel: KernelId::new("test-kernel"),
+            status: SessionStatus::Idle,
+            recovery_state: RecoveryState::Idle,
+            stop_reason: None,
+            geometry: TerminalGeometry::default(),
+            last_seq: 8,
+            environment_profile: None,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
+            capabilities: SessionCapabilities {
+                conversation: true,
+                ..Default::default()
+            },
+            granted_services: Some(Vec::new()),
+            granted_skills: Some(Vec::new()),
+            pricing: None,
+            created_at: "2026-08-25T08:00:00Z".into(),
+        });
+        let store: Arc<dyn SessionStore> = Arc::new(ReplayStore { record, events });
+        let settings = Arc::new(PlatformSettingsService::unconfigured());
+        let environments = EnvironmentProfileService::new(
+            Arc::new(NoProfiles),
+            Baseline::default(),
+            None,
+            None,
+            AgentConfiguration::default(),
+            settings,
+        );
+        let screen_factory: ScreenFactory =
+            Arc::new(|_| panic!("a bounded history read must not start a runtime"));
+        let sessions = SessionService::new(
+            Default::default(),
+            screen_factory,
+            store,
+            SessionPorts::default(),
+            Arc::clone(&environments),
+            Deployment::default(),
+        );
+        let state = SessionsState {
+            sessions,
+            users: UserDirectory::new(Arc::new(NoDirectory)),
+            tickets: TerminalTickets::new(),
+            environments,
+        };
+        let authorization = Authorization::from_capabilities([Capability::UseOwnSessions]);
+
+        agui::router(state)
+            .layer(Extension(authorization))
+            .layer(Extension(AuthenticatedSubject(owner)))
+    }
+
+    #[tokio::test]
+    async fn the_production_route_resumes_an_interrupted_projection_whole() {
+        let app = app();
+        let full = replay(&app, 0).await;
+        assert_eq!(
+            full.iter()
+                .map(|frame| (frame.id, frame.body["type"].as_str().unwrap_or_default()))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some(6), "RUN_STARTED"),
+                (None, "TEXT_MESSAGE_START"),
+                (None, "TEXT_MESSAGE_CONTENT"),
+                (Some(7), "TEXT_MESSAGE_END"),
+                (Some(8), "RUN_FINISHED"),
+            ]
+        );
+
+        // Simulate a transport that received sequence 6 and message 7's first
+        // frame before dropping. The prefix has no id, so 6 is still the only
+        // cursor the client can return to the production endpoint.
+        let delivered_prefix = &full[..2];
+        let last_seen = delivered_prefix
+            .iter()
+            .filter_map(|frame| frame.id)
+            .next_back()
+            .expect("the preceding event was numbered");
+        assert_eq!(last_seen, 6);
+
+        let resumed = replay(&app, last_seen).await;
+        assert_eq!(
+            resumed
+                .iter()
+                .map(|frame| (frame.id, frame.body["type"].as_str().unwrap_or_default()))
+                .collect::<Vec<_>>(),
+            vec![
+                (None, "TEXT_MESSAGE_START"),
+                (None, "TEXT_MESSAGE_CONTENT"),
+                (Some(7), "TEXT_MESSAGE_END"),
+                (Some(8), "RUN_FINISHED"),
+            ]
+        );
+        assert_eq!(resumed[1].body["delta"], "nothing after the drop is lost");
+
+        let after_message = replay(&app, 7).await;
+        assert_eq!(after_message.len(), 1);
+        assert_eq!(after_message[0].id, Some(8));
+        assert_eq!(after_message[0].body["type"], "RUN_FINISHED");
+    }
+}
