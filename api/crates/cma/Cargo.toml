@@ -26,7 +26,7 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-# Holds a socket operation at its public receipt boundary so rotation races are
+# Holds PTY receipt, output, and disconnect boundaries so socket races are
 # proved without sleeps or scheduler assumptions.
 layer1-public = { workspace = true, features = ["test-support"] }
 # Drives the composed REST router in public error-contract tests.

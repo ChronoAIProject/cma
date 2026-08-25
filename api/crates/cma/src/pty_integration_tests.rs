@@ -248,6 +248,8 @@ impl ScreenModel for MemoryScreen {
 #[derive(Default)]
 struct WireAdapter {
     outputs: Mutex<Vec<mpsc::Sender<TerminalOutput>>>,
+    terminal_inputs: Arc<Mutex<Vec<TerminalInput>>>,
+    terminal_input_arrived: Arc<Notify>,
     conversations: Mutex<Vec<mpsc::Sender<ConversationUpdate>>>,
     runtimes: Mutex<HashMap<String, String>>,
     next_runtime: AtomicUsize,
@@ -272,6 +274,26 @@ impl WireAdapter {
 
     async fn lose_transport(&self) {
         self.outputs.lock().await.clear();
+    }
+
+    async fn wait_until_signal(&self, expected: &str) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let arrived = self.terminal_input_arrived.notified();
+                if self
+                    .terminal_inputs
+                    .lock()
+                    .await
+                    .iter()
+                    .any(|input| matches!(input, TerminalInput::Signal(signal) if signal == expected))
+                {
+                    break;
+                }
+                arrived.await;
+            }
+        })
+        .await
+        .expect("the signal reaches the runtime while output is blocked");
     }
 
     fn pause_next_rotation_snapshot(&self) {
@@ -338,7 +360,14 @@ impl KernelAdapter for WireAdapter {
         let (output, output_rx) = mpsc::channel(16);
         let (input, mut input_rx) = mpsc::channel::<TerminalInput>(16);
         self.outputs.lock().await.push(output);
-        tokio::spawn(async move { while input_rx.recv().await.is_some() {} });
+        let terminal_inputs = Arc::clone(&self.terminal_inputs);
+        let terminal_input_arrived = Arc::clone(&self.terminal_input_arrived);
+        tokio::spawn(async move {
+            while let Some(input) = input_rx.recv().await {
+                terminal_inputs.lock().await.push(input);
+                terminal_input_arrived.notify_one();
+            }
+        });
         Ok(TerminalChannel {
             output: output_rx,
             input,
@@ -504,6 +533,24 @@ impl Fixture {
         .expect("the test session becomes ready");
         created.id
     }
+
+    async fn wait_until_detached(&self, id: &SessionId) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if !self
+                    .service
+                    .terminal_is_held(&self.caller, id)
+                    .await
+                    .expect("the test session remains readable")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the disconnected socket releases its attachment");
+    }
 }
 
 struct TestServer(tokio::task::JoinHandle<()>);
@@ -585,6 +632,44 @@ async fn expect_session_rotating(socket: &mut ClientSocket, operation: &str) {
             .is_some_and(|detail| !detail.is_empty()),
         "{operation} must carry a useful refusal detail: {frame}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blocked_terminal_output_does_not_stall_signal_or_disconnect_input() {
+    let fixture = Fixture::new();
+    let id = fixture.create_ready_session().await;
+    let (mut socket, _server) = public_socket(&fixture, &id).await;
+    let outbound = layer1_public::pty::OutboundGate::install(&id);
+    let disconnect = layer1_public::pty::DisconnectGate::install(&id);
+    let runtime = fixture.adapter.output().await;
+
+    runtime
+        .send(TerminalOutput::Bytes(b"blocked-public-output".to_vec()))
+        .await
+        .expect("terminal output reaches the public writer");
+    tokio::time::timeout(Duration::from_secs(2), outbound.wait_until_blocked())
+        .await
+        .expect("the public writer selects output before the client signal");
+
+    socket
+        .send(Message::Text(
+            serde_json::json!({ "t": "signal", "sig": "INT" }).to_string(),
+        ))
+        .await
+        .expect("the signal crosses the independently polled socket source");
+    fixture.adapter.wait_until_signal("INT").await;
+
+    socket
+        .send(Message::Close(None))
+        .await
+        .expect("the client close reaches the independently polled source");
+    tokio::time::timeout(Duration::from_secs(2), disconnect.wait_until_observed())
+        .await
+        .expect("the input task observes disconnect while the writer remains blocked");
+
+    disconnect.release();
+    outbound.release();
+    fixture.wait_until_detached(&id).await;
 }
 
 #[tokio::test]
@@ -774,6 +859,59 @@ async fn an_operation_read_before_supersession_is_refused_before_its_close() {
     ] {
         assert_accepted_operation_precedes_close(operation, ending).await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_frame_queued_behind_the_accepted_operation_stays_outside_core() {
+    let fixture = Fixture::new();
+    let id = fixture.create_ready_session().await;
+    let (mut socket, _server) = public_socket(&fixture, &id).await;
+    let accepted = layer1_public::pty::OperationGate::install(&id, "input");
+    let queued = layer1_public::pty::OperationGate::install(&id, "signal");
+
+    socket
+        .send(Message::Binary(b"accepted-before-ending".to_vec()))
+        .await
+        .expect("the first operation reaches the established socket");
+    tokio::time::timeout(Duration::from_secs(2), accepted.wait_until_received())
+        .await
+        .expect("the input task accepts exactly the first operation");
+    socket
+        .send(Message::Text(
+            serde_json::json!({ "t": "signal", "sig": "INT" }).to_string(),
+        ))
+        .await
+        .expect("the second operation queues behind the accepted one");
+
+    fixture.adapter.pause_next_termination();
+    let rotation = tokio::spawn({
+        let service = Arc::clone(&fixture.service);
+        let caller = fixture.caller.clone();
+        let id = id.clone();
+        async move {
+            service
+                .change_plane(&caller, &id, SessionMode::Conversation)
+                .await
+        }
+    });
+    fixture.adapter.wait_until_termination_paused().await;
+
+    accepted.release();
+    expect_session_rotating(&mut socket, "input").await;
+    let Message::Close(Some(close)) = next_message(&mut socket).await else {
+        panic!("the drained operation must be followed by its rotation close");
+    };
+    assert_eq!(u16::from(close.code), 4001);
+    assert!(
+        !queued.was_received(),
+        "the frame behind an accepted operation must not cross supersession"
+    );
+
+    fixture.adapter.resume_termination();
+    rotation
+        .await
+        .expect("the rotation task completes")
+        .expect("the plane change completes after the socket drains");
 }
 
 #[tokio::test]
