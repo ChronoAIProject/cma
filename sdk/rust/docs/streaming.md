@@ -29,10 +29,11 @@ async fn consume(client: &Client, session_id: &SessionId) -> cma_sdk::Result<u64
 }
 ```
 
-Reconnects send the last validated cursor in both the REST `after` query and
-`Last-Event-ID`. One overlapping frame is deduplicated. A frame with no positive
-SSE id, a mismatched payload sequence, another session id, invalid UTF-8, malformed
-SSE, an oversized body, or a malformed known event returns `Error::Protocol`.
+Reconnects send the last validated cursor in both REST's canonical
+`starting_after` query and `Last-Event-ID`. One overlapping frame is deduplicated.
+A frame with no positive SSE id, a mismatched payload sequence, another session
+id, invalid UTF-8, malformed SSE, an oversized body, or a malformed known event
+returns `Error::Protocol`.
 
 ## Reconnect and cancellation
 
@@ -46,4 +47,4 @@ SSE, an oversized body, or a malformed known event returns `Error::Protocol`.
 An unrecognised event discriminator becomes `EventKind::Unknown` with the complete
 JSON payload, so an older client can advance its cursor without pretending it
 understood the event. Known discriminators remain strict. The full vocabulary and
-replay rules are in [REST Events](../../../docs/API_REST.md#4-events).
+replay rules are in [REST Events](../../../docs/API_REST.md#5-events).

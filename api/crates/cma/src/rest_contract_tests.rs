@@ -1034,7 +1034,7 @@ async fn get_collection(app: &Router, uri: &str) -> (Vec<serde_json::Value>, Hea
 }
 
 async fn seed_cursor_contract_events(store: &MemorySessions, id: &SessionId) {
-    *store.events.lock().await = [41, 42, 43]
+    store.state.lock().await.events = [41, 42, 43]
         .into_iter()
         .map(|seq| Event {
             session_id: id.clone(),
@@ -1282,7 +1282,7 @@ async fn listed_origin_allows_the_sdk_reconnect_cursor_header() {
     );
     let response = app
         .oneshot(preflight_request(
-            "/api/v1/sessions/session/events?after=17",
+            "/api/v1/sessions/session/events?starting_after=17",
             LISTED_ORIGIN,
             Method::GET,
             Some("authorization,last-event-id"),
@@ -1483,6 +1483,8 @@ async fn bad_query_strings_are_problem_documents_on_every_query_route() {
         "/api/v1/sessions/sesn_bad/events?after=not-a-number",
         "/api/v1/sessions/sesn_bad/events?starting_after=not-a-number",
         "/api/v1/sessions/sesn_bad/events?startingafter=17",
+        "/api/v1/sessions/sesn_bad/events?starting_after=17&starting_after=18",
+        "/api/v1/sessions/sesn_bad/events?after=17&after=18",
         "/api/v1/sessions/sesn_bad/events?starting_after=17&after=17",
         "/api/v1/pricing/quote?environment_profile=one&environment_profile=two",
         "/api/v1/sessions?limitt=5",

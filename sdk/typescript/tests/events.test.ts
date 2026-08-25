@@ -364,8 +364,8 @@ describe('the reconnecting event stream', () => {
 
     expect(received.map(({ seq }) => seq)).toEqual([8, 9]);
     expect(calls.map(({ url }) => url)).toEqual([
-      '/api/v1/sessions/sesn%2Ffixture/events?after=7',
-      '/api/v1/sessions/sesn%2Ffixture/events?after=8',
+      '/api/v1/sessions/sesn%2Ffixture/events?starting_after=7',
+      '/api/v1/sessions/sesn%2Ffixture/events?starting_after=8',
     ]);
     expect(calls.map(({ init }) => new Headers(init.headers).get('last-event-id'))).toEqual([
       '7',
