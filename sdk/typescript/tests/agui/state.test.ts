@@ -136,6 +136,44 @@ describe('the public AG-UI state fold', () => {
     expect(next.toString).toBe('replaced own member');
   });
 
+  it('rejects inherited operation metadata after cloning an ordinary patch object', () => {
+    const members = ['op', 'path', 'from'] as const;
+    const descriptors = members.map(
+      (member) => [member, Object.getOwnPropertyDescriptor(Object.prototype, member)] as const,
+    );
+    Object.defineProperties(Object.prototype, {
+      op: { configurable: true, value: 'remove' },
+      path: { configurable: true, value: '/mode' },
+      from: { configurable: true, value: '/mode' },
+    });
+
+    let missingOperationError: unknown;
+    let missingFromError: unknown;
+    try {
+      try {
+        applyStateDelta(initialState(), [{} as JsonPatch]);
+      } catch (error) {
+        missingOperationError = error;
+      }
+      try {
+        applyStateDelta(initialState(), [{ op: 'copy', path: '/extension' }]);
+      } catch (error) {
+        missingFromError = error;
+      }
+    } finally {
+      for (const [member, descriptor] of descriptors) {
+        if (descriptor === undefined) {
+          Reflect.deleteProperty(Object.prototype, member);
+        } else {
+          Object.defineProperty(Object.prototype, member, descriptor);
+        }
+      }
+    }
+
+    expect(missingOperationError).toBeInstanceOf(ProtocolError);
+    expect(missingFromError).toBeInstanceOf(ProtocolError);
+  });
+
   it.each([
     { patches: [{ op: 'copy', from: '/constructor', path: '/extension' }] },
     { patches: [{ op: 'move', from: '/toString', path: '/extension' }] },

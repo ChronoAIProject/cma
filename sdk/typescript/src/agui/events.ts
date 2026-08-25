@@ -476,9 +476,9 @@ function patches(raw: unknown): readonly JsonPatch[] {
 
 function patch(raw: unknown): JsonPatch {
   const value = objectOf(raw, 'STATE_DELTA patch');
-  const op = nonEmptyString(value.op, 'STATE_DELTA patch op');
+  const op = nonEmptyString(requiredPatchMember(value, 'op'), 'STATE_DELTA patch op');
   // The empty string is RFC 6902's pointer to the document root.
-  const path = requiredString(value.path, 'STATE_DELTA patch path');
+  const path = requiredString(requiredPatchMember(value, 'path'), 'STATE_DELTA patch path');
 
   switch (op) {
     case 'add':
@@ -487,12 +487,23 @@ function patch(raw: unknown): JsonPatch {
       return { op, path, value: requiredPatchValue(value) };
     case 'copy':
     case 'move':
-      return { op, path, from: requiredString(value.from, 'STATE_DELTA patch from') };
+      return {
+        op,
+        path,
+        from: requiredString(requiredPatchMember(value, 'from'), 'STATE_DELTA patch from'),
+      };
     case 'remove':
       return { op, path };
     default:
       throw new ProtocolError(`STATE_DELTA patch used unsupported operation '${op}'`);
   }
+}
+
+function requiredPatchMember(patch: Record<string, unknown>, member: string): unknown {
+  if (!Object.prototype.hasOwnProperty.call(patch, member)) {
+    throw new ProtocolError(`STATE_DELTA patch ${member} was missing`);
+  }
+  return patch[member];
 }
 
 function requiredPatchValue(patch: Record<string, unknown>): unknown {
