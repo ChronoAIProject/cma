@@ -1125,7 +1125,7 @@ async fn a_plane_change_ends_after_four_store_failures_without_runtime_side_effe
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_final_plane_change_conflict_restores_the_old_runtime_and_channels() {
+async fn a_final_plane_change_conflict_preserves_the_newer_record_and_old_runtime() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_plane_changed));
     let adapter = switch_capable();
@@ -1169,11 +1169,45 @@ async fn a_final_plane_change_conflict_restores_the_old_runtime_and_channels() {
     assert!(adapter.terminated.lock().await.is_empty());
 
     let mut rival = inner.get(&created.id).await.unwrap().unwrap();
+    let rival_seq = rival.session.last_seq + 1;
+    rival.session.status = SessionStatus::Ready;
+    rival.session.last_seq = rival_seq;
     rival.context_ref = Some("rival-between-rotation-stages".into());
     inner
-        .commit_session_idempotent("rival-between-rotation-stages", &rival, &[])
+        .commit_session_idempotent(
+            "rival-between-rotation-stages",
+            &rival,
+            &[Event {
+                session_id: created.id.clone(),
+                seq: rival_seq,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Ready,
+                    stop_reason: None,
+                    detail: None,
+                    capability: None,
+                },
+                appended_at: String::new(),
+            }],
+        )
         .await
-        .expect("the rival record commits before PlaneChanged");
+        .expect("the outgoing runtime settles before PlaneChanged");
+    let (newer_input, mut outgoing_runtime) = tokio::sync::mpsc::channel(1);
+    {
+        let mut entries = svc.entries.write().await;
+        let entry = entries
+            .get_mut(&created.id)
+            .expect("old entry remains live");
+        entry.session.status = SessionStatus::Ready;
+        entry.session.last_seq = rival_seq;
+        entry.input = Some(newer_input);
+    }
+    svc.send_input(&alice, &created.id, b"accepted by newer state".to_vec())
+        .await
+        .expect("the newer Ready state accepts input while the stale final CAS waits");
+    assert!(matches!(
+        outgoing_runtime.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == b"accepted by newer state"
+    ));
     store.release();
 
     assert!(matches!(
@@ -1183,7 +1217,7 @@ async fn a_final_plane_change_conflict_restores_the_old_runtime_and_channels() {
     wait_for_rotation_lane(&svc, &created.id).await;
     assert_eq!(store.matched_calls(), 1);
     let durable = inner.get(&created.id).await.unwrap().unwrap();
-    assert_eq!(durable.session.status, before.session.status);
+    assert_eq!(durable.session.status, SessionStatus::Ready);
     assert_eq!(durable.session.options, before.session.options);
     assert_eq!(durable.session.capabilities, before.session.capabilities);
     assert_eq!(durable.session.rotations, before.session.rotations);
@@ -1203,8 +1237,10 @@ async fn a_final_plane_change_conflict_restores_the_old_runtime_and_channels() {
         )));
     {
         let entries = svc.entries.read().await;
-        let entry = entries.get(&created.id).expect("old entry remains usable");
-        assert_eq!(entry.session.status, before.session.status);
+        let entry = entries
+            .get(&created.id)
+            .expect("old entry remains installed");
+        assert_eq!(entry.session.status, SessionStatus::Ready);
         assert_eq!(entry.session.options, before.session.options);
         assert_eq!(
             entry.runtime.as_ref().map(|handle| handle.0.as_str()),
@@ -1224,6 +1260,62 @@ async fn a_final_plane_change_conflict_restores_the_old_runtime_and_channels() {
             .is_some_and(|sender| !sender.is_closed()),
         "the old output relay remains connected"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_older_final_cas_cannot_steal_a_newer_rotation_of_the_same_runtime() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_plane_changed));
+    let adapter = switch_capable();
+    let (svc, alice, created, before) =
+        started_with_commit_fault(store.clone(), adapter.clone()).await;
+    let old_runtime = before.runtime_id.clone().expect("old runtime is durable");
+
+    store.pause_next();
+    let moving = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.change_plane(&alice, &id, crate::options::SessionMode::Conversation)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+
+    let mut readopted = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(readopted.session.status, SessionStatus::Rotating);
+    readopted.session.status = SessionStatus::Ready;
+    readopted.context_ref = Some("readopted-between-rotation-claims".into());
+    inner
+        .commit_session_idempotent("readopted-between-rotation-claims", &readopted, &[])
+        .await
+        .expect("a replacement process settles the older claim");
+
+    let mut newer_rotation = inner.get(&created.id).await.unwrap().unwrap();
+    newer_rotation.session.status = SessionStatus::Rotating;
+    newer_rotation.context_ref = Some("newer-rotation-claim".into());
+    let newer_revision = inner
+        .commit_session_idempotent("newer-rotation-claim", &newer_rotation, &[])
+        .await
+        .expect("a newer rotation claims the same still-running runtime");
+
+    store.release();
+    assert!(matches!(
+        moving.await.expect("older plane change task completes"),
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_rotation_lane(&svc, &created.id).await;
+
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.revision, newer_revision);
+    assert_eq!(durable.session.status, SessionStatus::Rotating);
+    assert_eq!(durable.context_ref.as_deref(), Some("newer-rotation-claim"));
+    assert_eq!(durable.runtime_id.as_deref(), Some(old_runtime.as_str()));
+    assert_eq!(durable.session.options, before.session.options);
+    assert_eq!(durable.session.rotations, before.session.rotations);
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(adapter.running.lock().await.contains_key(&old_runtime));
 }
 
 #[tokio::test]
