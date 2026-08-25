@@ -141,7 +141,7 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 | Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
 | Reasoning | `REASONING_MESSAGE_CONTENT` | what the agent is working through — **live lane only, never durable** |
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` | file edits, shell commands, MCP calls, their arguments and results |
-| State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
+| State | `STATE_DELTA` | the canonical state document and complete path vocabulary below |
 
 ### Canonical initial state
 
@@ -177,6 +177,42 @@ unknown. `/usage/contextUsed` is different only at the core event boundary:
 zero there is the established "no context reading" sentinel, so its projection
 omits that operation and preserves the canonical `null` or last positive value.
 For `/memoryPressure`, `null` means no pressure episode is currently open.
+
+### `STATE_DELTA` paths
+
+This is the complete JSON-Pointer vocabulary emitted by this build. Operations
+apply to the canonical initial state above with RFC 6902 semantics. A path not
+listed here is not part of the current contract.
+
+| Path | Operation | Value shape | Emitted when |
+|---|---|---|---|
+| `/availableCommands` | `replace` | array of `{name: string, description: string}` | the kernel announces the complete command list; projected durably and on the cursorless live lane |
+| `/configOptions` | `replace` | array of `{id: string, name: string, kind: string}` | the kernel reports the complete set of configurable options |
+| `/contextCompactions/-` | `add` | `{was: integer, now: integer, window?: integer}` | the agent summarises its conversation to make room; `window` is omitted where unstated |
+| `/gaps/-` | `add` | `{frames: integer}` | the runtime reports that conversation frames were dropped |
+| `/memoryPressure` | `replace` | `{usedBytes: integer, limitBytes: integer, occupancyPermille: integer, since: string or null}` or `null` | a durable memory-pressure episode opens or closes |
+| `/mode` | `replace` | permission-mode string in the kernel's own vocabulary | the session's permission mode changes |
+| `/plan` | `replace` | array of `{title: string, status: string}` | the agent reports a complete plan revision |
+| `/planeChanges/-` | `add` | `{from: string, to: string, snapshotAt: string}` | the owner moves the session between terminal and conversation planes |
+| `/resources` | `replace` | object containing all fourteen numeric-or-null resource fields shown below | a resource reading arrives on the cursorless live lane |
+| `/runtimeLosses/-` | `add` | `{runtime: string, cause: string or null, noticedAt: string or null}` | reconciliation establishes that a runtime was lost |
+| `/signIn` | `replace` | `{url: string, code: string or null, message: string or null}` | the agent needs its owner to complete an own-account sign-in |
+| `/usage/contextUsed` | `replace` | positive integer token count | a usage report carries a positive context reading; the zero sentinel emits no operation |
+| `/usage/contextWindow` | `replace` | non-negative integer token count | a usage report states the context ceiling; omission preserves the prior value |
+| `/usage/inputTokens` | `replace` | non-negative integer token count | any usage report arrives, including a zero count |
+| `/usage/outputTokens` | `replace` | non-negative integer token count | any usage report arrives, including a zero count |
+
+#### `/signIn` is the own-account prompt
+
+`/signIn` is the only conversation-plane channel for the own-account sign-in
+flow. When it arrives, the client must render the URL and, where non-null, the
+one-time code together; it should also render the kernel's message where one
+was provided. No message event, interrupt, or other state path repeats this
+prompt. Ignoring it leaves the session waiting on information its owner cannot
+otherwise see.
+
+The value is never a credential. The credential produced after the owner signs
+in is written by the agent inside its sandbox and never reaches CMA.
 
 For a replay from the beginning, discard the old state and start from this
 document again. When resuming after a cursor, retain the state already folded
