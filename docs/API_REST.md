@@ -363,8 +363,8 @@ needed before the first profile exists:
 `access` is optional display text supplied by the catalogue. A deployment with
 no skill catalogue returns the same shape with an empty `skills` array; profile
 writes remain available. If a configured skill catalogue cannot be read, this
-route returns a `503 runtime_unavailable` problem document; retrying the picker
-request is appropriate.
+route returns a `503 skill_catalogue_unavailable` problem document; retrying
+the picker request is appropriate.
 
 ### Services catalogue
 
@@ -778,6 +778,48 @@ in [Services](./Services.md).
 `name` and `description` come from the caller's own service catalogue and are **absent when it could not be asked**. A catalogue that is down costs the names and not the answer: the identifiers alone are still true, and reporting an error here would render a transient outage as a session that reaches nothing. See `docs/Services.md`.
 
 **Never a credential.** `reach` carries identifiers and display names. What a session may reach is a fact about its configuration; what it holds is not, and no token, no expiry and nothing that could be used to fingerprint one appears here.
+
+### Environment profiles and skill catalogue
+
+```http
+GET /api/v1/environment-profiles
+GET /api/v1/environment-profiles/skills
+```
+
+The skill route returns every registry entry the authenticated caller may put
+in a profile, plus the deployment's mandatory packages and skills. CMA follows
+the registry's opaque cursor with pages of 100, to an explicit ceiling of 50
+pages / 5,000 distinct skills. A terminal fiftieth page succeeds. If the
+registry advertises another page, omits pagination metadata or a required next
+cursor, repeats a cursor, or repeats a skill identity, the route returns a
+coded `503 skill_catalogue_unavailable` problem and no catalogue body. Its
+detail is fixed and never reflects an upstream URL, cursor, or transport error.
+The route never presents the pages collected so far as a complete picker.
+
+Session reads make one side-effect-free catalogue walk for all distinct recorded
+skill identifiers on the rendered response. That walk sends no fuzzy `q`, follows
+the same opaque cursor in pages of 100, and stops at the same ceiling of 50 pages
+/ 5,000 rows. It therefore enriches a valid profile containing 100 caller skills
+plus mandatory baseline skills in at most 50 upstream requests, rather than one
+request per grant. A repeated durable identifier keeps its first request order
+and consumes no separate work. The walk never calls Ornn's
+`/api/v1/skills/{idOrName}` detail route, whose authenticated GET records a
+package pull in Mongo and PostHog.
+
+Only an exact registry GUID or exact slug can supply `agent.skills[].name` and
+`description`; substring matches never do. Each result is keyed to the durable
+identifier it resolved, so a successful GUID cannot accidentally supply metadata
+for a colliding slug. A slug shared by multiple rows is ambiguous and remains
+raw without hiding metadata for other identifiers. A removed, inaccessible, or
+malformed entry likewise affects only identifiers it claims to represent.
+
+Enrichment is best-effort because the durable grants are already the authority.
+After a later page or transport failure, exact GUID matches collected on earlier
+pages remain usable; slug-only matches remain raw because an unseen page could
+still contain a colliding alias. If no safe metadata was collected, the catalogue
+failure is logged and the rendered response still carries every raw grant. In
+all cases enrichment changes only `name` and `description`: recorded order, `id`,
+and `version` remain byte-for-byte stable.
 
 ---
 
