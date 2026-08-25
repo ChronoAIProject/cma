@@ -7,7 +7,7 @@ import { Context } from './Context';
 import { Usage } from './Usage';
 import { MemoryPressureNotice, Resources } from './Resources';
 import { RuntimeLoss } from './RuntimeLoss';
-import { EMPTY, reduce, type Conversation } from '@chronoai/cma-sdk';
+import { initialConversation, reduce, type Conversation } from '@chronoai/cma-sdk';
 import { planeStateFor } from './planeState';
 import {
   AguiConnection,
@@ -88,7 +88,7 @@ export function ConversationSurface({
   onInspect,
   inspectingId,
 }: ConversationSurfaceProps) {
-  const [conversation, setConversation] = useState<Conversation>(EMPTY);
+  const [conversation, setConversation] = useState<Conversation>(initialConversation);
   const [link, setLink] = useState<LinkStatus>('reconnecting');
   const [busy, setBusy] = useState(false);
   /**

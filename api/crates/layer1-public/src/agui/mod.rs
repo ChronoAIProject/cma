@@ -40,6 +40,9 @@ mod replay;
 mod resources;
 mod run;
 mod run_ending;
+mod state;
+
+pub use state::initial_state;
 
 pub(super) const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
