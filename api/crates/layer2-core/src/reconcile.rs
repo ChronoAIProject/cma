@@ -468,11 +468,18 @@ impl SessionService {
     /// new, and the sandbox was never the session.
     async fn reprovision(self: &Arc<Self>, record: SessionRecord, reclaimed: &mut Reclaimed) {
         let id = record.session.id.clone();
+        let was_rotating = record.session.status.is_rotating();
         let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
             return;
         };
         if !self.begin_start(&id).await {
             return;
+        }
+        if was_rotating {
+            // A replacement process has no in-memory rotation marker to inherit.
+            // Preserve the operation's identity before rewriting the durable
+            // status to `Provisioning`, through readiness and live installation.
+            self.rotations_in_progress.write().await.insert(id.clone());
         }
 
         let mut starting = record.clone();
