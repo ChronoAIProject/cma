@@ -14,7 +14,7 @@ use crate::size::SessionSize;
 /// `None` on one dimension means no ceiling was declared for that dimension and
 /// it is not checked. Absence is deliberately different from zero: settings
 /// written before this field existed must continue to admit sessions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct DeploymentCapacity {
     /// Total processor reservation this deployment may promise, in millicores.
     pub cpu_millis: Option<u64>,

@@ -24,6 +24,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::AdminProblem;
 use crate::auth::{AuthenticatedCaller, SettingsTouched};
+use crate::rest::openapi_shapes;
 use crate::rest::ConfidentialBodyProblem;
 
 /// The two exact paths owned by this module remain in the parent surface's
@@ -40,9 +41,11 @@ pub(super) fn router(service: Arc<PlatformSettingsService>) -> OpenApiRouter {
 #[derive(Debug, Serialize, ToSchema)]
 struct SettingsView {
     revision: u64,
+    #[schema(value_type = openapi_shapes::PlatformSettings)]
     settings: PlatformSettings,
     /// The full object replaced by the most recent write, when one exists.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::PlatformSettings>)]
     previous: Option<PlatformSettings>,
 }
 
@@ -146,16 +149,19 @@ impl From<BoundsRequest> for CapacityBounds {
 struct ChangeRequest {
     expected_revision: u64,
     #[serde(default)]
-    #[schema(value_type = Option<BriefingRequest>)]
+    #[schema(required = false, value_type = BriefingRequest)]
     briefing: PatchField<BriefingRequest>,
     #[serde(default)]
-    #[schema(value_type = Option<DeploymentCapacity>)]
+    #[schema(
+        required = false,
+        value_type = openapi_shapes::DeploymentCapacity
+    )]
     deployment_capacity: PatchField<DeploymentCapacity>,
     #[serde(default)]
-    #[schema(value_type = Option<BoundsRequest>)]
+    #[schema(required = false, value_type = BoundsRequest)]
     size_bounds: PatchField<BoundsRequest>,
     #[serde(default)]
-    #[schema(value_type = Option<u32>)]
+    #[schema(required = false, value_type = Option<u32>, minimum = 1)]
     live_sessions: PatchField<NonZeroU32>,
 }
 
@@ -164,6 +170,7 @@ struct ChangeRequest {
 #[serde(deny_unknown_fields)]
 struct ReplaceRequest {
     expected_revision: u64,
+    #[schema(value_type = openapi_shapes::PlatformSettings)]
     settings: PlatformSettings,
 }
 

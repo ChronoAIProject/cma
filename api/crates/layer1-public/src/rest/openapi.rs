@@ -6,16 +6,33 @@ use axum::{Extension, Json, Router};
 use utoipa::{openapi, PartialSchema, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::ProblemDocument;
+use super::{ProblemDocument, SERVICE_VERSION};
 
 pub(super) const DOCUMENT_PATH: &str = "/openapi.json";
+
+/// The stable top-level shape returned by the OpenAPI discovery route.
+#[allow(dead_code)]
+#[derive(ToSchema)]
+struct OpenApiDocument {
+    openapi: String,
+    info: OpenApiDocumentInfo,
+    #[schema(value_type = Object)]
+    paths: serde_json::Value,
+}
+
+#[allow(dead_code)]
+#[derive(ToSchema)]
+struct OpenApiDocumentInfo {
+    title: String,
+    version: String,
+}
 
 /// Serve the exact document collected while registering the REST handlers.
 #[utoipa::path(
     get,
     path = "/openapi.json",
     tag = "discovery",
-    responses((status = 200, description = "OpenAPI 3.1 contract")),
+    responses((status = 200, description = "OpenAPI 3.1 contract", body = OpenApiDocument, content_type = "application/json")),
     security(())
 )]
 async fn document(Extension(document): Extension<Arc<openapi::OpenApi>>) -> Json<openapi::OpenApi> {
@@ -34,7 +51,7 @@ pub(super) fn finish(mut documented: OpenApiRouter) -> Router {
 
 fn finish_document(document: &mut openapi::OpenApi) {
     document.info.title = "CMA REST API".to_string();
-    document.info.version = env!("CARGO_PKG_VERSION").to_string();
+    document.info.version = SERVICE_VERSION.to_string();
     document.info.description = Some(
         "The complete CMA REST control surface. Refusals use RFC 9457 problem details.".to_string(),
     );
@@ -79,7 +96,7 @@ fn finish_document(document: &mut openapi::OpenApi) {
         .parameter_in(openapi::path::ParameterIn::Header)
         .required(openapi::Required::False)
         .description(Some(
-            "Optional caller correlation identifier; echoed unchanged when supplied",
+            "Optional non-empty text caller correlation identifier; usable values are echoed unchanged",
         ))
         .schema(Some(openapi::Object::with_type(openapi::Type::String)))
         .build();
@@ -97,6 +114,24 @@ fn finish_document(document: &mut openapi::OpenApi) {
     components
         .responses
         .insert("Problem".to_string(), problem.into());
+
+    // Utoipa's shorthand couples request-body optionality to `Option<T>`,
+    // which also makes the JSON value nullable. Runtime accepts an omitted or
+    // empty ticket body but deliberately rejects an explicit JSON `null`, so
+    // express those two dimensions independently in the finished document.
+    let ticket_body = document
+        .paths
+        .paths
+        .get_mut("/api/v1/sessions/{id}/terminal-ticket")
+        .and_then(|item| item.post.as_mut())
+        .and_then(|operation| operation.request_body.as_mut())
+        .expect("the terminal ticket route declares a request body");
+    ticket_body.required = Some(openapi::Required::False);
+    ticket_body
+        .content
+        .get_mut("application/json")
+        .expect("the terminal ticket body is JSON")
+        .schema = Some(openapi::Ref::from_schema_name("TicketRequest").into());
 
     for (path, item) in &mut document.paths.paths {
         for (method, operation) in [

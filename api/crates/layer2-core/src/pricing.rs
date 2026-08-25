@@ -17,7 +17,7 @@ pub use crate::ids::RateCardId;
 pub const CURRENCY: &str = "USD";
 
 /// What a deployment charges for capacity, in micro-USD.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rate {
     /// Micro-USD charged for one CPU reserved for one hour.
     pub cpu_micros_per_cpu_hour: u64,
@@ -190,7 +190,7 @@ pub fn format_usd(micros: u64) -> String {
 }
 
 /// One rate the deployment has charged under.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RateCard {
     pub id: RateCardId,
     /// RFC 3339 in UTC, minted when the card was appended.
@@ -201,7 +201,7 @@ pub struct RateCard {
 }
 
 /// Every rate this deployment has ever charged, oldest first.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PriceList {
     pub cards: Vec<RateCard>,
 }
