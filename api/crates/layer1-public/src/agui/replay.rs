@@ -21,17 +21,60 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Query, State},
-    response::sse::{Event as SseEvent, KeepAlive, Sse},
+    http::StatusCode,
+    response::{
+        sse::{Event as SseEvent, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
 };
 use futures_util::stream::{self, Stream};
-use layer2_core::SessionId;
+use layer2_core::{CoreError, SessionId};
 use serde::Deserialize;
 
 use super::project::project;
 use super::resources::{next_frame, project_reading, Woke, POLL_INTERVAL};
 use super::{SessionsState, KEEPALIVE_INTERVAL};
 use crate::auth::AuthenticatedCaller;
-use crate::rest::Problem;
+use crate::rest::{problem_document, problem_response, Problem};
+
+/// A replay refusal, including the one condition owned by this projection.
+#[derive(Debug)]
+pub(super) enum ReplayProblem {
+    /// Layer 2 refused the authenticated read.
+    Core(CoreError),
+    /// The offered cursor names a position this session's log has not reached.
+    CursorBeyondEnd { cursor: u64, head: u64 },
+}
+
+impl From<CoreError> for ReplayProblem {
+    fn from(error: CoreError) -> Self {
+        Self::Core(error)
+    }
+}
+
+impl IntoResponse for ReplayProblem {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Core(error) => Problem(error).into_response(),
+            Self::CursorBeyondEnd { cursor, head } => {
+                let detail = format!(
+                    "The starting_after cursor {cursor} is beyond this session's durable event \
+                     head {head}; resume from {head} or earlier."
+                );
+                let mut body = problem_document(
+                    StatusCode::BAD_REQUEST,
+                    "cursor-beyond-end",
+                    &detail,
+                    "cursor_beyond_end",
+                );
+                body.as_object_mut()
+                    .expect("a problem document is an object")
+                    .insert("head".into(), head.into());
+                problem_response(StatusCode::BAD_REQUEST, body)
+            }
+        }
+    }
+}
 
 /// Where a client is resuming from, and which conversation it wants.
 #[derive(Debug, Deserialize)]
@@ -87,7 +130,7 @@ pub(super) async fn replay(
     State(state): State<SessionsState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Query(query): Query<Replay>,
-) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, Problem> {
+) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, ReplayProblem> {
     let seq = query.starting_after().unwrap_or(0);
     let follows = query.follows();
     let id = SessionId(query.thread_id);
@@ -95,11 +138,20 @@ pub(super) async fn replay(
     // Read once before answering, so a caller who may not see this session is
     // refused with a status rather than handed an empty stream that never says
     // why.
-    let first = state
-        .sessions
-        .events_since(&caller, &id, Some(seq))
-        .await
-        .map_err(Problem)?;
+    let first = state.sessions.events_since(&caller, &id, Some(seq)).await?;
+
+    if seq > 0 {
+        let head = state.sessions.event_log_head(&caller, &id).await?;
+        if seq > head {
+            tracing::warn!(
+                session_id = %id,
+                cursor = seq,
+                head,
+                "AG-UI replay cursor is beyond the durable event log head"
+            );
+            return Err(ReplayProblem::CursorBeyondEnd { cursor: seq, head });
+        }
+    }
 
     // The live lane, on the session's own stream.
     //
