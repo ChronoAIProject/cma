@@ -113,12 +113,62 @@ where
 /// a delegated credential is needed by almost none, so extracting it has to be
 /// a deliberate act rather than something that rides along by default.
 #[derive(Clone)]
-pub struct DelegatedCredential(pub String);
+pub struct DelegatedCredential {
+    value: String,
+    request_bound: bool,
+}
+
+impl DelegatedCredential {
+    /// A browser credential that follows the subject's renewable state.
+    pub fn subject(value: String) -> Self {
+        Self {
+            value,
+            request_bound: false,
+        }
+    }
+
+    /// A bearer credential whose exact authority belongs to this request.
+    pub fn request_bound(value: String) -> Self {
+        Self {
+            value,
+            request_bound: true,
+        }
+    }
+
+    /// Borrow the opaque value only where it must be delegated onward.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Consume the provenance wrapper where only the opaque value is needed.
+    pub fn into_value(self) -> String {
+        self.value
+    }
+
+    /// Carry both the value and its recovery policy into session creation.
+    pub fn into_caller_credential(self) -> layer2_core::CallerCredential {
+        if self.request_bound {
+            layer2_core::CallerCredential::request_bound(self.value)
+        } else {
+            self.value.into()
+        }
+    }
+
+    /// Whether this exact value must remain pinned across session recovery.
+    pub fn is_request_bound(&self) -> bool {
+        self.request_bound
+    }
+}
 
 impl std::fmt::Debug for DelegatedCredential {
     /// Redacted, so no accidental `{:?}` puts a live credential in a log.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "DelegatedCredential(<redacted {} bytes>)", self.0.len())
+        write!(
+            f,
+            "DelegatedCredential(<redacted {} bytes>, request_bound={})",
+            self.value.len(),
+            self.request_bound
+        )
     }
 }
 
@@ -186,6 +236,17 @@ mod tests {
         Router,
     };
     use tower::ServiceExt;
+
+    #[test]
+    fn delegated_credential_conversion_keeps_request_provenance_attached() {
+        let request = DelegatedCredential::request_bound("bearer".into()).into_caller_credential();
+        assert!(request.is_request_bound());
+        assert_eq!(request.as_ref(), "bearer");
+
+        let subject = DelegatedCredential::subject("browser".into()).into_caller_credential();
+        assert!(!subject.is_request_bound());
+        assert_eq!(subject.as_ref(), "browser");
+    }
 
     #[tokio::test]
     async fn a_subject_placed_by_middleware_is_extracted() {

@@ -55,8 +55,12 @@ pub async fn attach_subject(
         // needs the subject, almost none needs a credential, so taking one has
         // to be deliberate.
         if let Some(token) = resolved.delegated_credential {
-            req.extensions_mut()
-                .insert(layer1_public::auth::DelegatedCredential(token));
+            let credential = if resolved.credential_is_request_bound {
+                layer1_public::auth::DelegatedCredential::request_bound(token)
+            } else {
+                layer1_public::auth::DelegatedCredential::subject(token)
+            };
+            req.extensions_mut().insert(credential);
         }
         req.extensions_mut().insert(resolved.authorization);
         req.extensions_mut().insert(resolved.profile);
@@ -96,7 +100,8 @@ mod tests {
             "subject": subject.0.as_str(),
             "create": authorization.allows(Capability::CreateSession),
             "read_all": authorization.allows(Capability::ReadAllSessions),
-            "credential": credential.0,
+            "credential": credential.value(),
+            "request_bound": credential.is_request_bound(),
             "display_name": profile.display_name,
         }))
     }
@@ -182,6 +187,7 @@ mod tests {
         assert_eq!(value["create"], true);
         assert_eq!(value["read_all"], false);
         assert_eq!(value["credential"], "token-a");
+        assert_eq!(value["request_bound"], true);
         assert_eq!(value["display_name"], "Token A");
     }
 
@@ -190,6 +196,7 @@ mod tests {
         assert_eq!(value["create"], false);
         assert_eq!(value["read_all"], true);
         assert_eq!(value["credential"], "token-b");
+        assert_eq!(value["request_bound"], true);
         assert_eq!(value["display_name"], "Token B");
     }
 
@@ -247,6 +254,31 @@ mod tests {
         );
         assert_token_a(&left);
         assert_token_b(&right);
+    }
+
+    #[tokio::test]
+    async fn browser_credentials_are_marked_as_subject_renewable() {
+        let (auth, _store, app) = same_subject_bearer_fixture().await;
+        let cookie = auth
+            .issue_session(SubjectId("shared-subject".into()))
+            .await
+            .expect("browser session persists");
+        let value = response_json(
+            app.oneshot(
+                Request::get("/inspect")
+                    .header(
+                        header::COOKIE,
+                        format!("{}={cookie}", super::SESSION_COOKIE),
+                    )
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers"),
+        )
+        .await;
+        assert_eq!(value["credential"], "browser-access");
+        assert_eq!(value["request_bound"], false);
     }
 
     #[tokio::test]

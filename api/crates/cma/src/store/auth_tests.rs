@@ -174,6 +174,7 @@ fn credential_state() -> SessionCredentialState {
     SessionCredentialState {
         session: SessionId("sesn_a".into()),
         generation: 9,
+        request_bound_credential: None,
         current: Some(DurableCredential {
             id: "provider-current".into(),
             value: SecretValue::new("current-plaintext".into()),
@@ -589,17 +590,32 @@ fn moving_subject_ciphertext_to_another_field_fails_closed() {
 #[test]
 fn credential_values_are_encrypted_and_bound_to_current_or_pending() {
     let cipher = cipher();
-    let mut stored = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    let mut state = credential_state();
+    state.request_bound_credential = Some(SecretValue::new("request-bound-plaintext".into()));
+    let mut stored = credential_state_to_doc(state, &cipher).unwrap();
     let rendered = format!(
         "{:?}",
         mongodb::bson::serialize_to_document(&stored).unwrap()
     );
     assert!(!rendered.contains("current-plaintext"));
     assert!(!rendered.contains("pending-plaintext"));
+    assert!(!rendered.contains("request-bound-plaintext"));
 
     let current = stored.current.as_mut().unwrap();
     let pending = stored.pending.as_mut().unwrap();
     std::mem::swap(&mut current.value, &mut pending.value);
+    assert!(matches!(
+        credential_state_from_doc(stored, &cipher),
+        Err(StoreError::Malformed(_))
+    ));
+
+    let mut state = credential_state();
+    state.request_bound_credential = Some(SecretValue::new("request-bound-plaintext".into()));
+    let mut stored = credential_state_to_doc(state, &cipher).unwrap();
+    std::mem::swap(
+        stored.request_bound_credential.as_mut().unwrap(),
+        &mut stored.current.as_mut().unwrap().value,
+    );
     assert!(matches!(
         credential_state_from_doc(stored, &cipher),
         Err(StoreError::Malformed(_))
@@ -609,13 +625,17 @@ fn credential_values_are_encrypted_and_bound_to_current_or_pending() {
 #[test]
 fn credential_state_round_trips_every_durable_transition_fact() {
     let cipher = cipher();
-    let restored = credential_state_from_doc(
-        credential_state_to_doc(credential_state(), &cipher).unwrap(),
-        &cipher,
-    )
-    .unwrap();
+    let mut state = credential_state();
+    state.request_bound_credential = Some(SecretValue::new("request-bound".into()));
+    let restored =
+        credential_state_from_doc(credential_state_to_doc(state, &cipher).unwrap(), &cipher)
+            .unwrap();
     assert_eq!(restored.session.as_str(), "sesn_a");
     assert_eq!(restored.generation, 9);
+    assert_eq!(
+        restored.request_bound_credential.unwrap().expose(),
+        "request-bound"
+    );
     assert_eq!(
         restored.current.unwrap().value.expose(),
         "current-plaintext"

@@ -11,7 +11,7 @@ use axum::{
     Json, Router,
 };
 use layer2_core::store::StoreError;
-use layer2_core::{CredentialSource as _, ServiceId, SessionId, SubjectId};
+use layer2_core::{CallerCredential, CredentialSource as _, ServiceId, SessionId, SubjectId};
 
 use super::*;
 use crate::auth::persistence::{
@@ -51,6 +51,7 @@ fn state(
     SessionCredentialState {
         session: session.clone(),
         generation: 0,
+        request_bound_credential: None,
         current,
         pending,
         revoke_debt: Vec::new(),
@@ -955,10 +956,15 @@ async fn a_request_bearer_mints_session_custody_without_becoming_subject_state()
     let services = [ServiceId::new("model")];
 
     assert_eq!(
-        auth.credential_for(&session, &owner, &services, Some("owner-access"))
-            .await
-            .expect("request token mints custody")
-            .as_deref(),
+        auth.credential_for(
+            &session,
+            &owner,
+            &services,
+            Some(&CallerCredential::request_bound("owner-access".into())),
+        )
+        .await
+        .expect("request token mints custody")
+        .as_deref(),
         Some("full-key-1")
     );
     assert_eq!(mints.load(Ordering::SeqCst), 1);
@@ -966,14 +972,109 @@ async fn a_request_bearer_mints_session_custody_without_becoming_subject_state()
         store.subject(&owner).await.expect("store works").is_none(),
         "an externally minted bearer must not overwrite renewable browser state"
     );
-    assert!(store
+    let custody = store
         .credential(&session)
         .await
         .expect("store works")
-        .expect("session custody persists")
-        .current
-        .is_some());
+        .expect("session custody persists");
+    assert!(custody.current.is_some());
+    assert_eq!(
+        custody
+            .request_bound_credential
+            .expect("request provenance persists")
+            .expose(),
+        "owner-access"
+    );
+    assert_eq!(
+        auth.reissue(&session, &owner, &services)
+            .await
+            .expect("reissue uses durable request provenance")
+            .as_deref(),
+        Some("full-key-2")
+    );
+    assert_eq!(mints.load(Ordering::SeqCst), 2);
     server.abort();
+}
+
+#[tokio::test]
+async fn no_issuer_recovery_keeps_bearer_pinned_while_browser_sessions_follow_refresh() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let first = auth(store.clone());
+    let owner = SubjectId("shared-subject".into());
+    let bearer_session = SessionId("sesn_pinned_bearer".into());
+    let browser_session = SessionId("sesn_renewable_browser".into());
+    let services = [ServiceId::new("model")];
+    first
+        .store_tokens(
+            &owner,
+            SubjectTokens {
+                access_token: "browser-old".into(),
+                refresh_token: Some("browser-refresh".into()),
+                expires_at: std::time::Instant::now() + Duration::from_secs(60),
+            },
+        )
+        .await
+        .expect("browser state persists");
+
+    let bearer = CallerCredential::request_bound("bearer-exact".into());
+    assert_eq!(
+        first
+            .credential_for(&bearer_session, &owner, &services, Some(&bearer))
+            .await
+            .expect("bearer custody persists")
+            .as_deref(),
+        Some("bearer-exact")
+    );
+    let browser = CallerCredential::from("browser-old");
+    assert_eq!(
+        first
+            .credential_for(&browser_session, &owner, &services, Some(&browser))
+            .await
+            .expect("browser credential resolves")
+            .as_deref(),
+        Some("browser-old")
+    );
+
+    first
+        .store_tokens(
+            &owner,
+            SubjectTokens {
+                access_token: "browser-new".into(),
+                refresh_token: Some("browser-refresh-new".into()),
+                expires_at: std::time::Instant::now() + Duration::from_secs(60),
+            },
+        )
+        .await
+        .expect("browser refresh persists");
+    drop(first);
+    let restarted = auth(store);
+
+    assert_eq!(
+        restarted
+            .credential_for(&bearer_session, &owner, &services, None)
+            .await
+            .expect("restarted bearer custody loads")
+            .as_deref(),
+        Some("bearer-exact"),
+        "same-subject browser state must not replace request-bound authority"
+    );
+    assert_eq!(
+        restarted
+            .credential_for(&browser_session, &owner, &services, None)
+            .await
+            .expect("restarted browser credential loads")
+            .as_deref(),
+        Some("browser-new"),
+        "browser sessions must continue following the refreshed subject token"
+    );
+    assert!(!restarted
+        .tracks_subject_credential(&bearer_session)
+        .await
+        .expect("bearer provenance loads"));
+    assert!(restarted
+        .tracks_subject_credential(&browser_session)
+        .await
+        .expect("browser provenance loads"));
 }
 
 #[tokio::test]

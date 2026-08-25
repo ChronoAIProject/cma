@@ -306,6 +306,7 @@ pub(super) struct RequestAuth {
     pub(super) authorization: Authorization,
     pub(super) profile: profile::Profile,
     pub(super) delegated_credential: Option<String>,
+    pub(super) credential_is_request_bound: bool,
 }
 
 /// A token generation observed by one renewal sweep.
@@ -406,6 +407,7 @@ impl AuthState {
                 authorization: Self::trusted_authorization(),
                 profile: profile::Profile::default(),
                 delegated_credential: None,
+                credential_is_request_bound: false,
             })),
             AuthMode::Provider { .. } => {
                 for token in session_cookies(headers) {
@@ -419,6 +421,7 @@ impl AuthState {
                                     authorization: Authorization::none(),
                                     profile: profile::Profile::default(),
                                     delegated_credential: None,
+                                    credential_is_request_bound: false,
                                 }));
                             };
                             let delegated_credential = fact
@@ -430,6 +433,7 @@ impl AuthState {
                                 authorization: fact.authorization,
                                 profile: fact.profile,
                                 delegated_credential,
+                                credential_is_request_bound: false,
                             }));
                         }
                         // TTL deletion is eventual. An expired record is never
