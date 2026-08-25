@@ -220,26 +220,24 @@ pub(super) async fn run(
         .map(|e| e.seq)
         .unwrap_or(0);
 
-    match body.resume.is_empty() {
-        false => {
-            for item in &body.resume {
-                service
-                    .resolve_approval(&caller, &id, item.interrupt_id.clone(), decision_of(item))
-                    .await?;
-            }
+    let continuation = !body.resume.is_empty();
+    if continuation {
+        for item in &body.resume {
+            service
+                .resolve_approval(&caller, &id, item.interrupt_id.clone(), decision_of(item))
+                .await?;
         }
-        true => {
-            let prompt = body
-                .messages
-                .iter()
-                .rev()
-                .find(|m| m.role == "user")
-                .and_then(|m| m.content.clone())
-                .ok_or_else(|| {
-                    CoreError::InvalidRequest("a run needs a user message to send".to_string())
-                })?;
-            service.send_prompt(&caller, &id, prompt).await?;
-        }
+    } else {
+        let prompt = body
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .and_then(|m| m.content.clone())
+            .ok_or_else(|| {
+                CoreError::InvalidRequest("a run needs a user message to send".to_string())
+            })?;
+        service.send_prompt(&caller, &id, prompt).await?;
     }
 
     // Subscribed after the prompt is sent, so the turn is already underway and
@@ -251,7 +249,14 @@ pub(super) async fn run(
     let resources = service.subscribe_resources(&caller, &id).await.ok();
 
     Ok(Sse::new(events(
-        service, caller, id, run_id, from, watching, resources,
+        service,
+        caller,
+        id,
+        run_id,
+        from,
+        continuation,
+        watching,
+        resources,
     ))
     .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL)))
 }
@@ -272,6 +277,22 @@ fn decision_of(item: &ResumeItem) -> ApprovalDecision {
     }
 }
 
+/// Open a continuation run without claiming that another durable turn began.
+fn continuation_started(run_id: &str, thread_id: &str) -> super::project::AguiEvent {
+    super::project::AguiEvent {
+        kind: "RUN_STARTED",
+        run_id: run_id.to_string(),
+        thread_id: thread_id.to_string(),
+        body: serde_json::json!({}),
+        timestamp: None,
+        // This brackets the interface's run rather than projecting a log
+        // record. Giving it an id would move replay past an event that does not
+        // exist, while recording another TurnStarted would invent a new turn.
+        seq: None,
+        live: false,
+    }
+}
+
 /// The run's event stream, from `after` until the turn ends.
 ///
 /// Three lanes on one stream. The durable one is polled from the log and is
@@ -281,13 +302,16 @@ fn decision_of(item: &ResumeItem) -> ApprovalDecision {
 /// and a client holding several would have to decide how to interleave them.
 ///
 /// The durable lane is drained first on every pass. A committed message must
-/// not arrive behind a piece of itself.
+/// not arrive behind a piece of itself. A continuation boundary is queued
+/// ahead of all three lanes because it brackets this run rather than the turn
+/// already in progress.
 fn events(
     service: Arc<SessionService>,
     caller: layer2_core::Caller,
     id: SessionId,
     run_id: String,
     after: u64,
+    continuation: bool,
     watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
     resources: Option<tokio::sync::broadcast::Receiver<layer2_core::ResourceReading>>,
 ) -> impl Stream<Item = Result<SseEvent, std::convert::Infallible>> {
@@ -307,6 +331,11 @@ fn events(
         ended: bool,
     }
 
+    let pending = continuation
+        .then(|| continuation_started(&run_id, &id.0))
+        .into_iter()
+        .collect();
+
     stream::unfold(
         Open {
             service,
@@ -314,7 +343,7 @@ fn events(
             id,
             run_id,
             seq: after,
-            pending: Default::default(),
+            pending,
             watching,
             resources,
             ended: false,
@@ -338,21 +367,21 @@ fn events(
                 )
                 .await
                 .unwrap_or(Woke::Idle);
-                match woke {
-                    Woke::Live(frame) => open.pending.extend(super::live::project_live(
-                        &frame,
-                        &open.run_id,
-                        &open.id.0,
-                    )),
-                    Woke::Reading(reading) => {
-                        open.pending
-                            .push_back(project_reading(&reading, &open.run_id, &open.id.0))
+                // Hold the cursorless lane until the log has been drained. A
+                // runtime can answer immediately after accepting a prompt; if
+                // that live piece were queued first, the stream would still
+                // violate RUN_STARTED-first even though TurnStarted was already
+                // durable. The same ordering keeps a committed message ahead of
+                // the live piece it supersedes.
+                let cursorless = match woke {
+                    Woke::Live(frame) => {
+                        super::live::project_live(&frame, &open.run_id, &open.id.0)
                     }
-                    Woke::Idle => {}
-                }
-                if !open.pending.is_empty() {
-                    continue;
-                }
+                    Woke::Reading(reading) => {
+                        Some(project_reading(&reading, &open.run_id, &open.id.0))
+                    }
+                    Woke::Idle => None,
+                };
                 let read = open
                     .service
                     .events_since(&open.caller, &open.id, Some(open.seq))
@@ -371,6 +400,13 @@ fn events(
                         tracing::debug!(session_id = %open.id, ?ending, "run ended");
                         open.ended = true;
                     }
+                }
+                // RUN_FINISHED/RUN_ERROR must remain the last frame. A
+                // cursorless reading that happened alongside the durable ending
+                // belongs before it in time but cannot safely be reordered past
+                // the run boundary, so the durable outcome wins.
+                if !open.ended {
+                    open.pending.extend(cursorless);
                 }
             }
         },

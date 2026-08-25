@@ -97,3 +97,16 @@ fn a_run_with_neither_a_message_nor_an_answer_has_nothing_to_do() {
     assert!(request.resume.is_empty());
     assert!(request.messages.is_empty());
 }
+
+#[test]
+fn a_continuation_boundary_is_unnumbered_and_is_not_a_new_turn() {
+    let boundary = continuation_started("run_resume", "sesn_1");
+    let body = serde_json::to_value(&boundary).expect("the boundary serialises");
+
+    assert_eq!(body["type"], "RUN_STARTED");
+    assert_eq!(body["runId"], "run_resume");
+    assert_eq!(body["threadId"], "sesn_1");
+    assert!(boundary.cursor().is_none());
+    assert!(body.get("cma:live").is_none());
+    assert!(body.get("timestamp").is_none());
+}
