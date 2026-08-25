@@ -280,13 +280,9 @@ impl WireAdapter {
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 let arrived = self.terminal_input_arrived.notified();
-                if self
-                    .terminal_inputs
-                    .lock()
-                    .await
-                    .iter()
-                    .any(|input| matches!(input, TerminalInput::Signal(signal) if signal == expected))
-                {
+                if self.terminal_inputs.lock().await.iter().any(
+                    |input| matches!(input, TerminalInput::Signal(signal) if signal == expected),
+                ) {
                     break;
                 }
                 arrived.await;
@@ -756,9 +752,9 @@ impl HeldOperation {
             Self::Resize => Message::Text(
                 serde_json::json!({ "t": "resize", "cols": 138, "rows": 46 }).to_string(),
             ),
-            Self::Signal => Message::Text(
-                serde_json::json!({ "t": "signal", "sig": "INT" }).to_string(),
-            ),
+            Self::Signal => {
+                Message::Text(serde_json::json!({ "t": "signal", "sig": "INT" }).to_string())
+            }
         }
     }
 }
@@ -792,10 +788,7 @@ async fn assert_accepted_operation_precedes_close(
         // The attach above durably applies its initial geometry. Mark the
         // resulting record old only afterwards so that write cannot restore the
         // current version before reconciliation reads it.
-        fixture
-            .store
-            .set_runtime_version(&id, "runtime:old")
-            .await;
+        fixture.store.set_runtime_version(&id, "runtime:old").await;
     }
     let receipt = layer1_public::pty::OperationGate::install(&id, operation.name());
 
@@ -821,9 +814,9 @@ async fn assert_accepted_operation_precedes_close(
                     .map_err(|error| error.to_string()),
                 RotationEnding::RuntimeReplaced => {
                     let reclaimed = service.reconcile().await;
-                    (reclaimed.rotated_sessions == 1).then_some(()).ok_or_else(|| {
-                        format!("expected one runtime rotation, got {reclaimed:?}")
-                    })
+                    (reclaimed.rotated_sessions == 1)
+                        .then_some(())
+                        .ok_or_else(|| format!("expected one runtime rotation, got {reclaimed:?}"))
                 }
             }
         }
