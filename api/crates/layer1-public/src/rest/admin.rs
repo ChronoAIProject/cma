@@ -248,10 +248,22 @@ impl AdminSessionView {
 
 /// One runtime in service, as this interface renders it.
 #[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeGenerationView {
+    Legacy,
+    Recorded,
+    Malformed,
+}
+
+/// One runtime in service, as this interface renders it.
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RuntimeView {
     runtime: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     generation: Option<u64>,
+    generation_state: RuntimeGenerationView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -308,13 +320,28 @@ impl InventoryView {
                         runtimes: Some(
                             runtimes
                                 .into_iter()
-                                .map(|r| RuntimeView {
-                                    unaccounted: r.is_unaccounted(),
-                                    runtime: r.runtime,
-                                    generation: r.generation,
-                                    session: r.session.map(|s| s.0),
-                                    owner: r.owner.map(|o| o.0),
-                                    status: r.status,
+                                .map(|r| {
+                                    let (generation, generation_state) = match r.generation {
+                                        layer2_core::ProviderRuntimeGeneration::Legacy => {
+                                            (None, RuntimeGenerationView::Legacy)
+                                        }
+                                        layer2_core::ProviderRuntimeGeneration::Recorded(value) => {
+                                            (Some(value), RuntimeGenerationView::Recorded)
+                                        }
+                                        layer2_core::ProviderRuntimeGeneration::Malformed => {
+                                            (None, RuntimeGenerationView::Malformed)
+                                        }
+                                    };
+                                    RuntimeView {
+                                        unaccounted: r.is_unaccounted(),
+                                        runtime: r.runtime,
+                                        generation,
+                                        generation_state,
+                                        created_by: r.created_by,
+                                        session: r.session.map(|s| s.0),
+                                        owner: r.owner.map(|o| o.0),
+                                        status: r.status,
+                                    }
                                 })
                                 .collect(),
                         ),
