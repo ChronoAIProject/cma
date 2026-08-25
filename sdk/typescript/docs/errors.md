@@ -63,11 +63,14 @@ the observer failure.
 ## Retry discipline
 
 Unary TypeScript operations do not retry automatically. `ApiError.isRetryable` is
-true for `429` and `5xx`, and `TransportError.isRetryable` is true, but those are
-advice to the caller rather than an automatic replay. This matters for
-side-effecting POSTs: the current REST contract has no idempotency key, so a timeout
-can mean the server completed an operation whose response was lost. Read current
-state before repeating create or another non-idempotent operation.
+true for `429`, `5xx`, and the self-resolving `409 session_rotating` refusal.
+Other `409` responses, including `session_terminated`, are not retryable.
+`TransportError.isRetryable` is also true, but these values are advice to the caller
+rather than an automatic replay. A caller may retry `session_rotating` after the
+in-progress plane change finishes. This matters for side-effecting POSTs: the
+current REST contract has no idempotency key, so a timeout can mean the server
+completed an operation whose response was lost. Read current state before repeating
+create or another non-idempotent operation.
 
 The durable event stream performs its own bounded reconnects as documented in
 [Streaming](streaming.md). A server problem document that does not match the

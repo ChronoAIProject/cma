@@ -585,7 +585,36 @@ describe('what comes back', () => {
     );
     expect(failure).toBeInstanceOf(ApiError);
     expect(failure).not.toBeInstanceOf(SessionLimitReached);
-    expect((failure as ApiError).code).toBe('session_terminated');
+    expect(failure).toMatchObject({
+      status: 409,
+      code: 'session_terminated',
+      message: 'this session has ended',
+      isRetryable: false,
+    });
+  });
+
+  it('preserves a rotating-session refusal as a retryable ApiError', async () => {
+    const { impl } = recorder({
+      ok: false,
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          detail: 'this session is changing planes',
+          code: 'session_rotating',
+        }),
+    });
+    const failure = await request(resolveConfig({ fetch: impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).not.toBeInstanceOf(SessionLimitReached);
+    expect(failure).toMatchObject({
+      status: 409,
+      code: 'session_rotating',
+      message: 'this session is changing planes',
+      isRetryable: true,
+    });
   });
 
   it('keeps malformed session-limit numbers absent', async () => {
@@ -631,6 +660,10 @@ describe('telling a refusal from a failure', () => {
     // never succeed.
     expect(new ApiError(500, '').isRetryable).toBe(true);
     expect(new ApiError(429, '').isRetryable).toBe(true);
+    expect(new ApiError(409, '', 'session_rotating').isRetryable).toBe(true);
+    expect(new ApiError(400, '', 'session_rotating').isRetryable).toBe(false);
+    expect(new ApiError(409, '', 'session_terminated').isRetryable).toBe(false);
+    expect(new ApiError(409, '').isRetryable).toBe(false);
     expect(new ApiError(400, '').isRetryable).toBe(false);
     expect(new ApiError(404, '').isRetryable).toBe(false);
   });
