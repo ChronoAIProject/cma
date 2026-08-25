@@ -102,12 +102,11 @@ export const PRICING_WIRE = {
 } as const;
 
 /**
- * The JSON-Pointer paths a `STATE_DELTA` writes, as the service writes them.
+ * The JSON-Pointer paths this SDK recognizes in `STATE_DELTA` operations.
  *
- * `docs/API_AGUI.md`: token counts arrive as patches against `/usage`, a
- * dropped stretch of conversation is appended to `/gaps`, and a plane change
- * is appended to `/planeChanges`; a runtime loss is appended to
- * `/runtimeLosses`.
+ * `docs/API_AGUI.md` §3, "STATE_DELTA paths", is the complete emitted path,
+ * operation, value-shape, and trigger contract. `/usage/cost` is the one
+ * explicitly unwritten local placeholder, recorded at its declaration below.
  */
 export const PATHS = {
   /** A session's live resource readings. Replaced whole; never accumulated. */
@@ -150,8 +149,8 @@ export const PATHS = {
   /**
    * The actions the owner may invoke right now.
    *
-   * Liveness rather than history: a stale list replayed from the log would
-   * offer actions that no longer exist.
+   * Written by both the durable projection and cursorless live lane. Each
+   * announcement replaces the list whole, so both lanes converge on one path.
    */
   availableCommands: '/availableCommands',
   /** Where a plane change is appended. */
