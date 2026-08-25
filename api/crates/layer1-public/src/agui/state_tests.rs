@@ -313,8 +313,7 @@ fn every_emitted_state_delta_applies_with_a_conforming_library() {
 fn emitted_canonical_and_documented_paths_are_equal() {
     let emitted = emitted_state_delta_paths();
     let canonical = canonical_state_delta_paths();
-    let documented =
-        documented_state_delta_paths(include_str!("../../../../../docs/API_AGUI.md"));
+    let documented = documented_state_delta_paths(include_str!("../../../../../docs/API_AGUI.md"));
 
     assert_eq!(
         canonical.len(),
