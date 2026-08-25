@@ -25,7 +25,7 @@ struct Refusal {
 
 /// What the independently polled socket reader needs from its writer.
 enum InputEvent {
-    Refusal(Refusal),
+    Refusal(Box<Refusal>),
     /// Supersession was observed and the sole accepted operation has completed.
     Drained,
 }
@@ -437,13 +437,13 @@ async fn report_refusal(
     tracing::warn!(session_id = %id, %operation, %code, error = %error, "terminal operation refused");
     let (delivered, receipt) = oneshot::channel();
     if events
-        .send(InputEvent::Refusal(Refusal {
+        .send(InputEvent::Refusal(Box::new(Refusal {
             control: ServerControl::Error {
                 code,
                 detail: error.to_string(),
             },
             delivered,
-        }))
+        })))
         .await
         .is_err()
     {
