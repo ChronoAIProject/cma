@@ -851,37 +851,45 @@ With no attachment live, all three operate the terminal directly.
 
 ## 5. Events
 
-### Replay
+### Replay and follow
 
 ```http
-GET /api/v1/sessions/{id}/events?starting_after=1042&limit=200
-```
-
-Returns durable events in `seq` order, oldest first. `seq` is **monotonic per session**, so a cursor is one integer. Use `Link: rel="next"` to page.
-
-### Stream
-
-```http
-GET /api/v1/sessions/{id}/events/stream?starting_after=1042
+GET /api/v1/sessions/{id}/events?starting_after=1042
 Accept: text/event-stream
 ```
 
-Server-sent events. Each carries `id` (the `seq`) and `event` (the type).
+This single SSE route first replays every durable event after the optional
+per-session cursor, oldest first, and then follows the same log for new events.
+It does not have a separate JSON history page, a `limit` parameter, a `Link`
+header, or an `/events/stream` variant.
 
-```
-event: turn.started
+`starting_after` is the canonical query name. REST also accepts `after` as a
+compatibility alias. A valid numeric `Last-Event-ID` header takes precedence
+over either query spelling, matching automatic `EventSource` reconnects.
+Unknown, malformed, repeated, or combined canonical-and-alias query fields
+return a `400` problem document instead of silently replaying from the start.
+
+Each frame carries the sequence in `id` and uses SSE's default message event.
+The JSON `data` object is keyed `{seq, session_id, event}`, with the core event
+kind nested under `event`. Browser clients therefore use `onmessage`, not a
+named-event listener:
+
+```text
 id: 1043
-data: {"session_id":"sesn_01JD8Z3K7","seq":1043,"type":"turn.started"}
+data: {"seq":1043,"session_id":"sesn_01JD8Z3K7","event":{"type":"turn_started"}}
 
-event: approval.requested
 id: 1044
-data: {"session_id":"sesn_01JD8Z3K7","seq":1044,"type":"approval.requested",
-       "request_id":"apr_7Q2","action":"command_execution","detail":{"command":"rm -rf build/"}}
+data: {"seq":1044,"session_id":"sesn_01JD8Z3K7","event":{"type":"approval_requested","request_id":"apr_7Q2","action":"command_execution"}}
 ```
 
-**Reconnect correctly:** open the stream first, then `GET /events` for history, then deduplicate by `seq`. The stream does not replay what it missed while closed; `starting_after` does.
+**Reconnect correctly:** persist an event cursor only after committing that
+event's effect, then reopen this route with that cursor. Sending both the query
+cursor and `Last-Event-ID` is safe; the header wins, and clients should still
+deduplicate by `seq` across an uncertain disconnect.
 
-Delta events (`output.delta`, `thinking.delta`) are **stream-only and never persisted**. They exist for liveness. Anything durable arrives as a semantic event.
+Only durable semantic events appear on this route. Ephemeral terminal and
+message deltas travel on their interface-specific live connections; they are
+never stored and cannot be replayed here.
 
 A runtime the service established as lost arrives in an unnamed SSE frame with the core kind nested under `event`, exactly as the implementation sends it:
 

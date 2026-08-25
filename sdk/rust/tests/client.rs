@@ -780,7 +780,7 @@ async fn create_stream_interrupt_smoke_uses_a_fresh_credential_each_time() {
 
     let requests = stub.requests().await;
     assert_eq!(requests.len(), 3);
-    assert_eq!(requests[1].uri.query(), Some("after=7"));
+    assert_eq!(requests[1].uri.query(), Some("starting_after=7"));
     assert_eq!(requests[1].last_event_id.as_deref(), Some("7"));
     assert_eq!(provider_calls.load(Ordering::SeqCst), 3);
 }
@@ -824,7 +824,7 @@ async fn stream_reconnects_after_the_last_validated_cursor_and_deduplicates() {
 
     let requests = stub.requests().await;
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[1].uri.query(), Some("after=8"));
+    assert_eq!(requests[1].uri.query(), Some("starting_after=8"));
     assert_eq!(requests[1].last_event_id.as_deref(), Some("8"));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
