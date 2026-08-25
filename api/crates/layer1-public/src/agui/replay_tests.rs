@@ -241,10 +241,11 @@ mod route_resume {
     use layer2_core::{
         AgentConfiguration, Authorization, Baseline, Capability, Deployment, DirectoryQuery,
         EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-        EnvironmentProfileStore, Event, EventKind, KernelId, PlatformSettingsService,
-        RecoveryState, RegisteredUser, Reserved, ScreenFactory, Session, SessionCapabilities,
-        SessionId, SessionPorts, SessionRecord, SessionService, SessionStatus, SessionStore,
-        StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
+        EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind, KernelId, Page,
+        PageRequest, PlatformSettingsService, RecoveryState, RegisteredUser, Reserved,
+        ScreenFactory, Session, SessionCapabilities, SessionId, SessionListQuery, SessionPorts,
+        SessionRecord, SessionService, SessionStatus, SessionStore, StoreError, StoredEvent,
+        SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
     };
     use serde_json::Value;
     use tower::ServiceExt;
@@ -262,27 +263,36 @@ mod route_resume {
             Ok(())
         }
 
-        async fn upsert(&self, _record: &SessionRecord) -> Result<(), StoreError> {
-            panic!("the replay fixture is read-only")
-        }
-
         async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
             Ok((self.record.session.id == *id).then(|| self.record.clone()))
         }
 
-        async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
-            Ok((&self.record.session.owner == owner)
-                .then(|| self.record.clone())
-                .into_iter()
-                .collect())
+        async fn list_for(
+            &self,
+            owner: &SubjectId,
+            _query: &SessionListQuery,
+        ) -> Result<Page<SessionRecord>, StoreError> {
+            Ok(Page {
+                items: (&self.record.session.owner == owner)
+                    .then(|| self.record.clone())
+                    .into_iter()
+                    .collect(),
+                next: None,
+            })
         }
 
         async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
             Ok(Reserved::default())
         }
 
-        async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
-            Ok(vec![self.record.clone()])
+        async fn list_all(
+            &self,
+            _query: &SessionListQuery,
+        ) -> Result<Page<SessionRecord>, StoreError> {
+            Ok(Page {
+                items: vec![self.record.clone()],
+                next: None,
+            })
         }
 
         async fn delete(&self, _id: &SessionId) -> Result<(), StoreError> {
@@ -290,6 +300,24 @@ mod route_resume {
         }
 
         async fn append_events(&self, _events: &[Event]) -> Result<(), StoreError> {
+            panic!("the replay fixture is read-only")
+        }
+
+        async fn commit_session_idempotent(
+            &self,
+            _write_id: &str,
+            _record: &SessionRecord,
+            _events: &[Event],
+        ) -> Result<u64, StoreError> {
+            panic!("the replay fixture is read-only")
+        }
+
+        async fn create_session_idempotent(
+            &self,
+            _write_id: &str,
+            _record: &SessionRecord,
+            _events: &[Event],
+        ) -> Result<u64, StoreError> {
             panic!("the replay fixture is read-only")
         }
 
@@ -315,7 +343,16 @@ mod route_resume {
     #[async_trait::async_trait]
     impl EnvironmentProfileStore for NoProfiles {
         async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
-            Ok(())
+            panic!("the replay fixture is read-only")
+        }
+
+        async fn replace_content(
+            &self,
+            _id: &EnvironmentProfileId,
+            _content: &EnvironmentProfileSpec,
+            _updated_at: &str,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            panic!("the replay fixture is read-only")
         }
 
         async fn get(
@@ -328,12 +365,31 @@ mod route_resume {
         async fn list_for(
             &self,
             _owner: &SubjectId,
-        ) -> Result<Vec<EnvironmentProfile>, StoreError> {
-            Ok(Vec::new())
+            _page: &PageRequest,
+        ) -> Result<Page<EnvironmentProfile>, StoreError> {
+            Ok(Page {
+                items: Vec::new(),
+                next: None,
+            })
+        }
+
+        async fn set_preferred(
+            &self,
+            _owner: &SubjectId,
+            _chosen: Option<&EnvironmentProfileId>,
+        ) -> Result<(), StoreError> {
+            panic!("the replay fixture is read-only")
+        }
+
+        async fn preferred_for(
+            &self,
+            _owner: &SubjectId,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
         }
 
         async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
-            Ok(())
+            panic!("the replay fixture is read-only")
         }
     }
 

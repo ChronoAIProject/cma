@@ -493,8 +493,16 @@ export class AguiConnection {
     }
 
     for (let index = pending.acknowledged; index < events.length; index += 1) {
+      const event = events[index] as AguiEvent;
+      const delivered =
+        event.type === 'UNKNOWN'
+          ? {
+              ...event,
+              projectionId: JSON.stringify([final.threadId, final.seq, index, event.kind]),
+            }
+          : event;
       try {
-        onEvent(events[index] as AguiEvent);
+        onEvent(delivered);
       } catch (cause) {
         throw new EventCallbackFailure(cause);
       }
