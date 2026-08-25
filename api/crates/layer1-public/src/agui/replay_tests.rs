@@ -14,6 +14,15 @@ use super::*;
 use crate::agui::project::project;
 use layer2_core::{Event, EventKind, SessionId};
 
+#[test]
+fn keepalive_interval_matches_the_documented_contract() {
+    // `API_AGUI.md` §2 promises clients a comment at least every 15 seconds.
+    assert_eq!(
+        super::super::KEEPALIVE_INTERVAL,
+        std::time::Duration::from_secs(15)
+    );
+}
+
 fn logged(seq: u64, kind: EventKind) -> Event {
     Event {
         session_id: SessionId("sesn_1".into()),
@@ -231,13 +240,14 @@ fn a_drop_mid_projection_resumes_the_event_whole() {
 }
 
 mod route_resume {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use axum::{
         body::{to_bytes, Body},
         http::{header, Request, StatusCode},
         Extension, Router,
     };
+    use futures_util::StreamExt;
     use layer2_core::{
         AgentConfiguration, Authorization, Baseline, Capability, Deployment, DirectoryQuery,
         EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
@@ -593,5 +603,40 @@ mod route_resume {
         assert_eq!(after_message.len(), 1);
         assert_eq!(after_message[0].id, Some(8));
         assert_eq!(after_message[0].body["type"], "RUN_FINISHED");
+    }
+
+    #[tokio::test]
+    async fn an_idle_route_stream_sends_an_unnamed_uncursored_keepalive() {
+        let response = app()
+            .oneshot(
+                Request::get("/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let mut body = response.into_body().into_data_stream();
+        let chunk = tokio::time::timeout(
+            super::super::super::KEEPALIVE_INTERVAL + Duration::from_secs(1),
+            body.next(),
+        )
+        .await
+        .expect("an idle stream sends a keepalive within the documented interval plus margin")
+        .expect("the followed stream stays open")
+        .expect("the keepalive body chunk is readable");
+        let keepalive = std::str::from_utf8(&chunk).expect("SSE is UTF-8");
+
+        assert!(
+            keepalive.starts_with(':'),
+            "a transport keepalive is an SSE comment: {keepalive:?}"
+        );
+        assert!(
+            keepalive
+                .lines()
+                .all(|line| !line.starts_with("id:") && !line.starts_with("event:")),
+            "a transport keepalive is neither cursor-bearing nor an application event: {keepalive:?}"
+        );
     }
 }
