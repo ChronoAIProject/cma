@@ -165,7 +165,8 @@ pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
 pub use session::{
-    RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus, StopReason,
+    CallerCredential, RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus,
+    StopReason,
 };
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;

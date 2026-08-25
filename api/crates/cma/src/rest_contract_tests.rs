@@ -827,7 +827,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     let public_state = layer1_public::rest::SessionsState {
         sessions: Arc::clone(&sessions),
         users: Arc::clone(&users),
-        tickets: TerminalTickets::new(),
+        tickets: TerminalTickets::in_memory(),
         environments: Arc::clone(&environments),
     };
     let rest = rest_api_router(
@@ -849,7 +849,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     let app = if authenticated {
         app.layer(Extension(caller.authorization.clone()))
             .layer(Extension(AuthenticatedSubject(caller.subject.clone())))
-            .layer(Extension(DelegatedCredential(
+            .layer(Extension(DelegatedCredential::subject(
                 TEST_DELEGATED_CREDENTIAL.into(),
             )))
     } else {
@@ -2319,6 +2319,16 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
     assert_eq!(
         ticket_schema["$ref"], "#/components/schemas/TicketRequest",
         "an explicit ticket body must be a non-null TicketRequest: {ticket_schema}"
+    );
+    let ticket_responses = &paths["/api/v1/sessions/{id}/terminal-ticket"]["post"]["responses"];
+    assert_eq!(
+        ticket_responses["503"]["content"]["application/problem+json"]["schema"]["$ref"],
+        "#/components/schemas/ProblemDocument",
+        "ticket-store failures must advertise their typed problem: {ticket_responses}"
+    );
+    assert_eq!(
+        ticket_responses["default"]["$ref"], "#/components/responses/Problem",
+        "the shared OpenAPI problem fallback must remain present: {ticket_responses}"
     );
 
     let profile_create_schema = &paths["/api/v1/environment-profiles"]["post"]["requestBody"]

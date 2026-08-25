@@ -311,9 +311,11 @@ dependencies = [
  "layer3-adapter",
  "mongodb",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.24.0",
  "tower",
@@ -321,6 +323,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -1343,6 +1346,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "sha2 0.10.9",
  "tokio",
  "tower",
  "tracing",

@@ -4,7 +4,7 @@
 //! "what may they do", `super` answers "who are they and can we still act for
 //! them". They are resolved once at sign-in and looked up per request.
 
-use layer2_core::{Authorization, SubjectId};
+use layer2_core::{store::StoreError, Authorization, SubjectId};
 
 use super::{AuthMode, AuthState};
 
@@ -15,19 +15,27 @@ impl AuthState {
     /// and the endpoint that reports them read the same function, so a client
     /// can never be told it may do something the next request refuses. That
     /// disagreement is the whole failure mode of telling a client anything.
-    pub async fn effective_authorization(&self, subject: &SubjectId) -> Authorization {
+    pub async fn effective_authorization(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<Authorization, StoreError> {
         match self.mode {
-            AuthMode::Trusted { .. } => Self::trusted_authorization(),
+            AuthMode::Trusted { .. } => Ok(Self::trusted_authorization()),
             AuthMode::Provider { .. } => self.authorization(subject).await,
         }
     }
 
     /// Record what a subject may do, as resolved at sign-in.
-    pub async fn store_authorization(&self, subject: &SubjectId, authorization: Authorization) {
-        self.authorizations
-            .write()
-            .await
-            .insert(subject.clone(), authorization);
+    pub async fn store_authorization(
+        &self,
+        subject: &SubjectId,
+        authorization: Authorization,
+    ) -> Result<(), StoreError> {
+        self.replace_subject_fact(subject, |state| {
+            state.authorization = authorization.clone();
+            Ok(())
+        })
+        .await
     }
 
     /// What a subject may do.
@@ -35,13 +43,13 @@ impl AuthState {
     /// A subject with nothing recorded gets an empty authorization rather than
     /// an error, so an unknown caller is denied by every check instead of
     /// bypassing them.
-    pub async fn authorization(&self, subject: &SubjectId) -> Authorization {
-        self.authorizations
-            .read()
-            .await
-            .get(subject)
-            .cloned()
-            .unwrap_or_else(Authorization::none)
+    pub async fn authorization(&self, subject: &SubjectId) -> Result<Authorization, StoreError> {
+        Ok(self
+            .store
+            .subject(subject)
+            .await?
+            .map(|state| state.authorization)
+            .unwrap_or_else(Authorization::none))
     }
 }
 
@@ -68,7 +76,10 @@ mod tests {
         // The lookup must fail closed: a subject with nothing recorded gets an
         // empty authorization, not a bypass.
         let auth = provider_state();
-        let a = auth.authorization(&SubjectId("never-seen".into())).await;
+        let a = auth
+            .authorization(&SubjectId("never-seen".into()))
+            .await
+            .expect("memory store works");
         assert_eq!(a.capabilities().count(), 0);
         assert!(!a.allows(Capability::CreateSession));
     }
@@ -81,8 +92,9 @@ mod tests {
             &s,
             Authorization::from_capabilities([Capability::UseOwnSessions]),
         )
-        .await;
-        let a = auth.authorization(&s).await;
+        .await
+        .expect("authorization persists");
+        let a = auth.authorization(&s).await.expect("authorization loads");
         assert!(a.allows(Capability::UseOwnSessions));
         assert!(!a.allows(Capability::ReadAllSessions));
     }
@@ -96,13 +108,15 @@ mod tests {
             &s,
             Authorization::from_capabilities([Capability::ReadAllSessions]),
         )
-        .await;
+        .await
+        .expect("first authorization persists");
         auth.store_authorization(
             &s,
             Authorization::from_capabilities([Capability::UseOwnSessions]),
         )
-        .await;
-        let a = auth.authorization(&s).await;
+        .await
+        .expect("replacement authorization persists");
+        let a = auth.authorization(&s).await.expect("authorization loads");
         assert!(a.allows(Capability::UseOwnSessions));
         assert!(
             !a.allows(Capability::ReadAllSessions),
@@ -123,7 +137,8 @@ mod tests {
         );
         let a = auth
             .effective_authorization(&SubjectId("anybody".into()))
-            .await;
+            .await
+            .expect("trusted authorization is available");
         assert!(a.allows(Capability::CreateSession));
         assert!(!a.is_privileged());
     }
@@ -136,16 +151,19 @@ mod tests {
             &s,
             Authorization::from_capabilities([Capability::ReadActivityLog]),
         )
-        .await;
+        .await
+        .expect("authorization persists");
         assert!(auth
             .effective_authorization(&s)
             .await
+            .expect("authorization loads")
             .allows(Capability::ReadActivityLog));
         // And an unknown subject still gets nothing, which is what makes the
         // report safe to hand to a browser.
         assert_eq!(
             auth.effective_authorization(&SubjectId("never-seen".into()))
                 .await
+                .expect("authorization loads")
                 .capabilities()
                 .count(),
             0

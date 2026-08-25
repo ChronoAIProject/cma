@@ -58,16 +58,16 @@ impl SessionService {
         session: &SessionId,
         owner: &SubjectId,
         services: &[crate::environment::ServiceId],
-    ) -> Option<String> {
-        let source = self.credentials.as_ref()?;
-        source.credential_for(session, owner, services).await
+        caller_credential: Option<&crate::session::CallerCredential>,
+    ) -> Result<Option<String>, crate::store::StoreError> {
+        let Some(source) = self.credentials.as_ref() else {
+            return Ok(None);
+        };
+        source
+            .credential_for(session, owner, services, caller_credential)
+            .await
     }
 
-    /// What this session's profile says its credential may reach.
-    ///
-    /// Read from the session rather than from the request that created it, so
-    /// a credential minted long afterwards — for a replaced runtime, or after
-    /// a restart — is scoped the same way the first one was.
     /// Whether this session still exists and could present a credential.
     ///
     /// A terminated session is not live even while its record remains: the
@@ -90,15 +90,39 @@ impl SessionService {
     ///
     /// A credential is unclaimed only when the session it was minted for has
     /// ended or is no longer there at all.
-    pub async fn session_claims_credential(&self, id: &SessionId) -> bool {
-        match self.store.get(id).await {
-            Ok(Some(record)) => !record.session.status.is_terminal(),
-            _ => false,
-        }
+    pub async fn session_claims_credential(
+        &self,
+        id: &SessionId,
+    ) -> Result<bool, crate::store::StoreError> {
+        Ok(self
+            .store
+            .get(id)
+            .await?
+            .is_some_and(|record| !record.session.status.is_terminal()))
     }
 
     pub async fn session_services(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
         self.services_for(id).await
+    }
+
+    /// Authoritative owner and frozen grant for recurring credential work.
+    ///
+    /// Missing or terminal sessions have no context that can authorize a mint
+    /// or delivery. Store failures remain distinguishable from that absence.
+    pub async fn session_credential_context(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<(SubjectId, Vec<crate::environment::ServiceId>)>, crate::store::StoreError>
+    {
+        let Some(record) = self.store.get(id).await? else {
+            return Ok(None);
+        };
+        if record.session.status.is_terminal() {
+            return Ok(None);
+        }
+        let owner = record.session.owner.clone();
+        let services = self.services_for_record(&record).await;
+        Ok(Some((owner, services)))
     }
 
     /// Hand one session a credential that was minted for it.
@@ -121,6 +145,14 @@ impl SessionService {
         let Ok(Some(record)) = self.store.get(id).await else {
             return Vec::new();
         };
+        self.services_for_record(&record).await
+    }
+
+    /// What this session's recorded grant says its credential may reach.
+    async fn services_for_record(
+        &self,
+        record: &crate::store::SessionRecord,
+    ) -> Vec<crate::environment::ServiceId> {
         // The session's own answer, not its profile's. A credential minted long
         // afterwards — for a replaced runtime, or after a restart — is scoped
         // the way the first one was, even if the bundle it was started from has
@@ -148,9 +180,20 @@ impl SessionService {
     /// broken while being perfectly alive.
     pub(crate) async fn supply_credential(&self, id: &SessionId, owner: &SubjectId) {
         let services = self.services_for(id).await;
-        let Some(credential) = self.credential_for(id, owner, &services).await else {
-            tracing::debug!(session_id = %id, "no credential held for this session's owner");
-            return;
+        let credential = match self.credential_for(id, owner, &services, None).await {
+            Ok(Some(credential)) => credential,
+            Ok(None) => {
+                tracing::debug!(session_id = %id, "no credential held for this session's owner");
+                return;
+            }
+            Err(error) => {
+                tracing::error!(
+                    session_id = %id,
+                    error = %error,
+                    "could not read or mint this session's credential"
+                );
+                return;
+            }
         };
         {
             let mut entries = self.entries.write().await;
@@ -209,17 +252,40 @@ impl SessionService {
         subject: &SubjectId,
         credential: String,
     ) -> usize {
-        let targets: Vec<SessionId> = {
-            let mut entries = self.entries.write().await;
+        let candidates: Vec<SessionId> = {
+            let entries = self.entries.read().await;
             entries
-                .values_mut()
+                .values()
                 .filter(|e| e.session.is_owned_by(subject) && !e.session.status.is_terminal())
-                .map(|e| {
-                    e.subject_credential = Some(credential.clone());
-                    e.session.id.clone()
-                })
+                .map(|e| e.session.id.clone())
                 .collect()
         };
+
+        let mut targets = Vec::new();
+        for id in candidates {
+            let tracks_subject = match self.credentials.as_ref() {
+                Some(source) => match source.tracks_subject_credential(&id).await {
+                    Ok(tracks) => tracks,
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id = %id,
+                            error = %error,
+                            "could not determine credential provenance; renewal was not pushed"
+                        );
+                        false
+                    }
+                },
+                None => false,
+            };
+            if tracks_subject {
+                if let Some(entry) = self.entries.write().await.get_mut(&id).filter(|entry| {
+                    entry.session.is_owned_by(subject) && !entry.session.status.is_terminal()
+                }) {
+                    entry.subject_credential = Some(credential.clone());
+                    targets.push(id);
+                }
+            }
+        }
 
         let mut delivered = 0;
         for id in targets {

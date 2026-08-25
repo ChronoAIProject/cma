@@ -45,9 +45,15 @@ impl crate::store::CredentialSource for FixedCredential {
         _session: &crate::ids::SessionId,
         _subject: &SubjectId,
         _services: &[crate::environment::ServiceId],
-    ) -> Option<String> {
-        Some(self.0.clone())
+        _caller_credential: Option<&crate::session::CallerCredential>,
+    ) -> Result<Option<String>, crate::store::StoreError> {
+        Ok(Some(self.0.clone()))
     }
 
-    async fn release(&self, _session: &crate::ids::SessionId) {}
+    async fn release(
+        &self,
+        _session: &crate::ids::SessionId,
+    ) -> Result<(), crate::store::StoreError> {
+        Ok(())
+    }
 }

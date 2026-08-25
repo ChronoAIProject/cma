@@ -341,7 +341,7 @@ async fn services(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<axum::Extension<DelegatedCredential>>,
 ) -> Result<Json<ServiceCatalogView>, Problem> {
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     let services = service
         .available_services(&caller, credential.as_deref())
         .await?;
@@ -393,7 +393,7 @@ async fn skills(
     // it the catalogue answers as this service, which sees only what is public.
     credential: Option<axum::Extension<DelegatedCredential>>,
 ) -> Result<Json<SkillCatalogView>, Problem> {
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     let skills = service
         .available_skills(&caller, credential.as_deref())
         .await?;
