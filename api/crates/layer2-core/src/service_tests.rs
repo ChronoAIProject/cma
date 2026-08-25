@@ -176,9 +176,10 @@ async fn a_kernel_this_deployment_does_not_run_is_refused_before_anything_is_rec
         "got {err:?}"
     );
     assert!(
-        svc.list_sessions(&alice)
+        svc.list_sessions(&alice, &crate::SessionListQuery::default())
             .await
             .expect("session list is readable")
+            .items
             .is_empty(),
         "nothing may be recorded for a session that was refused"
     );

@@ -129,7 +129,7 @@ impl SessionService {
         // Read before asking the providers. A record that cannot be read means
         // no runtime can be attributed to anybody, and an inventory of
         // anonymous sandboxes would be worse than saying so.
-        let records = self.store.list_all().await.map_err(store_failed)?;
+        let records = self.store.scan_all().await.map_err(store_failed)?;
         let owners: HashMap<&str, (&SubjectId, SessionStatus)> = records
             .iter()
             .map(|r| (r.session.id.as_str(), (&r.session.owner, r.session.status)))

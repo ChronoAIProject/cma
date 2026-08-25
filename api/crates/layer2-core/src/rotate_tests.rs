@@ -18,7 +18,7 @@ use crate::commit_fault_support::CommitFaultStore;
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
 use crate::session::SessionStatus;
-use crate::store::{SessionRecord, SessionStore, StoreError};
+use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
     await_settled, service_on_version, service_on_version_with_skills, spec, user, FakeAdapter,
     FakeStore,
@@ -79,16 +79,20 @@ impl SessionStore for RotationStore {
         self.inner.get(id).await
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
-        self.inner.list_for(owner).await
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError> {
+        self.inner.list_for(owner, query).await
     }
 
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
         self.inner.reserved_capacity().await
     }
 
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
-        self.inner.list_all().await
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
+        self.inner.list_all(query).await
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
@@ -1369,9 +1373,10 @@ async fn a_rotation_whose_replacement_cannot_start_does_not_end_the_session() {
         "and it must stay recoverable, or nothing will ever bring it back"
     );
     assert!(
-        new.list_sessions(&alice)
+        new.list_sessions(&alice, &crate::SessionListQuery::default())
             .await
             .expect("session list is readable")
+            .items
             .iter()
             .any(|s| s.id == created.id),
         "it keeps its place in its owner's list"

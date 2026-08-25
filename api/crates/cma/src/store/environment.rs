@@ -10,7 +10,7 @@
 
 use futures_util::TryStreamExt;
 use layer2_core::{
-    store::{EnvironmentProfileStore, StoreError},
+    store::{EnvironmentProfileStore, Page, PageCursor, PageRequest, StoreError},
     AgentConfiguration, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
     EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort, ServiceId, SessionMode,
     SkillId, SoftwarePackage, SubjectId,
@@ -228,16 +228,27 @@ impl MongoEnvironmentProfileStore {
     async fn ensure_indexes(&self) -> Result<(), StoreError> {
         // Every list is by owner and newest first, which is the only query
         // shape this collection ever serves.
-        let owner = IndexModel::builder()
-            .keys(doc! { "owner": 1, "created_at": -1 })
-            .options(IndexOptions::builder().build())
-            .build();
-        self.profiles
-            .create_index(owner)
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("profile index: {e}")))?;
+        for index in profile_indexes() {
+            self.profiles
+                .create_index(index)
+                .await
+                .map_err(|e| StoreError::Unavailable(format!("profile index: {e}")))?;
+        }
         Ok(())
     }
+}
+
+fn profile_indexes() -> [IndexModel; 2] {
+    [
+        IndexModel::builder()
+            .keys(doc! { "owner": 1, "created_at": -1, "_id": -1 })
+            .options(IndexOptions::builder().build())
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "owner": 1, "preferred": 1, "updated_at": -1, "_id": -1 })
+            .options(IndexOptions::builder().build())
+            .build(),
+    ]
 }
 
 #[async_trait::async_trait]
@@ -264,11 +275,16 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
         Ok(found.map(from_doc))
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError> {
         let mut cursor = self
             .profiles
-            .find(doc! { "owner": &owner.0 })
-            .sort(doc! { "created_at": -1 })
+            .find(profile_page_filter(owner, page))
+            .sort(profile_page_sort())
+            .limit(profile_page_fetch_limit(page))
             .await
             .map_err(|e| StoreError::Unavailable(format!("list profiles: {e}")))?;
         let mut out = Vec::new();
@@ -279,7 +295,71 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
         {
             out.push(from_doc(d));
         }
-        Ok(out)
+        let has_more = out.len() > page.limit() as usize;
+        if has_more {
+            out.pop();
+        }
+        let next = has_more.then(|| {
+            let last = out.last().expect("a non-empty bounded page has a last row");
+            PageCursor::new(&last.created_at, &last.id.0)
+        });
+        Ok(Page { items: out, next })
+    }
+
+    async fn set_preferred(
+        &self,
+        owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError> {
+        if let Some(id) = chosen {
+            let selected = self
+                .profiles
+                .find_one(doc! { "_id": &id.0, "owner": &owner.0 })
+                .await
+                .map_err(|e| StoreError::Unavailable(format!("validate preferred profile: {e}")))?;
+            if selected.is_none() {
+                return Err(StoreError::Malformed(
+                    "selected environment profile is not owned by the subject".into(),
+                ));
+            }
+        }
+
+        self.profiles
+            .update_many(
+                doc! { "owner": &owner.0, "preferred": true },
+                doc! { "$set": { "preferred": false } },
+            )
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("clear preferred profile: {e}")))?;
+
+        if let Some(id) = chosen {
+            let result = self
+                .profiles
+                .update_one(
+                    doc! { "_id": &id.0, "owner": &owner.0 },
+                    doc! { "$set": { "preferred": true } },
+                )
+                .await
+                .map_err(|e| StoreError::Unavailable(format!("set preferred profile: {e}")))?;
+            if result.matched_count != 1 {
+                return Err(StoreError::Unavailable(
+                    "selected environment profile disappeared while setting preference".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn preferred_for(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        self.profiles
+            .find_one(doc! { "owner": &owner.0, "preferred": true })
+            .sort(doc! { "updated_at": -1, "_id": -1 })
+            .await
+            .map(|profile| profile.map(from_doc))
+            .map_err(|e| StoreError::Unavailable(format!("preferred profile: {e}")))
     }
 
     async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError> {
@@ -289,6 +369,31 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
             .map_err(|e| StoreError::Unavailable(format!("delete profile: {e}")))?;
         Ok(())
     }
+}
+
+fn profile_page_sort() -> mongodb::bson::Document {
+    doc! { "created_at": -1, "_id": -1 }
+}
+
+fn profile_page_fetch_limit(page: &PageRequest) -> i64 {
+    i64::from(page.limit().saturating_add(1))
+}
+
+fn profile_page_filter(owner: &SubjectId, page: &PageRequest) -> mongodb::bson::Document {
+    let mut filter = doc! { "owner": &owner.0 };
+    if let Some(cursor) = page.cursor() {
+        filter.insert(
+            "$or",
+            vec![
+                doc! { "created_at": { "$lt": &cursor.created_at } },
+                doc! {
+                    "created_at": &cursor.created_at,
+                    "_id": { "$lt": &cursor.id },
+                },
+            ],
+        );
+    }
+    filter
 }
 
 #[cfg(test)]
@@ -419,5 +524,42 @@ mod tests {
             .find(|p| p.name == "platform-cli")
             .expect("present");
         assert!(cli.version.is_none());
+    }
+
+    #[test]
+    fn profile_pages_fetch_one_sentinel_row_and_never_exceed_the_store_bound() {
+        let five = PageRequest::new(5, None);
+        let oversized = PageRequest::new(u32::MAX, None);
+
+        assert_eq!(profile_page_fetch_limit(&five), 6);
+        assert_eq!(oversized.limit(), 200);
+        assert_eq!(profile_page_fetch_limit(&oversized), 201);
+    }
+
+    #[test]
+    fn profile_page_filter_uses_the_timestamp_and_id_tie_breaker() {
+        let page = PageRequest::new(
+            50,
+            Some(PageCursor::new("2026-08-24T10:11:12Z", "envp_tied")),
+        );
+
+        assert_eq!(
+            profile_page_filter(&SubjectId("subject-a".into()), &page),
+            doc! {
+                "owner": "subject-a",
+                "$or": [
+                    { "created_at": { "$lt": "2026-08-24T10:11:12Z" } },
+                    {
+                        "created_at": "2026-08-24T10:11:12Z",
+                        "_id": { "$lt": "envp_tied" },
+                    },
+                ],
+            }
+        );
+        assert_eq!(profile_page_sort(), doc! { "created_at": -1, "_id": -1 });
+        assert_eq!(
+            profile_indexes()[0].keys,
+            doc! { "owner": 1, "created_at": -1, "_id": -1 }
+        );
     }
 }
