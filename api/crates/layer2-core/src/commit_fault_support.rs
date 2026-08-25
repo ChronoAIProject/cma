@@ -1,7 +1,7 @@
 //! A session store that faults only the semantic commit a test names.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use tokio::sync::Notify;
@@ -20,6 +20,7 @@ pub(crate) struct CommitFaultStore {
     pause_after_next: AtomicBool,
     failures: AtomicUsize,
     matched_calls: AtomicUsize,
+    matched_write_ids: StdMutex<Vec<String>>,
     entered: Notify,
     release: Notify,
 }
@@ -36,6 +37,7 @@ impl CommitFaultStore {
             pause_after_next: AtomicBool::new(false),
             failures: AtomicUsize::new(0),
             matched_calls: AtomicUsize::new(0),
+            matched_write_ids: StdMutex::new(Vec::new()),
             entered: Notify::new(),
             release: Notify::new(),
         }
@@ -57,6 +59,13 @@ impl CommitFaultStore {
         self.matched_calls.load(Ordering::SeqCst)
     }
 
+    pub(crate) fn matched_write_ids(&self) -> Vec<String> {
+        self.matched_write_ids
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
     pub(crate) async fn wait_until_held(&self) {
         tokio::time::timeout(Duration::from_secs(2), self.entered.notified())
             .await
@@ -69,6 +78,7 @@ impl CommitFaultStore {
 
     async fn before_commit(
         &self,
+        write_id: &str,
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<(), StoreError> {
@@ -76,6 +86,10 @@ impl CommitFaultStore {
             return Ok(());
         }
         self.matched_calls.fetch_add(1, Ordering::SeqCst);
+        self.matched_write_ids
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(write_id.to_owned());
         if self.pause_next.swap(false, Ordering::SeqCst) {
             self.entered.notify_one();
             self.release.notified().await;
@@ -138,7 +152,7 @@ impl SessionStore for CommitFaultStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.before_commit(record, events).await?;
+        self.before_commit(write_id, record, events).await?;
         let revision = self
             .inner
             .commit_session_idempotent(write_id, record, events)
@@ -153,7 +167,7 @@ impl SessionStore for CommitFaultStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.before_commit(record, events).await?;
+        self.before_commit(write_id, record, events).await?;
         let revision = self
             .inner
             .create_session_idempotent(write_id, record, events)
