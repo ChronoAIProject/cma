@@ -262,9 +262,18 @@ async fn caller_limits_allow_exact_echoes_beside_the_current_baseline() {
     let service = environments_with_baseline(
         Arc::clone(&store),
         Baseline::new(
-            [SoftwarePackage::new("mandatory-package")],
-            [SkillId::new("mandatory-skill")],
-            [ServiceId::new("mandatory-service")],
+            [
+                SoftwarePackage::new("mandatory-package"),
+                SoftwarePackage::new("mandatory-package"),
+            ],
+            [
+                SkillId::new("mandatory-skill"),
+                SkillId::new("mandatory-skill"),
+            ],
+            [
+                ServiceId::new("mandatory-service"),
+                ServiceId::new("mandatory-service"),
+            ],
         ),
     );
     let owner = caller("subject-a");
@@ -286,6 +295,31 @@ async fn caller_limits_allow_exact_echoes_beside_the_current_baseline() {
     assert_eq!(created.packages.len(), 101);
     assert_eq!(created.agent.skills.len(), 101);
     assert_eq!(created.services.len(), 101);
+    assert_eq!(
+        created
+            .packages
+            .iter()
+            .filter(|package| package.name == "mandatory-package")
+            .count(),
+        1
+    );
+    assert_eq!(
+        created
+            .agent
+            .skills
+            .iter()
+            .filter(|skill| skill.as_str() == "mandatory-skill")
+            .count(),
+        1
+    );
+    assert_eq!(
+        created
+            .services
+            .iter()
+            .filter(|service| service.as_str() == "mandatory-service")
+            .count(),
+        1
+    );
 
     let echoed = service
         .update(&owner, &created.id, created.to_spec())

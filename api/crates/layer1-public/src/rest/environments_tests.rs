@@ -252,31 +252,40 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
+        Self::with_baseline(Self::default_baseline())
+    }
+
+    fn default_baseline() -> Baseline {
+        Baseline::new(
+            [SoftwarePackage::new("platform-cli")],
+            [SkillId::new("mandatory-skill")],
+            [ServiceId::new("mandatory-service")],
+        )
+    }
+
+    fn with_baseline(baseline: Baseline) -> Self {
         let catalog = Arc::new(DocumentationCatalog);
         let skills: Arc<dyn SkillCatalog> = catalog.clone();
         let services: Arc<dyn ServiceCatalog> = catalog;
-        Self::with_catalogs(Some(skills), Some(services))
+        Self::with_catalogs(baseline, Some(skills), Some(services))
     }
 
     fn with_unavailable_catalogs() -> Self {
         let catalog = Arc::new(UnavailableCatalog);
         let skills: Arc<dyn SkillCatalog> = catalog.clone();
         let services: Arc<dyn ServiceCatalog> = catalog;
-        Self::with_catalogs(Some(skills), Some(services))
+        Self::with_catalogs(Self::default_baseline(), Some(skills), Some(services))
     }
 
     fn with_catalogs(
+        baseline: Baseline,
         skills: Option<Arc<dyn SkillCatalog>>,
         services: Option<Arc<dyn ServiceCatalog>>,
     ) -> Self {
         let store = Arc::new(RecordingProfileStore::default());
         let service = EnvironmentProfileService::new(
             Arc::clone(&store) as Arc<dyn EnvironmentProfileStore>,
-            Baseline::new(
-                [SoftwarePackage::new("platform-cli")],
-                [SkillId::new("mandatory-skill")],
-                [ServiceId::new("mandatory-service")],
-            ),
+            baseline,
             skills,
             services,
             AgentConfiguration {
@@ -587,7 +596,20 @@ async fn a_field_complete_get_put_get_is_byte_identical() {
 
 #[tokio::test]
 async fn maximum_caller_lists_plus_the_baseline_echo_byte_identically_without_a_write() {
-    let harness = Harness::new();
+    let harness = Harness::with_baseline(Baseline::new(
+        [
+            SoftwarePackage::new("platform-cli"),
+            SoftwarePackage::new("platform-cli"),
+        ],
+        [
+            SkillId::new("mandatory-skill"),
+            SkillId::new("mandatory-skill"),
+        ],
+        [
+            ServiceId::new("mandatory-service"),
+            ServiceId::new("mandatory-service"),
+        ],
+    ));
     let request = ProfileRequest {
         name: "boundary profile".into(),
         variables: Vec::new(),
@@ -624,6 +646,49 @@ async fn maximum_caller_lists_plus_the_baseline_echo_byte_identically_without_a_
         created.json["nyxid"]["services"].as_array().unwrap().len(),
         101
     );
+    assert_eq!(
+        created.json["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|package| package["name"] == "platform-cli")
+            .count(),
+        1
+    );
+    assert_eq!(
+        created.json["agent"]["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|skill| skill.as_str() == Some("mandatory-skill"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        created.json["nyxid"]["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|service| service.as_str() == Some("mandatory-service"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        created.json["mandatory"],
+        json!({
+            "packages": ["platform-cli"],
+            "skills": ["mandatory-skill"],
+        })
+    );
+    let services = send(
+        &harness.app,
+        Method::GET,
+        "/api/v1/environment-profiles/services",
+        None,
+    )
+    .await;
+    assert_eq!(services.status, StatusCode::OK);
+    assert_eq!(services.json["mandatory"], json!(["mandatory-service"]));
     let id = created.json["id"].as_str().expect("created id");
     let uri = format!("/api/v1/environment-profiles/{id}");
     let before = send(&harness.app, Method::GET, &uri, None).await;
