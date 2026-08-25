@@ -4,20 +4,120 @@
 //! client saw, a client that arrives later — or comes back after a restart —
 //! must be able to reconstruct from the sequence alone.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use layer3_adapter::KernelAdapter;
 
+use super::pending_approvals_from;
 use crate::authz::Caller;
 use crate::conversation_support::{
     asking, chunk, conversation, conversing, offering, said, until_logged,
 };
-use crate::event::EventKind;
+use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+
+fn logged(seq: u64, kind: EventKind) -> Event {
+    Event {
+        session_id: SessionId("sesn_pending_approvals".into()),
+        seq,
+        kind,
+        appended_at: "2026-08-26T05:00:00Z".into(),
+    }
+}
+
+#[test]
+fn an_unresolved_approval_request_folds_as_pending() {
+    let events = vec![logged(
+        1,
+        EventKind::ApprovalRequested {
+            request_id: "approval-1".into(),
+            action: Some("run a command".into()),
+            detail: None,
+        },
+    )];
+
+    assert_eq!(
+        pending_approvals_from(&events),
+        HashSet::from(["approval-1".to_string()])
+    );
+}
+
+#[test]
+fn a_resolved_approval_request_does_not_fold_as_pending() {
+    let events = vec![
+        logged(
+            1,
+            EventKind::ApprovalRequested {
+                request_id: "approval-1".into(),
+                action: Some("run a command".into()),
+                detail: None,
+            },
+        ),
+        logged(
+            2,
+            EventKind::ApprovalResolved {
+                request_id: "approval-1".into(),
+                allowed: true,
+            },
+        ),
+    ];
+
+    assert!(pending_approvals_from(&events).is_empty());
+}
+
+#[test]
+fn interleaved_approval_requests_fold_independently() {
+    let events = vec![
+        logged(
+            1,
+            EventKind::ApprovalRequested {
+                request_id: "approval-1".into(),
+                action: Some("first action".into()),
+                detail: None,
+            },
+        ),
+        logged(2, EventKind::TurnStarted),
+        logged(
+            3,
+            EventKind::ApprovalRequested {
+                request_id: "approval-2".into(),
+                action: Some("second action".into()),
+                detail: None,
+            },
+        ),
+        logged(
+            4,
+            EventKind::ApprovalResolved {
+                request_id: "approval-1".into(),
+                allowed: false,
+            },
+        ),
+        logged(
+            5,
+            EventKind::ApprovalRequested {
+                request_id: "approval-3".into(),
+                action: Some("third action".into()),
+                detail: None,
+            },
+        ),
+        logged(
+            6,
+            EventKind::ApprovalResolved {
+                request_id: "approval-3".into(),
+                allowed: true,
+            },
+        ),
+    ];
+
+    assert_eq!(
+        pending_approvals_from(&events),
+        HashSet::from(["approval-2".to_string()])
+    );
+}
 
 async fn report_usage(adapter: &Arc<FakeAdapter>, used: u64, window: u64) {
     let held = adapter.conversation.lock().await;

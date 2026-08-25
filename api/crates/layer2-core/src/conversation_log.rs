@@ -18,7 +18,7 @@
 //! branched on: the sets differ between runtimes and grow without warning, and
 //! a session must not fail because a kernel invented a category.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use layer3_adapter::{
     ContentBlock, ConversationUpdate, PermissionRequest, PromptResponse, SessionUpdate,
@@ -30,6 +30,27 @@ use crate::ids::SessionId;
 use crate::log::append;
 use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
+
+/// Rebuild the approval requests a live entry must still accept.
+///
+/// Requests and resolutions are both durable, so replaying them in sequence is
+/// the authority after a process restart. No separate stored set can drift
+/// from this fold.
+pub(crate) fn pending_approvals_from(events: &[Event]) -> HashSet<String> {
+    let mut pending = HashSet::new();
+    for event in events {
+        match &event.kind {
+            EventKind::ApprovalRequested { request_id, .. } => {
+                pending.insert(request_id.clone());
+            }
+            EventKind::ApprovalResolved { request_id, .. } => {
+                pending.remove(request_id);
+            }
+            _ => {}
+        }
+    }
+    pending
+}
 
 impl SessionService {
     /// Record one thing a runtime said.
