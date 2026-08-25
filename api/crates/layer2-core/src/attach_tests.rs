@@ -5,7 +5,10 @@
 //! person out of their own session when the client holding it has died in a
 //! way nothing has noticed yet.
 
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll, Wake, Waker};
 
 use layer3_adapter::TerminalOutput;
 
@@ -19,6 +22,18 @@ use crate::test_support::{
     await_settled, service, service_on_version, service_over, spec, user, write_screen,
     FakeAdapter, FakeStore,
 };
+
+struct WakeFlag(AtomicBool);
+
+impl Wake for WakeFlag {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
 
 fn is_terminal_attachment(_record: &crate::store::SessionRecord, events: &[Event]) -> bool {
     events
@@ -575,6 +590,107 @@ async fn a_second_client_is_refused_while_one_holds_the_terminal() {
         .err(),
         Some(CoreError::AlreadyAttached)
     );
+}
+
+#[tokio::test]
+async fn dropping_an_unpolled_attach_outside_the_runtime_releases_exclusivity() {
+    let inner = Arc::new(FakeStore::default());
+    let svc = service(Arc::clone(&inner), Arc::new(FakeAdapter::default()));
+    let alice = user("outside-runtime-attachment-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+
+    let mut attach = Box::pin({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(
+                &alice,
+                &id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+        }
+    });
+    let woken = Arc::new(WakeFlag(AtomicBool::new(false)));
+    let waker = Waker::from(Arc::clone(&woken));
+    let mut context = Context::from_waker(&waker);
+    assert!(
+        matches!(attach.as_mut().poll(&mut context), Poll::Pending),
+        "the attachment waits for its durable commit"
+    );
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let installed = svc
+                .entries
+                .read()
+                .await
+                .get(&created.id)
+                .is_some_and(|entry| entry.attached.is_some());
+            if installed && woken.0.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the successful attachment is delivered without being polled");
+
+    std::thread::spawn(move || {
+        assert!(
+            tokio::runtime::Handle::try_current().is_err(),
+            "the regression must drop outside every entered Tokio runtime"
+        );
+        drop(attach);
+    })
+    .join()
+    .expect("dropping the attachment future outside the runtime does not panic");
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let released = svc
+                .entries
+                .read()
+                .await
+                .get(&created.id)
+                .is_some_and(|entry| entry.attached.is_none());
+            let events = inner
+                .events_since(&created.id, before.session.last_seq)
+                .await
+                .expect("attachment events are readable");
+            if released
+                && events.len() == 2
+                && matches!(
+                    events[1].kind,
+                    crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                )
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the unobserved attachment is durably detached");
+
+    let later = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("the next exclusive attachment is not permanently blocked");
+    drop(later);
 }
 
 #[tokio::test]
