@@ -259,6 +259,19 @@ export async function withDeadline<T>(
   options: OperationOptions,
   operation: (signal: AbortSignal, requestId: string) => Promise<T>,
 ): Promise<T> {
+  return withOperationDeadline(config, options, async (signal) => {
+    const requestId = await resolveRequestId(config, options.requestId);
+    throwIfSignalAborted(signal);
+    return operation(signal, requestId);
+  });
+}
+
+/** Execute callback and transport work under one caller-visible deadline. */
+export async function withOperationDeadline<T>(
+  config: ResolvedConfig,
+  options: OperationOptions,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
   const timeoutMs = options.timeoutMs ?? config.requestTimeoutMs;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new ValidationError('timeoutMs must be a positive safe integer');
@@ -275,19 +288,11 @@ export async function withDeadline<T>(
     timedOut = true;
     controller.abort();
   }, timeoutMs);
-  let rejectForAbort: (() => void) | undefined;
-  const aborted = new Promise<never>((_, reject) => {
-    rejectForAbort = () => reject(abortError(controller.signal));
-    controller.signal.addEventListener('abort', rejectForAbort, { once: true });
-  });
 
   try {
-    return await Promise.race([
-      Promise.resolve().then(async () =>
-        operation(controller.signal, await resolveRequestId(config, options.requestId)),
-      ),
-      aborted,
-    ]);
+    const value = await raceWithAbortSignal(controller.signal, () => operation(controller.signal));
+    throwIfSignalAborted(controller.signal);
+    return value;
   } catch (cause) {
     if (isAborted(options.signal)) {
       throw new RequestAborted(undefined, { cause });
@@ -301,10 +306,40 @@ export async function withDeadline<T>(
     throw new TransportError(`cannot reach the control plane: ${messageOf(cause)}`, { cause });
   } finally {
     clearTimeout(timer);
-    if (rejectForAbort !== undefined) {
-      controller.signal.removeEventListener('abort', rejectForAbort);
-    }
     options.signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/** Race one async boundary against a transport signal without starting it after abort. */
+export async function raceWithAbortSignal<T>(
+  signal: AbortSignal,
+  operation: () => Promise<T>,
+): Promise<T> {
+  throwIfSignalAborted(signal);
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(abortError(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => {
+        throwIfSignalAborted(signal);
+        return operation();
+      }),
+      aborted,
+    ]);
+  } finally {
+    if (onAbort !== undefined) {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+}
+
+/** Stop a losing async hook before it can advance to the next transport stage. */
+export function throwIfSignalAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw abortError(signal);
   }
 }
 
@@ -319,6 +354,7 @@ async function send(
   signal: AbortSignal,
   requestId: string,
 ): Promise<CompletedResponse> {
+  throwIfSignalAborted(signal);
   let body: string | undefined;
   if (options.body !== undefined) {
     try {
@@ -330,14 +366,18 @@ async function send(
       throw new ValidationError('request body could not be encoded as JSON');
     }
   }
+  const headers = await headersFor(config, options.headers, { requestId });
+  throwIfSignalAborted(signal);
   const response = await config.fetch(urlOf(config, path), {
     method: options.method ?? 'GET',
-    headers: await headersFor(config, options.headers, { requestId }),
+    headers,
     credentials: config.cookies ? 'include' : 'omit',
     body,
     signal,
   });
-  return { response, metadata: await observeResponse(config, response) };
+  const metadata = await observeResponse(config, response);
+  throwIfSignalAborted(signal);
+  return { response, metadata };
 }
 
 async function responseJson(response: Response, signal: AbortSignal): Promise<unknown> {
