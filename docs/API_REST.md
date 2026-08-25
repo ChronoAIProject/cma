@@ -363,8 +363,8 @@ needed before the first profile exists:
 `access` is optional display text supplied by the catalogue. A deployment with
 no skill catalogue returns the same shape with an empty `skills` array; profile
 writes remain available. If a configured skill catalogue cannot be read, this
-route returns a `503 runtime_unavailable` problem document; retrying the picker
-request is appropriate.
+route returns a `503 skill_catalogue_unavailable` problem document; retrying
+the picker request is appropriate.
 
 ### Services catalogue
 

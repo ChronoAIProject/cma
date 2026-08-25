@@ -1410,12 +1410,15 @@ async fn documented_collection_catalogue_and_preference_responses_are_served() {
 #[tokio::test]
 async fn configured_catalogue_outages_are_route_specific_503_problem_documents() {
     let section = environment_profile_documentation();
-    assert!(section.contains("`503 runtime_unavailable`"));
+    assert!(section.contains("`503 skill_catalogue_unavailable`"));
     assert!(section.contains("`503 service_catalogue_unavailable`"));
     let harness = Harness::with_unavailable_catalogs();
 
     for (uri, code) in [
-        ("/api/v1/environment-profiles/skills", "runtime_unavailable"),
+        (
+            "/api/v1/environment-profiles/skills",
+            "skill_catalogue_unavailable",
+        ),
         (
             "/api/v1/environment-profiles/services",
             "service_catalogue_unavailable",
