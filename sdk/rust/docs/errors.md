@@ -67,7 +67,7 @@ fn conservative_client() -> cma_sdk::Result<Client> {
 ```
 
 Problem documents that do not match the
-[REST error contract](../../../docs/API_REST.md#9-errors) become `Error::Protocol`
+[REST error contract](../../../docs/API_REST.md#10-errors) become `Error::Protocol`
 rather than an unreliable generic API error.
 
 `Error::Api` and `Error::CapabilityRefused` expose `request_id` from the HTTP
