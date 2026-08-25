@@ -25,10 +25,19 @@ host, and optional port, without a path. The service keeps credentialed CORS
 enabled and deliberately provides no wildcard-origin mode.
 
 For a listed origin, preflights admit the `Authorization` request header, the
-`Last-Event-ID` cursor used when event streams reconnect, and the supported REST
+`Last-Event-ID` cursor used when event streams reconnect, and the supported HTTP
 methods, including `PUT`. Browsers may cache that verdict for one hour. If an
 origin is absent, the preflight `OPTIONS` response omits
 `Access-Control-Allow-Origin`. The browser then reports a CORS or network failure
 and does not send the bearer-bearing API request, so the SDK receives no HTTP
 problem document. The failed `OPTIONS` request in the browser network panel is
 the observable distinction from an API authentication or authorization refusal.
+
+That grant covers AG-UI as well as REST. A cross-origin conversation frontend
+must consume `POST /api/v1/agui/run` and `GET /api/v1/agui/events` with `fetch`
+and an `Authorization: Bearer` header; native `EventSource` cannot set that
+header. The TypeScript SDK's `createAguiTransport` uses `fetch` and a streaming
+body reader for this reason. Native `EventSource` is limited to the same-origin
+cookie path, and a terminal-upgrade ticket is not an alternative credential for
+either AG-UI stream. See [AG-UI Authentication](API_AGUI.md#authentication) and
+the SDK's [TypeScript Authentication guide](../sdk/typescript/docs/authentication.md#browser-sessions).

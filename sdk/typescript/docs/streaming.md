@@ -96,6 +96,13 @@ AG-UI is a separate, run-shaped projection for conversation frontends. Use
 [AG-UI contract](../../../docs/API_AGUI.md) and
 [REST replay contract](../../../docs/API_REST.md#5-events).
 
+`createAguiTransport` is a fetch-SSE transport, not a native `EventSource`
+wrapper. That distinction is required for a cross-origin browser: `fetch` can
+send the configured `Authorization: Bearer` header and expose the response body
+reader, while `EventSource` can do neither. Native `EventSource` therefore works
+only with CMA's same-origin session cookie. Configure the deployment's origin
+allowlist as described in [Authentication](authentication.md#browser-sessions).
+
 `parseEventStream` handles a complete captured AG-UI SSE body. It returns
 normalized `AguiEvent` values, groups durable prefixes with their numbered final,
 and assigns occurrence identities to unknown siblings. Pass that result directly

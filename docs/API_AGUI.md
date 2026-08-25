@@ -8,6 +8,41 @@ See [API_Overview.md](./API_Overview.md) for the core operation set and session 
 
 ---
 
+## Authentication
+
+Both stream-producing routes require an authenticated subject: `POST /api/v1/agui/run` and `GET /api/v1/agui/events`. A browser served on CMA's own origin signs in through the identity provider and sends the CMA session cookie. Every other caller sends the identity provider's access token in the HTTP header used by the REST interface:
+
+```http
+Authorization: Bearer <access token>
+```
+
+The token verification, revocation window, capabilities, and `401`/`403` distinction are the shared [REST authentication contract](./API_REST.md#authentication); AG-UI does not define another identity model. `GET /api/v1/agui/capabilities` is the exception: it is public interface discovery, requires no credential, and carries no session-specific authority.
+
+There is no query-string credential for either AG-UI stream. In particular, `GET /api/v1/agui/events?...&ticket=<ticket>` is still unauthenticated without a cookie or Bearer header. The short-lived ticket is accepted only by `GET /api/v1/sessions/{id}/terminal` because the browser WebSocket API cannot set an authorization header. It is not an AG-UI credential and its scope is not widened here.
+
+Native `EventSource` cannot set `Authorization`. It is therefore usable for AG-UI only by a same-origin browser whose session cookie is sent automatically. A cross-origin browser must use `fetch`, attach its Bearer token, and parse SSE incrementally from the response body rather than await the whole body:
+
+```ts
+const response = await fetch(
+  `${cmaOrigin}/api/v1/agui/events?thread_id=${encodeURIComponent(sessionId)}`,
+  {
+    headers: {
+      Accept: 'text/event-stream',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    credentials: 'omit',
+  },
+);
+if (!response.ok || response.body === null) throw new Error(`AG-UI stream: ${response.status}`);
+const reader = response.body.getReader();
+```
+
+The repository TypeScript SDK's [`createAguiTransport`](../sdk/typescript/src/agui/wire.ts) is the reference fetch/`ReadableStream` transport. Pair it with `AguiConnection`, which adds bounded-history ordering, cursor recovery, projection acknowledgement, and reconnection; product frontends should use the pair rather than reimplement those rules.
+
+A cross-origin fetch is readable only when the browser application's exact origin is in the deployment's comma-separated `CHRONO_SERVER_CORS_ORIGIN` allowlist. CMA applies credentialed CORS to the complete public router, admits `Authorization` and `Last-Event-ID` on preflight, and deliberately has no wildcard-origin mode. An unlisted origin receives no `Access-Control-Allow-Origin`, so the browser reports a CORS or network failure before the Bearer-authenticated request reaches AG-UI. The operator setting and diagnostics are kept in the [cross-origin SDK deployment guide](./SDK.md#cross-origin-browser-deployments).
+
+---
+
 ## 1. What AG-UI is not for
 
 AG-UI carries **semantic events**. It cannot carry a terminal byte stream — there is no honest mapping from `\x1b[2J\x1b[H` to a message event. A client that needs the literal terminal uses the [PTY interface](./API_PTY.md).
@@ -53,9 +88,9 @@ A run is one request. The response is an SSE stream of AG-UI events that ends wh
 
 `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>` is the same event vocabulary, read rather than driven: a session's whole history and then everything after it, projected through the same mapping and never ending on its own. Every AG-UI event frame on this route carries the session id in both `threadId` and `runId`; a run response instead echoes that turn's accepted run id. Raw SSE keepalive comments are transport frames rather than AG-UI events and carry neither identifier. This route is what §7 means by recovering a dropped stream, and it exists because §7 used to send clients to `/api/v1/sessions/{id}/events` — a REST route, which answers in the core's vocabulary and not this one. A client that followed that advice received frames it could not read.
 
-Both streaming responses emit a raw SSE comment at least every **15 seconds** while otherwise idle. The comment carries neither an SSE `id:` nor an `event:` name. A fetch-based SSE reader sees those comments and should treat roughly two intervals — about 30 seconds — with no bytes as a dead connection, then reconnect to the session stream with its last complete cursor as described in §7. This is the recommended transport after #501 because it can enforce that read timeout as well as observe the comments.
+Both streaming responses emit a raw SSE comment at least every **15 seconds** while otherwise idle. The comment carries neither an SSE `id:` nor an `event:` name. A fetch-based SSE reader sees those comments and should treat roughly two intervals — about 30 seconds — with no bytes as a dead connection, then reconnect to the session stream with its last complete cursor as described in §7. This is the required transport for a cross-origin Bearer client and the recommended transport for any client that needs to enforce the read timeout.
 
-Native `EventSource` does not expose SSE comments to application code. A client using it must detect a dead connection at the transport level rather than waiting for a comment callback that can never occur. CMA deliberately does not emit application heartbeat events: doing so would add protocol vocabulary and require special exemptions from the durable-event cursor rules for frames that are only transport liveness.
+The same-origin cookie clients that can use native `EventSource` do not receive SSE comments in application code. Such a client must detect a dead connection at the transport level rather than wait for a comment callback that can never occur. CMA deliberately does not emit application heartbeat events: doing so would add protocol vocabulary and require special exemptions from the durable-event cursor rules for frames that are only transport liveness.
 
 **The sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The sequence is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
 
@@ -129,9 +164,9 @@ Absent means follow, so nothing written against the earlier behaviour changes.
 
 Every frame on both streams arrives as the default SSE `message` type, with **no `event:` name**. The kind is `type` in the body, and that is what to dispatch on.
 
-This is deliberate and it matters for an `EventSource` client: a named frame is delivered only to a listener registered for that exact name, and `EventSource` has no wildcard. Since the emitted set grows additively — see the rule above about tolerating unknown types — naming the frames would make every kind added after your client was written silently unreceivable. Unnamed frames are the only shape that keeps that rule true.
+This is deliberate and it matters at the fetch-SSE parser boundary: pass every complete SSE data frame to the JSON decoder, then dispatch on the payload's `type`. Do not filter by SSE event name. The emitted set grows additively, so a transport that forwards only names it already knows silently loses every kind added after that client was written.
 
-An older control plane may still name them. A client that registers both `onmessage` and a listener per kind it knows reads either, and a frame has one name or none, so nothing arrives twice.
+An older control plane may still name frames. A fetch-SSE parser should accept either shape, verify that a present non-default event name agrees with the body type, and dispatch on the body type in both cases.
 
 ### The session stream carries the live lane too
 
@@ -158,7 +193,7 @@ The run stream also carries a **live** lane — what is happening right now. Tho
 
 **Never resume from one.** It has no place in the log, so a cursor taken from it points at a position the log has never held, and everything between there and the real position is skipped on the next reconnect.
 
-The marker is sent because you cannot otherwise see the absence. `EventSource` reports `lastEventId` as the last id it was *given*, so a frame sent without one is indistinguishable from a frame repeating the previous id — and a client deduplicating on that drops every live frame in silence. **A client must exclude `cma:live` frames from whatever it deduplicates and cursors on**, and only from that.
+A raw fetch-SSE parser sees that this frame omitted the `id` field. Native `EventSource` does not: its `lastEventId` inherits the most recent id, which makes absence look like repetition. The marker keeps the distinction explicit on either transport. **A client must exclude `cma:live` frames from whatever it deduplicates and cursors on**, and only from that.
 
 The lane also carries the agent's reasoning:
 
@@ -399,15 +434,15 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 - **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`, not by POSTing the run again — which would start a second turn. Read the cursor off the last SSE `id`; it is not in the body.
 - **An SSE `id` acknowledges a whole durable projection.** Only its final frame carries the event sequence. If the connection drops after an earlier frame, the last id still names the preceding durable event, so replay sends the interrupted projection again from its first frame. Group the prefixes with their next numbered final and deduplicate that complete projection by the final id. Do not deduplicate prefixes only by `messageId`, `toolCallId`, or kind: one tool call can have several distinct durable updates, and future unknown kinds may also be prefixes. Advance the stored cursor only after the complete group was accepted.
 
-  A raw SSE parser can observe whether the current frame omitted `id`; native `EventSource` cannot, because `MessageEvent.lastEventId` inherits the most recent id. A native client uses this equivalent procedure:
+  A fetch-SSE reader can observe the current frame's actual `id` field and uses this procedure:
 
-  1. Keep two values separate: the global acknowledged cursor used for replay and deduplication, and the previous `lastEventId` observed on this particular `EventSource`. Initialize the per-source value to the empty string whenever constructing a source.
-  2. Do not let that object reconnect automatically. Its URL retains the `starting_after` value with which it was constructed, and this endpoint does not use the browser's `Last-Event-ID` request header. In the `error` handler, call `close()` before the automatic retry, discard the incomplete prefix buffer, and construct a new `EventSource` whose URL carries the latest global acknowledged cursor. The new object starts with an empty per-source value and empty prefix buffer; retain completed-projection deduplication state.
-  3. In the message listener, capture and classify each frame at arrival, before queued stream frames are combined with history. Deliver a `cma:live` frame without putting it in the durable buffer and without changing either cursor from it. Its inherited `lastEventId` says nothing about that live frame.
-  4. For a non-live frame, compare its `lastEventId` with the previous value captured from this source. Equality means the frame omitted `id`, so buffer it as a prefix. This includes two empty strings before the first numbered frame on a newly constructed `EventSource`, even one opened with a nonzero `starting_after` query.
-  5. A changed value is an explicit id and must be a positive safe integer. Record it immediately as this source's previous observed value and classify the frame as a projection final. Combine it with the buffered prefixes, deduplicate the whole group by that id against the global acknowledged cursor, and clear the buffer. Advance the global cursor only after the complete group was accepted, and never move it backwards.
+  1. Keep one acknowledged cursor for replay and deduplication. Put it in the `starting_after` query whenever constructing the followed stream; the query is authoritative even when the SDK also sends `Last-Event-ID`.
+  2. Open that followed stream before requesting bounded history with the same cursor and `follow=false`. Queue followed frames until history has been accepted, then drain the queue. This closes the gap in which an event could otherwise be committed after the history read but before the live connection opened.
+  3. Deliver a `cma:live` frame without putting it in the durable projection buffer and without changing the cursor. It has no durable position to acknowledge.
+  4. For any other frame with no `id`, buffer it as a projection prefix. An explicit id must be a positive safe integer and marks the projection's final frame. Combine that final with the buffered prefixes, deduplicate the complete group by the final id, and clear the buffer.
+  5. Advance the cursor only after the application accepts every frame in the complete group, and never move it backwards. On a drop, discard any incomplete prefix buffer, retain completed-projection deduplication state, and construct a new fetch from the latest acknowledged cursor. Never retry the POSTed run.
 
-  The per-source comparison must happen at arrival. The required open-stream-before-history sequence can queue stream final 7, let history acknowledge 7, and only then drain the stream queue; comparison with the global cursor would misclassify that duplicate final as a prefix, while its arrival-time change on the stream lane still classifies it correctly and global deduplication then discards it. Closing and reconstructing on an error is equally important: automatic reconnection with the old query can explicitly replay final 7, which is observationally identical to a prefix inheriting 7. A fresh source querying after the accepted cursor removes that ambiguity and safely replays any discarded incomplete projection. This inference relies on the final-frame contract's rule that a server never explicitly repeats one id across projection siblings; a legacy server that does so requires access to raw SSE fields. The SDK's fetch transport has that access, reconstructs each request with its current cursor, and groups the actual per-frame fields directly.
+  Parsing the raw fields removes the inherited-`lastEventId` ambiguity native `EventSource` creates. The SDK's fetch transport reconstructs each request with its current cursor, while `AguiConnection` performs the open-stream-before-history ordering, projection grouping, acknowledgement, deduplication, and retry policy.
 - **The events route identifies replay, not a run.** Route provenance is authoritative: every AG-UI event frame in both its initial history and followed tail carries the effective `threadId` as `runId`, because no one run owns the whole session history. The run route rejects explicit blank identifiers and `runId == threadId`, and its generated identifiers are also kept distinct, so equality is an exclusive replay-envelope signature on accepted responses. Do not derive conversation or per-run rendering state from it. The repository TypeScript SDK follows this rule: `AguiConnection` assembles each complete durable projection around its numbered final frame, preserves an unacknowledged projection for exact retry, and advances the cursor only after every callback accepts it; the conversation fold ignores `runId`, so run-stream and replay envelopes render the same conversation.
 - **`STATE_DELTA` patches, it does not replace.** Apply it to the last `STATE_SNAPSHOT`.
 
