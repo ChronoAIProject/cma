@@ -14,7 +14,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function conversationFrom(name: string) {
   const session = new MockSession(transcriptNamed(name));
   const seen: AguiEvent[] = [];
-  const connection = new AguiConnection(session.transport, 'sesn_1', {
+  const connection = new AguiConnection(session.transport, session.id, {
     backoffMs: 0,
     sleep: () => Promise.resolve(),
   });
