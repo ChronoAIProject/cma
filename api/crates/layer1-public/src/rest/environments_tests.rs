@@ -10,7 +10,6 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -32,7 +31,8 @@ use super::router;
 use crate::{
     auth::AuthenticatedSubject,
     rest::environments_shapes::{
-        AgentBody, NyxIdBody, PackageBody, ProfileRequest, ProfileView, SizeBody, VariableBody,
+        unknown_profile_field, AgentBody, NyxIdBody, PackageBody, ProfileRequest, ProfileView,
+        SizeBody, VariableBody,
     },
 };
 
@@ -455,22 +455,8 @@ fn marked_examples(section: &str, marker: &str) -> Vec<Value> {
     examples
 }
 
-/// Profile timestamps have one-second resolution. Start the exact-byte test
-/// near the beginning of a clock second so its intentional echoing PUT cannot
-/// acquire a different `updated_at` merely by crossing a wall-clock boundary.
-async fn leave_clock_boundary() {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_millis();
-    if millis > 100 {
-        tokio::time::sleep(Duration::from_millis(u64::from(1_050 - millis))).await;
-    }
-}
-
 #[tokio::test]
 async fn a_field_complete_get_put_get_is_byte_identical() {
-    leave_clock_boundary().await;
     let harness = Harness::new();
     let submitted = serde_json::to_value(field_complete_request()).expect("request serializes");
 
@@ -514,6 +500,11 @@ async fn a_field_complete_get_put_get_is_byte_identical() {
     let replaced = send(&harness.app, Method::PUT, &profile_uri, Some(echoed)).await;
     assert_eq!(replaced.status, StatusCode::OK);
     assert_eq!(replaced.json["agent"]["record_tool_bodies"], true);
+    assert_eq!(
+        harness.store.upserts.load(Ordering::SeqCst),
+        1,
+        "an exact echo is a no-op rather than a timestamp-only store write"
+    );
 
     let after = send(&harness.app, Method::GET, &profile_uri, None).await;
     assert_eq!(after.status, StatusCode::OK);
@@ -533,10 +524,7 @@ async fn replacement_omissions_reset_writable_fields_to_defaults() {
         &harness.app,
         Method::PUT,
         &format!("/api/v1/environment-profiles/{PROFILE_ID}"),
-        Some(json!({
-            "name": "replacement",
-            "agent": { "kernel": "profile-kernel" },
-        })),
+        Some(json!({ "name": "replacement" })),
     )
     .await;
     assert_eq!(replaced.status, StatusCode::OK);
@@ -546,6 +534,7 @@ async fn replacement_omissions_reset_writable_fields_to_defaults() {
         replaced.json["packages"],
         json!([{ "name": "platform-cli" }])
     );
+    assert_eq!(replaced.json["agent"]["kernel"], "deployment-kernel");
     assert_eq!(replaced.json["agent"]["mode"], "terminal");
     assert!(replaced.json["agent"].get("model").is_none());
     assert_eq!(replaced.json["agent"]["reasoning_effort"], "high");
@@ -563,13 +552,15 @@ async fn replacement_omissions_reset_writable_fields_to_defaults() {
 
 #[test]
 fn every_nested_profile_shape_identifies_an_unknown_field() {
-    for (unknown, request) in [
+    for (unknown, path, request) in [
         (
+            "unexpected_profile_field",
             "unexpected_profile_field",
             json!({ "name": "profile", "unexpected_profile_field": true }),
         ),
         (
             "variableValue",
+            "variables[0].variableValue",
             json!({
                 "name": "profile",
                 "variables": [{ "key": "A", "value": "1", "variableValue": "1" }],
@@ -577,6 +568,7 @@ fn every_nested_profile_shape_identifies_an_unknown_field() {
         ),
         (
             "packageVersion",
+            "packages[0].packageVersion",
             json!({
                 "name": "profile",
                 "packages": [{ "name": "ripgrep", "packageVersion": "14" }],
@@ -584,10 +576,12 @@ fn every_nested_profile_shape_identifies_an_unknown_field() {
         ),
         (
             "reasoningEffort",
+            "agent.reasoningEffort",
             json!({ "name": "profile", "agent": { "reasoningEffort": "low" } }),
         ),
         (
             "memoryMb",
+            "agent.size.memoryMb",
             json!({
                 "name": "profile",
                 "agent": {
@@ -597,9 +591,14 @@ fn every_nested_profile_shape_identifies_an_unknown_field() {
         ),
         (
             "serviceIds",
+            "nyxid.serviceIds",
             json!({ "name": "profile", "nyxid": { "serviceIds": ["calendar"] } }),
         ),
     ] {
+        let diagnostic = unknown_profile_field(&request).expect("the unknown field is located");
+        assert_eq!(diagnostic.field.as_deref(), Some(unknown));
+        assert_eq!(diagnostic.path.as_deref(), Some(path));
+
         let message = serde_json::from_value::<ProfileRequest>(request)
             .expect_err("an unknown field must be refused")
             .to_string();
@@ -610,10 +609,24 @@ fn every_nested_profile_shape_identifies_an_unknown_field() {
     }
 }
 
+#[test]
+fn arbitrary_unknown_key_text_is_not_reflected_as_schema_metadata() {
+    let submitted = "secret@example.com=do-not-reflect";
+    let mut body = json!({ "name": "profile" });
+    body.as_object_mut()
+        .expect("the request is an object")
+        .insert(submitted.into(), true.into());
+    let diagnostic = unknown_profile_field(&body).expect("the unknown field is still detected");
+
+    assert!(diagnostic.field.is_none());
+    assert!(diagnostic.path.is_none());
+}
+
 #[tokio::test]
 async fn create_and_replace_unknown_fields_are_confidential_problem_documents() {
-    for (unknown, submitted_value, body) in [
+    for (unknown, path, submitted_value, body) in [
         (
+            "unexpected_profile_field",
             "unexpected_profile_field",
             "do-not-reflect-top-level",
             json!({
@@ -623,6 +636,7 @@ async fn create_and_replace_unknown_fields_are_confidential_problem_documents() 
         ),
         (
             "reasoningEffort",
+            "agent.reasoningEffort",
             "do-not-reflect-nested",
             json!({
                 "name": "profile",
@@ -649,12 +663,13 @@ async fn create_and_replace_unknown_fields_are_confidential_problem_documents() 
             assert_eq!(refused.content_type.as_deref(), Some(PROBLEM_CONTENT_TYPE));
             assert_eq!(refused.json["status"], 422);
             assert_eq!(refused.json["code"], "invalid_request");
+            assert_eq!(refused.json["field"], unknown);
+            assert_eq!(refused.json["path"], path);
             assert_eq!(
                 refused.json["detail"],
                 "The JSON body does not match this operation's request schema."
             );
             let rendered = String::from_utf8(refused.bytes).expect("problem JSON is UTF-8");
-            assert!(!rendered.contains(unknown), "unknown keys are request data");
             assert!(
                 !rendered.contains(submitted_value),
                 "a rejected value must not be reflected"

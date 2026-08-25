@@ -1337,6 +1337,7 @@ dependencies = [
  "base64",
  "futures-util",
  "layer2-core",
+ "mime",
  "serde",
  "serde_json",
  "serde_urlencoded",
