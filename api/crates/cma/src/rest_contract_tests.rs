@@ -1793,6 +1793,26 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         "an explicit ticket body must be a non-null TicketRequest: {ticket_schema}"
     );
 
+    let profile_create_schema = &paths["/api/v1/environment-profiles"]["post"]["requestBody"]
+        ["content"]["application/json"]["schema"];
+    assert_eq!(
+        profile_create_schema,
+        &serde_json::json!({ "$ref": "#/components/schemas/ProfileRequest" }),
+        "profile creation accepts only ProfileRequest: {profile_create_schema}"
+    );
+    let profile_replacement_schema = &paths["/api/v1/environment-profiles/{id}"]["put"]
+        ["requestBody"]["content"]["application/json"]["schema"];
+    assert_eq!(
+        profile_replacement_schema,
+        &serde_json::json!({
+            "oneOf": [
+                { "$ref": "#/components/schemas/ProfileRequest" },
+                { "$ref": "#/components/schemas/ProfileView" }
+            ]
+        }),
+        "profile replacement accepts the writable request or a complete view: {profile_replacement_schema}"
+    );
+
     let problem = &document["components"]["schemas"]["ProblemDocument"];
     for required in ["type", "title", "status", "detail", "code"] {
         assert!(
@@ -1818,6 +1838,10 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             "problem extension {optional} must remain optional: {problem}"
         );
     }
+    assert!(
+        problem["properties"].get("request_id").is_none(),
+        "request correlation belongs in the X-Request-Id header, not the problem body: {problem}"
+    );
     assert_eq!(
         document["components"]["responses"]["Problem"]["content"]["application/problem+json"]
             ["schema"]["$ref"],
@@ -1883,6 +1907,172 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
     let schemas = document["components"]["schemas"]
         .as_object()
         .expect("component schemas are an object");
+
+    fn assert_exact_schema_properties(
+        schemas: &serde_json::Map<String, serde_json::Value>,
+        schema: &str,
+        expected: &[&str],
+    ) {
+        let properties = schemas
+            .get(schema)
+            .unwrap_or_else(|| panic!("OpenAPI is missing the {schema} schema"))["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{schema} properties are an object"));
+        let actual = properties
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let expected = expected
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(actual, expected, "{schema} fields must remain exact");
+    }
+
+    for (schema, expected_properties) in [
+        (
+            "ProfileRequest",
+            &[
+                "name",
+                "variables",
+                "packages",
+                "agent",
+                "nyxid",
+                "agent_notes",
+            ][..],
+        ),
+        (
+            "ProfileView",
+            &[
+                "id",
+                "name",
+                "variables",
+                "packages",
+                "agent",
+                "nyxid",
+                "agent_notes",
+                "mandatory",
+                "created_at",
+                "updated_at",
+                "preferred",
+            ][..],
+        ),
+        (
+            "AgentBody",
+            &[
+                "kernel",
+                "mode",
+                "model",
+                "reasoning_effort",
+                "permission",
+                "credential",
+                "size",
+                "record_tool_bodies",
+                "skills",
+            ][..],
+        ),
+        (
+            "ProfileAgentView",
+            &[
+                "kernel",
+                "mode",
+                "model",
+                "reasoning_effort",
+                "permission",
+                "credential",
+                "size",
+                "record_tool_bodies",
+                "skills",
+            ][..],
+        ),
+        ("VariableBody", &["key", "value"][..]),
+        ("PackageBody", &["name", "version"][..]),
+        ("NyxIdBody", &["services"][..]),
+        ("NyxIdView", &["services"][..]),
+        ("SizeBody", &["cpu_millis", "memory_mib"][..]),
+        ("SessionSize", &["cpu_millis", "memory_mib"][..]),
+        ("MandatoryView", &["packages", "skills"][..]),
+    ] {
+        assert_exact_schema_properties(schemas, schema, expected_properties);
+    }
+
+    fn assert_only_schema_ref(schema: &serde_json::Value, expected: &str) {
+        fn collect_refs<'a>(
+            value: &'a serde_json::Value,
+            refs: &mut std::collections::BTreeSet<&'a str>,
+        ) {
+            match value {
+                serde_json::Value::Object(object) => {
+                    if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str)
+                    {
+                        refs.insert(reference);
+                    }
+                    for nested in object.values() {
+                        collect_refs(nested, refs);
+                    }
+                }
+                serde_json::Value::Array(array) => {
+                    for nested in array {
+                        collect_refs(nested, refs);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut actual = std::collections::BTreeSet::new();
+        collect_refs(schema, &mut actual);
+        assert_eq!(
+            actual,
+            std::collections::BTreeSet::from([expected]),
+            "schema must reference only {expected}: {schema}"
+        );
+    }
+
+    for (schema, property, reference) in [
+        (
+            "ProfileRequest",
+            "variables",
+            "#/components/schemas/VariableBody",
+        ),
+        (
+            "ProfileRequest",
+            "packages",
+            "#/components/schemas/PackageBody",
+        ),
+        ("ProfileRequest", "agent", "#/components/schemas/AgentBody"),
+        ("ProfileRequest", "nyxid", "#/components/schemas/NyxIdBody"),
+        (
+            "ProfileView",
+            "variables",
+            "#/components/schemas/VariableBody",
+        ),
+        (
+            "ProfileView",
+            "packages",
+            "#/components/schemas/PackageBody",
+        ),
+        (
+            "ProfileView",
+            "agent",
+            "#/components/schemas/ProfileAgentView",
+        ),
+        ("ProfileView", "nyxid", "#/components/schemas/NyxIdView"),
+        (
+            "ProfileView",
+            "mandatory",
+            "#/components/schemas/MandatoryView",
+        ),
+        ("AgentBody", "size", "#/components/schemas/SizeBody"),
+        (
+            "ProfileAgentView",
+            "size",
+            "#/components/schemas/SessionSize",
+        ),
+    ] {
+        assert_only_schema_ref(&schemas[schema]["properties"][property], reference);
+    }
+
     let discovery_document = &schemas["OpenApiDocument"];
     for required in ["openapi", "info", "paths"] {
         assert!(
@@ -1935,14 +2125,6 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             &["id", "status", "agent", "conforms_to", "reach"][..],
         ),
         (
-            "ProfileRequest",
-            &["name", "variables", "packages", "nyxid", "agent"][..],
-        ),
-        (
-            "ProfileView",
-            &["id", "name", "agent", "mandatory", "created_at"][..],
-        ),
-        (
             "ActivityView",
             &["id", "at", "action", "target", "outcome", "detail"][..],
         ),
@@ -1988,16 +2170,6 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             &["permission", "reasoning_effort", "credential", "skills"][..],
         ),
         (
-            "ProfileAgentView",
-            &[
-                "kernel",
-                "mode",
-                "permission",
-                "record_tool_bodies",
-                "skills",
-            ][..],
-        ),
-        (
             "SessionSkillView",
             &["id", "version", "name", "description"][..],
         ),
@@ -2026,6 +2198,10 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
     assert_eq!(
         schemas["ProfileView"]["properties"]["agent"]["$ref"],
         "#/components/schemas/ProfileAgentView"
+    );
+    assert_eq!(
+        schemas["InputRequest"]["properties"]["newline"]["default"], true,
+        "terminal input must advertise its runtime newline default"
     );
 
     let mut operations = 0;

@@ -1221,15 +1221,17 @@ The document includes the RFC 9457 problem schema used by every refusal.
 
 ## 10. Errors
 
-```json
+```http
+HTTP/1.1 409 Conflict
+Content-Type: application/problem+json
+X-Request-Id: req_01JD8Z4M2
+
 {
   "type": "https://spec.chrono-ai.fun/cma/1.0/problems/turn-in-progress",
   "title": "A turn is already in progress",
   "status": 409,
   "detail": "Session sesn_01JD8Z3K7 has an active turn and its concurrent_input policy is 'reject'.",
-  "code": "turn_in_progress",
-  "instance": "/api/v1/sessions/sesn_01JD8Z3K7/input",
-  "request_id": "req_01JD8Z4M2"
+  "code": "turn_in_progress"
 }
 ```
 
