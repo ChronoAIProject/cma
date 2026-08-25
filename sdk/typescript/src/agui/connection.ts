@@ -9,6 +9,7 @@ import {
 } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { toEvent, type AguiEvent } from './events.js';
+import { ProjectionAssembler } from './projection.js';
 
 /**
  * The AG-UI connection: its cursor, its reconnect order, and its deduplication.
@@ -68,6 +69,20 @@ const DEFAULT_MAX_BACKOFF = 15_000;
 const DEFAULT_JITTER_RATIO = 1;
 const TERMINAL_HTTP_STATUSES = new Set([401, 403, 404, 410, 422]);
 
+interface PendingProjection {
+  readonly seq: number;
+  readonly finalKey: string;
+  readonly fingerprint: string;
+  acknowledged: number;
+}
+
+class EventCallbackFailure extends Error {
+  constructor(cause: unknown) {
+    super('the AG-UI event consumer did not acknowledge a durable frame', { cause });
+    this.name = 'EventCallbackFailure';
+  }
+}
+
 /** Where the link is, for a surface that has to say so. */
 export type LinkStatus = 'live' | 'reconnecting' | 'failed' | 'closed';
 
@@ -88,19 +103,15 @@ export interface LinkFailure {
 export class AguiConnection {
   #cursor = 0;
   /*
-   * Frames already delivered at the current cursor, keyed by the durable event
-   * they came from AND the kind of frame it projected to. Advancing the cursor
-   * clears older keys, keeping this set bounded for a connection that lives as
-   * long as its session.
+   * Stamped frames already delivered at the current cursor, keyed by the
+   * durable event they came from AND the kind of frame it projected to.
+   * Advancing the cursor clears older keys, keeping this set bounded for a
+   * connection that lives as long as its session.
    *
-   * Not by sequence alone. One durable event legitimately projects to several
-   * frames — a committed message becomes TEXT_MESSAGE_START, then CONTENT,
-   * then END — and every one of them carries the sequence of the event it was
-   * projected from, because that sequence is the cursor a reconnect resumes
-   * on. Keyed by sequence alone, the first frame was delivered and its
-   * siblings were dropped as duplicates: every agent message opened and then
-   * received none of its own text. No projection emits the same kind twice
-   * for one event, so this pair is exact.
+   * The kind remains part of the key for compatibility with control planes
+   * that predate final-frame acknowledgement and stamp every frame of a
+   * projection with the same sequence. No projection emits the same kind
+   * twice for one event, so this pair is exact.
    *
    * The kind is the one that arrived on the wire, not the one this build
    * normalised it to: everything unfamiliar normalises to UNKNOWN, so two
@@ -108,6 +119,8 @@ export class AguiConnection {
    * a client can least afford to drop something it does not understand.
    */
   #seen = new Set<string>();
+  /** A complete projection whose consumer callback has not acknowledged every frame. */
+  #pendingProjection: PendingProjection | undefined;
   #closed = false;
   /** The one terminal notification this one-shot connection has emitted. */
   #terminal: 'failed' | 'closed' | undefined;
@@ -222,6 +235,7 @@ export class AguiConnection {
          * history and opening a connection.
          */
         const pending: unknown[] = [];
+        const streamProjection = new ProjectionAssembler(this.session);
         let live = false;
         let dropped = false;
         let dropCause: unknown;
@@ -241,7 +255,7 @@ export class AguiConnection {
                 return;
               }
               if (live) {
-                this.#deliver(raw, onEvent);
+                this.#accept(raw, onEvent, streamProjection);
               } else {
                 // Held until history has been replayed, so the caller sees one
                 // ordered sequence rather than the future before the past.
@@ -255,18 +269,26 @@ export class AguiConnection {
           this.options,
         );
 
-        // Then history, from the cursor. Then deduplicate — which the delivery
-        // below does on `seq`, so a frame seen twice is delivered once.
+        // Then history, from the cursor. Cursorless durable frames are held
+        // until their numbered final frame makes the projection an exact,
+        // occurrence-aware deduplication unit.
         try {
           const history = await this.transport.history(this.session, this.#cursor, this.options);
           if (this.#closed) {
             return;
           }
+          const historyProjection = new ProjectionAssembler(this.session);
           for (const raw of history) {
             if (this.#closed) {
               return;
             }
-            this.#deliver(raw, onEvent);
+            this.#accept(raw, onEvent, historyProjection);
+          }
+          historyProjection.assertComplete('AG-UI history');
+          if (this.#pendingProjection !== undefined) {
+            throw new ProtocolError(
+              `AG-UI history did not replay the unacknowledged projection at sequence ${String(this.#pendingProjection.seq)}`,
+            );
           }
         } catch (cause) {
           this.#stopStream?.();
@@ -301,17 +323,18 @@ export class AguiConnection {
           continue;
         }
 
-        live = true;
         try {
-          for (const raw of pending.splice(0)) {
+          while (pending.length > 0) {
             if (this.#closed) {
               return;
             }
-            this.#deliver(raw, onEvent);
+            const raw = pending.shift();
+            this.#accept(raw, onEvent, streamProjection);
           }
         } catch (cause) {
           drop(cause);
         }
+        live = true;
         if (!dropped) {
           onStatus?.('live');
           backoff = this.options.backoffMs ?? DEFAULT_BACKOFF;
@@ -401,20 +424,16 @@ export class AguiConnection {
     onStatus?.('closed');
   }
 
-  /**
-   * Deliver one frame, once.
-   *
-   * Deduplicated on the durable event a frame was projected from together
-   * with the kind of frame it is, which is what the reconnect order above
-   * depends on: opening the stream before reading history guarantees an
-   * overlap, and this is what makes the overlap harmless without discarding
-   * the siblings of a frame already seen.
-   */
-  #deliver(raw: unknown, onEvent: (event: AguiEvent) => void) {
+  /** Parse one wire frame and deliver complete durable projections once. */
+  #accept(raw: unknown, onEvent: (event: AguiEvent) => void, assembler: ProjectionAssembler): void {
     if (this.#closed) {
       return;
     }
-    const event = toEvent(raw);
+    const events = assembler.accept(toEvent(raw));
+    if (events.length === 0) {
+      return;
+    }
+    const first = events[0] as AguiEvent;
     /*
      * Liveness passes straight through, touching neither the cursor nor the
      * seen-set. It has no sequence — what it arrives with is whatever id the
@@ -423,27 +442,98 @@ export class AguiConnection {
      * every piece of a message after the first would collide with the piece
      * before it and be dropped in silence.
      */
-    if (event.ephemeral === true) {
-      onEvent(event);
+    if (first.ephemeral === true) {
+      onEvent(first);
       return;
     }
-    const wireKind = event.type === 'UNKNOWN' ? event.kind : event.type;
-    if (event.seq < this.#cursor) {
+    this.#deliverProjection(events, onEvent);
+  }
+
+  /** Deliver a projection and acknowledge its cursor only after every callback returns. */
+  #deliverProjection(events: readonly AguiEvent[], onEvent: (event: AguiEvent) => void): void {
+    const final = events.at(-1);
+    if (final === undefined || final.ephemeral === true || final.seq <= 0) {
+      throw new ProtocolError('AG-UI durable projection had no numbered final frame');
+    }
+    const wireKind = final.type === 'UNKNOWN' ? final.kind : final.type;
+    const finalKey = frameKey(final.seq, wireKind);
+    if (final.seq < this.#cursor) {
       return;
     }
-    if (event.seq > this.#cursor) {
-      this.#cursor = event.seq;
-      // A reconnect asks strictly after the cursor. Only sibling projections
-      // at the current sequence can overlap now, so older keys retain no value
-      // and would otherwise grow for the session's entire lifetime.
+    if (final.seq === this.#cursor && this.#seen.has(finalKey)) {
+      return;
+    }
+
+    const fingerprint = canonicalJson(events);
+    let pending = this.#pendingProjection;
+    if (pending === undefined) {
+      pending = { seq: final.seq, finalKey, fingerprint, acknowledged: 0 };
+      this.#pendingProjection = pending;
+    } else if (
+      pending.seq !== final.seq ||
+      pending.finalKey !== finalKey ||
+      pending.fingerprint !== fingerprint
+    ) {
+      throw new ProtocolError(
+        `AG-UI replay changed the unacknowledged projection at sequence ${String(pending.seq)}`,
+      );
+    }
+
+    for (let index = pending.acknowledged; index < events.length; index += 1) {
+      try {
+        onEvent(events[index] as AguiEvent);
+      } catch (cause) {
+        throw new EventCallbackFailure(cause);
+      }
+      pending.acknowledged = index + 1;
+      if (this.#closed && pending.acknowledged < events.length) {
+        return;
+      }
+    }
+
+    if (final.seq > this.#cursor) {
+      this.#cursor = final.seq;
+      // A reconnect asks strictly after the cursor. Only legacy siblings at
+      // this sequence can still overlap, so older keys need not survive.
       this.#seen.clear();
     }
-    const delivered = frameKey(event.seq, wireKind);
-    if (this.#seen.has(delivered)) {
-      return;
+    this.#seen.add(finalKey);
+    this.#pendingProjection = undefined;
+  }
+}
+
+/** Stable JSON identity for retrying a callback without accepting changed history. */
+function canonicalJson(value: unknown, ancestors = new Set<object>()): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new ProtocolError('AG-UI projection contained a non-JSON number');
     }
-    this.#seen.add(delivered);
-    onEvent(event);
+    return JSON.stringify(value);
+  }
+  if (value === undefined) {
+    return 'undefined';
+  }
+  if (typeof value !== 'object') {
+    throw new ProtocolError('AG-UI projection contained a non-JSON value');
+  }
+  if (ancestors.has(value)) {
+    throw new ProtocolError('AG-UI projection contained a cycle');
+  }
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return `[${value.map((entry) => canonicalJson(entry, ancestors)).join(',')}]`;
+    }
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key], ancestors)}`)
+      .join(',')}}`;
+  } finally {
+    ancestors.delete(value);
   }
 }
 

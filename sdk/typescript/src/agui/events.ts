@@ -13,6 +13,7 @@
 
 import { KNOWN_EVENTS, STATE_DELTA_PATCHES } from '../wire.js';
 import { ProtocolError } from '../errors.js';
+import { canBeDurableProjectionPrefix } from './cursor.js';
 
 /** Every kind this build renders. The set grows; the handling does not break. */
 export type KnownEventType = (typeof KNOWN_EVENTS)[number];
@@ -32,6 +33,10 @@ interface EventBase {
    * `API_Overview.md` §3: durable events carry a per-session `seq`, **not a
    * global one**. A client that treated it as global would lose events in
    * exactly the window nobody tests.
+   *
+   * Zero means this is a leading durable projection frame with no SSE id. It
+   * does not advance the cursor; the projection's final frame carries the
+   * positive sequence. Liveness also uses zero, distinguished by `ephemeral`.
    */
   readonly seq: number;
   /**
@@ -248,6 +253,15 @@ export interface UnknownEvent extends EventBase {
   readonly type: 'UNKNOWN';
   /** The kind as it arrived, so it can be shown and reported. */
   readonly kind: string;
+  /**
+   * Stable identity of this frame within one durable projection.
+   *
+   * Assigned by the projection assembler after the numbered final frame
+   * reveals the projection's durable sequence. Both `AguiConnection` and
+   * `parseEventStream` use that assembler. This is client metadata, not wire
+   * data; directly constructed events may omit it for backwards compatibility.
+   */
+  readonly projectionId?: string;
   /** The frame verbatim, so nothing is lost in the round trip. */
   readonly raw: Readonly<Record<string, unknown>>;
 }
@@ -285,14 +299,18 @@ export function toEvent(raw: unknown): AguiEvent {
   if (frame['cma:live'] !== undefined && typeof frame['cma:live'] !== 'boolean') {
     throw new ProtocolError("AG-UI frame 'cma:live' was not boolean");
   }
+  const kind = nonEmptyString(frame.type, 'AG-UI type');
+  const seq = sequence(frame.seq);
+  if (!ephemeral && seq === 0 && !canBeDurableProjectionPrefix(kind)) {
+    throw new ProtocolError(`AG-UI durable ${kind} frame cannot have sequence zero`);
+  }
   const base = {
     threadId: nonEmptyString(frame.threadId, 'AG-UI threadId'),
     runId: nonEmptyString(frame.runId, 'AG-UI runId'),
-    seq: sequence(frame.seq, ephemeral),
+    seq,
     timestamp: optionalString(frame.timestamp, 'AG-UI timestamp'),
     ephemeral,
   };
-  const kind = nonEmptyString(frame.type, 'AG-UI type');
 
   switch (kind) {
     case 'RUN_STARTED':
@@ -504,12 +522,9 @@ function optionalBoolean(raw: unknown, name: string): void {
   }
 }
 
-function sequence(raw: unknown, ephemeral: boolean): number {
+function sequence(raw: unknown): number {
   if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw < 0) {
     throw new ProtocolError('AG-UI seq was not a non-negative safe integer');
-  }
-  if (!ephemeral && raw === 0) {
-    throw new ProtocolError('durable AG-UI frame carried no positive sequence');
   }
   return raw;
 }

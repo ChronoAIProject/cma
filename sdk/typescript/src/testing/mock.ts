@@ -1,5 +1,7 @@
 import type { AguiTransport } from '../agui/connection.js';
+import { toEvent } from '../agui/events.js';
 import type { OperationTransport } from '../agui/operations.js';
+import { ProjectionAssembler } from '../agui/projection.js';
 import type { Transcript } from './types.js';
 
 /**
@@ -45,6 +47,87 @@ export interface MockOptions {
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
+interface DurableProjection {
+  readonly seq: number;
+  readonly frames: readonly Readonly<Record<string, unknown>>[];
+}
+
+function validateProjection(
+  frames: readonly Readonly<Record<string, unknown>>[],
+  expectedThreadId: string,
+  source: string,
+): DurableProjection {
+  if (frames.length === 0) {
+    throw new TypeError(`${source} was empty`);
+  }
+
+  const assembler = new ProjectionAssembler(expectedThreadId);
+  let completed: ReturnType<ProjectionAssembler['accept']> = [];
+  frames.forEach((frame, index) => {
+    const accepted = assembler.accept(toEvent(frame));
+    if (index < frames.length - 1 && accepted.length > 0) {
+      throw new TypeError(`${source} completed before its final frame`);
+    }
+    if (accepted.length > 0) {
+      completed = accepted;
+    }
+  });
+  assembler.assertComplete(source);
+
+  const final = completed.at(-1);
+  if (
+    completed.length !== frames.length ||
+    final === undefined ||
+    final.ephemeral === true ||
+    final.seq <= 0
+  ) {
+    throw new TypeError(`${source} must end in one positive-sequence durable frame`);
+  }
+  return { seq: final.seq, frames };
+}
+
+/** Associate every durable transcript frame with the event projection it came from. */
+function durableProjections(
+  transcript: Transcript,
+  expectedThreadId: string,
+): readonly (DurableProjection | undefined)[] {
+  const byFrame: (DurableProjection | undefined)[] = new Array(transcript.frames.length);
+  let prefixes: { readonly index: number; readonly event: Readonly<Record<string, unknown>> }[] =
+    [];
+
+  transcript.frames.forEach((frame, index) => {
+    if (frame.event['cma:live'] === true) {
+      const live = toEvent(frame.event);
+      new ProjectionAssembler(expectedThreadId).accept(live);
+      if (live.seq !== 0) {
+        throw new TypeError(`mock transcript ${transcript.name} gave liveness a durable sequence`);
+      }
+      return;
+    }
+    if (Number(frame.event.seq ?? 0) === 0) {
+      prefixes.push({ index, event: frame.event });
+      return;
+    }
+
+    const members = [...prefixes, { index, event: frame.event }];
+    const projection = validateProjection(
+      members.map((member) => member.event),
+      expectedThreadId,
+      `mock transcript ${transcript.name}`,
+    );
+    for (const member of members) {
+      byFrame[member.index] = projection;
+    }
+    prefixes = [];
+  });
+
+  if (prefixes.length > 0) {
+    throw new TypeError(`mock transcript ${transcript.name} ended inside a durable projection`);
+  }
+
+  return byFrame;
+}
+
 /**
  * A mock AG-UI session.
  *
@@ -53,15 +136,25 @@ export interface MockOptions {
  * is the property the surface is being tested against.
  */
 export class MockSession {
-  /** Durable frames the session has already emitted, in sequence order. */
-  #delivered: Record<string, unknown>[] = [];
+  /** Durable events whose projection has begun streaming, in sequence order. */
+  readonly #available = new Set<DurableProjection>();
+  readonly #projectionByFrame: readonly (DurableProjection | undefined)[];
   #cursorAtDrop = 0;
   #dropsRemaining: number;
+
+  /** The session/thread identity recorded by this transcript. */
+  readonly id: string;
 
   constructor(
     private readonly transcript: Transcript,
     private readonly options: MockOptions = {},
   ) {
+    const threadId = transcript.frames[0]?.event.threadId;
+    if (typeof threadId !== 'string' || threadId.length === 0) {
+      throw new TypeError(`mock transcript ${transcript.name} has no threadId`);
+    }
+    this.id = threadId;
+    this.#projectionByFrame = durableProjections(transcript, threadId);
     this.#dropsRemaining = options.dropAfter === undefined ? 0 : 1;
   }
 
@@ -112,12 +205,14 @@ export class MockSession {
               onDrop('the mock dropped the stream');
               return;
             }
-            // Liveness is never history. Recording it here makes the
-            // connection deliver it once from history and once from the live
-            // stream, and makes a reload show reasoning the protocol never
-            // persisted.
-            if (frame.event['cma:live'] !== true) {
-              this.#delivered.push(frame.event);
+            // The durable event exists before the server starts projecting it
+            // onto SSE. Expose the whole projection to history before its first
+            // frame is sent, so a disconnect after a seq: 0 prefix replays the
+            // complete event. Liveness has no projection and never enters
+            // history.
+            const projection = this.#projectionByFrame[index - 1];
+            if (projection !== undefined) {
+              this.#available.add(projection);
             }
             onFrame(frame.event);
           }
@@ -128,9 +223,15 @@ export class MockSession {
       },
 
       history: (_session, cursor) =>
-        // Everything already emitted after the caller's cursor, oldest first —
-        // the same contract the wire's `starting_after` honours.
-        Promise.resolve(this.#delivered.filter((frame) => Number(frame.seq ?? 0) > cursor)),
+        // Every complete durable projection already available after the
+        // caller's cursor, oldest first — the same contract the wire's
+        // `starting_after` honours.
+        Promise.resolve(
+          [...this.#available]
+            .filter((projection) => projection.seq > cursor)
+            .sort((left, right) => left.seq - right.seq)
+            .flatMap((projection) => projection.frames),
+        ),
     };
   }
 
@@ -156,17 +257,35 @@ export class MockSession {
     };
   }
 
-  /**
-   * Emit a frame that is not in the transcript.
-   *
-   * For the cases a recording cannot express — an approval answered *now*, a
-   * turn steered mid-flight. A durable frame goes into history so a reconnect
-   * finds it; liveness remains live-only, like it does on the wire.
-   */
-  emit(event: Record<string, unknown>, onFrame: (raw: unknown) => void): void {
-    if (event['cma:live'] !== true) {
-      this.#delivered.push(event);
+  /** Emit liveness or one numbered durable frame that is not in the transcript. */
+  emit(event: Readonly<Record<string, unknown>>, onFrame: (raw: unknown) => void): void {
+    if (event['cma:live'] === true) {
+      const live = toEvent(event);
+      new ProjectionAssembler(this.id).accept(live);
+      if (live.seq !== 0) {
+        throw new TypeError('mock liveness must have sequence zero');
+      }
+      onFrame(event);
+      return;
     }
-    onFrame(event);
+    this.emitProjection([event], onFrame);
+  }
+
+  /**
+   * Emit one complete durable event projection that is not in the transcript.
+   *
+   * The full projection enters history before its first cursorless prefix is
+   * delivered. A reconnect at any point therefore reads the same complete
+   * durable event that the production history endpoint would return.
+   */
+  emitProjection(
+    frames: readonly Readonly<Record<string, unknown>>[],
+    onFrame: (raw: unknown) => void,
+  ): void {
+    const projection = validateProjection(frames, this.id, 'mock emitted projection');
+    this.#available.add(projection);
+    for (const frame of frames) {
+      onFrame(frame);
+    }
   }
 }

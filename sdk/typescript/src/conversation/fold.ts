@@ -182,7 +182,13 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
       );
       return existing === undefined
         ? state
-        : upsertMessage(state, { ...existing, committed: true });
+        : upsertMessage(state, {
+            ...existing,
+            committed: true,
+            // The END frame is the projection's resume point. Leading START
+            // and CONTENT frames are deliberately unnumbered.
+            seq: event.seq,
+          });
     }
 
     case 'TOOL_CALL_START':
@@ -200,7 +206,12 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
         ...state,
         entries: state.entries.map((entry) =>
           entry.kind === 'tool' && entry.id === event.toolCallId
-            ? { ...entry, arguments: { text: event.delta, truncated: event.truncated } }
+            ? {
+                ...entry,
+                arguments: { text: event.delta, truncated: event.truncated },
+                // ARGS closes the started projection when a body was recorded.
+                seq: event.seq,
+              }
             : entry,
         ),
       };
@@ -242,7 +253,7 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
       // a newer control plane is reporting is worth more than a tidy stream.
       return append(state, {
         kind: 'unknown',
-        id: `unknown-${String(event.seq)}`,
+        id: event.projectionId ?? `unknown-${String(event.seq)}`,
         eventKind: event.kind,
         seq: event.seq,
       });

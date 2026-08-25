@@ -10,6 +10,16 @@ import { KNOWN_EVENTS } from '../../src/wire.js';
  */
 
 const base = { threadId: 'sesn_1', runId: 'run_1', seq: 4 };
+const durableProjectionPrefixes = [
+  'TEXT_MESSAGE_START',
+  'TEXT_MESSAGE_CONTENT',
+  'TOOL_CALL_START',
+  'TOOL_CALL_END',
+] as const;
+const durableProjectionPrefixSet = new Set<string>(durableProjectionPrefixes);
+const durableFinalOrSingletonKinds = KNOWN_EVENTS.filter(
+  (kind) => !durableProjectionPrefixSet.has(kind),
+);
 
 function validFrame(type: (typeof KNOWN_EVENTS)[number]): Record<string, unknown> {
   const fields: Record<(typeof KNOWN_EVENTS)[number], Record<string, unknown>> = {
@@ -36,6 +46,39 @@ function validFrame(type: (typeof KNOWN_EVENTS)[number]): Record<string, unknown
 describe('reading a frame', () => {
   it.each(KNOWN_EVENTS)('classifies %s', (type) => {
     expect(toEvent(validFrame(type)).type).toBe(type);
+  });
+
+  it.each(durableProjectionPrefixes)('accepts unnumbered durable prefix %s', (type) => {
+    const event = toEvent({ ...validFrame(type), seq: 0 });
+
+    expect(event).toMatchObject({
+      type,
+      seq: 0,
+    });
+    expect(event.ephemeral).not.toBe(true);
+  });
+
+  it.each(durableFinalOrSingletonKinds)(
+    'rejects unnumbered durable final or singleton %s',
+    (type) => {
+      expect(() => toEvent({ ...validFrame(type), seq: 0 })).toThrow(ProtocolError);
+    },
+  );
+
+  it('preserves an unnumbered unknown durable prefix', () => {
+    const raw = { ...base, type: 'FUTURE_THING', seq: 0, futureValue: 7 };
+    const event = toEvent(raw);
+
+    expect(event).toMatchObject({ type: 'UNKNOWN', kind: 'FUTURE_THING', seq: 0 });
+    expect(event.type === 'UNKNOWN' && event.raw).toEqual(raw);
+  });
+
+  it('retains an explicitly live zero sequence', () => {
+    expect(toEvent({ ...validFrame('RUN_STARTED'), seq: 0, 'cma:live': true })).toMatchObject({
+      type: 'RUN_STARTED',
+      seq: 0,
+      ephemeral: true,
+    });
   });
 
   it('keeps an unknown kind whole rather than dropping it', () => {

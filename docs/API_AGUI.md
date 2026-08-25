@@ -53,7 +53,7 @@ A run is one request. The response is an SSE stream of AG-UI events that ends wh
 
 `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>` is the same events, read rather than driven: a session's whole history and then everything after it, projected identically and never ending on its own. It is what §7 means by recovering a dropped stream, and it exists because §7 used to send clients to `/api/v1/sessions/{id}/events` — a REST route, which answers in the core's vocabulary and not this one. A client that followed that advice received frames it could not read.
 
-**The sequence rides as the SSE `id`, not in the body.** A client resumes by handing back the last id it saw, and deduplicates on it. It is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
+**The sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The sequence is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
 
 ### Running a turn
 
@@ -101,12 +101,12 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 | Run lifecycle | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` | turn boundaries and outcome |
 | Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
 | Reasoning | `REASONING_MESSAGE_CONTENT` | what the agent is working through — **live lane only, never durable** |
-| Tool use | `TOOL_CALL_START`, `TOOL_CALL_END` | file edits, shell commands, MCP calls |
+| Tool use | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` | file edits, shell commands, MCP calls, their arguments and results |
 | State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
 
-Not emitted **today**: `TOOL_CALL_ARGS`, `TOOL_CALL_RESULT`, `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim. They arrive when the durable log carries what they would need: the core records that a tool call started and where it got to, not the arguments it was given or what it returned.
+Not emitted **today**: `REASONING_START`, `REASONING_END`, the deprecated `THINKING_*` family, `STATE_SNAPSHOT`, and everything else in the enum. Each is declared `false` in the capability document rather than omitted from it, because omission reads as "this build has not heard of it" and a client sizing its handling needs the other claim.
 
-A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively.
+A client must tolerate unknown event types rather than failing on them, and must not assume an event absent from this table will never appear — the set grows additively. That includes an unknown durable frame with no SSE `id`: an older client cannot know whether a future kind is a leading frame, so it retains the frame and groups it with the next numbered final just as it does a known leading frame.
 
 ### Reading history is a different request from watching
 
@@ -139,7 +139,7 @@ Liveness attaches when the session is running. A stream opened before that — w
 
 ### The run stream has two lanes, and one of them is not history
 
-Everything above is the **durable** lane: projected from the log, carrying an SSE `id`, and what a client resumes from.
+Everything above is the **durable** lane: projected from the log, with each projection's final frame carrying the SSE `id` a client resumes from. A leading frame without an id remains durable and does not carry `cma:live`.
 
 The run stream also carries a **live** lane — what is happening right now. Those frames are marked and carry **no `id` at all**:
 
@@ -281,6 +281,10 @@ A client that ignores `cma:returns` draws every rotation as a fault, and under �
 
 `TOOL_CALL_START` carries `cma:toolKind`, and `TOOL_CALL_END` carries `cma:status`, both verbatim from the kernel. They are not mapped onto a fixed set: the vocabularies differ between kernels and grow without warning, and a session must not fail because one invented a category. Render what you recognise.
 
+A durable tool-start record always projects `TOOL_CALL_START` and, when the record contains arguments, follows it with `TOOL_CALL_ARGS`. A durable tool update likewise projects `TOOL_CALL_END` and, when the record contains a result, follows it with `TOOL_CALL_RESULT`. Both frames in a pair carry the same `toolCallId`.
+
+That optional follow-up makes `TOOL_CALL_START` and `TOOL_CALL_END` deliberately ambiguous on their own. If no follow-up exists, the start or end is the projection's final frame and carries the durable sequence as its SSE `id`. If `TOOL_CALL_ARGS` or `TOOL_CALL_RESULT` follows, the start or end carries no id and the follow-up carries it instead. The start/end body does not announce which case applies, so a client must accept both shapes, upsert by `toolCallId`, and advance its cursor only when the numbered final frame arrives.
+
 **`STATE_DELTA` is where `get_usage` lands.** Token counts and cost arrive as state patches rather than a separate call, so a chat UI can show spend without polling.
 
 ---
@@ -355,8 +359,8 @@ GET /api/v1/agui/capabilities
   "events": {
     "RUN_STARTED": true, "RUN_FINISHED": true, "RUN_ERROR": true,
     "TEXT_MESSAGE_START": true, "TEXT_MESSAGE_CONTENT": true, "TEXT_MESSAGE_END": true,
-    "TOOL_CALL_START": true, "TOOL_CALL_ARGS": false, "TOOL_CALL_END": true,
-    "TOOL_CALL_RESULT": false, "THINKING_START": false, "THINKING_END": false,
+    "TOOL_CALL_START": true, "TOOL_CALL_ARGS": true, "TOOL_CALL_END": true,
+    "TOOL_CALL_RESULT": true, "THINKING_START": false, "THINKING_END": false,
     "STATE_SNAPSHOT": false, "STATE_DELTA": true
   },
   "features": {
@@ -388,7 +392,18 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 - **Tolerate unknown events.** The emitted set grows additively; a client that throws on an unrecognised type will break on a routine release.
 - **Do not treat `RUN_FINISHED` as "session over."** Check `outcome`. An interrupt outcome means the session is alive and waiting for you.
 - **A dropped stream is not a cancellation.** The turn keeps running. Recover by reading the log, not by re-posting the run — and if you meant to stop it, say so with the interrupt route (§5).
-- **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`, not by POSTing the run again — which would start a second turn. Read the cursor off the SSE `id`; it is not in the body.
+- **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`, not by POSTing the run again — which would start a second turn. Read the cursor off the last SSE `id`; it is not in the body.
+- **An SSE `id` acknowledges a whole durable projection.** Only its final frame carries the event sequence. If the connection drops after an earlier frame, the last id still names the preceding durable event, so replay sends the interrupted projection again from its first frame. Group the prefixes with their next numbered final and deduplicate that complete projection by the final id. Do not deduplicate prefixes only by `messageId`, `toolCallId`, or kind: one tool call can have several distinct durable updates, and future unknown kinds may also be prefixes. Advance the stored cursor only after the complete group was accepted.
+
+  A raw SSE parser can observe whether the current frame omitted `id`; native `EventSource` cannot, because `MessageEvent.lastEventId` inherits the most recent id. A native client uses this equivalent procedure:
+
+  1. Keep two values separate: the global acknowledged cursor used for replay and deduplication, and the previous `lastEventId` observed on this particular `EventSource`. Initialize the per-source value to the empty string whenever constructing a source.
+  2. Do not let that object reconnect automatically. Its URL retains the `starting_after` value with which it was constructed, and this endpoint does not use the browser's `Last-Event-ID` request header. In the `error` handler, call `close()` before the automatic retry, discard the incomplete prefix buffer, and construct a new `EventSource` whose URL carries the latest global acknowledged cursor. The new object starts with an empty per-source value and empty prefix buffer; retain completed-projection deduplication state.
+  3. In the message listener, capture and classify each frame at arrival, before queued stream frames are combined with history. Deliver a `cma:live` frame without putting it in the durable buffer and without changing either cursor from it. Its inherited `lastEventId` says nothing about that live frame.
+  4. For a non-live frame, compare its `lastEventId` with the previous value captured from this source. Equality means the frame omitted `id`, so buffer it as a prefix. This includes two empty strings before the first numbered frame on a newly constructed `EventSource`, even one opened with a nonzero `starting_after` query.
+  5. A changed value is an explicit id and must be a positive safe integer. Record it immediately as this source's previous observed value and classify the frame as a projection final. Combine it with the buffered prefixes, deduplicate the whole group by that id against the global acknowledged cursor, and clear the buffer. Advance the global cursor only after the complete group was accepted, and never move it backwards.
+
+  The per-source comparison must happen at arrival. The required open-stream-before-history sequence can queue stream final 7, let history acknowledge 7, and only then drain the stream queue; comparison with the global cursor would misclassify that duplicate final as a prefix, while its arrival-time change on the stream lane still classifies it correctly and global deduplication then discards it. Closing and reconstructing on an error is equally important: automatic reconnection with the old query can explicitly replay final 7, which is observationally identical to a prefix inheriting 7. A fresh source querying after the accepted cursor removes that ambiguity and safely replays any discarded incomplete projection. This inference relies on the final-frame contract's rule that a server never explicitly repeats one id across projection siblings; a legacy server that does so requires access to raw SSE fields. The SDK's fetch transport has that access, reconstructs each request with its current cursor, and groups the actual per-frame fields directly.
 - **`STATE_DELTA` patches, it does not replace.** Apply it to the last `STATE_SNAPSHOT`.
 
 ---
