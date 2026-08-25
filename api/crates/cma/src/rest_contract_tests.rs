@@ -9,7 +9,7 @@ use std::{
 };
 
 use axum::{
-    body::{to_bytes, Body},
+    body::{to_bytes, Body, BodyDataStream},
     http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode},
     Extension, Router,
 };
@@ -22,10 +22,10 @@ use layer2_core::{
     EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
     EnvironmentProfileStore, Event, EventKind, KernelId, Page, PageCursor, PageRequest,
     PlatformSettingsService, RecoveryState, RegisteredUser, Reserved, ScreenFactory, ScreenModel,
-    ScreenSnapshot, ServiceCatalog, ServiceId, Session, SessionId, SessionListQuery, SessionPorts,
-    SessionRecord, SessionService, SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack,
-    SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
-    UserDirectoryStore, MAX_PAGE_SIZE,
+    ScreenSnapshot, ServiceCatalog, ServiceId, Session, SessionId, SessionListQuery, SessionMode,
+    SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore,
+    SkillCatalog, SkillId, SkillPack, SkillSource, StoreError, StoredEvent, SubjectId,
+    TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -635,7 +635,43 @@ impl ScreenModel for EmptyScreen {
     }
 }
 
-struct TestKernel;
+#[derive(Default)]
+struct TestKernel {
+    conversation_updates: Mutex<Option<mpsc::Sender<layer3_adapter::ConversationUpdate>>>,
+    resource_samples: Mutex<Option<mpsc::Sender<layer3_adapter::ResourceSample>>>,
+}
+
+impl TestKernel {
+    async fn emit_message_chunk(&self, text: &str) {
+        let updates = self
+            .conversation_updates
+            .lock()
+            .await
+            .clone()
+            .expect("the conversation fixture is connected");
+        updates
+            .send(layer3_adapter::ConversationUpdate::Said(
+                layer3_adapter::SessionUpdate::AgentMessageChunk(
+                    layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(text)),
+                ),
+            ))
+            .await
+            .expect("the conversation fixture is listening");
+    }
+
+    async fn emit_resource_sample(&self, sample: layer3_adapter::ResourceSample) {
+        let readings = self
+            .resource_samples
+            .lock()
+            .await
+            .clone()
+            .expect("the resource fixture is connected");
+        readings
+            .send(sample)
+            .await
+            .expect("the resource fixture is listening");
+    }
+}
 
 #[async_trait::async_trait]
 impl KernelAdapter for TestKernel {
@@ -648,6 +684,7 @@ impl KernelAdapter for TestKernel {
             terminal: true,
             conversation: true,
             snapshot: true,
+            resources: true,
             ..Default::default()
         }
     }
@@ -676,8 +713,9 @@ impl KernelAdapter for TestKernel {
         &self,
         _handle: &RuntimeHandle,
         _options: &layer3_adapter::RuntimeOptions,
-        _updates: mpsc::Sender<layer3_adapter::ConversationUpdate>,
+        updates: mpsc::Sender<layer3_adapter::ConversationUpdate>,
     ) -> Result<layer3_adapter::ConversationChannel, AdapterError> {
+        *self.conversation_updates.lock().await = Some(updates);
         Ok(layer3_adapter::ConversationChannel {
             input: layer3_adapter::ConversationInputSender::spawn(8, |_input| async { Ok(()) }),
             conversation_id: Some("rest-contract-conversation".into()),
@@ -694,6 +732,15 @@ impl KernelAdapter for TestKernel {
 
     async fn snapshot(&self, _handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
         Ok(Some(b"rest-contract-conversation".to_vec()))
+    }
+
+    async fn watch_resources(
+        &self,
+        _handle: &RuntimeHandle,
+        readings: mpsc::Sender<layer3_adapter::ResourceSample>,
+    ) -> Result<(), AdapterError> {
+        *self.resource_samples.lock().await = Some(readings);
+        Ok(())
     }
 
     async fn switch_plane(
@@ -714,6 +761,7 @@ impl KernelAdapter for TestKernel {
 struct TestSurface {
     app: Router,
     sessions: Arc<SessionService>,
+    kernel: Arc<TestKernel>,
     store: Arc<MemorySessions>,
     profiles: Arc<MemoryProfiles>,
     catalogue: Arc<TestCatalogue>,
@@ -740,8 +788,12 @@ fn test_surface(authenticated: bool) -> TestSurface {
         },
         Arc::clone(&settings),
     );
+    let kernel = Arc::new(TestKernel::default());
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
-    adapters.insert(KernelId::new("test"), Arc::new(TestKernel));
+    adapters.insert(
+        KernelId::new("test"),
+        Arc::clone(&kernel) as Arc<dyn KernelAdapter>,
+    );
     let factory: ScreenFactory = Arc::new(|geometry| Box::new(EmptyScreen(geometry)));
     let store = Arc::new(MemorySessions::default());
     let sessions = SessionService::new(
@@ -772,24 +824,28 @@ fn test_surface(authenticated: bool) -> TestSurface {
             Capability::ConfigurePlatform,
         ]),
     );
-    let app = rest_api_router(
-        layer1_public::rest::SessionsState {
-            sessions: Arc::clone(&sessions),
-            users: Arc::clone(&users),
-            tickets: TerminalTickets::new(),
-            environments: Arc::clone(&environments),
-        },
+    let public_state = layer1_public::rest::SessionsState {
+        sessions: Arc::clone(&sessions),
+        users: Arc::clone(&users),
+        tickets: TerminalTickets::new(),
+        environments: Arc::clone(&environments),
+    };
+    let rest = rest_api_router(
+        public_state.clone(),
         Arc::new(layer1_public::rest::admin::AdminState {
             sessions: Arc::clone(&sessions),
             activity: Arc::clone(&activity),
             users,
             settings,
         }),
-    )
-    .layer(axum::middleware::from_fn_with_state(
-        ActivityRecorder::new(activity),
-        activity::record,
-    ));
+    );
+    let app = Router::new()
+        .merge(rest)
+        .merge(layer1_public::agui::router(public_state))
+        .layer(axum::middleware::from_fn_with_state(
+            ActivityRecorder::new(activity),
+            activity::record,
+        ));
     let app = if authenticated {
         app.layer(Extension(caller.authorization.clone()))
             .layer(Extension(AuthenticatedSubject(caller.subject.clone())))
@@ -802,6 +858,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     TestSurface {
         app,
         sessions,
+        kernel,
         store,
         profiles,
         catalogue,
@@ -973,6 +1030,63 @@ async fn seed_sessions(
     for record in records {
         state.records.insert(record.session.id.0.clone(), record);
     }
+}
+
+async fn create_ready_conversation_session(
+    sessions: &Arc<SessionService>,
+    caller: &Caller,
+) -> SessionId {
+    let session = sessions
+        .create_session(
+            caller,
+            SessionSpec {
+                options: Default::default(),
+                geometry: None,
+                environment_profile: None,
+                caller_credential: Some(TEST_DELEGATED_CREDENTIAL.into()),
+                runtime_credential: None,
+                requested_mode: Some(SessionMode::Conversation),
+                quoted_rate_card: None,
+            },
+        )
+        .await
+        .expect("the conversation session is accepted");
+    wait_until_ready(sessions, caller, &session.id).await;
+    session.id
+}
+
+async fn next_agui_frame(body: &mut BodyDataStream) -> serde_json::Value {
+    loop {
+        let bytes = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
+            .await
+            .expect("the SSE stream emits within the test deadline")
+            .expect("the SSE stream stays open")
+            .expect("the SSE body is readable");
+        let raw = String::from_utf8(bytes.to_vec()).expect("SSE framing is text");
+        let data = raw
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .map(str::trim_start)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if data.is_empty() && raw.lines().any(|line| line.starts_with(':')) {
+            continue;
+        }
+        assert!(
+            !data.is_empty(),
+            "an AG-UI event frame must carry SSE data: {raw:?}"
+        );
+        return serde_json::from_str(&data)
+            .unwrap_or_else(|error| panic!("AG-UI data is JSON ({error}): {raw:?}"));
+    }
+}
+
+fn assert_agui_ids(frame: &serde_json::Value, run_id: &str, thread_id: &SessionId) {
+    assert_eq!(frame["runId"], run_id, "unexpected run context: {frame}");
+    assert_eq!(
+        frame["threadId"], thread_id.0,
+        "unexpected session context: {frame}"
+    );
 }
 
 fn profile_record(sequence: usize, owner: &SubjectId) -> EnvironmentProfile {
@@ -1174,6 +1288,304 @@ fn assert_unnamed_skills(view: &serde_json::Value) {
             "version": "1.2.3"
         }])
     );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn replay_frames_use_the_session_id_for_initial_history_and_the_followed_tail() {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let before_turn = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("the owner can read the session")
+        .last()
+        .map(|event| event.seq)
+        .expect("creation records events");
+
+    sessions
+        .send_prompt(&caller, &id, "already in history".into())
+        .await
+        .expect("the real session accepts the opening turn");
+    let response = app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/agui/events?thread_id={}&starting_after={before_turn}",
+                id.0
+            ))
+            .body(Body::empty())
+            .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+
+    let mut initial_types = Vec::new();
+    for _ in 0..4 {
+        let frame = next_agui_frame(&mut body).await;
+        assert_agui_ids(&frame, &id.0, &id);
+        initial_types.push(
+            frame["type"]
+                .as_str()
+                .expect("AG-UI frames name their type")
+                .to_string(),
+        );
+    }
+    assert_eq!(
+        initial_types,
+        [
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
+            "RUN_STARTED",
+        ],
+        "the initial read must exercise the already-recorded turn"
+    );
+
+    sessions
+        .terminate_session(&caller, &id)
+        .await
+        .expect("terminating the real session records a followed event");
+    let followed = next_agui_frame(&mut body).await;
+    assert_eq!(followed["type"], "RUN_ERROR", "the tail was not followed");
+    assert_agui_ids(&followed, &id.0, &id);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn followed_live_and_resource_frames_use_the_session_id_for_both_contexts() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let head = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("the owner can read the session")
+        .last()
+        .map(|event| event.seq)
+        .expect("creation records events");
+    let response = app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/agui/events?thread_id={}&starting_after={head}",
+                id.0
+            ))
+            .body(Body::empty())
+            .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+
+    kernel.emit_message_chunk("being typed").await;
+    let live = next_agui_frame(&mut body).await;
+    assert_eq!(live["type"], "TEXT_MESSAGE_CONTENT");
+    assert_eq!(live["cma:live"], true);
+    assert!(
+        live.get("seq").is_none(),
+        "live frames carry no cursor: {live}"
+    );
+    assert_agui_ids(&live, &id.0, &id);
+
+    kernel
+        .emit_resource_sample(layer3_adapter::ResourceSample {
+            cpu_millis_used: Some(250),
+            cpu_millis_limit: Some(1_000),
+            memory_bytes_used: Some(128),
+            memory_bytes_limit: Some(256),
+            memory_bytes_peak: Some(192),
+            stall_permille: None,
+            ceiling_hits: Some(1),
+            allocation_failures: Some(0),
+            kills: Some(0),
+            received_bytes: Some(512),
+            sent_bytes: Some(1_024),
+            received_bytes_per_second: Some(64),
+            sent_bytes_per_second: Some(128),
+            interval_ms: Some(1_000),
+        })
+        .await;
+    let resources = next_agui_frame(&mut body).await;
+    assert_eq!(resources["type"], "STATE_DELTA");
+    assert_eq!(resources["cma:live"], true);
+    assert!(
+        resources.get("seq").is_none(),
+        "resource frames carry no cursor: {resources}"
+    );
+    assert_eq!(resources["delta"][0]["path"], "/resources");
+    assert_eq!(resources["delta"][0]["value"]["memoryBytesUsed"], 128);
+    assert_agui_ids(&resources, &id.0, &id);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn run_frames_echo_the_explicit_client_run_id_instead_of_the_session_id() {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let run_id = "run_explicit_contract";
+    assert_ne!(run_id, id.0);
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0,
+                "runId": run_id,
+                "messages": [{ "role": "user", "content": "echo my run id" }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+
+    for _ in 0..4 {
+        let frame = next_agui_frame(&mut body).await;
+        assert_agui_ids(&frame, run_id, &id);
+    }
+}
+
+async fn assert_server_defaulted_run_id(explicit_null: bool) {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let mut request = serde_json::json!({
+        "threadId": id.0,
+        "messages": [{ "role": "user", "content": "choose the run id" }]
+    });
+    if explicit_null {
+        request
+            .as_object_mut()
+            .expect("the request fixture is an object")
+            .insert("runId".into(), serde_json::Value::Null);
+    }
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            request.to_string(),
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+
+    let first = next_agui_frame(&mut body).await;
+    let generated = first["runId"]
+        .as_str()
+        .expect("a generated run id is a string")
+        .to_string();
+    let suffix = generated
+        .strip_prefix("run_")
+        .expect("generated run ids use the documented prefix");
+    assert_eq!(suffix.len(), 32, "the generated UUID is unhyphenated");
+    assert!(
+        suffix
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()),
+        "the generated UUID is hexadecimal: {generated}"
+    );
+    assert_eq!(suffix, suffix.to_ascii_lowercase());
+    assert_ne!(generated, id.0, "a run response is not a replay stream");
+    assert_agui_ids(&first, &generated, &id);
+
+    for _ in 1..4 {
+        let frame = next_agui_frame(&mut body).await;
+        assert_agui_ids(&frame, &generated, &id);
+    }
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn an_omitted_run_id_is_generated_once_and_echoed_on_every_run_frame() {
+    assert_server_defaulted_run_id(false).await;
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_null_run_id_uses_the_same_server_default_as_an_omitted_id() {
+    assert_server_defaulted_run_id(true).await;
+}
+
+async fn invalid_run_id_problem(supplied: impl FnOnce(&SessionId) -> String) -> serde_json::Value {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let before = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("the owner can read the session before the refusal")
+        .last()
+        .map(|event| event.seq);
+    let run_id = supplied(&id);
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0,
+                "runId": run_id,
+                "messages": [{ "role": "user", "content": "must not be sent" }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("router answers");
+    let problem = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    let after = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("the owner can read the session after the refusal")
+        .last()
+        .map(|event| event.seq);
+    assert_eq!(after, before, "an invalid run id must not open a turn");
+    problem
+}
+
+#[tokio::test]
+async fn a_run_id_equal_to_the_effective_thread_id_is_a_typed_client_refusal() {
+    let problem = invalid_run_id_problem(|id| id.0.clone()).await;
+    assert_eq!(problem["code"], "invalid_request");
+    assert_eq!(
+        problem["detail"],
+        "invalid request: runId must differ from the effective threadId"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_or_whitespace_run_id_is_a_typed_client_refusal() {
+    for supplied in ["", " \t"] {
+        let problem = invalid_run_id_problem(|_| supplied.to_string()).await;
+        assert_eq!(problem["code"], "invalid_request", "for {supplied:?}");
+        assert_eq!(
+            problem["detail"], "invalid request: runId must contain a non-whitespace character",
+            "for {supplied:?}"
+        );
+    }
 }
 
 #[tokio::test]
