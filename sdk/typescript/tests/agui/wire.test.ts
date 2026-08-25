@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAguiTransport, parseEventStream } from '../../src/agui/wire.js';
+import { parseEventStream } from '../../src/index.js';
 import { toEvent } from '../../src/agui/events.js';
+import { createAguiTransport, parseEventFrames } from '../../src/agui/wire.js';
 import type { ResponseMetadata } from '../../src/config.js';
+import { fold } from '../../src/conversation/fold.js';
 import { ApiError, ProtocolError, RequestAborted, TimeoutError } from '../../src/errors.js';
 import type { OperationOptions } from '../../src/http.js';
 import { KNOWN_EVENTS } from '../../src/wire.js';
@@ -102,7 +104,7 @@ describe('what the interface serves is what this client reads', () => {
       },
     ]);
 
-    const events = parseEventStream(body).map(toEvent);
+    const events = parseEventStream(body);
 
     expect(events.map((e) => e.type)).toEqual([
       'RUN_STARTED',
@@ -113,7 +115,7 @@ describe('what the interface serves is what this client reads', () => {
     ]);
     expect(events.map((e) => e.seq)).toEqual([1, 0, 0, 2, 3]);
     expect(events.slice(1, 3).every((event) => event.ephemeral !== true)).toBe(true);
-    expect(parseEventStream(body).slice(1, 3)).not.toContainEqual(
+    expect(parseEventFrames(body).slice(1, 3)).not.toContainEqual(
       expect.objectContaining({ 'cma:live': true }),
     );
     expect(events.some((e) => e.type === 'UNKNOWN')).toBe(false);
@@ -145,7 +147,7 @@ describe('what the interface serves is what this client reads', () => {
       },
     ]);
 
-    const [event] = parseEventStream(body).map(toEvent);
+    const [event] = parseEventStream(body);
 
     expect(event?.type).toBe('TOOL_CALL_START');
     expect(event?.type === 'TOOL_CALL_START' && event.target).toBe('Read file src/main.rs');
@@ -167,7 +169,7 @@ describe('what the interface serves is what this client reads', () => {
       },
     ]);
 
-    const events = parseEventStream(body).map(toEvent);
+    const events = parseEventStream(body);
 
     expect(events.map((e) => e.seq)).toEqual([41, 42]);
   });
@@ -199,7 +201,7 @@ describe('what the interface serves is what this client reads', () => {
 
 describe('the SSE id identifies only a complete durable projection', () => {
   it.each(durableProjectionPrefixes)('accepts an omitted id for durable prefix %s', (kind) => {
-    expect(parseEventStream(literalFrame(kind))).toEqual([
+    expect(parseEventFrames(literalFrame(kind))).toEqual([
       expect.objectContaining({ type: kind, seq: 0 }),
     ]);
   });
@@ -207,12 +209,12 @@ describe('the SSE id identifies only a complete durable projection', () => {
   it.each(durableFinalOrSingletonKinds)(
     'rejects an omitted id for durable final or singleton %s',
     (kind) => {
-      expect(() => parseEventStream(literalFrame(kind))).toThrow(ProtocolError);
+      expect(() => parseEventFrames(literalFrame(kind))).toThrow(ProtocolError);
     },
   );
 
   it('preserves an omitted id on an unknown durable prefix', () => {
-    expect(parseEventStream(literalFrame('SOMETHING_ADDED_LATER'))).toEqual([
+    expect(parseEventFrames(literalFrame('SOMETHING_ADDED_LATER'))).toEqual([
       expect.objectContaining({ type: 'SOMETHING_ADDED_LATER', seq: 0 }),
     ]);
   });
@@ -223,21 +225,21 @@ describe('the SSE id identifies only a complete durable projection', () => {
     ['unknown kind', 'SOMETHING_ADDED_LATER'],
   ] as const)('rejects invalid ids on a %s', (_class, kind) => {
     for (const idLine of invalidSequenceLines) {
-      expect(() => parseEventStream(literalFrame(kind, idLine))).toThrow(ProtocolError);
+      expect(() => parseEventFrames(literalFrame(kind, idLine))).toThrow(ProtocolError);
     }
   });
 
   it.each([...KNOWN_EVENTS, 'SOMETHING_ADDED_LATER'] as const)(
     'accepts a positive safe id for durable kind %s',
     (kind) => {
-      expect(parseEventStream(literalFrame(kind, 'id: 7'))).toEqual([
+      expect(parseEventFrames(literalFrame(kind, 'id: 7'))).toEqual([
         expect.objectContaining({ type: kind, seq: 7 }),
       ]);
     },
   );
 
   it('accepts an omitted id for an explicitly live frame', () => {
-    expect(parseEventStream(literalFrame('STATE_DELTA', undefined, true))).toEqual([
+    expect(parseEventFrames(literalFrame('STATE_DELTA', undefined, true))).toEqual([
       expect.objectContaining({ type: 'STATE_DELTA', seq: 0, 'cma:live': true }),
     ]);
   });
@@ -245,11 +247,52 @@ describe('the SSE id identifies only a complete durable projection', () => {
   it.each([...invalidSequenceLines, 'id: 7'])(
     'rejects a present id on an explicitly live frame (%s)',
     (idLine) => {
-      expect(() => parseEventStream(literalFrame('STATE_DELTA', idLine, true))).toThrow(
+      expect(() => parseEventFrames(literalFrame('STATE_DELTA', idLine, true))).toThrow(
         ProtocolError,
       );
     },
   );
+
+  it('rejects a complete body that ends before a durable projection gets its id', () => {
+    expect(() => parseEventStream(literalFrame('FUTURE_PREFIX'))).toThrow(
+      'AG-UI event stream ended inside a durable projection',
+    );
+  });
+
+  it('retains repeated unknown prefixes through the public parser and fold', () => {
+    const body = sse([
+      {
+        event: 'FUTURE_REPEAT',
+        data: { type: 'FUTURE_REPEAT', runId: 'run_1', threadId: 'sesn:opaque' },
+      },
+      {
+        event: 'FUTURE_REPEAT',
+        data: { type: 'FUTURE_REPEAT', runId: 'run_1', threadId: 'sesn:opaque' },
+      },
+      {
+        id: 7,
+        event: 'RUN_FINISHED',
+        data: { type: 'RUN_FINISHED', runId: 'run_1', threadId: 'sesn:opaque' },
+      },
+    ]);
+
+    const events = parseEventStream(body);
+    const unknowns = events.filter((event) => event.type === 'UNKNOWN');
+    expect(unknowns.map((event) => event.projectionId)).toEqual([
+      '["sesn:opaque",7,0,"FUTURE_REPEAT"]',
+      '["sesn:opaque",7,1,"FUTURE_REPEAT"]',
+    ]);
+    expect(fold([...events, ...events]).entries).toEqual([
+      expect.objectContaining({
+        id: '["sesn:opaque",7,0,"FUTURE_REPEAT"]',
+        eventKind: 'FUTURE_REPEAT',
+      }),
+      expect.objectContaining({
+        id: '["sesn:opaque",7,1,"FUTURE_REPEAT"]',
+        eventKind: 'FUTURE_REPEAT',
+      }),
+    ]);
+  });
 });
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));

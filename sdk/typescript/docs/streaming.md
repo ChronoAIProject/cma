@@ -96,6 +96,14 @@ AG-UI is a separate, run-shaped projection for conversation frontends. Use
 [AG-UI contract](../../../docs/API_AGUI.md) and
 [REST replay contract](../../../docs/API_REST.md#5-events).
 
+`parseEventStream` handles a complete captured AG-UI SSE body. It returns
+normalized `AguiEvent` values, groups durable prefixes with their numbered final,
+and assigns occurrence identities to unknown siblings. Pass that result directly
+to `fold`; do not map `toEvent` over it again. `toEvent` converts one raw frame and
+cannot discover a prefix's occurrence identity without the rest of its projection.
+An incomplete captured body that stops before the numbered final is a protocol
+error.
+
 ## Why the SDK owns the patches
 
 Earlier clients copied `STATE_DELTA` paths and wire fields into the frontend. That

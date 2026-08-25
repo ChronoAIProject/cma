@@ -9,6 +9,7 @@ import {
 } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { toEvent, type AguiEvent } from './events.js';
+import { ProjectionAssembler } from './projection.js';
 
 /**
  * The AG-UI connection: its cursor, its reconnect order, and its deduplication.
@@ -67,10 +68,6 @@ const DEFAULT_BACKOFF = 500;
 const DEFAULT_MAX_BACKOFF = 15_000;
 const DEFAULT_JITTER_RATIO = 1;
 const TERMINAL_HTTP_STATUSES = new Set([401, 403, 404, 410, 422]);
-
-interface ProjectionBuffer {
-  readonly prefixes: AguiEvent[];
-}
 
 interface PendingProjection {
   readonly seq: number;
@@ -238,7 +235,7 @@ export class AguiConnection {
          * history and opening a connection.
          */
         const pending: unknown[] = [];
-        const streamProjection: ProjectionBuffer = { prefixes: [] };
+        const streamProjection = new ProjectionAssembler();
         let live = false;
         let dropped = false;
         let dropCause: unknown;
@@ -280,16 +277,14 @@ export class AguiConnection {
           if (this.#closed) {
             return;
           }
-          const historyProjection: ProjectionBuffer = { prefixes: [] };
+          const historyProjection = new ProjectionAssembler();
           for (const raw of history) {
             if (this.#closed) {
               return;
             }
             this.#accept(raw, onEvent, historyProjection);
           }
-          if (historyProjection.prefixes.length > 0) {
-            throw new ProtocolError('AG-UI history ended inside a durable projection');
-          }
+          historyProjection.assertComplete('AG-UI history');
           if (this.#pendingProjection !== undefined) {
             throw new ProtocolError(
               `AG-UI history did not replay the unacknowledged projection at sequence ${String(this.#pendingProjection.seq)}`,
@@ -430,11 +425,15 @@ export class AguiConnection {
   }
 
   /** Parse one wire frame and deliver complete durable projections once. */
-  #accept(raw: unknown, onEvent: (event: AguiEvent) => void, buffer: ProjectionBuffer): void {
+  #accept(raw: unknown, onEvent: (event: AguiEvent) => void, assembler: ProjectionAssembler): void {
     if (this.#closed) {
       return;
     }
-    const event = toEvent(raw);
+    const events = assembler.accept(toEvent(raw));
+    if (events.length === 0) {
+      return;
+    }
+    const first = events[0] as AguiEvent;
     /*
      * Liveness passes straight through, touching neither the cursor nor the
      * seen-set. It has no sequence — what it arrives with is whatever id the
@@ -443,22 +442,10 @@ export class AguiConnection {
      * every piece of a message after the first would collide with the piece
      * before it and be dropped in silence.
      */
-    if (event.ephemeral === true) {
-      onEvent(event);
+    if (first.ephemeral === true) {
+      onEvent(first);
       return;
     }
-
-    // A cursorless durable frame is only a prefix. Holding it until the final
-    // frame prevents a history/stream overlap from forcing semantic identities
-    // (which are not unique: one tool call may have many durable updates) to do
-    // the work of a log cursor.
-    if (event.seq === 0) {
-      buffer.prefixes.push(event);
-      return;
-    }
-
-    const events = [...buffer.prefixes, event];
-    buffer.prefixes.length = 0;
     this.#deliverProjection(events, onEvent);
   }
 
@@ -493,16 +480,8 @@ export class AguiConnection {
     }
 
     for (let index = pending.acknowledged; index < events.length; index += 1) {
-      const event = events[index] as AguiEvent;
-      const delivered =
-        event.type === 'UNKNOWN'
-          ? {
-              ...event,
-              projectionId: JSON.stringify([final.threadId, final.seq, index, event.kind]),
-            }
-          : event;
       try {
-        onEvent(delivered);
+        onEvent(events[index] as AguiEvent);
       } catch (cause) {
         throw new EventCallbackFailure(cause);
       }
