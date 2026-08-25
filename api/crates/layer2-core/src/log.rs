@@ -89,14 +89,20 @@ struct EnqueuedCommit {
 }
 
 type DeliveryCleanupFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
-type DeliveryCleanup<T> = Box<dyn FnOnce(T) -> DeliveryCleanupFuture + Send>;
+type DeliveryCleanupAction<T> = Box<dyn FnOnce(T) -> DeliveryCleanupFuture + Send>;
+
+struct DeliveryCleanup<T> {
+    runtime: tokio::runtime::Handle,
+    action: DeliveryCleanupAction<T>,
+}
 
 /// A successful result that still owns its cancellation cleanup until polled.
 ///
 /// Sending through a oneshot is not observation: the receiver can be canceled
 /// after `send` succeeds but before it polls the value. Keeping cleanup in the
 /// value itself closes that window. Polling extracts the output and disarms the
-/// cleanup; dropping an unread delivery launches it.
+/// cleanup; dropping an unread delivery launches it on the originating runtime,
+/// even when the receiver itself is dropped from an ordinary thread.
 struct CommitDelivery<T> {
     output: Option<T>,
     cleanup: Option<DeliveryCleanup<T>>,
@@ -119,7 +125,10 @@ impl<T> CommitDelivery<T> {
     {
         Self {
             output: Some(output),
-            cleanup: Some(Box::new(move |output| Box::pin(cleanup(output, ownership)))),
+            cleanup: Some(DeliveryCleanup {
+                runtime: tokio::runtime::Handle::current(),
+                action: Box::new(move |output| Box::pin(cleanup(output, ownership))),
+            }),
         }
     }
 
@@ -138,14 +147,7 @@ impl<T> Drop for CommitDelivery<T> {
         let (Some(output), Some(cleanup)) = (self.output.take(), self.cleanup.take()) else {
             return;
         };
-        match tokio::runtime::Handle::try_current() {
-            Ok(runtime) => {
-                runtime.spawn(cleanup(output));
-            }
-            Err(error) => {
-                tracing::error!(%error, "cannot run cleanup for an unobserved commit delivery");
-            }
-        }
+        cleanup.runtime.spawn((cleanup.action)(output));
     }
 }
 
