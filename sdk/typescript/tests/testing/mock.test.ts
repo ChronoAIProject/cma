@@ -346,7 +346,7 @@ describe('the mock drives the real client', () => {
       {
         type: 'REASONING_MESSAGE_CONTENT',
         runId: 'run_live',
-        seq: 1,
+        seq: 0,
         messageId: 'reasoning_live_1',
         delta: 'Still working.',
         'cma:live': true,
@@ -357,6 +357,7 @@ describe('the mock drives the real client', () => {
     const history = await session.transport.history(session.id, 0);
 
     expect(seen.map((event) => event.type)).toEqual(['RUN_STARTED', 'REASONING_MESSAGE_CONTENT']);
+    expect(seen.map((event) => event.seq)).toEqual([1, 0]);
     expect(cursor).toBe(1);
     expect(history).toEqual([transcript.frames[0]?.event]);
   });
@@ -425,5 +426,186 @@ describe('the mock drives the real client', () => {
     stopLater();
 
     expect(replayed.some((e) => e.seq === 99)).toBe(true);
+  });
+
+  it.each([
+    {
+      name: 'message',
+      frames: [
+        {
+          threadId: 'sesn_projection_reconnect',
+          runId: 'run_emitted_message',
+          seq: 0,
+          type: 'TEXT_MESSAGE_START',
+          messageId: 'emitted_message_1',
+          role: 'assistant',
+        },
+        {
+          threadId: 'sesn_projection_reconnect',
+          runId: 'run_emitted_message',
+          seq: 0,
+          type: 'TEXT_MESSAGE_CONTENT',
+          messageId: 'emitted_message_1',
+          delta: 'The complete message survives.',
+        },
+        {
+          threadId: 'sesn_projection_reconnect',
+          runId: 'run_emitted_message',
+          seq: 1,
+          type: 'TEXT_MESSAGE_END',
+          messageId: 'emitted_message_1',
+        },
+      ],
+    },
+    {
+      name: 'tool start',
+      frames: [
+        {
+          threadId: 'sesn_projection_reconnect',
+          runId: 'run_emitted_tool_start',
+          seq: 0,
+          type: 'TOOL_CALL_START',
+          toolCallId: 'emitted_tool_start_1',
+          toolCallName: 'cargo test',
+          'cma:toolKind': 'shell',
+        },
+        {
+          threadId: 'sesn_projection_reconnect',
+          runId: 'run_emitted_tool_start',
+          seq: 1,
+          type: 'TOOL_CALL_ARGS',
+          toolCallId: 'emitted_tool_start_1',
+          delta: '--workspace',
+          'cma:truncated': false,
+        },
+      ],
+    },
+    {
+      name: 'tool result',
+      frames: [
+        {
+          threadId: 'sesn_projection_reconnect',
+          runId: 'run_emitted_tool_result',
+          seq: 0,
+          type: 'TOOL_CALL_END',
+          toolCallId: 'emitted_tool_result_1',
+          'cma:status': 'ok',
+        },
+        {
+          threadId: 'sesn_projection_reconnect',
+          runId: 'run_emitted_tool_result',
+          seq: 1,
+          type: 'TOOL_CALL_RESULT',
+          toolCallId: 'emitted_tool_result_1',
+          content: 'all tests passed',
+          'cma:truncated': false,
+        },
+      ],
+    },
+  ])(
+    'makes an emitted $name projection replayable before delivering its first prefix',
+    async ({ frames }) => {
+      const session = new MockSession(
+        projectionTranscript('dynamic-projection-base', [
+          {
+            type: 'REASONING_MESSAGE_CONTENT',
+            runId: 'run_live_only',
+            seq: 0,
+            messageId: 'live_only_1',
+            delta: 'Still working.',
+            'cma:live': true,
+          },
+        ]),
+      );
+      const historiesAtFirstFrame: Promise<readonly unknown[]>[] = [];
+
+      expect(() =>
+        session.emitProjection(frames, () => {
+          historiesAtFirstFrame.push(session.transport.history(session.id, 0));
+          throw new Error('the mock stream disconnected');
+        }),
+      ).toThrow('the mock stream disconnected');
+
+      expect(historiesAtFirstFrame).toHaveLength(1);
+      expect((await Promise.all(historiesAtFirstFrame))[0]).toEqual(frames);
+
+      const { cursor, seen } = await replay(session);
+      const runId = frames[0]?.runId;
+      const replayed = seen.filter((event) => event.runId === runId);
+      expect(replayed.map((event) => event.type)).toEqual(frames.map((frame) => frame.type));
+      expect(replayed.map((event) => event.seq)).toEqual(frames.map((frame) => frame.seq));
+      expect(cursor).toBe(1);
+    },
+  );
+
+  it('rejects malformed emitted projections without adding partial history', async () => {
+    const session = new MockSession(
+      projectionTranscript('dynamic-validation-base', [
+        {
+          type: 'REASONING_MESSAGE_CONTENT',
+          runId: 'run_live_only',
+          seq: 0,
+          messageId: 'live_only_2',
+          delta: 'Still working.',
+          'cma:live': true,
+        },
+      ]),
+    );
+    const prefix = {
+      threadId: session.id,
+      runId: 'run_dynamic_validation',
+      seq: 0,
+      type: 'TEXT_MESSAGE_START',
+      messageId: 'dynamic_validation_1',
+      role: 'assistant',
+    } as const;
+    const final = {
+      threadId: session.id,
+      runId: 'run_dynamic_validation',
+      seq: 1,
+      type: 'TEXT_MESSAGE_END',
+      messageId: 'dynamic_validation_1',
+    } as const;
+
+    expect(() => session.emit(prefix, () => {})).toThrow(/ended inside a durable projection/);
+    expect(() => session.emitProjection([], () => {})).toThrow(/was empty/);
+    expect(() =>
+      session.emitProjection([prefix, { ...final, threadId: 'sesn_another' }], () => {}),
+    ).toThrow(/another threadId/);
+    expect(() =>
+      session.emitProjection([prefix, { ...final, runId: 'run_another' }], () => {}),
+    ).toThrow(/changed runId/);
+    expect(() =>
+      session.emitProjection(
+        [
+          { ...final, seq: 1 },
+          { ...final, seq: 2 },
+        ],
+        () => {},
+      ),
+    ).toThrow(/completed before its final frame/);
+    expect(await session.transport.history(session.id, 0)).toEqual([]);
+  });
+
+  it('emits sequence-zero liveness without retaining it in history', async () => {
+    const session = new MockSession(transcriptNamed('plain-turn'));
+    const live = {
+      threadId: session.id,
+      runId: 'run_dynamic_live',
+      seq: 0,
+      type: 'REASONING_MESSAGE_CONTENT',
+      messageId: 'dynamic_live_1',
+      delta: 'Still working.',
+      'cma:live': true,
+    } as const;
+    const seen: unknown[] = [];
+
+    session.emit(live, (raw) => seen.push(raw));
+
+    expect(seen).toEqual([live]);
+    expect(await session.transport.history(session.id, 0)).toEqual([]);
+    expect(() => session.emit({ ...live, seq: 1 }, () => {})).toThrow(
+      /liveness must have sequence zero/,
+    );
   });
 });
