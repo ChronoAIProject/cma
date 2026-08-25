@@ -229,6 +229,126 @@ fn repeated_mandatory_identifiers_cannot_bypass_normalized_limits() {
 }
 
 #[test]
+fn duplicate_baseline_entries_are_canonicalized_by_identity() {
+    let baseline = Baseline::new(
+        [
+            SoftwarePackage {
+                name: "first-package".into(),
+                version: Some("1".into()),
+            },
+            SoftwarePackage::new("second-package"),
+            SoftwarePackage {
+                name: "first-package".into(),
+                version: Some("ignored".into()),
+            },
+        ],
+        [
+            SkillId::new("first-skill"),
+            SkillId::new("second-skill"),
+            SkillId::new("first-skill"),
+        ],
+        [
+            ServiceId::new("first-service"),
+            ServiceId::new("second-service"),
+            ServiceId::new("first-service"),
+        ],
+    );
+
+    assert_eq!(
+        baseline
+            .packages()
+            .iter()
+            .map(SoftwarePackage::requirement)
+            .collect::<Vec<_>>(),
+        ["first-package@1", "second-package"]
+    );
+    assert_eq!(
+        baseline
+            .skills()
+            .iter()
+            .map(SkillId::as_str)
+            .collect::<Vec<_>>(),
+        ["first-skill", "second-skill"]
+    );
+    assert_eq!(
+        baseline
+            .services()
+            .iter()
+            .map(ServiceId::as_str)
+            .collect::<Vec<_>>(),
+        ["first-service", "second-service"]
+    );
+
+    let mut applied = spec("canonical baseline");
+    baseline.apply(&mut applied);
+    assert_eq!(applied.packages, baseline.packages());
+    assert_eq!(applied.agent.skills, baseline.skills());
+    assert_eq!(applied.services, baseline.services());
+    assert_eq!(
+        ResolvedEnvironment::baseline_only(&baseline).packages,
+        ["first-package@1", "second-package"]
+    );
+    assert_eq!(
+        ResolvedEnvironment::baseline_only(&baseline).skills,
+        ["first-skill", "second-skill"]
+    );
+
+    let boundary_baseline = Baseline::new(
+        [
+            SoftwarePackage::new("mandatory-package"),
+            SoftwarePackage::new("mandatory-package"),
+        ],
+        [
+            SkillId::new("mandatory-skill"),
+            SkillId::new("mandatory-skill"),
+        ],
+        [
+            ServiceId::new("mandatory-service"),
+            ServiceId::new("mandatory-service"),
+        ],
+    );
+    let mut boundary = spec("at the boundary");
+    boundary.packages = (0..MAX_ENTRIES)
+        .map(|i| SoftwarePackage::new(format!("caller-package-{i}")))
+        .collect();
+    boundary.agent.skills = (0..MAX_ENTRIES)
+        .map(|i| SkillId::new(format!("caller-skill-{i}")))
+        .collect();
+    boundary.services = (0..MAX_ENTRIES)
+        .map(|i| ServiceId::new(format!("caller-service-{i}")))
+        .collect();
+    boundary_baseline.apply(&mut boundary);
+    boundary
+        .validate_with_baseline(&boundary_baseline)
+        .expect("100 caller entries remain valid beside one mandatory identity");
+
+    let mut too_many_packages = boundary.clone();
+    too_many_packages
+        .packages
+        .push(SoftwarePackage::new("mandatory-package"));
+    assert!(too_many_packages
+        .validate_with_baseline(&boundary_baseline)
+        .is_err());
+
+    let mut too_many_skills = boundary.clone();
+    too_many_skills
+        .agent
+        .skills
+        .push(SkillId::new("mandatory-skill"));
+    assert!(too_many_skills
+        .validate_with_baseline(&boundary_baseline)
+        .is_err());
+
+    let mut too_many_services = boundary;
+    too_many_services
+        .services
+        .push(ServiceId::new("mandatory-service"));
+    assert!(too_many_services
+        .validate_with_baseline(&boundary_baseline)
+        .is_err());
+}
+
+#[test]
 fn a_package_renders_its_pin_when_it_has_one() {
     assert_eq!(SoftwarePackage::new("ripgrep").requirement(), "ripgrep");
     assert_eq!(
