@@ -110,3 +110,55 @@ fn a_continuation_boundary_is_unnumbered_and_is_not_a_new_turn() {
     assert!(body.get("cma:live").is_none());
     assert!(body.get("timestamp").is_none());
 }
+
+#[test]
+fn a_durable_batch_keeps_the_complete_first_ending_projection_and_stops() {
+    let id = SessionId("sesn_terminal_batch".into());
+    let event = |seq, kind| Event {
+        session_id: id.clone(),
+        seq,
+        kind,
+        appended_at: "2026-08-26T00:00:00Z".into(),
+    };
+    let mut pending = std::collections::VecDeque::new();
+    let mut seq = 6;
+
+    let ended = queue_durable_batch(
+        [
+            event(
+                7,
+                layer2_core::EventKind::ApprovalRequested {
+                    request_id: "approval-terminal-batch".into(),
+                    action: Some("shell".into()),
+                    detail: Some("run a command".into()),
+                },
+            ),
+            event(
+                8,
+                layer2_core::EventKind::StatusChanged {
+                    status: layer2_core::SessionStatus::Terminated,
+                    stop_reason: Some(layer2_core::StopReason::Error),
+                    detail: Some("later failure".into()),
+                    capability: None,
+                },
+            ),
+        ],
+        &mut pending,
+        &mut seq,
+        "run_terminal_batch",
+        &id.0,
+    );
+
+    assert!(ended);
+    assert_eq!(seq, 7, "the cursor stops on the event that ended the run");
+    assert_eq!(
+        pending.len(),
+        2,
+        "the complete ending projection is kept but the later event is not queued"
+    );
+    let ending = pending.into_iter().collect::<Vec<_>>();
+    assert_eq!(ending[0].kind, "RUN_FINISHED");
+    assert_eq!(ending[0].seq, None);
+    assert_eq!(ending[1].kind, "STATE_DELTA");
+    assert_eq!(ending[1].seq, Some(7));
+}

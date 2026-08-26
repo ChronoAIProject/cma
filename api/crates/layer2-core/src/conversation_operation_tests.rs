@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
-use layer3_adapter::{ConversationInput, PermissionDecision};
+use layer3_adapter::{AdapterError, ConversationInput, PermissionDecision};
 
-use crate::conversation::ApprovalDecision;
+use crate::conversation::{ApprovalDecision, ApprovalResolution};
 use crate::conversation_support::{
     asking, chunk, conversation, conversation_with, conversing, said, until_logged, until_sent,
 };
@@ -822,6 +822,291 @@ async fn answering_something_nothing_is_waiting_for_is_refused() {
             .err(),
         Some(crate::error::CoreError::InvalidState)
     );
+}
+
+#[tokio::test]
+async fn an_immediate_completion_cannot_overtake_approval_resolution() {
+    let (svc, alice, id, adapter) = conversation().await;
+    let updates = {
+        let held = adapter.conversation.lock().await;
+        let conversation = held.as_ref().expect("the conversation was opened");
+        conversation
+            .updates
+            .send(layer3_adapter::ConversationUpdate::Asked(asking(
+                "req-racing-completion",
+                "finish after this answer",
+            )))
+            .await
+            .expect("the core is listening");
+        conversation.updates.clone()
+    };
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ApprovalRequested { request_id, .. }
+                if request_id == "req-racing-completion"
+        ))
+        .await
+    );
+
+    let input = layer3_adapter::ConversationInputSender::spawn(1, move |input| {
+        let updates = updates.clone();
+        async move {
+            if matches!(input, ConversationInput::PermissionAnswer { .. }) {
+                updates
+                    .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                        layer3_adapter::PromptResponse::new(
+                            layer3_adapter::TurnStopReason::EndTurn,
+                        ),
+                    ))
+                    .await
+                    .expect("the core continues folding runtime updates");
+                // Give the folder a chance to contend for the ordering gate
+                // before the permission delivery is acknowledged.
+                tokio::task::yield_now().await;
+            }
+            Ok(())
+        }
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(input);
+
+    svc.resolve_approval(
+        &alice,
+        &id,
+        "req-racing-completion".into(),
+        ApprovalDecision::Allow,
+    )
+    .await
+    .expect("the answer is delivered and recorded");
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::TurnCompleted
+        ))
+        .await,
+        "the immediate completion is eventually recorded"
+    );
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("approval history is readable");
+    let resolved = events
+        .iter()
+        .position(|event| matches!(event.kind, EventKind::ApprovalResolved { .. }))
+        .expect("the answer is durable");
+    let completed = events
+        .iter()
+        .position(|event| matches!(event.kind, EventKind::TurnCompleted))
+        .expect("the ending is durable");
+    assert!(
+        resolved < completed,
+        "resolution must precede the runtime effect it enabled: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_invalid_approval_batch_sends_and_mutates_nothing() {
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let updates = &held.as_ref().expect("the conversation was opened").updates;
+        for request_id in ["req-batch-1", "req-batch-2"] {
+            updates
+                .send(layer3_adapter::ConversationUpdate::Asked(asking(
+                    request_id,
+                    "batch preflight",
+                )))
+                .await
+                .expect("the core is listening");
+        }
+    }
+    for request_id in ["req-batch-1", "req-batch-2"] {
+        assert!(
+            until_logged(&svc, &alice, &id, |kind| matches!(
+                kind,
+                EventKind::ApprovalRequested { request_id: recorded, .. }
+                    if recorded == request_id
+            ))
+            .await
+        );
+    }
+    let cursor = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history is readable")
+        .last()
+        .expect("the requests are durable")
+        .seq;
+
+    assert_eq!(
+        svc.resolve_approvals(&alice, &id, &[]).await,
+        Err(CoreError::InvalidState)
+    );
+    assert_eq!(
+        svc.resolve_approvals(
+            &alice,
+            &id,
+            &[
+                ApprovalResolution::new("req-batch-1", ApprovalDecision::Allow),
+                ApprovalResolution::new("req-batch-1", ApprovalDecision::Deny),
+            ],
+        )
+        .await,
+        Err(CoreError::InvalidState),
+        "duplicate IDs are rejected before delivery"
+    );
+    assert_eq!(
+        svc.resolve_approvals(
+            &alice,
+            &id,
+            &[
+                ApprovalResolution::new("req-batch-1", ApprovalDecision::Allow),
+                ApprovalResolution::new("req-stale", ApprovalDecision::Deny),
+            ],
+        )
+        .await,
+        Err(CoreError::InvalidState),
+        "a stale later ID cannot consume the valid prefix"
+    );
+
+    let sent = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains open")
+        .sent()
+        .await;
+    assert!(
+        sent.iter()
+            .all(|input| !matches!(input, ConversationInput::PermissionAnswer { .. })),
+        "preflight failures send no answers: {sent:?}"
+    );
+    let entries = svc.entries.read().await;
+    let pending = &entries
+        .get(&id)
+        .expect("the session remains live")
+        .pending_approvals;
+    assert_eq!(pending.len(), 2);
+    assert!(pending.contains("req-batch-1"));
+    assert!(pending.contains("req-batch-2"));
+    drop(entries);
+    assert!(
+        svc.events_since(&alice, &id, Some(cursor))
+            .await
+            .expect("history remains readable")
+            .is_empty(),
+        "preflight failures append no resolution events"
+    );
+}
+
+#[tokio::test]
+async fn an_accepted_batch_prefix_is_durable_before_a_later_delivery_error() {
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let updates = &held.as_ref().expect("the conversation was opened").updates;
+        for request_id in ["req-prefix-1", "req-prefix-2"] {
+            updates
+                .send(layer3_adapter::ConversationUpdate::Asked(asking(
+                    request_id,
+                    "partial delivery",
+                )))
+                .await
+                .expect("the core is listening");
+        }
+    }
+    for request_id in ["req-prefix-1", "req-prefix-2"] {
+        assert!(
+            until_logged(&svc, &alice, &id, |kind| matches!(
+                kind,
+                EventKind::ApprovalRequested { request_id: recorded, .. }
+                    if recorded == request_id
+            ))
+            .await
+        );
+    }
+    let cursor = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history is readable")
+        .last()
+        .expect("the requests are durable")
+        .seq;
+
+    let delivered = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let delivered_by_runtime = Arc::clone(&delivered);
+    let input = layer3_adapter::ConversationInputSender::spawn(2, move |input| {
+        let delivered = Arc::clone(&delivered_by_runtime);
+        async move {
+            let refused = matches!(
+                &input,
+                ConversationInput::PermissionAnswer { id, .. } if id == "req-prefix-2"
+            );
+            delivered.lock().await.push(input);
+            if refused {
+                Err(AdapterError::Rejected("second answer refused".into()))
+            } else {
+                Ok(())
+            }
+        }
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(input);
+
+    assert_eq!(
+        svc.resolve_approvals(
+            &alice,
+            &id,
+            &[
+                ApprovalResolution::new("req-prefix-1", ApprovalDecision::Allow),
+                ApprovalResolution::new("req-prefix-2", ApprovalDecision::Deny),
+            ],
+        )
+        .await,
+        Err(CoreError::RuntimeRefused("second answer refused".into()))
+    );
+
+    let delivered = delivered.lock().await;
+    let delivered_ids = delivered
+        .iter()
+        .filter_map(|input| match input {
+            ConversationInput::PermissionAnswer { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(delivered_ids, ["req-prefix-1", "req-prefix-2"]);
+    drop(delivered);
+    let appended = svc
+        .events_since(&alice, &id, Some(cursor))
+        .await
+        .expect("the accepted prefix is readable before the error returns");
+    assert!(appended.iter().any(|event| matches!(
+        &event.kind,
+        EventKind::ApprovalResolved { request_id, allowed }
+            if request_id == "req-prefix-1" && *allowed
+    )));
+    assert!(appended.iter().all(|event| !matches!(
+        &event.kind,
+        EventKind::ApprovalResolved { request_id, .. } if request_id == "req-prefix-2"
+    )));
+    let entries = svc.entries.read().await;
+    let pending = &entries
+        .get(&id)
+        .expect("the session remains live")
+        .pending_approvals;
+    assert!(!pending.contains("req-prefix-1"));
+    assert!(pending.contains("req-prefix-2"));
 }
 
 #[tokio::test]
