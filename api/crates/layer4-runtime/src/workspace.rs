@@ -1,0 +1,505 @@
+//! Versioned, hash-addressed workspace restore and capture wire.
+
+use std::collections::BTreeSet;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+
+pub const VERSION: u32 = 1;
+pub const MAX_FILES: usize = 100_000;
+pub const MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_PATH_BYTES: usize = 1_024;
+const MAX_HEADER_BYTES: usize = 128 * 1024 * 1024;
+pub const MAX_ARCHIVE_BYTES: usize = MAX_BYTES as usize + MAX_HEADER_BYTES + 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EntryKind {
+    Regular,
+    Symlink,
+    Submodule,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Header {
+    cma_workspace: u32,
+    workspace_epoch: u64,
+    source_revision: String,
+    manifest_digest: String,
+    entries: Vec<Entry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Entry {
+    path: String,
+    kind: EntryKind,
+    mode: u32,
+    size: u64,
+    content_sha256: String,
+    provider_object_id: Option<String>,
+    offset: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Restored {
+    pub workspace_epoch: u64,
+    pub source_revision: String,
+    pub manifest_digest: String,
+    pub entries: usize,
+    pub bytes: u64,
+}
+
+/// Verify a complete archive, materialize it away from the live path, verify
+/// the resulting filesystem, and only then make it visible.
+pub fn restore(
+    target: &Path,
+    archive: &[u8],
+    expected_epoch: u64,
+    expected_source: &str,
+    expected_manifest: &str,
+    expected_archive_sha256: &str,
+) -> Result<Restored, String> {
+    require_sha256(expected_archive_sha256, "archive")?;
+    if hex(&Sha256::digest(archive)) != expected_archive_sha256 {
+        return Err("workspace archive failed its expected SHA-256".into());
+    }
+    let (header, payload) = open(archive)?;
+    if header.workspace_epoch != expected_epoch
+        || header.source_revision != expected_source
+        || header.manifest_digest != expected_manifest
+    {
+        return Err("workspace archive does not match the requested epoch and baseline".into());
+    }
+    validate_header(&header, payload)?;
+    if manifest_digest(&header, payload)? != header.manifest_digest {
+        return Err("workspace manifest digest does not match its entries".into());
+    }
+
+    if target.exists() {
+        let mut existing = std::fs::read_dir(target)
+            .map_err(|error| format!("inspect existing workspace: {error}"))?;
+        let empty = existing
+            .next()
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .is_none();
+        if !empty {
+            verify_existing_tree(target, &header.entries, payload).map_err(|why| {
+                format!("the existing workspace does not match this archive: {why}")
+            })?;
+            return Ok(restored(&header));
+        }
+        std::fs::remove_dir(target)
+            .map_err(|error| format!("remove empty workspace target: {error}"))?;
+    }
+
+    let parent = target
+        .parent()
+        .ok_or_else(|| "workspace target has no parent".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| format!("create workspace parent: {error}"))?;
+    let staging = staging_path(target, expected_epoch);
+    std::fs::create_dir(&staging)
+        .map_err(|error| format!("create workspace staging directory: {error}"))?;
+    let mut cleanup = Staging(Some(staging.clone()));
+    materialize(&staging, &header.entries, payload)?;
+    verify_materialized(&staging, &header.entries, payload)?;
+
+    std::fs::rename(&staging, target)
+        .map_err(|error| format!("commit restored workspace: {error}"))?;
+    cleanup.0 = None;
+    Ok(restored(&header))
+}
+
+fn restored(header: &Header) -> Restored {
+    let bytes = header.entries.iter().map(|entry| entry.size).sum();
+    Restored {
+        workspace_epoch: header.workspace_epoch,
+        source_revision: header.source_revision.clone(),
+        manifest_digest: header.manifest_digest.clone(),
+        entries: header.entries.len(),
+        bytes,
+    }
+}
+
+fn open(archive: &[u8]) -> Result<(Header, &[u8]), String> {
+    let prefix: [u8; 8] = archive
+        .get(..8)
+        .ok_or_else(|| "workspace archive has no header length".to_string())?
+        .try_into()
+        .map_err(|_| "workspace archive header length is malformed".to_string())?;
+    let header_len = usize::try_from(u64::from_be_bytes(prefix))
+        .map_err(|_| "workspace archive header exceeds this runtime".to_string())?;
+    if header_len == 0 || header_len > MAX_HEADER_BYTES {
+        return Err("workspace archive header is outside its bound".into());
+    }
+    let header_end = 8_usize
+        .checked_add(header_len)
+        .ok_or_else(|| "workspace archive header length overflowed".to_string())?;
+    let header: Header = serde_json::from_slice(
+        archive
+            .get(8..header_end)
+            .ok_or_else(|| "workspace archive header is truncated".to_string())?,
+    )
+    .map_err(|error| format!("workspace archive header is invalid: {error}"))?;
+    Ok((header, &archive[header_end..]))
+}
+
+fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
+    if header.cma_workspace != VERSION || header.workspace_epoch == 0 {
+        return Err("workspace archive version or epoch is unsupported".into());
+    }
+    if header.entries.len() > MAX_FILES {
+        return Err("workspace archive contains too many files".into());
+    }
+    require_sha256(&header.manifest_digest, "manifest")?;
+    if header.source_revision.len() != 40
+        || !header
+            .source_revision
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("workspace archive source revision is invalid".into());
+    }
+    let mut seen = BTreeSet::new();
+    let mut expected_offset = 0_u64;
+    for entry in &header.entries {
+        validate_path(&entry.path)?;
+        if !seen.insert(entry.path.as_str()) {
+            return Err("workspace archive repeats a path".into());
+        }
+        if entry.offset != expected_offset {
+            return Err("workspace archive entries overlap or contain a gap".into());
+        }
+        expected_offset = expected_offset
+            .checked_add(entry.size)
+            .ok_or_else(|| "workspace archive size overflowed".to_string())?;
+        if expected_offset > MAX_BYTES {
+            return Err("workspace archive exceeds its byte bound".into());
+        }
+        require_sha256(&entry.content_sha256, "entry")?;
+        match entry.kind {
+            EntryKind::Regular if matches!(entry.mode, 0o100644 | 0o100755) => {}
+            EntryKind::Symlink if entry.mode == 0o120000 => {}
+            EntryKind::Submodule => {
+                return Err("workspace archive contains an unsupported submodule".into())
+            }
+            _ => return Err("workspace archive contains an unsupported file mode".into()),
+        }
+        if let Some(object) = entry.provider_object_id.as_deref() {
+            if object.len() != 40 || !object.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err("workspace archive contains an invalid Git object ID".into());
+            }
+        }
+        let bytes = entry_bytes(entry, payload)?;
+        if hex(&Sha256::digest(bytes)) != entry.content_sha256 {
+            return Err(format!("workspace entry {} failed its SHA-256", entry.path));
+        }
+        if entry.kind == EntryKind::Symlink {
+            validate_symlink(
+                &entry.path,
+                std::str::from_utf8(bytes)
+                    .map_err(|_| "workspace symlink target is not UTF-8".to_string())?,
+            )?;
+        }
+    }
+    if usize::try_from(expected_offset).ok() != Some(payload.len()) {
+        return Err("workspace archive payload has trailing or missing bytes".into());
+    }
+    Ok(())
+}
+
+fn materialize(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), String> {
+    use std::os::unix::fs::{symlink, PermissionsExt as _};
+
+    for entry in entries {
+        let destination = root.join(&entry.path);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create workspace directory: {error}"))?;
+        }
+        let bytes = entry_bytes(entry, payload)?;
+        match entry.kind {
+            EntryKind::Regular => {
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&destination)
+                    .map_err(|error| format!("create workspace file {}: {error}", entry.path))?;
+                file.write_all(bytes)
+                    .map_err(|error| format!("write workspace file {}: {error}", entry.path))?;
+                file.sync_all()
+                    .map_err(|error| format!("flush workspace file {}: {error}", entry.path))?;
+                std::fs::set_permissions(
+                    &destination,
+                    std::fs::Permissions::from_mode(entry.mode & 0o777),
+                )
+                .map_err(|error| format!("set workspace mode {}: {error}", entry.path))?;
+            }
+            EntryKind::Symlink => {
+                let target = std::str::from_utf8(bytes)
+                    .map_err(|_| "workspace symlink target is not UTF-8".to_string())?;
+                symlink(target, &destination)
+                    .map_err(|error| format!("create workspace symlink {}: {error}", entry.path))?;
+            }
+            EntryKind::Submodule => unreachable!("submodules are rejected before extraction"),
+        }
+    }
+    Ok(())
+}
+
+fn verify_materialized(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    for entry in entries {
+        let path = root.join(&entry.path);
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("verify workspace entry {}: {error}", entry.path))?;
+        match entry.kind {
+            EntryKind::Regular => {
+                if !metadata.file_type().is_file()
+                    || metadata.permissions().mode() & 0o777 != entry.mode & 0o777
+                    || std::fs::read(&path)
+                        .map_err(|error| format!("read workspace entry {}: {error}", entry.path))?
+                        != entry_bytes(entry, payload)?
+                {
+                    return Err(format!(
+                        "materialized workspace file {} disagrees",
+                        entry.path
+                    ));
+                }
+            }
+            EntryKind::Symlink => {
+                if !metadata.file_type().is_symlink()
+                    || std::fs::read_link(&path)
+                        .map_err(|error| format!("read workspace link {}: {error}", entry.path))?
+                        != PathBuf::from(
+                            std::str::from_utf8(entry_bytes(entry, payload)?)
+                                .map_err(|_| "workspace symlink target is not UTF-8")?,
+                        )
+                {
+                    return Err(format!(
+                        "materialized workspace link {} disagrees",
+                        entry.path
+                    ));
+                }
+            }
+            EntryKind::Submodule => unreachable!("submodules are rejected before extraction"),
+        }
+    }
+    Ok(())
+}
+
+fn verify_existing_tree(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), String> {
+    let expected_files = entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<BTreeSet<_>>();
+    let mut expected_directories = BTreeSet::new();
+    for entry in entries {
+        let mut parent = Path::new(&entry.path).parent();
+        while let Some(path) = parent {
+            if path.as_os_str().is_empty() {
+                break;
+            }
+            expected_directories.insert(
+                path.to_str()
+                    .ok_or_else(|| "workspace path is not UTF-8".to_string())?
+                    .to_string(),
+            );
+            parent = path.parent();
+        }
+    }
+
+    let mut actual_files = BTreeSet::new();
+    let mut actual_directories = BTreeSet::new();
+    collect_materialized_paths(root, root, &mut actual_files, &mut actual_directories)?;
+    if actual_files != expected_files || actual_directories != expected_directories {
+        return Err("its path set differs".into());
+    }
+    verify_materialized(root, entries, payload)
+}
+
+fn collect_materialized_paths(
+    root: &Path,
+    directory: &Path,
+    files: &mut BTreeSet<String>,
+    directories: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    for item in std::fs::read_dir(directory)
+        .map_err(|error| format!("inspect workspace directory: {error}"))?
+    {
+        let item = item.map_err(|error| format!("inspect workspace entry: {error}"))?;
+        let path = item.path();
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| "workspace entry escaped its root".to_string())?
+            .to_str()
+            .ok_or_else(|| "workspace path is not UTF-8".to_string())?
+            .to_string();
+        validate_path(&relative)?;
+        let kind = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("inspect workspace entry {relative}: {error}"))?
+            .file_type();
+        if kind.is_dir() {
+            directories.insert(relative);
+            collect_materialized_paths(root, &path, files, directories)?;
+        } else if kind.is_file() || kind.is_symlink() {
+            files.insert(relative);
+        } else {
+            return Err("it contains an unsupported filesystem entry".into());
+        }
+    }
+    Ok(())
+}
+
+fn entry_bytes<'a>(entry: &Entry, payload: &'a [u8]) -> Result<&'a [u8], String> {
+    let start = usize::try_from(entry.offset)
+        .map_err(|_| "workspace entry offset exceeds this runtime".to_string())?;
+    let size = usize::try_from(entry.size)
+        .map_err(|_| "workspace entry size exceeds this runtime".to_string())?;
+    let end = start
+        .checked_add(size)
+        .ok_or_else(|| "workspace entry range overflowed".to_string())?;
+    payload
+        .get(start..end)
+        .ok_or_else(|| "workspace entry extends past the payload".to_string())
+}
+
+fn manifest_digest(header: &Header, payload: &[u8]) -> Result<String, String> {
+    let mut digest = Sha256::new();
+    digest.update(b"cma-workspace-manifest-v1\0");
+    hash_text(&mut digest, &header.source_revision)?;
+    digest.update(
+        u64::try_from(header.entries.len())
+            .map_err(|_| "workspace manifest is too large".to_string())?
+            .to_be_bytes(),
+    );
+    for entry in &header.entries {
+        hash_text(&mut digest, &entry.path)?;
+        digest.update([match entry.kind {
+            EntryKind::Regular => 1,
+            EntryKind::Symlink => 2,
+            EntryKind::Submodule => 3,
+        }]);
+        digest.update(entry.mode.to_be_bytes());
+        digest.update(entry.size.to_be_bytes());
+        hash_text(&mut digest, &entry.content_sha256)?;
+        hash_optional_text(&mut digest, entry.provider_object_id.as_deref())?;
+        let target = if entry.kind == EntryKind::Symlink {
+            Some(
+                std::str::from_utf8(entry_bytes(entry, payload)?)
+                    .map_err(|_| "workspace symlink target is not UTF-8".to_string())?,
+            )
+        } else {
+            None
+        };
+        hash_optional_text(&mut digest, target)?;
+    }
+    Ok(hex(&digest.finalize()))
+}
+
+fn hash_text(digest: &mut Sha256, value: &str) -> Result<(), String> {
+    digest.update(
+        u64::try_from(value.len())
+            .map_err(|_| "workspace manifest value is too large".to_string())?
+            .to_be_bytes(),
+    );
+    digest.update(value.as_bytes());
+    Ok(())
+}
+
+fn hash_optional_text(digest: &mut Sha256, value: Option<&str>) -> Result<(), String> {
+    match value {
+        Some(value) => {
+            digest.update([1]);
+            hash_text(digest, value)
+        }
+        None => {
+            digest.update([0]);
+            Ok(())
+        }
+    }
+}
+
+fn validate_path(path: &str) -> Result<(), String> {
+    if path.is_empty()
+        || path.len() > MAX_PATH_BYTES
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path.contains('\0')
+        || path.split('/').any(|segment| {
+            segment.is_empty()
+                || segment == "."
+                || segment == ".."
+                || segment.eq_ignore_ascii_case(".git")
+        })
+    {
+        return Err("workspace archive contains a non-canonical path".into());
+    }
+    Ok(())
+}
+
+fn validate_symlink(path: &str, target: &str) -> Result<(), String> {
+    if target.is_empty()
+        || target.len() > MAX_PATH_BYTES
+        || target.starts_with('/')
+        || target.contains('\\')
+        || target.contains('\0')
+    {
+        return Err("workspace archive contains an unsafe symlink".into());
+    }
+    let mut depth = path.split('/').count().saturating_sub(1) as i64;
+    for segment in target.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err("workspace symlink escapes its root".into());
+                }
+            }
+            _ => depth += 1,
+        }
+    }
+    Ok(())
+}
+
+fn require_sha256(value: &str, name: &str) -> Result<(), String> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("workspace {name} SHA-256 is invalid"));
+    }
+    Ok(())
+}
+
+fn staging_path(target: &Path, epoch: u64) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    target.with_file_name(format!(
+        ".cma-workspace-{}-{epoch}-{stamp}",
+        std::process::id()
+    ))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+struct Staging(Option<PathBuf>);
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "workspace_tests.rs"]
+mod tests;

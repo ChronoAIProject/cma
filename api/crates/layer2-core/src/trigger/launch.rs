@@ -377,6 +377,12 @@ pub struct BranchRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceRecord {
     pub baseline: WorkspaceManifest,
+    /// Machine-owned object containing the exact baseline bytes.
+    ///
+    /// The reference is useful only through the owner- and Launch-scoped
+    /// object-store port. It is not a bearer credential.
+    pub baseline_object_reference: String,
+    pub baseline_archive_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_checkpoint: Option<WorkspaceCheckpoint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

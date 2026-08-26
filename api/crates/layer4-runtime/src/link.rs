@@ -243,13 +243,16 @@ async fn relay_terminal(
     let rows = params.rows.unwrap_or(24).max(1);
     let framed = params.framed();
 
-    let (session, mut output): (
+    let startup = state.startup_gate.read().await;
+    let started: std::io::Result<(
         std::sync::Arc<PtySession>,
         tokio::sync::broadcast::Receiver<Vec<u8>>,
-    ) = state
+    )> = state
         .registry
         .get_or_start(&id, &state.agent_command(), cols, rows, PLACEHOLDER_KEY)
-        .await?;
+        .await;
+    drop(startup);
+    let (session, mut output) = started?;
 
     let mut exited = session.subscribe_exit();
     session.resize(cols, rows)?;

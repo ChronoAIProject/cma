@@ -112,6 +112,11 @@ data:
   # at all: the storage service authorises objects by bucket ownership, so a
   # bucket created by any other identity is refused permanently.
   CHRONO_CONTEXT_BUCKET: "chrono-platform-bot"
+  # Trigger repository baselines and checkpoints have a distinct lifecycle
+  # from conversation context. This deployment deliberately keeps them in the
+  # same machine-identity-owned bucket under CMA's subject/Launch-scoped object
+  # prefix; changing either policy does not implicitly change this selection.
+  CHRONO_TRIGGER_WORKSPACE_BUCKET: "chrono-platform-bot"
   # This service's own machine identity on the identity platform, used to store
   # session context. The identifier is not secret; its secret half lives in the
   # Secret, and they are delivered separately for that reason.

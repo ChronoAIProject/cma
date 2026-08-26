@@ -20,6 +20,7 @@ fn adapter(base: &str) -> DshAdapter {
 fn conversation() -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
         platform_briefing: String::new(),
