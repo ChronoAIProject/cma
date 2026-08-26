@@ -8,8 +8,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use layer3_adapter::KernelAdapter;
-use tokio::sync::Mutex;
+use layer3_adapter::{AdapterError, KernelAdapter, TerminalInput, TerminalInputSender};
+use tokio::sync::{mpsc, Mutex};
 
 use crate::authz::{Authorization, Caller, Capability};
 use crate::coordination::{
@@ -1317,6 +1317,21 @@ fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> P
 }
 
 pub(crate) use crate::adapter_support::FakeAdapter;
+
+pub(crate) fn terminal_input_channel(
+    capacity: usize,
+) -> (TerminalInputSender, mpsc::Receiver<TerminalInput>) {
+    let (delivered, received) = mpsc::channel(capacity);
+    let input = TerminalInputSender::spawn(capacity, move |input| {
+        let delivered = delivered.clone();
+        async move {
+            delivered.send(input).await.map_err(|_| {
+                AdapterError::Unavailable("the fake terminal runtime has ended".into())
+            })
+        }
+    });
+    (input, received)
+}
 pub(crate) use crate::environment_support::{
     baseline, catalog_service, environments, fake_agent, profile_spec, unconfigured_settings,
     FakeProfileStore, FakeSkillCatalog, ReplacementInterference,

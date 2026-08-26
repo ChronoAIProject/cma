@@ -987,11 +987,13 @@ impl KernelAdapter for TestKernel {
         &self,
         _handle: &RuntimeHandle,
     ) -> Result<TerminalChannel, AdapterError> {
-        let (input, mut received) = mpsc::channel(8);
         let (output, produced) = mpsc::channel(8);
-        tokio::spawn(async move {
-            let _keep_output_open = output;
-            while received.recv().await.is_some() {}
+        let input = layer3_adapter::TerminalInputSender::spawn(8, move |_input| {
+            let keep_output_open = output.clone();
+            async move {
+                let _keep_output_open = keep_output_open;
+                Ok(())
+            }
         });
         Ok(TerminalChannel {
             output: produced,

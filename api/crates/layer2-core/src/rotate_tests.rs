@@ -20,8 +20,8 @@ use crate::ids::{SessionId, SubjectId};
 use crate::session::{ProvisioningStage, SessionStatus, StopReason};
 use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
-    await_settled, service_on_version, service_on_version_with_skills, spec, user, FakeAdapter,
-    FakeStore,
+    await_settled, service_on_version, service_on_version_with_skills, spec,
+    terminal_input_channel, user, FakeAdapter, FakeStore,
 };
 use crate::Reserved;
 
@@ -976,7 +976,7 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
     let (svc, alice, created, _) =
         started_adversarial(Arc::clone(&store), Arc::clone(&adapter)).await;
     let input_gate = svc.input_gates.gate(&created.id);
-    let (outgoing_input, mut outgoing_runtime) = tokio::sync::mpsc::channel(1);
+    let (outgoing_input, mut outgoing_runtime) = terminal_input_channel(1);
     outgoing_input
         .send(TerminalInput::Signal("already queued".into()))
         .await
@@ -1107,7 +1107,7 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
         .expect("session can return to its terminal plane");
     await_usable(&svc, &alice, &created.id).await;
 
-    let (replacement_input, mut replacement_runtime) = tokio::sync::mpsc::channel(1);
+    let (replacement_input, mut replacement_runtime) = terminal_input_channel(1);
     svc.entries
         .write()
         .await
@@ -1541,7 +1541,7 @@ async fn a_final_plane_change_conflict_preserves_the_newer_record_and_old_runtim
         )
         .await
         .expect("the outgoing runtime settles before PlaneChanged");
-    let (newer_input, mut outgoing_runtime) = tokio::sync::mpsc::channel(1);
+    let (newer_input, mut outgoing_runtime) = terminal_input_channel(1);
     {
         let mut entries = svc.entries.write().await;
         let entry = entries

@@ -103,6 +103,92 @@ async fn a_failed_handshake_closes_a_harness_that_keeps_its_socket_open() {
     );
 }
 
+#[tokio::test]
+async fn canceling_open_during_a_held_handshake_retires_the_whole_generation() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let (started, started_rx) = tokio::sync::oneshot::channel();
+    let served = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("a client connects");
+        let mut socket = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket opens");
+        socket
+            .send(Message::Text(
+                serde_json::json!({
+                    "t": "ready",
+                    "wireVersion": supervisor::WIRE_VERSION,
+                    "lanes": ["ctl", "conv"],
+                })
+                .to_string(),
+            ))
+            .await
+            .expect("the harness declares its wire");
+        let frame = socket
+            .next()
+            .await
+            .expect("the initialize call arrives")
+            .expect("the initialize frame is readable");
+        assert!(matches!(frame, Message::Binary(_)));
+        let _ = started.send(());
+        while let Some(frame) = socket.next().await {
+            match frame {
+                Ok(Message::Close(_)) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
+
+    let hosted = crate::hosted::HostedKernel::new(
+        crate::sandbox::SandboxClient::new("http://127.0.0.1:1", "test-key"),
+        crate::hosted::SandboxShape::default(),
+        "dsh",
+        ".codex/skills",
+        "AGENTS.md",
+    );
+    let handle = crate::RuntimeHandle("sbx_canceled_dsh_open".into());
+    let (stream, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("the adapter connects");
+    let (updates, _received) = mpsc::channel(8);
+    let lifecycle = hosted.link_lifecycle(&handle.0);
+    let opening = tokio::spawn(async move {
+        let spec = DshSandboxSpec::default();
+        Harness::open(
+            stream,
+            "/home/chrono".into(),
+            &spec,
+            None,
+            lifecycle,
+            updates,
+        )
+        .await
+    });
+
+    started_rx
+        .await
+        .expect("the open reaches its held initialize call");
+    assert!(hosted.link_to(&handle.0).await.is_some());
+    opening.abort();
+    assert!(opening
+        .await
+        .expect_err("the open future is canceled")
+        .is_cancelled());
+    tokio::time::timeout(std::time::Duration::from_secs(1), served)
+        .await
+        .expect("canceling open disconnects the held runtime peer")
+        .expect("the held harness fixture does not panic");
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while hosted.link_to(&handle.0).await.is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the canceled generation is promptly removed");
+}
+
 /// One session-log record, as `session.event` delivers it.
 fn record(kind: &str, data: serde_json::Value) -> serde_json::Value {
     serde_json::json!({ "seq": 1, "time": "2026-08-17T00:00:00Z", "type": kind, "data": data })

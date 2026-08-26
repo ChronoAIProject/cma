@@ -20,8 +20,8 @@ use crate::event::{Event, EventKind};
 use crate::store::SessionStore;
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{
-    await_settled, service, service_on_version, service_over, spec, user, write_screen,
-    FakeAdapter, FakeStore,
+    await_settled, service, service_on_version, service_over, spec, terminal_input_channel, user,
+    write_screen, FakeAdapter, FakeStore,
 };
 
 struct WakeFlag(AtomicBool);
@@ -1219,7 +1219,7 @@ async fn every_operation_refuses_the_retained_outgoing_runtime_and_retries_on_th
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
 
-    let (outgoing_input, mut outgoing_runtime) = tokio::sync::mpsc::channel(8);
+    let (outgoing_input, mut outgoing_runtime) = terminal_input_channel(8);
     let mut record = store
         .get(&created.id)
         .await
@@ -1335,7 +1335,7 @@ async fn every_operation_refuses_the_retained_outgoing_runtime_and_retries_on_th
     let settled = await_settled(&svc, &alice, &created.id).await;
     assert_eq!(settled.runtime_version.as_deref(), Some("runtime:2"));
 
-    let (replacement_input, mut replacement_runtime) = tokio::sync::mpsc::channel(8);
+    let (replacement_input, mut replacement_runtime) = terminal_input_channel(8);
     svc.entries
         .write()
         .await
