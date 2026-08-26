@@ -1,4 +1,6 @@
 pub(crate) mod github;
+pub(crate) mod github_effects;
+pub(crate) mod worker;
 
 use async_trait::async_trait;
 use layer2_core::{
@@ -13,9 +15,7 @@ use layer2_core::{
 pub(crate) struct UnavailableGithub;
 
 fn unavailable() -> TriggerServiceError {
-    TriggerServiceError::Authority(
-        "GitHub connections require provider-backed CMA authentication".to_string(),
-    )
+    layer2_core::TriggerAuthorityError::ProviderAuthenticationUnavailable.into()
 }
 
 #[async_trait]

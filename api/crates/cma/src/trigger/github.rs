@@ -7,10 +7,11 @@ use std::time::SystemTime;
 use async_trait::async_trait;
 use layer2_core::{
     AuthorityProvenance, ConnectedAccount, ConnectionSnapshot, ConnectionState, DelegationState,
-    LaunchAuthority, PublisherAuthority, PublisherRepositoryRole, RepositoryIdentity,
-    RepositoryVisibility, ScopeClass, SourceMode, SubjectId, TriggerAuthorityVerifier,
-    TriggerConnection, TriggerConnectionAuthorization, TriggerConnectionManager,
-    TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent, TriggerServiceError,
+    ForkRecord, Launch, LaunchAuthority, PublisherAuthority, PublisherRepositoryRole,
+    RepositoryIdentity, RepositoryVisibility, ScopeClass, SourceMode, SubjectId,
+    TriggerAuthorityVerifier, TriggerConnection, TriggerConnectionAuthorization,
+    TriggerConnectionManager, TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent,
+    TriggerServiceError,
 };
 use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
@@ -24,6 +25,9 @@ const GITHUB_PROVIDER_ID: &str = "github";
 const PUBLIC_REPOSITORY_SCOPE: &str = "public_repo";
 const MAX_MANAGEMENT_BODY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_GITHUB_BODY_BYTES: usize = 32 * 1024 * 1024;
+const MAX_USER_REPOSITORY_PAGES: u32 = 100;
+const USER_REPOSITORY_PAGE_SIZE: usize = 100;
+const MAX_GITHUB_TREE_ENTRIES: usize = 100_000;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum GithubBrokerError {
@@ -49,6 +53,12 @@ pub(crate) enum GithubBrokerError {
     RateLimited { retry_after: Option<String> },
     #[error("the provider is temporarily unavailable")]
     Transient { status: Option<u16> },
+    #[error("the outcome of a provider write is unknown")]
+    AmbiguousWrite,
+    #[error("the repository does not currently allow forking")]
+    ForkingDisabled,
+    #[error("the connected account's fork-network slot is occupied")]
+    ForkNetworkOccupied,
     #[error("the provider rejected the typed request with HTTP {status}")]
     Rejected { status: u16 },
     #[error("provider data is malformed: {0}")]
@@ -57,7 +67,30 @@ pub(crate) enum GithubBrokerError {
 
 impl From<GithubBrokerError> for TriggerServiceError {
     fn from(error: GithubBrokerError) -> Self {
-        TriggerServiceError::Authority(error.to_string())
+        use layer2_core::TriggerAuthorityError as Authority;
+        let error = match error {
+            GithubBrokerError::OwnerCredentialUnavailable => Authority::OwnerCredentialUnavailable,
+            GithubBrokerError::ConnectionNotFound => Authority::ConnectionNotFound,
+            GithubBrokerError::ConnectionNotPersonal => Authority::ConnectionNotPersonal,
+            GithubBrokerError::ConnectionInactive => Authority::ConnectionInactive,
+            GithubBrokerError::ConnectionDisconnected => Authority::ReauthorizationRequired,
+            GithubBrokerError::InsufficientScope { required } => Authority::InsufficientScope {
+                required: required.to_string(),
+            },
+            GithubBrokerError::AuthorityDrift => Authority::AuthorityDrift,
+            GithubBrokerError::Forbidden => Authority::Forbidden,
+            GithubBrokerError::NotFound => Authority::ResourceNotFound,
+            GithubBrokerError::RateLimited { retry_after } => {
+                Authority::RateLimited { retry_after }
+            }
+            GithubBrokerError::Transient { .. } => Authority::Transient,
+            GithubBrokerError::AmbiguousWrite => Authority::Transient,
+            GithubBrokerError::ForkingDisabled => Authority::UpstreamNotForkable,
+            GithubBrokerError::ForkNetworkOccupied => Authority::ForkNetworkOccupied,
+            GithubBrokerError::Rejected { .. } => Authority::ProviderRejected,
+            GithubBrokerError::Malformed(_) => Authority::MalformedEvidence,
+        };
+        TriggerServiceError::Authority(error)
     }
 }
 
@@ -132,6 +165,36 @@ pub(crate) struct RepositoryEvidence {
     pub disabled: bool,
     pub html_url: String,
     pub subject_token_generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ForkReconciliation {
+    Absent,
+    Pending { repository_id: Option<u64> },
+    Ready(ForkRecord),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ForkContext {
+    pub owner: SubjectId,
+    pub connection: ConnectionSnapshot,
+    pub upstream: RepositoryIdentity,
+    pub source_sha: String,
+}
+
+impl TryFrom<&Launch> for ForkContext {
+    type Error = GithubBrokerError;
+
+    fn try_from(launch: &Launch) -> Result<Self, Self::Error> {
+        Ok(Self {
+            owner: launch.owner.clone(),
+            connection: launch.connection.clone().ok_or_else(|| {
+                GithubBrokerError::Malformed("the Launch has no selected connection".into())
+            })?,
+            upstream: launch.revision.content.upstream.repository.clone(),
+            source_sha: launch.source_sha.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -441,58 +504,322 @@ impl GithubBroker {
         if response.value.id != repository_id {
             return Err(GithubBrokerError::AuthorityDrift);
         }
-        let visibility = match response.value.visibility.as_deref() {
-            Some("public") => RepositoryVisibility::Public,
-            Some("private") => RepositoryVisibility::Private,
-            Some("internal") => RepositoryVisibility::Internal,
-            None if response.value.private => RepositoryVisibility::Private,
-            None => RepositoryVisibility::Public,
-            Some(_) => {
-                return Err(GithubBrokerError::Malformed(
-                    "GitHub returned an unknown repository visibility".into(),
-                ))
+        repository_evidence(response.value, response.token_generation)
+    }
+
+    /// Reconcile the connected account's single compatible fork-network slot
+    /// and prove the exact Launch source commit is addressable there.
+    pub(crate) async fn reconcile_fork(
+        &self,
+        context: &ForkContext,
+    ) -> Result<ForkReconciliation, GithubBrokerError> {
+        let connection = &context.connection;
+        connection
+            .validate_for(&[ScopeClass::PublicRepository])
+            .map_err(|_| GithubBrokerError::ConnectionDisconnected)?;
+        let upstream = &context.upstream;
+        let network_source_id = upstream.fork_source_id.unwrap_or(upstream.repository_id);
+        let mut compatible = None;
+        let mut occupied = false;
+
+        for page_number in 1..=MAX_USER_REPOSITORY_PAGES {
+            let page = page_number.to_string();
+            let repositories: Observed<Vec<GithubRepositoryWire>> = self
+                .github_json(
+                    &context.owner,
+                    &connection.service_id,
+                    Method::GET,
+                    &["user", "repos"],
+                    &[
+                        ("affiliation", "owner"),
+                        ("per_page", "100"),
+                        ("page", page.as_str()),
+                    ],
+                    None,
+                )
+                .await?;
+            let count = repositories.value.len();
+            for repository in repositories.value {
+                if repository.owner.id != connection.account.account_id
+                    || repository.source.as_ref().map(|source| source.id) != Some(network_source_id)
+                {
+                    continue;
+                }
+                if repository.parent.as_ref().map(|parent| parent.id)
+                    == Some(upstream.repository_id)
+                {
+                    if compatible.replace(repository.id).is_some() {
+                        return Err(GithubBrokerError::AuthorityDrift);
+                    }
+                } else {
+                    occupied = true;
+                }
             }
+            if count < USER_REPOSITORY_PAGE_SIZE {
+                break;
+            }
+            if page_number == MAX_USER_REPOSITORY_PAGES {
+                return Err(GithubBrokerError::Malformed(
+                    "the owned repository inventory exceeds its reconciliation bound".into(),
+                ));
+            }
+        }
+        if compatible.is_some() && occupied {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        match compatible {
+            Some(repository_id) => self.fork_readiness(context, repository_id, true).await,
+            None if occupied => Err(GithubBrokerError::ForkNetworkOccupied),
+            None => Ok(ForkReconciliation::Absent),
+        }
+    }
+
+    /// Create a personal fork only after reconciliation proved its network
+    /// slot absent. Unknown POST outcomes are never retried as writes.
+    pub(crate) async fn create_fork(
+        &self,
+        context: &ForkContext,
+    ) -> Result<ForkReconciliation, GithubBrokerError> {
+        match self.reconcile_fork(context).await? {
+            ForkReconciliation::Absent => {}
+            existing => return Ok(existing),
+        }
+        let connection = &context.connection;
+        let fresh = self
+            .preflight_connection(&context.owner, &connection.service_id)
+            .await?;
+        if connection_drifted(connection, &fresh.snapshot) {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        let expected = &context.upstream;
+        let mut upstream = self
+            .repository_by_id(
+                &context.owner,
+                &connection.service_id,
+                expected.repository_id,
+            )
+            .await?;
+        upstream.identity.selected_ref = expected.selected_ref.clone();
+        if !upstream.identity.allow_forking {
+            return Err(GithubBrokerError::ForkingDisabled);
+        }
+        if upstream.identity != *expected || upstream.archived || upstream.disabled {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        let response: Observed<GithubRepositoryWire> = self
+            .github_json(
+                &context.owner,
+                &connection.service_id,
+                Method::POST,
+                &[
+                    "repos",
+                    upstream.identity.canonical_owner.as_str(),
+                    upstream.identity.canonical_name.as_str(),
+                    "forks",
+                ],
+                &[],
+                Some(serde_json::json!({})),
+            )
+            .await
+            .map_err(|error| {
+                if matches!(
+                    error,
+                    GithubBrokerError::Transient { .. }
+                        | GithubBrokerError::Malformed(_)
+                        | GithubBrokerError::AmbiguousWrite
+                ) {
+                    GithubBrokerError::AmbiguousWrite
+                } else {
+                    error
+                }
+            })?;
+        if response.value.id == 0 {
+            return Err(GithubBrokerError::AmbiguousWrite);
+        }
+        self.fork_readiness(context, response.value.id, false).await
+    }
+
+    async fn fork_readiness(
+        &self,
+        context: &ForkContext,
+        repository_id: u64,
+        reused: bool,
+    ) -> Result<ForkReconciliation, GithubBrokerError> {
+        let connection = &context.connection;
+        let mut fork = match self
+            .repository_by_id(&context.owner, &connection.service_id, repository_id)
+            .await
+        {
+            Ok(fork) => fork,
+            Err(GithubBrokerError::NotFound) => {
+                return Ok(ForkReconciliation::Pending {
+                    repository_id: Some(repository_id),
+                })
+            }
+            Err(error) => return Err(error),
         };
-        let allow_forking = response
-            .value
-            .allow_forking
-            .unwrap_or(visibility == RepositoryVisibility::Public);
-        let identity = RepositoryIdentity {
-            repository_id: response.value.id,
-            repository_node_id: required(response.value.node_id, "repository node ID")?,
-            owner_id: response.value.owner.id,
-            owner_node_id: required(response.value.owner.node_id, "owner node ID")?,
-            canonical_owner: required(response.value.owner.login, "repository owner login")?,
-            canonical_name: required(response.value.name, "repository name")?,
-            visibility,
-            allow_forking,
-            default_branch: required(response.value.default_branch, "default branch")?,
-            selected_ref: String::new(),
-            fork_parent_id: response.value.parent.as_ref().map(|parent| parent.id),
-            fork_source_id: response.value.source.as_ref().map(|source| source.id),
-        };
-        Ok(RepositoryEvidence {
-            identity,
-            permissions: response.value.permissions.unwrap_or_default(),
-            archived: response.value.archived,
-            disabled: response.value.disabled,
-            html_url: required(response.value.html_url, "repository URL")?,
-            subject_token_generation: response.token_generation,
-        })
+        let upstream = &context.upstream;
+        let network_source_id = upstream.fork_source_id.unwrap_or(upstream.repository_id);
+        fork.identity.selected_ref = upstream.selected_ref.clone();
+        if fork.identity.owner_id != connection.account.account_id
+            || fork.identity.owner_node_id != connection.account.account_node_id
+            || fork.identity.fork_parent_id != Some(upstream.repository_id)
+            || fork.identity.fork_source_id != Some(network_source_id)
+            || fork.identity.visibility != RepositoryVisibility::Public
+        {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        validate_repository_url(&fork.html_url, &fork.identity)?;
+        let default_ref = fork.identity.default_branch.clone();
+        match self
+            .resolve_branch_sha(
+                &context.owner,
+                &connection.service_id,
+                &fork.identity,
+                &default_ref,
+            )
+            .await
+        {
+            Ok(_) => {}
+            Err(GithubBrokerError::NotFound) => {
+                return Ok(ForkReconciliation::Pending {
+                    repository_id: Some(repository_id),
+                })
+            }
+            Err(error) => return Err(error),
+        }
+        match self
+            .require_commit(
+                &context.owner,
+                &connection.service_id,
+                &fork.identity,
+                &context.source_sha,
+            )
+            .await
+        {
+            Ok(()) => {}
+            Err(GithubBrokerError::NotFound) => {
+                return Ok(ForkReconciliation::Pending {
+                    repository_id: Some(repository_id),
+                })
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(ForkReconciliation::Ready(ForkRecord {
+            repository: fork.identity,
+            reused,
+            source_revision: context.source_sha.clone(),
+            canonical_url: fork.html_url,
+            ready_at: layer2_core::rfc3339_at(SystemTime::now()),
+        }))
+    }
+
+    async fn require_commit(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+        repository: &RepositoryIdentity,
+        sha: &str,
+    ) -> Result<(), GithubBrokerError> {
+        validate_commit_sha(sha)?;
+        let response: Observed<GithubCommitWire> = self
+            .github_json(
+                subject,
+                service_id,
+                Method::GET,
+                &[
+                    "repos",
+                    repository.canonical_owner.as_str(),
+                    repository.canonical_name.as_str(),
+                    "git",
+                    "commits",
+                    sha,
+                ],
+                &[],
+                None,
+            )
+            .await?;
+        if response.value.sha.to_ascii_lowercase() != sha.to_ascii_lowercase() {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        Ok(())
+    }
+
+    async fn workflow_paths(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+        repository: &RepositoryIdentity,
+        source_sha: &str,
+    ) -> Result<Vec<String>, GithubBrokerError> {
+        validate_commit_sha(source_sha)?;
+        let response: Observed<GithubTreeWire> = self
+            .github_json(
+                subject,
+                service_id,
+                Method::GET,
+                &[
+                    "repos",
+                    repository.canonical_owner.as_str(),
+                    repository.canonical_name.as_str(),
+                    "git",
+                    "trees",
+                    source_sha,
+                ],
+                &[("recursive", "1")],
+                None,
+            )
+            .await?;
+        if response.value.truncated || response.value.tree.len() > MAX_GITHUB_TREE_ENTRIES {
+            return Err(GithubBrokerError::Malformed(
+                "the source tree is incomplete or exceeds its review bound".into(),
+            ));
+        }
+        let mut paths = Vec::new();
+        for entry in response.value.tree {
+            if entry.kind != "blob" {
+                continue;
+            }
+            let Some(name) = entry.path.strip_prefix(".github/workflows/") else {
+                continue;
+            };
+            if name.is_empty()
+                || entry.path.len() > 4_096
+                || entry.path.bytes().any(|byte| byte.is_ascii_control())
+            {
+                return Err(GithubBrokerError::Malformed(
+                    "a workflow path is outside the supported review shape".into(),
+                ));
+            }
+            if name.contains('/') {
+                continue;
+            }
+            if !name.ends_with(".yml") && !name.ends_with(".yaml") {
+                continue;
+            }
+            paths.push(entry.path);
+        }
+        paths.sort();
+        if paths.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(GithubBrokerError::Malformed(
+                "the source tree contains duplicate workflow paths".into(),
+            ));
+        }
+        Ok(paths)
     }
 
     async fn resolve_branch_sha(
         &self,
         subject: &SubjectId,
         service_id: &str,
-        repository_id: u64,
+        repository: &RepositoryIdentity,
         selected_ref: &str,
     ) -> Result<String, GithubBrokerError> {
         let components = repository_ref_components(selected_ref)?;
-        let repository_id = repository_id.to_string();
         let mut path = vec![
-            "repositories",
-            repository_id.as_str(),
+            "repos",
+            repository.canonical_owner.as_str(),
+            repository.canonical_name.as_str(),
             "git",
             "ref",
             "heads",
@@ -611,17 +938,21 @@ impl GithubBroker {
         let url = endpoint(&self.base_url, path, query)?;
         let mut request = self
             .http
-            .request(method, url)
+            .request(method.clone(), url)
             .bearer_auth(&authority.bearer)
             .header("accept", "application/vnd.github+json")
             .header("x-github-api-version", "2022-11-28");
         if let Some(body) = body {
             request = request.json(&body);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|_| GithubBrokerError::Transient { status: None })?;
+        let mutating = !matches!(method, Method::GET | Method::HEAD);
+        let response = request.send().await.map_err(|_| {
+            if mutating {
+                GithubBrokerError::AmbiguousWrite
+            } else {
+                GithubBrokerError::Transient { status: None }
+            }
+        })?;
         let status = response.status();
         let retry_after = response
             .headers()
@@ -633,7 +964,14 @@ impl GithubBroker {
             // Drain only a small bounded body so the connection can be reused;
             // provider text is never copied into Launch state or logs.
             let _ = bounded_body(response, 16 * 1024).await;
-            return Err(classify_status(status, retry_after));
+            let classified = classify_status(status, retry_after);
+            return Err(
+                if mutating && matches!(classified, GithubBrokerError::Transient { .. }) {
+                    GithubBrokerError::AmbiguousWrite
+                } else {
+                    classified
+                },
+            );
         }
         let bytes = bounded_body(response, max_bytes).await?;
         let value = serde_json::from_slice(&bytes).map_err(|_| {
@@ -644,6 +982,49 @@ impl GithubBroker {
             token_generation: authority.token_generation,
         })
     }
+}
+
+fn repository_evidence(
+    repository: GithubRepositoryWire,
+    token_generation: u64,
+) -> Result<RepositoryEvidence, GithubBrokerError> {
+    let visibility = match repository.visibility.as_deref() {
+        Some("public") => RepositoryVisibility::Public,
+        Some("private") => RepositoryVisibility::Private,
+        Some("internal") => RepositoryVisibility::Internal,
+        None if repository.private => RepositoryVisibility::Private,
+        None => RepositoryVisibility::Public,
+        Some(_) => {
+            return Err(GithubBrokerError::Malformed(
+                "GitHub returned an unknown repository visibility".into(),
+            ))
+        }
+    };
+    let allow_forking = repository
+        .allow_forking
+        .unwrap_or(visibility == RepositoryVisibility::Public);
+    let identity = RepositoryIdentity {
+        repository_id: repository.id,
+        repository_node_id: required(repository.node_id, "repository node ID")?,
+        owner_id: repository.owner.id,
+        owner_node_id: required(repository.owner.node_id, "owner node ID")?,
+        canonical_owner: required(repository.owner.login, "repository owner login")?,
+        canonical_name: required(repository.name, "repository name")?,
+        visibility,
+        allow_forking,
+        default_branch: required(repository.default_branch, "default branch")?,
+        selected_ref: String::new(),
+        fork_parent_id: repository.parent.as_ref().map(|parent| parent.id),
+        fork_source_id: repository.source.as_ref().map(|source| source.id),
+    };
+    Ok(RepositoryEvidence {
+        identity,
+        permissions: repository.permissions.unwrap_or_default(),
+        archived: repository.archived,
+        disabled: repository.disabled,
+        html_url: required(repository.html_url, "repository URL")?,
+        subject_token_generation: token_generation,
+    })
 }
 
 #[async_trait]
@@ -665,11 +1046,14 @@ impl TriggerAuthorityVerifier for GithubBroker {
             )
             .await?;
         repository.identity.selected_ref = content.upstream.repository.selected_ref.clone();
+        if !repository.identity.allow_forking {
+            return Err(GithubBrokerError::ForkingDisabled.into());
+        }
         let observed_head = self
             .resolve_branch_sha(
                 subject,
                 selected_service_id,
-                repository.identity.repository_id,
+                &repository.identity,
                 &repository.identity.selected_ref,
             )
             .await?;
@@ -710,15 +1094,7 @@ impl TriggerAuthorityVerifier for GithubBroker {
         let connection = self
             .preflight_connection(subject, selected_service_id)
             .await?;
-        if previous.is_some_and(|previous| {
-            previous.service_id != connection.snapshot.service_id
-                || previous.service_state_version != connection.snapshot.service_state_version
-                || previous.backing_key_id != connection.snapshot.backing_key_id
-                || previous.account.account_id != connection.snapshot.account.account_id
-                || previous.account.account_node_id != connection.snapshot.account.account_node_id
-                || normalized_set(&previous.granted_scopes)
-                    != normalized_set(&connection.snapshot.granted_scopes)
-        }) {
+        if previous.is_some_and(|previous| connection_drifted(previous, &connection.snapshot)) {
             return Err(GithubBrokerError::AuthorityDrift.into());
         }
         let mut repository = self
@@ -730,11 +1106,14 @@ impl TriggerAuthorityVerifier for GithubBroker {
             .await?;
         repository.identity.selected_ref =
             revision.content.upstream.repository.selected_ref.clone();
+        if !repository.identity.allow_forking {
+            return Err(GithubBrokerError::ForkingDisabled.into());
+        }
         let observed_head = self
             .resolve_branch_sha(
                 subject,
                 selected_service_id,
-                repository.identity.repository_id,
+                &repository.identity,
                 &repository.identity.selected_ref,
             )
             .await?;
@@ -744,6 +1123,25 @@ impl TriggerAuthorityVerifier for GithubBroker {
         {
             return Err(GithubBrokerError::AuthorityDrift.into());
         }
+        let source_sha = match revision.content.upstream.source_mode {
+            SourceMode::PinnedCommit => revision
+                .content
+                .upstream
+                .observed_source_sha
+                .clone()
+                .ok_or_else(|| {
+                    GithubBrokerError::Malformed("the pinned Trigger has no source commit".into())
+                })?,
+            SourceMode::BranchHeadAtLaunch => observed_head,
+        };
+        let workflow_paths = self
+            .workflow_paths(
+                subject,
+                selected_service_id,
+                &repository.identity,
+                &source_sha,
+            )
+            .await?;
         Ok(LaunchAuthority {
             provenance: AuthorityProvenance {
                 subject: subject.clone(),
@@ -756,17 +1154,8 @@ impl TriggerAuthorityVerifier for GithubBroker {
                 observed_at: layer2_core::rfc3339_at(SystemTime::now()),
             },
             connection: connection.snapshot,
-            source_sha: match revision.content.upstream.source_mode {
-                SourceMode::PinnedCommit => revision
-                    .content
-                    .upstream
-                    .observed_source_sha
-                    .clone()
-                    .ok_or_else(|| {
-                    GithubBrokerError::Malformed("the pinned Trigger has no source commit".into())
-                })?,
-                SourceMode::BranchHeadAtLaunch => observed_head,
-            },
+            source_sha,
+            workflow_paths,
         })
     }
 }
@@ -841,7 +1230,7 @@ impl TriggerConnectionManager for GithubBroker {
         repository.identity.selected_ref = selected_ref.to_string();
         repository.identity.validate_public_upstream()?;
         let source_sha = self
-            .resolve_branch_sha(subject, service_id, repository_id, selected_ref)
+            .resolve_branch_sha(subject, service_id, &repository.identity, selected_ref)
             .await?;
         Ok(TriggerRepositorySelection {
             repository: repository.identity,
@@ -985,6 +1374,25 @@ struct GithubRefObjectWire {
     kind: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct GithubCommitWire {
+    sha: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubTreeWire {
+    #[serde(default)]
+    truncated: bool,
+    tree: Vec<GithubTreeEntryWire>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubTreeEntryWire {
+    path: String,
+    #[serde(rename = "type")]
+    kind: String,
+}
+
 fn connection_state(service: &UserServiceWire, evidence: &KeyAuthorizationWire) -> ConnectionState {
     if !service.is_active || !evidence.is_active {
         return ConnectionState::Inactive;
@@ -1028,6 +1436,41 @@ fn repository_ref_components(value: &str) -> Result<Vec<&str>, GithubBrokerError
     Ok(components)
 }
 
+fn validate_commit_sha(value: &str) -> Result<(), GithubBrokerError> {
+    if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(GithubBrokerError::Malformed(
+            "the source commit is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_repository_url(
+    value: &str,
+    repository: &RepositoryIdentity,
+) -> Result<(), GithubBrokerError> {
+    let url = Url::parse(value)
+        .map_err(|_| GithubBrokerError::Malformed("the repository URL is invalid".into()))?;
+    let expected_path = format!(
+        "/{}/{}",
+        repository.canonical_owner, repository.canonical_name
+    );
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path().trim_end_matches(".git") != expected_path
+    {
+        return Err(GithubBrokerError::Malformed(
+            "the repository URL does not match its numeric identity".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn normalize_scopes(scopes: Vec<String>) -> Result<Vec<String>, GithubBrokerError> {
     let mut normalized = BTreeSet::new();
     for scope in scopes {
@@ -1049,6 +1492,15 @@ fn normalize_scopes(scopes: Vec<String>) -> Result<Vec<String>, GithubBrokerErro
 
 fn normalized_set(scopes: &[String]) -> BTreeSet<&str> {
     scopes.iter().map(String::as_str).collect()
+}
+
+fn connection_drifted(previous: &ConnectionSnapshot, current: &ConnectionSnapshot) -> bool {
+    previous.service_id != current.service_id
+        || previous.service_state_version != current.service_state_version
+        || previous.backing_key_id != current.backing_key_id
+        || previous.account.account_id != current.account.account_id
+        || previous.account.account_node_id != current.account.account_node_id
+        || normalized_set(&previous.granted_scopes) != normalized_set(&current.granted_scopes)
 }
 
 fn required(value: String, field: &str) -> Result<String, GithubBrokerError> {
@@ -1192,7 +1644,9 @@ fn validate_github_authorization_url(value: &str, nonce: &str) -> Result<(), Git
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
 
     use axum::body::to_bytes;
     use axum::extract::{Request, State};
@@ -1238,6 +1692,12 @@ mod tests {
         scopes: Vec<String>,
         resource_uri: String,
         label: Option<String>,
+        fork_parent_id: Option<u64>,
+        allow_forking: bool,
+        tree_truncated: bool,
+        ambiguous_fork_post: bool,
+        fork_appears_after_post: bool,
+        post_seen: Arc<AtomicBool>,
     }
 
     impl Default for Fixture {
@@ -1249,6 +1709,12 @@ mod tests {
                 scopes: vec![PUBLIC_REPOSITORY_SCOPE.to_string()],
                 resource_uri: "https://nyxid.test/api/v1/proxy/s/api-github".to_string(),
                 label: None,
+                fork_parent_id: Some(10),
+                allow_forking: true,
+                tree_truncated: false,
+                ambiguous_fork_post: false,
+                fork_appears_after_post: false,
+                post_seen: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -1310,13 +1776,13 @@ mod tests {
                 "private": false,
                 "visibility": "public",
                 "default_branch": "main",
-                "allow_forking": true,
+                "allow_forking": fixture.allow_forking,
                 "archived": false,
                 "disabled": false,
                 "html_url": "https://github.com/owner/upstream",
                 "permissions": { "pull": true }
             }),
-            ("GET", "/api/v1/proxy/s/api-github/repositories/10/git/ref/heads/main") => {
+            ("GET", "/api/v1/proxy/s/api-github/repos/owner/upstream/git/ref/heads/main") => {
                 json!({
                     "ref": "refs/heads/main",
                     "object": {
@@ -1324,6 +1790,54 @@ mod tests {
                         "type": "commit"
                     }
                 })
+            }
+            (
+                "GET",
+                "/api/v1/proxy/s/api-github/repos/owner/upstream/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ) => json!({
+                "sha": "tree-sha",
+                "truncated": fixture.tree_truncated,
+                "tree": [
+                    { "path": "README.md", "type": "blob", "sha": "readme-sha" },
+                    { "path": ".github/workflows/release.yml", "type": "blob", "sha": "workflow-2" },
+                    { "path": ".github/workflows/checks.yaml", "type": "blob", "sha": "workflow-1" },
+                    { "path": ".github/workflows/nested/ignored.yml", "type": "blob", "sha": "nested" },
+                    { "path": ".github/workflows", "type": "tree", "sha": "directory" }
+                ]
+            }),
+            ("GET", "/api/v1/proxy/s/api-github/user/repos") => fixture
+                .fork_parent_id
+                .or_else(|| {
+                    (fixture.fork_appears_after_post
+                        && fixture.post_seen.load(Ordering::SeqCst))
+                    .then_some(10)
+                })
+                .map(|parent| json!([fork_repository(parent)]))
+                .unwrap_or_else(|| json!([])),
+            ("GET", "/api/v1/proxy/s/api-github/repositories/30") => {
+                json!(fork_repository(10))
+            }
+            ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/main") => {
+                json!({
+                    "ref": "refs/heads/main",
+                    "object": {
+                        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "type": "commit"
+                    }
+                })
+            }
+            ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") => {
+                json!({ "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })
+            }
+            ("POST", "/api/v1/proxy/s/api-github/repos/owner/upstream/forks") => {
+                fixture.post_seen.store(true, Ordering::SeqCst);
+                if fixture.ambiguous_fork_post {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "response lost after create" })),
+                    );
+                }
+                json!(fork_repository(10))
             }
             ("POST", "/api/v1/keys") => json!({
                 "id": "service-created",
@@ -1344,6 +1858,29 @@ mod tests {
             }
         };
         (StatusCode::OK, Json(response))
+    }
+
+    fn fork_repository(parent_id: u64) -> Value {
+        json!({
+            "id": 30,
+            "node_id": "R_fork",
+            "name": "upstream",
+            "owner": {
+                "id": 21,
+                "node_id": "U_kgDOBQ",
+                "login": "contributor"
+            },
+            "private": false,
+            "visibility": "public",
+            "default_branch": "main",
+            "allow_forking": true,
+            "archived": false,
+            "disabled": false,
+            "html_url": "https://github.com/contributor/upstream",
+            "permissions": { "pull": true, "push": true },
+            "parent": { "id": parent_id },
+            "source": { "id": 10 }
+        })
     }
 
     async fn fixture_server(
@@ -1378,6 +1915,43 @@ mod tests {
 
     fn subject() -> SubjectId {
         SubjectId("subject-1".to_string())
+    }
+
+    fn fork_context() -> ForkContext {
+        ForkContext {
+            owner: subject(),
+            connection: ConnectionSnapshot {
+                service_id: "service-1".into(),
+                service_state_version: 4,
+                backing_key_id: "key-1".into(),
+                account: ConnectedAccount {
+                    account_id: 21,
+                    account_node_id: "U_kgDOBQ".into(),
+                    login: "contributor".into(),
+                    avatar_url: None,
+                },
+                state: ConnectionState::Active,
+                granted_scopes: vec![PUBLIC_REPOSITORY_SCOPE.into()],
+                satisfied_scope_classes: vec![ScopeClass::PublicRepository],
+                consent_observed_at: "2026-08-26T01:02:03Z".into(),
+                preflight_observed_at: "2026-08-26T01:02:04Z".into(),
+            },
+            upstream: RepositoryIdentity {
+                repository_id: 10,
+                repository_node_id: "R_kgDOAA".into(),
+                owner_id: 11,
+                owner_node_id: "U_kgDOAQ".into(),
+                canonical_owner: "owner".into(),
+                canonical_name: "upstream".into(),
+                visibility: RepositoryVisibility::Public,
+                allow_forking: true,
+                default_branch: "main".into(),
+                selected_ref: "main".into(),
+                fork_parent_id: None,
+                fork_source_id: None,
+            },
+            source_sha: "a".repeat(40),
+        }
     }
 
     fn query(uri: &str, key: &str) -> Option<String> {
@@ -1550,8 +2124,248 @@ mod tests {
         );
         assert_eq!(
             requests[4].uri,
-            "/api/v1/proxy/s/api-github/repositories/10/git/ref/heads/main?_nyxid_via=service-1"
+            "/api/v1/proxy/s/api-github/repos/owner/upstream/git/ref/heads/main?_nyxid_via=service-1"
         );
+    }
+
+    #[tokio::test]
+    async fn workflow_review_uses_the_exact_source_tree_and_stable_paths() {
+        let (base_url, requests, server) = fixture_server(Fixture::default()).await;
+        let context = fork_context();
+        let paths = broker(&base_url, true)
+            .workflow_paths(
+                &context.owner,
+                &context.connection.service_id,
+                &context.upstream,
+                &context.source_sha,
+            )
+            .await
+            .expect("read exact source workflow paths");
+        server.abort();
+
+        assert_eq!(
+            paths,
+            vec![
+                ".github/workflows/checks.yaml",
+                ".github/workflows/release.yml"
+            ]
+        );
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].uri,
+            "/api/v1/proxy/s/api-github/repos/owner/upstream/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?recursive=1&_nyxid_via=service-1"
+        );
+    }
+
+    #[tokio::test]
+    async fn truncated_workflow_inventory_fails_closed() {
+        let fixture = Fixture {
+            tree_truncated: true,
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let context = fork_context();
+        let result = broker(&base_url, true)
+            .workflow_paths(
+                &context.owner,
+                &context.connection.service_id,
+                &context.upstream,
+                &context.source_sha,
+            )
+            .await;
+        server.abort();
+
+        assert!(matches!(result, Err(GithubBrokerError::Malformed(_))));
+    }
+
+    #[tokio::test]
+    async fn compatible_fork_is_reused_only_after_network_and_commit_proof() {
+        let (base_url, requests, server) = fixture_server(Fixture::default()).await;
+        let result = broker(&base_url, true)
+            .reconcile_fork(&fork_context())
+            .await
+            .expect("reconcile fork");
+        server.abort();
+
+        let ForkReconciliation::Ready(fork) = result else {
+            panic!("expected a ready fork");
+        };
+        assert!(fork.reused);
+        assert_eq!(fork.repository.repository_id, 30);
+        assert_eq!(fork.repository.fork_parent_id, Some(10));
+        assert_eq!(fork.repository.fork_source_id, Some(10));
+        assert_eq!(fork.source_revision, "a".repeat(40));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 4);
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(
+            query(&requests[0].uri, "affiliation").as_deref(),
+            Some("owner")
+        );
+        assert_eq!(
+            requests[1].uri,
+            "/api/v1/proxy/s/api-github/repositories/30?_nyxid_via=service-1"
+        );
+        assert!(requests[3]
+            .uri
+            .contains("/repos/contributor/upstream/git/commits/"));
+    }
+
+    #[tokio::test]
+    async fn sibling_fork_network_slot_is_named_and_never_reused() {
+        let fixture = Fixture {
+            fork_parent_id: Some(12),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, true)
+            .reconcile_fork(&fork_context())
+            .await;
+        server.abort();
+
+        assert!(matches!(
+            result,
+            Err(GithubBrokerError::ForkNetworkOccupied)
+        ));
+        assert_eq!(requests.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn absent_fork_is_created_once_then_proven_ready() {
+        let fixture = Fixture {
+            fork_parent_id: None,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, true)
+            .create_fork(&fork_context())
+            .await
+            .expect("create fork");
+        server.abort();
+
+        let ForkReconciliation::Ready(fork) = result else {
+            panic!("expected a ready fork");
+        };
+        assert!(!fork.reused);
+        let requests = requests.lock().await;
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.method == "POST")
+                .count(),
+            1
+        );
+        let create = requests
+            .iter()
+            .find(|request| request.method == "POST")
+            .unwrap();
+        assert_eq!(
+            create.uri,
+            "/api/v1/proxy/s/api-github/repos/owner/upstream/forks?_nyxid_via=service-1"
+        );
+        assert_eq!(create.body, Some(json!({})));
+    }
+
+    #[tokio::test]
+    async fn disabled_forking_fails_before_the_provider_write() {
+        let fixture = Fixture {
+            fork_parent_id: None,
+            allow_forking: false,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, true).create_fork(&fork_context()).await;
+        server.abort();
+
+        assert!(matches!(result, Err(GithubBrokerError::ForkingDisabled)));
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
+    async fn stale_connection_authority_blocks_fork_creation_before_the_write() {
+        let fixture = Fixture {
+            fork_parent_id: None,
+            service_state_version: 5,
+            authorization_state_version: 5,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, true).create_fork(&fork_context()).await;
+        server.abort();
+
+        assert!(matches!(result, Err(GithubBrokerError::AuthorityDrift)));
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
+    async fn ambiguous_create_is_reconciled_by_the_worker_without_a_second_post() {
+        use crate::trigger::github_effects::GithubEffectExecutor;
+        use crate::trigger::worker::{EffectRunOutcome, EffectWorker};
+
+        let fixture = Fixture {
+            fork_parent_id: None,
+            ambiguous_fork_post: true,
+            fork_appears_after_post: true,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let github = Arc::new(broker(&base_url, true));
+        let executor = Arc::new(GithubEffectExecutor::new(github));
+        let context = fork_context();
+        let mut launch = crate::trigger::worker::tests::launch_fixture();
+        launch.owner = context.owner.clone();
+        launch.connection = Some(context.connection.clone());
+        launch.revision.content.upstream.repository = context.upstream.clone();
+        launch.source_sha = context.source_sha.clone();
+        launch.state = layer2_core::LaunchState::ForkPending;
+        launch.effects.clear();
+        launch.lease = None;
+        let service = crate::trigger::worker::tests::service_for_launch(launch.clone());
+        let worker = EffectWorker::new(service.clone(), executor, "fork-integration").unwrap();
+
+        assert_eq!(
+            worker
+                .run_once(&launch.id, launch.revision_number, "ambiguous-create")
+                .await
+                .unwrap(),
+            EffectRunOutcome::Deferred
+        );
+        let deferred = service.get_launch(&launch.owner, &launch.id).await.unwrap();
+        assert_eq!(
+            deferred.effects[0].state,
+            layer2_core::EffectState::Reconciling
+        );
+
+        tokio::time::sleep(Duration::from_millis(2_100)).await;
+        assert_eq!(
+            worker
+                .run_once(&launch.id, deferred.revision_number, "reconcile-create")
+                .await
+                .unwrap(),
+            EffectRunOutcome::Completed
+        );
+        let completed = service.get_launch(&launch.owner, &launch.id).await.unwrap();
+        assert_eq!(completed.state, layer2_core::LaunchState::ForkReady);
+        assert_eq!(completed.fork.unwrap().repository.repository_id, 30);
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.method == "POST")
+                .count(),
+            1
+        );
+        server.abort();
     }
 
     #[tokio::test]
