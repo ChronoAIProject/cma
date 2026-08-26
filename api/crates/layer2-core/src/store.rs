@@ -16,9 +16,10 @@ use std::{collections::HashSet, time::SystemTime};
 
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::coordination::{
-    RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
-    RuntimeCleanup, RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest,
-    SessionLease, SessionLeaseRequest,
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
+    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeReservation, SessionBoundary,
+    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest,
 };
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
@@ -272,6 +273,24 @@ pub enum StoreError {
         /// Session whose lease no longer matches.
         id: SessionId,
     },
+    /// Another unexpired conversation opening currently owns this session.
+    #[error("session {id} conversation opening is held by another replica")]
+    ConversationOpeningHeld {
+        /// Session whose opening claim is occupied.
+        id: SessionId,
+    },
+    /// This conversation opening expired, was released, or was replaced.
+    #[error("session {id} conversation opening is no longer authoritative")]
+    ConversationOpeningLost {
+        /// Session whose opening claim no longer matches.
+        id: SessionId,
+    },
+    /// A conversation write came from a link superseded by a later publication.
+    #[error("session {id} conversation link is no longer authoritative")]
+    ConversationLinkChanged {
+        /// Session whose published link no longer matches.
+        id: SessionId,
+    },
     /// This runtime reservation expired, was replaced, or belongs to another lease.
     #[error("session {id} runtime reservation is no longer authoritative")]
     RuntimeReservationChanged {
@@ -508,6 +527,59 @@ pub trait SessionStore: Send + Sync {
         Err(StoreError::CoordinationDisabled)
     }
 
+    /// Reserve one pending conversation opening without replacing the active link.
+    ///
+    /// `session_lease` is required by coordinated callers and must be the real
+    /// current provider-operation lease. Compatibility callers pass none; the
+    /// store then conditions the claim on the exact runtime handle in `request`.
+    async fn acquire_conversation_opening(
+        &self,
+        _request: &ConversationOpeningLeaseRequest,
+        _session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Extend an exact pending opening using the store's authoritative clock.
+    async fn renew_conversation_opening(
+        &self,
+        _opening: &ConversationOpeningLease,
+        _session_lease: Option<&SessionLease>,
+        _ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Promote a pending opening into the sole active conversation link.
+    ///
+    /// Publication is the cross-replica linearization point. It advances a
+    /// monotonic epoch and atomically makes every older link unable to commit.
+    async fn publish_conversation_link(
+        &self,
+        _opening: &ConversationOpeningLease,
+        _session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Release this exact opening, including a publication whose response was
+    /// never observed; stale release cannot retire a successor link.
+    async fn release_conversation_opening(
+        &self,
+        _opening: &ConversationOpeningLease,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Check one published link without changing the session or its history.
+    ///
+    /// Conversation frames use this as their durable admission point before
+    /// changing replica-local state or broadcasting liveness. Publication and
+    /// validation must therefore observe one total order for a session.
+    async fn validate_conversation_link(&self, _link: &ConversationLink) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
     /// Reserve a never-reused runtime generation while holding a lease.
     async fn reserve_runtime_generation(
         &self,
@@ -735,6 +807,20 @@ pub trait SessionStore: Send + Sync {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError>;
+
+    /// Atomically commit a session write only while its conversation authority
+    /// is still current. A committed `write_id` remains replayable after later
+    /// publication; otherwise an old opening or active link is refused before
+    /// any record or event mutation becomes durable.
+    async fn commit_conversation_idempotent(
+        &self,
+        _write_id: &str,
+        _authority: &ConversationWriteAuthority,
+        _record: &SessionRecord,
+        _events: &[Event],
+    ) -> Result<u64, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
 
     /// Atomically create a session and its initial events.
     ///

@@ -1034,6 +1034,38 @@ fn coordination_activation_provenance_is_exact_and_uuid_bound() {
         complete
     );
 
+    let legacy_complete = CoordinationActivationMarker::LegacyComplete {
+        origin: "operator-drained".into(),
+        collection_ids: BTreeMap::from([
+            (SESSIONS.to_owned(), test_collection_uuid(7)),
+            (COORDINATION_RECEIPTS.to_owned(), test_collection_uuid(8)),
+        ]),
+    };
+    let legacy_document = coordination_activation_marker_document(&legacy_complete).unwrap();
+    assert_eq!(
+        legacy_document.get_i32("protocol").unwrap(),
+        LEGACY_COORDINATION_ACTIVATION_PROTOCOL
+    );
+    assert_eq!(
+        validate_coordination_activation_marker(legacy_document).unwrap(),
+        legacy_complete
+    );
+
+    let upgrade = CoordinationActivationMarker::UpgradeInProgress {
+        origin: "operator-drained".into(),
+        collection_ids: BTreeMap::from([
+            (SESSIONS.to_owned(), test_collection_uuid(7)),
+            (COORDINATION_RECEIPTS.to_owned(), test_collection_uuid(8)),
+        ]),
+    };
+    assert_eq!(
+        validate_coordination_activation_marker(
+            coordination_activation_marker_document(&upgrade).unwrap()
+        )
+        .unwrap(),
+        upgrade
+    );
+
     for invalid in [
         doc! {
             "_id": COORDINATION_ACTIVATION_ID,
@@ -1287,6 +1319,20 @@ fn protocol_validators_require_the_current_marker_and_session_revision() {
 
     let receipt_schema = coordination_receipt_protocol_validator();
     let receipt_schema = receipt_schema.get_document("$jsonSchema").unwrap();
+    assert_eq!(
+        receipt_schema
+            .get_document("properties")
+            .unwrap()
+            .get_document(COORDINATION_PROTOCOL_FIELD)
+            .unwrap()
+            .get_array("enum")
+            .unwrap(),
+        &[Bson::Int32(COORDINATION_RECEIPT_PROTOCOL)]
+    );
+    assert_ne!(
+        COORDINATION_RECEIPT_PROTOCOL, SESSION_COORDINATION_PROTOCOL,
+        "receipt compatibility must not weaken the session writer fence"
+    );
     assert!(receipt_schema
         .get_array("required")
         .unwrap()
@@ -1357,7 +1403,7 @@ fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types(
                     "bsonType": "int",
                 },
                 COORDINATION_PROTOCOL_FIELD: {
-                    "enum": [COORDINATION_PROTOCOL],
+                    "enum": [SESSION_COORDINATION_PROTOCOL],
                     "bsonType": "int",
                 },
             },
@@ -1385,7 +1431,7 @@ fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types(
                 "revision": { "bsonType": "long" },
                 COORDINATION_PROTOCOL_FIELD: {
                     "bsonType": "int",
-                    "enum": [COORDINATION_PROTOCOL],
+                    "enum": [SESSION_COORDINATION_PROTOCOL],
                 },
             },
             "required": ["revision", WRITE_PROTOCOL_FIELD, COORDINATION_PROTOCOL_FIELD],
@@ -1409,7 +1455,7 @@ fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types(
                 "revision": { "bsonType": "long" },
                 COORDINATION_PROTOCOL_FIELD: {
                     "bsonType": "int",
-                    "enum": [COORDINATION_PROTOCOL],
+                    "enum": [SESSION_COORDINATION_PROTOCOL],
                 },
             },
         }
@@ -1565,9 +1611,31 @@ fn current_session_documents_carry_both_writer_protocols() {
     );
     assert_eq!(
         document.get_i32(COORDINATION_PROTOCOL_FIELD).unwrap(),
-        COORDINATION_PROTOCOL
+        SESSION_COORDINATION_PROTOCOL
     );
     assert!(document.contains_key("coordination"));
+}
+
+#[test]
+fn session_protocol_migration_changes_only_protocol_and_revision_fields() {
+    assert_eq!(
+        session_protocol_migration_update(),
+        doc! {
+            "$set": {
+                WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+                COORDINATION_PROTOCOL_FIELD: SESSION_COORDINATION_PROTOCOL,
+            },
+            "$max": { "revision": 0_i64 },
+        }
+    );
+    assert_eq!(
+        current_session_protocol_filter(),
+        doc! {
+            WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+            COORDINATION_PROTOCOL_FIELD: SESSION_COORDINATION_PROTOCOL,
+            "revision": { "$type": "long" },
+        }
+    );
 }
 
 #[test]
@@ -1709,7 +1777,7 @@ fn raw_append_touches_the_session_without_lowering_a_legacy_tail() {
         doc! {
             "$set": {
                 "_cma_write_protocol": WRITE_PROTOCOL,
-                "_cma_coordination_protocol": COORDINATION_PROTOCOL,
+                "_cma_coordination_protocol": SESSION_COORDINATION_PROTOCOL,
                 "revision": 0_i64,
             },
             "$max": { "last_seq": 7_i64 },
@@ -1720,7 +1788,7 @@ fn raw_append_touches_the_session_without_lowering_a_legacy_tail() {
         doc! {
             "$set": {
                 "_cma_write_protocol": WRITE_PROTOCOL,
-                "_cma_coordination_protocol": COORDINATION_PROTOCOL,
+                "_cma_coordination_protocol": SESSION_COORDINATION_PROTOCOL,
             },
             "$max": { "last_seq": 5_i64 },
         }
@@ -2317,6 +2385,174 @@ async fn create_pre_coordination_namespace_state(database: &Database) -> BTreeMa
     collection_ids
 }
 
+async fn downgrade_completed_coordination_protocol_for_test(
+    store: &MongoSessionStore,
+) -> CoordinationActivationMarker {
+    let current = store
+        .coordination_activation_marker()
+        .await
+        .unwrap()
+        .expect("the test store has an activation marker");
+    let CoordinationActivationMarker::Complete {
+        origin,
+        collection_ids,
+    } = current
+    else {
+        panic!("the test store reached current coordination activation");
+    };
+    store
+        .database
+        .run_command(doc! {
+            "collMod": SESSIONS,
+            "validator": legacy_session_protocol_validator(),
+            "validationLevel": "strict",
+            "validationAction": "error",
+        })
+        .await
+        .unwrap();
+    store
+        .sessions
+        .clone_with_type::<Document>()
+        .update_many(
+            doc! {},
+            doc! {
+                "$set": {
+                    WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+                    COORDINATION_PROTOCOL_FIELD: LEGACY_SESSION_COORDINATION_PROTOCOL,
+                },
+                "$max": { "revision": 0_i64 },
+            },
+        )
+        .await
+        .unwrap();
+    let legacy = CoordinationActivationMarker::LegacyComplete {
+        origin,
+        collection_ids,
+    };
+    store
+        .database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .replace_one(
+            doc! { "_id": COORDINATION_ACTIVATION_ID },
+            coordination_activation_marker_document(&legacy).unwrap(),
+        )
+        .await
+        .unwrap();
+    legacy
+}
+
+async fn run_legacy_raw_append_transaction(
+    client: &Client,
+    database: &Database,
+    id: &SessionId,
+    event: &Event,
+) -> Result<(), mongodb::error::Error> {
+    let events = database.collection::<Document>(EVENTS);
+    let sessions = database.collection::<Document>(SESSIONS);
+    let document = event_doc::to_document(event).expect("test event serializes");
+    let tail = i64::try_from(event.seq).expect("test event sequence fits MongoDB");
+    let mut session = client.start_session().await?;
+    session
+        .start_transaction()
+        .read_concern(ReadConcern::snapshot())
+        .write_concern(WriteConcern::majority())
+        .and_run(
+            (events, sessions, id.clone(), document, tail),
+            |session, (events, sessions, id, document, tail)| {
+                async move {
+                    events.insert_one(document).session(&mut *session).await?;
+                    sessions
+                        .update_one(
+                            doc! { "_id": &id.0 },
+                            doc! {
+                                "$set": {
+                                    WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+                                    COORDINATION_PROTOCOL_FIELD:
+                                        LEGACY_SESSION_COORDINATION_PROTOCOL,
+                                },
+                                "$max": { "last_seq": tail },
+                            },
+                        )
+                        .session(&mut *session)
+                        .await?;
+                    Ok(())
+                }
+                .boxed()
+            },
+        )
+        .await
+}
+
+async fn run_legacy_delete_transaction(
+    client: &Client,
+    database: &Database,
+    id: &SessionId,
+) -> Result<(), mongodb::error::Error> {
+    let sessions = database.collection::<Document>(SESSIONS);
+    let events = database.collection::<Document>(EVENTS);
+    let writes = database.collection::<Document>(WRITES);
+    let tombstones = database.collection::<SessionTombstoneDoc>(TOMBSTONES);
+    let receipts = database.collection::<Document>(COORDINATION_RECEIPTS);
+    let mut session = client.start_session().await?;
+    session
+        .start_transaction()
+        .read_concern(ReadConcern::snapshot())
+        .write_concern(WriteConcern::majority())
+        .and_run(
+            (sessions, events, writes, tombstones, receipts, id.clone()),
+            |session, (sessions, events, writes, tombstones, receipts, id)| {
+                async move {
+                    // This is the deployed v1 transaction's first operation.
+                    // The strict v2 validator must abort it before any delete.
+                    sessions
+                        .update_one(
+                            doc! { "_id": &id.0 },
+                            doc! {
+                                "$set": {
+                                    WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+                                    COORDINATION_PROTOCOL_FIELD:
+                                        LEGACY_SESSION_COORDINATION_PROTOCOL,
+                                },
+                                "$currentDate": { "coordination.server_now": true },
+                            },
+                        )
+                        .session(&mut *session)
+                        .await?;
+                    tombstones
+                        .replace_one(
+                            doc! { "_id": &id.0 },
+                            SessionTombstoneDoc {
+                                id: id.0.clone(),
+                                write_protocol: WRITE_PROTOCOL,
+                            },
+                        )
+                        .with_options(ReplaceOptions::builder().upsert(true).build())
+                        .session(&mut *session)
+                        .await?;
+                    sessions
+                        .delete_one(doc! { "_id": &id.0 })
+                        .session(&mut *session)
+                        .await?;
+                    events
+                        .delete_many(doc! { "session_id": &id.0 })
+                        .session(&mut *session)
+                        .await?;
+                    writes
+                        .delete_many(doc! { "session_id": &id.0 })
+                        .session(&mut *session)
+                        .await?;
+                    receipts
+                        .delete_many(all_session_receipts_filter(&id))
+                        .session(&mut *session)
+                        .await?;
+                    Ok(())
+                }
+                .boxed()
+            },
+        )
+        .await
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn real_default_cutover_refusal_does_not_mutate_writable_legacy_namespaces() {
@@ -2438,6 +2674,557 @@ async fn real_existing_database_requires_the_coordination_drain_gate() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_v1_upgrade_requires_a_new_drain_and_fences_old_writers() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!("chrono_coordination_v2_{}_{}", std::process::id(), nonce);
+    let database = client.database(&database_name);
+    let store = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .unwrap();
+    let mut record = record_with(None);
+    record.session.id = SessionId("sesn_coordination_v2_upgrade".into());
+    record.session.last_seq = 0;
+    record.runtime_id = Some("runtime-v1".into());
+    store
+        .create_session_idempotent("seed-coordination-v2-upgrade", &record, &[])
+        .await
+        .unwrap();
+    store
+        .sessions
+        .clone_with_type::<Document>()
+        .update_one(
+            doc! { "_id": &record.session.id.0 },
+            doc! {
+                "$set": {
+                    "coordination.conversation_epoch": 7_i64,
+                    "coordination.conversation_link_token": "fixture",
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let before = store
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &record.session.id.0 })
+        .await
+        .unwrap()
+        .unwrap();
+    let coordination_before = before.get_document("coordination").unwrap().clone();
+    downgrade_completed_coordination_protocol_for_test(&store).await;
+    drop(store);
+
+    let error = match MongoSessionStore::open(&client, &database_name, false, false).await {
+        Ok(_) => panic!("a completed v1 deployment needs a fresh v2 drain assertion"),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("CHRONO_MONGODB_COORDINATION_CUTOVER=drained"));
+    let legacy_marker = database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        legacy_marker.get_i32("protocol").unwrap(),
+        LEGACY_COORDINATION_ACTIVATION_PROTOCOL
+    );
+
+    let upgraded = MongoSessionStore::open(&client, &database_name, false, true)
+        .await
+        .expect("the explicit drain upgrades and resumes the store");
+    assert!(matches!(
+        upgraded.coordination_activation_marker().await.unwrap(),
+        Some(CoordinationActivationMarker::Complete { origin, .. })
+            if origin == "operator-drained"
+    ));
+    let durable = upgraded
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &record.session.id.0 })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        durable.get_i32(COORDINATION_PROTOCOL_FIELD).unwrap(),
+        SESSION_COORDINATION_PROTOCOL
+    );
+    assert_eq!(
+        durable.get_document("coordination").unwrap(),
+        &coordination_before
+    );
+
+    let old_preflight = upgraded
+        .sessions
+        .clone_with_type::<Document>()
+        .update_one(
+            doc! { "_id": &record.session.id.0 },
+            doc! {
+                "$set": {
+                    WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+                    COORDINATION_PROTOCOL_FIELD: LEGACY_SESSION_COORDINATION_PROTOCOL,
+                },
+                "$currentDate": { "coordination.server_now": true },
+            },
+        )
+        .await;
+    assert!(
+        old_preflight.is_err(),
+        "the strict v2 validator fences a live v1 command"
+    );
+
+    let mut old_replacement = durable.clone();
+    old_replacement.insert(
+        COORDINATION_PROTOCOL_FIELD,
+        LEGACY_SESSION_COORDINATION_PROTOCOL,
+    );
+    let old_coordination = old_replacement.get_document_mut("coordination").unwrap();
+    old_coordination.remove("conversation_epoch");
+    old_coordination.remove("conversation_link_token");
+    old_coordination.remove("conversation_opening");
+    let old_replace = upgraded
+        .sessions
+        .clone_with_type::<Document>()
+        .replace_one(doc! { "_id": &record.session.id.0 }, old_replacement)
+        .await;
+    assert!(
+        old_replace.is_err(),
+        "a v1 whole-document replacement is fenced"
+    );
+    assert_eq!(
+        upgraded
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "_id": &record.session.id.0 })
+            .await
+            .unwrap()
+            .unwrap(),
+        durable
+    );
+
+    upgraded
+        .append_events(&[event(&record.session.id.0, 1)])
+        .await
+        .expect("a v2 event establishes history the old transactions must preserve");
+    let current = upgraded.get(&record.session.id).await.unwrap().unwrap();
+    let authority = upgraded
+        .runtime_authority(&record.session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let lease = upgraded
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: record.session.id.clone(),
+            holder: "v2-upgrade-receipt-holder".into(),
+            token: "v2-upgrade-receipt-token".into(),
+            boundary: SessionBoundary::for_record(&current, authority.generation),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .expect("a coordination receipt is established");
+    upgraded
+        .release_session_lease(&lease)
+        .await
+        .expect("the retained release receipt is durable");
+
+    let sessions_before = sorted_collection_documents(&database, SESSIONS).await;
+    let events_before = sorted_collection_documents(&database, EVENTS).await;
+    let writes_before = sorted_collection_documents(&database, WRITES).await;
+    let tombstones_before = sorted_collection_documents(&database, TOMBSTONES).await;
+    let receipts_before = sorted_collection_documents(&database, COORDINATION_RECEIPTS).await;
+    assert!(!events_before.is_empty());
+    assert!(!receipts_before.is_empty());
+
+    assert!(run_legacy_raw_append_transaction(
+        &client,
+        &database,
+        &record.session.id,
+        &event(&record.session.id.0, 2),
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        sorted_collection_documents(&database, SESSIONS).await,
+        sessions_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, EVENTS).await,
+        events_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, WRITES).await,
+        writes_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, TOMBSTONES).await,
+        tombstones_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, COORDINATION_RECEIPTS).await,
+        receipts_before
+    );
+
+    assert!(
+        run_legacy_delete_transaction(&client, &database, &record.session.id)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, SESSIONS).await,
+        sessions_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, EVENTS).await,
+        events_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, WRITES).await,
+        writes_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, TOMBSTONES).await,
+        tombstones_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, COORDINATION_RECEIPTS).await,
+        receipts_before
+    );
+
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_interrupted_v2_protocol_upgrade_resumes_after_each_durable_boundary() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+
+    for stage in [
+        "after-marker",
+        "after-strict-validator",
+        "after-document-migration",
+    ] {
+        let database_name = format!(
+            "chrono_coordination_v2_resume_{}_{}_{}",
+            stage,
+            std::process::id(),
+            nonce
+        );
+        let database = client.database(&database_name);
+        let store = MongoSessionStore::open(&client, &database_name, false, false)
+            .await
+            .unwrap();
+        let mut record = record_with(None);
+        record.session.id = SessionId(format!("sesn_coordination_v2_resume_{stage}"));
+        record.session.last_seq = 0;
+        store
+            .create_session_idempotent(&format!("seed-v2-resume-{stage}"), &record, &[])
+            .await
+            .unwrap();
+        let legacy = downgrade_completed_coordination_protocol_for_test(&store).await;
+        let CoordinationActivationMarker::LegacyComplete { collection_ids, .. } = legacy else {
+            unreachable!("the downgrade helper returns a completed v1 marker");
+        };
+        database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .replace_one(
+                doc! { "_id": COORDINATION_ACTIVATION_ID },
+                coordination_activation_marker_document(
+                    &CoordinationActivationMarker::UpgradeInProgress {
+                        origin: "operator-drained".into(),
+                        collection_ids,
+                    },
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        if matches!(stage, "after-strict-validator" | "after-document-migration") {
+            store.install_session_protocol_validator().await.unwrap();
+        }
+        if stage == "after-document-migration" {
+            store.migrate_session_coordination_protocol().await.unwrap();
+        }
+        drop(store);
+
+        let resumed = MongoSessionStore::open(&client, &database_name, false, false)
+            .await
+            .unwrap_or_else(|error| panic!("resume {stage}: {error}"));
+        assert!(matches!(
+            resumed.coordination_activation_marker().await.unwrap(),
+            Some(CoordinationActivationMarker::Complete { .. })
+        ));
+        let durable = resumed
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "_id": &record.session.id.0 })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            durable.get_i32(COORDINATION_PROTOCOL_FIELD).unwrap(),
+            SESSION_COORDINATION_PROTOCOL
+        );
+        database.drop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_completed_v2_contract_fails_closed_without_repairing_a_downgrade() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!(
+        "chrono_completed_v2_downgrade_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let database = client.database(&database_name);
+    let store = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .unwrap();
+    let mut record = record_with(None);
+    record.session.id = SessionId("sesn_completed_v2_downgrade".into());
+    record.session.last_seq = 0;
+    store
+        .create_session_idempotent("seed-completed-v2-downgrade", &record, &[])
+        .await
+        .unwrap();
+    let marker_before = database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        marker_before.get_i32("protocol").unwrap(),
+        COORDINATION_ACTIVATION_PROTOCOL
+    );
+
+    database
+        .run_command(doc! {
+            "collMod": SESSIONS,
+            "validator": legacy_session_protocol_validator(),
+            "validationLevel": "strict",
+            "validationAction": "error",
+        })
+        .await
+        .unwrap();
+    store
+        .sessions
+        .clone_with_type::<Document>()
+        .update_one(
+            doc! { "_id": &record.session.id.0 },
+            doc! {
+                "$set": {
+                    WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+                    COORDINATION_PROTOCOL_FIELD: LEGACY_SESSION_COORDINATION_PROTOCOL,
+                },
+            },
+        )
+        .await
+        .unwrap();
+    drop(store);
+
+    let contracts_before = collection_contract_snapshot(&database, &[SESSIONS]).await;
+    let sessions_before = sorted_collection_documents(&database, SESSIONS).await;
+    let error = match MongoSessionStore::open(&client, &database_name, false, false).await {
+        Ok(_) => panic!("a completed v2 marker must not authorize downgrade repair"),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("changed write-protocol validator"));
+    assert_eq!(
+        database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+            .await
+            .unwrap()
+            .unwrap(),
+        marker_before
+    );
+    assert_eq!(
+        collection_contract_snapshot(&database, &[SESSIONS]).await,
+        contracts_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, SESSIONS).await,
+        sessions_before
+    );
+
+    database
+        .run_command(doc! {
+            "collMod": SESSIONS,
+            "validator": session_protocol_validator(),
+            "validationLevel": "strict",
+            "validationAction": "error",
+        })
+        .await
+        .unwrap();
+    let contracts_before = collection_contract_snapshot(&database, &[SESSIONS]).await;
+    let sessions_before = sorted_collection_documents(&database, SESSIONS).await;
+    assert_eq!(
+        sessions_before[0]
+            .get_i32(COORDINATION_PROTOCOL_FIELD)
+            .unwrap(),
+        LEGACY_SESSION_COORDINATION_PROTOCOL
+    );
+    let error = match MongoSessionStore::open(&client, &database_name, false, false).await {
+        Ok(_) => panic!("a completed v2 marker must not migrate a stale protocol-v1 document"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("coordination protocol"));
+    assert_eq!(
+        database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+            .await
+            .unwrap()
+            .unwrap(),
+        marker_before
+    );
+    assert_eq!(
+        collection_contract_snapshot(&database, &[SESSIONS]).await,
+        contracts_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, SESSIONS).await,
+        sessions_before
+    );
+
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_upgrade_resume_rejects_a_replacement_before_validator_or_document_mutation() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!(
+        "chrono_v2_upgrade_replacement_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let database = client.database(&database_name);
+    let store = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .unwrap();
+    let marker = store
+        .coordination_activation_marker()
+        .await
+        .unwrap()
+        .unwrap();
+    let CoordinationActivationMarker::Complete { collection_ids, .. } = marker else {
+        unreachable!("a fresh store has a completed current marker");
+    };
+    let upgrade = CoordinationActivationMarker::UpgradeInProgress {
+        origin: "operator-drained".into(),
+        collection_ids,
+    };
+    database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .replace_one(
+            doc! { "_id": COORDINATION_ACTIVATION_ID },
+            coordination_activation_marker_document(&upgrade).unwrap(),
+        )
+        .await
+        .unwrap();
+    store.sessions.drop().await.unwrap();
+    database.create_collection(SESSIONS).await.unwrap();
+    database
+        .run_command(doc! {
+            "collMod": SESSIONS,
+            "validator": legacy_session_protocol_validator(),
+            "validationLevel": "strict",
+            "validationAction": "error",
+        })
+        .await
+        .unwrap();
+    let mut replacement = record_with(None);
+    replacement.session.id = SessionId("sesn_replacement_upgrade_source".into());
+    replacement.session.last_seq = 0;
+    let mut replacement_document =
+        mongodb::bson::serialize_to_document(&to_doc(&replacement).unwrap()).unwrap();
+    replacement_document.insert(
+        COORDINATION_PROTOCOL_FIELD,
+        LEGACY_SESSION_COORDINATION_PROTOCOL,
+    );
+    database
+        .collection::<Document>(SESSIONS)
+        .insert_one(replacement_document)
+        .await
+        .unwrap();
+    drop(store);
+
+    let marker_before = database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+        .await
+        .unwrap()
+        .unwrap();
+    let contracts_before = collection_contract_snapshot(&database, &[SESSIONS]).await;
+    let sessions_before = sorted_collection_documents(&database, SESSIONS).await;
+    let error = match MongoSessionStore::open(&client, &database_name, false, false).await {
+        Ok(_) => panic!("an upgrade marker cannot authorize a replacement collection"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("UUID no longer matches"));
+    assert_eq!(
+        database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+            .await
+            .unwrap()
+            .unwrap(),
+        marker_before
+    );
+    assert_eq!(
+        collection_contract_snapshot(&database, &[SESSIONS]).await,
+        contracts_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, SESSIONS).await,
+        sessions_before
+    );
+
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn real_fresh_database_activates_coordination_without_a_drain_gate() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
@@ -2486,16 +3273,18 @@ async fn real_in_progress_coordination_activation_resumes_every_namespace_bounda
         );
         let database = client.database(&database_name);
         let old_ids = create_pre_coordination_namespace_state(&database).await;
+        let activation = if stage == "before-fence" {
+            CoordinationActivationMarker::LegacyInProgress {
+                origin: "operator-drained".into(),
+            }
+        } else {
+            CoordinationActivationMarker::InProgress {
+                origin: "operator-drained".into(),
+            }
+        };
         database
             .collection::<Document>(NAMESPACE_CUTOVERS)
-            .insert_one(
-                coordination_activation_marker_document(
-                    &CoordinationActivationMarker::InProgress {
-                        origin: "operator-drained".into(),
-                    },
-                )
-                .unwrap(),
-            )
+            .insert_one(coordination_activation_marker_document(&activation).unwrap())
             .await
             .unwrap();
 
@@ -3065,7 +3854,7 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_lease() {
     );
     assert_eq!(
         promoted.get_i32(COORDINATION_PROTOCOL_FIELD).unwrap(),
-        COORDINATION_PROTOCOL
+        SESSION_COORDINATION_PROTOCOL
     );
     assert!(promoted
         .get_document("coordination")
@@ -3470,6 +4259,184 @@ async fn real_ordinary_commits_serialize_with_authority_switch_and_retirement() 
         .unwrap()
         .runtime_id
         .is_none());
+
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_conversation_commit_rejects_stale_authority_without_reserving_the_write() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_conversation_commit_authority_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let store = MongoSessionStore::open(&client, &database, false, false)
+        .await
+        .unwrap();
+    let id = SessionId("sesn_conversation_commit_authority".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.last_seq = 0;
+    seed.runtime_id = Some("runtime-conversation-commit".into());
+    store
+        .create_session_idempotent("seed-conversation-commit-authority", &seed, &[])
+        .await
+        .unwrap();
+
+    let opening_request = |token: &str| ConversationOpeningLeaseRequest {
+        session_id: id.clone(),
+        holder: format!("holder-{token}"),
+        token: token.into(),
+        runtime_id: "runtime-conversation-commit".into(),
+        runtime_generation: 0,
+        runtime_candidate_token: None,
+        ttl: Duration::from_secs(60),
+    };
+    let first_opening = store
+        .acquire_conversation_opening(&opening_request("first"), None)
+        .await
+        .unwrap();
+    let first_link = store
+        .publish_conversation_link(&first_opening, None)
+        .await
+        .unwrap();
+    let second_opening = store
+        .acquire_conversation_opening(&opening_request("second"), None)
+        .await
+        .unwrap();
+    let second_link = store
+        .publish_conversation_link(&second_opening, None)
+        .await
+        .unwrap();
+    assert!(second_link.epoch > first_link.epoch);
+
+    let before = store.get(&id).await.unwrap().unwrap();
+    let before_document = store
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &id.0 })
+        .await
+        .unwrap()
+        .unwrap();
+    let mut attempted = before.clone();
+    attempted.session.last_seq = 1;
+    let stale_active_write = "stale-active-conversation-write";
+    assert!(matches!(
+        store
+            .commit_conversation_idempotent(
+                stale_active_write,
+                &ConversationWriteAuthority::Active(first_link),
+                &attempted,
+                &[event(&id.0, 1)],
+            )
+            .await,
+        Err(StoreError::ConversationLinkChanged { .. })
+    ));
+    assert_eq!(
+        store
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "_id": &id.0 })
+            .await
+            .unwrap()
+            .unwrap(),
+        before_document
+    );
+    assert!(store.events_since(&id, 0).await.unwrap().is_empty());
+    assert!(store
+        .writes
+        .find_one(doc! { "_id": stale_active_write })
+        .await
+        .unwrap()
+        .is_none());
+    store
+        .commit_conversation_idempotent(
+            stale_active_write,
+            &ConversationWriteAuthority::Active(second_link),
+            &before,
+            &[],
+        )
+        .await
+        .expect("the valid successor reuses the unreserved write identity");
+
+    let third_opening = store
+        .acquire_conversation_opening(&opening_request("third"), None)
+        .await
+        .unwrap();
+    store
+        .publish_conversation_link(&third_opening, None)
+        .await
+        .unwrap();
+    let fourth_opening = store
+        .acquire_conversation_opening(&opening_request("fourth"), None)
+        .await
+        .unwrap();
+    let fourth_link = store
+        .publish_conversation_link(&fourth_opening, None)
+        .await
+        .unwrap();
+
+    let before = store.get(&id).await.unwrap().unwrap();
+    let before_document = store
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &id.0 })
+        .await
+        .unwrap()
+        .unwrap();
+    let mut attempted = before.clone();
+    attempted.session.last_seq = 1;
+    let stale_opening_write = "stale-opening-conversation-write";
+    assert!(matches!(
+        store
+            .commit_conversation_idempotent(
+                stale_opening_write,
+                &ConversationWriteAuthority::Opening {
+                    opening: third_opening,
+                    session_lease: None,
+                },
+                &attempted,
+                &[event(&id.0, 1)],
+            )
+            .await,
+        Err(StoreError::ConversationOpeningLost { .. })
+    ));
+    assert_eq!(
+        store
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "_id": &id.0 })
+            .await
+            .unwrap()
+            .unwrap(),
+        before_document
+    );
+    assert!(store.events_since(&id, 0).await.unwrap().is_empty());
+    assert!(store
+        .writes
+        .find_one(doc! { "_id": stale_opening_write })
+        .await
+        .unwrap()
+        .is_none());
+    store
+        .commit_conversation_idempotent(
+            stale_opening_write,
+            &ConversationWriteAuthority::Active(fourth_link),
+            &before,
+            &[],
+        )
+        .await
+        .expect("the current publication reuses the unreserved write identity");
 
     client.database(&database).drop().await.unwrap();
 }

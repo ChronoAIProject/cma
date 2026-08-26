@@ -12,6 +12,105 @@ use crate::ids::SessionId;
 use crate::session::SessionStatus;
 use crate::store::SessionRecord;
 
+/// One attempt to reserve durable authority while a conversation link opens.
+///
+/// Opening is separate from publication: a replacement may wait on sign-in or
+/// fail after reaching the runtime, and neither case may fence the active link
+/// until the replacement is ready to install.
+#[derive(Debug, Clone)]
+pub struct ConversationOpeningLeaseRequest {
+    /// Session whose runtime is being attached.
+    pub session_id: SessionId,
+    /// Exact process instance opening the link.
+    pub holder: String,
+    /// Never-reused identity for this opening attempt.
+    pub token: String,
+    /// Provider handle the resulting link must still name at publication.
+    pub runtime_id: String,
+    /// Runtime generation the resulting link must still name at publication.
+    /// Zero is the compatibility generation and remains bound by `runtime_id`.
+    pub runtime_generation: u64,
+    /// Registered candidate reservation token for provisioning. Readoption of
+    /// the already-authoritative runtime carries none.
+    pub runtime_candidate_token: Option<String>,
+    /// Requested lifetime, measured by the store's clock.
+    pub ttl: Duration,
+}
+
+impl ConversationOpeningLeaseRequest {
+    /// Build a request with a new ABA-resistant opening token.
+    pub fn new(
+        session_id: SessionId,
+        holder: impl Into<String>,
+        runtime_id: impl Into<String>,
+        runtime_generation: u64,
+        runtime_candidate: Option<&RuntimeCandidate>,
+        ttl: Duration,
+    ) -> Self {
+        Self {
+            session_id,
+            holder: holder.into(),
+            token: format!("conversation_opening_{}", uuid::Uuid::new_v4().simple()),
+            runtime_id: runtime_id.into(),
+            runtime_generation,
+            runtime_candidate_token: runtime_candidate.map(|candidate| candidate.token.clone()),
+            ttl,
+        }
+    }
+}
+
+/// Durable authority held while one conversation link is opening.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationOpeningLease {
+    /// Session whose runtime is being attached.
+    pub session_id: SessionId,
+    /// Exact process instance holding this opening.
+    pub holder: String,
+    /// Never-reused identity of this opening attempt.
+    pub token: String,
+    /// Provider handle this opening must publish against.
+    pub runtime_id: String,
+    /// Exact durable runtime generation this opening must publish against.
+    pub runtime_generation: u64,
+    /// Registered candidate reservation token for provisioning, or none when
+    /// readopting the already-authoritative runtime.
+    pub runtime_candidate_token: Option<String>,
+    /// Provider-operation lease token backing this opening, when coordination
+    /// is enabled. Generation-zero compatibility openings carry none and are
+    /// instead conditioned on the exact stored runtime handle.
+    pub session_lease_token: Option<String>,
+}
+
+/// Durable identity of the one conversation link allowed to append inbound work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationLink {
+    /// Session whose conversation this link carries.
+    pub session_id: SessionId,
+    /// Monotonic store-issued epoch. Zero is never published.
+    pub epoch: u64,
+    /// Opening token promoted into this link. Paired with the epoch so an
+    /// unknown publication result can be replayed without advancing twice.
+    pub token: String,
+    /// Exact runtime generation this link was published for.
+    pub runtime_generation: u64,
+    /// Exact provider handle this link was published for.
+    pub runtime_id: String,
+}
+
+/// Exact durable predicate attached to a conversation-originated commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConversationWriteAuthority {
+    /// The sole early-write exception while the adapter is still opening.
+    Opening {
+        /// Exact pending opening claim.
+        opening: ConversationOpeningLease,
+        /// Current provider-operation lease, when coordination is enabled.
+        session_lease: Option<SessionLease>,
+    },
+    /// An update or close from a successfully published link.
+    Active(ConversationLink),
+}
+
 /// The provider runtime currently authorised to serve a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeAuthority {
