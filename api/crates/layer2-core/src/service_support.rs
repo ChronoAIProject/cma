@@ -147,6 +147,27 @@ pub(crate) fn service_on_version_with_skills(
     version: &str,
     skills: Arc<dyn crate::store::SkillSource>,
 ) -> Arc<SessionService> {
+    service_on_version_with_skill_ports(store, adapter, version, skills, None)
+}
+
+/// The skill fixture with durable pack custody enabled.
+pub(crate) fn service_on_version_with_skill_store(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    version: &str,
+    skills: Arc<dyn crate::store::SkillSource>,
+    skill_packs: Arc<dyn crate::store::SkillPackStore>,
+) -> Arc<SessionService> {
+    service_on_version_with_skill_ports(store, adapter, version, skills, Some(skill_packs))
+}
+
+fn service_on_version_with_skill_ports(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    version: &str,
+    skills: Arc<dyn crate::store::SkillSource>,
+    skill_packs: Option<Arc<dyn crate::store::SkillPackStore>>,
+) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
@@ -173,7 +194,7 @@ pub(crate) fn service_on_version_with_skills(
         crate::service::SessionPorts {
             skills: Some(skills),
             handovers: Some(handovers),
-            skill_packs: None,
+            skill_packs,
             ..Default::default()
         },
         environments,

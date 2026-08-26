@@ -71,6 +71,7 @@ impl SessionService {
         adapter: &Arc<dyn KernelAdapter>,
         context: RuntimeStartContext<'_>,
         lease: &mut Option<SessionLease>,
+        prepared_skills: &mut Option<crate::provision_support::PreparedSkillPacks>,
     ) -> Result<(), StartFailure> {
         let RuntimeStartContext {
             geometry,
@@ -121,65 +122,14 @@ impl SessionService {
                     "this session's environment could not be prepared: {e}"
                 ))
             })?;
-        /*
-         * The session's skills, fetched before a sandbox is asked for.
-         *
-         * Here rather than after, because a skill that cannot be had is a
-         * session that would start without something it was told it has —
-         * and the agent only discovers that by failing to do what it was
-         * told it could. Fetching first means the refusal costs nothing but
-         * the request.
-         */
-        let skills = match (self.skills.as_ref(), environment.skills.is_empty()) {
-            (Some(source), false) => {
-                let wanted: Vec<crate::environment::SkillId> = environment
-                    .skills
-                    .iter()
-                    .map(|s| crate::environment::SkillId::new(s.clone()))
-                    .collect();
-                match source
-                    .packs_for(spec.caller_credential.as_deref(), &wanted)
-                    .await
-                {
-                    Ok(packs) => packs,
-                    /*
-                     * Whether this is fatal depends on whether anybody asked.
-                     *
-                     * At creation there is a caller on the line, the fetch is
-                     * made as them, and a session that cannot have what it was
-                     * described as having should not be started — §3, refused
-                     * by name before anything is provisioned.
-                     *
-                     * A rotation or a recovery has no caller and no credential
-                     * of theirs to ask with, so the fetch falls back to this
-                     * service's own identity, which sees only public skills.
-                     * Refusing there does not protect anybody: it destroys a
-                     * session somebody is working in, to avoid it missing a
-                     * file. It cost three live sessions the first time this
-                     * shipped, and losing the work is far worse than losing a
-                     * skill.
-                     */
-                    Err(why) if spec.caller_credential.is_some() => {
-                        return Err(StartFailure::permanent(format!(
-                            "this session's skills could not be prepared: {why}"
-                        )))
-                    }
-                    Err(why) => {
-                        tracing::warn!(
-                            session_id = %id,
-                            %why,
-                            "carrying this session forward without refetching its skills; \
-                             it keeps everything else it had"
-                        );
-                        Vec::new()
-                    }
-                }
-            }
-            // Nothing to fetch, or nothing that knows how. A deployment with
-            // no registry configured still starts sessions; they simply carry
-            // whatever the image does.
-            _ => Vec::new(),
-        };
+        let skills = self
+            .prepare_skill_packs(
+                &id,
+                spec.caller_credential.as_deref(),
+                &environment.skills,
+                prepared_skills,
+            )
+            .await?;
         self.note_progress(&id, ProvisioningStage::RuntimeRequested)
             .await;
         // What the runtime is told, translated once. Some kernels settle how
