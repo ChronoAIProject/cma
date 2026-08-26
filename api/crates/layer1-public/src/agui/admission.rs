@@ -87,6 +87,20 @@ impl StoredProblem {
         }
     }
 
+    /// Run preparation stopped before it could hand its stream plan back.
+    pub(super) fn opening_task_failed() -> Self {
+        let status = StatusCode::SERVICE_UNAVAILABLE;
+        Self {
+            status: status.as_u16(),
+            body: problem_document(
+                status,
+                "run-opening-failed",
+                "The run opening task stopped before it could report an outcome.",
+                "run_opening_failed",
+            ),
+        }
+    }
+
     /// The finite result could not be published for durable retry coordination.
     pub(super) fn completion_failed() -> Self {
         let status = StatusCode::SERVICE_UNAVAILABLE;
