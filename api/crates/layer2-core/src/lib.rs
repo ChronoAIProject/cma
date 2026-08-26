@@ -123,6 +123,9 @@ pub mod service;
 mod service_state;
 pub mod session;
 pub mod size;
+#[cfg(test)]
+#[path = "skill_pack_tests.rs"]
+mod skill_pack_tests;
 pub mod store;
 pub mod terminal;
 mod terminal_io;

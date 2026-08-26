@@ -176,10 +176,21 @@ impl SessionService {
         // it would lose the name of whatever was missing, which is the part
         // the owner can act on.
         let mut last = StartFailure::transient(String::new());
+        // A provider retry is still the same bring-up. Once resolved, packs
+        // stay in this task so a failed upload or runtime attempt never asks
+        // the registry for a potentially different revision.
+        let mut prepared_skills = None;
 
         for attempt in 1..=PROVISION_ATTEMPTS {
             match self
-                .start_runtime(session, spec, adapter, context, lease)
+                .start_runtime(
+                    session,
+                    spec,
+                    adapter,
+                    context,
+                    lease,
+                    &mut prepared_skills,
+                )
                 .await
             {
                 Ok(()) => {
@@ -471,6 +482,9 @@ impl SessionService {
                     );
                 }
             }
+        }
+        if !keep {
+            self.remove_skill_packs(id).await;
         }
         Ok(settled)
     }
