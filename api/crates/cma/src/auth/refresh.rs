@@ -126,6 +126,9 @@ impl AuthState {
                 .ok_or_else(|| StoreError::Malformed("subject auth revision exhausted".into()))?;
             next.token_generation = next_token_generation(current.token_generation)?;
             next.tokens = tokens.clone();
+            if tokens.is_none() {
+                next.authorization = layer2_core::Authorization::none();
+            }
             next.refresh_lease = None;
             take_operation(budget, 2, "subject refresh completion write")?;
             if self
@@ -673,6 +676,14 @@ mod tests {
         )
         .await
         .expect("tokens persist");
+        auth.store_authorization(
+            &subject,
+            layer2_core::Authorization::from_capabilities([
+                layer2_core::Capability::ReadAllSessions,
+            ]),
+        )
+        .await
+        .expect("authorization persists");
         let before = store
             .subject(&subject)
             .await
@@ -695,6 +706,7 @@ mod tests {
             .expect("subject fact remains");
         assert!(after.tokens.is_none());
         assert!(after.refresh_lease.is_none());
+        assert_eq!(after.authorization.capabilities().count(), 0);
         assert_eq!(after.token_generation, before.token_generation + 1);
         server.abort();
     }

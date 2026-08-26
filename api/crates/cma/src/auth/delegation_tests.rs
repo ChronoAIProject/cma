@@ -185,6 +185,18 @@ impl AuthStore for TerminalInsertRaceStore {
         unreachable!("terminal insert race does not use subject state")
     }
 
+    async fn subjects_due_for_authorization_check(
+        &self,
+        _now: SystemTime,
+        _after: Option<&super::persistence::SubjectAuthorizationCursor>,
+        _limit: usize,
+    ) -> Result<
+        Vec<AuthSweepItem<super::persistence::SubjectAuthorizationCursor, SubjectAuthState>>,
+        StoreError,
+    > {
+        unreachable!("terminal insert race does not use subject state")
+    }
+
     async fn subjects_with_tokens(
         &self,
         _after: Option<&SubjectOwnerCursor>,
