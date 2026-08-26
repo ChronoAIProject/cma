@@ -583,7 +583,7 @@ fn namespace_cutover_fences_before_rename_and_recovers_only_a_proven_late_spill(
             ..NamespacePair::default()
         },
         LEGACY_SESSIONS,
-        SESSIONS,
+        PRE_COORDINATION_SESSIONS,
     )
     .expect_err("a session spill is ambiguous even when both collections are fenced");
     assert!(late_session_spill.to_string().contains("refusing to merge"));
@@ -623,12 +623,12 @@ fn cutover_delete_owner_lookup_uses_only_the_current_fenced_session_collection()
     };
     assert_eq!(
         cutover_session_owner_namespace(&fenced_authoritative).unwrap(),
-        Some(SESSIONS)
+        Some(PRE_COORDINATION_SESSIONS)
     );
 
     let ready = NamespacePair {
         legacy: Some(NamespaceKind::View {
-            source: Some(SESSIONS.into()),
+            source: Some(PRE_COORDINATION_SESSIONS.into()),
             pipeline_is_empty: true,
         }),
         authoritative: Some(NamespaceKind::Collection),
@@ -637,7 +637,7 @@ fn cutover_delete_owner_lookup_uses_only_the_current_fenced_session_collection()
     };
     assert_eq!(
         cutover_session_owner_namespace(&ready).unwrap(),
-        Some(SESSIONS)
+        Some(PRE_COORDINATION_SESSIONS)
     );
     assert_eq!(
         cutover_session_owner_namespace(&NamespacePair::default()).unwrap(),
@@ -781,10 +781,13 @@ fn namespace_cutover_requires_an_exact_operator_gate_until_both_views_are_comple
         authoritative_uuid: Some(uuid),
         ..NamespacePair::default()
     };
-    let sessions = ready(SESSIONS, test_collection_uuid(1));
+    let sessions = ready(PRE_COORDINATION_SESSIONS, test_collection_uuid(1));
     let events = ready(EVENTS, test_collection_uuid(2));
     let collection_ids = BTreeMap::from([
-        (SESSIONS.to_owned(), test_collection_uuid(1)),
+        (
+            PRE_COORDINATION_SESSIONS.to_owned(),
+            test_collection_uuid(1),
+        ),
         (EVENTS.to_owned(), test_collection_uuid(2)),
     ]);
     assert_eq!(
@@ -824,7 +827,7 @@ fn durable_new_database_provenance_resumes_every_partial_bootstrap_state() {
         authoritative_uuid: Some(uuid),
         ..NamespacePair::default()
     };
-    let ready_sessions = ready(SESSIONS, test_collection_uuid(1));
+    let ready_sessions = ready(PRE_COORDINATION_SESSIONS, test_collection_uuid(1));
     let ready_events = ready(EVENTS, test_collection_uuid(2));
     let in_progress = NamespaceCutoverMarker::InProgress {
         origin: "new-database".into(),
@@ -913,7 +916,10 @@ fn namespace_cutover_marker_accepts_only_supported_immutable_provenance() {
     let complete = NamespaceCutoverMarker::Complete {
         origin: "operator-drained".into(),
         collection_ids: BTreeMap::from([
-            (SESSIONS.to_owned(), test_collection_uuid(1)),
+            (
+                PRE_COORDINATION_SESSIONS.to_owned(),
+                test_collection_uuid(1),
+            ),
             (EVENTS.to_owned(), test_collection_uuid(2)),
         ]),
     };
@@ -981,6 +987,180 @@ fn coordination_receipt_provenance_is_exact_and_uuid_bound() {
 }
 
 #[test]
+fn coordination_activation_provenance_is_exact_and_uuid_bound() {
+    let in_progress = CoordinationActivationMarker::InProgress {
+        origin: "new-database".into(),
+    };
+    assert_eq!(
+        validate_coordination_activation_marker(
+            coordination_activation_marker_document(&in_progress).unwrap(),
+        )
+        .unwrap(),
+        in_progress
+    );
+
+    let complete = CoordinationActivationMarker::Complete {
+        origin: "operator-drained".into(),
+        collection_ids: BTreeMap::from([
+            (SESSIONS.to_owned(), test_collection_uuid(7)),
+            (COORDINATION_RECEIPTS.to_owned(), test_collection_uuid(8)),
+        ]),
+    };
+    assert_eq!(
+        validate_coordination_activation_marker(
+            coordination_activation_marker_document(&complete).unwrap(),
+        )
+        .unwrap(),
+        complete
+    );
+
+    for invalid in [
+        doc! {
+            "_id": COORDINATION_ACTIVATION_ID,
+            "protocol": COORDINATION_ACTIVATION_PROTOCOL + 1,
+            "origin": "new-database",
+            "phase": "in-progress",
+        },
+        doc! {
+            "_id": COORDINATION_ACTIVATION_ID,
+            "protocol": COORDINATION_ACTIVATION_PROTOCOL,
+            "origin": NAMESPACE_CUTOVER_OBSERVED_ORIGIN,
+            "phase": "in-progress",
+        },
+        doc! {
+            "_id": COORDINATION_ACTIVATION_ID,
+            "protocol": COORDINATION_ACTIVATION_PROTOCOL,
+            "origin": "new-database",
+            "phase": "complete",
+        },
+        doc! {
+            "_id": COORDINATION_ACTIVATION_ID,
+            "protocol": COORDINATION_ACTIVATION_PROTOCOL,
+            "origin": "new-database",
+            "phase": "in-progress",
+            "extra": true,
+        },
+    ] {
+        assert!(validate_coordination_activation_marker(invalid).is_err());
+    }
+
+    let recorded = BTreeMap::from([
+        (SESSIONS.to_owned(), test_collection_uuid(7)),
+        (COORDINATION_RECEIPTS.to_owned(), test_collection_uuid(8)),
+    ]);
+    assert!(validate_coordination_activation_ids(&recorded, &recorded).is_ok());
+    assert!(validate_coordination_activation_ids(
+        &recorded,
+        &BTreeMap::from([
+            (SESSIONS.to_owned(), test_collection_uuid(9)),
+            (COORDINATION_RECEIPTS.to_owned(), test_collection_uuid(8)),
+        ]),
+    )
+    .is_err());
+}
+
+#[test]
+fn coordination_activation_requires_the_exact_gate_for_every_existing_database() {
+    assert_eq!(
+        coordination_activation_origin(true, false).unwrap(),
+        "new-database"
+    );
+    assert_eq!(
+        coordination_activation_origin(true, true).unwrap(),
+        "new-database"
+    );
+    assert_eq!(
+        coordination_activation_origin(false, true).unwrap(),
+        "operator-drained"
+    );
+    let error = coordination_activation_origin(false, false)
+        .expect_err("an existing database cannot infer an external provider drain");
+    assert!(error
+        .to_string()
+        .contains("CHRONO_MONGODB_COORDINATION_CUTOVER=drained"));
+}
+
+#[test]
+fn coordination_activation_preserves_the_legacy_session_uuid_across_resume_states() {
+    let session_uuid = test_collection_uuid(17);
+    let before_fence = NamespacePair {
+        legacy: Some(NamespaceKind::Collection),
+        legacy_uuid: Some(session_uuid.clone()),
+        ..NamespacePair::default()
+    };
+    let after_rename = NamespacePair {
+        authoritative: Some(NamespaceKind::Collection),
+        authoritative_uuid: Some(session_uuid.clone()),
+        ..NamespacePair::default()
+    };
+    let after_view = NamespacePair {
+        legacy: Some(NamespaceKind::View {
+            source: Some(SESSIONS.into()),
+            pipeline_is_empty: true,
+        }),
+        authoritative: Some(NamespaceKind::Collection),
+        authoritative_uuid: Some(session_uuid.clone()),
+        ..NamespacePair::default()
+    };
+
+    for state in [&before_fence, &after_rename, &after_view] {
+        assert_eq!(
+            coordination_migration_session_id(state).unwrap(),
+            &session_uuid
+        );
+    }
+    assert!(coordination_migration_session_id(&NamespacePair::default()).is_err());
+    assert!(coordination_migration_session_id(&NamespacePair {
+        legacy: Some(NamespaceKind::Collection),
+        authoritative: Some(NamespaceKind::Collection),
+        legacy_uuid: Some(session_uuid.clone()),
+        authoritative_uuid: Some(session_uuid),
+        ..NamespacePair::default()
+    })
+    .is_err());
+}
+
+#[test]
+fn completed_coordination_namespace_is_a_rollback_fence() {
+    let old_binary_pair = NamespacePair {
+        legacy: Some(NamespaceKind::View {
+            source: Some(PRE_COORDINATION_SESSIONS.into()),
+            pipeline_is_empty: true,
+        }),
+        authoritative: Some(NamespaceKind::View {
+            source: Some(SESSIONS.into()),
+            pipeline_is_empty: true,
+        }),
+        ..NamespacePair::default()
+    };
+    assert!(
+        next_namespace_action(&old_binary_pair, LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS,)
+            .is_err()
+    );
+
+    let old_ids = BTreeMap::from([
+        (
+            PRE_COORDINATION_SESSIONS.to_owned(),
+            test_collection_uuid(21),
+        ),
+        (EVENTS.to_owned(), test_collection_uuid(22)),
+    ]);
+    let current_ids = BTreeMap::from([
+        (SESSIONS.to_owned(), test_collection_uuid(21)),
+        (EVENTS.to_owned(), test_collection_uuid(22)),
+    ]);
+    assert!(validate_migrated_namespace_ids(&old_ids, &current_ids).is_ok());
+    assert!(validate_migrated_namespace_ids(
+        &old_ids,
+        &BTreeMap::from([
+            (SESSIONS.to_owned(), test_collection_uuid(23)),
+            (EVENTS.to_owned(), test_collection_uuid(22)),
+        ]),
+    )
+    .is_err());
+}
+
+#[test]
 fn completed_namespace_provenance_rejects_loss_and_replacement() {
     let ready = |authoritative: &str, uuid| NamespacePair {
         legacy: Some(NamespaceKind::View {
@@ -996,7 +1176,10 @@ fn completed_namespace_provenance_rejects_loss_and_replacement() {
     let marker = NamespaceCutoverMarker::Complete {
         origin: "new-database".into(),
         collection_ids: BTreeMap::from([
-            (SESSIONS.to_owned(), test_collection_uuid(1)),
+            (
+                PRE_COORDINATION_SESSIONS.to_owned(),
+                test_collection_uuid(1),
+            ),
             (EVENTS.to_owned(), test_collection_uuid(2)),
         ]),
     };
@@ -1011,7 +1194,7 @@ fn completed_namespace_provenance_rejects_loss_and_replacement() {
     assert!(loss.to_string().contains("no longer complete"));
 
     let replacement = namespace_cutover_authorization(
-        &ready(SESSIONS, test_collection_uuid(3)),
+        &ready(PRE_COORDINATION_SESSIONS, test_collection_uuid(3)),
         &ready(EVENTS, test_collection_uuid(2)),
         false,
         Some(&marker),
@@ -1022,6 +1205,16 @@ fn completed_namespace_provenance_rejects_loss_and_replacement() {
 
 #[test]
 fn protocol_validators_require_the_current_marker_and_session_revision() {
+    let pre_coordination = pre_coordination_session_protocol_validator();
+    let pre_coordination_required = pre_coordination
+        .get_document("$jsonSchema")
+        .unwrap()
+        .get_array("required")
+        .unwrap();
+    assert!(pre_coordination_required.contains(&Bson::String(WRITE_PROTOCOL_FIELD.into())));
+    assert!(pre_coordination_required.contains(&Bson::String("revision".into())));
+    assert!(!pre_coordination_required.contains(&Bson::String(COORDINATION_PROTOCOL_FIELD.into())));
+
     let sessions = session_protocol_validator();
     let schema = sessions
         .get_document("$jsonSchema")
@@ -1095,6 +1288,24 @@ fn protocol_validators_require_the_current_marker_and_session_revision() {
             .get_str("bsonType")
             .unwrap(),
         "string"
+    );
+    assert_eq!(
+        receipt_schema
+            .get_document("properties")
+            .unwrap()
+            .get_document("payload")
+            .unwrap()
+            .get_document("properties")
+            .unwrap()
+            .get_document("value")
+            .unwrap()
+            .get_document("properties")
+            .unwrap()
+            .get_document("completed_by")
+            .unwrap()
+            .get_i32("minLength")
+            .unwrap(),
+        1
     );
 }
 
@@ -2028,6 +2239,60 @@ async fn sorted_collection_documents(database: &Database, collection: &str) -> V
     documents
 }
 
+async fn create_pre_coordination_namespace_state(database: &Database) -> BTreeMap<String, Binary> {
+    database
+        .create_collection(PRE_COORDINATION_SESSIONS)
+        .await
+        .unwrap();
+    database.create_collection(EVENTS).await.unwrap();
+    database.create_collection(TOMBSTONES).await.unwrap();
+    for collection in [PRE_COORDINATION_SESSIONS, EVENTS] {
+        database
+            .run_command(doc! {
+                "collMod": collection,
+                "validator": expected_validator(collection).unwrap(),
+                "validationLevel": "strict",
+                "validationAction": "error",
+            })
+            .await
+            .unwrap();
+    }
+    database
+        .create_collection(LEGACY_SESSIONS)
+        .view_on(PRE_COORDINATION_SESSIONS)
+        .pipeline(Vec::<Document>::new())
+        .await
+        .unwrap();
+    database
+        .create_collection(LEGACY_EVENTS)
+        .view_on(EVENTS)
+        .pipeline(Vec::<Document>::new())
+        .await
+        .unwrap();
+
+    let contracts =
+        collection_contract_snapshot(database, &[PRE_COORDINATION_SESSIONS, EVENTS]).await;
+    let collection_ids = BTreeMap::from([
+        (
+            PRE_COORDINATION_SESSIONS.to_owned(),
+            contracts[PRE_COORDINATION_SESSIONS].uuid.clone().unwrap(),
+        ),
+        (EVENTS.to_owned(), contracts[EVENTS].uuid.clone().unwrap()),
+    ]);
+    database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .insert_one(
+            namespace_cutover_marker_document(&NamespaceCutoverMarker::Complete {
+                origin: "operator-drained".into(),
+                collection_ids: collection_ids.clone(),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    collection_ids
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn real_default_cutover_refusal_does_not_mutate_writable_legacy_namespaces() {
@@ -2070,7 +2335,7 @@ async fn real_default_cutover_refusal_does_not_mutate_writable_legacy_namespaces
     let sessions_before = sorted_collection_documents(&database, LEGACY_SESSIONS).await;
     let events_before = sorted_collection_documents(&database, LEGACY_EVENTS).await;
 
-    let error = match MongoSessionStore::open(&client, &database_name, false).await {
+    let error = match MongoSessionStore::open(&client, &database_name, false, false).await {
         Ok(_) => panic!("writable legacy collections require the explicit offline cutover"),
         Err(error) => error,
     };
@@ -2093,7 +2358,13 @@ async fn real_default_cutover_refusal_does_not_mutate_writable_legacy_namespaces
         sorted_collection_documents(&database, LEGACY_EVENTS).await,
         events_before
     );
-    for absent in [NAMESPACE_CUTOVERS, TOMBSTONES, SESSIONS, EVENTS] {
+    for absent in [
+        NAMESPACE_CUTOVERS,
+        TOMBSTONES,
+        PRE_COORDINATION_SESSIONS,
+        SESSIONS,
+        EVENTS,
+    ] {
         assert!(!names_after.iter().any(|name| name == absent));
     }
 
@@ -2102,7 +2373,191 @@ async fn real_default_cutover_refusal_does_not_mutate_writable_legacy_namespaces
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn real_marker_backed_partial_new_database_bootstrap_resumes_without_an_opt_in() {
+async fn real_existing_database_requires_the_coordination_drain_gate() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!("chrono_coordination_gate_{}_{}", std::process::id(), nonce);
+    let database = client.database(&database_name);
+    let old_ids = create_pre_coordination_namespace_state(&database).await;
+
+    let error = match MongoSessionStore::open(&client, &database_name, false, false).await {
+        Ok(_) => panic!("an existing database must require the coordination drain gate"),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("CHRONO_MONGODB_COORDINATION_CUTOVER=drained"));
+    assert!(database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+        .await
+        .unwrap()
+        .is_none());
+    let contracts =
+        collection_contract_snapshot(&database, &[PRE_COORDINATION_SESSIONS, SESSIONS, EVENTS])
+            .await;
+    assert_eq!(
+        contracts[PRE_COORDINATION_SESSIONS].uuid.as_ref(),
+        old_ids.get(PRE_COORDINATION_SESSIONS)
+    );
+    assert!(!contracts.contains_key(SESSIONS));
+
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_fresh_database_activates_coordination_without_a_drain_gate() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!("chrono_fresh_coordination_{}_{}", std::process::id(), nonce);
+    let database = client.database(&database_name);
+
+    let store = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .expect("a genuinely empty database activates automatically");
+    store.verify_coordinated_namespaces().await.unwrap();
+    assert!(matches!(
+        store.coordination_activation_marker().await.unwrap(),
+        Some(CoordinationActivationMarker::Complete { origin, .. })
+            if origin == "new-database"
+    ));
+
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_in_progress_coordination_activation_resumes_every_namespace_boundary() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+
+    for stage in ["before-fence", "after-fence", "after-rename", "after-view"] {
+        let database_name = format!(
+            "chrono_coordination_resume_{}_{}_{}",
+            stage,
+            std::process::id(),
+            nonce
+        );
+        let database = client.database(&database_name);
+        let old_ids = create_pre_coordination_namespace_state(&database).await;
+        database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .insert_one(
+                coordination_activation_marker_document(
+                    &CoordinationActivationMarker::InProgress {
+                        origin: "operator-drained".into(),
+                    },
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        if stage != "before-fence" {
+            database
+                .run_command(doc! {
+                    "collMod": PRE_COORDINATION_SESSIONS,
+                    "validator": session_protocol_validator(),
+                    "validationLevel": "strict",
+                    "validationAction": "error",
+                })
+                .await
+                .unwrap();
+        }
+        if matches!(stage, "after-rename" | "after-view") {
+            client
+                .database("admin")
+                .run_command(doc! {
+                    "renameCollection": format!("{database_name}.{PRE_COORDINATION_SESSIONS}"),
+                    "to": format!("{database_name}.{SESSIONS}"),
+                    "dropTarget": false,
+                })
+                .await
+                .unwrap();
+        }
+        if stage == "after-view" {
+            database
+                .create_collection(PRE_COORDINATION_SESSIONS)
+                .view_on(SESSIONS)
+                .pipeline(Vec::<Document>::new())
+                .await
+                .unwrap();
+        }
+
+        let store = MongoSessionStore::open(&client, &database_name, false, false)
+            .await
+            .unwrap_or_else(|error| panic!("resume {stage}: {error}"));
+        store.verify_coordinated_namespaces().await.unwrap();
+        assert_eq!(
+            store.collection_ids[SESSIONS],
+            old_ids[PRE_COORDINATION_SESSIONS]
+        );
+        assert!(matches!(
+            store.coordination_activation_marker().await.unwrap(),
+            Some(CoordinationActivationMarker::Complete { .. })
+        ));
+        database.drop().await.unwrap();
+    }
+
+    let database_name = format!(
+        "chrono_coordination_before_complete_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let database = client.database(&database_name);
+    let first = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .unwrap();
+    let session_id = first.collection_ids[SESSIONS].clone();
+    database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .replace_one(
+            doc! { "_id": COORDINATION_ACTIVATION_ID },
+            coordination_activation_marker_document(&CoordinationActivationMarker::InProgress {
+                origin: "new-database".into(),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    drop(first);
+
+    let resumed = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .expect("complete contracts with an in-progress marker resume to completion");
+    assert_eq!(resumed.collection_ids[SESSIONS], session_id);
+    assert!(matches!(
+        resumed.coordination_activation_marker().await.unwrap(),
+        Some(CoordinationActivationMarker::Complete { .. })
+    ));
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_marker_backed_partial_legacy_bootstrap_coordinates_after_the_drain_gate() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
     let client = Client::with_uri_str(&uri)
@@ -2126,22 +2581,20 @@ async fn real_marker_backed_partial_new_database_bootstrap_resumes_without_an_op
         .unwrap();
     database.create_collection(EVENTS).await.unwrap();
 
-    let store = MongoSessionStore::open(&client, &database_name, false)
+    let store = MongoSessionStore::open(&client, &database_name, false, true)
         .await
         .expect("durable new-database provenance resumes the partial bootstrap");
-    for (legacy, authoritative) in [(LEGACY_SESSIONS, SESSIONS), (LEGACY_EVENTS, EVENTS)] {
-        let pair = store.namespace_pair(legacy, authoritative).await.unwrap();
-        assert_eq!(
-            next_namespace_action(&pair, legacy, authoritative).unwrap(),
-            NamespaceAction::Ready
-        );
-    }
-    MongoSessionStore::open(&client, &database_name, false)
+    store.verify_coordinated_namespaces().await.unwrap();
+    MongoSessionStore::open(&client, &database_name, false, false)
         .await
         .expect("completed views remain restartable without an opt-in");
     assert!(matches!(
         store.namespace_cutover_marker().await.unwrap(),
         Some(NamespaceCutoverMarker::Complete { .. })
+    ));
+    assert!(matches!(
+        store.coordination_activation_marker().await.unwrap(),
+        Some(CoordinationActivationMarker::Complete { .. })
     ));
 
     database.drop().await.unwrap();
@@ -2186,7 +2639,7 @@ async fn real_cutover_resume_after_session_rename_preserves_owner_and_history() 
     legacy_session.remove("revision");
     legacy_session.remove(WRITE_PROTOCOL_FIELD);
     database
-        .collection::<Document>(SESSIONS)
+        .collection::<Document>(PRE_COORDINATION_SESSIONS)
         .insert_one(legacy_session)
         .await
         .unwrap();
@@ -2198,7 +2651,7 @@ async fn real_cutover_resume_after_session_rename_preserves_owner_and_history() 
         .insert_one(legacy_event)
         .await
         .unwrap();
-    for authoritative in [SESSIONS, EVENTS] {
+    for authoritative in [PRE_COORDINATION_SESSIONS, EVENTS] {
         database
             .run_command(doc! {
                 "collMod": authoritative,
@@ -2216,24 +2669,13 @@ async fn real_cutover_resume_after_session_rename_preserves_owner_and_history() 
         .await
         .unwrap();
 
-    let store = MongoSessionStore::open(&client, &database_name, false)
+    let store = MongoSessionStore::open(&client, &database_name, false, true)
         .await
         .expect("cutover resumes after the session rename without inferring a delete");
     assert!(store.get(&id).await.unwrap().is_some());
     assert_eq!(store.event_tail(&id).await.unwrap(), 1);
     assert!(!store.is_tombstoned(&id).await.unwrap());
-    assert_eq!(
-        next_namespace_action(
-            &store
-                .namespace_pair(LEGACY_SESSIONS, SESSIONS)
-                .await
-                .unwrap(),
-            LEGACY_SESSIONS,
-            SESSIONS,
-        )
-        .unwrap(),
-        NamespaceAction::Ready
-    );
+    store.verify_coordinated_namespaces().await.unwrap();
     assert_eq!(
         database
             .collection::<Document>(SESSIONS)
@@ -2255,7 +2697,13 @@ async fn real_cutover_resume_after_session_rename_preserves_owner_and_history() 
 }
 
 async fn drop_session_namespace_pairs(database: &Database) {
-    for collection in [LEGACY_SESSIONS, LEGACY_EVENTS, SESSIONS, EVENTS] {
+    for collection in [
+        LEGACY_SESSIONS,
+        PRE_COORDINATION_SESSIONS,
+        LEGACY_EVENTS,
+        SESSIONS,
+        EVENTS,
+    ] {
         database
             .collection::<Document>(collection)
             .drop()
@@ -2277,19 +2725,29 @@ async fn create_fenced_session_namespace_pairs(database: &Database) {
             .await
             .unwrap();
     }
-    for (legacy, authoritative) in [(LEGACY_SESSIONS, SESSIONS), (LEGACY_EVENTS, EVENTS)] {
-        database
-            .create_collection(legacy)
-            .view_on(authoritative)
-            .pipeline(Vec::<Document>::new())
-            .await
-            .unwrap();
-    }
+    database
+        .create_collection(PRE_COORDINATION_SESSIONS)
+        .view_on(SESSIONS)
+        .pipeline(Vec::<Document>::new())
+        .await
+        .unwrap();
+    database
+        .create_collection(LEGACY_SESSIONS)
+        .view_on(PRE_COORDINATION_SESSIONS)
+        .pipeline(Vec::<Document>::new())
+        .await
+        .unwrap();
+    database
+        .create_collection(LEGACY_EVENTS)
+        .view_on(EVENTS)
+        .pipeline(Vec::<Document>::new())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn real_completed_cutover_provenance_rejects_namespace_loss_and_replacement() {
+async fn real_completed_activation_provenance_rejects_session_loss_and_replacement() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
     let client = Client::with_uri_str(&uri)
@@ -2306,7 +2764,7 @@ async fn real_completed_cutover_provenance_rejects_namespace_loss_and_replacemen
     );
     let database = client.database(&database_name);
 
-    let store = MongoSessionStore::open(&client, &database_name, false)
+    let store = MongoSessionStore::open(&client, &database_name, false, false)
         .await
         .expect("a fresh store completes its namespace provenance");
     let marker_before = database
@@ -2317,14 +2775,25 @@ async fn real_completed_cutover_provenance_rejects_namespace_loss_and_replacemen
         .expect("completed provenance is durable");
     let completed = validate_namespace_cutover_marker(marker_before.clone()).unwrap();
     assert!(matches!(completed, NamespaceCutoverMarker::Complete { .. }));
+    let activation_before = database
+        .collection::<Document>(NAMESPACE_CUTOVERS)
+        .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+        .await
+        .unwrap()
+        .expect("completed activation provenance is durable");
+    assert!(matches!(
+        validate_coordination_activation_marker(activation_before.clone()).unwrap(),
+        CoordinationActivationMarker::Complete { .. }
+    ));
     drop(store);
 
     drop_session_namespace_pairs(&database).await;
     create_fenced_session_namespace_pairs(&database).await;
-    let replacement_error = match MongoSessionStore::open(&client, &database_name, false).await {
-        Ok(_) => panic!("replacement collections must not inherit completed provenance"),
-        Err(error) => error,
-    };
+    let replacement_error =
+        match MongoSessionStore::open(&client, &database_name, false, false).await {
+            Ok(_) => panic!("replacement collections must not inherit completed provenance"),
+            Err(error) => error,
+        };
     assert!(replacement_error
         .to_string()
         .contains("UUID no longer matches"));
@@ -2337,15 +2806,24 @@ async fn real_completed_cutover_provenance_rejects_namespace_loss_and_replacemen
             .unwrap(),
         marker_before
     );
+    assert_eq!(
+        database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+            .await
+            .unwrap()
+            .unwrap(),
+        activation_before
+    );
 
     drop_session_namespace_pairs(&database).await;
     let mut names_before = database.list_collection_names().await.unwrap();
     names_before.sort();
-    let loss_error = match MongoSessionStore::open(&client, &database_name, false).await {
+    let loss_error = match MongoSessionStore::open(&client, &database_name, false, false).await {
         Ok(_) => panic!("lost completed namespaces must not become a fresh empty store"),
         Err(error) => error,
     };
-    assert!(loss_error.to_string().contains("no longer complete"));
+    assert!(loss_error.to_string().contains("is missing"));
     let mut names_after = database.list_collection_names().await.unwrap();
     names_after.sort();
     assert_eq!(names_after, names_before);
@@ -2357,6 +2835,15 @@ async fn real_completed_cutover_provenance_rejects_namespace_loss_and_replacemen
             .unwrap()
             .unwrap(),
         marker_before
+    );
+    assert_eq!(
+        database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+            .await
+            .unwrap()
+            .unwrap(),
+        activation_before
     );
 
     database.drop().await.unwrap();
@@ -2375,7 +2862,7 @@ async fn the_real_store_refuses_a_forward_gap_without_committing_it() {
         .expect("clock is after epoch")
         .as_nanos();
     let database = format!("chrono_gap_refusal_{}_{}", std::process::id(), nonce);
-    let store = MongoSessionStore::open(&client, &database, false)
+    let store = MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("test store opens");
     let id = SessionId("sesn_real_gap".into());
@@ -2433,7 +2920,7 @@ async fn a_real_legacy_document_passes_its_first_revision_zero_cas() {
         .insert_one(legacy)
         .await
         .expect("legacy document is seeded before the writer fence");
-    let store = MongoSessionStore::open(&client, &database, true)
+    let store = MongoSessionStore::open(&client, &database, true, true)
         .await
         .expect("test store opens and fences the legacy namespace");
 
@@ -2486,6 +2973,7 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_lease() {
     let mut original = record_with(None);
     original.session.id = SessionId("sesn_legacy_coordination".into());
     original.session.last_seq = 0;
+    original.runtime_id = Some("runtime-generation-zero".into());
     let stored = to_doc(&original).expect("record encodes");
     let mut legacy = mongodb::bson::serialize_to_document(&stored).expect("record serializes");
     assert!(legacy.remove("revision").is_some());
@@ -2499,7 +2987,7 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_lease() {
         .await
         .expect("legacy document is seeded before either writer fence");
 
-    let store = MongoSessionStore::open(&client, &database, true)
+    let store = MongoSessionStore::open(&client, &database, true, true)
         .await
         .expect("test store opens and fences the legacy namespace");
     let record = store
@@ -2528,10 +3016,16 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_lease() {
         operation: SessionOperation::Lifecycle,
         ttl: Duration::from_secs(30),
     };
-    let lease = store
+    let mut lease = store
         .acquire_session_lease(&request)
         .await
         .expect("the first coordination write promotes every required field");
+    assert_eq!(lease.boundary.authority.generation, 0);
+    assert_eq!(
+        lease.boundary.authority.runtime_id.as_deref(),
+        Some("runtime-generation-zero")
+    );
+    assert!(store.legacy_runtime_cleanup_authorized().await.unwrap());
 
     let promoted = store
         .sessions
@@ -2554,6 +3048,45 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_lease() {
         .unwrap()
         .get_datetime("server_now")
         .is_ok());
+
+    let reservation = store
+        .reserve_runtime_generation(&lease, "reserve-generation-one")
+        .await
+        .expect("the first coordinated generation reserves");
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, "runtime-generation-one")
+        .await
+        .expect("the successor candidate registers");
+    let candidate_debts = store
+        .runtime_cleanup_debts(&original.session.id)
+        .await
+        .unwrap();
+    assert_eq!(candidate_debts.len(), 1);
+    assert_eq!(
+        candidate_debts[0].reason,
+        RuntimeCleanupReason::UncommittedCandidate
+    );
+    store
+        .switch_runtime_authority(&mut lease, &candidate)
+        .await
+        .expect("the successor becomes authoritative");
+    let debts = store
+        .runtime_cleanup_debts(&original.session.id)
+        .await
+        .unwrap();
+    assert_eq!(debts.len(), 1);
+    assert_eq!(debts[0].generation, 0);
+    assert_eq!(debts[0].runtime_id, "runtime-generation-zero");
+    assert_eq!(debts[0].reason, RuntimeCleanupReason::RetiredAuthority);
+    store
+        .acknowledge_runtime_cleanup(&lease, &debts[0])
+        .await
+        .expect("the exact generation-zero cleanup is acknowledged");
+    assert!(store
+        .runtime_cleanup_debts(&original.session.id)
+        .await
+        .unwrap()
+        .is_empty());
     store
         .release_session_lease(&lease)
         .await
@@ -2579,7 +3112,7 @@ async fn a_real_store_coordinates_exact_cleanup_before_deletion() {
         .expect("clock is after epoch")
         .as_nanos();
     let database = format!("chrono_exact_coordination_{}_{}", std::process::id(), nonce);
-    let store = MongoSessionStore::open(&client, &database, false)
+    let store = MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("test store opens");
 
@@ -2706,14 +3239,32 @@ async fn a_real_store_coordinates_exact_cleanup_before_deletion() {
         .await
         .expect("exact cleanup is acknowledged");
     store
-        .acknowledge_runtime_cleanup(&cleanup_lease, &retired.cleanup)
-        .await
-        .expect("cleanup acknowledgement retry replays");
-    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
-    store
         .release_session_lease(&cleanup_lease)
         .await
-        .expect("cleanup lease releases");
+        .expect("first cleanup lease releases");
+
+    let current = store.get(&id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let successor_cleanup_lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "successor-cleanup-test".into(),
+            token: "lease-successor-cleanup".into(),
+            boundary: SessionBoundary::for_record(&current, authority.generation),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .expect("successor cleanup lease is acquired");
+    store
+        .acknowledge_runtime_cleanup(&successor_cleanup_lease, &retired.cleanup)
+        .await
+        .expect("a successor authorized lease replays the completed acknowledgement");
+    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
+    store
+        .release_session_lease(&successor_cleanup_lease)
+        .await
+        .expect("successor cleanup lease releases");
     store.delete(&id).await.expect("clean session deletes");
     assert_eq!(
         store
@@ -2733,6 +3284,258 @@ async fn a_real_store_coordinates_exact_cleanup_before_deletion() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_lease_expires_on_the_server_clock_and_allows_a_successor() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_lease_expiry_{}_{}", std::process::id(), nonce);
+    let store = MongoSessionStore::open(&client, &database, false, false)
+        .await
+        .expect("test store opens");
+    let id = SessionId("sesn_server_clock_expiry".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.last_seq = 0;
+    store
+        .create_session_idempotent("seed-server-clock-expiry", &seed, &[])
+        .await
+        .unwrap();
+    let record = store.get(&id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let boundary = SessionBoundary::for_record(&record, authority.generation);
+    let first = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "first-holder".into(),
+            token: "first-token".into(),
+            boundary: boundary.clone(),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_millis(100),
+        })
+        .await
+        .expect("first lease is acquired");
+    assert!(matches!(
+        store
+            .acquire_session_lease(&SessionLeaseRequest {
+                session_id: id.clone(),
+                holder: "successor-holder".into(),
+                token: "successor-token".into(),
+                boundary: boundary.clone(),
+                operation: SessionOperation::Lifecycle,
+                ttl: Duration::from_secs(30),
+            })
+            .await,
+        Err(StoreError::SessionLeaseHeld { .. })
+    ));
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let successor = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "successor-holder".into(),
+            token: "successor-token".into(),
+            boundary,
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(30),
+        })
+        .await
+        .expect("the successor acquires after MongoDB's server time expires the first lease");
+    assert_ne!(successor.token, first.token);
+    store.release_session_lease(&successor).await.unwrap();
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_ordinary_commits_serialize_with_authority_switch_and_retirement() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_commit_coordination_race_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let store = MongoSessionStore::open(&client, &database, false, false)
+        .await
+        .unwrap();
+    let id = SessionId("sesn_commit_coordination_race".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.last_seq = 0;
+    seed.runtime_id = None;
+    store
+        .create_session_idempotent("seed-commit-coordination-race", &seed, &[])
+        .await
+        .unwrap();
+    let record = store.get(&id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let mut lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "commit-coordination-race".into(),
+            token: "lease-commit-coordination-race".into(),
+            boundary: SessionBoundary::for_record(&record, authority.generation),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .unwrap();
+    let reservation = store
+        .reserve_runtime_generation(&lease, "reserve-race-runtime")
+        .await
+        .unwrap();
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, "race-runtime")
+        .await
+        .unwrap();
+
+    let mut ordinary_switch_record = record.clone();
+    ordinary_switch_record.context_ref = Some("ordinary-commit-near-switch".into());
+    let ordinary_switch =
+        store.commit_session_idempotent("ordinary-near-switch", &ordinary_switch_record, &[]);
+    let authority_switch = store.switch_runtime_authority(&mut lease, &candidate);
+    let (ordinary_switch_result, switched) = tokio::join!(ordinary_switch, authority_switch);
+    let switched = switched.expect("the authority switch eventually serializes");
+    assert!(matches!(
+        ordinary_switch_result,
+        Ok(_)
+            | Err(StoreError::RevisionConflict { .. })
+            | Err(StoreError::SessionAuthorityChanged { .. })
+    ));
+    assert_eq!(
+        store.runtime_authority(&id).await.unwrap().unwrap(),
+        switched.boundary.authority
+    );
+    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
+
+    let before_retire = store.get(&id).await.unwrap().unwrap();
+    let mut ordinary_retire_record = before_retire.clone();
+    ordinary_retire_record.context_ref = Some("ordinary-commit-near-retire".into());
+    let ordinary_retire =
+        store.commit_session_idempotent("ordinary-near-retire", &ordinary_retire_record, &[]);
+    let authority_retirement = store.retire_runtime_authority(&mut lease, "retire-race-runtime");
+    let (ordinary_retire_result, retired) = tokio::join!(ordinary_retire, authority_retirement);
+    let retired = retired.expect("the authority retirement eventually serializes");
+    assert!(matches!(
+        ordinary_retire_result,
+        Ok(_)
+            | Err(StoreError::RevisionConflict { .. })
+            | Err(StoreError::SessionAuthorityChanged { .. })
+    ));
+    assert_eq!(
+        store.runtime_cleanup_debts(&id).await.unwrap(),
+        vec![retired.cleanup]
+    );
+    assert!(store
+        .runtime_authority(&id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .is_none());
+
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_snapshot_receipt_audits_do_not_report_healthy_concurrent_coordination_as_corrupt() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_snapshot_coordination_audit_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let store = MongoSessionStore::open(&client, &database, false, false)
+        .await
+        .unwrap();
+    let id = SessionId("sesn_snapshot_coordination_audit".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.last_seq = 0;
+    seed.runtime_id = None;
+    store
+        .create_session_idempotent("seed-snapshot-coordination-audit", &seed, &[])
+        .await
+        .unwrap();
+    let record = store.get(&id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let mut lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "snapshot-audit-writer".into(),
+            token: "lease-snapshot-audit".into(),
+            boundary: SessionBoundary::for_record(&record, authority.generation),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .unwrap();
+
+    let writer_store = store.clone();
+    let writer = async move {
+        for generation in 1..=8 {
+            let reservation = writer_store
+                .reserve_runtime_generation(&lease, &format!("snapshot-reservation-{generation}"))
+                .await?;
+            let candidate = writer_store
+                .register_runtime_candidate(
+                    &lease,
+                    &reservation,
+                    &format!("snapshot-runtime-{generation}"),
+                )
+                .await?;
+            let switched = writer_store
+                .switch_runtime_authority(&mut lease, &candidate)
+                .await?;
+            if let Some(cleanup) = switched.cleanup {
+                writer_store
+                    .acknowledge_runtime_cleanup(&lease, &cleanup)
+                    .await?;
+            }
+        }
+        Ok::<_, StoreError>(lease)
+    };
+    let audit_store = store.clone();
+    let auditor = async move {
+        for _ in 0..32 {
+            audit_store.validate_coordination_receipts().await?;
+            tokio::task::yield_now().await;
+        }
+        Ok::<_, StoreError>(())
+    };
+    let (writer_result, audit_result) = tokio::join!(writer, auditor);
+    let lease = writer_result.expect("healthy coordination completes");
+    audit_result.expect("every snapshot audit observes a complete transaction state");
+    store.release_session_lease(&lease).await.unwrap();
+    store.validate_coordination_receipts().await.unwrap();
+
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn a_real_store_refuses_missing_cleanup_receipts_at_every_deletion_gate() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
@@ -2748,7 +3551,7 @@ async fn a_real_store_refuses_missing_cleanup_receipts_at_every_deletion_gate() 
         std::process::id(),
         nonce
     );
-    let store = MongoSessionStore::open(&client, &database, false)
+    let store = MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("test store opens");
     let id = SessionId("sesn_missing_cleanup_receipt".into());
@@ -2806,7 +3609,7 @@ async fn a_real_store_refuses_missing_cleanup_receipts_at_every_deletion_gate() 
         store.check_readiness().await,
         Err(StoreError::Malformed(_))
     ));
-    let restart = match MongoSessionStore::open(&client, &database, false).await {
+    let restart = match MongoSessionStore::open(&client, &database, false, false).await {
         Ok(_) => panic!("startup must reject a missing required cleanup receipt"),
         Err(error) => error,
     };
@@ -2836,7 +3639,7 @@ async fn a_real_store_rejects_null_cleanup_completion_without_hiding_the_debt() 
         std::process::id(),
         nonce
     );
-    let store = MongoSessionStore::open(&client, &database, false)
+    let store = MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("test store opens");
     let id = SessionId("sesn_null_cleanup_completion".into());
@@ -2913,7 +3716,7 @@ async fn a_real_store_rejects_null_cleanup_completion_without_hiding_the_debt() 
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn a_real_store_refuses_a_replaced_coordination_receipt_collection() {
+async fn a_real_store_refuses_a_missing_or_replaced_coordination_receipt_collection() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
     let client = Client::with_uri_str(&uri)
@@ -2928,7 +3731,7 @@ async fn a_real_store_refuses_a_replaced_coordination_receipt_collection() {
         std::process::id(),
         nonce
     );
-    let store = MongoSessionStore::open(&client, &database, false)
+    let store = MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("test store opens");
     let original_id = store
@@ -2942,6 +3745,17 @@ async fn a_real_store_refuses_a_replaced_coordination_receipt_collection() {
         .drop()
         .await
         .expect("test removes the proven receipt collection");
+    let missing_error = match MongoSessionStore::open(&client, &database, false, false).await {
+        Ok(_) => panic!("a completed activation must not recreate a missing receipt collection"),
+        Err(error) => error,
+    };
+    assert!(missing_error.to_string().contains("is missing"));
+    assert!(store
+        .current_coordination_receipts_id()
+        .await
+        .unwrap()
+        .is_none());
+
     store
         .database
         .create_collection(COORDINATION_RECEIPTS)
@@ -2954,7 +3768,7 @@ async fn a_real_store_refuses_a_replaced_coordination_receipt_collection() {
         .expect("replacement UUID reads");
     assert_ne!(replacement_id, original_id);
 
-    let error = match MongoSessionStore::open(&client, &database, false).await {
+    let error = match MongoSessionStore::open(&client, &database, false, false).await {
         Ok(_) => panic!("a replacement receipt namespace must not be adopted"),
         Err(error) => error,
     };
@@ -2981,7 +3795,7 @@ async fn a_real_standalone_is_rejected_before_the_store_reports_ready() {
         .as_nanos();
     let database = format!("chrono_standalone_refusal_{}_{}", std::process::id(), nonce);
 
-    let error = match MongoSessionStore::open(&client, &database, false).await {
+    let error = match MongoSessionStore::open(&client, &database, false, false).await {
         Ok(_) => panic!("a standalone cannot support session transactions"),
         Err(error) => error,
     };
@@ -3029,10 +3843,11 @@ async fn real_legacy_names_are_readable_views_but_refuse_every_old_mutation() {
         .await
         .expect("legacy event is seeded");
 
-    let store = MongoSessionStore::open(&client, &database, true)
+    let store = MongoSessionStore::open(&client, &database, true, true)
         .await
         .expect("cutover succeeds");
     let legacy_sessions = db.collection::<Document>(LEGACY_SESSIONS);
+    let pre_coordination_sessions = db.collection::<Document>(PRE_COORDINATION_SESSIONS);
     let legacy_events = db.collection::<Document>(LEGACY_EVENTS);
     assert!(legacy_sessions
         .find_one(doc! { "_id": "sesn_view_fence" })
@@ -3076,6 +3891,22 @@ async fn real_legacy_names_are_readable_views_but_refuse_every_old_mutation() {
         .delete_one(doc! { "_id": "sesn_view_fence" })
         .await
         .is_err());
+    assert!(pre_coordination_sessions
+        .insert_one(doc! { "_id": "old-v2-insert" })
+        .await
+        .is_err());
+    assert!(pre_coordination_sessions
+        .replace_one(
+            doc! { "_id": "sesn_view_fence" },
+            doc! { "_id": "sesn_view_fence" }
+        )
+        .with_options(ReplaceOptions::builder().upsert(true).build())
+        .await
+        .is_err());
+    assert!(pre_coordination_sessions
+        .delete_one(doc! { "_id": "sesn_view_fence" })
+        .await
+        .is_err());
     assert!(legacy_events
         .insert_one(doc! {
             "session_id": "sesn_view_fence",
@@ -3112,7 +3943,7 @@ async fn a_real_tombstoned_session_cannot_be_recreated_or_appended_to() {
         .expect("clock is after epoch")
         .as_nanos();
     let database = format!("chrono_tombstone_{}_{}", std::process::id(), nonce);
-    let store = MongoSessionStore::open(&client, &database, false)
+    let store = MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("test store opens");
     let mut record = record_with(None);
@@ -3195,7 +4026,7 @@ async fn real_cutover_rejects_an_advertised_hole_but_allows_physical_history_ahe
         .await
         .unwrap();
 
-    let error = match MongoSessionStore::open(&client, &ahead_database, true).await {
+    let error = match MongoSessionStore::open(&client, &ahead_database, true, true).await {
         Ok(_) => panic!("an advertised second event cannot survive with only event one"),
         Err(error) => error,
     };
@@ -3229,7 +4060,7 @@ async fn real_cutover_rejects_an_advertised_hole_but_allows_physical_history_ahe
         .await
         .unwrap();
 
-    let store = MongoSessionStore::open(&client, &behind_database, true)
+    let store = MongoSessionStore::open(&client, &behind_database, true, true)
         .await
         .expect("a physical tail ahead of the record is recoverable");
     assert_eq!(
@@ -3257,11 +4088,14 @@ async fn real_namespace_cutover_resumes_known_states_and_rejects_ambiguous_ones(
 
     let partial_name = format!("chrono_cutover_partial_{}_{}", std::process::id(), nonce);
     let partial = client.database(&partial_name);
-    partial.create_collection(SESSIONS).await.unwrap();
-    let store = MongoSessionStore::open(&client, &partial_name, true)
+    partial
+        .create_collection(PRE_COORDINATION_SESSIONS)
+        .await
+        .unwrap();
+    let store = MongoSessionStore::open(&client, &partial_name, true, true)
         .await
         .expect("rename-complete/view-missing state resumes");
-    MongoSessionStore::open(&client, &partial_name, false)
+    MongoSessionStore::open(&client, &partial_name, false, false)
         .await
         .expect("a complete cutover is idempotent");
     partial
@@ -3285,15 +4119,23 @@ async fn real_namespace_cutover_resumes_known_states_and_rejects_ambiguous_ones(
     let ambiguous_name = format!("chrono_cutover_ambiguous_{}_{}", std::process::id(), nonce);
     let ambiguous = client.database(&ambiguous_name);
     ambiguous.create_collection(LEGACY_SESSIONS).await.unwrap();
-    ambiguous.create_collection(SESSIONS).await.unwrap();
-    assert!(MongoSessionStore::open(&client, &ambiguous_name, true)
+    ambiguous
+        .create_collection(PRE_COORDINATION_SESSIONS)
         .await
-        .is_err());
+        .unwrap();
+    assert!(
+        MongoSessionStore::open(&client, &ambiguous_name, true, true)
+            .await
+            .is_err()
+    );
     ambiguous.drop().await.unwrap();
 
     let wrong_name = format!("chrono_cutover_wrong_view_{}_{}", std::process::id(), nonce);
     let wrong = client.database(&wrong_name);
-    wrong.create_collection(SESSIONS).await.unwrap();
+    wrong
+        .create_collection(PRE_COORDINATION_SESSIONS)
+        .await
+        .unwrap();
     wrong.create_collection("wrong_sessions").await.unwrap();
     wrong
         .create_collection(LEGACY_SESSIONS)
@@ -3301,7 +4143,7 @@ async fn real_namespace_cutover_resumes_known_states_and_rejects_ambiguous_ones(
         .pipeline(Vec::<Document>::new())
         .await
         .unwrap();
-    assert!(MongoSessionStore::open(&client, &wrong_name, true)
+    assert!(MongoSessionStore::open(&client, &wrong_name, true, true)
         .await
         .is_err());
     wrong.drop().await.unwrap();
@@ -3320,7 +4162,7 @@ async fn a_real_late_receipt_failure_aborts_events_and_record_replacement_too() 
         .expect("clock is after epoch")
         .as_nanos();
     let database = format!("chrono_atomic_abort_{}_{}", std::process::id(), nonce);
-    let store = MongoSessionStore::open(&client, &database, false)
+    let store = MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("test store opens");
     let mut original = record_with(None);
@@ -3382,7 +4224,7 @@ async fn a_real_raw_append_and_delete_serialize_without_leaving_orphan_events() 
         .expect("clock is after epoch")
         .as_nanos();
     let database = format!("chrono_append_delete_race_{}_{}", std::process::id(), nonce);
-    let store = MongoSessionStore::open(&client, &database, false)
+    let store = MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("test store opens");
 
@@ -3427,7 +4269,7 @@ async fn a_real_raw_append_and_delete_serialize_without_leaving_orphan_events() 
         assert!(store.is_tombstoned(&id).await.unwrap());
     }
 
-    MongoSessionStore::open(&client, &database, false)
+    MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("the post-fence audit accepts every race result");
     client.database(&database).drop().await.unwrap();
