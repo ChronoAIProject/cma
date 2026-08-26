@@ -29,7 +29,7 @@ use axum::{
     Router,
 };
 
-use crate::rest::{Problem, SessionsState};
+use crate::rest::SessionsState;
 use crate::{InterfaceProfile, Operation};
 
 mod admission;
@@ -45,11 +45,11 @@ mod resources;
 mod run;
 mod run_ending;
 mod state;
-mod thread_alias;
-mod turn_admission;
 #[cfg(test)]
 #[path = "steer_tests.rs"]
 mod steer_tests;
+mod thread_alias;
+mod turn_admission;
 
 pub use state::initial_state;
 

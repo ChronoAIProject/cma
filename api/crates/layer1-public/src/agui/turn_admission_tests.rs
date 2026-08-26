@@ -8,7 +8,10 @@ fn a_run_fingerprint_is_the_action_not_its_envelope() {
     let same = RunAction::Prompt("do the work".into());
     let changed = RunAction::Prompt("do different work".into());
 
-    assert_eq!(run_fingerprint(&first).unwrap(), run_fingerprint(&same).unwrap());
+    assert_eq!(
+        run_fingerprint(&first).unwrap(),
+        run_fingerprint(&same).unwrap()
+    );
     assert_ne!(
         run_fingerprint(&first).unwrap(),
         run_fingerprint(&changed).unwrap()

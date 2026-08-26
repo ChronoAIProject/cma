@@ -1430,11 +1430,7 @@ async fn wait_until_count(counter: &AtomicUsize, expected: usize, description: &
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    assert_eq!(
-        counter.load(Ordering::SeqCst),
-        expected,
-        "{description}"
-    );
+    assert_eq!(counter.load(Ordering::SeqCst), expected, "{description}");
 }
 
 fn profile_record(sequence: usize, owner: &SubjectId) -> EnvironmentProfile {
@@ -2426,9 +2422,7 @@ async fn a_fresh_agui_run_survives_a_dropped_body_and_replays_both_thread_names_
         assert_eq!(replayed_start["type"], "RUN_STARTED");
         assert_agui_ids(&replayed_start, run_id, &effective);
         assert!(
-            !replayed_wire
-                .lines()
-                .any(|line| line.starts_with("id:")),
+            !replayed_wire.lines().any(|line| line.starts_with("id:")),
             "a replay retains the original synthetic boundary: {replayed_wire:?}"
         );
     }
@@ -2520,23 +2514,29 @@ async fn a_deferred_prompt_suppresses_its_durable_turn_started_projection() {
     let (synthetic, synthetic_wire) = next_agui_frame_and_wire(&mut body).await;
     let effective = SessionId(synthetic["threadId"].as_str().unwrap().to_string());
     assert_eq!(synthetic["type"], "RUN_STARTED");
-    assert!(
-        !synthetic_wire
-            .lines()
-            .any(|line| line.starts_with("id:"))
-    );
+    assert!(!synthetic_wire.lines().any(|line| line.starts_with("id:")));
 
     pause.release();
     wait_until_ready(&sessions, &caller, &effective).await;
-    let (next, next_wire) = next_agui_frame_and_wire(&mut body).await;
-    assert_eq!(
-        next["type"], "TEXT_MESSAGE_START",
-        "replay begins after the durable TurnStarted: {next}"
-    );
-    assert!(
-        next_wire.lines().any(|line| line.starts_with("id:")),
-        "the user echo is durable: {next_wire:?}"
-    );
+    for (index, expected) in [
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (next, next_wire) = next_agui_frame_and_wire(&mut body).await;
+        assert_eq!(
+            next["type"], expected,
+            "replay begins after the durable TurnStarted: {next}"
+        );
+        assert_eq!(
+            next_wire.lines().any(|line| line.starts_with("id:")),
+            index == 2,
+            "only the user echo's final projection frame is numbered: {next_wire:?}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -2593,6 +2593,80 @@ async fn an_explicit_agui_run_id_replays_one_admission_and_refuses_changed_input
         ))
         .await
         .expect("the mismatch route answers");
+    let problem = assert_problem(mismatch, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "agui_operation_reused");
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn an_explicit_mid_turn_capability_refusal_is_replayable() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+
+    let first = app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0,
+                "runId": "run_open_for_steer_refusal",
+                "messages": [{ "role": "user", "content": "begin the turn" }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the first run route answers");
+    assert_eq!(first.status(), StatusCode::OK);
+    drop(first);
+    wait_until_count(
+        kernel.conversation_inputs.as_ref(),
+        1,
+        "the first prompt starts the running turn",
+    )
+    .await;
+
+    let denied_run_id = "run_replayable_steer_refusal";
+    for _ in 0..2 {
+        let denied = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/v1/agui/run",
+                serde_json::json!({
+                    "threadId": id.0,
+                    "runId": denied_run_id,
+                    "messages": [{ "role": "user", "content": "redirect the turn" }]
+                })
+                .to_string(),
+            ))
+            .await
+            .expect("the denied run route answers");
+        let problem = assert_problem(denied, StatusCode::UNPROCESSABLE_ENTITY).await;
+        assert_eq!(problem["code"], "capability_unsupported");
+        assert_eq!(problem["capability"], "steer");
+    }
+
+    let mismatch = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0,
+                "runId": denied_run_id,
+                "messages": [{ "role": "user", "content": "different redirect" }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the mismatched retry route answers");
     let problem = assert_problem(mismatch, StatusCode::UNPROCESSABLE_ENTITY).await;
     assert_eq!(problem["code"], "agui_operation_reused");
     assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
@@ -2765,13 +2839,7 @@ async fn an_agui_operation_store_outage_fails_closed_before_creation() {
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn provisioning_timeout_is_a_terminal_cursorless_run_error() {
-    let TestSurface {
-        app,
-        sessions,
-        kernel,
-        caller,
-        ..
-    } = test_surface(true);
+    let TestSurface { app, kernel, .. } = test_surface(true);
     let pause = kernel.pause_next_provision().await;
     let request = json_request(
         Method::POST,
@@ -2806,19 +2874,20 @@ async fn provisioning_timeout_is_a_terminal_cursorless_run_error() {
     let (error, error_wire) = next_agui_frame_and_wire(&mut body).await;
     assert_eq!(error["type"], "RUN_ERROR");
     assert_eq!(error["code"], "provisioning_timeout");
-    assert_agui_ids(
-        &error,
-        "run_provisioning_timeout_contract",
-        &effective,
-    );
+    assert_agui_ids(&error, "run_provisioning_timeout_contract", &effective);
     assert!(
         !error_wire.lines().any(|line| line.starts_with("id:")),
         "a synthetic admission failure has no durable cursor: {error_wire:?}"
     );
-    assert!(body.next().await.is_none(), "RUN_ERROR terminates the SSE body");
+    assert!(
+        body.next().await.is_none(),
+        "RUN_ERROR terminates the SSE body"
+    );
 
     pause.release();
-    wait_until_ready(&sessions, &caller, &effective).await;
+    for _ in 0..4 {
+        tokio::task::yield_now().await;
+    }
     assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 0);
 }
 
