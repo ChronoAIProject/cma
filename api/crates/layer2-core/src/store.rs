@@ -19,7 +19,7 @@ use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
 use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
-use crate::session::{Session, SessionStatus};
+use crate::session::{Session, SessionStatus, TriggerSessionOrigin};
 use crate::Reserved;
 
 /// Records one internal store read asks for while walking a complete set.
@@ -47,6 +47,11 @@ pub struct SessionRecord {
     pub runtime_id: Option<String>,
     /// Where this session's accumulated agent context is stored, if any.
     pub context_ref: Option<String>,
+    /// Trigger authority and repository workspace pinned at session creation.
+    ///
+    /// Kept off the public `Session`: clients receive the Launch/session link,
+    /// while only the control plane may resolve the machine-owned object.
+    pub trigger_origin: Option<TriggerSessionOrigin>,
     /// Store-owned optimistic revision.
     ///
     /// Zero means the record has not been created yet. Stores increment this
@@ -64,6 +69,7 @@ impl SessionRecord {
             session,
             runtime_id: None,
             context_ref: None,
+            trigger_origin: None,
             revision: 0,
         }
     }
@@ -550,7 +556,11 @@ pub trait SessionStore: Send + Sync {
 /// hold a different opinion about who may read what.
 #[async_trait::async_trait]
 pub trait EnvironmentProfileStore: Send + Sync {
-    /// Create a profile with a new identifier.
+    /// Insert a profile with a new identifier.
+    ///
+    /// This operation must never replace an existing row. Identifier
+    /// collisions are failures, including when two control-plane replicas race
+    /// to create the same deterministic profile.
     async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError>;
 
     /// Atomically replace caller-controlled content on an existing profile.
@@ -747,6 +757,20 @@ pub trait ContextStore: Send + Sync {
 
     /// Remove a session's context.
     async fn delete(&self, reference: &str) -> Result<(), StoreError>;
+}
+
+/// Loads a Trigger session's exact repository workspace for runtime handoff.
+///
+/// Implementations authorize the read from the session owner and the durable
+/// Launch identity. The sandbox receives only the returned bytes and integrity
+/// metadata, never object-storage authority.
+#[async_trait::async_trait]
+pub trait SessionWorkspaceSource: Send + Sync {
+    async fn load_workspace(
+        &self,
+        owner: &SubjectId,
+        origin: &TriggerSessionOrigin,
+    ) -> Result<Option<Vec<u8>>, StoreError>;
 }
 
 #[cfg(test)]

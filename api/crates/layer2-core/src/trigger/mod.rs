@@ -22,4 +22,4 @@ pub use store::*;
 pub use workspace::*;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

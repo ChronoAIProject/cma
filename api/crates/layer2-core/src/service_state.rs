@@ -44,6 +44,8 @@ pub(crate) struct Attachment {
 /// rebuilt when a client attaches.
 pub(crate) struct SessionEntry {
     pub(crate) session: Session,
+    /// Internal Trigger provenance retained across live-entry flushes.
+    pub(crate) trigger_origin: Option<crate::session::TriggerSessionOrigin>,
     /// This session's durable FIFO, kept alive while its runtime is live.
     pub(crate) event_log: Arc<crate::log::SessionLog>,
     /// Owner-delegated credential last handed to the runtime. Held so a refresh
@@ -228,6 +230,8 @@ pub struct SessionService {
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
     /// Where this session's skills are fetched from, when anything can.
     pub(crate) skills: Option<Arc<dyn crate::store::SkillSource>>,
+    /// Repository bytes for Trigger sessions, reached only by the control plane.
+    pub(crate) workspaces: Option<Arc<dyn crate::store::SessionWorkspaceSource>>,
     /// Sessions whose runtime has said it cannot be carried onto a newer one.
     ///
     /// Held in memory rather than recorded, deliberately: it is a fact about a
@@ -293,6 +297,8 @@ pub struct SessionPorts {
     pub credentials: Option<Arc<dyn CredentialSource>>,
     /// Where a session's skills are fetched from.
     pub skills: Option<Arc<dyn crate::store::SkillSource>>,
+    /// Exact Trigger workspace source used for every runtime generation.
+    pub workspaces: Option<Arc<dyn crate::store::SessionWorkspaceSource>>,
     /// The deployment's own settings, when this process has a store for them.
     ///
     /// `None` becomes `unconfigured()`, so sessions still use shipped bounds.
