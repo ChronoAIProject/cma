@@ -185,8 +185,14 @@ impl SessionService {
             return Err(CoreError::SessionRotating);
         }
         let entries = self.entries.read().await;
+        let live_is_rotating = entries
+            .get(id)
+            .is_some_and(|entry| entry.session.status.is_rotating());
         let missing_live_entry = !entries.contains_key(id);
         drop(entries);
+        if live_is_rotating {
+            return Err(CoreError::SessionRotating);
+        }
         if missing_live_entry {
             let rotation_in_progress = self.rotation_in_progress(id).await;
             if rotation_in_progress {

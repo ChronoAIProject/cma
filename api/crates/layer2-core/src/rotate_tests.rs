@@ -17,7 +17,7 @@ use tokio::sync::Notify;
 use crate::commit_fault_support::CommitFaultStore;
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
-use crate::session::{ProvisioningStage, SessionStatus};
+use crate::session::{ProvisioningStage, SessionStatus, StopReason};
 use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
     await_settled, service_on_version, service_on_version_with_skills, spec, user, FakeAdapter,
@@ -581,6 +581,56 @@ async fn a_stopped_session_is_not_carried_anywhere() {
             .status,
         SessionStatus::Idle,
     );
+}
+
+#[tokio::test]
+async fn an_approval_wait_is_not_rotated_away_from_its_runtime_local_request() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("approval-wait-owner");
+
+    let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
+    let created = old.create_session(&alice, spec()).await.expect("created");
+    await_settled(&old, &alice, &created.id).await;
+    let mut waiting = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    waiting.session.status = SessionStatus::Idle;
+    waiting.session.stop_reason = Some(StopReason::RequiresAction);
+    store
+        .seed(&waiting)
+        .await
+        .expect("the approval wait is durable");
+
+    let upgraded = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    assert!(
+        waiting.session.capabilities.snapshot,
+        "the approval wait must otherwise be eligible for handover"
+    );
+    assert!(
+        waiting.session.wants_runtime(),
+        "the blocked runtime remains entitled"
+    );
+    assert!(
+        !upgraded.needs_rotation(&waiting),
+        "rotation must not sever the request that the runtime is waiting on"
+    );
+    assert!(
+        matches!(
+            upgraded
+                .change_plane(
+                    &alice,
+                    &created.id,
+                    crate::options::SessionMode::Conversation,
+                )
+                .await,
+            Err(crate::error::CoreError::InvalidState)
+        ),
+        "a plane handover must wait for the runtime-local request to resolve"
+    );
+    assert_eq!(adapter.running_count().await, 1);
 }
 
 #[tokio::test]
@@ -2011,18 +2061,18 @@ async fn a_permanently_refused_replacement_preserves_the_old_authority() {
             }
         )
     });
-    let terminated = failed_attempt.iter().position(|event| {
+    let restored = failed_attempt.iter().position(|event| {
         matches!(
             &event.kind,
             EventKind::StatusChanged {
-                status: SessionStatus::Terminated,
+                status: SessionStatus::Ready,
                 ..
             }
         )
     });
     assert!(
         rotating
-            .zip(terminated)
+            .zip(restored)
             .is_some_and(|(start, end)| start < end),
         "the bounded failed attempt did not end after it began: {failed_attempt:?}"
     );
@@ -2030,11 +2080,11 @@ async fn a_permanently_refused_replacement_preserves_the_old_authority() {
         failed_attempt.iter().all(|event| !matches!(
             &event.kind,
             EventKind::StatusChanged {
-                status: SessionStatus::Ready,
+                status: SessionStatus::Terminated,
                 ..
             }
         )),
-        "a permanently failed attempt fabricated readiness inside its bounded cursor window: \
+        "a permanently failed attempt terminated the session instead of restoring it: \
          {failed_attempt:?}"
     );
 }

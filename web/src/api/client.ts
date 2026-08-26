@@ -3,11 +3,12 @@
  *
  * Everything below is `@chronoai/cma-sdk` bound to one configuration: the
  * empty one. That means same-origin paths authenticated by the cookie the
- * browser attaches, which is exactly what this deployment needs — the bundle
- * is served by a proxy that forwards `/api/` and `/auth/` onward, so no host
- * is compiled in and no token is ever handled in the browser. A build that
- * knew the API's address would need rebuilding to move it, and a token in
- * script gives up the one property an http-only cookie has.
+ * browser attaches, which is exactly what this deployment needs. The Gateway
+ * sends API, auth, and discovery paths on that origin directly to the control
+ * plane; nginx supplies the same paths when the image is reached without the
+ * managed route. No host is compiled in and no token is ever handled in the
+ * browser. A build that knew the API's address would need rebuilding to move
+ * it, and a token in script gives up the one property an http-only cookie has.
  *
  * The binding is the point rather than an implementation detail. `CLAUDE.md`
  * §1 makes this the reference client for the public interfaces, and a

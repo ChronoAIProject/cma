@@ -607,6 +607,7 @@ async fn rotation_completes_while_the_deployment_is_at_capacity() {
     let rotated = store.get(&created.id).await.unwrap().unwrap();
     assert_eq!(rotated.session.status, SessionStatus::Ready);
     assert_eq!(rotated.session.rotations, 1);
+    replacement.reconcile().await;
     assert_eq!(adapter.running_count().await, 1);
 }
 

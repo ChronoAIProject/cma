@@ -861,6 +861,13 @@ async fn a_recorded_cleanup_debt_is_reclaimed_under_fresh_authority() {
     let first = service(Arc::clone(&store), Arc::clone(&adapter));
     let created = first.create_session(&alice, spec()).await.expect("created");
     await_settled(&first, &alice, &created.id).await;
+    let original = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .unwrap();
     drop(first);
 
     let retired = switch_to_test_candidate(&store, &adapter, &created.id, "generation-one").await;
@@ -868,7 +875,8 @@ async fn a_recorded_cleanup_debt_is_reclaimed_under_fresh_authority() {
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
     let recovered = restarted.reconcile().await;
 
-    assert_eq!(recovered.orphaned_runtimes, 1);
+    assert_eq!(recovered.orphaned_runtimes, 2);
+    assert!(!adapter.running.lock().await.contains_key(&original));
     assert!(!adapter
         .running
         .lock()
@@ -879,9 +887,11 @@ async fn a_recorded_cleanup_debt_is_reclaimed_under_fresh_authority() {
         .lock()
         .await
         .contains_key(&current.runtime_id));
-    let debts = store.runtime_cleanup_debts(&created.id).await.unwrap();
-    assert_eq!(debts.len(), 1, "only the unverifiable legacy debt remains");
-    assert_eq!(debts[0].generation, 0);
+    assert!(store
+        .runtime_cleanup_debts(&created.id)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -894,7 +904,21 @@ async fn coordinated_readoption_refuses_to_attach_without_a_durable_lease() {
     await_settled(&first, &alice, &created.id).await;
     drop(first);
 
-    let current = switch_to_test_candidate(&store, &adapter, &created.id, "generation-one").await;
+    let record = store.get(&created.id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(&created.id).await.unwrap().unwrap();
+    let current_runtime = record.runtime_id.clone().unwrap();
+    let current_generation = authority.generation;
+    let rival = SessionLeaseRequest::new(
+        created.id.clone(),
+        "rival-readoption-holder",
+        SessionBoundary {
+            status: record.session.status,
+            authority,
+        },
+        SessionOperation::Readopt,
+        Duration::from_secs(30),
+    );
+    let _held = store.acquire_session_lease(&rival).await.unwrap();
     let channels_before = adapter.senders.lock().await.len();
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
     let recovered = restarted.reconcile().await;
@@ -903,11 +927,7 @@ async fn coordinated_readoption_refuses_to_attach_without_a_durable_lease() {
     assert_eq!(recovered.reprovisioned_sessions, 0);
     assert_eq!(recovered.deferred_sessions, 1);
     assert_eq!(adapter.senders.lock().await.len(), channels_before);
-    assert!(adapter
-        .running
-        .lock()
-        .await
-        .contains_key(&current.runtime_id));
+    assert!(adapter.running.lock().await.contains_key(&current_runtime));
     assert_eq!(
         store
             .runtime_authority(&created.id)
@@ -915,7 +935,7 @@ async fn coordinated_readoption_refuses_to_attach_without_a_durable_lease() {
             .unwrap()
             .unwrap()
             .generation,
-        current.generation.get()
+        current_generation
     );
 }
 
@@ -927,13 +947,10 @@ async fn legacy_cleanup_requires_the_irreversible_old_writer_drain_proof() {
     let first = service(Arc::clone(&store), Arc::clone(&adapter));
     let created = first.create_session(&alice, spec()).await.expect("created");
     await_settled(&first, &alice, &created.id).await;
-    let legacy_runtime = store
-        .get(&created.id)
-        .await
-        .unwrap()
-        .unwrap()
-        .runtime_id
-        .unwrap();
+    let legacy = store.get(&created.id).await.unwrap().unwrap();
+    let legacy_runtime = legacy.runtime_id.clone().unwrap();
+    store.seed(&legacy).await.expect("seed legacy authority");
+    adapter.generations.lock().await.remove(&legacy_runtime);
     drop(first);
 
     let current = switch_to_test_candidate(&store, &adapter, &created.id, "generation-one").await;
@@ -969,6 +986,13 @@ async fn delayed_cleanup_cannot_delete_a_handle_reused_at_the_same_generation() 
     let first = service(Arc::clone(&store), Arc::clone(&adapter));
     let created = first.create_session(&alice, spec()).await.expect("created");
     await_settled(&first, &alice, &created.id).await;
+    let original = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .unwrap();
     drop(first);
 
     let retired = switch_to_test_candidate(&store, &adapter, &created.id, "generation-one").await;
@@ -982,7 +1006,7 @@ async fn delayed_cleanup_cannot_delete_a_handle_reused_at_the_same_generation() 
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
     let recovered = restarted.reconcile().await;
 
-    assert_eq!(recovered.orphaned_runtimes, 0);
+    assert_eq!(recovered.orphaned_runtimes, 1);
     assert!(adapter
         .running
         .lock()
@@ -993,13 +1017,15 @@ async fn delayed_cleanup_cannot_delete_a_handle_reused_at_the_same_generation() 
         .lock()
         .await
         .contains_key(&current.runtime_id));
-    assert!(adapter.terminated.lock().await.is_empty());
+    assert_eq!(adapter.terminated.lock().await.as_slice(), &[original]);
     assert!(store
         .runtime_cleanup_debts(&created.id)
         .await
         .unwrap()
         .iter()
-        .any(|debt| debt.runtime_id == retired.runtime_id && debt.generation == 1));
+        .any(|debt| {
+            debt.runtime_id == retired.runtime_id && debt.generation == retired.generation.get()
+        }));
 }
 
 #[tokio::test]

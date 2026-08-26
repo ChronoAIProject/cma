@@ -222,9 +222,9 @@ pub struct SessionService {
     ///
     /// Separate from lifecycle ordering because opening a conversation may wait
     /// on a human-paced sign-in. Within this process, the permit spans the
-    /// history read, network open, folder creation and installation so two
-    /// callers cannot leave two sockets draining and folding the same runtime
-    /// conversation.
+    /// history read, network open, folder creation, installation, and durable
+    /// lease release so two callers cannot leave two sockets draining and
+    /// folding the same runtime conversation.
     ///
     /// Process-local exclusion is sufficient only while
     /// `infra/api/deployment.yaml` keeps `replicas: 1`. Horizontal scaling
