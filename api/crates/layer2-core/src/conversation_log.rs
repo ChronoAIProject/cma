@@ -18,10 +18,11 @@
 //! branched on: the sets differ between runtimes and grow without warning, and
 //! a session must not fail because a kernel invented a category.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use layer3_adapter::{
-    ContentBlock, ConversationUpdate, PermissionRequest, PromptResponse, SessionUpdate,
+    ContentBlock, ConversationUpdate, PermissionLocator, PermissionRequest, PromptResponse,
+    SessionUpdate,
 };
 use tokio::sync::mpsc;
 
@@ -36,20 +37,61 @@ use crate::session::{SessionStatus, StopReason};
 /// Requests and resolutions are both durable, so replaying them in sequence is
 /// the authority after a process restart. No separate stored set can drift
 /// from this fold.
-pub(crate) fn pending_approvals_from(events: &[Event]) -> HashSet<String> {
-    let mut pending = HashSet::new();
+#[derive(Debug)]
+pub(crate) struct ApprovalState {
+    pub(crate) pending: HashMap<String, Option<PermissionLocator>>,
+    pub(crate) locators: HashMap<String, Option<PermissionLocator>>,
+}
+
+pub(crate) fn pending_approvals_from(events: &[Event]) -> Result<ApprovalState, String> {
+    let mut pending = HashMap::new();
+    let mut locators = HashMap::new();
     for event in events {
         match &event.kind {
-            EventKind::ApprovalRequested { request_id, .. } => {
-                pending.insert(request_id.clone());
+            EventKind::ApprovalRequested {
+                request_id,
+                locator,
+                ..
+            } => {
+                if let Some(previous) = locators.get(request_id) {
+                    if previous != locator {
+                        return Err(
+                            "an approval id was reused with a different delivery locator".into(),
+                        );
+                    }
+                    continue;
+                }
+                locators.insert(request_id.clone(), locator.clone());
+                pending.insert(request_id.clone(), locator.clone());
             }
             EventKind::ApprovalResolved { request_id, .. } => {
                 pending.remove(request_id);
             }
+            EventKind::TurnStarted
+            | EventKind::TurnCompleted
+            | EventKind::ConversationOpened { .. }
+            | EventKind::PlaneChanged { .. }
+            | EventKind::RuntimeLost { .. } => {
+                pending.clear();
+                locators.clear();
+            }
+            EventKind::StatusChanged {
+                status: SessionStatus::Idle,
+                stop_reason: Some(StopReason::RequiresAction),
+                ..
+            } => {}
+            EventKind::StatusChanged {
+                status: SessionStatus::Running,
+                ..
+            } => pending.clear(),
+            EventKind::StatusChanged { .. } => {
+                pending.clear();
+                locators.clear();
+            }
             _ => {}
         }
     }
-    pending
+    Ok(ApprovalState { pending, locators })
 }
 
 impl SessionService {
@@ -271,12 +313,29 @@ impl SessionService {
         request: PermissionRequest,
         ordered: tokio::sync::MutexGuard<'_, ()>,
     ) {
+        let locator = request.locator.clone();
         {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
+                drop(entries);
+                self.fold_early_request(id, request, ordered).await;
                 return;
             };
-            entry.pending_approvals.insert(request.id.clone());
+            if let Some(previous) = entry.approval_locators.get(&request.id) {
+                if previous != &locator {
+                    tracing::error!(
+                        session_id = %id,
+                        "a permission request id was reused with a different locator"
+                    );
+                }
+                return;
+            }
+            entry
+                .pending_approvals
+                .insert(request.id.clone(), locator.clone());
+            entry
+                .approval_locators
+                .insert(request.id.clone(), locator.clone());
             // Waiting on a person is not a failure and not the end of a turn.
             // `RequiresAction` is the one stop reason that is explicitly not
             // terminal, which is what lets a client show this as a question
@@ -289,6 +348,7 @@ impl SessionService {
                     request_id: request.id.clone(),
                     action: request.request.tool_call.fields.title.clone(),
                     detail: None,
+                    locator,
                 },
             );
             append(
@@ -303,6 +363,83 @@ impl SessionService {
         }
         drop(ordered);
         self.flush(id).await;
+    }
+
+    /// Record a request replayed while readoption has not installed its entry.
+    async fn fold_early_request(
+        &self,
+        id: &SessionId,
+        request: PermissionRequest,
+        ordered: tokio::sync::MutexGuard<'_, ()>,
+    ) {
+        let mut record = match self.store.get(id).await {
+            Ok(Some(record)) => record,
+            Ok(None) => {
+                tracing::error!(session_id = %id, "cannot record an early permission request: the session is absent");
+                return;
+            }
+            Err(error) => {
+                tracing::error!(session_id = %id, %error, "cannot record an early permission request");
+                return;
+            }
+        };
+        let history = match self.readoption_history(&record).await {
+            Ok(history) => history,
+            Err(error) => {
+                tracing::error!(
+                    session_id = %id,
+                    %error,
+                    "cannot verify an early permission request"
+                );
+                return;
+            }
+        };
+        if let Some(previous) = history.approval_locators.get(&request.id) {
+            if previous != &request.locator {
+                tracing::error!(
+                    session_id = %id,
+                    "a replayed permission request id changed its locator"
+                );
+            }
+            return;
+        }
+
+        record.session.status = SessionStatus::Idle;
+        record.session.stop_reason = Some(StopReason::RequiresAction);
+        let events = vec![
+            Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::ApprovalRequested {
+                    request_id: request.id,
+                    action: request.request.tool_call.fields.title,
+                    detail: None,
+                    locator: request.locator,
+                },
+                appended_at: String::new(),
+            },
+            Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Idle,
+                    stop_reason: Some(StopReason::RequiresAction),
+                    detail: None,
+                    capability: None,
+                },
+                appended_at: String::new(),
+            },
+        ];
+        if let Err(error) = self.persist_durably(&mut record, events).await {
+            tracing::error!(
+                session_id = %id,
+                %error,
+                "cannot record an early permission request"
+            );
+        }
+        // Installation takes the same gate before its final history read. The
+        // guard is released only after this direct append has settled.
+        drop(ordered);
     }
 
     /// Record that a turn ended, and why.
@@ -347,6 +484,8 @@ impl SessionService {
             if let Some((_, content)) = entry.assembling.take() {
                 append(entry, EventKind::MessageCommitted { content });
             }
+            entry.pending_approvals.clear();
+            entry.approval_locators.clear();
             entry.session.status = SessionStatus::Ready;
             entry.session.stop_reason = Some(reason);
             append(entry, EventKind::TurnCompleted);
@@ -480,6 +619,8 @@ impl SessionService {
             if let Some((_, content)) = entry.assembling.take() {
                 append(entry, EventKind::MessageCommitted { content });
             }
+            entry.pending_approvals.clear();
+            entry.approval_locators.clear();
             entry.session.status = SessionStatus::Ready;
             entry.session.stop_reason = Some(StopReason::Error);
             append(entry, EventKind::TurnCompleted);
@@ -518,7 +659,10 @@ impl SessionService {
             // was idle when its runtime went away has nothing dangling, and
             // writing a failure against it would report one that did not
             // happen.
-            if entry.session.status == SessionStatus::Running {
+            if entry.session.status == SessionStatus::Running || !entry.pending_approvals.is_empty()
+            {
+                entry.pending_approvals.clear();
+                entry.approval_locators.clear();
                 entry.session.status = SessionStatus::Idle;
                 entry.session.stop_reason = Some(StopReason::Error);
                 append(entry, EventKind::TurnCompleted);

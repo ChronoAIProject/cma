@@ -97,6 +97,13 @@ pub struct Bridge {
     /// has to be matched to the JSON-RPC request that is still waiting — and
     /// to the options that request offered, which only it knows.
     pub(super) blocked: Mutex<HashMap<String, Blocked>>,
+    /// Answers accepted on this connection, including ones restored from a
+    /// durable locator rather than observed on this socket.
+    ///
+    /// The whole response is retained so a duplicate delivery of the same
+    /// JSON-RPC request can receive the identical answer without asking its
+    /// owner a second time.
+    pub(super) answered: Mutex<HashMap<String, serde_json::Value>>,
 }
 
 /// A permission request the bridge is waiting on an answer to.
@@ -174,6 +181,7 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             session: Mutex::new(None),
             blocked: Mutex::new(HashMap::new()),
+            answered: Mutex::new(HashMap::new()),
         });
         // This sender's channel identity is the generation of this socket.
         // Keep it beside the reader so a late answer from this socket cannot

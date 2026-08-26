@@ -131,6 +131,7 @@ fn a_durable_batch_keeps_the_complete_first_ending_projection_and_stops() {
                     request_id: "approval-terminal-batch".into(),
                     action: Some("shell".into()),
                     detail: Some("run a command".into()),
+                    locator: None,
                 },
             ),
             event(

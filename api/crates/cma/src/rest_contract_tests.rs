@@ -784,6 +784,7 @@ impl TestKernel {
             .send(layer3_adapter::ConversationUpdate::Asked(
                 layer3_adapter::PermissionRequest {
                     id: request_id.to_string(),
+                    locator: None,
                     request: layer3_adapter::RequestPermissionRequest::new(
                         layer3_adapter::ConversationId::new("rest-contract-conversation"),
                         layer3_adapter::ToolCallUpdate::new(
