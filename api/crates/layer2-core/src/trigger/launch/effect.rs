@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::seconds_from_rfc3339;
+use crate::{seconds_from_rfc3339, CapabilityRevocationState};
 
 pub(super) fn required_effect(launch: &Launch) -> Option<LaunchEffectKind> {
     match launch.state {
@@ -419,8 +419,10 @@ impl Launch {
                     reach,
                     connection,
                     authority,
+                    branch,
                 },
             ) => {
+                reach.validate()?;
                 connection.validate_for(
                     &self
                         .revision
@@ -441,6 +443,20 @@ impl Launch {
                 self.connection = Some(connection);
                 self.authority = Some(authority);
                 self.reach = Some(reach);
+                let retained_branch = self.branch.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field("branch", "the admitted policy has no branch")
+                })?;
+                if branch.name != retained_branch.name
+                    || branch.expected_head != retained_branch.expected_head
+                    || branch.canonical_url != retained_branch.canonical_url
+                {
+                    return Err(TriggerValidationError::field(
+                        "branch",
+                        "the admitted policy observed a different Launch branch",
+                    ));
+                }
+                super::super::validate_sha("branch.current_head", &branch.current_head)?;
+                self.branch = Some(branch);
             }
             (
                 LaunchEffectKind::InitialDispatch,
@@ -690,7 +706,8 @@ impl Launch {
                 let reach = self.reach.as_ref().ok_or_else(|| {
                     TriggerValidationError::field("reach", "the admitted policy is missing")
                 })?;
-                if reach.policy_generation == 0
+                reach.validate()?;
+                if reach.state != CapabilityRevocationState::Active
                     || self
                         .connection
                         .as_ref()

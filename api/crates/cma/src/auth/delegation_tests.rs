@@ -1741,6 +1741,47 @@ async fn release_atomically_retires_values_into_revoke_debt() {
 }
 
 #[tokio::test]
+async fn release_settlement_requires_retirement_with_no_durable_revoke_debt() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let settled_session = SessionId("sesn_settled_retirement".into());
+    store
+        .insert_credential(state(&settled_session, None, None))
+        .await
+        .expect("store works");
+
+    assert!(!auth
+        .release_settled(&settled_session)
+        .await
+        .expect("custody can be inspected"));
+    auth.release(&settled_session)
+        .await
+        .expect("empty custody retires durably");
+    assert!(auth
+        .release_settled(&settled_session)
+        .await
+        .expect("settled retirement is positive evidence"));
+
+    let debt_session = SessionId("sesn_unsettled_retirement".into());
+    store
+        .insert_credential(state(
+            &debt_session,
+            Some(credential("provider-key", "value", &owner, "scope")),
+            None,
+        ))
+        .await
+        .expect("store works");
+    auth.release(&debt_session)
+        .await
+        .expect("credential moves into durable revoke custody");
+    assert!(!auth
+        .release_settled(&debt_session)
+        .await
+        .expect("unsettled custody is reported conservatively"));
+}
+
+#[tokio::test]
 async fn confirming_a_reissue_promotes_pending_and_queues_the_old_value() {
     let store = Arc::new(MemoryAuthStore::default());
     let auth = auth(store.clone());
