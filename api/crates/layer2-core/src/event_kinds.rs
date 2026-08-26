@@ -266,6 +266,14 @@ pub enum EventKind {
         /// Anything further the runtime offered about the request.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// Opaque adapter-owned information for delivering an answer after a
+        /// control-plane replacement.
+        ///
+        /// The core never interprets this value. It is absent on history from
+        /// builds predating durable approval routing and for adapters whose
+        /// public request id is sufficient.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        locator: Option<layer3_adapter::PermissionLocator>,
     },
     /// The session was moved onto the other plane, because its owner asked.
     ///
