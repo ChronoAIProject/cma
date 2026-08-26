@@ -2536,6 +2536,10 @@ impl MongoSessionStore {
             .write_concern(WriteConcern::majority())
             .and_run(context, |client_session, (sessions, receipts, command)| {
                 async move {
+                    // Every coordination transaction writes this session document, so
+                    // overlapping attempts conflict and serialize. A successful retry
+                    // with the same nonce is therefore ordered after any earlier staged
+                    // write for that nonce; the caller can exact-release that result.
                     let clocked = sessions
                         .update_one(doc! { "_id": &command.id().0 }, coordination_clock_update())
                         .session(&mut *client_session)
