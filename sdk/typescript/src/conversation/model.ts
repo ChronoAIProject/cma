@@ -218,6 +218,15 @@ export interface Conversation {
   /** True between `RUN_STARTED` and the `RUN_FINISHED` that closes it. */
   readonly turnInFlight: boolean;
   /**
+   * Whether the session lifecycle currently accepts input.
+   *
+   * This is deliberately fail-closed until `/status` reports `ready` or
+   * `running`, and is cleared as soon as a run ends. A `running` session still
+   * admits mid-turn input only when `steer` was granted and its
+   * `concurrent_input` policy accepts the second run.
+   */
+  readonly sessionInteractive: boolean;
+  /**
    * The approval the session is parked on, when it is parked on one.
    *
    * Carries the time it was asked alongside the kernel's own question, which
@@ -364,6 +373,7 @@ export function initialConversation(): Conversation {
     stateDeltaSeq: 0,
     entries: [],
     turnInFlight: false,
+    sessionInteractive: false,
     runtimeLoss: undefined,
   };
 }
