@@ -57,6 +57,10 @@ pub enum EventKind {
     TurnStarted,
     /// A turn completed.
     TurnCompleted,
+    /// The durable initial Trigger prompt changed delivery state.
+    InitialPromptDeliveryChanged {
+        state: crate::trigger::PromptDeliveryState,
+    },
     /// A client took the exclusive terminal attachment.
     TerminalAttached,
     /// The exclusive terminal attachment was released.
@@ -419,6 +423,7 @@ const KNOWN_TAGS: &[&str] = &[
     "status_changed",
     "turn_started",
     "turn_completed",
+    "initial_prompt_delivery_changed",
     "conversation_opened",
     "message_committed",
     "owner_message",
