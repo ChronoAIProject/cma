@@ -2,18 +2,25 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use layer3_adapter::ConversationInput;
 use tokio::sync::{Mutex, Notify};
 
+use crate::conversation_support::conversing;
 use crate::coordination::{
     RuntimeAuthority, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeReservation,
     SessionBoundary, SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest,
     SessionOperation,
 };
-use crate::event::{Event, StoredEvent};
+use crate::environment::AgentConfiguration;
+use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{KernelId, SessionId, SubjectId};
+use crate::options::SessionMode;
 use crate::session::{RecoveryState, Session, SessionStatus};
 use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
-use crate::test_support::{service_over, FakeAdapter, FakeStore};
+use crate::test_support::{
+    await_settled, environments_defaulting_to, kernel, service_over,
+    service_over_with_environments, spec, user, FakeAdapter, FakeStore,
+};
 use crate::{AgentOptions, CoreError, Reserved, TerminalGeometry};
 
 #[derive(Default)]
@@ -26,6 +33,10 @@ struct InteractionStore {
     release_response_stalled: AtomicBool,
     release_committed: Notify,
     release_may_return: Notify,
+    interaction_released: Notify,
+    stall_prompt_commit: AtomicBool,
+    prompt_commit_stalled: Notify,
+    prompt_commit_may_return: Notify,
     renewal_failures: AtomicUsize,
     acquisitions: Mutex<Vec<SessionInteractionLeaseRequest>>,
     renewals: Mutex<Vec<(SessionLease, Duration)>>,
@@ -55,6 +66,29 @@ impl InteractionStore {
     fn stall_next_release_after_commit(&self) {
         self.stall_release_after_commit
             .store(true, Ordering::SeqCst);
+    }
+
+    fn stall_next_prompt_commit(&self) {
+        assert!(!self.stall_prompt_commit.swap(true, Ordering::SeqCst));
+    }
+
+    async fn wait_until_prompt_commit_stalled(&self) {
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            self.prompt_commit_stalled.notified(),
+        )
+        .await
+        .expect("the receipted prompt reached its durable commit");
+    }
+
+    fn resume_prompt_commit(&self) {
+        self.prompt_commit_may_return.notify_one();
+    }
+
+    async fn wait_until_interaction_released(&self) {
+        tokio::time::timeout(Duration::from_secs(2), self.interaction_released.notified())
+            .await
+            .expect("the interaction lease was released");
     }
 
     fn consume(counter: &AtomicUsize) -> bool {
@@ -124,6 +158,14 @@ impl SessionStore for InteractionStore {
         self.inner.renew_interaction_lease(lease, ttl).await
     }
 
+    async fn advance_session_lease(
+        &self,
+        lease: &mut SessionLease,
+        boundary: &SessionBoundary,
+    ) -> Result<(), StoreError> {
+        self.inner.advance_session_lease(lease, boundary).await
+    }
+
     async fn release_session_lease(&self, lease: &SessionLease) -> Result<(), StoreError> {
         if lease.operation != SessionOperation::Interact {
             return self.inner.release_session_lease(lease).await;
@@ -135,6 +177,9 @@ impl SessionStore for InteractionStore {
             ));
         }
         let released = self.inner.release_session_lease(lease).await;
+        if released.is_ok() {
+            self.interaction_released.notify_one();
+        }
         if released.is_ok()
             && self
                 .stall_release_after_commit
@@ -210,6 +255,14 @@ impl SessionStore for InteractionStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
+        if events
+            .iter()
+            .any(|event| matches!(&event.kind, EventKind::TurnStarted))
+            && self.stall_prompt_commit.swap(false, Ordering::SeqCst)
+        {
+            self.prompt_commit_stalled.notify_one();
+            self.prompt_commit_may_return.notified().await;
+        }
         self.inner
             .commit_session_idempotent(write_id, record, events)
             .await
@@ -355,6 +408,111 @@ async fn caller_cancellation_does_not_cancel_a_durable_interaction() {
 #[tokio::test]
 async fn caller_cancellation_does_not_cancel_a_compatibility_interaction() {
     cancellation_keeps_action_owned(Arc::new(InteractionStore::compatibility())).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelled_prompt_keeps_renewing_until_receipted_commit_settles() {
+    let store = Arc::new(InteractionStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(AgentConfiguration {
+        kernel: kernel(),
+        mode: SessionMode::Conversation,
+        ..Default::default()
+    });
+    let service = service_over_with_environments(store.clone(), Arc::clone(&adapter), profiles);
+    let alice = user("cancelled-prompt-finalization-owner");
+    let created = service
+        .create_session(&alice, spec())
+        .await
+        .expect("created");
+    await_settled(&service, &alice, &created.id).await;
+    store.stall_next_prompt_commit();
+
+    let caller = tokio::spawn({
+        let service = Arc::clone(&service);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            service
+                .send_prompt(&alice, &id, "retain the finalization fence".into())
+                .await
+        }
+    });
+    store.wait_until_prompt_commit_stalled().await;
+    let held = store
+        .inner
+        .active_session_lease(&created.id)
+        .await
+        .expect("the prompt retains its interaction lease");
+    assert_eq!(held.operation, SessionOperation::Interact);
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+
+    for expected_renewals in 1..=6 {
+        tokio::time::advance(Duration::from_secs(11)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            store.renewals.lock().await.len(),
+            expected_renewals,
+            "caller cancellation must not stop successful lease renewal"
+        );
+        assert_eq!(
+            store.inner.active_session_lease(&created.id).await,
+            Some(held.clone()),
+            "the same lease remains authoritative beyond its original TTL"
+        );
+    }
+
+    assert!(matches!(
+        service.interrupt_turn(&alice, &created.id).await,
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    let sent = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains live")
+        .sent()
+        .await;
+    assert!(matches!(sent.as_slice(), [ConversationInput::Prompt(_)]));
+
+    store.resume_prompt_commit();
+    store.wait_until_interaction_released().await;
+    assert!(store
+        .inner
+        .active_session_lease(&created.id)
+        .await
+        .is_none());
+    let events = service
+        .events_since(&alice, &created.id, None)
+        .await
+        .expect("the finalized prompt history is readable");
+    assert!(events.iter().any(|event| matches!(
+        &event.kind,
+        EventKind::OwnerMessage { content } if content == "retain the finalization fence"
+    )));
+
+    service
+        .interrupt_turn(&alice, &created.id)
+        .await
+        .expect("a successor proceeds after prompt finalization releases its lease");
+    store.wait_until_interaction_released().await;
+    let sent = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains live")
+        .sent()
+        .await;
+    assert!(matches!(
+        sent.as_slice(),
+        [ConversationInput::Prompt(_), ConversationInput::Cancel]
+    ));
 }
 
 #[tokio::test]
