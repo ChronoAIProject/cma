@@ -115,9 +115,7 @@ impl TriggerContentRequest {
             if base.repository.repository_id != selected.repository.repository_id
                 || base.repository.repository_node_id != selected.repository.repository_node_id
             {
-                return Err(TriggerServiceError::Authority(
-                    "the contribution base resolved to a different repository".into(),
-                ));
+                return Err(layer2_core::TriggerAuthorityError::AuthorityDrift.into());
             }
         }
         Ok(self.into_content(subject.clone(), selected))
@@ -204,6 +202,15 @@ struct SelectConnectionRequest {
 struct ConfirmLaunchRequest {
     expected_revision: u64,
     snapshot_digest: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct StartLaunchRequest {
+    expected_revision: u64,
+    snapshot_digest: String,
+    #[serde(default)]
+    acknowledge_workflow_risk: bool,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -1297,7 +1304,7 @@ async fn select_launch_connection(
     path = "/api/v1/launches/{launch_id}/start",
     tag = "launches",
     params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
-    request_body = ConfirmLaunchRequest,
+    request_body = StartLaunchRequest,
     responses((status = 202, description = "Launch orchestration accepted", body = LaunchView))
 )]
 async fn start_launch(
@@ -1306,7 +1313,7 @@ async fn start_launch(
     Path(launch_id): Path<String>,
     headers: HeaderMap,
     key: idempotency::IdempotencyKey,
-    body: Result<idempotency::RequestBody<ConfirmLaunchRequest>, BodyProblem>,
+    body: Result<idempotency::RequestBody<StartLaunchRequest>, BodyProblem>,
 ) -> Response {
     let operation = format!("trigger-launch-start:{launch_id}");
     let (guard, body, confirmation_hash) =
@@ -1333,6 +1340,7 @@ async fn start_launch(
                     confirmed_at: timestamp.clone(),
                     idempotency_key_hash: confirmation_hash,
                 },
+                body.acknowledge_workflow_risk,
                 timestamp,
                 correlation_id(&headers),
             )
@@ -1430,6 +1438,7 @@ impl From<TriggerServiceError> for TriggerProblem {
 
 impl IntoResponse for TriggerProblem {
     fn into_response(self) -> Response {
+        let mut retry_after = None;
         let (status, slug, code, detail, field): (StatusCode, &str, &str, String, Option<String>) =
             match self.0 {
                 TriggerServiceError::NotFound | TriggerServiceError::Forbidden => (
@@ -1446,13 +1455,85 @@ impl IntoResponse for TriggerProblem {
                     "The Trigger request violates the declared policy.".into(),
                     error.field,
                 ),
-                TriggerServiceError::Authority(detail) => (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "trigger-authority-required",
-                    "trigger_authority_required",
-                    detail,
-                    None,
-                ),
+                TriggerServiceError::Authority(error) => {
+                    use layer2_core::TriggerAuthorityError as Authority;
+                    let (status, slug, code) = match &error {
+                        Authority::OwnerCredentialUnavailable => (
+                            StatusCode::UNAUTHORIZED,
+                            "trigger-owner-credential-unavailable",
+                            "trigger_owner_credential_unavailable",
+                        ),
+                        Authority::ConnectionNotFound => (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "trigger-connection-not-found",
+                            "trigger_connection_not_found",
+                        ),
+                        Authority::ConnectionNotPersonal => (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "trigger-personal-connection-required",
+                            "trigger_personal_connection_required",
+                        ),
+                        Authority::ConnectionInactive => (
+                            StatusCode::CONFLICT,
+                            "trigger-connection-inactive",
+                            "trigger_connection_inactive",
+                        ),
+                        Authority::ReauthorizationRequired => (
+                            StatusCode::CONFLICT,
+                            "trigger-reauthorization-required",
+                            "trigger_reauthorization_required",
+                        ),
+                        Authority::InsufficientScope { .. } => (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "trigger-scope-insufficient",
+                            "trigger_scope_insufficient",
+                        ),
+                        Authority::AuthorityDrift => (
+                            StatusCode::CONFLICT,
+                            "trigger-authority-drift",
+                            "trigger_authority_drift",
+                        ),
+                        Authority::Forbidden | Authority::ResourceNotFound => (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "trigger-provider-resource-unavailable",
+                            "trigger_provider_resource_unavailable",
+                        ),
+                        Authority::RateLimited { retry_after: value } => {
+                            retry_after = value.clone();
+                            (
+                                StatusCode::TOO_MANY_REQUESTS,
+                                "trigger-provider-rate-limited",
+                                "trigger_provider_rate_limited",
+                            )
+                        }
+                        Authority::Transient => (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "trigger-provider-unavailable",
+                            "trigger_provider_unavailable",
+                        ),
+                        Authority::ProviderRejected | Authority::MalformedEvidence => (
+                            StatusCode::BAD_GATEWAY,
+                            "trigger-provider-response-invalid",
+                            "trigger_provider_response_invalid",
+                        ),
+                        Authority::UpstreamNotForkable => (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "upstream-not-forkable",
+                            "upstream_not_forkable",
+                        ),
+                        Authority::ForkNetworkOccupied => (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "fork-network-occupied",
+                            "fork_network_occupied",
+                        ),
+                        Authority::ProviderAuthenticationUnavailable => (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "trigger-provider-authentication-unavailable",
+                            "trigger_provider_authentication_unavailable",
+                        ),
+                    };
+                    (status, slug, code, error.to_string(), None)
+                }
                 TriggerServiceError::Store(error) => match error {
                     TriggerStoreError::Unavailable(_) | TriggerStoreError::Malformed(_) => (
                         StatusCode::SERVICE_UNAVAILABLE,
@@ -1479,7 +1560,11 @@ impl IntoResponse for TriggerProblem {
         if let (Some(field), Some(object)) = (field, body.as_object_mut()) {
             object.insert("field".into(), field.into());
         }
-        problem_response(status, body)
+        let mut response = problem_response(status, body);
+        if let Some(value) = retry_after.and_then(|value| HeaderValue::from_str(&value).ok()) {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        response
     }
 }
 

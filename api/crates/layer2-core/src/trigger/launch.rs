@@ -11,8 +11,12 @@ use super::{
 };
 use crate::{PermissionMode, SessionId, SessionSize, SubjectId};
 
+mod effect;
+
 pub const LAUNCH_SCHEMA_VERSION: u32 = 1;
 pub const MAX_LAUNCH_EVENTS: usize = 2_048;
+pub const MAX_LAUNCH_EFFECT_ATTEMPTS: u32 = 5;
+pub const MAX_LAUNCH_RECONCILIATION_ATTEMPTS: u32 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -212,14 +216,85 @@ pub struct EffectRecord {
     pub state: EffectState,
     pub intent_key: String,
     pub attempt: u32,
+    #[serde(default)]
+    pub reconciliation_attempt: u32,
     pub fence: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_request_id: Option<String>,
+    #[serde(default)]
+    pub external_resource_ids: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_attempt_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_failure: Option<LaunchFailure>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectClaimMode {
+    Execute,
+    Reconcile,
+}
+
+/// Durable authority to execute or reconcile one logical external effect.
+///
+/// This value contains no credential. Its fence becomes stale as soon as a
+/// replacement worker acquires the Launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectClaim {
+    pub kind: LaunchEffectKind,
+    pub mode: EffectClaimMode,
+    pub intent_key: String,
+    pub attempt: u32,
+    pub reconciliation_attempt: u32,
+    pub fence: u64,
+}
+
+/// Typed durable result for one effect. Provider adapters cannot advance a
+/// Launch by returning an unstructured success flag.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LaunchEffectResult {
+    Preflight {
+        connection: ConnectionSnapshot,
+        authority: AuthorityProvenance,
+        source_sha: String,
+        #[serde(default)]
+        workflow_paths: Vec<String>,
+    },
+    Fork {
+        fork: ForkRecord,
+    },
+    Branch {
+        branch: BranchRecord,
+    },
+    WorkspaceImport {
+        workspace: WorkspaceRecord,
+    },
+    Sandbox,
+    Session {
+        session: SessionLink,
+    },
+    Reach {
+        reach: super::ReachStatus,
+    },
+    InitialDispatch {
+        delivery: PromptDelivery,
+    },
+    Checkpoint {
+        checkpoint: WorkspaceCheckpoint,
+    },
+    Diff {
+        diff: DiffArtifact,
+    },
+    BranchPublication {
+        contribution: super::ContributionRecord,
+    },
+    PullRequest {
+        pull_request: super::PullRequestRecord,
+    },
+    Cleanup,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -620,6 +695,36 @@ impl Launch {
         self.transition(LaunchState::Preflight, now, "start")
     }
 
+    /// Record the contributor's explicit acceptance of the workflow paths
+    /// shown for this exact reviewed Launch snapshot.
+    pub fn acknowledge_workflow_risk(
+        &mut self,
+        confirmation: Confirmation,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        if self.state != LaunchState::Draft
+            || self.workflow_paths.is_empty()
+            || confirmation.action != ConfirmationAction::WorkflowRisk
+            || confirmation.subject != self.owner
+            || confirmation.snapshot_digest != self.effective.digest
+        {
+            return Err(TriggerValidationError::field(
+                "workflow_risk_acknowledged",
+                "does not acknowledge the reviewed workflow paths",
+            ));
+        }
+        self.workflow_risk_acknowledged = true;
+        self.updated_at = confirmation.confirmed_at.clone();
+        self.confirmations.push(confirmation.clone());
+        self.push_event(
+            confirmation.confirmed_at,
+            correlation_id,
+            LaunchEventKind::ConfirmationRecorded {
+                action: ConfirmationAction::WorkflowRisk,
+            },
+        )
+    }
+
     pub fn transition(
         &mut self,
         to: LaunchState,
@@ -649,7 +754,6 @@ impl Launch {
         self.blocked_reason = None;
         if to.is_terminal() {
             self.terminal_at = Some(self.updated_at.clone());
-            self.lease = None;
         }
         self.push_event(
             self.updated_at.clone(),
@@ -678,31 +782,47 @@ impl Launch {
         failure: LaunchFailure,
         now: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
-        let target = match failure.class {
-            FailureClass::AuthRequired => LaunchState::AuthRequired,
+        let (target, blocked_reason) = match failure.class {
+            FailureClass::AuthRequired => (LaunchState::AuthRequired, None),
             FailureClass::OwnerCredentialUnavailable => {
-                self.blocked_reason = Some(LaunchBlockedReason::OwnerCredentialUnavailable);
-                LaunchState::FailedRetryable
+                return self.apply_blocking_failure(
+                    failure,
+                    LaunchState::FailedRetryable,
+                    LaunchBlockedReason::OwnerCredentialUnavailable,
+                    now,
+                );
             }
             FailureClass::ServiceInactive => {
-                self.blocked_reason = Some(LaunchBlockedReason::ServiceInactive);
-                LaunchState::AuthRequired
+                return self.apply_blocking_failure(
+                    failure,
+                    LaunchState::AuthRequired,
+                    LaunchBlockedReason::ServiceInactive,
+                    now,
+                );
             }
             FailureClass::RetryableTransient
             | FailureClass::AmbiguousExternal
             | FailureClass::ConflictStaleHead
-            | FailureClass::ResourceQuota => LaunchState::FailedRetryable,
+            | FailureClass::ResourceQuota => (LaunchState::FailedRetryable, None),
             FailureClass::RecoveryRequired => {
-                self.blocked_reason = Some(LaunchBlockedReason::RecoveryRequired);
-                LaunchState::FailedRetryable
+                return self.apply_blocking_failure(
+                    failure,
+                    LaunchState::FailedRetryable,
+                    LaunchBlockedReason::RecoveryRequired,
+                    now,
+                );
             }
             FailureClass::FeaturePaused => {
-                self.blocked_reason = Some(LaunchBlockedReason::FeaturePaused);
-                LaunchState::FailedRetryable
+                return self.apply_blocking_failure(
+                    failure,
+                    self.state,
+                    LaunchBlockedReason::FeaturePaused,
+                    now,
+                );
             }
             FailureClass::PolicyUserAction
             | FailureClass::TerminalValidation
-            | FailureClass::TerminalSecurity => LaunchState::FailedTerminal,
+            | FailureClass::TerminalSecurity => (LaunchState::FailedTerminal, None),
         };
         if !matches!(
             self.state,
@@ -715,6 +835,35 @@ impl Launch {
         if self.state != target {
             self.transition(target, now.clone(), failure.correlation_id.clone())?;
         }
+        self.blocked_reason = blocked_reason;
+        self.push_event(
+            now,
+            failure.correlation_id.clone(),
+            LaunchEventKind::Failure { failure },
+        )
+    }
+
+    fn apply_blocking_failure(
+        &mut self,
+        failure: LaunchFailure,
+        target: LaunchState,
+        reason: LaunchBlockedReason,
+        now: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        if !matches!(
+            self.state,
+            LaunchState::FailedRetryable | LaunchState::AuthRequired
+        ) && self.state != target
+        {
+            self.resume_state = Some(self.state);
+        }
+        self.failure = Some(failure.clone());
+        let now = now.into();
+        if self.state != target {
+            self.transition(target, now.clone(), failure.correlation_id.clone())?;
+        }
+        self.blocked_reason = Some(reason);
+        self.updated_at = now.clone();
         self.push_event(
             now,
             failure.correlation_id.clone(),
@@ -777,28 +926,10 @@ impl Launch {
         if self.blocked_reason.is_some() || self.state.is_terminal() || self.lease.is_some() {
             return None;
         }
-        match self.state {
-            LaunchState::Preflight => Some(LaunchEffectKind::Preflight),
-            LaunchState::ForkPending => Some(LaunchEffectKind::Fork),
-            LaunchState::ForkReady | LaunchState::BranchPending => Some(LaunchEffectKind::Branch),
-            LaunchState::WorkspacePending => Some(LaunchEffectKind::WorkspaceImport),
-            LaunchState::SandboxPending => Some(LaunchEffectKind::Sandbox),
-            LaunchState::SessionPending => Some(LaunchEffectKind::Session),
-            LaunchState::PromptPending if self.reach.is_none() => Some(LaunchEffectKind::Reach),
-            LaunchState::PromptPending => Some(LaunchEffectKind::InitialDispatch),
-            LaunchState::Contributing if self.diff.is_none() => Some(LaunchEffectKind::Checkpoint),
-            LaunchState::Contributing if self.contribution.is_none() => {
-                Some(LaunchEffectKind::Diff)
-            }
-            LaunchState::PrPending if self.pull_request.is_none() => {
-                Some(LaunchEffectKind::BranchPublication)
-            }
-            LaunchState::PrPending => Some(LaunchEffectKind::PullRequest),
-            _ => None,
-        }
+        effect::required_effect(self)
     }
 
-    fn push_event(
+    pub(super) fn push_event(
         &mut self,
         occurred_at: impl Into<String>,
         correlation_id: impl Into<String>,
