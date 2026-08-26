@@ -11,6 +11,7 @@
 use std::future::Future;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::AdapterError;
@@ -36,6 +37,34 @@ pub use agent_client_protocol_schema::v1::{
 };
 pub use agent_client_protocol_schema::v1::{MessageId, Usage as TurnUsage};
 
+/// Opaque adapter-owned information needed to deliver a permission answer.
+///
+/// The core records and returns this value without interpreting it. That lets
+/// an adapter reconnect after a control-plane replacement without teaching
+/// the durable layer its wire protocol, while keeping the tool payload and
+/// every credential out of history.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PermissionLocator(String);
+
+impl PermissionLocator {
+    /// Wrap an adapter's versioned locator representation.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Borrow the opaque representation at the adapter boundary that owns it.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for PermissionLocator {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PermissionLocator(<opaque>)")
+    }
+}
+
 /// A decision the runtime is blocked on, and the handle to answer it with.
 #[derive(Debug, Clone)]
 pub struct PermissionRequest {
@@ -47,6 +76,12 @@ pub struct PermissionRequest {
     /// back from them minutes later — possibly after a restart, and possibly
     /// through a different interface than the one that showed it.
     pub id: String,
+    /// Adapter-owned delivery information that survives a control-plane
+    /// replacement.
+    ///
+    /// Absent for adapters that can answer from the public id alone, and for
+    /// requests produced by builds predating durable delivery locators.
+    pub locator: Option<PermissionLocator>,
     /// What the runtime is asking to do, and the answers it will accept.
     ///
     /// The offered options come from the runtime rather than from here. A
@@ -66,6 +101,8 @@ pub enum ConversationInput {
     PermissionAnswer {
         /// The request being answered, as [`PermissionRequest::id`] named it.
         id: String,
+        /// The durable adapter-owned route recorded with the request.
+        locator: Option<PermissionLocator>,
         /// What the owner decided.
         ///
         /// An intent rather than one of the runtime's own options, on the same

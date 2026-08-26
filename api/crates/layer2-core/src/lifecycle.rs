@@ -401,7 +401,13 @@ impl SessionService {
             }
         }
         if let Some(source) = self.credentials.as_ref() {
-            source.release(&id).await;
+            if let Err(error) = source.release(&id).await {
+                tracing::error!(
+                    session_id = %id,
+                    %error,
+                    "could not retire this session's credential custody"
+                );
+            }
         }
         if let Err(error) = self.store.release_session_lease(&lease).await {
             tracing::debug!(

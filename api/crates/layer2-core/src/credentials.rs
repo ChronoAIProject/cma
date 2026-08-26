@@ -74,7 +74,7 @@ impl SessionService {
     /// record is history, and history presents nothing.
     pub async fn session_is_live(&self, id: &SessionId) -> bool {
         match self.store.get(id).await {
-            Ok(Some(record)) => record.session.status.wants_runtime(),
+            Ok(Some(record)) => record.session.wants_runtime(),
             _ => false,
         }
     }

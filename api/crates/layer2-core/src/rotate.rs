@@ -107,6 +107,10 @@ impl SessionService {
             // served by it simply continuing to work.
             return false;
         }
+        // An idle approval wait keeps its runtime, but it is deliberately not
+        // moved while the old conversation is blocked on a runtime-local
+        // request. Resolving the final approval returns it to `Running`, making
+        // it eligible on the next sweep.
         record.session.status.wants_runtime()
             && !record.session.status.is_rotating()
             && record.runtime_id.is_some()
@@ -165,6 +169,8 @@ impl SessionService {
             // sandbox being torn down and resume from whichever answered last.
             return Err(CoreError::InvalidState);
         }
+        // A blocked approval owns a runtime too, but cannot change planes while
+        // its answer is addressed to a request on the current conversation.
         if !record.session.status.wants_runtime() || record.runtime_id.is_none() {
             // Nothing to carry. A stopped session is started on whichever
             // plane its profile names when it is revived, and moving one that

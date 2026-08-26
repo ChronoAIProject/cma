@@ -125,7 +125,7 @@ impl SessionService {
         // is what stopping means — so its sandbox is reclaimed below.
         let entitled: HashSet<String> = records
             .iter()
-            .filter(|r| r.session.status.wants_runtime())
+            .filter(|r| r.session.wants_runtime())
             .map(|r| r.session.id.0.clone())
             .collect();
 
@@ -148,7 +148,7 @@ impl SessionService {
         }
 
         for record in records {
-            if !record.session.status.wants_runtime() {
+            if !record.session.wants_runtime() {
                 continue;
             }
             self.settle_session(record, &census, &mut reclaimed).await;
@@ -305,7 +305,7 @@ impl SessionService {
         // loss, recovery still needs that exact id for the RuntimeLost event.
         // Leave this one debt in place until settlement below has recorded the
         // loss; all other debts remain independently reclaimable here.
-        let retains_unrecorded_loss = record.session.status.wants_runtime()
+        let retains_unrecorded_loss = record.session.wants_runtime()
             && record.runtime_id.is_none()
             && record.session.status != SessionStatus::Provisioning
             && record.session.recovery_state != RecoveryState::Recovering;
@@ -631,7 +631,25 @@ impl SessionService {
         // attaching settles the question that the census could not: a sandbox
         // that answers is running, whatever anything else says.
         if record.runtime_id.is_some() && alive != Some(false) {
-            match self.readopt(&record).await {
+            // The resume identity and pending approvals are both part of the
+            // attachment's live state. Read them before touching the runtime,
+            // and defer when persistence cannot supply the complete history:
+            // replacing a runtime merely because its state could not be rebuilt
+            // would abandon the conversation the provider still reports alive.
+            let readoption = match self.prepare_readoption(&record).await {
+                Ok(Some(readoption)) => readoption,
+                Ok(None) => return,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "cannot rebuild conversation state; leaving the live runtime untouched"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            match self.readopt_prepared(&record, readoption).await {
                 Ok(()) => {
                     reclaimed.readopted_sessions += 1;
                     return;
@@ -700,7 +718,7 @@ impl SessionService {
             // from the old sweep snapshot after that: reread the desired state
             // and defer if it now names a different runtime.
             let latest = match self.store.get(&id).await {
-                Ok(Some(latest)) if latest.session.status.wants_runtime() => latest,
+                Ok(Some(latest)) if latest.session.wants_runtime() => latest,
                 Ok(_) => return,
                 Err(error) => {
                     tracing::warn!(session_id = %id, %error, "cannot recheck the session after readoption failed");
