@@ -2049,7 +2049,7 @@ async fn a_rejected_resize_returns_failure_without_changing_the_runtime() {
 }
 
 #[tokio::test]
-async fn cancelling_a_resize_retains_its_live_screen_and_runtime_continuation() {
+async fn cancelling_a_resize_before_delivery_keeps_desired_geometry_for_retry() {
     let store = Arc::new(FaultStore::default());
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let owner = user("cancelled-resize-owner");
@@ -2064,6 +2064,10 @@ async fn cancelling_a_resize_retains_its_live_screen_and_runtime_continuation() 
     };
     wait_for_lane_idle(&lane).await;
     let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    let before_screen = service
+        .screen_snapshot(&owner, &created.id)
+        .await
+        .expect("screen is readable");
     let (input, mut runtime_input) = terminal_input_channel(4);
     service
         .entries
@@ -2085,23 +2089,11 @@ async fn cancelling_a_resize_retains_its_live_screen_and_runtime_continuation() 
     resize.abort();
     let _ = resize.await;
     store.release_write.notify_one();
-
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let installed = service
-                .entries
-                .read()
-                .await
-                .get(&created.id)
-                .is_some_and(|entry| entry.session.geometry == resized);
-            if installed {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the retained resize installs after its waiter is cancelled");
+    drop(
+        tokio::time::timeout(Duration::from_secs(2), service.lock_lifecycle(&created.id))
+            .await
+            .expect("a public lock restarts and drains the retained resize"),
+    );
     wait_for_lane_idle(&lane).await;
 
     let durable = store.inner.get(&created.id).await.unwrap().unwrap();
@@ -2109,16 +2101,28 @@ async fn cancelling_a_resize_retains_its_live_screen_and_runtime_continuation() 
     assert_eq!(durable.session.last_seq, before.session.last_seq + 1);
     assert_eq!(
         service
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the live entry remains")
+            .session
+            .geometry,
+        before.session.geometry,
+        "caller cancellation before delivery leaves live geometry unchanged"
+    );
+    assert_eq!(
+        service
             .screen_snapshot(&owner, &created.id)
             .await
             .expect("screen is readable")
             .geometry,
-        resized
+        before_screen.geometry,
+        "caller cancellation before delivery leaves the screen unchanged"
     );
     assert!(matches!(
-        runtime_input.recv().await,
-        Some(layer3_adapter::TerminalInput::Resize(size))
-            if size.cols == resized.columns() && size.rows == resized.rows()
+        runtime_input.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
     ));
 
     let later = TerminalGeometry::new(122, 44).expect("valid later geometry");

@@ -381,3 +381,7 @@ impl SessionService {
         Ok(snapshot)
     }
 }
+
+#[cfg(test)]
+#[path = "terminal_io_tests.rs"]
+mod tests;
