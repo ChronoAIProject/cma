@@ -351,6 +351,23 @@ fn wanting_runtime_statuses_use_the_core_serialization() {
 }
 
 #[test]
+fn runtime_entitlement_includes_only_the_idle_approval_wait() {
+    assert_eq!(
+        runtime_entitlement_filter().expect("the core lifecycle values serialize"),
+        doc! {
+            "$or": [
+                {
+                    "status": {
+                        "$in": ["provisioning", "ready", "running", "rotating"]
+                    }
+                },
+                { "status": "idle", "stop_reason": "requires_action" },
+            ]
+        }
+    );
+}
+
+#[test]
 fn reserved_capacity_pipeline_matches_and_sums_only_durable_runtime_promises() {
     let pipeline = reserved_capacity_pipeline().expect("the core statuses serialize");
     assert_eq!(
@@ -358,9 +375,14 @@ fn reserved_capacity_pipeline_matches_and_sums_only_durable_runtime_promises() {
         vec![
             doc! {
                 "$match": {
-                    "status": {
-                        "$in": ["provisioning", "ready", "running", "rotating"]
-                    }
+                    "$or": [
+                        {
+                            "status": {
+                                "$in": ["provisioning", "ready", "running", "rotating"]
+                            }
+                        },
+                        { "status": "idle", "stop_reason": "requires_action" },
+                    ]
                 }
             },
             tombstone_lookup_stage(),

@@ -5,7 +5,7 @@
 //! with a session that already exists and whose runtime is either gone or
 //! still there without anything attached to it.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use layer3_adapter::RuntimeHandle;
 use tokio::sync::{broadcast, watch, Mutex};
@@ -16,9 +16,17 @@ use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::service::{store_failed, SessionEntry, SessionService, LIVE_BUFFER, RESOURCE_BUFFER};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
-use crate::store::SessionRecord;
+use crate::store::{SessionRecord, StoreError};
 use crate::terminal::ScreenModel;
 use crate::terminal_io::spawn_relay;
+use crate::SessionMode;
+
+/// Durable conversation state a replacement process needs before it attaches.
+#[derive(Default)]
+pub(crate) struct ReadoptionHistory {
+    conversation_id: Option<String>,
+    pending_approvals: HashSet<String>,
+}
 
 impl SessionService {
     /// Give a stopped session a runtime again.
@@ -41,7 +49,7 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
-        if record.session.status.wants_runtime() {
+        if record.session.wants_runtime() {
             // Already running or already starting. Reviving again would
             // provision a second sandbox for one session.
             return Ok(record.session);
@@ -115,6 +123,41 @@ impl SessionService {
         Ok(session)
     }
 
+    /// Read the durable facts needed to rebuild one conversation attachment.
+    ///
+    /// Kept separate from the network work so reconciliation can defer safely
+    /// when history is unavailable. Attaching first and discovering that the
+    /// answerable set cannot be rebuilt would leave a live runtime claimed by
+    /// neither the old process nor the replacement.
+    pub(crate) async fn readoption_history(
+        &self,
+        record: &SessionRecord,
+    ) -> Result<ReadoptionHistory, StoreError> {
+        if record.session.options.mode != SessionMode::Conversation {
+            return Ok(ReadoptionHistory::default());
+        }
+        let id = &record.session.id;
+        let durable_events: Vec<Event> = self
+            .store
+            .events_since(id, 0)
+            .await?
+            .into_iter()
+            .filter_map(crate::event::StoredEvent::into_known)
+            .collect();
+        let conversation_id = durable_events
+            .iter()
+            .rev()
+            .find_map(|event| match &event.kind {
+                EventKind::ConversationOpened { conversation_id } => Some(conversation_id.clone()),
+                _ => None,
+            });
+        let pending_approvals = crate::conversation_log::pending_approvals_from(&durable_events);
+        Ok(ReadoptionHistory {
+            conversation_id,
+            pending_approvals,
+        })
+    }
+
     /// Take an existing runtime back under management after losing track of it.
     ///
     /// A sandbox belongs to the provider, not to this process, so it is still
@@ -126,32 +169,24 @@ impl SessionService {
     /// The screen is rebuilt from the stored transcript, so what someone left
     /// is what they come back to. Without that the session would be alive and
     /// usable but visibly empty, which reads as lost work.
-    /// What the runtime called this session's conversation, from the record.
-    ///
-    /// Read rather than remembered, which is the §5 rule applied to the one
-    /// thing a replacement control plane cannot rebuild for itself. The last
-    /// one wins: a session may have been rejoined before, and each rejoin
-    /// records the name it ended up with.
-    ///
-    /// `None` where nothing named one — a session whose runtime has no name for
-    /// a conversation, or one recorded before this was written down. The caller
-    /// says so out loud rather than treating it as ordinary.
-    async fn recorded_conversation(&self, id: &SessionId) -> Option<String> {
-        let stored = self.store.events_since(id, 0).await.ok()?;
-        stored
-            .into_iter()
-            .filter_map(crate::event::StoredEvent::into_known)
-            .rev()
-            .find_map(|event| match event.kind {
-                crate::event::EventKind::ConversationOpened { conversation_id } => {
-                    Some(conversation_id)
-                }
-                _ => None,
-            })
+    pub(crate) async fn readopt(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
+        let history = self
+            .readoption_history(record)
+            .await
+            .map_err(store_failed)?;
+        self.readopt_with_history(record, history).await
     }
 
-    pub(crate) async fn readopt(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
+    pub(crate) async fn readopt_with_history(
+        self: &Arc<Self>,
+        record: &SessionRecord,
+        history: ReadoptionHistory,
+    ) -> Result<(), CoreError> {
         let id = record.session.id.clone();
+        let ReadoptionHistory {
+            conversation_id,
+            pending_approvals,
+        } = history;
         let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
             // Nothing to reclaim: the session never got a runtime, or its
             // runtime was already torn down.
@@ -216,12 +251,12 @@ impl SessionService {
         let conversation = match conversing {
             true => {
                 // What the runtime calls the conversation already running in
-                // it, read from the record because this process was not here
-                // when it was opened. Rejoining is the whole point: without it
-                // the runtime opens a second conversation beside the first and
-                // the agent loses everything it knew.
+                // it, read from the same durable snapshot as pending approvals.
+                // The last recorded name wins because a session may have been
+                // rejoined before. Rejoining is the whole point: without it the
+                // runtime opens a second conversation beside the first.
                 let mut options = crate::provision::runtime_options(&record.session.options);
-                options.resume_conversation = self.recorded_conversation(&id).await;
+                options.resume_conversation = conversation_id;
                 if options.resume_conversation.is_none() {
                     tracing::warn!(
                         session_id = %id,
@@ -302,7 +337,7 @@ impl SessionService {
         if current.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
-        if !current.session.status.wants_runtime()
+        if !current.session.wants_runtime()
             || current.session.kernel != record.session.kernel
             || current.runtime_id.as_deref() != Some(handle.0.as_str())
         {
@@ -337,6 +372,14 @@ impl SessionService {
             .map_err(store_failed)?;
         }
 
+        if !pending_approvals.is_empty() {
+            tracing::info!(
+                session_id = %id,
+                count = pending_approvals.len(),
+                "pending approvals restored during readoption"
+            );
+        }
+
         let owner = current.session.owner.clone();
         let mut adopted = current.session.clone();
         adopted.capabilities = capabilities;
@@ -359,7 +402,7 @@ impl SessionService {
             memory_pressure: Default::default(),
             readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),
-            pending_approvals: Default::default(),
+            pending_approvals,
             assembling: None,
             context_reading: None,
             attached: None,
