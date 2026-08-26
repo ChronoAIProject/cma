@@ -14,9 +14,9 @@ use layer2_core::{Authorization, SubjectId};
 
 use super::persistence::{SubjectAuthState, SubjectAuthorizationCursor, SubjectAuthorizationLease};
 use super::{
-    next_token_generation, random_token, AuthMode, AuthOperationBudget, AuthState,
-    AUTHORIZATION_CHECK_ATTEMPT_BUDGET, AUTHORIZATION_CHECK_BATCH_SIZE,
-    AUTHORIZATION_CHECK_INTERVAL,
+    authorization_check_deadline, next_token_generation, random_token, AuthMode,
+    AuthOperationBudget, AuthState, AUTHORIZATION_CHECK_ATTEMPT_BUDGET,
+    AUTHORIZATION_CHECK_BATCH_SIZE, AUTHORIZATION_CHECK_INTERVAL,
 };
 
 const AUTHORIZATION_CHECK_LEASE_LIFETIME: Duration = Duration::from_secs(30);
@@ -58,6 +58,7 @@ enum UserinfoAnswer {
 enum IntrospectionAnswer {
     Active(Vec<String>),
     Inactive,
+    SubjectMismatch,
     Transient(String),
 }
 
@@ -77,6 +78,24 @@ fn complete_permissions_claim(
                 .ok_or_else(|| format!("{source} permissions were not all strings"))
         })
         .collect()
+}
+
+/// The deadline at which nonempty authority stops being servable.
+///
+/// Schema-v3 records can already carry a check deadline later than their token
+/// expiry. Clamp again on the request path so migration cannot briefly revive
+/// that authority before the next fenced write normalizes the durable value.
+fn servable_authorization_deadline(state: &SubjectAuthState) -> SystemTime {
+    if state.authorization.capabilities().next().is_none() {
+        return state.authorization_check_after;
+    }
+    let Some(tokens) = state.tokens.as_ref() else {
+        return SystemTime::UNIX_EPOCH;
+    };
+    if tokens.access_token.is_none() {
+        return SystemTime::UNIX_EPOCH;
+    }
+    state.authorization_check_after.min(tokens.expires_at)
 }
 
 /// Result of one selected reconciliation item.
@@ -368,7 +387,14 @@ impl AuthState {
                 next.authorization = authorization.clone();
                 next.authorization_check_after = completed_at + AUTHORIZATION_CHECK_INTERVAL;
                 match token_disposition {
-                    TokenDisposition::Keep => {}
+                    TokenDisposition::Keep => {
+                        let tokens = next
+                            .tokens
+                            .as_ref()
+                            .expect("a kept authorization answer has token custody");
+                        next.authorization_check_after =
+                            authorization_check_deadline(tokens, completed_at);
+                    }
                     TokenDisposition::QuarantineAccess => {
                         next.token_generation = next_token_generation(current.token_generation)?;
                         if next
@@ -450,7 +476,9 @@ impl AuthState {
                 if let Err(error) = take_operation(budget, 1, "provider introspection check") {
                     return ProviderAnswer::Transient(error.to_string());
                 }
-                let introspection = self.introspection_answer(introspection, access_token).await;
+                let introspection = self
+                    .introspection_answer(introspection, expected_subject, access_token)
+                    .await;
                 if !matches!(&introspection, IntrospectionAnswer::Transient(_)) {
                     return Self::answer_from_introspection(introspection);
                 }
@@ -467,7 +495,8 @@ impl AuthState {
                     return ProviderAnswer::Transient(error.to_string());
                 }
                 Self::answer_from_introspection(
-                    self.introspection_answer(introspection, access_token).await,
+                    self.introspection_answer(introspection, expected_subject, access_token)
+                        .await,
                 )
             }
             (None, Some(userinfo)) => {
@@ -488,6 +517,7 @@ impl AuthState {
     async fn introspection_answer(
         &self,
         endpoint: &str,
+        expected_subject: &SubjectId,
         access_token: &str,
     ) -> IntrospectionAnswer {
         let AuthMode::Provider {
@@ -533,6 +563,23 @@ impl AuthState {
         };
         if !active {
             return IntrospectionAnswer::Inactive;
+        }
+        match body.get("sub") {
+            None => {}
+            Some(serde_json::Value::String(subject)) if subject.is_empty() => {
+                return IntrospectionAnswer::Transient(
+                    "introspection body carried an empty subject claim".into(),
+                );
+            }
+            Some(serde_json::Value::String(subject)) if subject != expected_subject.as_str() => {
+                return IntrospectionAnswer::SubjectMismatch;
+            }
+            Some(serde_json::Value::String(_)) => {}
+            Some(_) => {
+                return IntrospectionAnswer::Transient(
+                    "introspection body subject claim was not a string".into(),
+                );
+            }
         }
         match complete_permissions_claim(&body, "introspection body") {
             Ok(permissions) => IntrospectionAnswer::Active(permissions),
@@ -597,6 +644,10 @@ impl AuthState {
                 authorization: Authorization::none(),
                 token_disposition: TokenDisposition::QuarantineAccess,
             },
+            IntrospectionAnswer::SubjectMismatch => ProviderAnswer::Complete {
+                authorization: Authorization::none(),
+                token_disposition: TokenDisposition::RetireDelegation,
+            },
             IntrospectionAnswer::Transient(error) => ProviderAnswer::Transient(error),
         }
     }
@@ -616,7 +667,9 @@ impl AuthState {
         introspection: IntrospectionAnswer,
         userinfo: UserinfoAnswer,
     ) -> ProviderAnswer {
-        if matches!(&userinfo, UserinfoAnswer::SubjectMismatch) {
+        if matches!(&introspection, IntrospectionAnswer::SubjectMismatch)
+            || matches!(&userinfo, UserinfoAnswer::SubjectMismatch)
+        {
             return ProviderAnswer::Complete {
                 authorization: Authorization::none(),
                 token_disposition: TokenDisposition::RetireDelegation,
@@ -628,6 +681,7 @@ impl AuthState {
                 authorization: Authorization::none(),
                 token_disposition: TokenDisposition::QuarantineAccess,
             },
+            IntrospectionAnswer::SubjectMismatch => unreachable!("handled above"),
             IntrospectionAnswer::Transient(introspection_error) => match userinfo {
                 UserinfoAnswer::Complete(permissions) => Self::complete_permissions(&permissions),
                 UserinfoAnswer::SubjectMismatch => unreachable!("handled above"),
@@ -641,12 +695,14 @@ impl AuthState {
     /// Require a fresh complete answer before an overdue cookie can carry authority.
     pub(super) async fn enforce_cookie_authorization(
         &self,
-        current: SubjectAuthState,
+        mut current: SubjectAuthState,
     ) -> Result<SubjectAuthState, StoreError> {
         let due_at = SystemTime::now();
-        if current.authorization_check_after > due_at {
+        let servable_until = servable_authorization_deadline(&current);
+        if servable_until > due_at {
             return Ok(current);
         }
+        current.authorization_check_after = servable_until;
         let subject = current.subject.clone();
         let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
         tokio::time::timeout(
@@ -663,7 +719,7 @@ impl AuthState {
         let latest = self.store.subject(&subject).await?.ok_or_else(|| {
             StoreError::Unavailable("subject authorization disappeared during its check".into())
         })?;
-        if latest.authorization_check_after <= SystemTime::now() {
+        if servable_authorization_deadline(&latest) <= SystemTime::now() {
             return Err(StoreError::Unavailable(
                 "subject authorization is overdue or another worker is checking it".into(),
             ));
