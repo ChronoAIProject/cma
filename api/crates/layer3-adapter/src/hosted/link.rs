@@ -16,9 +16,13 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-use super::{HostedKernel, SUPERVISOR_PORT};
+use super::{AbortLinkOnDrop, HostedKernel, SUPERVISOR_PORT};
 use crate::supervisor;
-use crate::{AdapterError, RuntimeHandle, TerminalChannel, TerminalInput, TerminalOutput};
+use crate::task_retirement::TaskRetirement;
+use crate::{
+    AdapterError, RuntimeHandle, TerminalChannel, TerminalInput, TerminalInputSender,
+    TerminalOutput,
+};
 
 /// How many output chunks may queue before the relay applies backpressure.
 ///
@@ -189,29 +193,57 @@ impl HostedKernel {
     ) -> Result<TerminalChannel, AdapterError> {
         let (stream, url) = self.connect(handle, None).await?;
         tracing::info!(sandbox = %handle.0, %url, "attaching to sandbox terminal");
-        let (mut sink, mut source) = stream.split();
+        let (sink, mut source) = stream.split();
 
         // Settled before anything is relayed, so both directions agree on how
         // a binary frame is read for the whole life of the link.
         let (framed, early) = Self::negotiate(&mut source).await;
 
         let (out_tx, out_rx) = mpsc::channel::<TerminalOutput>(OUTPUT_BUFFER);
-        let (in_tx, mut in_rx) = mpsc::channel::<TerminalInput>(INPUT_BUFFER);
-
-        // Registered before either half can finish, so cleanup cannot race a
-        // dead sender into the map after it has already removed this link.
+        let sandbox = handle.0.clone();
+        let sink = std::sync::Arc::new(tokio::sync::Mutex::new(sink));
         let lifecycle = self.link_lifecycle(&handle.0);
-        lifecycle.register(in_tx.clone()).await;
+        let lifecycle_for_writer = lifecycle.clone();
+        let in_tx = TerminalInputSender::spawn(INPUT_BUFFER, move |input| {
+            let credential_operation = match &input {
+                TerminalInput::Credential { operation_id, .. } => Some(operation_id.clone()),
+                _ => None,
+            };
+            let message = Self::encode(input, framed);
+            let sandbox = sandbox.clone();
+            let sink = std::sync::Arc::clone(&sink);
+            let lifecycle = lifecycle_for_writer.clone();
+            async move {
+                if let Err(error) = sink.lock().await.send(message).await {
+                    tracing::warn!(%sandbox, %error, "sandbox terminal write failed");
+                    if let Some(operation_id) = credential_operation {
+                        lifecycle.fail_credential(&operation_id).await;
+                    }
+                    return Err(AdapterError::Unavailable(format!(
+                        "sandbox terminal write failed: {error}"
+                    )));
+                }
+                Ok(())
+            }
+        });
+
+        let mut abort_on_drop = AbortLinkOnDrop::new(in_tx.clone());
+        let whole_retirement = TaskRetirement::default();
+        let whole_guard = whole_retirement.guard();
+        let (installed, installation) = tokio::sync::oneshot::channel();
 
         let sandbox = handle.0.clone();
-        let link_for_cleanup = in_tx.clone();
+        let link_for_reader = in_tx.downgrade();
         let lifecycle_for_reader = lifecycle.clone();
-        tokio::spawn(async move {
+        let link_for_cleanup = in_tx.downgrade();
+        let writer_retired = in_tx.retirement();
+        let writer_abort = in_tx.abort_handle();
+        let lifecycle_for_cleanup = lifecycle.clone();
+        let reader = tokio::spawn(async move {
             // Output that arrived while the wire was being settled. Sent
             // first, because it is the top of somebody's screen.
             if let Some(bytes) = early {
                 if out_tx.send(TerminalOutput::Bytes(bytes)).await.is_err() {
-                    lifecycle_for_reader.forget(&link_for_cleanup).await;
                     return;
                 }
             }
@@ -239,13 +271,15 @@ impl HostedKernel {
                     }
                     Ok(Message::Text(text)) => {
                         if let Some((operation_id, installed)) = credential_answer(&text) {
-                            lifecycle_for_reader
-                                .settle_credential(&link_for_cleanup, &operation_id, installed)
-                                .await;
+                            if let Some(link) = link_for_reader.upgrade() {
+                                lifecycle_for_reader
+                                    .settle_credential(&link, &operation_id, installed)
+                                    .await;
+                            }
                         } else if let Some(accepted) = switch_answer(&text) {
-                            lifecycle_for_reader
-                                .settle(&link_for_cleanup, accepted)
-                                .await;
+                            if let Some(link) = link_for_reader.upgrade() {
+                                lifecycle_for_reader.settle(&link, accepted).await;
+                            }
                         } else if let Some(ending) = exit_report(&text) {
                             // The supervisor sends this only after it has
                             // stopped forwarding pty bytes. Sharing the output
@@ -262,32 +296,45 @@ impl HostedKernel {
                     }
                 }
             }
-            // Remove only this link. A reconnect can install its successor
-            // before the old reader notices that its socket ended.
-            lifecycle_for_reader.forget(&link_for_cleanup).await;
             tracing::info!(%sandbox, "sandbox output relay ended");
         });
 
-        let sandbox = handle.0.clone();
-        let lifecycle_for_writer = lifecycle.clone();
+        // A socket generation owns both halves. Whichever half ends first
+        // retires the other, then removes only this exact registration.
         tokio::spawn(async move {
-            while let Some(input) = in_rx.recv().await {
-                let credential_operation = match &input {
-                    TerminalInput::Credential { operation_id, .. } => Some(operation_id.clone()),
-                    _ => None,
-                };
-                let message = Self::encode(input, framed);
-                if let Err(e) = sink.send(message).await {
-                    tracing::warn!(%sandbox, error = %e, "sandbox terminal write failed");
-                    if let Some(operation_id) = credential_operation {
-                        lifecycle_for_writer.fail_credential(&operation_id).await;
-                    }
-                    break;
+            let _whole_guard = whole_guard;
+            let mut reader = reader;
+            let writer_ended = writer_retired.clone();
+            tokio::select! {
+                _ = writer_ended.wait() => {
+                    reader.abort();
+                    let _ = reader.await;
+                }
+                _ = &mut reader => {
+                    writer_abort.abort();
+                    writer_retired.wait().await;
                 }
             }
-            tracing::info!(%sandbox, "sandbox input relay ended");
+            if installation.await.is_ok() {
+                if let Some(link) = link_for_cleanup.upgrade() {
+                    lifecycle_for_cleanup.forget(&link).await;
+                }
+            }
         });
 
+        if !lifecycle
+            .register(in_tx.clone(), whole_retirement.clone(), installed)
+            .await
+        {
+            in_tx.abort();
+            whole_retirement.wait().await;
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {} terminal link was superseded while opening",
+                handle.0
+            )));
+        }
+
+        abort_on_drop.disarm();
         Ok(TerminalChannel {
             output: out_rx,
             input: in_tx,
@@ -313,7 +360,7 @@ impl HostedKernel {
             let links = self.links.lock().await;
             match links.get(&handle.0) {
                 Some(link) => {
-                    let link = link.clone();
+                    let link = link.sender.clone();
                     let answer = self
                         .credential_waiters
                         .expect(&handle.0, &operation_id, &link)
@@ -338,10 +385,15 @@ impl HostedKernel {
             .await
             .is_err()
         {
-            // The link died since it was recorded. Forgotten rather than
-            // retried: the next attachment records a live one, and keeping a
-            // dead sender would make every renewal fail the same way forever.
-            self.link_lifecycle(&handle.0).forget(&link).await;
+            self.credential_waiters
+                .forget_operation(&handle.0, &operation_id, &link)
+                .await;
+            // A dead writer wakes its generation supervisor, which retires the
+            // reader before forgetting this exact registration. Queue pressure
+            // is not a dead generation and deliberately leaves it registered.
+            self.link_lifecycle(&handle.0)
+                .forget_if_whole_retired(&link)
+                .await;
             return Err(AdapterError::Unavailable(format!(
                 "runtime {}'s link closed before the credential reached it",
                 handle.0
@@ -389,7 +441,7 @@ impl HostedKernel {
             let links = self.links.lock().await;
             match links.get(&handle.0) {
                 Some(link) => {
-                    let link = link.clone();
+                    let link = link.sender.clone();
                     let answer = self.switch_waiters.expect(&handle.0, &link).await;
                     Some((link, answer))
                 }
@@ -409,7 +461,9 @@ impl HostedKernel {
             .await
             .is_err()
         {
-            self.link_lifecycle(&handle.0).forget(&link).await;
+            self.link_lifecycle(&handle.0)
+                .forget_if_whole_retired(&link)
+                .await;
             return Err(AdapterError::Unavailable(format!(
                 "runtime {}'s link closed before the switch reached it",
                 handle.0

@@ -28,12 +28,84 @@ fn hosted(base: &str) -> HostedKernel {
     )
 }
 
+fn input_link(
+    capacity: usize,
+) -> (
+    crate::TerminalInputSender,
+    mpsc::Receiver<crate::TerminalInput>,
+) {
+    let (writer, received) = mpsc::channel(capacity);
+    let link = crate::TerminalInputSender::spawn(capacity, move |input| {
+        let writer = writer.clone();
+        async move {
+            writer
+                .send(input)
+                .await
+                .map_err(|_| AdapterError::Unavailable("the test terminal writer closed".into()))
+        }
+    });
+    (link, received)
+}
+
+fn start_mock_registration(
+    lifecycle: LinkLifecycle,
+    pause_cleanup: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+) -> (
+    TerminalInputSender,
+    crate::task_retirement::TaskRetirement,
+    tokio::task::JoinHandle<bool>,
+    tokio::task::JoinHandle<()>,
+) {
+    let link = TerminalInputSender::spawn(1, |_input| {
+        std::future::pending::<Result<(), AdapterError>>()
+    });
+    let writer_retired = link.retirement();
+    let identity = link.downgrade();
+    let whole_retirement = crate::task_retirement::TaskRetirement::default();
+    let whole_guard = whole_retirement.guard();
+    let (installed, installation) = tokio::sync::oneshot::channel();
+    let cleanup_lifecycle = lifecycle.clone();
+    let supervisor = tokio::spawn(async move {
+        let _whole_guard = whole_guard;
+        writer_retired.wait().await;
+        if let Some((started, resume)) = pause_cleanup {
+            let _ = started.send(());
+            let _ = resume.await;
+        }
+        if installation.await.is_ok() {
+            if let Some(link) = identity.upgrade() {
+                cleanup_lifecycle.forget(&link).await;
+            }
+        }
+    });
+
+    let registration_link = link.clone();
+    let registration_retirement = whole_retirement.clone();
+    let registered = tokio::spawn(async move {
+        let mut abort_on_drop = AbortLinkOnDrop::new(registration_link.clone());
+        let is_current = lifecycle
+            .register(registration_link, registration_retirement, installed)
+            .await;
+        if is_current {
+            abort_on_drop.disarm();
+        }
+        is_current
+    });
+    (link, whole_retirement, registered, supervisor)
+}
+
 async fn credential_waiter_count(kernel: &HostedKernel) -> usize {
     kernel.credential_waiters.0.lock().await.len()
 }
 
-/// Serve one provider listing response and then stop.
-async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
+/// Serve one HTTP response and then stop.
+async fn one_response_server(
+    status: u16,
+    body: serde_json::Value,
+) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("the provider fixture binds");
@@ -48,8 +120,13 @@ async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::Join
             assert!(read > 0, "the client sent complete request headers");
             request.extend_from_slice(&chunk[..read]);
         }
+        let reason = match status {
+            200 => "OK",
+            404 => "Not Found",
+            status => panic!("the fixture does not name HTTP status {status}"),
+        };
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(),
             body
         );
@@ -62,6 +139,11 @@ async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::Join
     (format!("http://{address}"), server)
 }
 
+/// Serve one provider listing response and then stop.
+async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
+    one_response_server(200, body).await
+}
+
 /// A provisioning request for a session with nothing carried into it.
 fn spec() -> RuntimeSpec {
     RuntimeSpec {
@@ -72,6 +154,8 @@ fn spec() -> RuntimeSpec {
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
+        generation: None,
+        reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
         subject_credential: None,
@@ -203,12 +287,14 @@ fn sandboxes_do_not_expire_on_a_timer() {
 fn provisioning_writes_both_generations_of_correlation_metadata() {
     let mut request = spec();
     request.created_by = Some("test-plane".to_string());
+    request.generation = std::num::NonZeroU64::new(17);
 
     assert_eq!(
         provisioning_metadata(&request, "test-kernel"),
         BTreeMap::from([
             ("cma/control-plane".to_string(), "test-plane".to_string()),
             ("cma/kernel".to_string(), "test-kernel".to_string()),
+            ("cma/runtime-generation".to_string(), "17".to_string()),
             ("cma/session".to_string(), "sesn_x".to_string()),
             (
                 "chrono-bot/control-plane".to_string(),
@@ -218,6 +304,24 @@ fn provisioning_writes_both_generations_of_correlation_metadata() {
             ("chrono-bot/session".to_string(), "sesn_x".to_string()),
         ])
     );
+}
+
+#[test]
+fn generation_metadata_distinguishes_legacy_valid_and_corrupt_values() {
+    let valid = std::num::NonZeroU64::new(17).unwrap();
+    for (raw, expected) in [
+        (None, RuntimeGeneration::Legacy),
+        (Some("17"), RuntimeGeneration::Recorded(valid)),
+        (Some("0"), RuntimeGeneration::Malformed),
+        (Some("-1"), RuntimeGeneration::Malformed),
+        (Some("not-a-number"), RuntimeGeneration::Malformed),
+        (Some("18446744073709551616"), RuntimeGeneration::Malformed),
+    ] {
+        let metadata = raw.map_or_else(BTreeMap::new, |value| {
+            BTreeMap::from([(GENERATION_METADATA_KEY.to_string(), value.to_string())])
+        });
+        assert_eq!(runtime_generation(&metadata), expected, "raw {raw:?}");
+    }
 }
 
 #[tokio::test]
@@ -242,7 +346,8 @@ async fn a_stopped_hosted_listing_carries_liveness_and_loss_reason() {
             "status": {"state": "Failed", "reason": "Error"},
             "metadata": {
                 "chrono-bot/session": "sesn_x",
-                "chrono-bot/control-plane": "test-plane"
+                "chrono-bot/control-plane": "test-plane",
+                "cma/runtime-generation": "17"
             }
         }],
         "pagination": {
@@ -263,6 +368,10 @@ async fn a_stopped_hosted_listing_carries_liveness_and_loss_reason() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].session.as_deref(), Some("sesn_x"));
+    assert_eq!(
+        listed[0].generation,
+        RuntimeGeneration::Recorded(std::num::NonZeroU64::new(17).unwrap())
+    );
     assert_eq!(listed[0].created_by.as_deref(), Some("test-plane"));
     assert!(!listed[0].serving);
     assert_eq!(listed[0].lost_because, Some(RuntimeLossReason::Failed));
@@ -299,6 +408,7 @@ async fn canonical_correlation_metadata_wins_over_historical_values() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].session.as_deref(), Some("sesn_current"));
+    assert_eq!(listed[0].generation, RuntimeGeneration::Legacy);
     assert_eq!(listed[0].created_by.as_deref(), Some("current-plane"));
 }
 
@@ -327,7 +437,7 @@ async fn a_credential_reaches_a_runtime_over_the_link_it_already_has() {
     // echoes an opaque operation id only after installing it.
     let k = hosted("http://127.0.0.1:1");
     let handle = RuntimeHandle("sbx-1".into());
-    let (tx, mut rx) = mpsc::channel(4);
+    let (tx, mut rx) = input_link(4);
     k.remember_link(&handle.0, tx.clone()).await;
     let waiters = k.credential_waiters();
     let runtime = handle.0.clone();
@@ -356,7 +466,7 @@ async fn a_credential_reaches_a_runtime_over_the_link_it_already_has() {
 async fn a_runtime_credential_refusal_is_not_delivery() {
     let kernel = Arc::new(hosted("http://127.0.0.1:1"));
     let handle = RuntimeHandle("sbx-install-refusal".into());
-    let (link, mut input) = mpsc::channel(4);
+    let (link, mut input) = input_link(4);
     kernel.remember_link(&handle.0, link.clone()).await;
 
     let attempt = {
@@ -386,7 +496,7 @@ async fn a_runtime_credential_refusal_is_not_delivery() {
 async fn a_queued_credential_whose_socket_write_fails_is_not_delivery() {
     let kernel = Arc::new(hosted("http://127.0.0.1:1"));
     let handle = RuntimeHandle("sbx-write-failure".into());
-    let (link, mut input) = mpsc::channel(4);
+    let (link, mut input) = input_link(4);
     kernel.remember_link(&handle.0, link).await;
 
     let attempt = {
@@ -420,7 +530,7 @@ async fn a_queued_credential_whose_socket_write_fails_is_not_delivery() {
 async fn silence_from_an_old_runtime_times_out_without_delivery() {
     let kernel = hosted("http://127.0.0.1:1");
     let handle = RuntimeHandle("sbx-legacy-runtime".into());
-    let (link, mut input) = mpsc::channel(4);
+    let (link, mut input) = input_link(4);
     kernel.remember_link(&handle.0, link).await;
     let request = tokio::spawn(async move { input.recv().await });
 
@@ -442,7 +552,7 @@ async fn silence_from_an_old_runtime_times_out_without_delivery() {
 async fn a_wrong_credential_operation_id_does_not_settle_delivery() {
     let kernel = Arc::new(hosted("http://127.0.0.1:1"));
     let handle = RuntimeHandle("sbx-wrong-operation".into());
-    let (link, mut input) = mpsc::channel(4);
+    let (link, mut input) = input_link(4);
     kernel.remember_link(&handle.0, link.clone()).await;
     let attempt = {
         let kernel = Arc::clone(&kernel);
@@ -475,7 +585,7 @@ async fn a_wrong_credential_operation_id_does_not_settle_delivery() {
 async fn a_replaced_socket_cancels_only_its_credential_operation() {
     let kernel = Arc::new(hosted("http://127.0.0.1:1"));
     let handle = RuntimeHandle("sbx-credential-generation".into());
-    let (old_link, mut old_input) = mpsc::channel(4);
+    let (old_link, mut old_input) = input_link(4);
     kernel.remember_link(&handle.0, old_link.clone()).await;
     let old_attempt = {
         let kernel = Arc::clone(&kernel);
@@ -490,7 +600,7 @@ async fn a_replaced_socket_cancels_only_its_credential_operation() {
         panic!("a credential request was expected");
     };
 
-    let (new_link, mut new_input) = mpsc::channel(4);
+    let (new_link, mut new_input) = input_link(4);
     kernel.remember_link(&handle.0, new_link.clone()).await;
     assert!(matches!(
         old_attempt.await.expect("the old delivery task ran"),
@@ -552,7 +662,7 @@ async fn a_credential_for_a_runtime_with_no_link_is_refused_rather_than_dropped(
 async fn a_link_that_closed_is_forgotten_rather_than_retried_forever() {
     let k = hosted("http://127.0.0.1:1");
     let handle = RuntimeHandle("sbx-1".into());
-    let (tx, rx) = mpsc::channel(1);
+    let (tx, rx) = input_link(1);
     drop(rx);
     k.remember_link(&handle.0, tx).await;
 
@@ -565,18 +675,121 @@ async fn a_link_that_closed_is_forgotten_rather_than_retried_forever() {
 }
 
 #[tokio::test]
-async fn tearing_a_runtime_down_forgets_its_link() {
-    // Otherwise this map grows with the remains of every session the process
-    // has ever served.
+async fn successful_raw_delete_retires_the_captured_link() {
+    let (base, server) = one_response_server(200, serde_json::json!({})).await;
+    let kernel = hosted(&base);
+    let handle = RuntimeHandle("sbx-1".into());
+    let (link, _received) = input_link(1);
+    kernel.remember_link(&handle.0, link.clone()).await;
+
+    kernel
+        .terminate(&handle)
+        .await
+        .expect("the compatibility provider accepts deletion");
+    server.await.expect("the provider fixture completes");
+
+    assert!(kernel.link_to(&handle.0).await.is_none());
+    link.wait_retired().await;
+    assert!(link
+        .send(TerminalInput::Bytes(b"late".to_vec()))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn an_absent_fenced_provider_object_retires_its_stale_link() {
+    let (base, server) = one_response_server(
+        404,
+        serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Status",
+            "metadata": {},
+            "status": "Failure",
+            "message": "the BatchSandbox is absent",
+            "reason": "NotFound",
+            "code": 404,
+        }),
+    )
+    .await;
+    let mut config = kube::Config::new(base.parse().expect("the fixture URL parses"));
+    config.default_namespace = "chrono-bot".into();
+    config.default_retry = false;
+    let reclaimer = crate::sandbox::BatchSandboxReclaimer::namespaced(
+        kube::Client::try_from(config).expect("the fixture client builds"),
+        "chrono-bot",
+    );
+    let kernel = HostedKernel::new(
+        SandboxClient::new("http://127.0.0.1:1", "test-key").with_reclaimer(reclaimer),
+        SandboxShape::default(),
+        "test-kernel",
+        ".codex/skills",
+        "AGENTS.md",
+    );
+    let handle = RuntimeHandle("sbx-absent".into());
+    let (link, _received) = input_link(1);
+    kernel.remember_link(&handle.0, link.clone()).await;
+
+    kernel
+        .terminate(&handle)
+        .await
+        .expect("an already absent provider object is terminated");
+    server.await.expect("the Kubernetes fixture completes");
+
+    assert!(kernel.link_to(&handle.0).await.is_none());
+    link.wait_retired().await;
+    assert!(link
+        .send(TerminalInput::Bytes(b"late".to_vec()))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn failed_raw_delete_keeps_the_captured_link_live() {
     let k = hosted("http://127.0.0.1:1");
     let handle = RuntimeHandle("sbx-1".into());
-    let (tx, _rx) = mpsc::channel(1);
-    k.remember_link(&handle.0, tx).await;
+    let (tx, mut rx) = input_link(1);
+    k.remember_link(&handle.0, tx.clone()).await;
 
-    // Against a dead provider the delete fails; the link is dropped first, on
-    // purpose, because the sandbox is going either way.
-    let _ = k.terminate(&handle).await;
-    assert!(k.link_to(&handle.0).await.is_none());
+    assert!(k.terminate(&handle).await.is_err());
+    let current = k
+        .link_to(&handle.0)
+        .await
+        .expect("provider failure says nothing about the captured link");
+    assert!(current.same_channel(&tx));
+    tx.send(TerminalInput::Bytes(b"still-live".to_vec()))
+        .await
+        .expect("the captured link was not retired before deletion succeeded");
+    assert!(matches!(
+        rx.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == b"still-live"
+    ));
+}
+
+#[tokio::test]
+async fn failed_identity_delete_keeps_the_captured_link_live() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let handle = RuntimeHandle("sbx_identity_delete_failed".into());
+    let (link, mut received) = input_link(1);
+    kernel.remember_link(&handle.0, link.clone()).await;
+    let identity = RuntimeIdentity {
+        handle: handle.clone(),
+        session: "sesn_identity_delete_failed".into(),
+        generation: std::num::NonZeroU64::new(1),
+    };
+
+    assert!(kernel.terminate_if_identity(&identity).await.is_err());
+    let current = kernel
+        .link_to(&handle.0)
+        .await
+        .expect("provider failure says nothing about the captured link");
+    assert!(current.same_channel(&link));
+    link.send(TerminalInput::Bytes(b"still-live".to_vec()))
+        .await
+        .expect("the captured link was not retired on provider failure");
+    assert!(matches!(
+        received.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == b"still-live"
+    ));
 }
 
 #[tokio::test]
@@ -756,10 +969,11 @@ async fn a_conversations_control_lane_carries_nothing_else() {
     let sink = Arc::new(tokio::sync::Mutex::new(Recorder(Arc::clone(&sent))));
 
     let control = super::control_lane(sink, None);
-    control
+    let error = control
         .send(TerminalInput::Bytes(b"ls -la".to_vec()))
         .await
-        .expect("accepted by the channel");
+        .expect_err("terminal bytes are rejected by a conversation control lane");
+    assert!(matches!(error, AdapterError::Rejected(_)), "got {error:?}");
     tokio::time::sleep(std::time::Duration::from_millis(60)).await;
 
     assert!(
@@ -810,7 +1024,7 @@ async fn a_runtime_that_never_answers_a_switch_is_not_recorded_as_having_switche
     // caller to a rotation — which is how such a session moved before the
     // in-place switch existed, and still moves correctly.
     let kernel = hosted("http://127.0.0.1:1");
-    let (link, _held) = mpsc::channel::<TerminalInput>(4);
+    let (link, _held) = input_link(4);
     kernel.remember_link("sbx_old", link).await;
 
     let started = std::time::Instant::now();
@@ -831,15 +1045,16 @@ async fn a_runtime_that_never_answers_a_switch_is_not_recorded_as_having_switche
 #[tokio::test]
 async fn cleanup_from_an_old_link_preserves_its_successor_and_waiter() {
     let kernel = hosted("http://127.0.0.1:1");
-    let (old_link, _old_input) = mpsc::channel::<TerminalInput>(1);
+    let (old_link, _old_input) = input_link(1);
     kernel
         .remember_link("sbx_generation", old_link.clone())
         .await;
 
-    let (successor, _successor_input) = mpsc::channel::<TerminalInput>(1);
+    let (successor, _successor_input) = input_link(1);
     kernel
         .remember_link("sbx_generation", successor.clone())
         .await;
+    old_link.wait_retired().await;
     let waiters = kernel.switch_waiters();
     let mut answer = waiters.expect("sbx_generation", &successor).await;
 
@@ -865,9 +1080,122 @@ async fn cleanup_from_an_old_link_preserves_its_successor_and_waiter() {
 }
 
 #[tokio::test]
+async fn chained_registration_does_not_wait_for_a_superseded_predecessors_predecessor() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let lifecycle = kernel.link_lifecycle("sbx_registration_chain");
+    let (r0_cleanup_started, r0_cleanup_started_rx) = tokio::sync::oneshot::channel();
+    let (resume_r0_cleanup, resume_r0_cleanup_rx) = tokio::sync::oneshot::channel();
+    let (r0, r0_retired, r0_registration, r0_supervisor) = start_mock_registration(
+        lifecycle.clone(),
+        Some((r0_cleanup_started, resume_r0_cleanup_rx)),
+    );
+    assert!(r0_registration.await.expect("R0 registration runs"));
+
+    let (a, a_retired, a_registration, a_supervisor) =
+        start_mock_registration(lifecycle.clone(), None);
+    r0_cleanup_started_rx
+        .await
+        .expect("A starts retiring R0 but R0 cleanup is paused");
+    assert!(!a_registration.is_finished());
+
+    let (b, b_retired, b_registration, b_supervisor) = start_mock_registration(lifecycle, None);
+    let b_is_current = tokio::time::timeout(std::time::Duration::from_secs(1), b_registration)
+        .await
+        .expect("B does not wait behind R0 cleanup")
+        .expect("B registration runs");
+    assert!(b_is_current);
+    a_retired.wait().await;
+    a_supervisor.await.expect("A supervisor retires");
+
+    let current = kernel
+        .link_to("sbx_registration_chain")
+        .await
+        .expect("B remains registered");
+    assert!(current.same_channel(&b));
+
+    let _ = resume_r0_cleanup.send(());
+    r0_retired.wait().await;
+    r0_supervisor.await.expect("R0 supervisor retires");
+    assert!(
+        !a_registration.await.expect("A registration resumes"),
+        "A reports that B superseded it"
+    );
+    assert!(r0.is_closed());
+    assert!(a.is_closed());
+
+    b.abort();
+    b_retired.wait().await;
+    b_supervisor.await.expect("B supervisor retires");
+    assert!(kernel.link_to("sbx_registration_chain").await.is_none());
+}
+
+#[tokio::test]
+async fn canceling_registration_while_it_retires_a_predecessor_rolls_it_back() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let lifecycle = kernel.link_lifecycle("sbx_canceled_registration");
+    let (r0_cleanup_started, r0_cleanup_started_rx) = tokio::sync::oneshot::channel();
+    let (resume_r0_cleanup, resume_r0_cleanup_rx) = tokio::sync::oneshot::channel();
+    let (_r0, r0_retired, r0_registration, r0_supervisor) = start_mock_registration(
+        lifecycle.clone(),
+        Some((r0_cleanup_started, resume_r0_cleanup_rx)),
+    );
+    assert!(r0_registration.await.expect("R0 registration runs"));
+
+    let (_a, a_retired, a_registration, a_supervisor) = start_mock_registration(lifecycle, None);
+    r0_cleanup_started_rx
+        .await
+        .expect("A is installed and waiting for R0 cleanup");
+    a_registration.abort();
+    assert!(a_registration
+        .await
+        .expect_err("A registration is canceled")
+        .is_cancelled());
+    a_retired.wait().await;
+    a_supervisor.await.expect("A supervisor retires");
+    assert!(kernel.link_to("sbx_canceled_registration").await.is_none());
+
+    let _ = resume_r0_cleanup.send(());
+    r0_retired.wait().await;
+    r0_supervisor.await.expect("R0 supervisor retires");
+}
+
+#[tokio::test]
+async fn post_delete_cleanup_of_a_captured_link_preserves_its_successor() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let handle = "sbx_reused_while_delete_waited";
+    let (old, _old_input) = input_link(1);
+    kernel.remember_link(handle, old).await;
+    let captured = kernel
+        .links
+        .lock()
+        .await
+        .get(handle)
+        .cloned()
+        .expect("the pre-delete generation is captured");
+
+    let (successor, mut successor_input) = input_link(1);
+    kernel.remember_link(handle, successor.clone()).await;
+    kernel.retire_captured_link(handle, &captured).await;
+
+    let current = kernel
+        .link_to(handle)
+        .await
+        .expect("post-delete cleanup leaves the concurrent successor");
+    assert!(current.same_channel(&successor));
+    successor
+        .send(TerminalInput::Bytes(b"successor".to_vec()))
+        .await
+        .expect("the successor writer was not retired");
+    assert!(matches!(
+        successor_input.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == b"successor"
+    ));
+}
+
+#[tokio::test]
 async fn a_waiter_does_not_keep_its_control_lane_alive() {
     let waiters = super::SwitchWaiters::default();
-    let (link, mut input) = mpsc::channel::<TerminalInput>(1);
+    let (link, mut input) = input_link(1);
     let _answer = waiters.expect("sbx_weak_waiter", &link).await;
 
     drop(link);
@@ -880,7 +1208,7 @@ async fn a_waiter_does_not_keep_its_control_lane_alive() {
 #[tokio::test]
 async fn remembering_the_same_link_again_keeps_its_waiter() {
     let kernel = hosted("http://127.0.0.1:1");
-    let (link, _input) = mpsc::channel::<TerminalInput>(1);
+    let (link, _input) = input_link(1);
     kernel
         .remember_link("sbx_same_generation", link.clone())
         .await;
@@ -903,7 +1231,7 @@ async fn remembering_the_same_link_again_keeps_its_waiter() {
 async fn replacing_a_link_cancels_only_that_generations_pending_switch() {
     let kernel = Arc::new(hosted("http://127.0.0.1:1"));
     let handle = RuntimeHandle("sbx_replaced_waiter".into());
-    let (old_link, mut old_input) = mpsc::channel::<TerminalInput>(1);
+    let (old_link, mut old_input) = input_link(1);
     kernel.remember_link(&handle.0, old_link).await;
 
     let old_attempt = {
@@ -916,7 +1244,7 @@ async fn replacing_a_link_cancels_only_that_generations_pending_switch() {
         Some(TerminalInput::SwitchPlane { command }) if command == "old-command"
     ));
 
-    let (successor, mut successor_input) = mpsc::channel::<TerminalInput>(1);
+    let (successor, mut successor_input) = input_link(1);
     kernel.remember_link(&handle.0, successor.clone()).await;
     let old_outcome = old_attempt.await.expect("the old switch task ran");
     assert!(
@@ -949,7 +1277,7 @@ async fn stale_switch_failure_and_late_reply_do_not_settle_the_successor() {
     let handle = RuntimeHandle("sbx_race".into());
 
     // Fill the old channel so its switch send parks after obtaining that link.
-    let (old_link, old_input) = mpsc::channel::<TerminalInput>(1);
+    let (old_link, old_input) = input_link(1);
     old_link
         .send(TerminalInput::Bytes(b"occupied".to_vec()))
         .await
@@ -967,7 +1295,7 @@ async fn stale_switch_failure_and_late_reply_do_not_settle_the_successor() {
         "the full old link keeps its send in flight"
     );
 
-    let (successor, mut successor_input) = mpsc::channel::<TerminalInput>(1);
+    let (successor, mut successor_input) = input_link(1);
     kernel.remember_link(&handle.0, successor.clone()).await;
     let successor_attempt = {
         let kernel = Arc::clone(&kernel);
@@ -1019,7 +1347,7 @@ async fn stale_switch_failure_and_late_reply_do_not_settle_the_successor() {
 async fn a_switch_the_runtime_confirms_is_recorded_as_done() {
     // The positive case, and the only one that may be recorded in place.
     let kernel = hosted("http://127.0.0.1:1");
-    let (link, mut held) = mpsc::channel::<TerminalInput>(4);
+    let (link, mut held) = input_link(4);
     kernel.remember_link("sbx_new", link.clone()).await;
 
     // Stand in for the pod: read the request off the link and answer it the
@@ -1046,7 +1374,7 @@ async fn a_refused_command_is_not_a_switch() {
     // The supervisor refuses anything outside its boot allowlist. That is a
     // negative answer, not a missing one, and it must not be recorded either.
     let kernel = hosted("http://127.0.0.1:1");
-    let (link, mut held) = mpsc::channel::<TerminalInput>(4);
+    let (link, mut held) = input_link(4);
     kernel.remember_link("sbx_ref", link.clone()).await;
 
     let waiters = kernel.switch_waiters();

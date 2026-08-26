@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use axum::{
@@ -21,13 +21,15 @@ use layer1_public::{auth::DelegatedCredential, tickets::TerminalTickets, Authent
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
-    EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
-    EnvironmentProfileStore, Event, EventKind, KernelId, OperationClaim, OperationReservation,
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, EnvironmentProfile, EnvironmentProfileId,
+    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind,
+    HandoverSnapshot, HandoverStore, KernelId, OperationClaim, OperationReservation,
     OperationStore, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
     RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
-    ServiceId, Session, SessionId, SessionListQuery, SessionMode, SessionPorts, SessionRecord,
-    SessionService, SessionSpec, SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack,
-    SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
+    ServiceId, Session, SessionId, SessionLease, SessionListQuery, SessionMode, SessionPorts,
+    SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore, SkillCatalog, SkillId,
+    SkillPack, SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
     UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
@@ -231,9 +233,80 @@ struct MemorySessionState {
     records: HashMap<String, SessionRecord>,
     events: Vec<Event>,
     receipts: HashMap<String, (SessionId, u64)>,
+    conversations: HashMap<String, MemoryConversationState>,
+}
+
+#[derive(Default)]
+struct MemoryConversationState {
+    opening: Option<ConversationOpeningLease>,
+    link: Option<ConversationLink>,
+    epoch: u64,
 }
 
 impl MemorySessionState {
+    fn record(&self, id: &SessionId) -> Result<&SessionRecord, StoreError> {
+        self.records
+            .get(&id.0)
+            .ok_or_else(|| StoreError::SessionDeleted { id: id.clone() })
+    }
+
+    fn validate_opening_backing(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<(), StoreError> {
+        let record = self.record(&opening.session_id)?;
+        if opening.runtime_generation != 0
+            || opening.runtime_candidate_token.is_some()
+            || opening.session_lease_token.is_some()
+            || session_lease.is_some()
+            || record.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+        {
+            return Err(StoreError::ConversationOpeningLost {
+                id: opening.session_id.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_authority(&self, authority: &ConversationWriteAuthority) -> Result<(), StoreError> {
+        match authority {
+            ConversationWriteAuthority::Opening {
+                opening,
+                session_lease,
+            } => {
+                self.validate_opening_backing(opening, session_lease.as_ref())?;
+                if self
+                    .conversations
+                    .get(&opening.session_id.0)
+                    .and_then(|state| state.opening.as_ref())
+                    != Some(opening)
+                {
+                    return Err(StoreError::ConversationOpeningLost {
+                        id: opening.session_id.clone(),
+                    });
+                }
+            }
+            ConversationWriteAuthority::Active(link) => {
+                let record = self.record(&link.session_id)?;
+                if link.epoch == 0
+                    || link.runtime_generation != 0
+                    || record.runtime_id.as_deref() != Some(link.runtime_id.as_str())
+                    || self
+                        .conversations
+                        .get(&link.session_id.0)
+                        .and_then(|state| state.link.as_ref())
+                        != Some(link)
+                {
+                    return Err(StoreError::ConversationLinkChanged {
+                        id: link.session_id.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn event_tail(&self, id: &SessionId) -> u64 {
         self.events
             .iter()
@@ -422,6 +495,7 @@ impl SessionStore for MemorySessions {
         state.records.remove(&id.0);
         state.events.retain(|event| &event.session_id != id);
         state.receipts.retain(|_, (session_id, _)| session_id != id);
+        state.conversations.remove(&id.0);
         Ok(())
     }
 
@@ -437,6 +511,125 @@ impl SessionStore for MemorySessions {
         state.validate_append(&first.session_id, events, recorded_tail)?;
         state.events.extend_from_slice(events);
         Ok(())
+    }
+
+    async fn acquire_conversation_opening(
+        &self,
+        request: &ConversationOpeningLeaseRequest,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        let opening = ConversationOpeningLease {
+            session_id: request.session_id.clone(),
+            holder: request.holder.clone(),
+            token: request.token.clone(),
+            runtime_id: request.runtime_id.clone(),
+            runtime_generation: request.runtime_generation,
+            runtime_candidate_token: request.runtime_candidate_token.clone(),
+            session_lease_token: session_lease.map(|lease| lease.token.clone()),
+        };
+        let mut state = self.state.lock().await;
+        state.validate_opening_backing(&opening, session_lease)?;
+        let conversation = state
+            .conversations
+            .entry(request.session_id.0.clone())
+            .or_default();
+        if let Some(held) = conversation.opening.as_ref() {
+            return if held == &opening {
+                Ok(opening)
+            } else {
+                Err(StoreError::ConversationOpeningHeld {
+                    id: request.session_id.clone(),
+                })
+            };
+        }
+        conversation.opening = Some(opening.clone());
+        Ok(opening)
+    }
+
+    async fn renew_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+        _ttl: Duration,
+    ) -> Result<(), StoreError> {
+        let state = self.state.lock().await;
+        state.validate_opening_backing(opening, session_lease)?;
+        if state
+            .conversations
+            .get(&opening.session_id.0)
+            .and_then(|state| state.opening.as_ref())
+            != Some(opening)
+        {
+            return Err(StoreError::ConversationOpeningLost {
+                id: opening.session_id.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn publish_conversation_link(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        let mut state = self.state.lock().await;
+        state.validate_opening_backing(opening, session_lease)?;
+        let conversation = state
+            .conversations
+            .entry(opening.session_id.0.clone())
+            .or_default();
+        if let Some(link) = conversation
+            .link
+            .as_ref()
+            .filter(|link| link.token == opening.token)
+        {
+            return Ok(link.clone());
+        }
+        if conversation.opening.as_ref() != Some(opening) {
+            return Err(StoreError::ConversationOpeningLost {
+                id: opening.session_id.clone(),
+            });
+        }
+        conversation.epoch = conversation
+            .epoch
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("conversation link epoch overflow".into()))?;
+        let link = ConversationLink {
+            session_id: opening.session_id.clone(),
+            epoch: conversation.epoch,
+            token: opening.token.clone(),
+            runtime_generation: opening.runtime_generation,
+            runtime_id: opening.runtime_id.clone(),
+        };
+        conversation.opening = None;
+        conversation.link = Some(link.clone());
+        Ok(link)
+    }
+
+    async fn release_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+    ) -> Result<(), StoreError> {
+        let mut state = self.state.lock().await;
+        let Some(conversation) = state.conversations.get_mut(&opening.session_id.0) else {
+            return Ok(());
+        };
+        if conversation.opening.as_ref() == Some(opening) {
+            conversation.opening = None;
+        }
+        if conversation.link.as_ref().map(|link| link.token.as_str())
+            == Some(opening.token.as_str())
+        {
+            conversation.link = None;
+        }
+        Ok(())
+    }
+
+    async fn validate_conversation_link(&self, link: &ConversationLink) -> Result<(), StoreError> {
+        self.state
+            .lock()
+            .await
+            .validate_authority(&ConversationWriteAuthority::Active(link.clone()))
     }
 
     async fn commit_session_idempotent(
@@ -458,6 +651,33 @@ impl SessionStore for MemorySessions {
             .lock()
             .await
             .commit(write_id, record, events, false);
+        if matches!(&result, Err(StoreError::SequenceTaken { .. })) {
+            self.sequence_taken_errors.fetch_add(1, Ordering::SeqCst);
+        }
+        result
+    }
+
+    async fn commit_conversation_idempotent(
+        &self,
+        write_id: &str,
+        authority: &ConversationWriteAuthority,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        let pause = if events.is_empty() {
+            None
+        } else {
+            self.event_commit_pause.lock().await.take()
+        };
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
+        }
+        let result = {
+            let mut state = self.state.lock().await;
+            state
+                .validate_authority(authority)
+                .and_then(|()| state.commit(write_id, record, events, false))
+        };
         if matches!(&result, Err(StoreError::SequenceTaken { .. })) {
             self.sequence_taken_errors.fetch_add(1, Ordering::SeqCst);
         }
@@ -843,6 +1063,7 @@ impl ScreenModel for EmptyScreen {
 struct TestKernel {
     conversation_updates: Mutex<Option<mpsc::Sender<layer3_adapter::ConversationUpdate>>>,
     resource_samples: Mutex<Option<mpsc::Sender<layer3_adapter::ResourceSample>>>,
+    stored_handovers: Mutex<HashMap<String, HandoverSnapshot>>,
     provision_pause: Mutex<Option<Arc<StorePause>>>,
     provisions: AtomicUsize,
     conversation_inputs: Arc<AtomicUsize>,
@@ -959,6 +1180,38 @@ impl TestKernel {
 }
 
 #[async_trait::async_trait]
+impl HandoverStore for TestKernel {
+    async fn put(&self, id: &SessionId, snapshot: HandoverSnapshot) -> Result<String, StoreError> {
+        let reference = format!("sessions/{}/handover.snapshot", id.0);
+        self.stored_handovers
+            .lock()
+            .await
+            .insert(reference.clone(), snapshot);
+        Ok(reference)
+    }
+
+    async fn get_for(
+        &self,
+        id: &SessionId,
+        reference: &str,
+    ) -> Result<Option<HandoverSnapshot>, StoreError> {
+        let expected = format!("sessions/{}/handover.snapshot", id.0);
+        if reference != expected {
+            return Err(StoreError::Malformed(
+                "handover reference belongs to another session".into(),
+            ));
+        }
+        Ok(self.stored_handovers.lock().await.get(reference).cloned())
+    }
+
+    async fn delete_for(&self, id: &SessionId) -> Result<(), StoreError> {
+        let reference = format!("sessions/{}/handover.snapshot", id.0);
+        self.stored_handovers.lock().await.remove(&reference);
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
 impl KernelAdapter for TestKernel {
     fn kernel_name(&self) -> &'static str {
         "rest-contract-test"
@@ -987,11 +1240,13 @@ impl KernelAdapter for TestKernel {
         &self,
         _handle: &RuntimeHandle,
     ) -> Result<TerminalChannel, AdapterError> {
-        let (input, mut received) = mpsc::channel(8);
         let (output, produced) = mpsc::channel(8);
-        tokio::spawn(async move {
-            let _keep_output_open = output;
-            while received.recv().await.is_some() {}
+        let input = layer3_adapter::TerminalInputSender::spawn(8, move |_input| {
+            let keep_output_open = output.clone();
+            async move {
+                let _keep_output_open = keep_output_open;
+                Ok(())
+            }
         });
         Ok(TerminalChannel {
             output: produced,
@@ -1089,6 +1344,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     );
     let kernel = Arc::new(TestKernel::default());
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&kernel) as Arc<dyn HandoverStore>;
     adapters.insert(
         KernelId::new("test"),
         Arc::clone(&kernel) as Arc<dyn KernelAdapter>,
@@ -1101,6 +1357,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         factory,
         Arc::clone(&store) as Arc<dyn SessionStore>,
         SessionPorts {
+            handovers: Some(handovers),
             skills: Some(Arc::new(TestSkills)),
             settings: Some(Arc::clone(&settings)),
             ..Default::default()
@@ -1309,6 +1566,22 @@ async fn wait_until_status(
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     panic!("the in-memory runtime did not become {wanted:?}");
+}
+
+async fn set_recorded_session_status(
+    store: &MemorySessions,
+    id: &SessionId,
+    status: SessionStatus,
+) {
+    store
+        .state
+        .lock()
+        .await
+        .records
+        .get_mut(&id.0)
+        .expect("the session record is present")
+        .session
+        .status = status;
 }
 
 async fn create_ready_session(
@@ -1967,7 +2240,7 @@ async fn a_prompt_run_starts_before_every_frame_and_finishes_after_the_user_echo
             Method::POST,
             "/api/v1/agui/run",
             serde_json::json!({
-                "threadId": id.0,
+                "threadId": id.0.clone(),
                 "runId": run_id,
                 "messages": [{ "role": "user", "content": "echo my run id" }]
             })
@@ -2062,7 +2335,9 @@ async fn a_resume_run_starts_unnumbered_and_still_finishes() {
         "the synthetic continuation boundary must not advance the durable cursor: {wire:?}"
     );
 
-    loop {
+    let mut approval_cleared = false;
+    let mut running_published = false;
+    while !approval_cleared || !running_published {
         let (frame, wire) = next_agui_frame_and_wire(&mut body).await;
         assert_agui_ids(&frame, "run_resume_contract", &id);
         assert!(
@@ -2073,15 +2348,19 @@ async fn a_resume_run_starts_unnumbered_and_still_finishes() {
             frame["type"], "RUN_FINISHED",
             "the continuation must clear the answered approval before it finishes"
         );
-        if frame["type"] == "STATE_DELTA"
+        approval_cleared |= frame["type"] == "STATE_DELTA"
             && frame["delta"]
                 == serde_json::json!([{
                     "op": "remove",
                     "path": "/pendingApprovals/approval-contract"
-                }])
-        {
-            break;
-        }
+                }]);
+        running_published |= frame["type"] == "STATE_DELTA"
+            && frame["delta"]
+                == serde_json::json!([{
+                    "op": "replace",
+                    "path": "/status",
+                    "value": "running"
+                }]);
     }
 
     kernel.emit_turn_ended().await;
@@ -2200,6 +2479,102 @@ async fn a_capability_refusal_is_a_problem_without_a_started_run() {
     assert_eq!(
         after, before,
         "a capability refusal must not open a durable turn"
+    );
+}
+
+#[tokio::test]
+async fn a_terminal_run_records_lifecycle_before_its_missing_conversation_grant() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let session = sessions
+        .create_session(
+            &caller,
+            SessionSpec {
+                options: Default::default(),
+                geometry: None,
+                environment_profile: None,
+                caller_credential: Some(TEST_DELEGATED_CREDENTIAL.into()),
+                runtime_credential: None,
+                requested_mode: Some(SessionMode::Terminal),
+                quoted_rate_card: None,
+            },
+        )
+        .await
+        .expect("the terminal session is accepted");
+    wait_until_ready(&sessions, &caller, &session.id).await;
+    assert!(session.capabilities.terminal);
+    assert!(!session.capabilities.conversation);
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+
+    let before = sessions
+        .events_since(&caller, &session.id, None)
+        .await
+        .expect("history is readable before the refusals")
+        .last()
+        .map(|event| event.seq);
+    let request = |run_id: &str| {
+        json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": session.id.0.clone(),
+                "runId": run_id,
+                "messages": [{ "role": "user", "content": "cannot cross lifecycle" }]
+            })
+            .to_string(),
+        )
+    };
+
+    for (status, code, run_id) in [
+        (
+            SessionStatus::Rotating,
+            "session_rotating",
+            "run_rotating_terminal",
+        ),
+        (
+            SessionStatus::Terminated,
+            "session_terminated",
+            "run_terminated_terminal",
+        ),
+    ] {
+        set_recorded_session_status(&store, &session.id, status).await;
+        let first = app
+            .clone()
+            .oneshot(request(run_id))
+            .await
+            .expect("the lifecycle-refused run route answers");
+        let first_problem = assert_problem(first, StatusCode::CONFLICT).await;
+        assert_eq!(first_problem["code"], code);
+
+        set_recorded_session_status(&store, &session.id, SessionStatus::Ready).await;
+        let replay = app
+            .clone()
+            .oneshot(request(run_id))
+            .await
+            .expect("the completed lifecycle refusal replays");
+        let replayed_problem = assert_problem(replay, StatusCode::CONFLICT).await;
+        assert_eq!(
+            replayed_problem, first_problem,
+            "a ready terminal would otherwise refuse the missing conversation grant"
+        );
+    }
+
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 0);
+    let after = sessions
+        .events_since(&caller, &session.id, None)
+        .await
+        .expect("history is readable after the refusals")
+        .last()
+        .map(|event| event.seq);
+    assert_eq!(
+        after, before,
+        "lifecycle refusals must not open a durable turn"
     );
 }
 
@@ -2482,7 +2857,7 @@ async fn dropping_the_request_during_creation_does_not_cancel_prompt_admission()
     assert_eq!(kernel.provisions.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn a_deferred_prompt_suppresses_its_durable_turn_started_projection() {
     let TestSurface {
         app,
@@ -2673,6 +3048,65 @@ async fn an_explicit_mid_turn_capability_refusal_is_replayable() {
     let problem = assert_problem(mismatch, StatusCode::UNPROCESSABLE_ENTITY).await;
     assert_eq!(problem["code"], "agui_operation_reused");
     assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn an_explicit_rotating_run_replays_until_a_fresh_run_id_is_used() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+    set_recorded_session_status(&store, &id, SessionStatus::Rotating).await;
+    let request = |run_id: &str| {
+        json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0.clone(),
+                "runId": run_id,
+                "messages": [{ "role": "user", "content": "continue after rotation" }]
+            })
+            .to_string(),
+        )
+    };
+
+    let denied_run_id = "run_rotation_refusal";
+    let first = app
+        .clone()
+        .oneshot(request(denied_run_id))
+        .await
+        .expect("the rotating run route answers");
+    let first_problem = assert_problem(first, StatusCode::CONFLICT).await;
+    assert_eq!(first_problem["code"], "session_rotating");
+
+    set_recorded_session_status(&store, &id, SessionStatus::Ready).await;
+    let replay = app
+        .clone()
+        .oneshot(request(denied_run_id))
+        .await
+        .expect("the completed refusal replays");
+    let replayed_problem = assert_problem(replay, StatusCode::CONFLICT).await;
+    assert_eq!(replayed_problem, first_problem);
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 0);
+
+    let accepted = app
+        .oneshot(request("run_after_rotation"))
+        .await
+        .expect("the fresh run route answers");
+    assert_eq!(accepted.status(), StatusCode::OK);
+    drop(accepted);
+    wait_until_count(
+        kernel.conversation_inputs.as_ref(),
+        1,
+        "a fresh run id admits one post-rotation prompt",
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -5097,6 +5531,60 @@ async fn one_input_key_delivers_one_prompt() {
         tokio::task::yield_now().await;
     }
     assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_rotating_input_key_replays_until_a_fresh_key_is_used() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+    set_recorded_session_status(&store, &id, SessionStatus::Rotating).await;
+    let uri = format!("/api/v1/sessions/{}/input", id.0);
+    let request = |key: &str| {
+        keyed_json_request(
+            Method::POST,
+            &uri,
+            key,
+            r#"{"text":"continue after rotation"}"#,
+        )
+    };
+
+    let first = app
+        .clone()
+        .oneshot(request("rotating-input"))
+        .await
+        .expect("the rotating input route answers");
+    let first_problem = assert_problem(first, StatusCode::CONFLICT).await;
+    assert_eq!(first_problem["code"], "session_rotating");
+
+    set_recorded_session_status(&store, &id, SessionStatus::Ready).await;
+    let replay = app
+        .clone()
+        .oneshot(request("rotating-input"))
+        .await
+        .expect("the completed refusal replays");
+    let replayed_problem = assert_problem(replay, StatusCode::CONFLICT).await;
+    assert_eq!(replayed_problem, first_problem);
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 0);
+
+    let accepted = app
+        .oneshot(request("input-after-rotation"))
+        .await
+        .expect("the fresh input route answers");
+    assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+    wait_until_count(
+        kernel.conversation_inputs.as_ref(),
+        1,
+        "a fresh idempotency key admits one post-rotation prompt",
+    )
+    .await;
 }
 
 #[tokio::test]

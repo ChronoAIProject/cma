@@ -25,6 +25,7 @@ fn credential_state(generation: u64) -> SessionCredentialState {
         request_bound_credential: None,
         current: None,
         pending: None,
+        pending_target: None,
         revoke_debt: Vec::new(),
         lease: None,
         retired: false,
@@ -190,6 +191,58 @@ async fn credential_compare_and_swap_rejects_a_stale_worker() {
             .generation,
         1
     );
+}
+
+#[tokio::test]
+async fn credential_compare_and_swap_preserves_the_pending_runtime_target() {
+    let store = MemoryAuthStore::default();
+    let now = SystemTime::now();
+    let mut initial = credential_state(0);
+    initial.pending = Some(credential("pending-b", now));
+    initial.pending_target = Some(CredentialDeliveryTarget {
+        runtime_generation: 3,
+        runtime_id: "runtime-h1".into(),
+    });
+    assert!(store.insert_credential(initial).await.unwrap());
+
+    let mut rebound = store
+        .credential(&SessionId("sesn_a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    rebound.generation = 1;
+    rebound.pending_target = Some(CredentialDeliveryTarget {
+        runtime_generation: 4,
+        runtime_id: "runtime-h2".into(),
+    });
+    assert!(store.replace_credential(0, rebound).await.unwrap());
+
+    let persisted = store
+        .credential(&SessionId("sesn_a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        persisted.pending_target,
+        Some(CredentialDeliveryTarget {
+            runtime_generation: 4,
+            runtime_id: "runtime-h2".into(),
+        })
+    );
+}
+
+#[tokio::test]
+async fn credential_store_rejects_a_target_without_pending_custody() {
+    let store = MemoryAuthStore::default();
+    let mut invalid = credential_state(0);
+    invalid.pending_target = Some(CredentialDeliveryTarget {
+        runtime_generation: 1,
+        runtime_id: "runtime-without-pending".into(),
+    });
+    assert!(matches!(
+        store.insert_credential(invalid).await,
+        Err(StoreError::Malformed(_))
+    ));
 }
 
 #[tokio::test]
@@ -521,6 +574,105 @@ async fn credential_work_pages_are_bounded_and_skip_only_settled_history() {
             .collect::<Vec<_>>(),
         ["sesn_a", "sesn_b", "sesn_aa", "sesn_c"]
     );
+}
+
+#[tokio::test]
+async fn expiring_current_pages_are_inclusive_ordered_and_epoch_bounded() {
+    let store = MemoryAuthStore::default();
+    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+    let issued_at = cutoff - Duration::from_secs(24 * 60 * 60);
+
+    for (session, expires_at) in [
+        ("sesn_due_early", Some(cutoff - Duration::from_secs(1))),
+        ("sesn_due_exact", Some(cutoff)),
+        ("sesn_after_cutoff", Some(cutoff + Duration::from_nanos(1))),
+        ("sesn_legacy", None),
+    ] {
+        let mut state = credential_state(0);
+        state.session = SessionId(session.into());
+        let mut held = credential(&format!("current-{session}"), issued_at);
+        held.expires_at = expires_at;
+        state.current = Some(held);
+        assert!(store.insert_credential(state).await.unwrap());
+    }
+
+    for session in ["sesn_pending", "sesn_leased", "sesn_retired"] {
+        let mut state = credential_state(0);
+        state.session = SessionId(session.into());
+        let mut held = credential(&format!("current-{session}"), issued_at);
+        held.expires_at = Some(cutoff);
+        state.current = Some(held);
+        match session {
+            "sesn_pending" => state.pending = Some(credential("pending", issued_at)),
+            "sesn_leased" => {
+                state.lease = Some(CredentialLease {
+                    holder: "worker".into(),
+                    fence: 1,
+                    acquired_at: issued_at,
+                    expires_at: cutoff + Duration::from_secs(60),
+                    scope_fingerprint: "scope".into(),
+                });
+            }
+            "sesn_retired" => state.retired = true,
+            _ => unreachable!(),
+        }
+        assert!(store.insert_credential(state).await.unwrap());
+    }
+
+    let through_sequence = store.auth_sweep_high_water().await.unwrap();
+    let mut next_epoch = credential_state(0);
+    next_epoch.session = SessionId("sesn_next_epoch".into());
+    let mut held = credential("current-next-epoch", issued_at);
+    held.expires_at = Some(cutoff - Duration::from_secs(2));
+    next_epoch.current = Some(held);
+    assert!(store.insert_credential(next_epoch).await.unwrap());
+
+    let first = store
+        .current_credentials_expiring_before(cutoff, None, through_sequence, 1)
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].cursor.session.as_str(), "sesn_due_early");
+    assert_eq!(first[0].cursor.expires_at, cutoff - Duration::from_secs(1));
+
+    let second = store
+        .current_credentials_expiring_before(cutoff, Some(&first[0].cursor), through_sequence, 10)
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].cursor.session.as_str(), "sesn_due_exact");
+    assert_eq!(second[0].cursor.expires_at, cutoff);
+
+    let next_through = store.auth_sweep_high_water().await.unwrap();
+    let next = store
+        .current_credentials_expiring_before(cutoff, None, next_through, 10)
+        .await
+        .unwrap();
+    assert_eq!(next[0].cursor.session.as_str(), "sesn_next_epoch");
+    assert!(next
+        .iter()
+        .all(|item| item.cursor.session.as_str() != "sesn_legacy"));
+    assert!(next
+        .iter()
+        .all(|item| item.cursor.session.as_str() != "sesn_after_cutoff"));
+    assert!(next.iter().all(|item| !matches!(
+        item.cursor.session.as_str(),
+        "sesn_pending" | "sesn_leased" | "sesn_retired"
+    )));
+
+    let age_due = store
+        .current_credentials_due_for_reissue(cutoff, None, through_sequence, 20)
+        .await
+        .unwrap();
+    let age_sessions = age_due
+        .iter()
+        .map(|item| item.cursor.session.as_str())
+        .collect::<Vec<_>>();
+    assert!(age_sessions.contains(&"sesn_legacy"));
+    assert!(age_sessions.contains(&"sesn_due_exact"));
+    assert!(second
+        .iter()
+        .any(|item| item.cursor.session.as_str() == "sesn_due_exact"));
 }
 
 #[tokio::test]

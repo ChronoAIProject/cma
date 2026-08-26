@@ -144,6 +144,10 @@ impl IntoResponse for Problem {
             }
             CoreError::InvalidRequest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-request"),
             CoreError::SessionTerminated => (StatusCode::CONFLICT, "session-terminated"),
+            // A fresh request can succeed after the handover finishes on its
+            // own, unlike the final session-terminated conflict. A completed
+            // idempotency key still replays the refusal it recorded.
+            CoreError::SessionRotating => (StatusCode::CONFLICT, "session-rotating"),
             CoreError::AlreadyAttached => (StatusCode::CONFLICT, "already-attached"),
             CoreError::InvalidGeometry(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-geometry"),
             CoreError::InvalidPressurePolicy(_) => {
@@ -337,6 +341,7 @@ mod tests {
             CoreError::EnvironmentProfileNotFound,
             CoreError::Forbidden,
             CoreError::SessionTerminated,
+            CoreError::SessionRotating,
             CoreError::AlreadyAttached,
             CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).unwrap_err()),
             CoreError::InvalidPressurePolicy(
@@ -378,6 +383,7 @@ mod tests {
                 | CoreError::EnvironmentProfileNotFound
                 | CoreError::Forbidden
                 | CoreError::SessionTerminated
+                | CoreError::SessionRotating
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
                 | CoreError::InvalidPressurePolicy(_)
@@ -443,6 +449,22 @@ mod tests {
         );
         assert!(!body.to_string().contains("registry.internal"));
         assert!(!body.to_string().contains("opaque"));
+    }
+
+    #[tokio::test]
+    async fn a_rotating_session_is_a_retryable_conflict_distinct_from_termination() {
+        let (rotating_status, rotating) = rendered(CoreError::SessionRotating).await;
+        let (terminated_status, terminated) = rendered(CoreError::SessionTerminated).await;
+
+        assert_eq!(rotating_status, StatusCode::CONFLICT);
+        assert_eq!(terminated_status, StatusCode::CONFLICT);
+        assert_eq!(rotating["code"], "session_rotating");
+        assert!(rotating["type"]
+            .as_str()
+            .expect("problem type")
+            .ends_with("/session-rotating"));
+        assert_ne!(rotating["code"], terminated["code"]);
+        assert_ne!(rotating["type"], terminated["type"]);
     }
 
     #[tokio::test]

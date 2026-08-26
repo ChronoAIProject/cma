@@ -34,13 +34,16 @@ use layer3_adapter::RuntimeHandle;
 use crate::authz::Caller;
 use crate::capabilities::SessionCapabilities;
 use crate::clock::now_rfc3339;
+use crate::coordination::{SessionBoundary, SessionLease, SessionOperation};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::SessionMode;
 use crate::service::SessionService;
 use crate::session::{Session, SessionSpec, SessionStatus};
-use crate::store::SessionRecord;
+use crate::store::{
+    HandoverSnapshot, PendingHandover, PendingHandoverTarget, SessionRecord, StoreError,
+};
 
 /// What a handover changes about the session it carries.
 ///
@@ -59,6 +62,19 @@ enum Handover {
     },
 }
 
+/// Durable handover state carried through replacement provisioning.
+///
+/// The old authority remains live while the candidate is prepared. These
+/// exact records let the successful path clear only its own rotation claim and
+/// let a pre-switch failure restore only the claim it actually acquired.
+pub(crate) struct CoordinatedHandover {
+    pub(crate) original: SessionRecord,
+    pub(crate) rotating: SessionRecord,
+    pub(crate) rotating_boundary: SessionBoundary,
+    pub(crate) completion_events: Vec<Event>,
+    pub(crate) detached: crate::lease::Detached,
+}
+
 impl Handover {
     /// What the owner is told while it happens.
     fn detail(&self) -> &'static str {
@@ -69,6 +85,21 @@ impl Handover {
             Self::Plane { .. } => {
                 "moving this session to the other plane; it will come back where it left off"
             }
+        }
+    }
+
+    /// Durable target carried independently of this process and request.
+    fn pending_target(&self, record: &SessionRecord) -> PendingHandoverTarget {
+        match self {
+            Self::Version(runtime_version) => PendingHandoverTarget::RuntimeVersion {
+                from_runtime_version: record.session.runtime_version.clone(),
+                runtime_version: runtime_version.clone(),
+            },
+            Self::Plane { mode, capabilities } => PendingHandoverTarget::Plane {
+                from_mode: record.session.options.mode,
+                mode: *mode,
+                capabilities: *capabilities,
+            },
         }
     }
 }
@@ -93,8 +124,12 @@ impl SessionService {
             // served by it simply continuing to work.
             return false;
         }
+        // An idle approval wait keeps its runtime, but it is deliberately not
+        // moved while the old conversation is blocked on a runtime-local
+        // request. Resolving the final approval returns it to `Running`, making
+        // it eligible on the next sweep.
         record.session.status.wants_runtime()
-            && !record.session.status.is_rotating()
+            && !record.is_effectively_rotating()
             && record.runtime_id.is_some()
             && record.session.runtime_version.as_deref() != Some(wanted)
     }
@@ -146,11 +181,13 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
-        if record.session.status.is_rotating() {
+        if record.is_effectively_rotating() {
             // Already mid-handover. Starting a second one would capture a
             // sandbox being torn down and resume from whichever answered last.
             return Err(CoreError::InvalidState);
         }
+        // A blocked approval owns a runtime too, but cannot change planes while
+        // its answer is addressed to a request on the current conversation.
         if !record.session.status.wants_runtime() || record.runtime_id.is_none() {
             // Nothing to carry. A stopped session is started on whichever
             // plane its profile names when it is revived, and moving one that
@@ -209,15 +246,15 @@ impl SessionService {
         change: Handover,
     ) -> Result<Session, CoreError> {
         let id = record.session.id.clone();
-        let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
+        if !self.adapters.contains_key(&record.session.kernel) {
             return Err(CoreError::RuntimeUnavailable(format!(
                 "this deployment no longer runs {}",
                 record.session.kernel.as_str()
             )));
-        };
-        let Some(old) = record.runtime_id.clone().map(RuntimeHandle) else {
+        }
+        if record.runtime_id.is_none() {
             return Err(CoreError::InvalidState);
-        };
+        }
         if self.rotation_refused.read().await.contains(&id) {
             // This runtime has already said it cannot hand its conversation
             // over. Asking again every few minutes would achieve nothing and
@@ -231,12 +268,72 @@ impl SessionService {
             return Err(CoreError::InvalidState);
         }
 
-        // Tried before anything is announced, because capturing changes
-        // nothing and failing to capture means the move is off. Announcing
-        // first would show every session an "updating" state it then backs out
-        // of — and on a runtime that can never be captured, it would do that
-        // on every sweep forever.
-        let rehearsal = match adapter.snapshot(&old).await {
+        // From the first local claim onward this work belongs to the service,
+        // not to the HTTP request that happened to trigger it. A disconnected
+        // caller drops only this receiver; the handover still records or rolls
+        // back its durable claim and releases `starting` in its own task.
+        let (finished, result) = tokio::sync::oneshot::channel();
+        let service = Arc::clone(self);
+        tokio::spawn(async move {
+            let outcome = service.carry_over_claimed(record, change).await;
+            let _ = finished.send(outcome);
+        });
+        result.await.map_err(|_| {
+            CoreError::RuntimeUnavailable("this session's handover task stopped".into())
+        })?
+    }
+
+    /// A service-owned handover after `starting` has been claimed.
+    async fn carry_over_claimed(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        change: Handover,
+    ) -> Result<Session, CoreError> {
+        let id = record.session.id.clone();
+        let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
+            self.finish_start(&id).await;
+            return Err(CoreError::RuntimeUnavailable(format!(
+                "this deployment no longer runs {}",
+                record.session.kernel.as_str()
+            )));
+        };
+        let Some(old) = record.runtime_id.clone().map(RuntimeHandle) else {
+            self.finish_start(&id).await;
+            return Err(CoreError::InvalidState);
+        };
+
+        let lease = match self
+            .acquire_runtime_lease_at(&record, SessionOperation::Handover)
+            .await
+        {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(format!(
+                    "this session's handover authority could not be acquired: {error}"
+                )));
+            }
+        };
+        if let Some(lease) = lease {
+            return self
+                .carry_over_coordinated(record, change, adapter, old, lease)
+                .await;
+        }
+
+        let Some(handovers) = self.handovers.as_ref().cloned() else {
+            self.finish_start(&id).await;
+            return Err(CoreError::RuntimeUnavailable(
+                "this deployment cannot durably store a runtime handover snapshot".into(),
+            ));
+        };
+
+        // Drain every operation already admitted to H1, then hold new input
+        // behind this boundary while snapshot storage and the durable
+        // descriptor are published. A failed capture, upload, or record write
+        // releases the fence with H1 and its public status untouched.
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+        let snapshot_at = now_rfc3339();
+        let snapshot = match adapter.snapshot(&old).await {
             Ok(bytes) => bytes,
             Err(e) => {
                 // The session cannot be carried across, so it stays exactly
@@ -245,106 +342,111 @@ impl SessionService {
                 // minutes against a runtime that has already said it cannot.
                 tracing::warn!(session_id = %id, error = %e, "cannot move this session; leaving it in place");
                 self.rotation_refused.write().await.insert(id.clone());
+                drop(input_fence);
                 self.finish_start(&id).await;
                 return Err(CoreError::RuntimeUnavailable(format!(
                     "this session's conversation could not be captured, so it has not been moved: {e}"
                 )));
             }
         };
+        let claim = format!("rotn_{}", uuid::Uuid::new_v4().simple());
+        let target = change.pending_target(&record);
+        let snapshot_ref = match handovers
+            .put(
+                &id,
+                HandoverSnapshot {
+                    claim: claim.clone(),
+                    snapshot_at: snapshot_at.clone(),
+                    restore: snapshot,
+                },
+            )
+            .await
+        {
+            Ok(reference) => reference,
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "cannot stage the handover snapshot; leaving the runtime in place");
+                drop(input_fence);
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(
+                    "this session's conversation could not be stored, so it has not been moved"
+                        .into(),
+                ));
+            }
+        };
+        let pending = PendingHandover {
+            claim,
+            snapshot_ref,
+            snapshot_at,
+            rotations_from: record.session.rotations,
+            rotations_to: record.session.rotations.saturating_add(1),
+            target,
+        };
 
-        // Announced now. Everything after this point is a handover the owner
-        // must not be typing into, and the interface cannot know to stop
-        // accepting input until it has been told.
-        let Some(rotating) = self.mark_rotating(&record, &change).await else {
+        // The claim and recovery descriptor become durable in one write while
+        // all post-snapshot input remains held behind the same fence.
+        let marked = self
+            .mark_rotating(&record, &change, Some(pending.clone()))
+            .await;
+        drop(input_fence);
+        let Some(rotating) = marked else {
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
                 "this session's handover could not be recorded, so it has not been moved".into(),
             ));
         };
+        self.rotations_in_progress.write().await.insert(id.clone());
 
-        // Taken again, because the first was read before input stopped and
-        // anything typed since belongs to the session too. The rehearsal
-        // stands in if this one fails: a slightly older conversation is worth
-        // far more than none.
-        let taken_at = now_rfc3339();
-        let restore = match adapter.snapshot(&old).await {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::warn!(session_id = %id, error = %e, "carrying the conversation captured a moment earlier");
-                rehearsal
+        // Object storage has no cross-store transaction or conditional write
+        // tied to the session row. Compatibility mode is the documented
+        // single-writer fallback; even there, require a claim-matching readback
+        // before the irreversible provider operation. Coordinated stores use
+        // the lease-aware path above instead.
+        let restore = match self.load_pending_handover_snapshot(&rotating).await {
+            Ok(restore) => restore,
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "the staged handover snapshot cannot be verified; leaving H1 in place");
+                let _ = self.restore_after_failed_move(&record, &rotating).await;
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(
+                    "this session's stored handover could not be verified, so it has not been moved"
+                        .into(),
+                ));
             }
         };
 
-        // Captured to storage as well as handed to the new runtime. The
-        // handover is the moment a session is most exposed, and a copy that
-        // outlives this process is what makes a failure here recoverable
-        // rather than final.
-        if let (Some(context), Some(bytes)) = (self.context.clone(), restore.as_ref()) {
-            match context.put(&id, bytes.clone()).await {
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!(session_id = %id, error = %e, "could not store the snapshot")
-                }
-            }
-        }
-
-        let mut moved = rotating.clone();
-        moved.runtime_id = None;
-        match &change {
-            Handover::Version(wanted) => moved.session.runtime_version = Some(wanted.clone()),
-            Handover::Plane { mode, capabilities } => {
-                moved.session.options.mode = *mode;
-                /*
-                 * Re-derived rather than carried. The granted set is the
-                 * intersection of what the runtime can do with what the plane
-                 * asks for, and the plane has just changed — a set carried
-                 * across would advertise a terminal on a session that now
-                 * holds a conversation, which is the one thing every interface
-                 * downstream trusts cannot happen.
-                 */
-                moved.session.capabilities = *capabilities;
-            }
-        }
-        moved.session.rotations = moved.session.rotations.saturating_add(1);
-        moved.session.rotated_at = Some(taken_at.clone());
-        let events = if let Handover::Plane { mode, .. } = &change {
-            vec![Event {
-                session_id: id.clone(),
-                seq: 0,
-                kind: EventKind::PlaneChanged {
-                    from: record.session.options.mode,
-                    to: *mode,
-                    snapshot_at: taken_at.clone(),
-                },
-                appended_at: String::new(),
-            }]
-        } else {
-            Vec::new()
-        };
-
-        // Credential delivery uses this same gate from exact-runtime selection
-        // through durable promotion and entry evidence. Whichever operation
-        // arrives first therefore completes against H1 before the other can
-        // remove it or choose what H2 will receive.
+        // Credential delivery uses this same legacy lifecycle gate from exact
+        // runtime selection through durable promotion and entry evidence. The
+        // durable coordination path above uses its Interact/Handover lease
+        // instead; this branch is reached only when the store has no such lease.
         let lifecycle = self.lock_lifecycle(&id).await;
-        if let Err(e) = self.persist_durably(&mut moved, events).await {
-            tracing::error!(session_id = %id, error = %e, "cannot record the move");
-            self.restore_after_failed_move(&record, &old).await;
-            self.finish_start(&id).await;
-            return Err(CoreError::RuntimeUnavailable(
-                "this session's move could not be recorded".into(),
-            ));
-        }
-
-        /*
-         * The attachment goes with the sandbox it was made to, and its holder
-         * is told which handover took it: a terminal that ends saying nothing
-         * reads as broken, and one that ends claiming the owner opened it
-         * elsewhere sends them looking for a tab that does not exist.
-         *
-         * This happens only after the move is durable. Until that transaction
-         * succeeds, the old entry and runtime are the complete rollback path.
-         */
+        let claimed = match self.store.get(&id).await {
+            Ok(Some(current))
+                if current.session.status == SessionStatus::Rotating
+                    && current.runtime_id == rotating.runtime_id
+                    && current.rotation_claim == rotating.rotation_claim
+                    && current.pending_handover == rotating.pending_handover =>
+            {
+                current
+            }
+            Ok(_) => {
+                drop(lifecycle);
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(
+                    "this session's handover authority changed before H1 teardown".into(),
+                ));
+            }
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "cannot verify handover authority before H1 teardown");
+                drop(lifecycle);
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(
+                    "this session's handover authority could not be verified".into(),
+                ));
+            }
+        };
+        // Fence every local channel for this exact H1 before touching the
+        // provider. The durable record still names H1, so a failed termination
+        // remains retryable and reconciliation can readopt it truthfully.
         let old_entry = {
             let mut entries = self.entries.write().await;
             let exact_old = entries.get(&id).and_then(|entry| entry.runtime.as_ref()) == Some(&old);
@@ -358,10 +460,36 @@ impl SessionService {
                 });
             }
         }
+        let cleared = match self
+            .teardown_compatibility_runtime(&adapter, &claimed, "runtime handover")
+            .await
+        {
+            Ok(cleared) => cleared,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "could not release the old runtime; leaving the handover fenced"
+                );
+                drop(lifecycle);
+                self.finish_start(&id).await;
+                return Err(error);
+            }
+        };
+
+        let moved = match self.publish_pending_handover_target(cleared).await {
+            Ok(moved) => moved,
+            Err(error) => {
+                tracing::error!(session_id = %id, %error, "cannot publish the move after clearing the old runtime");
+                drop(lifecycle);
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(
+                    "this session's move could not be recorded after its old runtime was cleared"
+                        .into(),
+                ));
+            }
+        };
         drop(lifecycle);
-        if let Err(e) = adapter.terminate(&old).await {
-            tracing::warn!(session_id = %id, error = %e, "could not release the old runtime");
-        }
 
         let geometry = moved.session.geometry;
         let spec = SessionSpec {
@@ -375,6 +503,7 @@ impl SessionService {
         };
         let service = Arc::clone(self);
         let session = moved.session.clone();
+        let rotation_claim = moved.rotation_claim.clone();
         tokio::spawn(async move {
             service
                 .bring_up(
@@ -383,11 +512,338 @@ impl SessionService {
                     adapter,
                     geometry,
                     restore,
-                    crate::provision_failure::Abandonment::Keep,
+                    crate::provision_support::BringUpContext::compatibility(
+                        crate::provision_failure::Abandonment::Keep,
+                        rotation_claim,
+                    ),
                 )
                 .await;
         });
         Ok(moved.session)
+    }
+
+    /// Load only the claim-bound object named by this durable descriptor.
+    pub(crate) async fn load_pending_handover_snapshot(
+        &self,
+        record: &SessionRecord,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let envelope = self.read_pending_handover_snapshot(record).await?;
+        let pending = record.pending_handover.as_ref().ok_or_else(|| {
+            StoreError::Malformed("a compatibility handover has no durable descriptor".into())
+        })?;
+        if envelope.snapshot_at != pending.snapshot_at {
+            return Err(StoreError::Malformed(
+                "the stored handover timestamp does not match its descriptor".into(),
+            ));
+        }
+        Ok(envelope.restore)
+    }
+
+    async fn read_pending_handover_snapshot(
+        &self,
+        record: &SessionRecord,
+    ) -> Result<HandoverSnapshot, StoreError> {
+        let pending = record.pending_handover.as_ref().ok_or_else(|| {
+            StoreError::Malformed("a compatibility handover has no durable descriptor".into())
+        })?;
+        if pending.claim.is_empty()
+            || pending.snapshot_ref.is_empty()
+            || pending.snapshot_at.is_empty()
+        {
+            return Err(StoreError::Malformed(
+                "a compatibility handover descriptor is incomplete".into(),
+            ));
+        }
+        match record.rotation_claim.as_deref() {
+            Some(claim) if claim == pending.claim => {}
+            // Stop intentionally retires the active claim while preserving an
+            // unconsumed descriptor. Revive may verify those bytes before it
+            // atomically reinstates the descriptor's claim.
+            None if record.session.status == SessionStatus::Idle => {}
+            _ => {
+                return Err(StoreError::Malformed(
+                    "the handover descriptor does not own this rotation claim".into(),
+                ))
+            }
+        }
+        let handovers = self.handovers.as_ref().ok_or_else(|| {
+            StoreError::Unavailable("handover object storage is not configured".into())
+        })?;
+        let envelope = handovers
+            .get_for(&record.session.id, &pending.snapshot_ref)
+            .await?
+            .ok_or_else(|| {
+                StoreError::Unavailable("the handover snapshot object is missing".into())
+            })?;
+        if envelope.claim != pending.claim {
+            return Err(StoreError::Malformed(
+                "the stored handover snapshot belongs to another claim".into(),
+            ));
+        }
+        if envelope.snapshot_at.is_empty() {
+            return Err(StoreError::Malformed(
+                "the stored handover snapshot has no capture time".into(),
+            ));
+        }
+        Ok(envelope)
+    }
+
+    /// Publish one pending target exactly once after H1 is durably absent.
+    ///
+    /// A fresh process may observe a target commit whose response was lost.
+    /// Exact target semantics together with `rotated_at == snapshot_at` are the
+    /// durable receipt; any partial third state is refused rather than charged
+    /// or logged as a second rotation.
+    pub(crate) async fn publish_pending_handover_target(
+        &self,
+        record: SessionRecord,
+    ) -> Result<SessionRecord, StoreError> {
+        let pending = record.pending_handover.clone().ok_or_else(|| {
+            StoreError::Malformed("a compatibility handover has no durable target".into())
+        })?;
+        if record.rotation_claim.as_deref() != Some(pending.claim.as_str())
+            || record.runtime_id.is_some()
+        {
+            return Err(StoreError::Malformed(
+                "the pending handover does not own the cleared H1 boundary".into(),
+            ));
+        }
+
+        let (target_applied, source_matches) = match &pending.target {
+            PendingHandoverTarget::RuntimeVersion {
+                from_runtime_version,
+                runtime_version,
+            } => (
+                record.session.runtime_version.as_deref() == Some(runtime_version.as_str()),
+                &record.session.runtime_version == from_runtime_version,
+            ),
+            PendingHandoverTarget::Plane {
+                from_mode,
+                mode,
+                capabilities,
+            } => (
+                record.session.options.mode == *mode
+                    && record.session.capabilities == *capabilities,
+                record.session.options.mode == *from_mode,
+            ),
+        };
+        let target_receipt = target_applied
+            && record.session.rotated_at.as_deref() == Some(pending.snapshot_at.as_str())
+            && record.session.rotations == pending.rotations_to;
+        if target_receipt {
+            return Ok(record);
+        }
+        if target_applied
+            || !source_matches
+            || record.session.rotations != pending.rotations_from
+            || record.session.status != SessionStatus::Rotating
+        {
+            return Err(StoreError::Malformed(
+                "the pending handover is neither at its source nor its exact target receipt".into(),
+            ));
+        }
+
+        let mut moved = record.clone();
+        let events = match &pending.target {
+            PendingHandoverTarget::RuntimeVersion {
+                runtime_version, ..
+            } => {
+                moved.session.runtime_version = Some(runtime_version.clone());
+                Vec::new()
+            }
+            PendingHandoverTarget::Plane {
+                from_mode,
+                mode,
+                capabilities,
+            } => {
+                moved.session.options.mode = *mode;
+                moved.session.capabilities = *capabilities;
+                vec![Event {
+                    session_id: moved.session.id.clone(),
+                    seq: 0,
+                    kind: EventKind::PlaneChanged {
+                        from: *from_mode,
+                        to: *mode,
+                        snapshot_at: pending.snapshot_at.clone(),
+                    },
+                    appended_at: String::new(),
+                }]
+            }
+        };
+        moved.session.rotations = pending.rotations_to;
+        moved.session.rotated_at = Some(pending.snapshot_at);
+        self.complete_compatibility_handover_durably(&mut moved, &record, events)
+            .await?;
+        Ok(moved)
+    }
+
+    /// Replace a runtime without surrendering the old authority first.
+    ///
+    /// The lease is acquired by the caller before the first snapshot. The old
+    /// handle and live entry remain authoritative through provider create and
+    /// attachment; `start_runtime` alone can switch them after the candidate is
+    /// usable. A pre-switch failure can therefore return to this exact record.
+    async fn carry_over_coordinated(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        change: Handover,
+        adapter: Arc<dyn layer3_adapter::KernelAdapter>,
+        old: RuntimeHandle,
+        mut lease: SessionLease,
+    ) -> Result<Session, CoreError> {
+        let id = record.session.id.clone();
+        if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
+            let _ = self.store.release_session_lease(&lease).await;
+            self.finish_start(&id).await;
+            return Err(CoreError::RuntimeUnavailable(format!(
+                "the handover lease expired before capture: {error}"
+            )));
+        }
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+        let taken_at = now_rfc3339();
+        let restore = match adapter.snapshot(&old).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "cannot move this session; leaving it in place");
+                self.rotation_refused.write().await.insert(id.clone());
+                drop(input_fence);
+                let _ = self.store.release_session_lease(&lease).await;
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(format!(
+                    "this session's conversation could not be captured, so it has not been moved: {error}"
+                )));
+            }
+        };
+
+        let marked = self.mark_rotating(&record, &change, None).await;
+        drop(input_fence);
+        let Some(rotating) = marked else {
+            let _ = self.store.release_session_lease(&lease).await;
+            self.finish_start(&id).await;
+            return Err(CoreError::RuntimeUnavailable(
+                "this session's handover could not be recorded, so it has not been moved".into(),
+            ));
+        };
+        let rotating_boundary =
+            SessionBoundary::for_record(&rotating, lease.boundary.authority.generation);
+        if let Err(error) = self
+            .advance_runtime_lease(&mut lease, &rotating_boundary)
+            .await
+        {
+            tracing::error!(session_id = %id, %error, "cannot advance the handover lease");
+            let _ = self.restore_after_failed_move(&record, &rotating).await;
+            let _ = self.store.release_session_lease(&lease).await;
+            self.finish_start(&id).await;
+            return Err(CoreError::RuntimeUnavailable(
+                "this session's handover authority changed while it was being recorded".into(),
+            ));
+        }
+        self.rotations_in_progress.write().await.insert(id.clone());
+
+        if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
+            self.rollback_coordinated_handover(&record, &rotating, &mut lease)
+                .await;
+            return Err(CoreError::RuntimeUnavailable(format!(
+                "the handover lease expired before replacement provisioning: {error}"
+            )));
+        }
+
+        let mut moved = rotating.clone();
+        let detached = match &change {
+            Handover::Version(wanted) => {
+                moved.session.runtime_version = Some(wanted.clone());
+                crate::lease::Detached::RuntimeReplaced
+            }
+            Handover::Plane { mode, capabilities } => {
+                moved.session.options.mode = *mode;
+                moved.session.capabilities = *capabilities;
+                crate::lease::Detached::PlaneChanged
+            }
+        };
+        moved.session.rotations = moved.session.rotations.saturating_add(1);
+        moved.session.rotated_at = Some(taken_at.clone());
+        let completion_events = if let Handover::Plane { mode, .. } = &change {
+            vec![Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::PlaneChanged {
+                    from: record.session.options.mode,
+                    to: *mode,
+                    snapshot_at: taken_at,
+                },
+                appended_at: String::new(),
+            }]
+        } else {
+            Vec::new()
+        };
+        let handover = CoordinatedHandover {
+            original: record,
+            rotating: rotating.clone(),
+            rotating_boundary,
+            completion_events,
+            detached,
+        };
+        let geometry = moved.session.geometry;
+        let spec = SessionSpec {
+            geometry: Some(geometry),
+            options: moved.session.options.clone(),
+            environment_profile: moved.session.environment_profile.clone(),
+            caller_credential: None,
+            runtime_credential: None,
+            requested_mode: None,
+            quoted_rate_card: None,
+        };
+        let service = Arc::clone(self);
+        let session = moved.session.clone();
+        let rotation_claim = rotating.rotation_claim.clone();
+        tokio::spawn(async move {
+            service
+                .bring_up_with_lease(
+                    session,
+                    adapter,
+                    spec,
+                    geometry,
+                    restore,
+                    crate::provision_support::BringUpContext {
+                        outcome: crate::provision_failure::Abandonment::Keep,
+                        lease: Some(lease),
+                        handover: Some(handover),
+                        rotation_claim,
+                    },
+                )
+                .await;
+        });
+        Ok(moved.session)
+    }
+
+    /// Restore a coordinated rotation while its old authority still matches.
+    pub(crate) async fn rollback_coordinated_handover(
+        &self,
+        original: &SessionRecord,
+        rotating: &SessionRecord,
+        lease: &mut SessionLease,
+    ) {
+        if let Some(restored) = self.restore_after_failed_move(original, rotating).await {
+            let boundary =
+                SessionBoundary::for_record(&restored, lease.boundary.authority.generation);
+            if boundary != lease.boundary {
+                if let Err(error) = self.advance_runtime_lease(lease, &boundary).await {
+                    tracing::warn!(
+                        session_id = %lease.session_id,
+                        %error,
+                        "the restored handover lease could not advance"
+                    );
+                }
+            }
+        }
+        if let Err(error) = self.store.release_session_lease(lease).await {
+            tracing::debug!(
+                session_id = %lease.session_id,
+                %error,
+                "the failed handover lease ended before explicit release"
+            );
+        }
+        self.finish_start(&lease.session_id).await;
     }
 
     /// Put a handover back on its original runtime after the final move failed.
@@ -396,25 +852,20 @@ impl SessionService {
     /// status makes their existing channels usable again; if this compensating
     /// write is also unavailable, leaving both sides `Rotating` is coherent and
     /// recoverable, while tearing anything down would not be.
-    async fn restore_after_failed_move(&self, original: &SessionRecord, old: &RuntimeHandle) {
+    pub(crate) async fn restore_after_failed_move(
+        &self,
+        original: &SessionRecord,
+        rotating: &SessionRecord,
+    ) -> Option<SessionRecord> {
         let id = &original.session.id;
-        let mut current = match self.store.get(id).await {
-            Ok(Some(record)) => record,
-            Ok(None) => return,
-            Err(error) => {
-                tracing::error!(session_id = %id, %error, "cannot read the failed handover for recovery");
-                return;
-            }
-        };
-        if current.session.status != SessionStatus::Rotating
-            || current.runtime_id.as_deref() != Some(old.0.as_str())
-        {
-            return;
-        }
-
-        current.session.status = original.session.status;
-        current.session.stop_reason = original.session.stop_reason;
-        let mut restored = current;
+        // Roll back only the exact durable rotation claim made by this task.
+        // Reloading by status and runtime would let a stale task erase a newer
+        // replica's claim after an ABA transition back to `Rotating`.
+        let mut restored = rotating.clone();
+        restored.session.status = original.session.status;
+        restored.session.stop_reason = original.session.stop_reason;
+        restored.rotation_claim = None;
+        restored.pending_handover = None;
         let event = Event {
             session_id: id.clone(),
             seq: 0,
@@ -429,10 +880,14 @@ impl SessionService {
             },
             appended_at: String::new(),
         };
-        match self.persist_durably(&mut restored, vec![event]).await {
+        match self
+            .roll_back_handover_durably(&mut restored, rotating, vec![event])
+            .await
+        {
             Ok(()) => {
                 self.mark_entry(id, original.session.status, restored.session.last_seq)
                     .await;
+                Some(restored)
             }
             Err(error) => {
                 tracing::error!(
@@ -440,6 +895,7 @@ impl SessionService {
                     %error,
                     "cannot restore the handover status; leaving the old runtime intact"
                 );
+                None
             }
         }
     }
@@ -449,10 +905,16 @@ impl SessionService {
         &self,
         record: &SessionRecord,
         change: &Handover,
+        pending_handover: Option<PendingHandover>,
     ) -> Option<SessionRecord> {
         let mut rotating = record.clone();
         rotating.session.status = SessionStatus::Rotating;
         rotating.session.stop_reason = None;
+        rotating.rotation_claim = Some(pending_handover.as_ref().map_or_else(
+            || format!("rotn_{}", uuid::Uuid::new_v4().simple()),
+            |pending| pending.claim.clone(),
+        ));
+        rotating.pending_handover = pending_handover;
         let id = rotating.session.id.clone();
         if let Err(e) = self
             .persist_durably(
@@ -474,6 +936,13 @@ impl SessionService {
             tracing::error!(session_id = %id, error = %e, "cannot record the handover");
             return None;
         }
+        // `persist_durably` is an exact write, so it does not advance the
+        // semantic lineage used by later inheriting commits. Seed that lineage
+        // with the record that owns this claim before conversation folds can
+        // queue history-only snapshots whose entry does not carry the private
+        // claim field. The final move can then clear this exact token while
+        // still rebasing over all history written during the second snapshot.
+        self.event_logs.lane(&id).observe_record(&rotating);
         let seq = rotating.session.last_seq;
         self.mark_entry(&id, SessionStatus::Rotating, seq).await;
         Some(rotating)

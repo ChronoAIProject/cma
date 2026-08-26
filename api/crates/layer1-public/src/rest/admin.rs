@@ -248,8 +248,48 @@ impl AdminSessionView {
 
 /// One runtime in service, as this interface renders it.
 #[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeGenerationView {
+    Legacy,
+    Recorded,
+    Malformed,
+}
+
+/// Whether provider metadata agrees with the durable runtime authority.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAuthorityView {
+    Unaccounted,
+    CoordinationDisabled,
+    Legacy,
+    Matches,
+    Mismatch,
+}
+
+/// Why an exact runtime remains durably scheduled for cleanup.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeCleanupView {
+    UncommittedCandidate,
+    RetiredAuthority,
+}
+
+/// One runtime in service, as this interface renders it.
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RuntimeView {
     runtime: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation: Option<u64>,
+    generation_state: RuntimeGenerationView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    durable_runtime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    durable_generation: Option<u64>,
+    authority_state: RuntimeAuthorityView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cleanup_reason: Option<RuntimeCleanupView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -306,12 +346,62 @@ impl InventoryView {
                         runtimes: Some(
                             runtimes
                                 .into_iter()
-                                .map(|r| RuntimeView {
-                                    unaccounted: r.is_unaccounted(),
-                                    runtime: r.runtime,
-                                    session: r.session.map(|s| s.0),
-                                    owner: r.owner.map(|o| o.0),
-                                    status: r.status,
+                                .map(|r| {
+                                    let (generation, generation_state) = match r.generation {
+                                        layer2_core::ProviderRuntimeGeneration::Legacy => {
+                                            (None, RuntimeGenerationView::Legacy)
+                                        }
+                                        layer2_core::ProviderRuntimeGeneration::Recorded(value) => {
+                                            (Some(value), RuntimeGenerationView::Recorded)
+                                        }
+                                        layer2_core::ProviderRuntimeGeneration::Malformed => {
+                                            (None, RuntimeGenerationView::Malformed)
+                                        }
+                                    };
+                                    RuntimeView {
+                                        unaccounted: r.is_unaccounted(),
+                                        runtime: r.runtime,
+                                        generation,
+                                        generation_state,
+                                        durable_runtime: r
+                                            .durable_authority
+                                            .as_ref()
+                                            .and_then(|authority| authority.runtime_id.clone()),
+                                        durable_generation: r
+                                            .durable_authority
+                                            .as_ref()
+                                            .filter(|authority| authority.generation != 0)
+                                            .map(|authority| authority.generation),
+                                        authority_state: match r.authority_comparison {
+                                            layer2_core::RuntimeAuthorityComparison::Unaccounted => {
+                                                RuntimeAuthorityView::Unaccounted
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::CoordinationDisabled => {
+                                                RuntimeAuthorityView::CoordinationDisabled
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::Legacy => {
+                                                RuntimeAuthorityView::Legacy
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::Matches => {
+                                                RuntimeAuthorityView::Matches
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::Mismatch => {
+                                                RuntimeAuthorityView::Mismatch
+                                            }
+                                        },
+                                        cleanup_reason: r.cleanup_reason.map(|reason| match reason {
+                                            layer2_core::RuntimeCleanupReason::UncommittedCandidate => {
+                                                RuntimeCleanupView::UncommittedCandidate
+                                            }
+                                            layer2_core::RuntimeCleanupReason::RetiredAuthority => {
+                                                RuntimeCleanupView::RetiredAuthority
+                                            }
+                                        }),
+                                        created_by: r.created_by,
+                                        session: r.session.map(|s| s.0),
+                                        owner: r.owner.map(|o| o.0),
+                                        status: r.status,
+                                    }
                                 })
                                 .collect(),
                         ),

@@ -97,6 +97,27 @@ async fn keep_current_updates_open(
         .clone()
 }
 
+async fn assert_readoption_lease_released(
+    service: &Arc<SessionService>,
+    store: &Arc<FakeStore>,
+    id: &crate::ids::SessionId,
+) {
+    let current = store
+        .get(id)
+        .await
+        .expect("the store is readable")
+        .expect("the durable session remains");
+    let lease = service
+        .acquire_runtime_lease_at(&current, crate::coordination::SessionOperation::Interact)
+        .await
+        .expect("a new operation can acquire after readoption")
+        .expect("the fake store has coordination enabled");
+    store
+        .release_session_lease(&lease)
+        .await
+        .expect("the follow-up operation releases its lease");
+}
+
 #[tokio::test]
 async fn terminal_readoption_does_not_depend_on_conversation_history() {
     let store = Arc::new(FakeStore::default());
@@ -439,7 +460,7 @@ async fn only_outstanding_approvals_are_answerable_after_a_restart() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_request_arriving_between_history_read_and_install_is_answerable() {
+async fn a_request_arriving_during_readoption_survives_a_hidden_replay_lease_advance() {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter {
         capabilities: conversing(),
@@ -453,9 +474,20 @@ async fn a_request_arriving_between_history_read_and_install_is_answerable() {
     drop(first);
     *adapter.permission_on_open.lock().await =
         Some(asking("arrived-during-readoption", "run after reconnect"));
+    store.lose_runtime_advance_responses(1);
     let replacement = replacement_service(Arc::clone(&store), Arc::clone(&adapter));
     let recovered = replacement.reconcile().await;
     assert_eq!(recovered.readopted_sessions, 1);
+    assert_readoption_lease_released(&replacement, &store, &created.id).await;
+    assert!(
+        replacement
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .is_some_and(|entry| entry.publication_complete),
+        "the confirmed replay boundary is published before readoption completes"
+    );
 
     let events = replacement
         .events_since(&alice, &created.id, None)
@@ -499,7 +531,7 @@ async fn a_request_arriving_between_history_read_and_install_is_answerable() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_resolution_committed_after_the_first_history_read_is_not_resurrected() {
+async fn readoption_fences_resolution_until_the_replacement_is_live() {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter {
         capabilities: conversing(),
@@ -534,9 +566,25 @@ async fn a_resolution_committed_after_the_first_history_read_is_not_resurrected(
         .expect("the replacement reaches its network open")
         .forget();
 
-    // The original process commits the answer after the replacement's first
-    // snapshot, while replacement attachment is deliberately paused.
-    first
+    // Once readoption owns durable runtime authority, the old process cannot
+    // mutate the conversation snapshot it is replacing.
+    let blocked = first
+        .resolve_approval(
+            &alice,
+            &created.id,
+            "resolved-during-readoption".into(),
+            ApprovalDecision::Deny,
+        )
+        .await;
+    assert!(
+        matches!(blocked, Err(CoreError::RuntimeUnavailable(_))),
+        "readoption must fence the outgoing process, got {blocked:?}"
+    );
+    adapter.continue_conversation_open.add_permits(1);
+
+    let recovered = reconciling.await.expect("reconciliation finishes");
+    assert_eq!(recovered.readopted_sessions, 1);
+    replacement
         .resolve_approval(
             &alice,
             &created.id,
@@ -544,19 +592,15 @@ async fn a_resolution_committed_after_the_first_history_read_is_not_resurrected(
             ApprovalDecision::Deny,
         )
         .await
-        .expect("the original process records the resolution");
+        .expect("the replacement records the resolution");
     assert!(
-        until_logged(&first, &alice, &created.id, |kind| matches!(
+        until_logged(&replacement, &alice, &created.id, |kind| matches!(
             kind,
             EventKind::ApprovalResolved { request_id, .. }
                 if request_id == "resolved-during-readoption"
         ))
         .await
     );
-    adapter.continue_conversation_open.add_permits(1);
-
-    let recovered = reconciling.await.expect("reconciliation finishes");
-    assert_eq!(recovered.readopted_sessions, 1);
     assert_eq!(
         replacement
             .resolve_approval(
@@ -567,7 +611,7 @@ async fn a_resolution_committed_after_the_first_history_read_is_not_resurrected(
             )
             .await,
         Err(CoreError::InvalidState),
-        "the final installation snapshot must include the intervening resolution"
+        "the replacement keeps its recorded resolution final"
     );
     drop(keep_original_updates_open);
 }
