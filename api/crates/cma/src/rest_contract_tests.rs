@@ -44,12 +44,12 @@ const TEST_SERVICE_ID: &str = "api-github";
 const TEST_SKILL_NAME: &str = "repository-review";
 const TEST_DELEGATED_CREDENTIAL: &str = "contract-delegated-credential";
 
-struct RecordReadPause {
+struct StorePause {
     reached: Semaphore,
     resume: Semaphore,
 }
 
-impl RecordReadPause {
+impl StorePause {
     fn new() -> Self {
         Self {
             reached: Semaphore::new(0),
@@ -61,7 +61,7 @@ impl RecordReadPause {
         self.reached
             .acquire()
             .await
-            .expect("the event-read barrier remains open")
+            .expect("the store barrier remains open")
             .forget();
     }
 
@@ -74,7 +74,7 @@ impl RecordReadPause {
         self.resume
             .acquire()
             .await
-            .expect("the event-read barrier remains open")
+            .expect("the store barrier remains open")
             .forget();
     }
 }
@@ -83,13 +83,15 @@ impl RecordReadPause {
 struct MemorySessions {
     state: Mutex<MemorySessionState>,
     fail_lists: AtomicBool,
-    record_read_pause: Mutex<Option<(usize, Arc<RecordReadPause>)>>,
+    sequence_taken_errors: AtomicUsize,
+    record_read_pause: Mutex<Option<(usize, Arc<StorePause>)>>,
+    event_commit_pause: Mutex<Option<Arc<StorePause>>>,
 }
 
 impl MemorySessions {
-    async fn pause_nth_record_read(&self, nth: usize) -> Arc<RecordReadPause> {
+    async fn pause_nth_record_read(&self, nth: usize) -> Arc<StorePause> {
         assert!(nth > 0, "a record-read pause needs a positive position");
-        let pause = Arc::new(RecordReadPause::new());
+        let pause = Arc::new(StorePause::new());
         assert!(
             self.record_read_pause
                 .lock()
@@ -97,6 +99,19 @@ impl MemorySessions {
                 .replace((nth, Arc::clone(&pause)))
                 .is_none(),
             "only one record read may be paused at a time"
+        );
+        pause
+    }
+
+    async fn pause_next_event_commit(&self) -> Arc<StorePause> {
+        let pause = Arc::new(StorePause::new());
+        assert!(
+            self.event_commit_pause
+                .lock()
+                .await
+                .replace(Arc::clone(&pause))
+                .is_none(),
+            "only one event commit may be paused at a time"
         );
         pause
     }
@@ -321,10 +336,23 @@ impl SessionStore for MemorySessions {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.state
+        let pause = if events.is_empty() {
+            None
+        } else {
+            self.event_commit_pause.lock().await.take()
+        };
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
+        }
+        let result = self
+            .state
             .lock()
             .await
-            .commit(write_id, record, events, false)
+            .commit(write_id, record, events, false);
+        if matches!(&result, Err(StoreError::SequenceTaken { .. })) {
+            self.sequence_taken_errors.fetch_add(1, Ordering::SeqCst);
+        }
+        result
     }
 
     async fn create_session_idempotent(
@@ -1642,6 +1670,114 @@ async fn a_prompt_run_starts_at_its_own_boundary_after_a_racing_runtime_event() 
         first_id > unrelated_seq,
         "the response must start at its own prompt boundary, after the racing event: {wire:?}"
     );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_prompt_run_uses_its_committed_boundary_after_cross_replica_resequencing() {
+    let TestSurface {
+        app,
+        sessions,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let original_tail = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("the owner can read the session")
+        .last()
+        .expect("creation records events")
+        .seq;
+
+    // Hold the already allocated three-event prompt unit immediately before
+    // its store CAS. A competing event append then takes its first sequence,
+    // forcing the real lane through SequenceTaken before it can report the
+    // boundary used by the POST response.
+    let pause = store.pause_next_event_commit().await;
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": id.0,
+            "runId": "run_resequenced_prompt",
+            "messages": [{ "role": "user", "content": "use the committed boundary" }]
+        })
+        .to_string(),
+    );
+    let response =
+        tokio::spawn(async move { app.oneshot(request).await.expect("the run route answers") });
+    pause.wait_until_reached().await;
+
+    let rival_seq = original_tail + 1;
+    let rival_event = Event {
+        session_id: id.clone(),
+        seq: rival_seq,
+        kind: EventKind::AvailableCommandsSet {
+            commands: Vec::new(),
+        },
+        appended_at: "2026-08-26T00:00:00Z".into(),
+    };
+    store
+        .append_events(&[rival_event])
+        .await
+        .expect("the competing replica takes the prompt unit's first sequence");
+    pause.release();
+
+    let response = response.await.expect("the run task completes");
+    assert_eq!(
+        store.sequence_taken_errors.load(Ordering::SeqCst),
+        1,
+        "the prompt commit must exercise the normal cross-replica sequence rebase"
+    );
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let (first, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(
+        first["type"], "RUN_STARTED",
+        "the rival projection is excluded"
+    );
+    assert_agui_ids(&first, "run_resequenced_prompt", &id);
+    let first_id = wire
+        .lines()
+        .find_map(|line| line.strip_prefix("id:"))
+        .map(str::trim)
+        .expect("the committed prompt boundary carries an SSE id")
+        .parse::<u64>()
+        .expect("the prompt boundary id is a sequence");
+    assert_eq!(
+        first_id,
+        rival_seq + 1,
+        "the response starts at the prompt unit's rebased TurnStarted"
+    );
+
+    let committed = sessions
+        .events_since(&caller, &id, Some(original_tail))
+        .await
+        .expect("the resequenced history is readable");
+    assert!(matches!(
+        committed.as_slice(),
+        [
+            Event {
+                seq,
+                kind: EventKind::AvailableCommandsSet { .. },
+                ..
+            },
+            Event {
+                seq: turn_seq,
+                kind: EventKind::TurnStarted,
+                ..
+            },
+            Event {
+                kind: EventKind::OwnerMessage { .. },
+                ..
+            },
+            Event {
+                kind: EventKind::StatusChanged { .. },
+                ..
+            }
+        ] if *seq == rival_seq && *turn_seq == first_id
+    ));
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
