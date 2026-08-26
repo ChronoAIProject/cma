@@ -1,5 +1,7 @@
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
 use layer3_adapter::ConversationInput;
@@ -15,6 +17,7 @@ use crate::environment::AgentConfiguration;
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::options::SessionMode;
+use crate::provision_support::RuntimeInteractionDeliveryLoss;
 use crate::session::{RecoveryState, Session, SessionStatus};
 use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
@@ -22,6 +25,18 @@ use crate::test_support::{
     service_over_with_environments, spec, user, FakeAdapter, FakeStore,
 };
 use crate::{AgentOptions, CoreError, Reserved, TerminalGeometry};
+
+struct WakeFlag(AtomicBool);
+
+impl Wake for WakeFlag {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
 
 #[derive(Default)]
 struct InteractionStore {
@@ -408,6 +423,214 @@ async fn caller_cancellation_does_not_cancel_a_durable_interaction() {
 #[tokio::test]
 async fn caller_cancellation_does_not_cancel_a_compatibility_interaction() {
     cancellation_keeps_action_owned(Arc::new(InteractionStore::compatibility())).await;
+}
+
+#[tokio::test]
+async fn retained_result_reports_send_failure_after_caller_cancellation() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let (started, is_started) = tokio::sync::oneshot::channel();
+    let (finish, may_finish) = tokio::sync::oneshot::channel();
+    let (lost, mut losses) = tokio::sync::mpsc::unbounded_channel();
+    let caller = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move {
+            service
+                .run_retained_runtime_interaction_at(
+                    &durable,
+                    move |authority, _interaction| async move {
+                        authority.ensure_delivery_allowed()?;
+                        let _ = started.send(());
+                        let _ = may_finish.await;
+                        Ok::<_, CoreError>("completed after cancellation")
+                    },
+                    move |reason, result, _interaction| {
+                        let _ = lost.send((reason, result.is_ok()));
+                    },
+                )
+                .await
+        }
+    });
+
+    is_started.await.expect("the retained action started");
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    finish.send(()).unwrap();
+    let (reason, succeeded) = tokio::time::timeout(Duration::from_secs(2), losses.recv())
+        .await
+        .expect("the undelivered hook runs")
+        .expect("the loss is reported");
+    assert_eq!(reason, RuntimeInteractionDeliveryLoss::SendFailed);
+    assert!(succeeded);
+    wait_for_releases(&store, 1).await;
+    assert_eq!(store.releases.lock().await.len(), 1);
+}
+
+#[tokio::test]
+async fn retained_success_sent_but_dropped_before_poll_reports_unread() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let (completed, is_completed) = tokio::sync::oneshot::channel();
+    let (lost, losses) = std::sync::mpsc::sync_channel(1);
+    let mut caller = Box::pin(service.run_retained_runtime_interaction_at(
+        &durable,
+        move |authority, _interaction| async move {
+            authority.ensure_delivery_allowed()?;
+            let _ = completed.send(());
+            Ok::<_, CoreError>("buffered success")
+        },
+        move |reason, result, interaction| {
+            let invalidated = interaction.authority().ensure_delivery_allowed().is_err();
+            let _ = lost.send((reason, result.is_ok(), invalidated));
+        },
+    ));
+    let woken = Arc::new(WakeFlag(AtomicBool::new(false)));
+    let waker = Waker::from(Arc::clone(&woken));
+    let mut context = Context::from_waker(&waker);
+    assert!(matches!(caller.as_mut().poll(&mut context), Poll::Pending));
+
+    is_completed.await.expect("the retained action completed");
+    tokio::task::yield_now().await;
+    assert!(
+        woken.0.load(Ordering::SeqCst),
+        "the completed result wakes its unpolled caller"
+    );
+    drop(caller);
+
+    let (reason, succeeded, invalidated) = losses
+        .recv_timeout(Duration::from_secs(2))
+        .expect("dropping the buffered delivery runs its hook synchronously");
+    assert_eq!(reason, RuntimeInteractionDeliveryLoss::Unread);
+    assert!(succeeded);
+    assert!(invalidated, "caller cancellation precedes the unread hook");
+    wait_for_releases(&store, 1).await;
+}
+
+#[tokio::test]
+async fn retained_owner_clones_queue_one_exact_release() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+
+    service
+        .run_retained_runtime_interaction_at(
+            &durable,
+            |authority, interaction| async move {
+                authority.ensure_delivery_allowed()?;
+                let first = interaction.clone();
+                let second = interaction.clone();
+                drop(first);
+                drop(second);
+                Ok::<_, CoreError>(())
+            },
+            |_reason, _result, _interaction| panic!("an observed result is not undelivered"),
+        )
+        .await
+        .unwrap();
+
+    wait_for_releases(&store, 1).await;
+    tokio::task::yield_now().await;
+    let releases = store.releases.lock().await;
+    assert_eq!(releases.len(), 1);
+    assert_eq!(releases[0].operation, SessionOperation::Interact);
+}
+
+#[test]
+fn retained_owner_resumes_and_releases_after_origin_runtime_replacement() {
+    let origin = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("origin runtime builds");
+    let store = Arc::new(InteractionStore::default());
+    origin.block_on(store.inner.seed(&record())).unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = origin
+        .block_on(store.get(&record().session.id))
+        .unwrap()
+        .unwrap();
+    let (retained, retained_result) = std::sync::mpsc::sync_channel(1);
+    let mut caller = Box::pin(service.run_retained_runtime_interaction_at(
+        &durable,
+        move |authority, interaction| async move {
+            authority.ensure_delivery_allowed()?;
+            assert!(
+                retained.send(interaction.clone()).is_ok(),
+                "the replacement-runtime owner is received"
+            );
+            std::future::pending::<Result<&'static str, CoreError>>().await
+        },
+        |_reason, _result, _interaction| {},
+    ));
+    let interaction = origin.block_on(async {
+        loop {
+            std::future::poll_fn(|context| {
+                assert!(matches!(caller.as_mut().poll(context), Poll::Pending));
+                Poll::Ready(())
+            })
+            .await;
+            if let Ok(interaction) = retained_result.try_recv() {
+                return interaction;
+            }
+            tokio::task::yield_now().await;
+        }
+    });
+    let held = origin
+        .block_on(store.inner.active_session_lease(&durable.session.id))
+        .expect("the retained interaction owns its exact lease");
+    drop(origin);
+
+    let replacement = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("replacement runtime builds");
+    let resumed = replacement
+        .block_on(interaction.resume_before_delivery())
+        .expect("the retained exact lease renews on the replacement runtime");
+    resumed
+        .ensure_delivery_allowed()
+        .expect("the retained authority remains usable");
+    let renewals = replacement.block_on(store.renewals.lock());
+    assert_eq!(
+        renewals.as_slice(),
+        &[(held.clone(), Duration::from_secs(30))]
+    );
+    drop(renewals);
+    drop(replacement);
+
+    drop(caller);
+    drop(interaction);
+    assert!(
+        store
+            .releases
+            .try_lock()
+            .expect("release log is unlocked")
+            .is_empty(),
+        "dropping outside a runtime only retains service-owned release"
+    );
+
+    let successor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("successor runtime builds");
+    successor.block_on(async {
+        service
+            .run_runtime_interaction_at(&durable, |authority| async move {
+                authority.ensure_delivery_allowed()?;
+                Ok::<_, CoreError>(())
+            })
+            .await
+            .expect("a successor drains the orphaned release and acquires");
+        wait_for_releases(&store, 2).await;
+    });
+    let releases = successor.block_on(store.releases.lock());
+    assert_eq!(releases.len(), 2);
+    assert_eq!(releases[0], held);
+    assert_ne!(releases[0].token, releases[1].token);
 }
 
 #[tokio::test(start_paused = true)]
