@@ -64,6 +64,7 @@ impl SessionService {
             entries: RwLock::new(HashMap::new()),
             lifecycle_gates: Default::default(),
             readoption_gates: Default::default(),
+            conversation_order_gates: Default::default(),
             prompt_gates: Default::default(),
             skills,
             sequences,

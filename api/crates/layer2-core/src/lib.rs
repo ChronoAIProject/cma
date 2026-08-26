@@ -133,7 +133,9 @@ pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
-pub use conversation::{ApprovalDecision, ConversationReadinessError, Usage};
+pub use conversation::{
+    ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage,
+};
 pub use deployment_capacity::{DeploymentCapacity, Reserved};
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
@@ -173,9 +175,10 @@ pub use session::{
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
 pub use store::{
-    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, Page, PageCursor,
-    PageRequest, SessionListQuery, SessionRecord, SessionStore, SkillPack, SkillSource, StoreError,
-    UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, OperationClaim,
+    OperationReservation, OperationStore, Page, PageCursor, PageRequest, SessionListQuery,
+    SessionRecord, SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
+    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

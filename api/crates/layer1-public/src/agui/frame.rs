@@ -19,9 +19,10 @@ pub(super) struct AguiEvent {
     pub body: serde_json::Value,
     /// When the durable event this was projected from was appended, RFC 3339.
     ///
-    /// Absent for a liveness frame — which has no log position — and for an
-    /// event written by a control plane that predates timestamps. A client
-    /// renders no time rather than an invented one.
+    /// Absent for a liveness frame — which has no log position — for the
+    /// interface-only boundary that starts a continuation run, and for an event
+    /// written by a control plane that predates timestamps. A client renders no
+    /// time rather than an invented one.
     #[serde(rename = "timestamp", skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
     /// The durable sequence this was projected from, when there is one.
@@ -30,18 +31,20 @@ pub(super) struct AguiEvent {
     /// is what a reconnecting client hands back. Skipped in the body so a
     /// client is never tempted to read it as protocol.
     ///
-    /// `None` for every liveness frame and for every leading frame of a
-    /// multi-frame durable projection. Only the projection's final frame is a
-    /// safe resume point: receiving an earlier one does not mean the durable
-    /// event arrived whole.
+    /// `None` for every liveness frame, for the interface-only boundary that
+    /// starts a continuation run, and for every leading frame of a multi-frame
+    /// durable projection. Only a durable projection's final frame is a safe
+    /// resume point: receiving an earlier one does not mean the durable event
+    /// arrived whole.
     #[serde(skip)]
     pub seq: Option<u64>,
-    /// Whether this is liveness rather than a projection of durable history.
+    /// Whether this belongs to CMA's live lane.
     ///
-    /// Kept separate from `seq`: a leading durable projection frame also has
-    /// no SSE id, but it must not be mistaken for the live lane. In particular,
-    /// committed message content remains history even though its closing frame
-    /// is the only one that advances the cursor.
+    /// Kept separate from `seq`: a leading durable projection frame and the
+    /// synthetic continuation boundary also have no SSE id, but neither is a
+    /// live-lane update. In particular, committed message content remains
+    /// history even though its closing frame is the only one that advances the
+    /// cursor.
     #[serde(rename = "cma:live", skip_serializing_if = "is_false")]
     pub live: bool,
 }
@@ -71,8 +74,9 @@ pub(super) fn sse_frame(event: &AguiEvent) -> axum::response::sse::Event {
         // here would take a live stream down; a client reading a run error it
         // did not expect is survivable and says something went wrong.
         .unwrap_or_else(|_| axum::response::sse::Event::default().data(r#"{"type":"RUN_ERROR"}"#));
-    // Only where there is one. Liveness and leading durable projection frames
-    // carry no cursor: neither is a point after which replay may safely begin.
+    // Only where there is one. Liveness, the synthetic continuation boundary,
+    // and leading durable projection frames carry no cursor: none is a point
+    // after which replay may safely begin.
     match event.cursor() {
         Some(id) => frame.id(id),
         None => frame,
