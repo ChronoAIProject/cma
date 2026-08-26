@@ -115,15 +115,20 @@ AG-UI also has one cursorless interface boundary: an unnumbered, non-live
 `RUN_STARTED` opens a continuation response that did not create a new durable
 turn. Only an accepted `POST /api/v1/agui/run` continuation response emits it;
 `GET /api/v1/agui/events` never does, whether serving bounded history, a
-followed stream, or reconnect replay. The SDK delivers it immediately and in
-order, but does not mark it ephemeral, deduplicate it, or advance the reconnect
-cursor. An unnumbered
-`RUN_FINISHED` is different: it is the durable prefix of an approval request and
-stays buffered until the following numbered pending-state delta completes that
-projection. Every other known durable singleton or final requires a positive
-SSE id. Numbered durable continuation projections may follow the cursorless
-`RUN_STARTED` before the answered approval is removed; consumers must not assume
-those two frames are adjacent.
+followed stream, or reconnect replay. When parsing the complete captured body of
+an accepted continuation response, `parseEventStream` accepts this cursorless
+boundary and returns it immediately in wire order, but does not mark it
+ephemeral, deduplicate it, or advance the reconnect cursor. `AguiConnection`, by
+contrast, consumes only GET history and followed-tail traffic. Receiving a
+cursorless `RUN_STARTED` there violates route provenance and terminates the
+connection with a `ProtocolError`.
+
+An unnumbered `RUN_FINISHED` is different: it is the durable prefix of an
+approval request and stays buffered until the following numbered `STATE_DELTA`
+completes that projection. Every other known durable singleton or final requires
+a positive SSE id. Numbered durable continuation projections may follow the
+cursorless `RUN_STARTED` before the answered approval is removed; consumers must
+not assume those two frames are adjacent.
 
 ## Why the SDK owns the patches
 
