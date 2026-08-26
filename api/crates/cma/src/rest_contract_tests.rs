@@ -1606,6 +1606,22 @@ async fn a_resume_run_starts_unnumbered_and_still_finishes() {
         "the synthetic continuation boundary must not advance the durable cursor: {wire:?}"
     );
 
+    let (resolved, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(resolved["type"], "STATE_DELTA");
+    assert_agui_ids(&resolved, "run_resume_contract", &id);
+    assert_eq!(
+        resolved["delta"],
+        serde_json::json!([{
+            "op": "remove",
+            "path": "/pendingApprovals/approval-contract"
+        }]),
+        "the continuation durably clears the approval it answered"
+    );
+    assert!(
+        wire.lines().any(|line| line.starts_with("id:")),
+        "the durable approval resolution must advance the cursor: {wire:?}"
+    );
+
     kernel.emit_turn_ended().await;
     let (finished, wire) = next_agui_frame_and_wire(&mut body).await;
     assert_eq!(finished["type"], "RUN_FINISHED");
