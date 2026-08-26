@@ -10,6 +10,7 @@
  * what the control plane says, and a second field agreeing with it is a second
  * field that can stop agreeing with it.
  */
+import { observeBrowserCompatibility } from '../observability/browserCompatibility';
 import type { Session, SessionLifecycle } from './types';
 
 export type GroupId = 'active' | 'paused' | 'terminated';
@@ -102,10 +103,21 @@ function isGroupId(value: unknown): value is GroupId {
   return GROUPS.some((group) => group.id === value);
 }
 
-function readCollapsed(store: Storage, key: string): string | null {
+function readCollapsed(
+  store: Storage,
+  key: string,
+  observeCanonical: boolean = false,
+): string | null {
   try {
-    return store.getItem(key);
+    const value = store.getItem(key);
+    if (observeCanonical) {
+      observeBrowserCompatibility(['rail-collapsed', 'canonical', 'read-ok']);
+    }
+    return value;
   } catch {
+    if (observeCanonical) {
+      observeBrowserCompatibility(['rail-collapsed', 'canonical', 'read-blocked']);
+    }
     return null;
   }
 }
@@ -126,7 +138,9 @@ function parseCollapsed(raw: string | null): ReadonlySet<GroupId> | null {
 function writeCollapsed(store: Storage, collapsed: ReadonlySet<GroupId>): void {
   try {
     store.setItem(KEY, JSON.stringify([...collapsed]));
+    observeBrowserCompatibility(['rail-collapsed', 'canonical', 'write-ok']);
   } catch {
+    observeBrowserCompatibility(['rail-collapsed', 'canonical', 'write-blocked']);
     // The rail still works when storage is blocked or full.
   }
 }
@@ -136,10 +150,11 @@ export function loadCollapsed(): ReadonlySet<GroupId> {
   const fallback = new Set(GROUPS.filter((group) => !group.openByDefault).map((group) => group.id));
   const store = storage();
   if (store === null) {
+    observeBrowserCompatibility(['rail-collapsed', 'canonical', 'read-blocked']);
     return fallback;
   }
 
-  const canonical = parseCollapsed(readCollapsed(store, KEY));
+  const canonical = parseCollapsed(readCollapsed(store, KEY, true));
   if (canonical !== null) {
     return canonical;
   }
@@ -149,6 +164,7 @@ export function loadCollapsed(): ReadonlySet<GroupId> {
     return fallback;
   }
 
+  observeBrowserCompatibility(['rail-collapsed', 'historical-key', 'fallback-used']);
   writeCollapsed(store, historical);
   return historical;
 }
@@ -158,5 +174,7 @@ export function storeCollapsed(collapsed: ReadonlySet<GroupId>): void {
   const store = storage();
   if (store !== null) {
     writeCollapsed(store, collapsed);
+  } else {
+    observeBrowserCompatibility(['rail-collapsed', 'canonical', 'write-blocked']);
   }
 }
