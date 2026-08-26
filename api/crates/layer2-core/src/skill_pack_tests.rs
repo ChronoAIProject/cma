@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::store::{SkillPack, SkillPackStore, SkillSource, StoreError};
+use crate::store::{
+    SessionStore, SkillPack, SkillPackState, SkillPackStore, SkillSource, StoreError,
+};
 use crate::test_support::{
     await_settled, service_on_version, service_on_version_with_skill_store, spec, user,
     FakeAdapter, FakeStore,
@@ -65,6 +67,7 @@ impl SkillPackStore for MemorySkillPacks {
 struct CountingSkills {
     calls: AtomicUsize,
     refuses: bool,
+    requests: Mutex<Vec<(bool, Vec<SkillId>)>>,
 }
 
 impl CountingSkills {
@@ -72,6 +75,7 @@ impl CountingSkills {
         Self {
             calls: AtomicUsize::new(0),
             refuses: false,
+            requests: Mutex::new(Vec::new()),
         }
     }
 
@@ -79,6 +83,7 @@ impl CountingSkills {
         Self {
             calls: AtomicUsize::new(0),
             refuses: true,
+            requests: Mutex::new(Vec::new()),
         }
     }
 }
@@ -87,10 +92,14 @@ impl CountingSkills {
 impl SkillSource for CountingSkills {
     async fn packs_for(
         &self,
-        _caller_credential: Option<&str>,
+        caller_credential: Option<&str>,
         skills: &[SkillId],
     ) -> Result<Vec<SkillPack>, String> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.requests
+            .lock()
+            .await
+            .push((caller_credential.is_some(), skills.to_vec()));
         if self.refuses {
             return Err("the registry refused this identity".into());
         }
@@ -106,6 +115,77 @@ impl SkillSource for CountingSkills {
             })
             .collect())
     }
+}
+
+#[tokio::test]
+async fn creation_atomically_freezes_the_caller_visible_packs() {
+    let sessions = Arc::new(FakeStore::default());
+    let packs = Arc::new(MemorySkillPacks::default());
+    packs.fail_writes.store(100, Ordering::SeqCst);
+    let source = Arc::new(CountingSkills::working());
+    let service = service_on_version_with_skill_store(
+        Arc::clone(&sessions),
+        Arc::new(FakeAdapter::default()),
+        "runtime:1",
+        Arc::clone(&source) as Arc<dyn SkillSource>,
+        packs,
+    );
+    let owner = user("creation-custody-owner");
+    let mut request = spec();
+    request.caller_credential = Some("delegated-creation-custody".into());
+
+    let created = service
+        .create_session(&owner, request)
+        .await
+        .expect("the exact packs are resolved before creation");
+    let record = sessions
+        .get(&created.id)
+        .await
+        .expect("the created session is readable")
+        .expect("the created session is durable");
+    let SkillPackState::Staged(staged) = record.skill_packs else {
+        panic!("creation must retain exact staged bytes until object custody succeeds");
+    };
+
+    assert_eq!(staged.len(), 1);
+    assert_eq!(staged[0].name, "a-mandated-skill");
+    assert_eq!(staged[0].version.as_deref(), Some("7.3"));
+    assert_eq!(
+        record.session.granted_skills,
+        Some(vec![crate::environment::GrantedSkill {
+            id: SkillId::new("a-mandated-skill"),
+            version: Some("7.3".into()),
+        }])
+    );
+    assert_eq!(
+        source.requests.lock().await.as_slice(),
+        &[(true, vec![SkillId::new("a-mandated-skill")])],
+        "creation must resolve once with the caller's delegated authority"
+    );
+}
+
+#[tokio::test]
+async fn a_creation_refused_by_the_skill_source_leaves_no_session() {
+    let sessions = Arc::new(FakeStore::default());
+    let source = Arc::new(CountingSkills::refusing());
+    let service = service_on_version_with_skill_store(
+        Arc::clone(&sessions),
+        Arc::new(FakeAdapter::default()),
+        "runtime:1",
+        Arc::clone(&source) as Arc<dyn SkillSource>,
+        Arc::new(MemorySkillPacks::default()),
+    );
+    let mut request = spec();
+    request.caller_credential = Some("delegated-refused-skill".into());
+
+    assert!(matches!(
+        service
+            .create_session(&user("refused-skill-owner"), request)
+            .await,
+        Err(crate::CoreError::SkillCatalogUnavailable(_))
+    ));
+    assert!(sessions.sessions.lock().await.is_empty());
+    assert_eq!(source.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -218,7 +298,7 @@ async fn creation_fetches_once_and_rotation_replays_without_the_registry() {
 }
 
 #[tokio::test]
-async fn a_missing_legacy_pack_still_uses_the_nonfatal_refetch_fallback() {
+async fn a_missing_legacy_pack_recovers_only_the_frozen_grant() {
     let sessions = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
     let owner = user("legacy-skill-owner");
@@ -226,8 +306,23 @@ async fn a_missing_legacy_pack_still_uses_the_nonfatal_refetch_fallback() {
     let created = old.create_session(&owner, spec()).await.expect("created");
     await_settled(&old, &owner, &created.id).await;
 
+    let mut legacy = sessions
+        .get(&created.id)
+        .await
+        .expect("legacy session is readable")
+        .expect("legacy session exists");
+    legacy.skill_packs = SkillPackState::Legacy;
+    legacy.session.granted_skills = Some(vec![crate::environment::GrantedSkill {
+        id: SkillId::new("frozen-private-skill"),
+        version: Some("7.3".into()),
+    }]);
+    sessions
+        .seed(&legacy)
+        .await
+        .expect("the legacy representation is installed");
+
     let packs = Arc::new(MemorySkillPacks::default());
-    let source = Arc::new(CountingSkills::refusing());
+    let source = Arc::new(CountingSkills::working());
     let newer = service_on_version_with_skill_store(
         Arc::clone(&sessions),
         Arc::clone(&adapter),
@@ -238,9 +333,121 @@ async fn a_missing_legacy_pack_still_uses_the_nonfatal_refetch_fallback() {
     newer.reconcile().await;
     let settled = await_settled(&newer, &owner, &created.id).await;
 
-    assert_ne!(settled.status, SessionStatus::Terminated);
+    assert_eq!(settled.status, SessionStatus::Ready);
     assert_eq!(source.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        source.requests.lock().await.as_slice(),
+        &[(false, vec![SkillId::new("frozen-private-skill")])],
+        "legacy recovery must use the frozen IDs without borrowing caller authority"
+    );
+    assert_eq!(
+        packs.objects.lock().await[&created.id.0][0].name,
+        "frozen-private-skill"
+    );
+    let recovered = sessions
+        .get(&created.id)
+        .await
+        .expect("recovered session is readable")
+        .expect("recovered session exists");
+    assert_eq!(recovered.skill_packs, SkillPackState::Stored);
+    assert_eq!(
+        recovered.session.granted_skills,
+        legacy.session.granted_skills
+    );
+}
+
+#[tokio::test]
+async fn a_legacy_session_without_a_frozen_grant_never_consults_the_profile() {
+    let sessions = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let owner = user("unknown-legacy-skill-owner");
+    let old = service_on_version(Arc::clone(&sessions), Arc::clone(&adapter), "runtime:1");
+    let created = old.create_session(&owner, spec()).await.expect("created");
+    await_settled(&old, &owner, &created.id).await;
+
+    let mut legacy = sessions
+        .get(&created.id)
+        .await
+        .expect("legacy session is readable")
+        .expect("legacy session exists");
+    let original_runtime = legacy.runtime_id.clone().expect("the old runtime is live");
+    legacy.skill_packs = SkillPackState::Legacy;
+    legacy.session.granted_skills = None;
+    sessions
+        .seed(&legacy)
+        .await
+        .expect("the legacy representation is installed");
+
+    let packs = Arc::new(MemorySkillPacks::default());
+    let source = Arc::new(CountingSkills::working());
+    let newer = service_on_version_with_skill_store(
+        Arc::clone(&sessions),
+        Arc::clone(&adapter),
+        "runtime:2",
+        Arc::clone(&source) as Arc<dyn SkillSource>,
+        Arc::clone(&packs) as Arc<dyn SkillPackStore>,
+    );
+    newer.reconcile().await;
+    let settled = await_settled(&newer, &owner, &created.id).await;
+
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert_eq!(source.calls.load(Ordering::SeqCst), 0);
     assert!(packs.objects.lock().await.is_empty());
+    let deferred = sessions
+        .get(&created.id)
+        .await
+        .expect("deferred session is readable")
+        .expect("deferred session exists");
+    assert_eq!(deferred.skill_packs, SkillPackState::Legacy);
+    assert_eq!(
+        deferred.runtime_id.as_deref(),
+        Some(original_runtime.as_str())
+    );
+    assert!(adapter.terminated.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_pack_that_disagrees_with_the_frozen_grant_cannot_replace_the_runtime() {
+    let sessions = Arc::new(FakeStore::default());
+    let packs = Arc::new(MemorySkillPacks::default());
+    let source = Arc::new(CountingSkills::working());
+    let adapter = Arc::new(FakeAdapter::default());
+    let owner = user("mismatched-pack-owner");
+    let old = service_on_version_with_skill_store(
+        Arc::clone(&sessions),
+        Arc::clone(&adapter),
+        "runtime:1",
+        Arc::clone(&source) as Arc<dyn SkillSource>,
+        Arc::clone(&packs) as Arc<dyn SkillPackStore>,
+    );
+    let created = old.create_session(&owner, spec()).await.expect("created");
+    await_settled(&old, &owner, &created.id).await;
+    let before = sessions
+        .get(&created.id)
+        .await
+        .expect("session is readable")
+        .expect("session exists");
+    let original_runtime = before.runtime_id.clone().expect("the old runtime is live");
+    packs.objects.lock().await.get_mut(&created.id.0).unwrap()[0].version = Some("8.0".into());
+
+    let newer = service_on_version_with_skill_store(
+        Arc::clone(&sessions),
+        Arc::clone(&adapter),
+        "runtime:2",
+        Arc::new(CountingSkills::refusing()),
+        Arc::clone(&packs) as Arc<dyn SkillPackStore>,
+    );
+    newer.reconcile().await;
+    let after = sessions
+        .get(&created.id)
+        .await
+        .expect("session is readable after refused rotation")
+        .expect("session survives refused rotation");
+
+    assert_eq!(after.session.status, SessionStatus::Ready);
+    assert_eq!(after.session.granted_skills, before.session.granted_skills);
+    assert_eq!(after.runtime_id.as_deref(), Some(original_runtime.as_str()));
+    assert!(adapter.terminated.lock().await.is_empty());
 }
 
 #[tokio::test]
@@ -259,6 +466,13 @@ async fn a_store_outage_is_not_mistaken_for_legacy_absence() {
     );
     let created = first.create_session(&owner, spec()).await.expect("created");
     await_settled(&first, &owner, &created.id).await;
+    let original_runtime = sessions
+        .get(&created.id)
+        .await
+        .expect("session is readable")
+        .expect("session exists")
+        .runtime_id
+        .expect("the old runtime is live");
 
     packs.fail_reads.store(true, Ordering::SeqCst);
     let fallback = Arc::new(CountingSkills::refusing());
@@ -272,9 +486,20 @@ async fn a_store_outage_is_not_mistaken_for_legacy_absence() {
     newer.reconcile().await;
     let settled = await_settled(&newer, &owner, &created.id).await;
 
-    assert_ne!(settled.status, SessionStatus::Terminated);
+    assert_eq!(settled.status, SessionStatus::Ready);
     assert_eq!(fallback.calls.load(Ordering::SeqCst), 0);
     assert!(packs.objects.lock().await.contains_key(&created.id.0));
+    assert_eq!(
+        sessions
+            .get(&created.id)
+            .await
+            .expect("session remains readable")
+            .expect("session remains present")
+            .runtime_id
+            .as_deref(),
+        Some(original_runtime.as_str())
+    );
+    assert!(adapter.terminated.lock().await.is_empty());
 }
 
 #[tokio::test]

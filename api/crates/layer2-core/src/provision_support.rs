@@ -798,154 +798,287 @@ enum RuntimeInteractionAcquisition {
     },
 }
 
-/// Skill bytes resolved during one bring-up and whether their durable write
-/// still needs to be confirmed.
+/// Exact skill bytes retained across provider retries in one bring-up.
 pub(crate) struct PreparedSkillPacks {
     packs: Vec<crate::store::SkillPack>,
-    needs_persistence: bool,
 }
 
 impl PreparedSkillPacks {
-    fn durable(packs: Vec<crate::store::SkillPack>) -> Self {
-        Self {
-            packs,
-            needs_persistence: false,
-        }
-    }
-
-    fn pending(packs: Vec<crate::store::SkillPack>) -> Self {
-        Self {
-            packs,
-            needs_persistence: true,
-        }
+    fn new(packs: Vec<crate::store::SkillPack>) -> Self {
+        Self { packs }
     }
 }
 
 impl SessionService {
-    /// Restore the exact skills already held for this session, or resolve and
-    /// preserve them once when no durable packs predate this start.
+    /// Resolve a new session's skills while its caller is still present.
     ///
-    /// `prepared` belongs to one bring-up task. Keeping a resolved answer there
-    /// means provider retries replay the same bytes even when the durable store is
-    /// briefly unavailable; neither retry can touch the registry a second time.
-    pub(crate) async fn prepare_skill_packs(
+    /// The returned bytes and the grant derived from them enter the atomic
+    /// session create together. Nothing after that boundary needs the caller's
+    /// credential, so a process loss cannot turn a private grant into an empty
+    /// one merely because reconciliation has no request to borrow authority
+    /// from.
+    pub(crate) async fn resolve_skill_packs_for_creation(
         &self,
-        id: &SessionId,
         caller_credential: Option<&str>,
         wanted: &[String],
-        prepared: &mut Option<PreparedSkillPacks>,
-    ) -> Result<Vec<crate::store::SkillPack>, crate::provision_failure::StartFailure> {
-        if let Some(cached) = prepared.as_mut() {
-            self.preserve_prepared_skill_packs(id, cached).await?;
-            return Ok(cached.packs.clone());
-        }
-
-        if let Some(store) = self.skill_packs.as_ref() {
-            match store.get(id).await {
-                Ok(Some(packs)) => {
-                    tracing::info!(
-                        session_id = %id,
-                        skills = packs.len(),
-                        "restored this session's stored skills"
-                    );
-                    *prepared = Some(PreparedSkillPacks::durable(packs.clone()));
-                    return Ok(packs);
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    return Err(crate::provision_failure::StartFailure::transient(format!(
-                        "this session's stored skills could not be read: {error}"
-                    )));
-                }
-            }
-        }
-
+    ) -> Result<Vec<crate::store::SkillPack>, crate::error::CoreError> {
         if wanted.is_empty() {
-            // Empty is still an exact resolution. Its durable marker prevents a
-            // later profile change from silently granting this session a skill
-            // it did not have when it was created.
-            *prepared = Some(PreparedSkillPacks::pending(Vec::new()));
-            self.preserve_prepared_skill_packs(
-                id,
-                prepared.as_mut().expect("the empty resolution was cached"),
+            return Ok(Vec::new());
+        }
+        let source = self.skills.as_ref().ok_or_else(|| {
+            crate::error::CoreError::SkillCatalogUnavailable(
+                "this deployment has no source for the selected skills".into(),
             )
-            .await?;
-            return Ok(Vec::new());
-        }
-
-        let Some(source) = self.skills.as_ref() else {
-            // A deployment with no registry still starts sessions; they carry
-            // whatever their image does. Do not store this empty fallback: a
-            // later correctly configured process must still get one chance to
-            // recover a legacy session's packs.
-            *prepared = Some(PreparedSkillPacks::durable(Vec::new()));
-            return Ok(Vec::new());
-        };
-        let wanted: Vec<crate::environment::SkillId> = wanted
+        })?;
+        let wanted = wanted
             .iter()
-            .map(|skill| crate::environment::SkillId::new(skill.clone()))
-            .collect();
-        let packs = match source.packs_for(caller_credential, &wanted).await {
-            Ok(packs) => packs,
-            // At creation a caller is present and should hear a named refusal
-            // before anything is provisioned. A legacy rotation has no caller;
-            // losing its work to avoid one missing file is the production
-            // failure this fallback exists to prevent.
-            Err(why) if caller_credential.is_some() => {
-                return Err(crate::provision_failure::StartFailure::permanent(format!(
-                    "this session's skills could not be prepared: {why}"
-                )));
+            .cloned()
+            .map(crate::environment::SkillId::new)
+            .collect::<Vec<_>>();
+        source
+            .packs_for(caller_credential, &wanted)
+            .await
+            .map_err(crate::error::CoreError::SkillCatalogUnavailable)
+    }
+
+    pub(crate) fn granted_skills_for(
+        packs: &[crate::store::SkillPack],
+    ) -> Vec<crate::environment::GrantedSkill> {
+        packs
+            .iter()
+            .map(|pack| crate::environment::GrantedSkill {
+                id: crate::environment::SkillId::new(pack.name.clone()),
+                version: pack.version.clone(),
+            })
+            .collect()
+    }
+
+    /// Restore the exact skills already held for this session.
+    ///
+    /// Provider retries retain one prepared copy but still reread desired state
+    /// under the process-local lifecycle gate, so same-process termination
+    /// cannot provision from a stale cache. The durable coordination boundary
+    /// owns the equivalent exclusion between replicas.
+    pub(crate) async fn prepare_skill_packs(
+        &self,
+        session: &Session,
+        prepared: &mut Option<PreparedSkillPacks>,
+    ) -> Result<Option<Vec<crate::store::SkillPack>>, crate::provision_failure::StartFailure> {
+        use crate::store::SkillPackState;
+
+        let id = &session.id;
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let mut record = match self.store.get(id).await {
+            Ok(Some(record))
+                if record.session.wants_runtime() && record.session.kernel == session.kernel =>
+            {
+                record
             }
-            Err(why) => {
-                tracing::warn!(
-                    session_id = %id,
-                    %why,
-                    "no stored skill packs predate this start and the legacy refetch failed; \
-                     carrying the session forward without skills"
-                );
-                *prepared = Some(PreparedSkillPacks::durable(Vec::new()));
-                return Ok(Vec::new());
+            Ok(_) => return Ok(None),
+            Err(error) => {
+                return Err(crate::provision_failure::StartFailure::transient(format!(
+                    "this session could not be checked before its skills were prepared: {error}"
+                )))
             }
         };
 
-        // Keep the exact resolved bytes before attempting storage. If storage
-        // fails, the retry writes these again rather than refetching a newer
-        // revision from the registry.
-        *prepared = Some(PreparedSkillPacks::pending(packs.clone()));
-        self.preserve_prepared_skill_packs(
-            id,
-            prepared.as_mut().expect("the resolved packs were cached"),
-        )
-        .await?;
-        Ok(packs)
-    }
-
-    async fn preserve_prepared_skill_packs(
-        &self,
-        id: &SessionId,
-        prepared: &mut PreparedSkillPacks,
-    ) -> Result<(), crate::provision_failure::StartFailure> {
-        if !prepared.needs_persistence {
-            return Ok(());
+        if matches!(
+            &record.skill_packs,
+            SkillPackState::CleanupPending | SkillPackState::Cleaned
+        ) {
+            return Ok(None);
         }
-        self.preserve_skill_packs(id, &prepared.packs).await?;
-        prepared.needs_persistence = false;
-        Ok(())
+        if let Some(cached) = prepared.as_ref() {
+            self.require_matching_skill_grant(&record, &cached.packs)?;
+            return Ok(Some(cached.packs.clone()));
+        }
+
+        let packs = match record.skill_packs.clone() {
+            SkillPackState::Staged(packs) => {
+                self.require_matching_skill_grant(&record, &packs)?;
+                if let Some(store) = self.skill_packs.as_ref() {
+                    store.put(id, &packs).await.map_err(|error| {
+                        crate::provision_failure::StartFailure::transient(format!(
+                            "this session's skills could not be stored for recovery: {error}"
+                        ))
+                    })?;
+                    record.skill_packs = SkillPackState::Stored;
+                    self.persist_durably(&mut record, Vec::new())
+                        .await
+                        .map_err(|error| {
+                            crate::provision_failure::StartFailure::transient(format!(
+                                "stored skill custody could not be recorded: {error}"
+                            ))
+                        })?;
+                }
+                packs
+            }
+            SkillPackState::Stored => {
+                let store = self.skill_packs.as_ref().ok_or_else(|| {
+                    crate::provision_failure::StartFailure::transient(
+                        "this session's skill store is not configured".into(),
+                    )
+                })?;
+                let packs = store
+                    .get(id)
+                    .await
+                    .map_err(|error| {
+                        crate::provision_failure::StartFailure::transient(format!(
+                            "this session's stored skills could not be read: {error}"
+                        ))
+                    })?
+                    .ok_or_else(|| {
+                        crate::provision_failure::StartFailure::transient(
+                            "this session's recorded skill packs are missing".into(),
+                        )
+                    })?;
+                self.require_matching_skill_grant(&record, &packs)?;
+                tracing::info!(
+                    session_id = %id,
+                    skills = packs.len(),
+                    "restored this session's stored skills"
+                );
+                packs
+            }
+            SkillPackState::Legacy => {
+                if let Some(store) = self.skill_packs.as_ref() {
+                    match store.get(id).await {
+                        Ok(Some(packs)) => {
+                            self.settle_legacy_skill_custody(&mut record, &packs)
+                                .await?;
+                            packs
+                        }
+                        Ok(None) => self.recover_frozen_legacy_skills(&mut record).await?,
+                        Err(error) => {
+                            return Err(crate::provision_failure::StartFailure::transient(format!(
+                                "this session's stored skills could not be read: {error}"
+                            )))
+                        }
+                    }
+                } else {
+                    self.recover_frozen_legacy_skills(&mut record).await?
+                }
+            }
+            SkillPackState::CleanupPending | SkillPackState::Cleaned => return Ok(None),
+        };
+
+        *prepared = Some(PreparedSkillPacks::new(packs.clone()));
+        Ok(Some(packs))
     }
 
-    async fn preserve_skill_packs(
+    fn require_matching_skill_grant(
         &self,
-        id: &SessionId,
+        record: &crate::store::SessionRecord,
         packs: &[crate::store::SkillPack],
     ) -> Result<(), crate::provision_failure::StartFailure> {
-        let Some(store) = self.skill_packs.as_ref() else {
-            return Ok(());
+        let installed = Self::granted_skills_for(packs);
+        match record.session.granted_skills.as_deref() {
+            Some(granted) if granted == installed.as_slice() => Ok(()),
+            Some(_) => Err(crate::provision_failure::StartFailure::transient(
+                "the stored skill packs do not match this session's frozen grant".into(),
+            )),
+            None => Err(crate::provision_failure::StartFailure::transient(
+                "this session has skill bytes but no frozen grant".into(),
+            )),
+        }
+    }
+
+    async fn settle_legacy_skill_custody(
+        &self,
+        record: &mut crate::store::SessionRecord,
+        packs: &[crate::store::SkillPack],
+    ) -> Result<(), crate::provision_failure::StartFailure> {
+        let installed = Self::granted_skills_for(packs);
+        match record.session.granted_skills.as_deref() {
+            Some(granted) if granted != installed.as_slice() => {
+                return Err(crate::provision_failure::StartFailure::transient(
+                    "the stored skill packs do not match this session's frozen grant".into(),
+                ))
+            }
+            Some(_) => {}
+            None => record.session.granted_skills = Some(installed),
+        }
+        record.skill_packs = crate::store::SkillPackState::Stored;
+        self.persist_durably(record, Vec::new())
+            .await
+            .map_err(|error| {
+                crate::provision_failure::StartFailure::transient(format!(
+                    "legacy skill custody could not be recorded: {error}"
+                ))
+            })
+    }
+
+    /// Recover only from the immutable grant an older session recorded.
+    ///
+    /// An absent grant cannot be distinguished from an unknown private grant,
+    /// so it is deferred explicitly. The mutable environment profile is never
+    /// consulted here. A source answer is accepted only when its names and
+    /// versions exactly reproduce the frozen fact.
+    async fn recover_frozen_legacy_skills(
+        &self,
+        record: &mut crate::store::SessionRecord,
+    ) -> Result<Vec<crate::store::SkillPack>, crate::provision_failure::StartFailure> {
+        let granted = record.session.granted_skills.clone().ok_or_else(|| {
+            crate::provision_failure::StartFailure::transient(
+                "this legacy session has neither stored skill packs nor a frozen skill grant"
+                    .into(),
+            )
+        })?;
+        let packs = if granted.is_empty() {
+            Vec::new()
+        } else {
+            let source = self.skills.as_ref().ok_or_else(|| {
+                crate::provision_failure::StartFailure::transient(
+                    "this legacy session's frozen skills cannot be fetched because no source is configured"
+                        .into(),
+                )
+            })?;
+            let wanted = granted
+                .iter()
+                .map(|skill| skill.id.clone())
+                .collect::<Vec<_>>();
+            source.packs_for(None, &wanted).await.map_err(|why| {
+                crate::provision_failure::StartFailure::transient(format!(
+                    "this legacy session's frozen skills could not be fetched: {why}"
+                ))
+            })?
         };
-        store.put(id, packs).await.map_err(|error| {
-            crate::provision_failure::StartFailure::transient(format!(
-                "this session's skills could not be stored for recovery: {error}"
-            ))
-        })
+        if Self::granted_skills_for(&packs) != granted {
+            return Err(crate::provision_failure::StartFailure::transient(
+                "the skill source no longer returns this legacy session's frozen versions".into(),
+            ));
+        }
+
+        // The exact source answer becomes recoverable in Mongo before a
+        // separate object write is attempted. A crash at either following
+        // boundary therefore retries from these bytes, never from the source.
+        record.skill_packs = crate::store::SkillPackState::Staged(packs.clone());
+        self.persist_durably(record, Vec::new())
+            .await
+            .map_err(|error| {
+                crate::provision_failure::StartFailure::transient(format!(
+                    "legacy skill bytes could not be staged for recovery: {error}"
+                ))
+            })?;
+        if let Some(store) = self.skill_packs.as_ref() {
+            store
+                .put(&record.session.id, &packs)
+                .await
+                .map_err(|error| {
+                    crate::provision_failure::StartFailure::transient(format!(
+                        "this session's skills could not be stored for recovery: {error}"
+                    ))
+                })?;
+            record.skill_packs = crate::store::SkillPackState::Stored;
+            self.persist_durably(record, Vec::new())
+                .await
+                .map_err(|error| {
+                    crate::provision_failure::StartFailure::transient(format!(
+                        "stored skill custody could not be recorded: {error}"
+                    ))
+                })?;
+        }
+        Ok(packs)
     }
 
     /// Remove session-owned skill bytes without making lifecycle cleanup
@@ -1932,49 +2065,6 @@ impl SessionService {
             .await
         {
             tracing::warn!(session_id = %id, error = %error, "cannot record progress");
-        }
-    }
-
-    /// Record the runtime a session was given, as soon as it exists.
-    /// Write down the skills this runtime was actually given.
-    ///
-    /// Not the set the session asked for. A rotation has no caller to fetch as
-    /// and falls back to this service's own identity, which sees only public
-    /// skills - so a session can legitimately come back with fewer than it
-    /// started with, and #442 is about stopping that. Until it does, the record
-    /// must say what is on the disk rather than what was once requested.
-    ///
-    /// The difference is not cosmetic: the record is what every interface
-    /// reports, so a record describing skills the sandbox does not have is an
-    /// interface telling somebody their agent can do something it cannot.
-    pub(crate) async fn remember_skills(&self, id: &SessionId, skills: &[crate::SkillPack]) {
-        let installed: Vec<crate::environment::GrantedSkill> = skills
-            .iter()
-            .map(|pack| crate::environment::GrantedSkill {
-                id: crate::environment::SkillId::new(pack.name.clone()),
-                version: pack.version.clone(),
-            })
-            .collect();
-        let Ok(Some(mut record)) = self.store.get(id).await else {
-            tracing::error!(session_id = %id, "cannot record the skills: session is gone");
-            return;
-        };
-        if record.session.granted_skills.as_deref() == Some(installed.as_slice()) {
-            return;
-        }
-        tracing::info!(
-            session_id = %id,
-            had = ?record.session.granted_skills,
-            now = ?installed,
-            "recording the skills this runtime was actually given"
-        );
-        record.session.granted_skills = Some(installed);
-        if let Err(e) = self.persist_durably(&mut record, Vec::new()).await {
-            tracing::error!(
-                session_id = %id,
-                error = %e,
-                "skills installed but not recorded; the record now overstates what this session has"
-            );
         }
     }
 
