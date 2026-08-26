@@ -71,6 +71,8 @@ struct RuntimeInteractionValidity {
     deadline: Option<tokio::time::Instant>,
     /// Upper bound after which the store-issued lease is certain to be expired.
     lease_expiry_bound: Option<tokio::time::Instant>,
+    /// A renewal may still commit after its local waiter loses the outcome.
+    lease_expiry_unknown: bool,
     invalid_reason: Option<String>,
 }
 
@@ -158,12 +160,14 @@ impl RetainedRuntimeInteraction {
                 authority.ensure_delivery_allowed()?;
                 return Ok(authority);
             }
-            match service
+            let mut renewal = RuntimeInteractionRenewalGuard::new(authority.clone());
+            let outcome = service
                 .store
                 .renew_interaction_lease(lease, INTERACTION_LEASE_TTL)
-                .await
-            {
+                .await;
+            match outcome {
                 Ok(()) => {
+                    renewal.known();
                     authority.extend(
                         renewal_started + INTERACTION_LEASE_TTL,
                         tokio::time::Instant::now() + INTERACTION_LEASE_TTL,
@@ -172,6 +176,7 @@ impl RetainedRuntimeInteraction {
                     return Ok(authority);
                 }
                 Err(StoreError::Unavailable(error)) => {
+                    renewal.unknown();
                     tracing::debug!(
                         session_id = %lease.session_id,
                         %error,
@@ -182,6 +187,7 @@ impl RetainedRuntimeInteraction {
                     tokio::time::sleep_until(retry_at).await;
                 }
                 Err(error) => {
+                    renewal.known();
                     authority.invalidate(format!(
                         "the interaction lease ended before retained delivery: {error}"
                     ));
@@ -250,20 +256,21 @@ impl DeferredCleanup for DeferredRuntimeInteractionRelease {
             };
 
             loop {
-                let expiry = self
-                    .state
-                    .authority
-                    .lease_expiry_bound()
-                    .expect("a retained durable interaction has an expiry bound");
-                if tokio::time::Instant::now() >= expiry {
+                let expiry = self.state.authority.lease_expiry_bound();
+                if expiry.is_some_and(|expiry| tokio::time::Instant::now() >= expiry) {
                     return;
                 }
 
-                let release = service.store.release_session_lease(lease);
-                tokio::pin!(release);
-                let outcome = tokio::select! {
-                    outcome = &mut release => outcome,
-                    _ = tokio::time::sleep_until(expiry) => return,
+                let outcome = match expiry {
+                    Some(expiry) => {
+                        let release = service.store.release_session_lease(lease);
+                        tokio::pin!(release);
+                        tokio::select! {
+                            outcome = &mut release => outcome,
+                            _ = tokio::time::sleep_until(expiry) => return,
+                        }
+                    }
+                    None => service.store.release_session_lease(lease).await,
                 };
                 match outcome {
                     Ok(()) => return,
@@ -273,9 +280,13 @@ impl DeferredCleanup for DeferredRuntimeInteractionRelease {
                             %error,
                             "interaction lease release is temporarily unavailable"
                         );
-                        let retry_at = (tokio::time::Instant::now()
-                            + INTERACTION_LEASE_RETRY_INTERVAL)
-                            .min(expiry);
+                        let retry_at = expiry.map_or_else(
+                            || tokio::time::Instant::now() + INTERACTION_LEASE_RETRY_INTERVAL,
+                            |expiry| {
+                                (tokio::time::Instant::now() + INTERACTION_LEASE_RETRY_INTERVAL)
+                                    .min(expiry)
+                            },
+                        );
                         tokio::time::sleep_until(retry_at).await;
                     }
                     Err(error) => {
@@ -363,6 +374,16 @@ struct RuntimeInteractionCallerGuard {
     authority: Option<RuntimeInteractionAuthority>,
 }
 
+/// Tracks whether an in-flight renewal's outcome is known.
+///
+/// A lost response or a canceled waiter does not prove the renewal failed. In
+/// that case exact cleanup cannot rely on any finite expiry bound, because the
+/// store may still commit the renewal after the local future is dropped.
+struct RuntimeInteractionRenewalGuard {
+    authority: RuntimeInteractionAuthority,
+    outcome_known: bool,
+}
+
 impl RuntimeInteractionCallerGuard {
     fn new(authority: RuntimeInteractionAuthority) -> Self {
         Self {
@@ -384,6 +405,32 @@ impl Drop for RuntimeInteractionCallerGuard {
     }
 }
 
+impl RuntimeInteractionRenewalGuard {
+    fn new(authority: RuntimeInteractionAuthority) -> Self {
+        Self {
+            authority,
+            outcome_known: false,
+        }
+    }
+
+    fn known(&mut self) {
+        self.outcome_known = true;
+    }
+
+    fn unknown(&mut self) {
+        self.authority.mark_lease_expiry_unknown();
+        self.outcome_known = true;
+    }
+}
+
+impl Drop for RuntimeInteractionRenewalGuard {
+    fn drop(&mut self) {
+        if !self.outcome_known {
+            self.authority.mark_lease_expiry_unknown();
+        }
+    }
+}
+
 impl RuntimeInteractionAuthority {
     fn new(
         boundary: SessionBoundary,
@@ -395,6 +442,7 @@ impl RuntimeInteractionAuthority {
             validity: Arc::new(std::sync::Mutex::new(RuntimeInteractionValidity {
                 deadline,
                 lease_expiry_bound,
+                lease_expiry_unknown: false,
                 invalid_reason: None,
             })),
         }
@@ -453,10 +501,21 @@ impl RuntimeInteractionAuthority {
     }
 
     fn lease_expiry_bound(&self) -> Option<tokio::time::Instant> {
-        self.validity
+        let validity = self
+            .validity
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .lease_expiry_bound
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (!validity.lease_expiry_unknown)
+            .then_some(validity.lease_expiry_bound)
+            .flatten()
+    }
+
+    fn mark_lease_expiry_unknown(&self) {
+        let mut validity = self
+            .validity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        validity.lease_expiry_unknown = true;
     }
 
     fn extend(&self, deadline: tokio::time::Instant, lease_expiry_bound: tokio::time::Instant) {
@@ -1059,12 +1118,14 @@ impl SessionService {
                         );
                         return action.await;
                     }
-                    match self
+                    let mut renewal = RuntimeInteractionRenewalGuard::new(authority.clone());
+                    let outcome = self
                         .store
                         .renew_interaction_lease(lease, INTERACTION_LEASE_TTL)
-                        .await
-                    {
+                        .await;
+                    match outcome {
                         Ok(()) => {
+                            renewal.known();
                             authority.extend(
                                 renewal_started + INTERACTION_LEASE_TTL,
                                 tokio::time::Instant::now() + INTERACTION_LEASE_TTL,
@@ -1073,6 +1134,7 @@ impl SessionService {
                                 renewal_started + INTERACTION_LEASE_RENEW_INTERVAL;
                         }
                         Err(StoreError::Unavailable(error)) => {
+                            renewal.unknown();
                             tracing::debug!(
                                 session_id = %lease.session_id,
                                 %error,
@@ -1083,6 +1145,7 @@ impl SessionService {
                                 .min(deadline);
                         }
                         Err(error) => {
+                            renewal.known();
                             authority.invalidate(format!(
                                 "the interaction lease ended before delivery: {error}"
                             ));

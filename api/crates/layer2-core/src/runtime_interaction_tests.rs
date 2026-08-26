@@ -53,6 +53,11 @@ struct InteractionStore {
     prompt_commit_stalled: Notify,
     prompt_commit_may_return: Notify,
     renewal_failures: AtomicUsize,
+    unknown_renewal_results: AtomicUsize,
+    detach_next_renewal: AtomicBool,
+    detached_renewal_dispatched: AtomicBool,
+    detached_renewal_may_commit: Arc<Notify>,
+    detached_renewal_committed: Arc<AtomicBool>,
     acquisitions: Mutex<Vec<SessionInteractionLeaseRequest>>,
     renewals: Mutex<Vec<(SessionLease, Duration)>>,
     releases: Mutex<Vec<SessionLease>>,
@@ -68,6 +73,22 @@ impl InteractionStore {
 
     fn fail_renewals(&self, count: usize) {
         self.renewal_failures.store(count, Ordering::SeqCst);
+    }
+
+    fn obscure_renewal_successes(&self, count: usize) {
+        self.unknown_renewal_results.store(count, Ordering::SeqCst);
+    }
+
+    fn detach_next_renewal(&self) {
+        assert!(!self.detach_next_renewal.swap(true, Ordering::SeqCst));
+        self.detached_renewal_dispatched
+            .store(false, Ordering::SeqCst);
+        self.detached_renewal_committed
+            .store(false, Ordering::SeqCst);
+    }
+
+    fn allow_detached_renewal_to_commit(&self) {
+        self.detached_renewal_may_commit.notify_one();
     }
 
     fn fail_releases(&self, count: usize) {
@@ -165,12 +186,35 @@ impl SessionStore for InteractionStore {
         ttl: Duration,
     ) -> Result<(), StoreError> {
         self.renewals.lock().await.push((lease.clone(), ttl));
+        if self.detach_next_renewal.swap(false, Ordering::SeqCst) {
+            let inner = Arc::clone(&self.inner);
+            let lease = lease.clone();
+            let may_commit = Arc::clone(&self.detached_renewal_may_commit);
+            let committed = Arc::clone(&self.detached_renewal_committed);
+            tokio::spawn(async move {
+                may_commit.notified().await;
+                inner
+                    .renew_interaction_lease(&lease, ttl)
+                    .await
+                    .expect("the detached test renewal commits");
+                committed.store(true, Ordering::SeqCst);
+            });
+            self.detached_renewal_dispatched
+                .store(true, Ordering::SeqCst);
+            return std::future::pending().await;
+        }
         if Self::consume(&self.renewal_failures) {
             return Err(StoreError::Unavailable(
                 "interaction renewal unavailable".into(),
             ));
         }
-        self.inner.renew_interaction_lease(lease, ttl).await
+        let renewed = self.inner.renew_interaction_lease(lease, ttl).await;
+        if renewed.is_ok() && Self::consume(&self.unknown_renewal_results) {
+            return Err(StoreError::Unavailable(
+                "interaction renewal result was lost".into(),
+            ));
+        }
+        renewed
     }
 
     async fn advance_session_lease(
@@ -740,6 +784,169 @@ async fn retained_resume_retries_transient_renewal_until_the_store_recovers() {
 
     drop(interaction);
     wait_for_releases(&store, 1).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn unknown_retained_renewals_extend_exact_cleanup_until_release_recovers() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let interaction = completed_retained_interaction(&service, &durable).await;
+
+    tokio::time::advance(Duration::from_secs(20)).await;
+    store.obscure_renewal_successes(2);
+    let resumed = tokio::spawn({
+        let interaction = interaction.clone();
+        async move { interaction.resume_before_delivery().await }
+    });
+    while store.renewals.lock().await.is_empty() {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_secs(1)).await;
+    while store.unknown_renewal_results.load(Ordering::SeqCst) != 0 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(store.renewals.lock().await.len(), 2);
+    resumed.abort();
+    assert!(matches!(
+        resumed.await,
+        Err(error) if error.is_cancelled()
+    ));
+
+    // Keep exact release unavailable through the original t=30 bound. Both
+    // hidden-success renewals extended the store lease beyond it, so cleanup
+    // must keep retrying the same token instead of assuming it expired.
+    store.fail_releases(usize::MAX);
+    drop(interaction);
+    while store.releases.lock().await.is_empty() {
+        tokio::task::yield_now().await;
+    }
+    for expected_attempts in 2..=9 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        while store.releases.lock().await.len() < expected_attempts {
+            tokio::task::yield_now().await;
+        }
+    }
+    assert!(store
+        .inner
+        .active_session_lease(&durable.session.id)
+        .await
+        .is_some());
+
+    store.fail_releases(0);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while store.releases.lock().await.len() < 10 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cleanup retries beyond the pre-renewal expiry bound");
+    assert!(store
+        .inner
+        .active_session_lease(&durable.session.id)
+        .await
+        .is_none());
+
+    service
+        .run_runtime_interaction_at(&durable, |authority| async move {
+            authority.ensure_delivery_allowed()?;
+            Ok::<_, CoreError>(())
+        })
+        .await
+        .expect("exact cleanup lets a successor acquire promptly");
+    wait_for_releases(&store, 11).await;
+    let releases = store.releases.lock().await;
+    assert!(releases[..10]
+        .windows(2)
+        .all(|attempts| attempts[0] == attempts[1]));
+    assert_ne!(releases[9].token, releases[10].token);
+}
+
+#[tokio::test(start_paused = true)]
+async fn canceled_in_flight_renewal_keeps_exact_cleanup_until_hidden_commit_releases() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let interaction = completed_retained_interaction(&service, &durable).await;
+
+    tokio::time::advance(Duration::from_secs(20)).await;
+    store.detach_next_renewal();
+    let resumed = tokio::spawn({
+        let interaction = interaction.clone();
+        async move { interaction.resume_before_delivery().await }
+    });
+    while !store.detached_renewal_dispatched.load(Ordering::SeqCst) {
+        tokio::task::yield_now().await;
+    }
+
+    resumed.abort();
+    assert!(matches!(
+        resumed.await,
+        Err(error) if error.is_cancelled()
+    ));
+    store.fail_releases(usize::MAX);
+    drop(interaction);
+    wait_for_releases(&store, 1).await;
+
+    // The store commits at t=21 after the only waiter was canceled, extending
+    // its exact lease to t=51 without returning an outcome to the service.
+    tokio::time::advance(Duration::from_secs(1)).await;
+    store.allow_detached_renewal_to_commit();
+    while !store.detached_renewal_committed.load(Ordering::SeqCst) {
+        tokio::task::yield_now().await;
+    }
+
+    // Drive failed exact releases through t=49. A finite drop-time-plus-TTL
+    // bound would stop cleanup at t=50 even though the hidden renewal is live.
+    let mut attempts = store.releases.lock().await.len();
+    for _ in 22..50 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        while store.releases.lock().await.len() <= attempts {
+            tokio::task::yield_now().await;
+        }
+        attempts = store.releases.lock().await.len();
+    }
+    assert!(store
+        .inner
+        .active_session_lease(&durable.session.id)
+        .await
+        .is_some());
+
+    store.fail_releases(0);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while store
+            .inner
+            .active_session_lease(&durable.session.id)
+            .await
+            .is_some()
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("unknown-expiry cleanup releases the still-live exact lease at t=50");
+
+    let cleanup_attempts = store.releases.lock().await.len();
+    service
+        .run_runtime_interaction_at(&durable, |authority| async move {
+            authority.ensure_delivery_allowed()?;
+            Ok::<_, CoreError>(())
+        })
+        .await
+        .expect("exact cleanup lets a successor acquire before hidden expiry");
+    wait_for_releases(&store, cleanup_attempts + 1).await;
+    let releases = store.releases.lock().await;
+    assert!(releases[..cleanup_attempts]
+        .windows(2)
+        .all(|attempts| attempts[0] == attempts[1]));
+    assert_ne!(
+        releases[cleanup_attempts - 1].token,
+        releases[cleanup_attempts].token
+    );
 }
 
 #[tokio::test]
