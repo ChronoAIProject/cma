@@ -57,6 +57,14 @@ data:
   # marker: it binds completion to the authoritative collection UUIDs so a lost
   # or replaced namespace cannot be mistaken for a new empty database.
   CHRONO_MONGODB_LEGACY_CUTOVER: ""
+  # Separate one-time acknowledgement for promoting durable runtime
+  # coordination. Leave this empty during ordinary startup. Before setting it
+  # to `drained`, stop every pre-coordination process and wait for both its
+  # MongoDB work and external provider operations to finish. Start exactly one
+  # new replica, verify `sessions -> sessions_v2 -> sessions_v3`, the UUID-bound
+  # activation/receipt proofs, and readiness, then remove the value. Do not roll
+  # back to an image which expects sessions_v2 to remain writable.
+  CHRONO_MONGODB_COORDINATION_CUTOVER: ""
   # How many days a recorded action is kept before the database removes it.
   #
   # Every request this control plane serves is recorded — who asked, when, for
