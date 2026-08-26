@@ -141,7 +141,14 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 | Assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | what the agent said |
 | Reasoning | `REASONING_MESSAGE_CONTENT` | what the agent is working through — **live lane only, never durable** |
 | Tool use | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` | file edits, shell commands, MCP calls, their arguments and results |
-| State | `STATE_DELTA` | usage, live resource readings, memory-pressure episodes, boundaries where conversation was lost, and plane changes |
+| State | `STATE_DELTA` | the canonical state document and complete path vocabulary below |
+
+`TOOL_CALL_ARGS` and `TOOL_CALL_RESULT` are part of the interface vocabulary,
+but a particular session emits them only when its environment profile has
+`record_tool_bodies` enabled and the runtime supplied a body. The capability
+document says what this interface can emit for some session; the session's
+environment decides whether these optional bodies are recorded for that
+session.
 
 ### Canonical initial state
 
@@ -157,6 +164,7 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
   "plan": null,
   "configOptions": null,
   "availableCommands": null,
+  "pendingApprovals": {},
   "signIn": null,
   "gaps": [],
   "planeChanges": [],
@@ -168,15 +176,67 @@ CMA emits a **subset** of the AG-UI event vocabulary. The authoritative list is 
 ```
 
 `STATE_SNAPSHOT` is not emitted. Create this document once for each session and
-apply every `STATE_DELTA` to it, in stream order, with RFC 6902 semantics. The
-parents and replace targets are present deliberately: applying the same patches
-to `{}` is invalid JSON Patch. For report-valued members, an initial `null`
+apply every `STATE_DELTA` to it in stream order. Operations use RFC 6902
+semantics except for the one pending-approval tombstone rule below. The parents
+and replace targets are present deliberately: applying the same patches to `{}`
+is invalid JSON Patch. For report-valued members, an initial `null`
 means no value has been reported. Zero input and output token counts and an empty
 command list are real reports, arriving as `0` and `[]` rather than remaining
 unknown. `/usage/contextUsed` is different only at the core event boundary:
 zero there is the established "no context reading" sentinel, so its projection
 omits that operation and preserves the canonical `null` or last positive value.
 For `/memoryPressure`, `null` means no pressure episode is currently open.
+
+### `STATE_DELTA` paths
+
+This is the complete JSON-Pointer vocabulary emitted by this build. Operations
+apply to the canonical initial state above. A path not listed here is not part
+of the current contract.
+
+| Path | Operation | Value shape | Emitted when |
+|---|---|---|---|
+| `/availableCommands` | `replace` | array of `{name: string, description: string}` | the kernel announces the complete command list; projected durably and on the cursorless live lane |
+| `/configOptions` | `replace` | array of `{id: string, name: string, kind: string}` | the kernel reports the complete set of configurable options |
+| `/contextCompactions/-` | `add` | `{was: integer, now: integer, window?: integer}` | the agent summarises its conversation to make room; `window` is omitted where unstated |
+| `/gaps/-` | `add` | `{frames: integer}` | the runtime reports that conversation frames were dropped |
+| `/memoryPressure` | `replace` | `{usedBytes: integer, limitBytes: integer, occupancyPermille: integer, since: string or null}` or `null` | a durable memory-pressure episode opens or closes |
+| `/mode` | `replace` | permission-mode string in the kernel's own vocabulary | the session's permission mode changes |
+| `/pendingApprovals/{requestId}` | `add` or `remove` | on `add`, `{id: string, reason: string, message: string or null}`; `remove` carries no value | an approval is requested or resolved |
+| `/plan` | `replace` | array of `{title: string, status: string}` | the agent reports a complete plan revision |
+| `/planeChanges/-` | `add` | `{from: string, to: string, snapshotAt: string}` | the owner moves the session between terminal and conversation planes |
+| `/resources` | `replace` | object containing all fourteen numeric-or-null resource fields shown below | a resource reading arrives on the cursorless live lane |
+| `/runtimeLosses/-` | `add` | `{runtime: string, cause: string or null, noticedAt: string or null}` | reconciliation establishes that a runtime was lost |
+| `/signIn` | `replace` | `{url: string, code: string or null, message: string or null}` | the agent needs its owner to complete an own-account sign-in |
+| `/usage/contextUsed` | `replace` | positive integer token count | a usage report carries a positive context reading; the zero sentinel emits no operation |
+| `/usage/contextWindow` | `replace` | non-negative integer token count | a usage report states the context ceiling; omission preserves the prior value |
+| `/usage/inputTokens` | `replace` | non-negative integer token count | any usage report arrives, including a zero count |
+| `/usage/outputTokens` | `replace` | non-negative integer token count | any usage report arrives, including a zero count |
+
+`{requestId}` is one RFC 6901 reference token, not a literal path segment copied
+from the identifier. Encode `~` as `~0` first and then `/` as `~1`. For example,
+the request id `approval/~one` is written at
+`/pendingApprovals/approval~1~0one`; decoding that pointer recovers the original
+id exactly.
+
+An approval resolution uses `remove` at that member. Strict RFC 6902 rejects a
+remove when the member is absent, but a client can legitimately observe a
+durable resolution without having observed its request. CMA therefore defines
+one narrow fold exception: a remove whose decoded pointer is exactly
+`["pendingApprovals", requestId]` is **remove-if-present**, and is a no-op when
+that own member is absent. This is not strict RFC 6902. No other missing remove
+is relaxed, and malformed pointers or missing parents remain protocol errors.
+
+#### `/signIn` is the own-account prompt
+
+`/signIn` is the only conversation-plane channel for the own-account sign-in
+flow. When it arrives, the client must render the URL and, where non-null, the
+one-time code together; it should also render the kernel's message where one
+was provided. No message event, interrupt, or other state path repeats this
+prompt. Ignoring it leaves the session waiting on information its owner cannot
+otherwise see.
+
+The value is never a credential. The credential produced after the owner signs
+in is written by the agent inside its sandbox and never reaches CMA.
 
 For a replay from the beginning, discard the old state and start from this
 document again. When resuming after a cursor, retain the state already folded
@@ -400,9 +460,26 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
 
 `reason` is `confirmation` where the runtime offered no description of what it wants, and `cma:<what the runtime called it>` where it did — `cma:command_execution`, `cma:file_write`, `cma:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
 
+`message` is the kernel's wording where it supplied any, and `null` where it
+supplied neither a detail nor an action. The `RUN_FINISHED` interrupt and its
+`/pendingApprovals/{requestId}` state member carry the same nullable value; a
+client must not invent wording when it is absent.
+
 `payload.decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions, and a client that meant the second and sent the first watches the agent try something else instead of stopping. **A decision or status this service does not recognise is read as a refusal** — the one direction this can safely fail in, because the alternative is granting on a word it did not understand.
 
 Between step 2 and step 4 the session is `idle` with `stop_reason: requires_action`. **That state is durable.** A client that closes the tab and returns finds the interrupt still pending and answerable; it does not need to have held the stream.
+
+The durable projection makes that pending state explicit. `RUN_FINISHED` is the
+first, unnumbered frame of the approval-request projection, and the following
+`STATE_DELTA` add at `/pendingApprovals/{requestId}` is its sole numbered final
+frame. Advance the projection cursor only after that state delta. When any tab
+answers the approval, the durable `ApprovalResolved` record projects a remove at
+the same member. Every watcher and a replay from the beginning therefore fold to
+the same pending set; the tab that submitted the answer has no private exception.
+
+An approval can be resolved once. A second answer is refused as HTTP `409` with
+problem type `https://spec.chrono-ai.fun/cma/1.0/problems/invalid-state` and code
+`invalid_state`; it is never forwarded to the runtime as another decision.
 
 `status: "cancelled"` on resume is a deny.
 
@@ -422,6 +499,8 @@ Between step 2 and step 4 the session is `idle` with `stop_reason: requires_acti
 
 - **Steer** — POST a new run on the same `threadId` while one is in flight. What happens is governed by the session's `concurrent_input` policy (`reject` · `enqueue` · `interrupt` · `rollback`), fixed at session creation and reported in the capability document. On `reject`, the second run returns `409` before opening a stream.
 
+  A prompt run against a session whose turn is in flight and whose granted set does not include `steer` is refused `capability_unsupported: steer` before the stream opens.
+
 ---
 
 ## 6. Capability document
@@ -438,7 +517,15 @@ GET /api/v1/agui/capabilities
     "RUN_STARTED": true, "RUN_FINISHED": true, "RUN_ERROR": true,
     "TEXT_MESSAGE_START": true, "TEXT_MESSAGE_CONTENT": true, "TEXT_MESSAGE_END": true,
     "TOOL_CALL_START": true, "TOOL_CALL_ARGS": true, "TOOL_CALL_END": true,
-    "TOOL_CALL_RESULT": true, "THINKING_START": false, "THINKING_END": false,
+    "TOOL_CALL_RESULT": true,
+    "REASONING_MESSAGE_CONTENT": true,
+    "REASONING_START": false, "REASONING_END": false,
+    "REASONING_MESSAGE_START": false, "REASONING_MESSAGE_END": false,
+    "REASONING_MESSAGE_CHUNK": false, "REASONING_ENCRYPTED_VALUE": false,
+    "THINKING_START": false, "THINKING_END": false,
+    "THINKING_TEXT_MESSAGE_START": false,
+    "THINKING_TEXT_MESSAGE_CONTENT": false,
+    "THINKING_TEXT_MESSAGE_END": false,
     "STATE_SNAPSHOT": false, "STATE_DELTA": true
   },
   "features": {
@@ -450,7 +537,8 @@ GET /api/v1/agui/capabilities
     "execution":      { "codeExecution": true, "sandboxed": true },
     "custom":         { "cma:terminal": false, "cma:usage": true,
                         "cma:resources": true,
-                        "cma:changePlane": false, "cma:planeChangeObserved": true }
+                        "cma:changePlane": false, "cma:planeChangeObserved": true,
+                        "cma:liveFrames": true }
   },
   "conformsTo": [
     "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
@@ -485,7 +573,7 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 
   Parsing the raw fields removes the inherited-`lastEventId` ambiguity native `EventSource` creates. The SDK's fetch transport reconstructs each request with its current cursor, while `AguiConnection` performs the open-stream-before-history ordering, projection grouping, acknowledgement, deduplication, and retry policy.
 - **The events route identifies replay, not a run.** Route provenance is authoritative: every AG-UI event frame in both its initial history and followed tail carries the effective `threadId` as `runId`, because no one run owns the whole session history. The run route rejects explicit blank identifiers and `runId == threadId`, and its generated identifiers are also kept distinct, so equality is an exclusive replay-envelope signature on accepted responses. Do not derive conversation or per-run rendering state from it. The repository TypeScript SDK follows this rule: `AguiConnection` assembles each complete durable projection around its numbered final frame, preserves an unacknowledged projection for exact retry, and advances the cursor only after every callback accepts it; the conversation fold ignores `runId`, so run-stream and replay envelopes render the same conversation.
-- **`STATE_DELTA` patches, it does not replace.** Apply deltas in order to the canonical initial state defined in §3; no `STATE_SNAPSHOT` arrives.
+- **`STATE_DELTA` patches, it does not replace.** Apply deltas in order to the canonical initial state defined in §3; no `STATE_SNAPSHOT` arrives. Preserve strict RFC 6902 failure behavior except for §3's exact `/pendingApprovals/{requestId}` remove-if-present rule.
 
 ---
 
