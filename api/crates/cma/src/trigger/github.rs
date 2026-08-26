@@ -22,6 +22,10 @@ use crate::auth::AuthState;
 
 mod workspace;
 pub(crate) use workspace::{ImportedWorkspace, WorkspaceContext, WorkspaceUnsupported};
+mod publication;
+#[cfg(test)]
+pub(crate) use publication::{PreparedGitData, PublishedGitData};
+pub(crate) use publication::{PublicationAdvance, PublicationContext};
 
 const GITHUB_SERVICE_SLUG: &str = "api-github";
 const GITHUB_PROVIDER_ID: &str = "github";
@@ -66,10 +70,22 @@ pub(crate) enum GithubBrokerError {
     BranchHeadConflict,
     #[error("the repository workspace is unsupported: {0}")]
     UnsupportedWorkspace(WorkspaceUnsupported),
-    #[error("the provider rejected the typed request with HTTP {status}")]
-    Rejected { status: u16 },
+    #[error("the provider rejected the typed request with HTTP {status} ({kind:?})")]
+    Rejected {
+        status: u16,
+        kind: GithubRejectionKind,
+        provider_code: Option<String>,
+    },
     #[error("provider data is malformed: {0}")]
     Malformed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GithubRejectionKind {
+    WorkflowScope,
+    NonFastForward,
+    Validation,
+    Unknown,
 }
 
 impl From<GithubBrokerError> for TriggerServiceError {
@@ -1153,11 +1169,19 @@ impl GithubBroker {
             .and_then(|value| value.to_str().ok())
             .filter(|value| value.len() <= 128)
             .map(str::to_string);
+        let rate_limit_exhausted = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.trim() == "0");
         if !status.is_success() {
             // Drain only a small bounded body so the connection can be reused;
             // provider text is never copied into Launch state or logs.
-            let _ = bounded_body(response, 16 * 1024).await;
-            let classified = classify_status(status, retry_after);
+            let evidence = bounded_body(response, 16 * 1024)
+                .await
+                .ok()
+                .and_then(|bytes| parse_rejection(&bytes));
+            let classified = classify_status(status, retry_after, rate_limit_exhausted, evidence);
             return Err(
                 if mutating && matches!(classified, GithubBrokerError::Transient { .. }) {
                     GithubBrokerError::AmbiguousWrite
@@ -1831,19 +1855,135 @@ async fn bounded_body(
     Ok(bytes)
 }
 
-fn classify_status(status: StatusCode, retry_after: Option<String>) -> GithubBrokerError {
+fn classify_status(
+    status: StatusCode,
+    retry_after: Option<String>,
+    rate_limit_exhausted: bool,
+    evidence: Option<GithubRejectionEvidence>,
+) -> GithubBrokerError {
+    if matches!(
+        status,
+        StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
+    ) && (status == StatusCode::TOO_MANY_REQUESTS
+        || retry_after.is_some()
+        || rate_limit_exhausted
+        || evidence
+            .as_ref()
+            .is_some_and(|evidence| evidence.rate_limited))
+    {
+        return GithubBrokerError::RateLimited { retry_after };
+    }
+    if status == StatusCode::FORBIDDEN
+        && evidence
+            .as_ref()
+            .is_some_and(|evidence| evidence.kind == GithubRejectionKind::WorkflowScope)
+    {
+        return GithubBrokerError::Rejected {
+            status: status.as_u16(),
+            kind: GithubRejectionKind::WorkflowScope,
+            provider_code: evidence.and_then(|evidence| evidence.provider_code),
+        };
+    }
     match status {
         StatusCode::UNAUTHORIZED => GithubBrokerError::OwnerCredentialUnavailable,
         StatusCode::FORBIDDEN => GithubBrokerError::Forbidden,
         StatusCode::NOT_FOUND => GithubBrokerError::NotFound,
-        StatusCode::TOO_MANY_REQUESTS => GithubBrokerError::RateLimited { retry_after },
         status if status.is_server_error() => GithubBrokerError::Transient {
             status: Some(status.as_u16()),
         },
         status => GithubBrokerError::Rejected {
             status: status.as_u16(),
+            kind: evidence
+                .as_ref()
+                .map_or(GithubRejectionKind::Unknown, |evidence| evidence.kind),
+            provider_code: evidence.and_then(|evidence| evidence.provider_code),
         },
     }
+}
+
+#[derive(Debug)]
+struct GithubRejectionEvidence {
+    kind: GithubRejectionKind,
+    provider_code: Option<String>,
+    rate_limited: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubErrorWire {
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    errors: Vec<GithubErrorItemWire>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum GithubErrorItemWire {
+    Detail {
+        #[serde(default)]
+        resource: String,
+        #[serde(default)]
+        field: String,
+        #[serde(default)]
+        code: String,
+    },
+    Text(String),
+}
+
+fn parse_rejection(bytes: &[u8]) -> Option<GithubRejectionEvidence> {
+    let wire: GithubErrorWire = serde_json::from_slice(bytes).ok()?;
+    let message = wire.message.to_ascii_lowercase();
+    let rate_limited = message.contains("rate limit")
+        || message.contains("secondary rate")
+        || message.contains("abuse detection");
+    let workflow_detail = wire.errors.iter().any(|error| match error {
+        GithubErrorItemWire::Detail {
+            resource,
+            field,
+            code,
+        } => [resource, field, code]
+            .iter()
+            .any(|value| value.to_ascii_lowercase().contains("workflow")),
+        GithubErrorItemWire::Text(value) => value.to_ascii_lowercase().contains("workflow"),
+    });
+    let non_fast_forward_detail = wire.errors.iter().any(|error| match error {
+        GithubErrorItemWire::Detail { code, .. } => {
+            matches!(code.as_str(), "not_fast_forward" | "non_fast_forward")
+        }
+        GithubErrorItemWire::Text(value) => value.to_ascii_lowercase().contains("fast forward"),
+    });
+    let kind = if workflow_detail
+        || (message.contains("workflow")
+            && (message.contains("scope")
+                || message.contains("oauth")
+                || message.contains("token")))
+    {
+        GithubRejectionKind::WorkflowScope
+    } else if non_fast_forward_detail
+        || message.contains("fast forward")
+        || message.contains("reference update failed")
+    {
+        GithubRejectionKind::NonFastForward
+    } else {
+        GithubRejectionKind::Validation
+    };
+    let provider_code = wire.errors.iter().find_map(|error| match error {
+        GithubErrorItemWire::Detail { code, .. }
+            if !code.is_empty()
+                && code.len() <= 64
+                && code.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
+                }) =>
+        {
+            Some(code.clone())
+        }
+        _ => None,
+    });
+    Some(GithubRejectionEvidence {
+        kind,
+        provider_code,
+        rate_limited,
+    })
 }
 
 fn validate_github_authorization_url(value: &str, nonce: &str) -> Result<(), GithubBrokerError> {
@@ -1881,11 +2021,15 @@ mod tests {
     use axum::response::IntoResponse;
     use axum::routing::any;
     use axum::{Json, Router};
+    use layer2_core::{
+        CommitIdentity, Confirmation, ConfirmationAction, ContributionId, ContributionRecord,
+        DiffArtifactId, DiffChangeKind, LaunchId, PublicationState,
+    };
     use serde_json::{json, Value};
     use tokio::sync::Mutex;
 
     use super::*;
-    use sha2::Digest as _;
+    use sha2::{Digest as _, Sha256};
 
     const NONCE: &str = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -1912,6 +2056,43 @@ mod tests {
         body: Option<Value>,
     }
 
+    #[derive(Debug, Clone, Copy)]
+    enum PublicationPatch {
+        Confirmed,
+        AmbiguousApplied,
+        NonFastForward,
+        WorkflowScope,
+    }
+
+    #[derive(Clone)]
+    struct PublicationFixture {
+        head: Arc<Mutex<String>>,
+        base_tree_id: String,
+        tree_id: String,
+        commit_id: String,
+        binary_blob_id: String,
+        text_blob_id: String,
+        mode_blob_id: String,
+        symlink_blob_id: String,
+        patch: PublicationPatch,
+    }
+
+    impl PublicationFixture {
+        fn new(patch: PublicationPatch) -> Self {
+            Self {
+                head: Arc::new(Mutex::new("a".repeat(40))),
+                base_tree_id: "b".repeat(40),
+                tree_id: "c".repeat(40),
+                commit_id: "d".repeat(40),
+                binary_blob_id: crate::trigger::workspace_diff::git_blob_id(&[0, 255, 1]),
+                text_blob_id: crate::trigger::workspace_diff::git_blob_id(b"text change\n"),
+                mode_blob_id: crate::trigger::workspace_diff::git_blob_id(b"#!/bin/sh\n"),
+                symlink_blob_id: crate::trigger::workspace_diff::git_blob_id(b"README.md"),
+                patch,
+            }
+        }
+    }
+
     #[derive(Clone)]
     struct Fixture {
         requests: Arc<Mutex<Vec<RecordedRequest>>>,
@@ -1932,6 +2113,7 @@ mod tests {
         ambiguous_branch_post: bool,
         branch_appears_after_post: bool,
         branch_post_seen: Arc<AtomicBool>,
+        publication: Option<PublicationFixture>,
     }
 
     impl Default for Fixture {
@@ -1955,6 +2137,7 @@ mod tests {
                 ambiguous_branch_post: false,
                 branch_appears_after_post: false,
                 branch_post_seen: Arc::new(AtomicBool::new(false)),
+                publication: None,
             }
         }
     }
@@ -2148,23 +2331,127 @@ mod tests {
                 })
             }
             ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") => {
-                json!({ "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })
+                json!({
+                    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "tree": {
+                        "sha": fixture.publication.as_ref().map_or_else(
+                            || "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+                            |publication| publication.base_tree_id.clone()
+                        )
+                    },
+                    "parents": []
+                })
             }
             (
                 "GET",
                 "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test",
             ) => {
-                let head = fixture.branch_head.clone().or_else(|| {
-                    (fixture.branch_appears_after_post
-                        && fixture.branch_post_seen.load(Ordering::SeqCst))
-                    .then(|| "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string())
-                });
+                let head = if let Some(publication) = fixture.publication.as_ref() {
+                    Some(publication.head.lock().await.clone())
+                } else {
+                    fixture.branch_head.clone().or_else(|| {
+                        (fixture.branch_appears_after_post
+                            && fixture.branch_post_seen.load(Ordering::SeqCst))
+                        .then(|| "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string())
+                    })
+                };
                 let Some(head) = head else {
                     return (StatusCode::NOT_FOUND, Json(json!({ "message": "not found" })));
                 };
                 json!({
                     "ref": "refs/heads/cma/lnch_test",
                     "object": { "sha": head, "type": "commit" }
+                })
+            }
+            (
+                "POST",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/blobs",
+            ) if fixture.publication.is_some() => {
+                let publication = fixture.publication.as_ref().unwrap();
+                json!({ "sha": publication.binary_blob_id })
+            }
+            (
+                "POST",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees",
+            ) if fixture.publication.is_some() => {
+                let publication = fixture.publication.as_ref().unwrap();
+                json!({ "sha": publication.tree_id })
+            }
+            (
+                "POST",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits",
+            ) if fixture.publication.is_some() => {
+                let publication = fixture.publication.as_ref().unwrap();
+                json!({
+                    "sha": publication.commit_id,
+                    "tree": { "sha": publication.tree_id },
+                    "parents": [{ "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+                })
+            }
+            (
+                "GET",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/dddddddddddddddddddddddddddddddddddddddd",
+            ) if fixture.publication.is_some() => {
+                let publication = fixture.publication.as_ref().unwrap();
+                json!({
+                    "sha": publication.commit_id,
+                    "tree": { "sha": publication.tree_id },
+                    "parents": [{ "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+                })
+            }
+            (
+                "PATCH",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/refs/heads/cma/lnch_test",
+            ) if fixture.publication.is_some() => {
+                let publication = fixture.publication.as_ref().unwrap();
+                match publication.patch {
+                    PublicationPatch::Confirmed => {
+                        *publication.head.lock().await = publication.commit_id.clone();
+                    }
+                    PublicationPatch::AmbiguousApplied => {
+                        *publication.head.lock().await = publication.commit_id.clone();
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "message": "response lost after update" })),
+                        );
+                    }
+                    PublicationPatch::NonFastForward => {
+                        return (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            Json(json!({
+                                "message": "Reference update failed: not a fast forward",
+                                "errors": [{ "resource": "Reference", "field": "sha", "code": "not_fast_forward" }]
+                            })),
+                        );
+                    }
+                    PublicationPatch::WorkflowScope => {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(json!({
+                                "message": "refusing to allow an OAuth App to create or update workflow without workflow scope",
+                                "errors": [{ "resource": "Workflow", "field": "workflow", "code": "missing_workflow_scope" }]
+                            })),
+                        );
+                    }
+                }
+                json!({
+                    "ref": "refs/heads/cma/lnch_test",
+                    "object": { "sha": publication.commit_id, "type": "commit" }
+                })
+            }
+            (
+                "GET",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees/cccccccccccccccccccccccccccccccccccccccc",
+            ) if fixture.publication.is_some() => {
+                let publication = fixture.publication.as_ref().unwrap();
+                json!({
+                    "truncated": false,
+                    "tree": [
+                        { "path": "binary.dat", "mode": "100644", "type": "blob", "sha": publication.binary_blob_id },
+                        { "path": "link", "mode": "120000", "type": "blob", "sha": publication.symlink_blob_id },
+                        { "path": "mode.sh", "mode": "100755", "type": "blob", "sha": publication.mode_blob_id },
+                        { "path": "text.txt", "mode": "100644", "type": "blob", "sha": publication.text_blob_id }
+                    ]
                 })
             }
             (
@@ -2285,7 +2572,7 @@ mod tests {
                     account_id: 21,
                     account_node_id: "U_kgDOBQ".into(),
                     login: "contributor".into(),
-                    avatar_url: None,
+                    avatar_url: Some("https://avatars.githubusercontent.com/u/21".into()),
                 },
                 state: ConnectionState::Active,
                 granted_scopes: vec![PUBLIC_REPOSITORY_SCOPE.into()],
@@ -2339,6 +2626,131 @@ mod tests {
             },
             source_sha: fork.source_sha,
         }
+    }
+
+    fn publication_record() -> ContributionRecord {
+        ContributionRecord {
+            id: ContributionId::new(),
+            launch_id: LaunchId("lnch_test".into()),
+            diff_artifact_id: DiffArtifactId::new(),
+            revision_digest: "1".repeat(64),
+            baseline_digest: "2".repeat(64),
+            checkpoint_digest: "3".repeat(64),
+            diff_digest: "4".repeat(64),
+            branch_name: "cma/lnch_test".into(),
+            state: PublicationState::IntentRecorded,
+            expected_head: "a".repeat(40),
+            base_tree_id: None,
+            tree_id: None,
+            commit_id: None,
+            resulting_head: None,
+            object_ids: Vec::new(),
+            author: CommitIdentity {
+                name: "contributor".into(),
+                email: "21+contributor@users.noreply.github.com".into(),
+            },
+            committer: CommitIdentity {
+                name: "CMA".into(),
+                email: "cma@chrono.ai".into(),
+            },
+            confirmation: Confirmation {
+                action: ConfirmationAction::PublishBranch,
+                subject: subject(),
+                snapshot_digest: "4".repeat(64),
+                confirmed_at: "2026-08-26T12:34:56Z".into(),
+                idempotency_key_hash: "confirmation-hash".into(),
+            },
+            intent_key: "cma-trigger:lnch_test:publish:test".into(),
+            created_at: "2026-08-26T12:34:56Z".into(),
+            updated_at: "2026-08-26T12:34:56Z".into(),
+        }
+    }
+
+    fn publication_plan(
+        record: &ContributionRecord,
+    ) -> crate::trigger::workspace_diff::PublicationPlan {
+        use crate::trigger::workspace_diff::{PublicationFile, PublicationPlan};
+
+        let file = |path: &str,
+                    change: DiffChangeKind,
+                    binary: bool,
+                    mode: &str,
+                    content: Option<&[u8]>| {
+            let content = content.map(<[u8]>::to_vec);
+            PublicationFile {
+                path: path.into(),
+                change,
+                binary,
+                mode: mode.into(),
+                content_sha256: content
+                    .as_ref()
+                    .map(|content| format!("{:x}", Sha256::digest(content))),
+                blob_id: content
+                    .as_ref()
+                    .map(|content| crate::trigger::workspace_diff::git_blob_id(content)),
+                content,
+            }
+        };
+        PublicationPlan {
+            launch_id: record.launch_id.clone(),
+            artifact_id: record.diff_artifact_id.clone(),
+            revision_digest: record.revision_digest.clone(),
+            baseline_digest: record.baseline_digest.clone(),
+            checkpoint_digest: record.checkpoint_digest.clone(),
+            diff_digest: record.diff_digest.clone(),
+            expected_head: record.expected_head.clone(),
+            author: record.author.clone(),
+            committer: record.committer.clone(),
+            files: vec![
+                file(
+                    "binary.dat",
+                    DiffChangeKind::Modified,
+                    true,
+                    "100644",
+                    Some(&[0, 255, 1]),
+                ),
+                file(
+                    "deleted.txt",
+                    DiffChangeKind::Deleted,
+                    false,
+                    "100644",
+                    None,
+                ),
+                file(
+                    "link",
+                    DiffChangeKind::SymlinkChanged,
+                    false,
+                    "120000",
+                    Some(b"README.md"),
+                ),
+                file(
+                    "mode.sh",
+                    DiffChangeKind::ModeChanged,
+                    false,
+                    "100755",
+                    Some(b"#!/bin/sh\n"),
+                ),
+                file(
+                    "text.txt",
+                    DiffChangeKind::Modified,
+                    false,
+                    "100644",
+                    Some(b"text change\n"),
+                ),
+            ],
+        }
+    }
+
+    fn attach_prepared(
+        record: &mut ContributionRecord,
+        state: PublicationState,
+        prepared: &super::publication::PreparedGitData,
+    ) {
+        record.state = state;
+        record.base_tree_id = Some(prepared.base_tree_id.clone());
+        record.tree_id = Some(prepared.tree_id.clone());
+        record.commit_id = Some(prepared.commit_id.clone());
+        record.object_ids = prepared.object_ids.clone();
     }
 
     fn query(uri: &str, key: &str) -> Option<String> {
@@ -2847,6 +3259,264 @@ mod tests {
             .await
             .iter()
             .all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
+    async fn git_data_publication_is_three_phase_exact_and_verified() {
+        let provider = PublicationFixture::new(PublicationPatch::Confirmed);
+        let fixture = Fixture {
+            publication: Some(provider.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let github = broker(&base_url, true);
+        let branch = branch_context();
+        let mut record = publication_record();
+        let plan = publication_plan(&record);
+
+        let prepared = match github
+            .publish_branch(&PublicationContext::fixture(&branch, record.clone()), &plan)
+            .await
+            .expect("write exact reviewed objects")
+        {
+            PublicationAdvance::ObjectsWritten(prepared) => prepared,
+            other => panic!("unexpected first publication phase: {other:?}"),
+        };
+        assert_eq!(prepared.base_tree_id, provider.base_tree_id);
+        assert_eq!(prepared.tree_id, provider.tree_id);
+        assert_eq!(prepared.commit_id, provider.commit_id);
+        assert_eq!(prepared.object_ids.len(), 4);
+
+        attach_prepared(&mut record, PublicationState::ObjectsWritten, &prepared);
+        let pending = match github
+            .publish_branch(&PublicationContext::fixture(&branch, record.clone()), &plan)
+            .await
+            .expect("verify objects before ref intent")
+        {
+            PublicationAdvance::RefUpdatePending(prepared) => prepared,
+            other => panic!("unexpected second publication phase: {other:?}"),
+        };
+        assert_eq!(pending, prepared);
+
+        attach_prepared(&mut record, PublicationState::RefUpdatePending, &pending);
+        let published = match github
+            .publish_branch(&PublicationContext::fixture(&branch, record), &plan)
+            .await
+            .expect("guard and verify ref update")
+        {
+            PublicationAdvance::Published(published) => published,
+            other => panic!("unexpected final publication phase: {other:?}"),
+        };
+        server.abort();
+        assert_eq!(published.commit_id, provider.commit_id);
+        assert_eq!(published.resulting_head, provider.commit_id);
+        assert_eq!(*provider.head.lock().await, provider.commit_id);
+
+        let requests = requests.lock().await;
+        let sequence = requests
+            .iter()
+            .map(|request| {
+                (
+                    request.method.as_str(),
+                    request.uri.split('?').next().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            sequence,
+            vec![
+                ("GET", "/api/v1/proxy/s/api-github/repositories/30"),
+                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test"),
+                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                ("POST", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/blobs"),
+                ("POST", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees"),
+                ("POST", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits"),
+                ("GET", "/api/v1/proxy/s/api-github/repositories/30"),
+                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test"),
+                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/dddddddddddddddddddddddddddddddddddddddd"),
+                ("GET", "/api/v1/proxy/s/api-github/repositories/30"),
+                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test"),
+                ("GET", "/api/v1/user-services"),
+                ("GET", "/api/v1/keys/service-1/authorization"),
+                ("GET", "/api/v1/proxy/s/api-github/user"),
+                ("PATCH", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/refs/heads/cma/lnch_test"),
+                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test"),
+                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/dddddddddddddddddddddddddddddddddddddddd"),
+                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees/cccccccccccccccccccccccccccccccccccccccc"),
+            ]
+        );
+        assert_eq!(
+            requests[3].body,
+            Some(json!({ "content": "AP8B", "encoding": "base64" }))
+        );
+        assert_eq!(
+            requests[4].body,
+            Some(json!({
+                "base_tree": provider.base_tree_id,
+                "tree": [
+                    { "path": "binary.dat", "mode": "100644", "type": "blob", "sha": provider.binary_blob_id },
+                    { "path": "deleted.txt", "mode": "100644", "type": "blob", "sha": Value::Null },
+                    { "path": "link", "mode": "120000", "type": "blob", "content": "README.md" },
+                    { "path": "mode.sh", "mode": "100755", "type": "blob", "sha": provider.mode_blob_id },
+                    { "path": "text.txt", "mode": "100644", "type": "blob", "content": "text change\n" }
+                ]
+            }))
+        );
+        assert_eq!(
+            requests[5].body,
+            Some(json!({
+                "message": "CMA Trigger contribution\n\nLaunch: lnch_test\nReviewed diff: 4444444444444444444444444444444444444444444444444444444444444444",
+                "tree": provider.tree_id,
+                "parents": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+                "author": {
+                    "name": "contributor",
+                    "email": "21+contributor@users.noreply.github.com",
+                    "date": "2026-08-26T12:34:56Z"
+                },
+                "committer": {
+                    "name": "CMA",
+                    "email": "cma@chrono.ai",
+                    "date": "2026-08-26T12:34:56Z"
+                }
+            }))
+        );
+        assert_eq!(
+            requests[14].body,
+            Some(json!({ "sha": provider.commit_id, "force": false }))
+        );
+        assert!(requests
+            .iter()
+            .all(|request| { request.authorization.as_deref() == Some("Bearer subject-token") }));
+    }
+
+    #[tokio::test]
+    async fn ambiguous_ref_response_is_reconciled_without_a_second_patch() {
+        let provider = PublicationFixture::new(PublicationPatch::AmbiguousApplied);
+        let fixture = Fixture {
+            publication: Some(provider.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let github = broker(&base_url, true);
+        let branch = branch_context();
+        let mut record = publication_record();
+        let plan = publication_plan(&record);
+        let prepared = match github
+            .publish_branch(&PublicationContext::fixture(&branch, record.clone()), &plan)
+            .await
+            .unwrap()
+        {
+            PublicationAdvance::ObjectsWritten(prepared) => prepared,
+            other => panic!("unexpected publication phase: {other:?}"),
+        };
+        attach_prepared(&mut record, PublicationState::ObjectsWritten, &prepared);
+        let pending = match github
+            .publish_branch(&PublicationContext::fixture(&branch, record.clone()), &plan)
+            .await
+            .unwrap()
+        {
+            PublicationAdvance::RefUpdatePending(prepared) => prepared,
+            other => panic!("unexpected publication phase: {other:?}"),
+        };
+        attach_prepared(&mut record, PublicationState::RefUpdatePending, &pending);
+        assert!(matches!(
+            github
+                .publish_branch(&PublicationContext::fixture(&branch, record), &plan)
+                .await,
+            Ok(PublicationAdvance::Published(_))
+        ));
+        server.abort();
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.method == "PATCH")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_refusals_remain_named_after_ref_reconciliation() {
+        for (patch, expected) in [
+            (
+                PublicationPatch::NonFastForward,
+                GithubRejectionKind::NonFastForward,
+            ),
+            (
+                PublicationPatch::WorkflowScope,
+                GithubRejectionKind::WorkflowScope,
+            ),
+        ] {
+            let provider = PublicationFixture::new(patch);
+            let fixture = Fixture {
+                publication: Some(provider),
+                ..Fixture::default()
+            };
+            let (base_url, _requests, server) = fixture_server(fixture).await;
+            let github = broker(&base_url, true);
+            let branch = branch_context();
+            let mut record = publication_record();
+            let plan = publication_plan(&record);
+            let prepared = match github
+                .publish_branch(&PublicationContext::fixture(&branch, record.clone()), &plan)
+                .await
+                .unwrap()
+            {
+                PublicationAdvance::ObjectsWritten(prepared) => prepared,
+                other => panic!("unexpected publication phase: {other:?}"),
+            };
+            attach_prepared(&mut record, PublicationState::ObjectsWritten, &prepared);
+            let pending = match github
+                .publish_branch(&PublicationContext::fixture(&branch, record.clone()), &plan)
+                .await
+                .unwrap()
+            {
+                PublicationAdvance::RefUpdatePending(prepared) => prepared,
+                other => panic!("unexpected publication phase: {other:?}"),
+            };
+            attach_prepared(&mut record, PublicationState::RefUpdatePending, &pending);
+            let result = github
+                .publish_branch(&PublicationContext::fixture(&branch, record), &plan)
+                .await;
+            server.abort();
+            assert!(matches!(
+                result,
+                Err(GithubBrokerError::Rejected { kind, .. }) if kind == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn forbidden_workflow_and_secondary_rate_limits_are_not_flattened_to_forbidden() {
+        let workflow = parse_rejection(
+            br#"{"message":"OAuth token cannot update workflow without workflow scope","errors":[{"resource":"Workflow","field":"workflow","code":"missing_workflow_scope"}]}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            classify_status(StatusCode::FORBIDDEN, None, false, Some(workflow)),
+            GithubBrokerError::Rejected {
+                status: 403,
+                kind: GithubRejectionKind::WorkflowScope,
+                provider_code: Some(code),
+            } if code == "missing_workflow_scope"
+        ));
+
+        let secondary =
+            parse_rejection(br#"{"message":"You have exceeded a secondary rate limit"}"#).unwrap();
+        assert!(matches!(
+            classify_status(
+                StatusCode::FORBIDDEN,
+                Some("17".into()),
+                false,
+                Some(secondary),
+            ),
+            GithubBrokerError::RateLimited {
+                retry_after: Some(value),
+            } if value == "17"
+        ));
     }
 
     #[tokio::test]
