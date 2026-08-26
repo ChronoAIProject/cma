@@ -35,6 +35,17 @@ function projectScalarState(
 ): Conversation {
   let next = state;
 
+  if (fieldChanged(previous, current, 'status')) {
+    const status = fieldOf(current, 'status');
+    next = {
+      ...next,
+      // Unknown future values stay noninteractive until this SDK learns what
+      // they mean. `running` is lifecycle-interactive; steer admission still
+      // depends on the granted capability and concurrent-input policy.
+      sessionInteractive: status === 'ready' || status === 'running',
+    };
+  }
+
   if (fieldChanged(previous, current, 'resources')) {
     next = { ...next, resources: resourcesFrom(fieldOf(current, 'resources')) };
   }

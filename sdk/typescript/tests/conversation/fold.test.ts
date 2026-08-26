@@ -520,6 +520,45 @@ describe('a session being carried onto another runtime is not a failure', () => 
 
     expect(state.entries.filter((entry) => entry.kind === 'failure')).toHaveLength(1);
   });
+
+  it('stays noninteractive through replacement progress and reopens on ready', () => {
+    const replace = (seq: number, path: string, value: unknown): AguiEvent => ({
+      type: 'STATE_DELTA',
+      seq,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [{ op: 'replace', path, value }],
+    });
+
+    let state = reduce(initialConversation(), replace(1, '/status', 'running'));
+    expect(state.sessionInteractive).toBe(true);
+
+    state = reduce(
+      state,
+      failed(2, { message: 'moving this session to a replacement runtime', returns: true }),
+    );
+    expect(state.sessionInteractive).toBe(false);
+
+    state = reduce(state, replace(3, '/progress', 'runtime_requested'));
+    expect(state.aguiState.progress).toBe('runtime_requested');
+    expect(state.sessionInteractive).toBe(false);
+
+    state = reduce(state, replace(4, '/progress', 'ready'));
+    expect(state.sessionInteractive).toBe(false);
+
+    state = reduce(state, replace(5, '/status', 'ready'));
+    expect(state.aguiState.status).toBe('ready');
+    expect(state.sessionInteractive).toBe(true);
+
+    state = reduce(state, replace(6, '/progress', 'ready'));
+    expect(state.sessionInteractive).toBe(true);
+  });
+
+  it('does not treat an idle but revivable session as interactive', () => {
+    const state = stream([delta(1, '/status', 'idle')]);
+    expect(state.aguiState.status).toBe('idle');
+    expect(state.sessionInteractive).toBe(false);
+  });
 });
 
 /** A piece of a message being typed, as the live lane sends one. */

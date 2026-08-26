@@ -16,6 +16,22 @@ describe('the public AG-UI state fold', () => {
     expect(next.usage).not.toBe(state.usage);
   });
 
+  it('applies lifecycle and provisioning replacements from their null targets', () => {
+    const state = initialState();
+    const provisioning = applyStateDelta(state, [
+      { op: 'replace', path: '/status', value: 'provisioning' },
+      { op: 'replace', path: '/progress', value: 'runtime_requested' },
+    ]);
+    const ready = applyStateDelta(provisioning, [
+      { op: 'replace', path: '/progress', value: 'ready' },
+      { op: 'replace', path: '/status', value: 'ready' },
+    ]);
+
+    expect(state).toMatchObject({ status: null, progress: null });
+    expect(provisioning).toMatchObject({ status: 'provisioning', progress: 'runtime_requested' });
+    expect(ready).toMatchObject({ status: 'ready', progress: 'ready' });
+  });
+
   it('appends every value in operation order and does not retain patch-owned objects', () => {
     const first = { frames: 2 };
     const second = { frames: 3 };
