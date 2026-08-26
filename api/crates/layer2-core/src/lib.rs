@@ -127,6 +127,7 @@ mod transcript;
 mod transcript_tests;
 pub mod trigger;
 mod trigger_prompt;
+mod workspace_checkpoint;
 
 pub use activity::{
     ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityTarget,

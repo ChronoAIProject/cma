@@ -47,6 +47,9 @@ pub struct PtySession {
     /// The process ending, latched so a reattach to an ended process still
     /// receives the real status rather than waiting on a channel that is done.
     exit: watch::Receiver<Option<ProcessExit>>,
+    /// The dedicated agent process session. Layer 4 enumerates all of its job
+    /// control groups when fencing workspace writers.
+    writer_session_root: Option<i32>,
 }
 
 /// How the supervised process ended.
@@ -57,6 +60,13 @@ pub(crate) struct ProcessExit {
 }
 
 impl PtySession {
+    pub(crate) fn writer_session_root(&self) -> Option<i32> {
+        self.exit
+            .borrow()
+            .is_none()
+            .then_some(self.writer_session_root)
+            .flatten()
+    }
     /// Watch for the process to end.
     pub(crate) fn subscribe_exit(&self) -> watch::Receiver<Option<ProcessExit>> {
         self.exit.clone()
@@ -224,6 +234,16 @@ impl PtyRegistry {
         self.inner.lock().await.len()
     }
 
+    /// Every still-running agent process group this pod supervises.
+    pub(crate) async fn writer_session_roots(&self) -> Vec<i32> {
+        self.inner
+            .lock()
+            .await
+            .values()
+            .filter_map(|session| session.writer_session_root())
+            .collect()
+    }
+
     /// Inspect a started runtime from an in-crate integration test.
     #[cfg(test)]
     pub(crate) async fn session_for_test(&self, id: &str) -> Option<Arc<PtySession>> {
@@ -278,6 +298,11 @@ fn start_process(
         .map_err(std::io::Error::other)?;
     drop(pair.slave);
 
+    #[cfg(unix)]
+    let writer_session_root = child.process_id().and_then(|pid| i32::try_from(pid).ok());
+    #[cfg(not(unix))]
+    let writer_session_root = None;
+
     let mut reader = pair
         .master
         .try_clone_reader()
@@ -306,7 +331,14 @@ fn start_process(
     };
     std::thread::spawn(move || {
         #[cfg(unix)]
-        supervise_process(child, &mut reader, terminal_fd, &out, exit_tx);
+        supervise_process(
+            child,
+            &mut reader,
+            terminal_fd,
+            &out,
+            exit_tx,
+            writer_session_root,
+        );
         #[cfg(not(unix))]
         supervise_process(child, &mut reader, &out, exit_tx);
     });
@@ -317,6 +349,7 @@ fn start_process(
             writer: Arc::new(StdMutex::new(writer)),
             output,
             exit,
+            writer_session_root,
         },
         first_output,
     ))
@@ -345,8 +378,8 @@ fn supervise_process(
     terminal_fd: OwnedFd,
     output: &broadcast::Sender<Vec<u8>>,
     exit: watch::Sender<Option<ProcessExit>>,
+    process_group: Option<i32>,
 ) {
-    let process_group = child.process_id().and_then(|pid| i32::try_from(pid).ok());
     let mut terminal_open = true;
 
     loop {

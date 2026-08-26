@@ -256,8 +256,56 @@ pub struct RuntimeSpec {
 pub struct WorkspacePackage {
     pub epoch: u64,
     pub source_revision: String,
+    /// Immutable GitHub baseline used for all diffs in this Launch, even when
+    /// the archive itself is a later complete checkpoint.
+    pub baseline_manifest_digest: String,
     pub manifest_digest: String,
     pub archive_sha256: String,
+    pub archive: Vec<u8>,
+}
+
+/// One fenced request to capture a complete repository workspace.
+///
+/// The workspace epoch identifies the Launch-owned writer authority. The
+/// checkpoint version is monotonic within that epoch and makes an ambiguous
+/// transport retry address the exact same sealed artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceCheckpointRequest {
+    pub epoch: u64,
+    pub version: u64,
+    pub source_revision: String,
+    pub baseline_manifest_digest: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceEntryKind {
+    Regular,
+    Symlink,
+}
+
+/// Provider-neutral entry metadata returned with a sealed checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceEntryPackage {
+    pub path: String,
+    pub kind: WorkspaceEntryKind,
+    pub mode: u32,
+    pub size: u64,
+    pub content_sha256: String,
+    pub provider_object_id: Option<String>,
+    pub symlink_target: Option<String>,
+}
+
+/// Complete, runtime-sealed repository state and its quiescence receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceCheckpointPackage {
+    pub epoch: u64,
+    pub version: u64,
+    pub source_revision: String,
+    pub manifest_digest: String,
+    pub archive_sha256: String,
+    pub entries: Vec<WorkspaceEntryPackage>,
+    pub total_bytes: u64,
+    pub quiesced_writers: u32,
     pub archive: Vec<u8>,
 }
 

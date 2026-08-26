@@ -551,8 +551,8 @@ impl SessionService {
                 "this Trigger session has no configured workspace source".to_string(),
             )
         })?;
-        let archive = source
-            .load_workspace(&record.session.owner, &origin)
+        let workspace = source
+            .resolve_workspace(&record.session.owner, &origin)
             .await
             .map_err(|error| match error {
                 crate::store::StoreError::Unavailable(detail) => StartFailure::transient(format!(
@@ -567,19 +567,27 @@ impl SessionService {
                     "this Trigger session's repository workspace is missing".to_string(),
                 )
             })?;
-        let digest = format!("{:x}", Sha256::digest(&archive));
-        if digest != origin.archive_sha256 {
+        let digest = format!("{:x}", Sha256::digest(&workspace.archive));
+        if workspace.epoch != origin.workspace_epoch
+            || workspace.source_revision != origin.source_revision
+            || workspace.baseline_manifest_digest != origin.manifest_digest
+            || workspace.manifest_digest.len() != 64
+            || !workspace
+                .manifest_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || workspace.archive_sha256.len() != 64
+            || !workspace
+                .archive_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || digest != workspace.archive_sha256
+        {
             return Err(StartFailure::permanent(
                 "this Trigger session's repository workspace failed integrity verification"
                     .to_string(),
             ));
         }
-        Ok(Some(layer3_adapter::WorkspacePackage {
-            epoch: origin.workspace_epoch,
-            source_revision: origin.source_revision,
-            manifest_digest: origin.manifest_digest,
-            archive_sha256: origin.archive_sha256,
-            archive,
-        }))
+        Ok(Some(workspace))
     }
 }
