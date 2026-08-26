@@ -400,7 +400,7 @@ impl SessionStore for MemorySessions {
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
         let mut reserved = Reserved::default();
         for record in self.state.lock().await.records.values() {
-            if record.session.status.wants_runtime() {
+            if record.session.wants_runtime() {
                 reserved.include(record.session.options.size);
             }
         }
@@ -909,6 +909,7 @@ impl TestKernel {
             .send(layer3_adapter::ConversationUpdate::Asked(
                 layer3_adapter::PermissionRequest {
                     id: request_id.to_string(),
+                    locator: None,
                     request: layer3_adapter::RequestPermissionRequest::new(
                         layer3_adapter::ConversationId::new("rest-contract-conversation"),
                         layer3_adapter::ToolCallUpdate::new(
