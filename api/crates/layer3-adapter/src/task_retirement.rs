@@ -31,6 +31,10 @@ impl TaskRetirement {
         }
     }
 
+    pub(crate) fn is_retired(&self) -> bool {
+        self.inner.retired.load(Ordering::Acquire)
+    }
+
     fn finish(&self) {
         if !self.inner.retired.swap(true, Ordering::AcqRel) {
             self.inner.changed.notify_waiters();

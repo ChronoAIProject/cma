@@ -36,10 +36,12 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::DshSandboxSpec;
 use crate::supervisor;
+use crate::task_retirement::TaskRetirement;
 use crate::{
     AdapterError, ContentBlock, ContentChunk, ConversationChannel, ConversationInput,
-    ConversationInputSender, ConversationUpdate, PromptResponse, SessionUpdate, ToolCall,
-    ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, TurnStopReason, UsageUpdate,
+    ConversationInputSender, ConversationUpdate, PromptResponse, SessionUpdate,
+    TerminalInputSender, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, TurnStopReason, UsageUpdate,
 };
 
 /// One operation may wait behind the writer, but a second is a backed-up link.
@@ -98,7 +100,7 @@ impl Harness {
         // that reported nothing during its open would be indistinguishable
         // from one whose open had not started.
         updates_tx: mpsc::Sender<crate::ConversationUpdate>,
-    ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
+    ) -> Result<(ConversationChannel, TerminalInputSender), AdapterError> {
         let (sink, mut source) = stream.split();
 
         // The pod's declaration, read before anything else. A pod that
@@ -126,22 +128,18 @@ impl Harness {
             folder: Arc::new(Mutex::new(Folder::default())),
         });
         let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
-        link.register(control.clone()).await;
+        let mut abort_on_drop = crate::hosted::AbortLinkOnDrop::new(control.clone());
 
         let writer = Arc::clone(&harness);
-        let (input, input_task) =
-            ConversationInputSender::spawn_with_abort(INPUT_BUFFER, move |input| {
-                let writer = Arc::clone(&writer);
-                async move { writer.drive(input).await }
-            });
-        let input_task_for_reader = input_task.clone();
+        let input = ConversationInputSender::spawn(INPUT_BUFFER, move |input| {
+            let writer = Arc::clone(&writer);
+            async move { writer.drive(input).await }
+        });
 
         // Read before anything is sent: the handshake's own answer arrives on
         // this loop, so it has to be running to receive it.
         let reader = Arc::clone(&harness);
         let updates = updates_tx.clone();
-        let control_for_reader = control.clone();
-        let link_for_reader = link.clone();
         let reader_task = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
@@ -166,27 +164,84 @@ impl Harness {
                     }
                 }
             }
-            reader.pending.lock().await.clear();
-            link_for_reader.forget(&control_for_reader).await;
-            input_task_for_reader.abort();
+        });
+
+        let whole_retirement = TaskRetirement::default();
+        let whole_guard = whole_retirement.guard();
+        let (installed, installation) = tokio::sync::oneshot::channel();
+        let cleanup_harness = Arc::clone(&harness);
+        let input_retired = input.retirement();
+        let input_abort = input.abort_handle();
+        let control_retired = control.retirement();
+        let control_abort = control.abort_handle();
+        let control_for_cleanup = control.downgrade();
+        let link_for_cleanup = link.clone();
+        let cleanup_task = tokio::spawn(async move {
+            let _whole_guard = whole_guard;
+            let mut reader = reader_task;
+            let input_ended = input_retired.clone();
+            let control_ended = control_retired.clone();
+            tokio::select! {
+                _ = input_ended.wait() => {
+                    reader.abort();
+                    let _ = reader.await;
+                    control_abort.abort();
+                    control_retired.wait().await;
+                }
+                _ = control_ended.wait() => {
+                    reader.abort();
+                    let _ = reader.await;
+                    input_abort.abort();
+                    input_retired.wait().await;
+                }
+                _ = &mut reader => {
+                    input_abort.abort();
+                    control_abort.abort();
+                    input_retired.wait().await;
+                    control_retired.wait().await;
+                }
+            }
+            cleanup_harness.pending.lock().await.clear();
+            if installation.await.is_ok() {
+                if let Some(control) = control_for_cleanup.upgrade() {
+                    link_for_cleanup.forget(&control).await;
+                }
+            }
             tracing::info!("conversation link ended");
         });
+
+        if !link
+            .register(control.clone(), whole_retirement, installed)
+            .await
+        {
+            control.abort();
+            let _ = cleanup_task.await;
+            let _ = harness.sink.lock().await.close().await;
+            return Err(AdapterError::Unavailable(
+                "the conversation link was superseded while opening".into(),
+            ));
+        }
 
         if let Err(error) = harness.handshake(cwd, spec).await {
             // A failed handshake does not imply the runtime closed its socket.
             // Stop all detached work and close both halves before returning.
-            reader_task.abort();
-            let _ = reader_task.await;
-            input_task.abort();
-            link.forget(&control).await;
-            drop(input);
-            drop(control);
+            control.abort();
+            let _ = cleanup_task.await;
             let _ = harness.sink.lock().await.close().await;
             return Err(error);
         }
 
         let conversation_id = harness.session.clone();
+        if !link.is_current(&control).await {
+            control.abort();
+            let _ = cleanup_task.await;
+            let _ = harness.sink.lock().await.close().await;
+            return Err(AdapterError::Unavailable(
+                "the conversation link ended or was superseded while opening".into(),
+            ));
+        }
 
+        abort_on_drop.disarm();
         Ok((
             ConversationChannel {
                 input,

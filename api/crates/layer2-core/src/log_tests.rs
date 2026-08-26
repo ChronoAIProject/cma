@@ -12,7 +12,9 @@ use crate::ids::{SessionId, SubjectId};
 use crate::options::SessionMode;
 use crate::session::{RecoveryState, Session, SessionStatus, StopReason};
 use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
-use crate::test_support::{await_settled, service_over, spec, user, FakeAdapter, FakeStore};
+use crate::test_support::{
+    await_settled, service_over, spec, terminal_input_channel, user, FakeAdapter, FakeStore,
+};
 use crate::{AgentOptions, KernelId, Reserved, TerminalGeometry};
 
 fn id() -> SessionId {
@@ -1932,7 +1934,7 @@ async fn a_rejected_resize_returns_failure_without_changing_the_runtime() {
         .screen_snapshot(&owner, &created.id)
         .await
         .expect("screen is readable");
-    let (input, mut runtime_input) = tokio::sync::mpsc::channel(1);
+    let (input, mut runtime_input) = terminal_input_channel(1);
     service
         .entries
         .write()
@@ -2062,7 +2064,7 @@ async fn cancelling_a_resize_retains_its_live_screen_and_runtime_continuation() 
     };
     wait_for_lane_idle(&lane).await;
     let before = store.inner.get(&created.id).await.unwrap().unwrap();
-    let (input, mut runtime_input) = tokio::sync::mpsc::channel(4);
+    let (input, mut runtime_input) = terminal_input_channel(4);
     service
         .entries
         .write()
@@ -2155,7 +2157,7 @@ async fn four_observed_store_outages_leave_a_resize_entirely_unpublished() {
         .screen_snapshot(&owner, &created.id)
         .await
         .expect("screen is readable");
-    let (input, mut runtime_input) = tokio::sync::mpsc::channel(1);
+    let (input, mut runtime_input) = terminal_input_channel(1);
     service
         .entries
         .write()
