@@ -21,6 +21,13 @@ use crate::service::{store_failed, SessionEntry, SessionService};
 use crate::store::SessionRecord;
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 
+struct TerminalResizeTarget<'a> {
+    runtime_id: Option<&'a str>,
+    runtime_generation: u64,
+    screen: &'a Arc<Mutex<Box<dyn ScreenModel>>>,
+    input: Option<&'a TerminalInputSender>,
+}
+
 /// Pump runtime output into the screen model and out to any live subscriber.
 pub(crate) fn spawn_relay(
     service: Arc<SessionService>,
@@ -132,7 +139,7 @@ impl SessionService {
                 Some(service.lock_lifecycle(&id).await)
             };
             let _input_fence = service.input_gates.gate(&id).read_owned().await;
-            let (runtime_generation, sender) = {
+            let (runtime_id, runtime_generation, sender) = {
                 let entries = service.entries.read().await;
                 let entry = entries.get(&id).ok_or_else(|| {
                     CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
@@ -152,15 +159,14 @@ impl SessionService {
                         "this session holds no terminal input sender".into(),
                     )
                 })?;
-                (entry.runtime_generation, sender)
+                (
+                    entry.runtime.as_ref().map(|runtime| runtime.0.clone()),
+                    entry.runtime_generation,
+                    sender,
+                )
             };
 
-            if !authority.fences_runtime_generation(runtime_generation) {
-                return Err(CoreError::RuntimeUnavailable(
-                    "the live terminal belongs to another runtime generation".into(),
-                ));
-            }
-            authority.ensure_delivery_allowed()?;
+            authority.ensure_runtime_delivery_allowed(runtime_id.as_deref(), runtime_generation)?;
             service.forward_input(&id, &sender, input).await
         })
         .await
@@ -211,7 +217,7 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
-        if record.session.status.is_rotating() {
+        if record.is_effectively_rotating() {
             return Err(CoreError::SessionRotating);
         }
         if !record.session.capabilities.unrecorded() {
@@ -256,16 +262,15 @@ impl SessionService {
                         )
                     })?;
                     Self::require_resize_entry(entry, &owner)?;
+                    let runtime_id = entry.runtime.as_ref().map(|runtime| runtime.0.clone());
                     let runtime_generation = entry.runtime_generation;
-                    if !authority.fences_runtime_generation(runtime_generation) {
-                        return Err(CoreError::RuntimeUnavailable(
-                            "the live terminal belongs to another runtime generation".into(),
-                        ));
-                    }
                     // Committing desired geometry is itself a runtime-scoped
                     // mutation. Caller cancellation before this final check
                     // must leave both the store and runtime untouched.
-                    authority.ensure_delivery_allowed()?;
+                    authority.ensure_runtime_delivery_allowed(
+                        runtime_id.as_deref(),
+                        runtime_generation,
+                    )?;
 
                     let screen = Arc::clone(&entry.screen);
                     let input = entry.input.clone();
@@ -274,6 +279,7 @@ impl SessionService {
                     let continued_id = id.clone();
                     let continued_screen = Arc::clone(&screen);
                     let continued_input = input.clone();
+                    let continued_runtime_id = runtime_id.clone();
                     let continued_interaction = interaction.clone();
                     let rejected_service = Arc::clone(&service);
                     let rejected_id = id.clone();
@@ -294,9 +300,12 @@ impl SessionService {
                                         .finish_terminal_resize(
                                             &continued_owner,
                                             &continued_id,
-                                            runtime_generation,
-                                            &continued_screen,
-                                            continued_input.as_ref(),
+                                            TerminalResizeTarget {
+                                                runtime_id: continued_runtime_id.as_deref(),
+                                                runtime_generation,
+                                                screen: &continued_screen,
+                                                input: continued_input.as_ref(),
+                                            },
                                             &committed,
                                             &authority,
                                         )
@@ -339,14 +348,17 @@ impl SessionService {
     fn require_same_resize_target(
         entry: &SessionEntry,
         owner: &SubjectId,
+        runtime_id: Option<&str>,
         runtime_generation: u64,
         screen: &Arc<Mutex<Box<dyn ScreenModel>>>,
         input: Option<&TerminalInputSender>,
     ) -> Result<(), CoreError> {
         Self::require_resize_entry(entry, owner)?;
-        if entry.runtime_generation != runtime_generation {
+        if entry.runtime_generation != runtime_generation
+            || entry.runtime.as_ref().map(|runtime| runtime.0.as_str()) != runtime_id
+        {
             return Err(CoreError::RuntimeUnavailable(
-                "the live terminal belongs to another runtime generation".into(),
+                "the live terminal belongs to another runtime authority".into(),
             ));
         }
         if !Arc::ptr_eq(&entry.screen, screen) {
@@ -371,18 +383,18 @@ impl SessionService {
         &self,
         owner: &SubjectId,
         id: &SessionId,
-        runtime_generation: u64,
-        screen: &Arc<Mutex<Box<dyn ScreenModel>>>,
-        input: Option<&TerminalInputSender>,
+        target: TerminalResizeTarget<'_>,
         committed: &SessionRecord,
         authority: &RuntimeInteractionAuthority,
     ) -> Result<(), CoreError> {
+        let TerminalResizeTarget {
+            runtime_id,
+            runtime_generation,
+            screen,
+            input,
+        } = target;
         let geometry = committed.session.geometry;
-        if !authority.fences_runtime_generation(runtime_generation) {
-            return Err(CoreError::RuntimeUnavailable(
-                "the live terminal belongs to another runtime generation".into(),
-            ));
-        }
+        authority.ensure_runtime_delivery_allowed(runtime_id, runtime_generation)?;
         if let Some(sender) = input {
             // Keep runtime output from being folded at the old geometry after
             // the runtime has accepted this resize. The relay takes this same
@@ -398,9 +410,16 @@ impl SessionService {
                 let entry = entries.get(id).ok_or_else(|| {
                     CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
                 })?;
-                Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
+                Self::require_same_resize_target(
+                    entry,
+                    owner,
+                    runtime_id,
+                    runtime_generation,
+                    screen,
+                    input,
+                )?;
             }
-            authority.ensure_delivery_allowed()?;
+            authority.ensure_runtime_delivery_allowed(runtime_id, runtime_generation)?;
             self.forward_input(
                 id,
                 sender,
@@ -419,7 +438,14 @@ impl SessionService {
                     "the live terminal ended after accepting its resize".into(),
                 )
             })?;
-            Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
+            Self::require_same_resize_target(
+                entry,
+                owner,
+                runtime_id,
+                runtime_generation,
+                screen,
+                input,
+            )?;
             Self::install_committed_resize(entry, committed);
             screen_guard.resize(geometry);
         } else {
@@ -431,8 +457,15 @@ impl SessionService {
                 let entry = entries.get_mut(id).ok_or_else(|| {
                     CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
                 })?;
-                Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
-                authority.ensure_delivery_allowed()?;
+                Self::require_same_resize_target(
+                    entry,
+                    owner,
+                    runtime_id,
+                    runtime_generation,
+                    screen,
+                    input,
+                )?;
+                authority.ensure_runtime_delivery_allowed(runtime_id, runtime_generation)?;
                 Self::install_committed_resize(entry, committed);
             }
             screen.lock().await.resize(geometry);

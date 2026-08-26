@@ -811,7 +811,10 @@ async fn caller_cancellation_recovers_and_releases_an_unknown_acquisition() {
     assert_eq!(acquisitions.len(), 2);
     assert_eq!(acquisitions[0].nonce, acquisitions[1].nonce);
     drop(acquisitions);
-    assert_eq!(store.releases.lock().await.as_slice(), &[hidden.clone()]);
+    assert_eq!(
+        store.releases.lock().await.as_slice(),
+        std::slice::from_ref(&hidden)
+    );
 
     service
         .run_runtime_interaction_at(&durable, |authority| async move {
@@ -907,7 +910,7 @@ fn unknown_acquisition_cleanup_survives_origin_runtime_destruction() {
         .unwrap();
     let action_runs = Arc::new(AtomicUsize::new(0));
 
-    let caller = origin.block_on(async {
+    let (caller,) = origin.block_on(async {
         let caller = tokio::spawn({
             let service = Arc::clone(&service);
             let durable = durable.clone();
@@ -928,7 +931,7 @@ fn unknown_acquisition_cleanup_survives_origin_runtime_destruction() {
         )
         .await
         .expect("the origin polls the acquisition through its hidden commit");
-        caller
+        (caller,)
     });
     let hidden = origin
         .block_on(store.inner.active_session_lease(&durable.session.id))

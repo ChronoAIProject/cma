@@ -40,6 +40,75 @@ impl crate::store::CredentialSource for UnavailableCredentialSource {
     }
 }
 
+#[derive(Default)]
+struct RecordingCredentialSource {
+    releases: std::sync::atomic::AtomicUsize,
+}
+
+impl RecordingCredentialSource {
+    fn release_calls(&self) -> usize {
+        self.releases.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::store::CredentialSource for RecordingCredentialSource {
+    async fn credential_for(
+        &self,
+        _session: &crate::SessionId,
+        _subject: &crate::SubjectId,
+        _services: &[crate::environment::ServiceId],
+        _caller_credential: Option<&crate::CallerCredential>,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(Some("recorded-runtime-credential".into()))
+    }
+
+    async fn release(&self, _session: &crate::SessionId) -> Result<(), StoreError> {
+        self.releases
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct GatedUnavailableCredentialSource {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+impl GatedUnavailableCredentialSource {
+    async fn wait_until_requested(&self) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), self.entered.notified())
+            .await
+            .expect("credential custody was requested");
+    }
+
+    fn release(&self) {
+        self.release.notify_one();
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::store::CredentialSource for GatedUnavailableCredentialSource {
+    async fn credential_for(
+        &self,
+        _session: &crate::SessionId,
+        _subject: &crate::SubjectId,
+        _services: &[crate::environment::ServiceId],
+        _caller_credential: Option<&crate::CallerCredential>,
+    ) -> Result<Option<String>, StoreError> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        Err(StoreError::Unavailable(
+            "credential custody is unavailable".into(),
+        ))
+    }
+
+    async fn release(&self, _session: &crate::SessionId) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
+
 fn is_ready_commit(_record: &crate::store::SessionRecord, events: &[Event]) -> bool {
     events.iter().any(|event| {
         matches!(
@@ -198,6 +267,84 @@ async fn credential_custody_failure_is_settled_under_a_runtime_lease() {
         .await
         .expect("cleanup debt is readable")
         .is_empty());
+}
+
+#[tokio::test]
+async fn a_hidden_abandonment_advance_releases_the_exact_provider_lease() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let caller = user("hidden-abandonment-advance-owner");
+    let svc = service_with_credential_source(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::new(UnavailableCredentialSource),
+    );
+    store.lose_runtime_advance_responses(1);
+
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    let settled = await_settled(&svc, &caller, &created.id).await;
+
+    assert_eq!(settled.status, SessionStatus::Terminated);
+    assert_eq!(settled.stop_reason, Some(StopReason::Error));
+    assert!(
+        store.active_session_lease(&created.id).await.is_none(),
+        "release must use the confirmed terminal boundary after a hidden advance"
+    );
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+}
+
+#[tokio::test]
+async fn coordinated_abandonment_does_not_reread_its_committed_boundary() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let credentials = Arc::new(GatedUnavailableCredentialSource::default());
+    let caller = user("post-abandonment-read-outage-owner");
+    let svc = service_with_credential_source(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        credentials.clone(),
+    );
+
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    credentials.wait_until_requested().await;
+    store.fail_next_get_after_commit();
+    credentials.release();
+
+    let durable = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(record) = store.sessions.lock().await.get(&created.id.0).cloned() {
+                if record.session.status == SessionStatus::Terminated {
+                    break record;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the coordinated abandonment commits");
+
+    assert_eq!(durable.runtime_id, None);
+    assert_eq!(durable.session.stop_reason, Some(StopReason::Error));
+    assert!(
+        store.active_session_lease(&created.id).await.is_none(),
+        "the exact abandonment receipt advances and releases the provider lease"
+    );
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    assert!(matches!(
+        store.get(&created.id).await,
+        Err(StoreError::Unavailable(_))
+    ));
+    assert!(store.get(&created.id).await.unwrap().is_some());
 }
 
 #[tokio::test]
@@ -484,7 +631,7 @@ async fn repeated_ready_outages_publish_no_runtime_side_effects() {
 }
 
 #[tokio::test]
-async fn a_conflicted_runtime_clear_keeps_the_runtime_record_and_entry_together() {
+async fn a_runtime_clear_inherits_an_unrelated_concurrent_context_write() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(
         Arc::clone(&inner),
@@ -525,22 +672,702 @@ async fn a_conflicted_runtime_clear_keeps_the_runtime_record_and_entry_together(
         .expect("the rival record commits first");
     store.release();
 
-    assert!(matches!(
-        discard
-            .await
-            .expect("discard task completes")
-            .expect_err("the exact cleanup is conflicted"),
-        StoreError::RevisionConflict { .. }
-    ));
+    discard
+        .await
+        .expect("discard task completes")
+        .expect("the semantic runtime clear inherits unrelated context");
     let durable = inner.get(&created.id).await.unwrap().unwrap();
-    assert_eq!(durable.runtime_id.as_deref(), Some(handle.as_str()));
+    assert!(durable.runtime_id.is_none());
     assert_eq!(
         durable.context_ref.as_deref(),
         Some("rival-before-runtime-clear")
     );
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+    assert_eq!(adapter.running_count().await, 0);
+    assert_eq!(adapter.terminated.lock().await.as_slice(), &[handle]);
+}
+
+#[tokio::test]
+async fn failed_discard_keeps_the_exact_runtime_retryable_until_teardown_succeeds() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let caller = user("discard-teardown-retry-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+    await_live_entry(&svc, &created.id).await;
+    let handle = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the live runtime is durable");
+
+    adapter.fail_terminations(1);
+    assert!(matches!(
+        svc.discard_runtime(&created.id, &runtime_adapter).await,
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.runtime_id.as_deref(), Some(handle.as_str()));
     assert!(svc.entries.read().await.contains_key(&created.id));
-    assert_eq!(adapter.running_count().await, 1);
+    assert!(adapter.running.lock().await.contains_key(&handle));
     assert!(adapter.terminated.lock().await.is_empty());
+
+    svc.discard_runtime(&created.id, &runtime_adapter)
+        .await
+        .expect("the retained cleanup identity is retryable");
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert!(durable.runtime_id.is_none());
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+    assert_eq!(adapter.running_count().await, 0);
+    assert_eq!(adapter.terminated.lock().await.as_slice(), &[handle]);
+}
+
+#[tokio::test]
+async fn superseded_candidate_teardown_failure_is_surfaced_with_its_handle_intact() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let caller = user("superseded-candidate-teardown-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    let live = await_settled(&svc, &caller, &created.id).await;
+    let initial = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the initial runtime is durable");
+    svc.discard_runtime(&created.id, &runtime_adapter)
+        .await
+        .expect("the fixture starts without an existing runtime");
+
+    let mut stopped = store.get(&created.id).await.unwrap().unwrap();
+    stopped.session.status = SessionStatus::Terminated;
+    stopped.session.stop_reason = Some(StopReason::Error);
+    stopped.revision = store
+        .commit_session_idempotent("supersede-direct-candidate", &stopped, &[])
+        .await
+        .expect("the candidate's installation boundary is superseded");
+
+    adapter.fail_terminations(1);
+    let start_spec = spec();
+    let mut lease = None;
+    let failure = svc
+        .start_runtime(
+            &live,
+            &start_spec,
+            &runtime_adapter,
+            crate::provision::RuntimeStartContext {
+                geometry: live.geometry,
+                restore: None,
+                platform_briefing: "",
+                handover: None,
+                publication_token: "superseded-candidate-test",
+            },
+            &mut lease,
+        )
+        .await
+        .expect_err("the failed superseded teardown is returned to its caller");
+    assert!(failure.retryable);
+    assert!(failure.reason.contains("superseded runtime"));
+
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    let candidate = durable
+        .runtime_id
+        .clone()
+        .expect("the failed candidate cleanup retains its exact handle");
+    assert_eq!(durable.session.status, SessionStatus::Terminated);
+    assert_ne!(candidate, initial);
+    assert!(adapter.running.lock().await.contains_key(&candidate));
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&initial),
+        "the selected failure does not report the candidate as terminated"
+    );
+
+    svc.discard_runtime(&created.id, &runtime_adapter)
+        .await
+        .expect("the retained candidate identity can be retried");
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert!(durable.runtime_id.is_none());
+    assert_eq!(adapter.running_count().await, 0);
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        &[initial, candidate]
+    );
+}
+
+#[tokio::test]
+async fn failed_row_discard_cannot_later_abandon_a_promoted_successor() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    svc.retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    let caller = user("failed-discard-successor-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    let live = await_settled(&svc, &caller, &created.id).await;
+    let initial = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the initial runtime is durable");
+    svc.discard_runtime(&created.id, &runtime_adapter)
+        .await
+        .expect("the fixture starts without an existing runtime");
+
+    adapter.fail_terminal_attaches(1);
+    adapter.fail_terminations(1);
+    let start_spec = spec();
+    let mut lease = None;
+    let start_result = svc
+        .start_with_retries(
+            &live,
+            &start_spec,
+            &runtime_adapter,
+            crate::provision::RuntimeStartContext {
+                geometry: live.geometry,
+                restore: None,
+                platform_briefing: "",
+                handover: None,
+                publication_token: "failed-discard-successor-test",
+            },
+            &mut lease,
+        )
+        .await;
+    let failure = match start_result {
+        Ok(()) => panic!("failed row cleanup cannot report a successful start"),
+        Err(failure) => failure,
+    };
+    assert!(failure.retryable);
+    assert!(failure
+        .reason
+        .contains("the failed runtime could not be discarded safely"));
+    assert!(failure
+        .reason
+        .contains("the selected runtime teardown is unavailable"));
+    let candidate = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the failed discard retains its exact durable candidate");
+
+    let successor = "runtime-promoted-after-discard-failure".to_string();
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(successor.clone(), Some(created.id.0.clone()));
+    let mut promoted = store.get(&created.id).await.unwrap().unwrap();
+    promoted.session.status = SessionStatus::Ready;
+    promoted.runtime_id = Some(successor.clone());
+    promoted.revision = store
+        .commit_session_idempotent("promote-after-discard-failure", &promoted, &[])
+        .await
+        .expect("a concurrent operation promotes a successor before settlement");
+
+    let abandoned = svc
+        .abandon(
+            &created.id,
+            &runtime_adapter,
+            &failure,
+            Abandonment::Retire,
+            None,
+        )
+        .await
+        .expect("unverified cleanup reloads without mutating the successor")
+        .expect("the successor row remains present");
+    assert_eq!(abandoned.revision, promoted.revision);
+    assert_eq!(abandoned.runtime_id.as_deref(), Some(successor.as_str()));
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.revision, promoted.revision);
+    assert_eq!(durable.session.status, SessionStatus::Ready);
+    assert_eq!(durable.runtime_id.as_deref(), Some(successor.as_str()));
+    let running = adapter.running.lock().await;
+    assert!(running.contains_key(&candidate));
+    assert!(running.contains_key(&successor));
+    drop(running);
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&initial),
+        "settlement must not derive teardown identity from the successor row"
+    );
+}
+
+#[tokio::test]
+async fn stack_owned_teardown_failure_never_discards_a_promoted_successor_or_retries() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    svc.retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    let caller = user("promoted-successor-candidate-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    let live = await_settled(&svc, &caller, &created.id).await;
+    let initial = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the initial runtime is durable");
+    svc.discard_runtime(&created.id, &runtime_adapter)
+        .await
+        .expect("the fixture starts without an existing runtime");
+
+    let lifecycle = svc.lock_lifecycle(&created.id).await;
+    let starting = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let runtime_adapter = Arc::clone(&runtime_adapter);
+        let live = live.clone();
+        async move {
+            let start_spec = spec();
+            let mut lease = None;
+            svc.start_with_retries(
+                &live,
+                &start_spec,
+                &runtime_adapter,
+                crate::provision::RuntimeStartContext {
+                    geometry: live.geometry,
+                    restore: None,
+                    platform_briefing: "",
+                    handover: None,
+                    publication_token: "promoted-successor-candidate-test",
+                },
+                &mut lease,
+            )
+            .await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while adapter.senders.lock().await.len() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the candidate reaches its lifecycle-fenced installation boundary");
+    let candidate = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the stack-owned candidate was recorded before promotion");
+    assert_ne!(candidate, initial);
+
+    let successor = "runtime-promoted-successor".to_string();
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(successor.clone(), Some(created.id.0.clone()));
+    let mut promoted = store.get(&created.id).await.unwrap().unwrap();
+    promoted.runtime_id = Some(successor.clone());
+    promoted.revision = store
+        .commit_session_idempotent("promote-successor-runtime", &promoted, &[])
+        .await
+        .expect("a concurrent operation promotes its successor");
+
+    let provisions = adapter
+        .provision_calls
+        .load(std::sync::atomic::Ordering::SeqCst);
+    adapter.fail_terminations(1);
+    drop(lifecycle);
+    let start_result = tokio::time::timeout(std::time::Duration::from_secs(2), starting)
+        .await
+        .expect("the retry wrapper stops after exact candidate cleanup fails")
+        .expect("the start task completes");
+    let failure = match start_result {
+        Ok(()) => panic!("a failed stack-owned teardown cannot report success"),
+        Err(failure) => failure,
+    };
+    assert!(failure.retryable);
+    assert!(failure.reason.contains(&candidate));
+    assert!(failure
+        .reason
+        .contains("the selected runtime teardown is unavailable"));
+
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.runtime_id.as_deref(), Some(successor.as_str()));
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        provisions,
+        "no second candidate is requested after exact cleanup fails"
+    );
+    let running = adapter.running.lock().await;
+    assert!(running.contains_key(&successor));
+    assert!(running.contains_key(&candidate));
+    drop(running);
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&initial),
+        "row-based cleanup must not terminate the promoted successor"
+    );
+
+    let abandoned = svc
+        .abandon(
+            &created.id,
+            &runtime_adapter,
+            &failure,
+            Abandonment::Retire,
+            None,
+        )
+        .await
+        .expect("generic failure settlement leaves successor authority unchanged")
+        .expect("the successor row remains present");
+    assert_eq!(abandoned.runtime_id.as_deref(), Some(successor.as_str()));
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .runtime_id
+            .as_deref(),
+        Some(successor.as_str())
+    );
+    assert!(adapter.running.lock().await.contains_key(&successor));
+}
+
+#[tokio::test]
+async fn deleted_row_stack_owned_teardown_failure_stops_without_another_candidate() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        |_record, _events| false,
+    ));
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    svc.retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    let caller = user("deleted-candidate-row-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    let live = await_settled(&svc, &caller, &created.id).await;
+    let initial = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the initial runtime is durable");
+    svc.discard_runtime(&created.id, &runtime_adapter)
+        .await
+        .expect("the fixture starts without an existing runtime");
+
+    let lifecycle = svc.lock_lifecycle(&created.id).await;
+    let starting = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let runtime_adapter = Arc::clone(&runtime_adapter);
+        let live = live.clone();
+        async move {
+            let start_spec = spec();
+            let mut lease = None;
+            svc.start_with_retries(
+                &live,
+                &start_spec,
+                &runtime_adapter,
+                crate::provision::RuntimeStartContext {
+                    geometry: live.geometry,
+                    restore: None,
+                    platform_briefing: "",
+                    handover: None,
+                    publication_token: "deleted-candidate-row-test",
+                },
+                &mut lease,
+            )
+            .await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while adapter.senders.lock().await.len() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the candidate reaches its lifecycle-fenced installation boundary");
+    let candidate = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the stack-owned candidate was recorded before deletion");
+    assert_ne!(candidate, initial);
+
+    inner
+        .delete(&created.id)
+        .await
+        .expect("a concurrent lifecycle operation deletes the current row");
+    let provisions = adapter
+        .provision_calls
+        .load(std::sync::atomic::Ordering::SeqCst);
+    adapter.fail_terminations(1);
+    drop(lifecycle);
+    let start_result = tokio::time::timeout(std::time::Duration::from_secs(2), starting)
+        .await
+        .expect("the retry wrapper stops after exact candidate cleanup fails")
+        .expect("the start task completes");
+    let failure = match start_result {
+        Ok(()) => panic!("a failed stack-owned teardown cannot report success"),
+        Err(failure) => failure,
+    };
+    assert!(failure.retryable);
+    assert!(failure.reason.contains(&candidate));
+    assert!(failure
+        .reason
+        .contains("the selected runtime teardown is unavailable"));
+
+    assert!(inner.get(&created.id).await.unwrap().is_none());
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        provisions,
+        "a deleted row cannot turn exact cleanup failure into another candidate"
+    );
+    assert_eq!(adapter.running_count().await, 1);
+    assert!(adapter.running.lock().await.contains_key(&candidate));
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&initial)
+    );
+
+    assert!(svc
+        .abandon(
+            &created.id,
+            &runtime_adapter,
+            &failure,
+            Abandonment::Retire,
+            None,
+        )
+        .await
+        .expect("generic failure settlement tolerates an already deleted row")
+        .is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn uncoordinated_timeout_leaves_a_rival_successor_untouched() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    adapter.pause_next_provision();
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let caller = user("unverified-timeout-successor-owner");
+
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    adapter.wait_until_provision_paused().await;
+    let successor = "runtime-promoted-during-timeout".to_string();
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(successor.clone(), Some(created.id.0.clone()));
+    let mut rival = store.get(&created.id).await.unwrap().unwrap();
+    rival.session.status = SessionStatus::Ready;
+    rival.session.stop_reason = None;
+    rival.runtime_id = Some(successor.clone());
+    rival.revision = store
+        .commit_session_idempotent("promote-runtime-during-timeout", &rival, &[])
+        .await
+        .expect("a rival runtime becomes authoritative while create is suspended");
+
+    tokio::time::advance(
+        crate::provision_support::PROVISION_DEADLINE + std::time::Duration::from_secs(1),
+    )
+    .await;
+    for _ in 0..400 {
+        if !svc.starting.read().await.contains(&created.id) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !svc.starting.read().await.contains(&created.id),
+        "the expired bring-up releases its local start claim"
+    );
+
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.revision, rival.revision);
+    assert_eq!(durable.session.status, SessionStatus::Ready);
+    assert_eq!(durable.runtime_id.as_deref(), Some(successor.as_str()));
+    assert!(adapter.running.lock().await.contains_key(&successor));
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        adapter.issued.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the cancelled provider call never returned a candidate"
+    );
+}
+
+#[tokio::test]
+async fn failed_retirement_teardown_retains_custody_until_retry_finishes_cleanup() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let credentials = Arc::new(RecordingCredentialSource::default());
+    let svc = service_with_credential_source(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        credentials.clone(),
+    );
+    let caller = user("retirement-teardown-retry-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+    await_live_entry(&svc, &created.id).await;
+    let handle = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the live runtime is durable");
+    let failure = StartFailure::transient("selected retirement failure".into());
+
+    adapter.fail_terminations(1);
+    assert!(matches!(
+        svc.abandon(
+            &created.id,
+            &runtime_adapter,
+            &failure,
+            Abandonment::Retire,
+            None,
+        )
+        .await,
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Terminated);
+    assert_eq!(durable.runtime_id.as_deref(), Some(handle.as_str()));
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+    assert!(adapter.running.lock().await.contains_key(&handle));
+    assert_eq!(credentials.release_calls(), 0);
+
+    svc.abandon(
+        &created.id,
+        &runtime_adapter,
+        &failure,
+        Abandonment::Retire,
+        None,
+    )
+    .await
+    .expect("retirement cleanup succeeds on retry");
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Terminated);
+    assert!(durable.runtime_id.is_none());
+    assert_eq!(adapter.running_count().await, 0);
+    assert_eq!(adapter.terminated.lock().await.as_slice(), &[handle]);
+    assert_eq!(credentials.release_calls(), 1);
+}
+
+#[tokio::test]
+async fn revivable_abandonment_keeps_credential_custody_after_runtime_cleanup() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let credentials = Arc::new(RecordingCredentialSource::default());
+    let svc = service_with_credential_source(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        credentials.clone(),
+    );
+    let caller = user("revivable-custody-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+    let failure = StartFailure::transient("selected recoverable failure".into());
+
+    svc.abandon(
+        &created.id,
+        &runtime_adapter,
+        &failure,
+        Abandonment::Keep,
+        None,
+    )
+    .await
+    .expect("the revivable runtime is cleaned up");
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Idle);
+    assert!(durable.runtime_id.is_none());
+    assert_eq!(adapter.running_count().await, 0);
+    assert_eq!(credentials.release_calls(), 0);
+}
+
+#[tokio::test]
+async fn nonretryable_handover_failure_clears_its_claim_and_descriptor() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let runtime_adapter: Arc<dyn KernelAdapter> = adapter.clone();
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let caller = user("terminal-handover-failure-owner");
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+    svc.discard_runtime(&created.id, &runtime_adapter)
+        .await
+        .expect("the fixture clears H1 before describing H2 failure");
+
+    let claim = "rotn_terminal_handover_failure".to_string();
+    let mut rotating = store.get(&created.id).await.unwrap().unwrap();
+    rotating.session.status = SessionStatus::Rotating;
+    rotating.session.stop_reason = None;
+    rotating.rotation_claim = Some(claim.clone());
+    rotating.pending_handover = Some(crate::store::PendingHandover {
+        claim: claim.clone(),
+        snapshot_ref: format!("sessions/{}/handover.snapshot", created.id.0),
+        snapshot_at: "2026-08-27T01:02:03Z".into(),
+        rotations_from: rotating.session.rotations,
+        rotations_to: rotating.session.rotations + 1,
+        target: crate::store::PendingHandoverTarget::RuntimeVersion {
+            from_runtime_version: rotating.session.runtime_version.clone(),
+            runtime_version: "runtime:permanently-refused".into(),
+        },
+    });
+    svc.persist_durably(&mut rotating, Vec::new())
+        .await
+        .expect("the exact descriptor-backed boundary is durable");
+
+    let failure = StartFailure::permanent("the requested runtime is unsupported".into());
+    svc.abandon(
+        &created.id,
+        &runtime_adapter,
+        &failure,
+        Abandonment::Keep,
+        Some(&claim),
+    )
+    .await
+    .expect("a terminal H2 refusal is recorded");
+
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Terminated);
+    assert_eq!(durable.session.stop_reason, Some(StopReason::Error));
+    assert_eq!(durable.rotation_claim, None);
+    assert_eq!(durable.pending_handover, None);
+    assert_eq!(durable.runtime_id, None);
 }
 
 #[tokio::test]
@@ -566,10 +1393,16 @@ async fn four_abandonment_outages_leave_the_runtime_record_and_entry_intact() {
 
     store.fail_next(4);
     assert!(matches!(
-        svc.abandon(&created.id, &runtime_adapter, &failure, Abandonment::Retire,)
-            .await
-            .expect_err("the fourth unavailable response is propagated"),
-        StoreError::Unavailable(_)
+        svc.abandon(
+            &created.id,
+            &runtime_adapter,
+            &failure,
+            Abandonment::Retire,
+            None,
+        )
+        .await
+        .expect_err("the fourth unavailable response is propagated"),
+        crate::error::CoreError::RuntimeUnavailable(_)
     ));
     assert_eq!(store.matched_calls(), 4);
     let durable = inner.get(&created.id).await.unwrap().unwrap();
@@ -579,9 +1412,15 @@ async fn four_abandonment_outages_leave_the_runtime_record_and_entry_intact() {
     assert_eq!(adapter.running_count().await, 1);
     assert!(adapter.terminated.lock().await.is_empty());
 
-    svc.abandon(&created.id, &runtime_adapter, &failure, Abandonment::Retire)
-        .await
-        .expect("the unchanged cleanup is retryable after recovery");
+    svc.abandon(
+        &created.id,
+        &runtime_adapter,
+        &failure,
+        Abandonment::Retire,
+        None,
+    )
+    .await
+    .expect("the unchanged cleanup is retryable after recovery");
     let durable = inner.get(&created.id).await.unwrap().unwrap();
     assert_eq!(durable.session.status, SessionStatus::Terminated);
     assert!(durable.runtime_id.is_none());

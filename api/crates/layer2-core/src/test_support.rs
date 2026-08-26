@@ -58,6 +58,9 @@ pub(crate) struct FakeStore {
     /// where readoption must defer rather than mistake an incomplete rebuild
     /// for a lost sandbox.
     pub(crate) broken_event_reads: Mutex<bool>,
+    /// Make the first session read after the next successful commit unavailable.
+    fail_next_get_after_commit: std::sync::atomic::AtomicBool,
+    next_get_unavailable: std::sync::atomic::AtomicBool,
     /// Model a compatibility-stage store whose coordination port is disabled.
     coordination_disabled: std::sync::atomic::AtomicBool,
     /// Monotonic stand-in for promotion after the exact old-writer-drain proof.
@@ -65,6 +68,14 @@ pub(crate) struct FakeStore {
     /// One-shot committed-but-response-lost outcomes for opening retry tests.
     lose_next_conversation_acquire_response: std::sync::atomic::AtomicBool,
     lose_next_conversation_publish_response: std::sync::atomic::AtomicBool,
+    /// Successful retirement calls whose response is lost after the commit.
+    lose_runtime_retirement_responses: std::sync::atomic::AtomicUsize,
+    /// Successful lease advances whose response is lost after the commit.
+    lose_runtime_advance_responses: std::sync::atomic::AtomicUsize,
+    /// Hold one provider-operation release after its caller reaches the store.
+    pause_next_session_lease_release: std::sync::atomic::AtomicBool,
+    session_lease_release_entered: tokio::sync::Notify,
+    resume_session_lease_release: tokio::sync::Notify,
     conversation_acquire_calls: std::sync::atomic::AtomicUsize,
     conversation_publish_calls: std::sync::atomic::AtomicUsize,
 }
@@ -201,6 +212,21 @@ impl FakeStore {
             .map(|held| held.lease.clone())
     }
 
+    /// Expire the currently held interaction without advancing wall-clock time.
+    ///
+    /// Used by post-receipt race tests that need a successor lifecycle lease to
+    /// overlap the old service-owned finalizer deterministically.
+    pub(crate) async fn expire_active_interaction(&self, id: &SessionId) -> SessionLease {
+        let mut coordination = self.coordination.lock().await;
+        let held = coordination
+            .get_mut(&id.0)
+            .and_then(|state| state.lease.as_mut())
+            .expect("the interaction lease is active");
+        assert_eq!(held.lease.operation, SessionOperation::Interact);
+        held.expires_at = tokio::time::Instant::now();
+        held.lease.clone()
+    }
+
     pub(crate) fn session_lease_acquisitions(&self) -> usize {
         self.session_lease_acquisitions
             .load(std::sync::atomic::Ordering::SeqCst)
@@ -210,9 +236,38 @@ impl FakeStore {
         *self.broken.lock().await = true;
     }
 
+    pub(crate) fn fail_next_get_after_commit(&self) {
+        assert!(
+            !self
+                .fail_next_get_after_commit
+                .swap(true, std::sync::atomic::Ordering::SeqCst),
+            "a post-commit read failure is already armed"
+        );
+    }
+
     pub(crate) fn disable_coordination(&self) {
         self.coordination_disabled
             .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Expire the interaction lease while its process-local delivery remains in flight.
+    ///
+    /// This models the only coordinated overlap the input fence must survive:
+    /// durable authority can expire before an already admitted provider call
+    /// returns, allowing a handover lease to be acquired while the old local
+    /// delivery still owns its read side of the fence.
+    pub(crate) async fn expire_active_interaction_lease(&self, id: &SessionId) {
+        let _transaction = self.transaction.lock().await;
+        let mut coordination = self.coordination.lock().await;
+        let state = coordination
+            .get_mut(&id.0)
+            .expect("the coordinated session has runtime authority");
+        let held = state
+            .lease
+            .as_mut()
+            .expect("an interaction lease is active");
+        assert_eq!(held.lease.operation, SessionOperation::Interact);
+        held.expires_at = tokio::time::Instant::now();
     }
 
     /// Model the one-way promotion that permanently fences legacy writers.
@@ -229,6 +284,48 @@ impl FakeStore {
     pub(crate) fn lose_next_conversation_publish_response(&self) {
         self.lose_next_conversation_publish_response
             .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn lose_runtime_retirement_responses(&self, count: usize) {
+        self.lose_runtime_retirement_responses
+            .store(count, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn lose_runtime_advance_responses(&self, count: usize) {
+        self.lose_runtime_advance_responses
+            .store(count, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn pause_next_session_lease_release(&self) {
+        assert!(
+            !self
+                .pause_next_session_lease_release
+                .swap(true, std::sync::atomic::Ordering::SeqCst),
+            "a session-lease release is already paused"
+        );
+    }
+
+    pub(crate) async fn wait_for_paused_session_lease_release(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.session_lease_release_entered.notified(),
+        )
+        .await
+        .expect("the session-lease release reached the store");
+    }
+
+    pub(crate) fn resume_session_lease_release(&self) {
+        self.resume_session_lease_release.notify_one();
+    }
+
+    fn lose_runtime_retirement_response(&self) -> bool {
+        self.lose_runtime_retirement_responses
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
     }
 
     pub(crate) fn conversation_acquire_calls(&self) -> usize {
@@ -450,6 +547,13 @@ impl FakeStore {
         receipts.insert(write_id.to_string(), (record.session.id.clone(), revision));
         self.upserts
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self
+            .fail_next_get_after_commit
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.next_get_unavailable
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         Ok(revision)
     }
 
@@ -530,6 +634,14 @@ impl SessionStore for FakeStore {
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         self.guard().await?;
+        if self
+            .next_get_unavailable
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(StoreError::Unavailable(
+                "the first session read after a selected commit is unavailable".into(),
+            ));
+        }
         let _transaction = self.transaction.lock().await;
         Ok(self.sessions.lock().await.get(&id.0).cloned())
     }
@@ -795,6 +907,7 @@ impl SessionStore for FakeStore {
         lease: &mut SessionLease,
         boundary: &SessionBoundary,
     ) -> Result<(), StoreError> {
+        let caller_lease = lease.clone();
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
         let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
@@ -823,10 +936,31 @@ impl SessionStore for FakeStore {
         }
         held.lease.boundary = boundary.clone();
         lease.boundary = boundary.clone();
+        if self
+            .lose_runtime_advance_responses
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+        {
+            *lease = caller_lease;
+            return Err(StoreError::Unavailable(
+                "test lease-advance response lost after commit".into(),
+            ));
+        }
         Ok(())
     }
 
     async fn release_session_lease(&self, lease: &SessionLease) -> Result<(), StoreError> {
+        if self
+            .pause_next_session_lease_release
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.session_lease_release_entered.notify_one();
+            self.resume_session_lease_release.notified().await;
+        }
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
         let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
@@ -1398,6 +1532,7 @@ impl SessionStore for FakeStore {
         lease: &mut SessionLease,
         retirement_token: &str,
     ) -> Result<RuntimeAuthorityRetirement, StoreError> {
+        let caller_lease = lease.clone();
         self.guard().await?;
         if retirement_token.is_empty() {
             return Err(StoreError::Malformed(
@@ -1438,7 +1573,14 @@ impl SessionStore for FakeStore {
                 && current == completed.outcome.boundary
             {
                 lease.boundary = completed.outcome.boundary.clone();
-                return Ok(completed.outcome.clone());
+                let outcome = completed.outcome.clone();
+                if self.lose_runtime_retirement_response() {
+                    *lease = caller_lease;
+                    return Err(StoreError::Unavailable(
+                        "test runtime retirement response lost after commit".into(),
+                    ));
+                }
+                return Ok(outcome);
             }
             return Err(StoreError::RuntimeCleanupChanged {
                 id: lease.session_id.clone(),
@@ -1508,6 +1650,12 @@ impl SessionStore for FakeStore {
                 outcome: outcome.clone(),
             },
         );
+        if self.lose_runtime_retirement_response() {
+            *lease = caller_lease;
+            return Err(StoreError::Unavailable(
+                "test runtime retirement response lost after commit".into(),
+            ));
+        }
         Ok(outcome)
     }
 
@@ -1859,6 +2007,7 @@ pub(crate) fn service_over(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
@@ -1866,6 +2015,7 @@ pub(crate) fn service_over(
         store,
         crate::service::SessionPorts {
             context: None,
+            handovers: Some(handovers),
             credentials: None,
             skills: None,
             settings: None,
@@ -1898,6 +2048,7 @@ pub(crate) fn service_over_with_environments(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     SessionService::new(
         adapters,
@@ -1905,6 +2056,7 @@ pub(crate) fn service_over_with_environments(
         store,
         crate::service::SessionPorts {
             context: None,
+            handovers: Some(handovers),
             credentials: None,
             skills: None,
             settings: None,

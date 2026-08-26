@@ -33,13 +33,36 @@ use crate::StoreError;
 /// without a deadline a provider that never answers leaves a session waiting
 /// for something that is not coming, and the sandbox it may already have
 /// created is never reclaimed.
-const PROVISION_DEADLINE: Duration = Duration::from_secs(600);
+pub(crate) const PROVISION_DEADLINE: Duration = Duration::from_secs(600);
 
 /// Long enough to cover one bounded provider create and attachment attempt.
 /// Renewed at every durable/provider boundary rather than trusted for its age.
 pub(crate) const RUNTIME_OPERATION_LEASE_TTL: Duration = Duration::from_secs(600);
 /// Refresh a pending conversation before either it or its backing operation can expire.
 pub(crate) const CONVERSATION_OPENING_RENEW_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Authority and failure disposition carried through one detached bring-up.
+pub(crate) struct BringUpContext {
+    pub(crate) outcome: crate::provision_failure::Abandonment,
+    pub(crate) lease: Option<SessionLease>,
+    pub(crate) handover: Option<crate::rotate::CoordinatedHandover>,
+    /// Exact durable rotation claim this bring-up must publish or abandon.
+    pub(crate) rotation_claim: Option<String>,
+}
+
+impl BringUpContext {
+    pub(crate) fn compatibility(
+        outcome: crate::provision_failure::Abandonment,
+        rotation_claim: Option<String>,
+    ) -> Self {
+        Self {
+            outcome,
+            lease: None,
+            handover: None,
+            rotation_claim,
+        }
+    }
+}
 
 /// Interaction work is short and frequent, so a crashed holder should clear quickly.
 const INTERACTION_LEASE_TTL: Duration = Duration::from_secs(30);
@@ -648,13 +671,27 @@ impl RuntimeInteractionAuthority {
         self.deadline().is_some()
     }
 
-    /// Whether a process-local sender belongs to this exact runtime generation.
+    /// Refuse delivery unless the process-local channel belongs to the exact
+    /// durable runtime authority acquired for this interaction.
     ///
-    /// This comparison grants no delivery permission. Callers must still invoke
-    /// [`Self::ensure_delivery_allowed`] after all local validation and
-    /// immediately before the external send.
-    pub(crate) fn fences_runtime_generation(&self, generation: u64) -> bool {
-        self.boundary.authority.generation == generation
+    /// Retirement deliberately clears the runtime handle without advancing its
+    /// generation. Comparing only the generation would therefore let another
+    /// replica keep delivering through a retired channel after a normal stop.
+    pub(crate) fn ensure_runtime_delivery_allowed(
+        &self,
+        runtime_id: Option<&str>,
+        generation: u64,
+    ) -> Result<&SessionBoundary, CoreError> {
+        let boundary = self.ensure_delivery_allowed()?;
+        if runtime_id.is_none()
+            || boundary.authority.generation != generation
+            || boundary.authority.runtime_id.as_deref() != runtime_id
+        {
+            return Err(CoreError::RuntimeUnavailable(
+                "the live channel belongs to another runtime authority".into(),
+            ));
+        }
+        Ok(boundary)
     }
 
     /// Refuse a new delivery without enough authority for its bounded send.
@@ -770,12 +807,10 @@ impl SessionService {
         adapter: Arc<dyn KernelAdapter>,
         geometry: TerminalGeometry,
         restore: Option<Vec<u8>>,
-        outcome: crate::provision_failure::Abandonment,
+        context: BringUpContext,
     ) {
-        self.bring_up_with_lease(
-            session, adapter, spec, geometry, restore, outcome, None, None,
-        )
-        .await;
+        self.bring_up_with_lease(session, adapter, spec, geometry, restore, context)
+            .await;
     }
 
     /// Bring a runtime up while continuing a lease acquired by a handover.
@@ -789,10 +824,14 @@ impl SessionService {
         spec: SessionSpec,
         geometry: TerminalGeometry,
         restore: Option<Vec<u8>>,
-        outcome: crate::provision_failure::Abandonment,
-        mut lease: Option<SessionLease>,
-        handover: Option<crate::rotate::CoordinatedHandover>,
+        context: BringUpContext,
     ) {
+        let BringUpContext {
+            outcome,
+            mut lease,
+            handover,
+            rotation_claim,
+        } = context;
         let id = session.id.clone();
         /*
          * The session's own credential, minted against what it was granted.
@@ -810,7 +849,6 @@ impl SessionService {
          * replaced runtime, or after a restart - returns the value already
          * issued rather than leaving two alive for one session.
          */
-        let mut spec = spec;
         let services = self.services_for(&session.id).await;
         let reaches: Vec<String> = services.iter().map(|service| service.0.clone()).collect();
         // Render here, where both inputs are authoritative: this service owns
@@ -825,7 +863,7 @@ impl SessionService {
         // Kept for the common failure path below. Abandoning here would run
         // before ordinary provisioning acquires its durable runtime lease and
         // could turn a coordinated authority into handle-only deletion.
-        let mut credential_failure = match self
+        let (mut credential_failure, credential_available) = match self
             .credential_for(
                 &session.id,
                 &session.owner,
@@ -834,32 +872,43 @@ impl SessionService {
             )
             .await
         {
-            Ok(credential) => {
-                spec.runtime_credential = credential;
-                None
-            }
+            // This call establishes durable custody before a provider runtime
+            // is created. Its value is intentionally discarded: exact
+            // selection happens only after the target generation exists.
+            Ok(credential) => (None, credential.is_some()),
             Err(error) => {
                 tracing::error!(
                     session_id = %id,
                     error = %error,
                     "could not establish durable credential custody"
                 );
-                Some(crate::provision_failure::StartFailure::transient(
-                    "the durable credential store is unavailable".to_string(),
-                ))
+                (
+                    Some(crate::provision_failure::StartFailure::transient(
+                        "the durable credential store is unavailable".to_string(),
+                    )),
+                    false,
+                )
             }
         };
-        if credential_failure.is_none() && spec.runtime_credential.is_none() {
+        if credential_failure.is_none() && !credential_available {
             tracing::warn!(
                 session_id = %id,
                 "no credential could be minted for this session; it will start unable to act \
                  on its owner's behalf until the top-up sweep supplies one"
             );
         }
-        let operation = if session.status.is_rotating() {
+        let operation = if session.status.is_rotating() || rotation_claim.is_some() {
             SessionOperation::Handover
         } else {
             SessionOperation::Provision
+        };
+        let publication_token = format!("publication_{}", uuid::Uuid::new_v4().simple());
+        let start = crate::provision::RuntimeStartContext {
+            geometry,
+            restore: restore.as_ref(),
+            platform_briefing: &platform_briefing,
+            handover: handover.as_ref(),
+            publication_token: &publication_token,
         };
         let mut coordination_error = false;
         let started = if lease.is_none() {
@@ -872,14 +921,7 @@ impl SessionService {
                             tokio::time::timeout(
                                 PROVISION_DEADLINE,
                                 self.start_with_retries(
-                                    &session,
-                                    &spec,
-                                    &adapter,
-                                    geometry,
-                                    restore.as_ref(),
-                                    &platform_briefing,
-                                    &mut lease,
-                                    handover.as_ref(),
+                                    &session, &spec, &adapter, start, &mut lease,
                                 ),
                             )
                             .await
@@ -898,21 +940,16 @@ impl SessionService {
         } else {
             tokio::time::timeout(
                 PROVISION_DEADLINE,
-                self.start_with_retries(
-                    &session,
-                    &spec,
-                    &adapter,
-                    geometry,
-                    restore.as_ref(),
-                    &platform_briefing,
-                    &mut lease,
-                    handover.as_ref(),
-                ),
+                self.start_with_retries(&session, &spec, &adapter, start, &mut lease),
             )
             .await
         };
 
         let failed = !matches!(&started, Ok(Ok(())));
+        if failed {
+            self.remove_incomplete_runtime_entry(&id, &publication_token)
+                .await;
+        }
         let can_restore_handover = if failed {
             match (&handover, lease.as_ref()) {
                 (Some(handover), Some(_)) => {
@@ -966,36 +1003,43 @@ impl SessionService {
         };
         if can_abandon_without_authority {
             let abandonment = match &started {
-                Ok(Err(failure)) => self.abandon(&id, &adapter, failure, outcome).await,
+                Ok(Err(failure)) => {
+                    self.abandon(&id, &adapter, failure, outcome, rotation_claim.as_deref())
+                        .await
+                }
                 Err(_) => {
                     let failure = crate::provision_failure::StartFailure::transient(format!(
                         "the runtime did not become usable within {}s",
                         PROVISION_DEADLINE.as_secs()
                     ));
-                    self.abandon(&id, &adapter, &failure, outcome).await
+                    self.abandon(&id, &adapter, &failure, outcome, rotation_claim.as_deref())
+                        .await
                 }
                 Ok(Ok(())) => unreachable!("only a failed start is abandoned"),
             };
-            if let Err(error) = abandonment {
-                tracing::error!(
+            match abandonment {
+                Err(error) => tracing::error!(
                     session_id = %id,
                     %error,
                     "cannot record the coordinated runtime abandonment; leaving its debt intact"
-                );
-            } else {
-                let current = self.store.get(&id).await;
-                if let (Some(held), Ok(Some(record))) = (lease.as_mut(), current) {
-                    let boundary =
-                        SessionBoundary::for_record(&record, held.boundary.authority.generation);
-                    if let Err(error) = self.store.advance_session_lease(held, &boundary).await {
-                        tracing::warn!(
-                            session_id = %id,
-                            %error,
-                            "the abandonment committed but its runtime lease could not advance"
+                ),
+                Ok(Some(record)) => {
+                    if let Some(held) = lease.as_mut() {
+                        let boundary = SessionBoundary::for_record(
+                            &record,
+                            held.boundary.authority.generation,
                         );
+                        if let Err(error) = self.advance_runtime_lease(held, &boundary).await {
+                            tracing::warn!(
+                                session_id = %id,
+                                %error,
+                                "the abandonment committed but its runtime lease could not advance"
+                            );
+                        }
                     }
                 }
-            }
+                Ok(None) => {}
+            };
             if let Some(held) = lease.take() {
                 if let Err(error) = self.store.release_session_lease(&held).await {
                     tracing::debug!(
@@ -1007,6 +1051,29 @@ impl SessionService {
             }
             self.finish_start(&id).await;
             return;
+        }
+
+        // `start_runtime` returns only after the exact replacement entry and
+        // conversation link are locally published. Clear the durable claim
+        // while the provider-operation lease still excludes another replica.
+        // A failed final write is not a failed runtime start: leaving the claim
+        // set keeps every interaction fenced, and readoption/reconciliation
+        // repairs it without provisioning another sandbox.
+        if matches!(&started, Ok(Ok(()))) {
+            if let Some(claim) = rotation_claim.as_deref() {
+                match self.finalize_rotation_publication(&id, claim).await {
+                    Ok(true) => {}
+                    Ok(false) => tracing::warn!(
+                        session_id = %id,
+                        "the replacement runtime was published after its rotation claim changed"
+                    ),
+                    Err(error) => tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "the published replacement remains interaction-fenced until reconciliation clears its rotation claim"
+                    ),
+                }
+            }
         }
 
         let coordinated_failure = failed && (lease.is_some() || coordination_error);
@@ -1033,7 +1100,10 @@ impl SessionService {
                 );
             }
             Ok(Err(failure)) => {
-                if let Err(error) = self.abandon(&id, &adapter, &failure, outcome).await {
+                if let Err(error) = self
+                    .abandon(&id, &adapter, &failure, outcome, rotation_claim.as_deref())
+                    .await
+                {
                     tracing::error!(
                         session_id = %id,
                         %error,
@@ -1052,11 +1122,12 @@ impl SessionService {
                     .abandon(
                         &id,
                         &adapter,
-                        &crate::provision_failure::StartFailure::transient(format!(
+                        &crate::provision_failure::StartFailure::unverified_attempt(format!(
                             "the runtime did not become usable within {}s",
                             PROVISION_DEADLINE.as_secs()
                         )),
                         outcome,
+                        rotation_claim.as_deref(),
                     )
                     .await
                 {
@@ -1072,6 +1143,148 @@ impl SessionService {
         // controller leaves this session alone, so failing to release it would
         // strand a session nothing is allowed to recover.
         self.finish_start(&id).await;
+    }
+
+    /// Clear an exact rotation claim only after its authoritative runtime entry
+    /// has been published by this process.
+    ///
+    /// Runtime identity is checked against both the durable record and, where
+    /// coordination is enabled, its monotonic generation. A stale outgoing
+    /// entry in the durable `Ready` gap therefore cannot clear the claim for
+    /// the candidate that has just replaced it.
+    pub(crate) async fn finalize_rotation_publication(
+        &self,
+        id: &SessionId,
+        expected_claim: &str,
+    ) -> Result<bool, StoreError> {
+        // Publication finalization can race an owner lifecycle operation after
+        // that operation's durable write but before its retained continuation
+        // consumes the local entry. Serialize the whole check/remove/claim-clear
+        // decision with lifecycle and input delivery so a successful stop or
+        // termination remains successful and owns its exact local teardown.
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let _input_fence = self.input_gates.gate(id).write_owned().await;
+        let published = {
+            let entries = self.entries.read().await;
+            entries.get(id).and_then(|entry| {
+                if entry.session.status.is_rotating() || !entry.publication_complete {
+                    return None;
+                }
+                entry.runtime.as_ref().map(|runtime| {
+                    (
+                        runtime.0.clone(),
+                        entry.runtime_generation,
+                        Arc::clone(&entry.screen),
+                    )
+                })
+            })
+        };
+        let Some((runtime_id, runtime_generation, screen)) = published else {
+            return Ok(false);
+        };
+
+        match self.store.runtime_authority(id).await {
+            Ok(Some(authority))
+                if authority.runtime_id.as_deref() == Some(runtime_id.as_str())
+                    && authority.generation == runtime_generation => {}
+            Ok(Some(_)) => {
+                self.remove_exact_runtime_entry(id, &runtime_id, runtime_generation, &screen)
+                    .await;
+                return Ok(false);
+            }
+            Ok(None) | Err(StoreError::SessionDeleted { .. }) => {
+                return Err(StoreError::SessionDeleted { id: id.clone() });
+            }
+            Err(StoreError::CoordinationDisabled) => {}
+            Err(error) => return Err(error),
+        }
+
+        let Some(mut current) = self.store.get(id).await? else {
+            return Err(StoreError::SessionDeleted { id: id.clone() });
+        };
+        if current.runtime_id.as_deref() != Some(runtime_id.as_str())
+            || current.session.status.is_rotating()
+            || !current.session.wants_runtime()
+        {
+            self.remove_exact_runtime_entry(id, &runtime_id, runtime_generation, &screen)
+                .await;
+            return Ok(false);
+        }
+        if current.rotation_claim.is_none() {
+            return Ok(true);
+        }
+        if current.rotation_claim.as_deref() != Some(expected_claim) {
+            self.remove_exact_runtime_entry(id, &runtime_id, runtime_generation, &screen)
+                .await;
+            return Ok(false);
+        }
+        if current
+            .pending_handover
+            .as_ref()
+            .is_some_and(|pending| pending.claim != expected_claim)
+        {
+            self.remove_exact_runtime_entry(id, &runtime_id, runtime_generation, &screen)
+                .await;
+            return Ok(false);
+        }
+
+        let claimed = current.clone();
+        current.rotation_claim = None;
+        current.pending_handover = None;
+        self.clear_rotation_claim_durably(&mut current, &claimed)
+            .await?;
+        Ok(true)
+    }
+
+    /// Remove only the local entry whose publication identity was just shown
+    /// to be stale. A newer entry may appear while the durable checks await;
+    /// matching both handle and generation prevents that successor from being
+    /// discarded by the obsolete finalizer.
+    async fn remove_exact_runtime_entry(
+        &self,
+        id: &SessionId,
+        runtime_id: &str,
+        runtime_generation: u64,
+        screen: &Arc<tokio::sync::Mutex<Box<dyn crate::terminal::ScreenModel>>>,
+    ) {
+        let removed = {
+            let mut entries = self.entries.write().await;
+            let exact = entries.get(id).is_some_and(|entry| {
+                entry.runtime.as_ref().map(|runtime| runtime.0.as_str()) == Some(runtime_id)
+                    && entry.runtime_generation == runtime_generation
+                    && Arc::ptr_eq(&entry.screen, screen)
+            });
+            exact.then(|| entries.remove(id)).flatten()
+        };
+        if let Some(entry) = removed {
+            if let Some(attached) = entry.attached.as_ref() {
+                let _ = attached
+                    .supersede
+                    .send(crate::lease::Detached::RuntimeReplaced);
+            }
+        }
+    }
+
+    /// Remove only the incomplete local entry installed by one exact attempt.
+    pub(crate) async fn remove_incomplete_runtime_entry(
+        &self,
+        id: &SessionId,
+        publication_token: &str,
+    ) {
+        let removed = {
+            let mut entries = self.entries.write().await;
+            let exact = entries.get(id).is_some_and(|entry| {
+                !entry.publication_complete && entry.publication_token == publication_token
+            });
+            exact.then(|| entries.remove(id)).flatten()
+        };
+        if let Some(entry) = removed {
+            if let Some(attached) = entry.attached.as_ref() {
+                let _ = attached
+                    .supersede
+                    .send(crate::lease::Detached::RuntimeReplaced);
+            }
+        }
     }
 
     /// Acquire one exact durable provider-mutation boundary.
@@ -1280,6 +1493,9 @@ impl SessionService {
         record: &crate::store::SessionRecord,
         caller: &RuntimeInteractionCallerState,
     ) -> Result<RuntimeInteractionAcquisition, CoreError> {
+        if record.is_effectively_rotating() {
+            return Err(CoreError::SessionRotating);
+        }
         let request_started = tokio::time::Instant::now();
         let request = self
             .interaction_lease_request_at(record)
@@ -1359,7 +1575,7 @@ impl SessionService {
                         Some(current) if current.session.status.is_terminal() => {
                             Err(CoreError::SessionTerminated)
                         }
-                        Some(current) if current.session.status.is_rotating() => {
+                        Some(current) if current.is_effectively_rotating() => {
                             Err(CoreError::SessionRotating)
                         }
                         Some(_) => Err(CoreError::RuntimeUnavailable(

@@ -195,6 +195,7 @@ fn credential_state() -> SessionCredentialState {
             scope_fingerprint: "scope-b".into(),
             revocation_credential: Some(SecretValue::new("pending-revoke-plaintext".into())),
         }),
+        pending_target: None,
         revoke_debt: vec![RevokeDebt {
             id: "provider-retired".into(),
             owner: SubjectId("subject-a".into()),
@@ -272,6 +273,17 @@ fn recurring_auth_queries_have_named_supporting_indexes() {
                 "lease": Bson::Null,
                 "pending": Bson::Null,
                 "current.issued_at": { "$type": "date" },
+                "sweep_sequence": { "$type": "long" },
+            },
+        ),
+        (
+            doc! { "current.expires_at": 1, "sweep_sequence": 1, "_id": 1 },
+            CREDENTIAL_CURRENT_EXPIRY_INDEX,
+            doc! {
+                "retired": false,
+                "lease": Bson::Null,
+                "pending": Bson::Null,
+                "current.expires_at": { "$type": "date" },
                 "sweep_sequence": { "$type": "long" },
             },
         ),
@@ -506,6 +518,42 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
     };
     let current = current_credential_reissue_filter(second_time, Some(&credential_cursor), 99);
     assert_eq!(current.get_array("$or").unwrap().len(), 3);
+    let expiry_cursor = CredentialExpiryCursor {
+        expires_at: first_time,
+        sweep_sequence: 42,
+        session: SessionId("sesn_m".into()),
+    };
+    let expiring = current_credential_expiry_filter(second_time, Some(&expiry_cursor), 99);
+    assert_eq!(
+        expiring
+            .get_document("current.expires_at")
+            .unwrap()
+            .get_datetime("$lte")
+            .unwrap()
+            .to_system_time(),
+        second_time
+    );
+    assert_eq!(
+        expiring
+            .get_document("sweep_sequence")
+            .unwrap()
+            .get_i64("$lte")
+            .unwrap(),
+        99
+    );
+    let expiry_branches = expiring.get_array("$or").unwrap();
+    assert_eq!(expiry_branches.len(), 3);
+    assert_eq!(
+        expiry_branches[0]
+            .as_document()
+            .unwrap()
+            .get_document("current.expires_at")
+            .unwrap()
+            .get_datetime("$gt")
+            .unwrap()
+            .to_system_time(),
+        first_time
+    );
     let mutation_cursor = CredentialMutationCursor {
         sweep_sequence: 42,
         session: SessionId("sesn_m".into()),
@@ -547,7 +595,7 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, AUTH_SCHEMA_VERSION] } },
             ],
             "revoke_debt.0": { "$exists": true },
             "revoke_debt_ordered": { "$ne": true },
@@ -760,7 +808,7 @@ fn legacy_subject_bson_defaults_incarnation_generation_and_retention() {
 }
 
 #[test]
-fn schema_compatibility_accepts_v1_through_v3_and_rejects_future_documents() {
+fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
     let cipher = cipher();
 
     let mut legacy_subject = subject_to_doc(subject_state(), &cipher).unwrap();
@@ -774,6 +822,9 @@ fn schema_compatibility_accepts_v1_through_v3_and_rejects_future_documents() {
     v3_subject.auth_schema_version = 3;
     v3_subject.authorization_lease = None;
     assert!(subject_from_doc(v3_subject, &cipher).is_ok());
+    let mut v4_subject = subject_to_doc(subject_state(), &cipher).unwrap();
+    v4_subject.auth_schema_version = 4;
+    assert!(subject_from_doc(v4_subject, &cipher).is_ok());
     let mut future_subject = subject_to_doc(subject_state(), &cipher).unwrap();
     future_subject.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -790,6 +841,10 @@ fn schema_compatibility_accepts_v1_through_v3_and_rejects_future_documents() {
     let mut v3_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
     v3_credential.auth_schema_version = 3;
     assert!(credential_state_from_doc(v3_credential, &cipher).is_ok());
+    let mut v4_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    v4_credential.auth_schema_version = 4;
+    v4_credential.pending_target = None;
+    assert!(credential_state_from_doc(v4_credential, &cipher).is_ok());
     let mut future_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
     future_credential.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -802,7 +857,7 @@ fn schema_compatibility_accepts_v1_through_v3_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64] } },
             ]
         }
     );
@@ -811,7 +866,7 @@ fn schema_compatibility_accepts_v1_through_v3_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, AUTH_SCHEMA_VERSION] } },
             ]
         }
     );
@@ -954,6 +1009,10 @@ fn credential_state_round_trips_every_durable_transition_fact() {
     let cipher = cipher();
     let mut state = credential_state();
     state.request_bound_credential = Some(SecretValue::new("request-bound".into()));
+    state.pending_target = Some(CredentialDeliveryTarget {
+        runtime_generation: 12,
+        runtime_id: "runtime-target".into(),
+    });
     let restored =
         credential_state_from_doc(credential_state_to_doc(state, &cipher).unwrap(), &cipher)
             .unwrap();
@@ -966,14 +1025,30 @@ fn credential_state_round_trips_every_durable_transition_fact() {
     let current = restored.current.unwrap();
     assert_eq!(current.value.expose(), "current-plaintext");
     assert_eq!(
+        current.expires_at, None,
+        "legacy custody without an expiry remains unbounded"
+    );
+    assert_eq!(
         current.revocation_credential.unwrap().expose(),
         "current-revoke-plaintext"
     );
     let pending = restored.pending.unwrap();
     assert_eq!(pending.value.expose(), "pending-plaintext");
     assert_eq!(
+        pending.expires_at,
+        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_001)),
+        "the exact provider expiry survives durable custody round-trip"
+    );
+    assert_eq!(
         pending.revocation_credential.unwrap().expose(),
         "pending-revoke-plaintext"
+    );
+    assert_eq!(
+        restored.pending_target,
+        Some(CredentialDeliveryTarget {
+            runtime_generation: 12,
+            runtime_id: "runtime-target".into(),
+        })
     );
     assert_eq!(restored.revoke_debt[0].id, "provider-retired");
     assert_eq!(
@@ -986,6 +1061,32 @@ fn credential_state_round_trips_every_durable_transition_fact() {
     );
     assert_eq!(restored.lease.unwrap().fence, 9);
     assert!(!restored.retired);
+}
+
+#[test]
+fn credential_target_without_pending_custody_is_rejected_on_write_and_read() {
+    let cipher = cipher();
+    let mut invalid = credential_state();
+    invalid.pending = None;
+    invalid.pending_target = Some(CredentialDeliveryTarget {
+        runtime_generation: 2,
+        runtime_id: "runtime-orphan-target".into(),
+    });
+    assert!(matches!(
+        credential_state_to_doc(invalid, &cipher),
+        Err(StoreError::Malformed(_))
+    ));
+
+    let mut stored = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    stored.pending = None;
+    stored.pending_target = Some(CredentialDeliveryTargetDoc {
+        runtime_generation: 2,
+        runtime_id: "runtime-orphan-target".into(),
+    });
+    assert!(matches!(
+        credential_state_from_doc(stored, &cipher),
+        Err(StoreError::Malformed(_))
+    ));
 }
 
 #[test]
@@ -1152,7 +1253,7 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
         credentials.push(doc! {
             "_id": format!("current-old-{position:04}"),
             "generation": 0,
-            "current": { "issued_at": old_date },
+            "current": { "issued_at": old_date, "expires_at": old_date },
             "pending": Bson::Null,
             "revoke_debt": [],
             "lease": Bson::Null,
@@ -1161,7 +1262,7 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
         credentials.push(doc! {
             "_id": format!("current-future-{position:04}"),
             "generation": 0,
-            "current": { "issued_at": future_date },
+            "current": { "issued_at": future_date, "expires_at": future_date },
             "pending": Bson::Null,
             "revoke_debt": [],
             "lease": Bson::Null,
@@ -1456,6 +1557,39 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
     )
     .await;
     assert_explain_is_page_bounded(&execution, 1, 2, CREDENTIAL_CURRENT_INDEX);
+
+    let expiry_cursor = CredentialExpiryCursor {
+        expires_at: old,
+        sweep_sequence: 1,
+        session: SessionId(format!("current-old-{CURSOR_POSITION:04}")),
+    };
+    let execution = explain_find(
+        &client,
+        &database_name,
+        CREDENTIALS,
+        current_credential_expiry_filter(now, Some(&expiry_cursor), u64::MAX),
+        doc! { "current.expires_at": 1, "sweep_sequence": 1, "_id": 1 },
+        CREDENTIAL_CURRENT_EXPIRY_INDEX,
+        PAGE_SIZE,
+    )
+    .await;
+    assert_explain_is_page_bounded(
+        &execution,
+        PAGE_SIZE,
+        PAGE_SIZE * 2,
+        CREDENTIAL_CURRENT_EXPIRY_INDEX,
+    );
+    let execution = explain_find(
+        &client,
+        &database_name,
+        CREDENTIALS,
+        current_credential_expiry_filter(now, None, u64::MAX),
+        doc! { "current.expires_at": -1, "sweep_sequence": -1, "_id": -1 },
+        CREDENTIAL_CURRENT_EXPIRY_INDEX,
+        1,
+    )
+    .await;
+    assert_explain_is_page_bounded(&execution, 1, 2, CREDENTIAL_CURRENT_EXPIRY_INDEX);
 
     let lease_cursor = CredentialLeaseCursor {
         ready_at: old,
@@ -2135,6 +2269,7 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
     current_a.session = SessionId("sesn_current_a".into());
     current_a.generation = 0;
     current_a.current = Some(held("current-a", first_ready));
+    current_a.current.as_mut().unwrap().expires_at = Some(first_ready);
     current_a.pending = None;
     current_a.revoke_debt.clear();
     current_a.lease = None;
@@ -2142,6 +2277,7 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
     current_z.session = SessionId("sesn_current_z".into());
     current_z.generation = 0;
     current_z.current = Some(held("current-z", second_ready));
+    current_z.current.as_mut().unwrap().expires_at = Some(second_ready);
     current_z.pending = None;
     current_z.revoke_debt.clear();
     current_z.lease = None;
@@ -2177,6 +2313,7 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
     active_z.session = SessionId("sesn_z_active".into());
     active_z.generation = 0;
     active_z.current = Some(held("active-z", now + Duration::from_secs(60)));
+    active_z.current.as_mut().unwrap().expires_at = Some(now + Duration::from_secs(60));
     active_z.pending = None;
     active_z.revoke_debt.clear();
     active_z.lease = None;
@@ -2190,6 +2327,7 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
     interior_current.session = SessionId("sesn_current_m".into());
     interior_current.generation = 0;
     interior_current.current = Some(held("current-m", first_ready));
+    interior_current.current.as_mut().unwrap().expires_at = Some(first_ready);
     interior_current.pending = None;
     interior_current.revoke_debt.clear();
     interior_current.lease = None;
@@ -2206,6 +2344,17 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
     let current = &current.last().unwrap().cursor;
     assert_eq!(current.session.as_str(), "sesn_current_z");
     assert_eq!(current.issued_at, at_bson_precision(second_ready));
+    let expiring = store
+        .current_credentials_expiring_before(now, None, through_credentials, 10)
+        .await
+        .unwrap();
+    assert_eq!(expiring.len(), 2);
+    assert!(expiring
+        .iter()
+        .all(|item| item.cursor.session.as_str() != "sesn_current_m"));
+    let expiring = &expiring.last().unwrap().cursor;
+    assert_eq!(expiring.session.as_str(), "sesn_current_z");
+    assert_eq!(expiring.expires_at, at_bson_precision(second_ready));
     let pending = store
         .pending_credentials_due_for_reissue(None, through_credentials, 10)
         .await
@@ -2229,6 +2378,12 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
     let next_credential_epoch = store.auth_sweep_high_water().await.unwrap();
     assert!(store
         .current_credentials_due_for_reissue(now, None, next_credential_epoch, 10)
+        .await
+        .unwrap()
+        .iter()
+        .any(|item| item.cursor.session.as_str() == "sesn_current_m"));
+    assert!(store
+        .current_credentials_expiring_before(now, None, next_credential_epoch, 10)
         .await
         .unwrap()
         .iter()
@@ -2444,7 +2599,7 @@ async fn real_mongo_credential_corruption_isolated_across_recurring_lanes() {
     let ready_at = now - Duration::from_secs(60);
     let future = now + Duration::from_secs(60);
 
-    for lane in ["current", "pending", "lease", "active"] {
+    for lane in ["current", "expiring", "pending", "lease", "active"] {
         for kind in ["malformed", "ciphertext", "healthy"] {
             let id = format!("sesn-{lane}-{kind}");
             let mut state = credential_state();
@@ -2455,6 +2610,12 @@ async fn real_mongo_credential_corruption_isolated_across_recurring_lanes() {
             match lane {
                 "current" => {
                     state.current.as_mut().unwrap().issued_at = ready_at;
+                    state.pending = None;
+                    state.lease = None;
+                }
+                "expiring" => {
+                    state.current.as_mut().unwrap().issued_at = future;
+                    state.current.as_mut().unwrap().expires_at = Some(ready_at);
                     state.pending = None;
                     state.lease = None;
                 }
@@ -2482,7 +2643,7 @@ async fn real_mongo_credential_corruption_isolated_across_recurring_lanes() {
     let credentials = client
         .database(&database_name)
         .collection::<Document>(CREDENTIALS);
-    for lane in ["current", "pending", "lease", "active"] {
+    for lane in ["current", "expiring", "pending", "lease", "active"] {
         credentials
             .update_one(
                 doc! { "_id": format!("sesn-{lane}-malformed") },
@@ -2526,6 +2687,29 @@ async fn real_mongo_credential_corruption_isolated_across_recurring_lanes() {
         current[2].state.as_ref().unwrap().session.as_str(),
         "sesn-current-healthy",
         "later healthy current-credential work survives both corrupt predecessors"
+    );
+
+    let expiring = store
+        .current_credentials_expiring_before(now, None, through, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        expiring
+            .iter()
+            .map(|item| item.cursor.session.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "sesn-expiring-malformed",
+            "sesn-expiring-ciphertext",
+            "sesn-expiring-healthy",
+        ]
+    );
+    assert!(expiring[0].state.is_err());
+    assert!(expiring[1].state.is_err());
+    assert_eq!(
+        expiring[2].state.as_ref().unwrap().session.as_str(),
+        "sesn-expiring-healthy",
+        "later healthy expiry-ordered work survives both corrupt predecessors"
     );
 
     let pending = store
@@ -2878,6 +3062,18 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
                 "lease": Bson::Null,
                 "pending": Bson::Null,
                 "current.issued_at": { "$type": "date" },
+                "sweep_sequence": { "$type": "long" },
+            },
+        ),
+        (
+            CREDENTIALS,
+            CREDENTIAL_CURRENT_EXPIRY_INDEX,
+            doc! { "current.expires_at": 1, "sweep_sequence": 1, "_id": 1 },
+            doc! {
+                "retired": false,
+                "lease": Bson::Null,
+                "pending": Bson::Null,
+                "current.expires_at": { "$type": "date" },
                 "sweep_sequence": { "$type": "long" },
             },
         ),

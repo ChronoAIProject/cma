@@ -502,12 +502,12 @@ pub(super) async fn steer(
 ) -> Result<StatusCode, RequestFailure> {
     let Json(body) = body?;
     let id = SessionId(id);
-    let session = service.get_session(&caller, &id).await?;
+    let session = service.session_for_interaction(&caller, &id).await?;
     // Declared, not discovered. A session whose kernel does not steer refuses
     // here rather than accepting the request and delivering it as an ordinary
     // turn, which would be a different thing done under the caller's name.
-    // Layer 2 enforces the same invariant for every prompt sent mid-turn; this
-    // dedicated boundary still refuses before asking the core to do any work.
+    // Lifecycle belongs to Layer 2 and precedes this operation-specific check,
+    // so capabilities retained from the outgoing plane cannot mask rotation.
     session.capabilities.require(SessionCapability::Steer)?;
     let text = body
         .text

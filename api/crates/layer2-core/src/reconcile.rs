@@ -100,6 +100,14 @@ struct RuntimeCensus {
     trusted: bool,
 }
 
+fn same_compatibility_runtime_boundary(observed: &SessionRecord, current: &SessionRecord) -> bool {
+    observed.session.id == current.session.id
+        && observed.session.kernel == current.session.kernel
+        && observed.session.status == current.session.status
+        && observed.rotation_claim == current.rotation_claim
+        && observed.runtime_id == current.runtime_id
+}
+
 impl SessionService {
     /// Compare the provider's runtimes against the record, and settle both.
     pub async fn reconcile(self: &Arc<Self>) -> Reclaimed {
@@ -118,7 +126,12 @@ impl SessionService {
         let census = self.take_census().await;
 
         for record in &records {
+            self.discard_stale_coordinated_entry(record).await;
             self.reclaim_cleanup_debts(record, &mut reclaimed).await;
+            if !record.session.wants_runtime() && record.runtime_id.is_some() {
+                self.settle_stopped_compatibility_runtime(record, &mut reclaimed)
+                    .await;
+            }
         }
 
         // Only these are entitled to a runtime. A stopped session is not — that
@@ -165,6 +178,439 @@ impl SessionService {
             );
         }
         reclaimed
+    }
+
+    /// Remove a replica-local channel that no longer names durable authority.
+    ///
+    /// This pass includes stopped sessions, which ordinary settlement skips.
+    /// Without it, a stop on one replica can leave another replica's attachment
+    /// and output relay presenting the retired runtime indefinitely even though
+    /// exact interaction checks already refuse new input.
+    async fn discard_stale_coordinated_entry(&self, record: &SessionRecord) {
+        let id = &record.session.id;
+        let authority = match self.store.runtime_authority(id).await {
+            Ok(Some(authority)) if authority.generation != 0 => authority,
+            Ok(Some(_)) | Ok(None) | Err(StoreError::CoordinationDisabled) => return,
+            Err(error) => {
+                tracing::debug!(
+                    session_id = %id,
+                    %error,
+                    "cannot compare the local runtime entry with durable authority"
+                );
+                return;
+            }
+        };
+        let suspected_stale = self.entries.read().await.get(id).is_some_and(|entry| {
+            entry.session.status.is_rotating()
+                || !entry.publication_complete
+                || entry.runtime_generation != authority.generation
+                || entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                    != authority.runtime_id.as_deref()
+        });
+        if !suspected_stale {
+            return;
+        }
+
+        // The first comparison is only a cheap reason to investigate. Acquire a
+        // fresh durable boundary before changing local state so a concurrent
+        // readoption or switch cannot publish a successor between comparison and
+        // removal. Durable lease first, then the local lifecycle/input gates,
+        // preserves the provider-operation lock order.
+        let mut current = match self.store.get(id).await {
+            Ok(Some(current)) => current,
+            _ => return,
+        };
+        let mut resumed_local_cleanup = false;
+        let lease = loop {
+            match self
+                .acquire_runtime_lease_at(&current, SessionOperation::Reclaim)
+                .await
+            {
+                Ok(Some(lease)) => break lease,
+                Ok(None) => return,
+                Err(StoreError::SessionLeaseHeld { .. }) if !resumed_local_cleanup => {
+                    resumed_local_cleanup = true;
+                    self.event_logs.drain_retained_cleanups(id).await;
+                    current = match self.store.get(id).await {
+                        Ok(Some(current)) => current,
+                        _ => return,
+                    };
+                }
+                Err(_) => return,
+            }
+        };
+        let lifecycle = self.lock_lifecycle(id).await;
+        let input_fence = self.input_gates.gate(id).write_owned().await;
+        if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
+            tracing::debug!(session_id = %id, %error, "stale-entry lease expired before local removal");
+            drop(input_fence);
+            drop(lifecycle);
+            let _ = self.store.release_session_lease(&lease).await;
+            return;
+        }
+        let authority = &lease.boundary.authority;
+        let removed = {
+            let mut entries = self.entries.write().await;
+            let stale = entries.get(id).is_some_and(|entry| {
+                entry.session.status.is_rotating()
+                    || !entry.publication_complete
+                    || entry.runtime_generation != authority.generation
+                    || entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                        != authority.runtime_id.as_deref()
+            });
+            stale.then(|| entries.remove(id)).flatten()
+        };
+        drop(input_fence);
+        drop(lifecycle);
+        if let Some(entry) = removed {
+            if let Some(attached) = entry.attached.as_ref() {
+                let _ = attached
+                    .supersede
+                    .send(crate::lease::Detached::RuntimeReplaced);
+            }
+            tracing::warn!(
+                session_id = %id,
+                local_runtime = ?entry.runtime.as_ref().map(|runtime| runtime.0.as_str()),
+                local_generation = entry.runtime_generation,
+                durable_runtime = ?authority.runtime_id,
+                durable_generation = authority.generation,
+                "discarded a replica-local entry outside durable runtime authority"
+            );
+        }
+        if let Err(error) = self.store.release_session_lease(&lease).await {
+            tracing::debug!(session_id = %id, %error, "stale-entry lease ended before explicit release");
+        }
+    }
+
+    /// Remove a stale local channel for a store that has no durable leases.
+    ///
+    /// The local lifecycle and input gates exclude this process's handover and
+    /// deliveries; a fresh exact revision then prevents an old sweep from
+    /// removing an entry after durable state changed while it waited. A local
+    /// H1 distinct from durable H2 is terminated while its entry still retains
+    /// the only cleanup identity. Provider failure leaves that entry intact for
+    /// the next sweep.
+    async fn discard_stale_compatibility_entry(&self, record: &SessionRecord) -> bool {
+        let id = &record.session.id;
+        let lifecycle = self.lock_lifecycle(id).await;
+        let input_fence = self.input_gates.gate(id).write_owned().await;
+        match self.store.runtime_authority(id).await {
+            Ok(Some(authority)) if authority.generation == 0 => {}
+            Err(StoreError::CoordinationDisabled) => {}
+            _ => return false,
+        }
+        let current = match self.store.get(id).await {
+            Ok(Some(current)) if current.revision == record.revision => current,
+            _ => return false,
+        };
+        let stale = {
+            let entries = self.entries.read().await;
+            entries.get(id).and_then(|entry| {
+                (entry.session.status.is_rotating()
+                    || !entry.publication_complete
+                    || entry.runtime_generation != 0
+                    || entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                        != current.runtime_id.as_deref())
+                .then(|| {
+                    (
+                        entry.runtime.clone(),
+                        entry.session.kernel.clone(),
+                        Arc::clone(&entry.screen),
+                    )
+                })
+            })
+        };
+        let Some((local_runtime, local_kernel, entry_screen)) = stale else {
+            return false;
+        };
+        if local_runtime.as_ref().map(|runtime| runtime.0.as_str()) != current.runtime_id.as_deref()
+        {
+            let Some(adapter) = self.adapters.get(&local_kernel) else {
+                tracing::warn!(
+                    session_id = %id,
+                    kernel = %local_kernel,
+                    local_runtime = ?local_runtime.as_ref().map(|runtime| runtime.0.as_str()),
+                    "cannot discard a stale compatibility runtime without its adapter"
+                );
+                return false;
+            };
+            if let Err(error) = self
+                .require_compatibility_provider_mutation(id, "stale runtime reconciliation")
+                .await
+            {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "cannot authorize stale compatibility runtime teardown"
+                );
+                return false;
+            }
+            if let Some(handle) = local_runtime.as_ref() {
+                if let Err(error) = adapter.terminate(handle).await {
+                    tracing::warn!(
+                        session_id = %id,
+                        runtime = %handle.0,
+                        %error,
+                        "stale compatibility runtime teardown failed; retaining its local entry"
+                    );
+                    return false;
+                }
+            }
+        }
+        let removed = {
+            let mut entries = self.entries.write().await;
+            let exact = entries
+                .get(id)
+                .is_some_and(|entry| Arc::ptr_eq(&entry.screen, &entry_screen));
+            exact.then(|| entries.remove(id)).flatten()
+        };
+        drop(input_fence);
+        drop(lifecycle);
+        if let Some(entry) = removed {
+            if let Some(attached) = entry.attached.as_ref() {
+                let _ = attached
+                    .supersede
+                    .send(crate::lease::Detached::RuntimeReplaced);
+            }
+            tracing::warn!(
+                session_id = %id,
+                local_runtime = ?entry.runtime.as_ref().map(|runtime| runtime.0.as_str()),
+                durable_runtime = ?current.runtime_id,
+                "settled and discarded a stale compatibility runtime entry"
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Finish provider cleanup left behind by a failed compatibility stop.
+    ///
+    /// The scanned record is only a reason to investigate. Provider mutation
+    /// uses a fresh lifecycle boundary after local input is fenced, and the
+    /// runtime remains durable until teardown succeeds so another sweep can
+    /// retry it.
+    async fn settle_stopped_compatibility_runtime(
+        &self,
+        observed: &SessionRecord,
+        reclaimed: &mut Reclaimed,
+    ) {
+        let id = &observed.session.id;
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let _input_fence = self.input_gates.gate(id).write_owned().await;
+        let current = match self.store.get(id).await {
+            Ok(Some(current)) => current,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "cannot refresh a stopped compatibility runtime before cleanup"
+                );
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+        };
+        if current.session.wants_runtime() || current.runtime_id.is_none() {
+            return;
+        }
+        if !same_compatibility_runtime_boundary(observed, &current) {
+            tracing::debug!(
+                session_id = %id,
+                "the stopped compatibility runtime changed before cleanup"
+            );
+            reclaimed.deferred_sessions += 1;
+            return;
+        }
+        let local = {
+            let entries = self.entries.read().await;
+            entries.get(id).map(|entry| {
+                (
+                    entry.runtime.clone(),
+                    entry.session.kernel.clone(),
+                    Arc::clone(&entry.screen),
+                )
+            })
+        };
+        if let Some((Some(local_runtime), local_kernel, _)) = local.as_ref() {
+            if current.runtime_id.as_deref() != Some(local_runtime.0.as_str()) {
+                let Some(local_adapter) = self.adapters.get(local_kernel) else {
+                    tracing::warn!(
+                        session_id = %id,
+                        kernel = %local_kernel,
+                        runtime = %local_runtime.0,
+                        "cannot clean up a stopped local compatibility runtime without its adapter"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                };
+                if let Err(error) = self
+                    .require_compatibility_provider_mutation(
+                        id,
+                        "stopped local runtime reconciliation",
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        session_id = %id,
+                        runtime = %local_runtime.0,
+                        %error,
+                        "cannot authorize stopped local compatibility runtime teardown"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+                if let Err(error) = local_adapter.terminate(local_runtime).await {
+                    tracing::warn!(
+                        session_id = %id,
+                        runtime = %local_runtime.0,
+                        %error,
+                        "stopped local compatibility runtime teardown failed; retaining its entry"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            }
+        }
+        let Some(adapter) = self.adapters.get(&current.session.kernel).cloned() else {
+            tracing::warn!(
+                session_id = %id,
+                kernel = %current.session.kernel,
+                "cannot clean up a stopped compatibility runtime without its adapter"
+            );
+            reclaimed.deferred_sessions += 1;
+            return;
+        };
+        let runtime = current
+            .runtime_id
+            .clone()
+            .expect("a stopped cleanup candidate retains its runtime");
+        if let Err(error) = self
+            .teardown_compatibility_runtime(&adapter, &current, "stopped runtime reconciliation")
+            .await
+        {
+            tracing::warn!(
+                session_id = %id,
+                runtime = %runtime,
+                %error,
+                "stopped compatibility runtime cleanup remains pending"
+            );
+            reclaimed.deferred_sessions += 1;
+            return;
+        }
+
+        if current.session.status.is_terminal() {
+            if let Some(source) = self.credentials.as_ref() {
+                if let Err(error) = source.release(id).await {
+                    tracing::error!(
+                        session_id = %id,
+                        %error,
+                        "could not retire terminal session credential custody after runtime cleanup"
+                    );
+                }
+            }
+        }
+
+        let removed = {
+            let mut entries = self.entries.write().await;
+            let exact = local.as_ref().is_some_and(|(_, _, screen)| {
+                entries
+                    .get(id)
+                    .is_some_and(|entry| Arc::ptr_eq(&entry.screen, screen))
+            });
+            exact.then(|| entries.remove(id)).flatten()
+        };
+        if let Some(entry) = removed {
+            if let Some(attached) = entry.attached.as_ref() {
+                let _ = attached
+                    .supersede
+                    .send(crate::lease::Detached::RuntimeReplaced);
+            }
+        }
+        tracing::info!(
+            session_id = %id,
+            runtime = %runtime,
+            "finished stopped compatibility runtime cleanup"
+        );
+    }
+
+    /// Retire the exact compatibility runtime whose readoption just failed.
+    async fn clear_failed_compatibility_readoption(
+        &self,
+        observed: &SessionRecord,
+        reclaimed: &mut Reclaimed,
+    ) -> Option<SessionRecord> {
+        let id = &observed.session.id;
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let _input_fence = self.input_gates.gate(id).write_owned().await;
+        let current = match self.store.get(id).await {
+            Ok(Some(current)) => current,
+            Ok(None) => return None,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "cannot refresh the session after readoption failed"
+                );
+                reclaimed.deferred_sessions += 1;
+                return None;
+            }
+        };
+        if !current.session.wants_runtime()
+            || current.runtime_id.is_none()
+            || !same_compatibility_runtime_boundary(observed, &current)
+        {
+            tracing::debug!(
+                session_id = %id,
+                "the session changed before its failed readoption could be cleaned up"
+            );
+            reclaimed.deferred_sessions += 1;
+            return None;
+        }
+        if self.entries.read().await.contains_key(id) {
+            tracing::debug!(
+                session_id = %id,
+                "a local runtime entry appeared after readoption failed"
+            );
+            reclaimed.deferred_sessions += 1;
+            return None;
+        }
+        let Some(adapter) = self.adapters.get(&current.session.kernel).cloned() else {
+            tracing::warn!(
+                session_id = %id,
+                kernel = %current.session.kernel,
+                "cannot clean up a failed readoption without its adapter"
+            );
+            reclaimed.deferred_sessions += 1;
+            return None;
+        };
+        let runtime = current
+            .runtime_id
+            .clone()
+            .expect("a failed readoption cleanup candidate retains its runtime");
+        match self
+            .teardown_compatibility_runtime(&adapter, &current, "failed runtime readoption")
+            .await
+        {
+            Ok(cleared) => {
+                tracing::warn!(
+                    session_id = %id,
+                    runtime = %runtime,
+                    "retired an unreachable compatibility runtime before replacement"
+                );
+                Some(cleared)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    runtime = %runtime,
+                    %error,
+                    "failed readoption runtime cleanup remains pending"
+                );
+                reclaimed.deferred_sessions += 1;
+                None
+            }
+        }
     }
 
     /// Ask every provider what it is running.
@@ -521,6 +967,92 @@ impl SessionService {
             }
         };
 
+        // A failed post-publication claim clear leaves a usable local entry
+        // deliberately fenced. Retry that exact CAS before the ordinary
+        // "already served here" return. An outgoing or otherwise stale entry
+        // cannot prove publication. Its removal must still acquire a fresh
+        // exact lease: the cached claim/authority can become H1 while a local
+        // concurrent handover has already published H2.
+        if let Some(claim) = record.rotation_claim.clone() {
+            let expected_generation = coordinated_authority
+                .as_ref()
+                .map(|authority| authority.generation);
+            let local = {
+                let entries = self.entries.read().await;
+                entries.get(&id).map(|entry| {
+                    (
+                        entry.runtime.as_ref().map(|runtime| runtime.0.clone()),
+                        entry.runtime_generation,
+                        entry.session.status,
+                        entry.publication_complete,
+                    )
+                })
+            };
+            if let Some((runtime_id, runtime_generation, status, complete)) = local {
+                let exact_publication = complete
+                    && runtime_id == record.runtime_id
+                    && expected_generation
+                        .is_none_or(|generation| generation == runtime_generation)
+                    && !status.is_rotating();
+                if exact_publication {
+                    let finalization_lease = match self
+                        .acquire_runtime_lease_at(
+                            &record,
+                            crate::coordination::SessionOperation::Readopt,
+                        )
+                        .await
+                    {
+                        Ok(lease) => lease,
+                        Err(error) => {
+                            tracing::debug!(
+                                session_id = %id,
+                                %error,
+                                "the rotation publication retry could not acquire exact authority"
+                            );
+                            reclaimed.deferred_sessions += 1;
+                            return;
+                        }
+                    };
+                    let finalized = self.finalize_rotation_publication(&id, &claim).await;
+                    if let Some(lease) = finalization_lease {
+                        if let Err(error) = self.store.release_session_lease(&lease).await {
+                            tracing::debug!(
+                                session_id = %id,
+                                %error,
+                                "the rotation publication retry lease ended before explicit release"
+                            );
+                        }
+                    }
+                    match finalized {
+                        Ok(true) => return,
+                        Ok(false) => {
+                            reclaimed.deferred_sessions += 1;
+                            return;
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                session_id = %id,
+                                %error,
+                                "the published runtime remains fenced by its rotation claim"
+                            );
+                            reclaimed.deferred_sessions += 1;
+                            return;
+                        }
+                    }
+                }
+
+                if coordinated_authority.is_some() {
+                    // Re-read the durable boundary and remove only while a
+                    // fresh Reclaim lease plus the local lifecycle/input gates
+                    // exclude a successor publication. A following sweep can
+                    // then readopt from one coherent snapshot.
+                    self.discard_stale_coordinated_entry(&record).await;
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            }
+        }
+
         // Every path in this branch carries the current durable authority:
         // confirmed loss retires it before replacement, rotation retains it
         // until a usable candidate can switch atomically, and readoption holds
@@ -550,7 +1082,28 @@ impl SessionService {
                 reclaimed.rotated_sessions += 1;
                 return;
             }
-            if self.entries.read().await.contains_key(&id) {
+            let has_local_entry = {
+                let entries = self.entries.read().await;
+                match entries.get(&id) {
+                    Some(entry)
+                        if entry.publication_complete
+                            && entry.runtime_generation == authority.generation
+                            && entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                                == authority.runtime_id.as_deref() =>
+                    {
+                        return;
+                    }
+                    Some(_) => true,
+                    None => false,
+                }
+            };
+            if has_local_entry {
+                // The authority snapshot above can become stale while a local
+                // readoption publishes. Recheck and remove only under a fresh
+                // exact lease, then let the next sweep readopt from one coherent
+                // record/authority snapshot.
+                self.discard_stale_coordinated_entry(&record).await;
+                reclaimed.deferred_sessions += 1;
                 return;
             }
             match self.readopt(&record).await {
@@ -580,13 +1133,97 @@ impl SessionService {
          * runtime has not lost one.
          */
         if alive == Some(false) {
-            if let Some(runtime) = record.runtime_id.clone() {
-                let cause = census
+            let expected_runtime = record.runtime_id.clone();
+            let expected_boundary = record.clone();
+            // Nothing in this critical section may reacquire this session's
+            // lifecycle gate. It deliberately spans the authoritative store
+            // recheck, provider teardown, loss persistence, and exact entry
+            // removal so delivery, rotation, and reconciliation cannot
+            // interleave generations.
+            let _lifecycle = self.lock_lifecycle(&id).await;
+            let _input_fence = self.input_gates.gate(&id).write_owned().await;
+            let latest = match self.store.get(&id).await {
+                Ok(Some(latest))
+                    if latest.session.wants_runtime()
+                        && same_compatibility_runtime_boundary(&expected_boundary, &latest) =>
+                {
+                    latest
+                }
+                Ok(_) => {
+                    tracing::debug!(session_id = %id, "the session changed before its lost runtime could be recorded");
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(session_id = %id, %error, "cannot recheck the session before recording its lost runtime");
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            record = latest;
+
+            let entry_matches_snapshot = {
+                let entries = self.entries.read().await;
+                entries.get(&id).is_none_or(|entry| {
+                    entry.runtime_generation == 0
+                        && entry.runtime.as_ref().map(|handle| handle.0.as_str())
+                            == expected_runtime.as_deref()
+                })
+            };
+            if !entry_matches_snapshot {
+                tracing::warn!(session_id = %id, "a newer runtime entry replaced the one reported lost; deferring reconciliation");
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+
+            if let Some(runtime) = expected_runtime.as_deref() {
+                let view = census
                     .get(&record.session.kernel)
-                    .and_then(|view| view.stopped_because.get(&runtime))
+                    .expect("the trusted census selected this compatibility session");
+                if view.owners.contains_key(runtime) {
+                    let Some(adapter) = self.adapters.get(&record.session.kernel) else {
+                        tracing::warn!(
+                            session_id = %id,
+                            kernel = %record.session.kernel,
+                            "cannot tear down a listed non-serving runtime without its adapter"
+                        );
+                        reclaimed.deferred_sessions += 1;
+                        return;
+                    };
+                    if let Err(error) = self
+                        .require_compatibility_provider_mutation(
+                            &id,
+                            "non-serving runtime reconciliation",
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            session_id = %id,
+                            runtime = %runtime,
+                            %error,
+                            "cannot authorize non-serving compatibility runtime teardown"
+                        );
+                        reclaimed.deferred_sessions += 1;
+                        return;
+                    }
+                    if let Err(error) = adapter.terminate(&RuntimeHandle(runtime.to_string())).await
+                    {
+                        tracing::warn!(
+                            session_id = %id,
+                            runtime = %runtime,
+                            %error,
+                            "non-serving compatibility runtime teardown failed"
+                        );
+                        reclaimed.deferred_sessions += 1;
+                        return;
+                    }
+                }
+                let cause = view
+                    .stopped_because
+                    .get(runtime)
                     .copied()
                     .map(RuntimeLossCause::from);
-                if let Err(error) = self.record_runtime_lost(&mut record, &runtime, cause).await {
+                if let Err(error) = self.record_runtime_lost(&mut record, runtime, cause).await {
                     tracing::error!(
                         session_id = %id,
                         runtime = %runtime,
@@ -597,6 +1234,27 @@ impl SessionService {
                     return;
                 }
                 reclaimed.lost_runtimes += 1;
+            }
+
+            // Remove only the entry backed by the runtime the census proved
+            // lost. A newer generation is evidence that this sweep snapshot
+            // is stale and must never be discarded here.
+            let removed = {
+                let mut entries = self.entries.write().await;
+                let exact_lost = entries.get(&id).is_some_and(|entry| {
+                    entry.runtime.as_ref().map(|handle| handle.0.as_str())
+                        == expected_runtime.as_deref()
+                });
+                exact_lost.then(|| entries.remove(&id)).flatten()
+            };
+            if removed.is_some() {
+                if expected_runtime.is_some() {
+                    tracing::warn!(session_id = %id, "the runtime behind a live session has gone");
+                }
+            } else if self.entries.read().await.contains_key(&id) {
+                tracing::warn!(session_id = %id, "the runtime entry changed while its loss was being recorded; deferring reconciliation");
+                reclaimed.deferred_sessions += 1;
+                return;
             }
         }
 
@@ -614,17 +1272,36 @@ impl SessionService {
             return;
         }
 
-        if self.entries.read().await.contains_key(&id) {
+        let (has_local_entry, stale_compatibility_entry) = {
+            let entries = self.entries.read().await;
+            match entries.get(&id) {
+                Some(entry) => (
+                    true,
+                    entry.session.status.is_rotating()
+                        || !entry.publication_complete
+                        || entry.runtime_generation != 0
+                        || entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                            != record.runtime_id.as_deref(),
+                ),
+                None => (false, false),
+            }
+        };
+        if stale_compatibility_entry {
+            self.discard_stale_compatibility_entry(&record).await;
+            reclaimed.deferred_sessions += 1;
+            return;
+        }
+        if has_local_entry {
             if alive != Some(false) {
                 // Either it is running, or nobody can say otherwise. Neither is
                 // grounds for touching a session this process is serving.
                 return;
             }
-            // Serving a session whose sandbox is known to be gone: every
-            // keystroke is going nowhere. Drop the attachment so it can be
-            // rebuilt honestly.
-            tracing::warn!(session_id = %id, "the runtime behind a live session has gone");
-            self.entries.write().await.remove(&id);
+            // The known-lost branch above removes only the exact generation it
+            // proved dead. Anything still here is newer or internally
+            // inconsistent; neither may be replaced from this stale snapshot.
+            reclaimed.deferred_sessions += 1;
+            return;
         }
 
         // Worth trying whenever the runtime is not known to be gone, because
@@ -714,26 +1391,16 @@ impl SessionService {
             }
 
             // Readoption performs network work and can lose a race with a stop,
-            // termination, deletion, or replacement runtime. Never reprovision
-            // from the old sweep snapshot after that: reread the desired state
-            // and defer if it now names a different runtime.
-            let latest = match self.store.get(&id).await {
-                Ok(Some(latest)) if latest.session.wants_runtime() => latest,
-                Ok(_) => return,
-                Err(error) => {
-                    tracing::warn!(session_id = %id, %error, "cannot recheck the session after readoption failed");
-                    reclaimed.deferred_sessions += 1;
-                    return;
-                }
-            };
-            if latest.runtime_id != record.runtime_id
-                || latest.session.kernel != record.session.kernel
-            {
-                tracing::debug!(session_id = %id, "the session changed while readoption was in flight; leaving its new state for the next pass");
-                reclaimed.deferred_sessions += 1;
+            // termination, or successor runtime. Retire only the same fresh
+            // compatibility boundary, then reprovision from the committed
+            // runtime-free result.
+            let Some(cleared) = self
+                .clear_failed_compatibility_readoption(&record, reclaimed)
+                .await
+            else {
                 return;
-            }
-            record = latest;
+            };
+            record = cleared;
         }
 
         self.reprovision(record, reclaimed).await;
@@ -796,12 +1463,19 @@ impl SessionService {
         let retired = match self.retire_current_runtime(&mut lease).await {
             Ok(retired) => retired,
             Err(error) => {
+                let confirmed = self.confirm_retired_lifecycle_authority(&mut lease).await;
                 tracing::warn!(
                     session_id = %id,
                     runtime = %runtime,
                     %error,
+                    confirmed,
                     "cannot retire the lost runtime authority"
                 );
+                // Whether retirement committed is unknown until confirmation.
+                // In either case this replica's old channel is no longer safe:
+                // a confirmed retirement has no receipt to continue with, and
+                // an unconfirmed one may still have committed remotely.
+                self.entries.write().await.remove(&id);
                 drop(input_fence);
                 self.finish_failed_coordinated_recovery(&id, &lease, false, reclaimed)
                     .await;
@@ -900,15 +1574,6 @@ impl SessionService {
         reclaimed: &mut Reclaimed,
     ) {
         let id = record.session.id.clone();
-        if record.session.status == SessionStatus::Rotating {
-            tracing::warn!(
-                session_id = %id,
-                generation = authority.generation,
-                "cannot resume a handover whose former authority is already absent"
-            );
-            reclaimed.deferred_sessions += 1;
-            return;
-        }
         let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
             tracing::warn!(
                 session_id = %id,
@@ -1069,6 +1734,12 @@ impl SessionService {
                 .await;
             return;
         }
+        if starting.session.status.is_rotating() && starting.rotation_claim.is_none() {
+            starting.rotation_claim = Some(format!("rotn_{}", uuid::Uuid::new_v4().simple()));
+        }
+        if starting.rotation_claim.is_some() {
+            self.rotations_in_progress.write().await.insert(id.clone());
+        }
         if starting.session.status != SessionStatus::Provisioning
             || starting.session.stop_reason.is_some()
         {
@@ -1088,11 +1759,7 @@ impl SessionService {
 
         let boundary = SessionBoundary::for_record(&starting, lease.boundary.authority.generation);
         if boundary != lease.boundary {
-            if let Err(error) = self
-                .store
-                .advance_session_lease(&mut lease, &boundary)
-                .await
-            {
+            if let Err(error) = self.advance_runtime_lease(&mut lease, &boundary).await {
                 tracing::error!(
                     session_id = %id,
                     %error,
@@ -1119,6 +1786,7 @@ impl SessionService {
         }
 
         let geometry = starting.session.geometry;
+        let rotation_claim = starting.rotation_claim.clone();
         let spec = SessionSpec {
             geometry: Some(geometry),
             options: starting.session.options.clone(),
@@ -1139,9 +1807,12 @@ impl SessionService {
                     spec,
                     geometry,
                     None,
-                    crate::provision_failure::Abandonment::Keep,
-                    Some(lease),
-                    None,
+                    crate::provision_support::BringUpContext {
+                        outcome: crate::provision_failure::Abandonment::Keep,
+                        lease: Some(lease),
+                        handover: None,
+                        rotation_claim,
+                    },
                 )
                 .await;
         });
@@ -1221,15 +1892,63 @@ impl SessionService {
     /// The session is not recreated — same id, same history, same options — so
     /// everything already referring to it keeps working. Only the sandbox is
     /// new, and the sandbox was never the session.
-    async fn reprovision(self: &Arc<Self>, record: SessionRecord, reclaimed: &mut Reclaimed) {
+    async fn reprovision(self: &Arc<Self>, mut record: SessionRecord, reclaimed: &mut Reclaimed) {
         let id = record.session.id.clone();
-        let was_rotating = record.session.status.is_rotating();
+        if record.runtime_id.is_some() {
+            tracing::error!(
+                session_id = %id,
+                runtime = ?record.runtime_id,
+                "refusing to reprovision while a previous runtime remains durable"
+            );
+            reclaimed.deferred_sessions += 1;
+            return;
+        }
         let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
             return;
         };
         if !self.begin_start(&id).await {
             return;
         }
+        let restore = if record.pending_handover.is_some() {
+            let snapshot = match self.load_pending_handover_snapshot(&record).await {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "cannot verify the pending handover snapshot; leaving the session fenced"
+                    );
+                    self.finish_start(&id).await;
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            record = match self.publish_pending_handover_target(record).await {
+                Ok(published) => published,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "cannot publish the pending handover target; leaving the session fenced"
+                    );
+                    self.finish_start(&id).await;
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            snapshot
+        } else if record.is_effectively_rotating() {
+            tracing::error!(
+                session_id = %id,
+                "refusing to provision a rotating session without a durable handover snapshot"
+            );
+            self.finish_start(&id).await;
+            reclaimed.deferred_sessions += 1;
+            return;
+        } else {
+            None
+        };
+        let was_rotating = record.is_effectively_rotating();
         if was_rotating {
             // A replacement process has no in-memory rotation marker to inherit.
             // Preserve the operation's identity before rewriting the durable
@@ -1238,9 +1957,6 @@ impl SessionService {
         }
 
         let mut starting = record.clone();
-        // A runtime it no longer has must not still be named, or the next sweep
-        // reads a stale id and believes the session is fine.
-        starting.runtime_id = None;
         if starting.session.status != SessionStatus::Provisioning {
             starting.session.status = SessionStatus::Provisioning;
         }
@@ -1253,6 +1969,7 @@ impl SessionService {
 
         tracing::warn!(session_id = %id, "starting a new runtime for a session that lost one");
         let geometry = starting.session.geometry;
+        let rotation_claim = starting.rotation_claim.clone();
         let spec = SessionSpec {
             geometry: Some(geometry),
             options: starting.session.options.clone(),
@@ -1272,8 +1989,11 @@ impl SessionService {
                     spec,
                     adapter,
                     geometry,
-                    None,
-                    crate::provision_failure::Abandonment::Keep,
+                    restore,
+                    crate::provision_support::BringUpContext::compatibility(
+                        crate::provision_failure::Abandonment::Keep,
+                        rotation_claim,
+                    ),
                 )
                 .await;
         });

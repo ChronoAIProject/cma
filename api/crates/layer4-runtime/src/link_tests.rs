@@ -154,6 +154,52 @@ fn the_control_vocabulary_still_parses_from_its_tag() {
     assert!(serde_json::from_str::<ControlFrame>(r#"{"t":"nope"}"#).is_err());
 }
 
+#[tokio::test]
+async fn a_correlated_credential_is_installed_before_its_matching_result() {
+    let state = AppState::for_test(&["/bin/echo"]);
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    control(
+        r#"{"t":"credential","operation_id":"opaque-17","value":"secret"}"#,
+        "sbx_credential",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+
+    let answer = answers.recv().await.expect("installation is acknowledged");
+    assert!(
+        state.credential.is_set().await,
+        "the result must follow the holder mutation"
+    );
+    let answer: serde_json::Value = serde_json::from_str(&answer).expect("result is JSON");
+    assert_eq!(answer["t"], "credential_result");
+    assert_eq!(answer["operation_id"], "opaque-17");
+    assert_eq!(answer["installed"], true);
+}
+
+#[tokio::test]
+async fn a_legacy_credential_installs_without_an_unsolicited_result() {
+    let state = AppState::for_test(&["/bin/echo"]);
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    control(
+        r#"{"t":"credential","value":"legacy-secret"}"#,
+        "sbx_legacy_credential",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+
+    assert!(state.credential.is_set().await);
+    assert!(matches!(
+        answers.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+}
+
 #[test]
 fn a_switch_names_the_program_to_restart() {
     // The command is the kernel's own front-end name, carried verbatim; the

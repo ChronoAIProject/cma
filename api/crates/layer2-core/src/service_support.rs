@@ -69,6 +69,7 @@ pub(crate) fn service_with_environments_and_settings_service(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
@@ -76,6 +77,7 @@ pub(crate) fn service_with_environments_and_settings_service(
         store,
         crate::service::SessionPorts {
             context: None,
+            handovers: Some(handovers),
             credentials: None,
             skills: None,
             settings: Some(settings),
@@ -106,6 +108,7 @@ pub(crate) fn service_over_with_context(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
@@ -113,6 +116,7 @@ pub(crate) fn service_over_with_context(
         store,
         crate::service::SessionPorts {
             context: Some(context),
+            handovers: Some(handovers),
             credentials: None,
             skills: None,
             settings: None,
@@ -143,6 +147,7 @@ pub(crate) fn service_on_version_with_skills(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     let environments = crate::environment_service::EnvironmentProfileService::new(
         Arc::new(crate::test_support::FakeProfileStore::default()),
@@ -165,6 +170,7 @@ pub(crate) fn service_on_version_with_skills(
         store,
         crate::service::SessionPorts {
             skills: Some(skills),
+            handovers: Some(handovers),
             ..Default::default()
         },
         environments,
@@ -186,6 +192,7 @@ pub(crate) fn service_on_version(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
@@ -193,6 +200,7 @@ pub(crate) fn service_on_version(
         store,
         crate::service::SessionPorts {
             context: None,
+            handovers: Some(handovers),
             credentials: None,
             skills: None,
             settings: None,
@@ -218,6 +226,7 @@ pub(crate) fn service_on_version_with_settings(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     let settings = Arc::new(crate::PlatformSettingsService::new(Arc::new(
         StaticSettingsStore(settings),
@@ -228,6 +237,7 @@ pub(crate) fn service_on_version_with_settings(
         store,
         crate::service::SessionPorts {
             settings: Some(settings),
+            handovers: Some(handovers),
             ..Default::default()
         },
         no_environments(),
@@ -254,12 +264,16 @@ pub(crate) fn service_with_environments_on_version(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
         factory,
         store,
-        crate::service::SessionPorts::default(),
+        crate::service::SessionPorts {
+            handovers: Some(handovers),
+            ..Default::default()
+        },
         environments,
         Deployment {
             runtime_version: Some(version.to_string()),
@@ -292,6 +306,7 @@ pub(crate) fn service_with_credential_source(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
@@ -299,6 +314,7 @@ pub(crate) fn service_with_credential_source(
         store,
         crate::service::SessionPorts {
             context: None,
+            handovers: Some(handovers),
             credentials: Some(credentials),
             skills: None,
             settings: None,
@@ -336,6 +352,7 @@ pub(crate) fn service_as(
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
@@ -343,6 +360,7 @@ pub(crate) fn service_as(
         store,
         crate::service::SessionPorts {
             context: None,
+            handovers: Some(handovers),
             credentials: None,
             skills: None,
             settings: None,

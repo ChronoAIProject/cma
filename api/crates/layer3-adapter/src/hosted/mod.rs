@@ -21,6 +21,7 @@ mod deployment;
 mod handshake;
 mod inbound;
 mod link;
+pub(crate) use link::credential_answer;
 mod loss;
 mod telemetry;
 pub(super) mod turn;
@@ -353,6 +354,101 @@ impl Drop for AbortLinkOnDrop {
     }
 }
 
+/// Credential-install acknowledgements, correlated to one request and socket generation.
+#[derive(Clone, Default)]
+pub(crate) struct CredentialWaiters(
+    std::sync::Arc<tokio::sync::Mutex<BTreeMap<(String, String), CredentialWaiter>>>,
+);
+
+struct CredentialWaiter {
+    link: WeakTerminalInputSender,
+    answer: oneshot::Sender<bool>,
+}
+
+impl CredentialWaiters {
+    /// Register before enqueueing so even an immediate reply has an owner.
+    pub(crate) async fn expect(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &TerminalInputSender,
+    ) -> oneshot::Receiver<bool> {
+        let (tx, rx) = oneshot::channel();
+        self.0.lock().await.insert(
+            (handle.to_string(), operation_id.to_string()),
+            CredentialWaiter {
+                link: link.downgrade(),
+                answer: tx,
+            },
+        );
+        rx
+    }
+
+    /// Settle only the exact operation sent through this exact socket generation.
+    pub(crate) async fn settle(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &TerminalInputSender,
+        installed: bool,
+    ) {
+        let key = (handle.to_string(), operation_id.to_string());
+        let mut waiters = self.0.lock().await;
+        let is_same_link = waiters
+            .get(&key)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if !is_same_link {
+            return;
+        }
+        if let Some(waiter) = waiters.remove(&key) {
+            let _ = waiter.answer.send(installed);
+        }
+    }
+
+    /// Remove one timed-out or failed operation without disturbing a successor.
+    pub(crate) async fn forget_operation(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &TerminalInputSender,
+    ) {
+        let key = (handle.to_string(), operation_id.to_string());
+        let mut waiters = self.0.lock().await;
+        let is_same_link = waiters
+            .get(&key)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if is_same_link {
+            waiters.remove(&key);
+        }
+    }
+
+    /// Fail an operation whose frame could not be written to its socket.
+    pub(crate) async fn fail(&self, handle: &str, operation_id: &str) {
+        let waiter = self
+            .0
+            .lock()
+            .await
+            .remove(&(handle.to_string(), operation_id.to_string()));
+        if let Some(waiter) = waiter {
+            let _ = waiter.answer.send(false);
+        }
+    }
+
+    /// Cancel every request belonging to a socket that closed or was replaced.
+    pub(crate) async fn forget_link(&self, handle: &str, link: &TerminalInputSender) {
+        let mut waiters = self.0.lock().await;
+        waiters.retain(|(runtime, _), waiter| {
+            runtime != handle
+                || waiter
+                    .link
+                    .upgrade()
+                    .is_some_and(|expected| !expected.same_channel(link))
+        });
+    }
+}
+
 /// Registration and cleanup for one runtime link generation.
 ///
 /// A generation supervisor owns reader, writer, and registry cleanup, while
@@ -364,6 +460,7 @@ pub(crate) struct LinkLifecycle {
     runtime: String,
     links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, RegisteredLink>>>,
     switch_waiters: SwitchWaiters,
+    credential_waiters: CredentialWaiters,
 }
 
 impl LinkLifecycle {
@@ -405,8 +502,12 @@ impl LinkLifecycle {
             // must still retire instead of surviving unregistered.
             let runtime = self.runtime.clone();
             let switch_waiters = self.switch_waiters.clone();
+            let credential_waiters = self.credential_waiters.clone();
             let retirement = tokio::spawn(async move {
                 switch_waiters.forget(&runtime, &previous.sender).await;
+                credential_waiters
+                    .forget_link(&runtime, &previous.sender)
+                    .await;
                 previous.retire().await;
             });
             let _ = retirement.await;
@@ -436,6 +537,9 @@ impl LinkLifecycle {
         // A successor may be in the map while this generation still owns the
         // previous waiter, so waiter cleanup independently checks identity.
         self.switch_waiters.forget(&self.runtime, link).await;
+        self.credential_waiters
+            .forget_link(&self.runtime, link)
+            .await;
     }
 
     pub(crate) async fn forget_if_whole_retired(&self, link: &TerminalInputSender) {
@@ -448,6 +552,9 @@ impl LinkLifecycle {
         };
         if removed.is_some() {
             self.switch_waiters.forget(&self.runtime, link).await;
+            self.credential_waiters
+                .forget_link(&self.runtime, link)
+                .await;
         }
     }
 
@@ -464,6 +571,25 @@ impl LinkLifecycle {
             .await
             .get(&self.runtime)
             .is_some_and(|current| current.sender.same_channel(link) && !link.is_closed())
+    }
+
+    /// Settle a credential request only on the link generation that carried it.
+    pub(crate) async fn settle_credential(
+        &self,
+        link: &TerminalInputSender,
+        operation_id: &str,
+        installed: bool,
+    ) {
+        self.credential_waiters
+            .settle(&self.runtime, operation_id, link, installed)
+            .await;
+    }
+
+    /// Fail an exact operation after this link's WebSocket write failed.
+    pub(crate) async fn fail_credential(&self, operation_id: &str) {
+        self.credential_waiters
+            .fail(&self.runtime, operation_id)
+            .await;
     }
 }
 
@@ -497,6 +623,8 @@ pub struct HostedKernel {
     /// in silence. One waiter per runtime, because a session has one plane
     /// and cannot be moved twice at once.
     switch_waiters: SwitchWaiters,
+    /// Credential acknowledgements awaiting an exact operation and link generation.
+    credential_waiters: CredentialWaiters,
 }
 
 impl HostedKernel {
@@ -516,6 +644,7 @@ impl HostedKernel {
             agent_notes: agent_notes.into(),
             links: std::sync::Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             switch_waiters: SwitchWaiters::default(),
+            credential_waiters: CredentialWaiters::default(),
         }
     }
 
@@ -816,8 +945,10 @@ impl HostedKernel {
     async fn retire_removed_link(&self, handle: &str, link: RegisteredLink) {
         let handle = handle.to_string();
         let switch_waiters = self.switch_waiters.clone();
+        let credential_waiters = self.credential_waiters.clone();
         let retirement = tokio::spawn(async move {
             switch_waiters.forget(&handle, &link.sender).await;
+            credential_waiters.forget_link(&handle, &link.sender).await;
             link.retire().await;
         });
         let _ = retirement.await;
@@ -869,6 +1000,7 @@ impl HostedKernel {
     }
 
     /// The link to a runtime, if one is open.
+    #[cfg(test)]
     pub(crate) async fn link_to(&self, handle: &str) -> Option<TerminalInputSender> {
         self.links
             .lock()
@@ -882,12 +1014,19 @@ impl HostedKernel {
         self.switch_waiters.clone()
     }
 
+    /// The acknowledgement registry used by the reader for credential results.
+    #[cfg(test)]
+    pub(crate) fn credential_waiters(&self) -> CredentialWaiters {
+        self.credential_waiters.clone()
+    }
+
     /// Registration and cleanup shared by both halves of a runtime link.
     pub(crate) fn link_lifecycle(&self, handle: &str) -> LinkLifecycle {
         LinkLifecycle {
             runtime: handle.to_string(),
             links: std::sync::Arc::clone(&self.links),
             switch_waiters: self.switch_waiters.clone(),
+            credential_waiters: self.credential_waiters.clone(),
         }
     }
 
@@ -923,20 +1062,36 @@ mod hosted_tests;
 /// credential". Two of the three kernels serve only conversations, so for
 /// those there was no path to a credential at all.
 ///
-/// Only a credential is written here. Anything else arriving on this sender is
-/// dropped loudly rather than framed onto a lane it does not belong to: the
-/// conversation itself has its own typed channel, and terminal bytes have no
-/// meaning on a socket nobody is painting.
-pub(crate) fn control_lane<S>(sink: std::sync::Arc<tokio::sync::Mutex<S>>) -> TerminalInputSender
+/// Only credentials and plane switches are written here. Anything else
+/// arriving on this sender is dropped loudly rather than framed onto a lane it
+/// does not belong to: the conversation itself has its own typed channel, and
+/// terminal bytes have no meaning on a socket nobody is painting.
+pub(crate) fn control_lane<S>(
+    sink: std::sync::Arc<tokio::sync::Mutex<S>>,
+    lifecycle: Option<LinkLifecycle>,
+) -> TerminalInputSender
 where
     S: futures_util::SinkExt<tokio_tungstenite::tungstenite::Message> + Unpin + Send + 'static,
 {
     TerminalInputSender::spawn(CONTROL_BUFFER, move |input| {
         let sink = std::sync::Arc::clone(&sink);
+        let lifecycle = lifecycle.clone();
         async move {
+            let credential_operation = match &input {
+                TerminalInput::Credential { operation_id, .. } => Some(operation_id.clone()),
+                _ => None,
+            };
             let message = match input {
-                TerminalInput::Credential(value) => tokio_tungstenite::tungstenite::Message::Text(
-                    serde_json::json!({ "t": "credential", "value": value }).to_string(),
+                TerminalInput::Credential {
+                    operation_id,
+                    value,
+                } => tokio_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "t": "credential",
+                        "operation_id": operation_id,
+                        "value": value,
+                    })
+                    .to_string(),
                 ),
                 TerminalInput::SwitchPlane { command } => {
                     tokio_tungstenite::tungstenite::Message::Text(
@@ -951,9 +1106,18 @@ where
                 }
             };
             // Never logged with a credential's value, here or anywhere below this line.
-            sink.lock().await.send(message).await.map_err(|_| {
-                AdapterError::Unavailable("the conversation control link write failed".into())
-            })
+            if sink.lock().await.send(message).await.is_err() {
+                tracing::warn!("a conversation's control lane closed");
+                if let (Some(operation_id), Some(lifecycle)) =
+                    (credential_operation, lifecycle.as_ref())
+                {
+                    lifecycle.fail_credential(&operation_id).await;
+                }
+                return Err(AdapterError::Unavailable(
+                    "the conversation control link write failed".into(),
+                ));
+            }
+            Ok(())
         }
     })
 }

@@ -11,14 +11,17 @@ use axum::{
     Json, Router,
 };
 use layer2_core::store::StoreError;
-use layer2_core::{CallerCredential, CredentialSource as _, ServiceId, SessionId, SubjectId};
+use layer2_core::{
+    CallerCredential, CredentialDeliveryTarget, CredentialSource as _, ServiceId, SessionId,
+    SubjectId,
+};
 
 use super::*;
 use crate::auth::persistence::{
-    AuthStore, AuthSweepItem, BrowserSession, CredentialLeaseCursor, CredentialMutationCursor,
-    CredentialReconciliationCursor, CredentialReissueCursor, LoginAttempt, MemoryAuthStore,
-    RevokeDebtCursor, RevokeDebtWork, SecretDigest, SecretValue, SubjectAuthState,
-    SubjectAuthorizationCursor, SubjectOwnerCursor, SubjectRefreshCursor,
+    AuthStore, AuthSweepItem, BrowserSession, CredentialExpiryCursor, CredentialLeaseCursor,
+    CredentialMutationCursor, CredentialReconciliationCursor, CredentialReissueCursor,
+    LoginAttempt, MemoryAuthStore, RevokeDebtCursor, RevokeDebtWork, SecretDigest, SecretValue,
+    SubjectAuthState, SubjectAuthorizationCursor, SubjectOwnerCursor, SubjectRefreshCursor,
 };
 use crate::auth::{AuthMode, SubjectTokens};
 
@@ -53,6 +56,25 @@ fn credential(id: &str, value: &str, owner: &SubjectId, scope: &str) -> DurableC
     }
 }
 
+fn credential_expiring_at(
+    id: &str,
+    value: &str,
+    owner: &SubjectId,
+    scope: &str,
+    expires_at: SystemTime,
+) -> DurableCredential {
+    let mut credential = credential(id, value, owner, scope);
+    credential.expires_at = Some(expires_at);
+    credential
+}
+
+fn delivery_target(generation: u64, runtime_id: &str) -> CredentialDeliveryTarget {
+    CredentialDeliveryTarget {
+        runtime_generation: generation,
+        runtime_id: runtime_id.into(),
+    }
+}
+
 fn state(
     session: &SessionId,
     current: Option<DurableCredential>,
@@ -64,6 +86,7 @@ fn state(
         request_bound_credential: None,
         current,
         pending,
+        pending_target: None,
         revoke_debt: Vec::new(),
         lease: None,
         retired: false,
@@ -267,6 +290,17 @@ impl AuthStore for TerminalInsertRaceStore {
         unreachable!("terminal insert race does not scan credentials")
     }
 
+    async fn current_credentials_expiring_before(
+        &self,
+        _expires_before: SystemTime,
+        _after: Option<&CredentialExpiryCursor>,
+        _through_sequence: u64,
+        _limit: usize,
+    ) -> Result<Vec<AuthSweepItem<CredentialExpiryCursor, SessionCredentialState>>, StoreError>
+    {
+        unreachable!("terminal insert race does not scan credentials")
+    }
+
     async fn pending_credentials_due_for_reissue(
         &self,
         _after: Option<&CredentialMutationCursor>,
@@ -330,13 +364,23 @@ async fn list_owner_services(headers: HeaderMap) -> Json<serde_json::Value> {
 async fn mint_key(
     State(platform): State<MintPlatform>,
     headers: HeaderMap,
-    Json(_body): Json<serde_json::Value>,
+    Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     assert_eq!(
         headers
             .get(AUTHORIZATION)
             .and_then(|value| value.to_str().ok()),
         Some("Bearer owner-access")
+    );
+    let expires_at = body
+        .get("expires_at")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| mongodb::bson::DateTime::parse_rfc3339_str(value).ok())
+        .expect("mint requests a valid absolute provider expiry")
+        .to_system_time();
+    assert!(
+        expires_at > SystemTime::now() + Duration::from_secs(29 * 24 * 60 * 60),
+        "the provider expiry leaves the documented replacement margin"
     );
     let mint = platform.mints.fetch_add(1, Ordering::SeqCst) + 1;
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -500,6 +544,24 @@ fn scope_fingerprints_are_order_independent_but_domain_specific() {
     let second = scope_fingerprint(&[ServiceId::new("a"), ServiceId::new("b")]);
     assert_eq!(first, second);
     assert_ne!(first, scope_fingerprint(&[ServiceId::new("a")]))
+}
+
+#[test]
+fn credential_expiry_cutoff_is_inclusive_and_legacy_values_remain_unbounded() {
+    let owner = SubjectId("owner".into());
+    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_000);
+    let mut held = credential("provider-key", "value", &owner, "scope");
+
+    assert!(credential_is_deliverable(&held, cutoff));
+    held.expires_at = Some(cutoff);
+    assert!(
+        !credential_is_deliverable(&held, cutoff),
+        "the exact replacement boundary is already nondeliverable"
+    );
+    held.expires_at = Some(cutoff + Duration::from_nanos(1));
+    assert!(credential_is_deliverable(&held, cutoff));
+    held.expires_at = Some(cutoff - Duration::from_nanos(1));
+    assert!(!credential_is_deliverable(&held, cutoff));
 }
 
 async fn expire_mint_lease(store: &MemoryAuthStore, session: &SessionId) {
@@ -698,6 +760,19 @@ async fn lost_initial_mint_response_is_reclaimed_after_restart_and_lease_expiry(
             .await,
         Err(StoreError::Unavailable(_))
     ));
+    assert_eq!(platform.remaining_ids(), ["provider-key-1"]);
+    assert_eq!(
+        platform.delete_attempts.load(Ordering::SeqCst),
+        1,
+        "an unreadable session cannot prove the unmatched key is safe to reclaim"
+    );
+    assert_eq!(
+        restarted
+            .reclaim_unrecorded_credentials(&super::reclaim_tests::empty_session_service())
+            .await
+            .expect("a later readable reconciliation reclaims the unmatched key"),
+        1
+    );
     assert!(platform.remaining_ids().is_empty());
     assert_eq!(platform.delete_attempts.load(Ordering::SeqCst), 2);
     server.abort();
@@ -764,6 +839,19 @@ async fn lost_replacement_response_reclaims_only_the_unmatched_key_after_restart
             .await,
         Err(StoreError::Unavailable(_))
     ));
+    assert_eq!(platform.remaining_ids(), ["provider-key-1", "provider-old"]);
+    assert_eq!(
+        platform.delete_attempts.load(Ordering::SeqCst),
+        1,
+        "an unreadable session cannot confirm which sibling reached its runtime"
+    );
+    assert_eq!(
+        restarted
+            .reclaim_unrecorded_credentials(&super::reclaim_tests::empty_session_service())
+            .await
+            .expect("a later readable reconciliation reclaims the unmatched key"),
+        1
+    );
     assert_eq!(platform.remaining_ids(), ["provider-old"]);
     assert_eq!(platform.delete_attempts.load(Ordering::SeqCst), 2);
     let durable = store
@@ -771,11 +859,11 @@ async fn lost_replacement_response_reclaims_only_the_unmatched_key_after_restart
         .await
         .expect("store works")
         .expect("current custody remains");
-    assert_eq!(
-        durable.current.as_ref().map(|held| held.id.as_str()),
-        Some("provider-old")
-    );
+    assert!(durable.retired);
+    assert!(durable.current.is_none());
     assert!(durable.pending.is_none());
+    assert_eq!(durable.revoke_debt.len(), 1);
+    assert_eq!(durable.revoke_debt[0].id, "provider-old");
     server.abort();
 }
 
@@ -1254,6 +1342,14 @@ async fn a_request_bearer_mints_session_custody_without_becoming_subject_state()
         .await
         .expect("store works")
         .expect("session custody persists");
+    assert!(
+        custody
+            .current
+            .as_ref()
+            .and_then(|held| held.expires_at)
+            .is_some_and(|expires_at| expires_at > SystemTime::now()),
+        "CMA retains the exact provider-enforced expiry with custody"
+    );
     assert_eq!(
         custody
             .current
@@ -1723,6 +1819,1385 @@ async fn confirming_a_reissue_promotes_pending_and_queues_the_old_value() {
     assert_eq!(promoted.current.unwrap().id, "new-id");
     assert!(promoted.pending.is_none());
     assert_eq!(promoted.revoke_debt[0].id, "old-id");
+}
+
+#[tokio::test]
+async fn runtime_delivery_prepare_retargets_pending_to_h2_and_fences_h1_confirmation() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_h2_retargets_pending".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let h1 = delivery_target(7, "runtime-h1");
+    let h2 = delivery_target(8, "runtime-h2");
+    let mut custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, &scope)),
+        Some(credential("pending-b", "value-b", &owner, &scope)),
+    );
+    custody.pending_target = Some(h1.clone());
+    store.insert_credential(custody).await.expect("store works");
+
+    assert_eq!(
+        auth.prepare_credential_delivery(&session, &owner, &services, None, &h2)
+            .await
+            .expect("H2 preparation persists its exact target"),
+        Some("value-b".into()),
+        "a successor runtime selects pending B instead of ordinary current A"
+    );
+    let rebound = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(rebound.pending_target.as_ref(), Some(&h2));
+    assert_eq!(rebound.generation, 1, "retargeting is one durable CAS");
+
+    assert!(!auth
+        .confirm_credential_delivery(&session, &owner, &services, "value-b", &h1)
+        .await
+        .expect("the stale acknowledgement fails closed"));
+    let unchanged = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        unchanged.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert_eq!(
+        unchanged.pending.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert_eq!(unchanged.pending_target.as_ref(), Some(&h2));
+    assert!(unchanged.revoke_debt.is_empty());
+    assert_eq!(unchanged.generation, 1);
+}
+
+#[tokio::test]
+async fn runtime_delivery_prepare_returns_current_b_after_h1_promotion_wins() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_h1_promotion_wins".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let h1 = delivery_target(10, "runtime-h1");
+    let h2 = delivery_target(11, "runtime-h2");
+    let mut custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, &scope)),
+        Some(credential("pending-b", "value-b", &owner, &scope)),
+    );
+    custody.pending_target = Some(h1.clone());
+    store.insert_credential(custody).await.expect("store works");
+
+    assert!(auth
+        .confirm_credential_delivery(&session, &owner, &services, "value-b", &h1)
+        .await
+        .expect("H1 acknowledgement promotes its correlated value"));
+    assert_eq!(
+        auth.prepare_credential_delivery(&session, &owner, &services, None, &h2)
+            .await
+            .expect("H2 preparation re-reads custody after the winning promotion"),
+        Some("value-b".into()),
+        "H2 sees newly current B instead of stale A"
+    );
+
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(promoted.pending.is_none());
+    assert!(promoted.pending_target.is_none());
+    assert_eq!(promoted.revoke_debt.len(), 1);
+    assert_eq!(promoted.revoke_debt[0].id, "current-a");
+    assert_eq!(
+        promoted.generation, 1,
+        "preparing already-current B performs no second CAS"
+    );
+}
+
+#[tokio::test]
+async fn runtime_delivery_h2_confirmation_queues_a_only_after_correlated_acknowledgement() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_h2_correlated_ack".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let h1 = delivery_target(13, "runtime-h1");
+    let h2 = delivery_target(14, "runtime-h2");
+    let mut custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, &scope)),
+        Some(credential("pending-b", "value-b", &owner, &scope)),
+    );
+    custody.pending_target = Some(h1);
+    store.insert_credential(custody).await.expect("store works");
+
+    assert_eq!(
+        auth.prepare_credential_delivery(&session, &owner, &services, None, &h2)
+            .await
+            .expect("H2 preparation succeeds"),
+        Some("value-b".into())
+    );
+    let prepared = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        prepared.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a"),
+        "selection alone does not promote B"
+    );
+    assert_eq!(
+        prepared.pending.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert_eq!(prepared.pending_target.as_ref(), Some(&h2));
+    assert!(prepared.revoke_debt.is_empty());
+    assert_eq!(prepared.generation, 1);
+
+    assert!(auth
+        .confirm_credential_delivery(&session, &owner, &services, "value-b", &h2)
+        .await
+        .expect("H2's correlated acknowledgement promotes B"));
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(promoted.pending.is_none());
+    assert!(promoted.pending_target.is_none());
+    assert_eq!(promoted.revoke_debt.len(), 1);
+    assert_eq!(promoted.revoke_debt[0].id, "current-a");
+    assert_eq!(promoted.generation, 2);
+}
+
+#[tokio::test]
+async fn abandoned_h1_binding_is_fenced_before_fresh_c_is_delivered_to_h2() {
+    let (base, mints, server) = mint_platform().await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    auth.use_issuer(Arc::new(crate::auth::keys::KeyIssuer::new(
+        reqwest::Client::new(),
+        base,
+        "test",
+    )))
+    .await;
+    let owner = SubjectId("owner".into());
+    store_owner_token(&auth, &owner).await;
+    let session = SessionId("sesn_stale_b_to_fresh_c".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let h1 = delivery_target(20, "runtime-h1");
+    let h2 = delivery_target(21, "runtime-h2");
+    let mut custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, &scope)),
+        Some(credential_expiring_at(
+            "pending-b",
+            "value-b",
+            &owner,
+            &scope,
+            SystemTime::now() + CREDENTIAL_EXPIRY_MARGIN,
+        )),
+    );
+    custody.pending_target = Some(h1.clone());
+    store.insert_credential(custody).await.expect("store works");
+
+    assert_eq!(
+        auth.prepare_credential_delivery(&session, &owner, &services, None, &h2)
+            .await
+            .expect("H2 authority fences stale B before selecting a value"),
+        Some("full-key-1".into())
+    );
+    assert_eq!(mints.load(Ordering::SeqCst), 1);
+    let reminted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        reminted.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a"),
+        "A stays current until exact delivery of C"
+    );
+    assert_eq!(
+        reminted.pending.as_ref().map(|held| held.id.as_str()),
+        Some("provider-key-1")
+    );
+    assert_eq!(reminted.pending_target.as_ref(), Some(&h2));
+    assert_eq!(reminted.revoke_debt.len(), 1);
+    assert_eq!(reminted.revoke_debt[0].id, "pending-b");
+
+    assert!(!auth
+        .confirm_credential_delivery(&session, &owner, &services, "value-b", &h1)
+        .await
+        .expect("an abandoned H1 acknowledgement cannot promote retired B"));
+    let bound = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(bound.pending_target.as_ref(), Some(&h2));
+    assert_eq!(
+        bound.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+
+    assert!(auth
+        .confirm_credential_delivery(&session, &owner, &services, "full-key-1", &h2)
+        .await
+        .expect("H2 acknowledgement promotes exact C"));
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("provider-key-1")
+    );
+    assert!(promoted.pending.is_none());
+    assert!(promoted.pending_target.is_none());
+    let debt_ids: Vec<_> = promoted
+        .revoke_debt
+        .iter()
+        .map(|debt| debt.id.as_str())
+        .collect();
+    assert_eq!(debt_ids, ["current-a", "pending-b"]);
+    server.abort();
+}
+
+#[tokio::test]
+async fn expired_current_is_never_selected_and_remains_current_until_fresh_c_lands() {
+    let (base, mints, server) = mint_platform().await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    auth.use_issuer(Arc::new(crate::auth::keys::KeyIssuer::new(
+        reqwest::Client::new(),
+        base,
+        "test",
+    )))
+    .await;
+    let owner = SubjectId("owner".into());
+    store_owner_token(&auth, &owner).await;
+    let session = SessionId("sesn_expired_current".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let h2 = delivery_target(31, "runtime-h2");
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential_expiring_at(
+                "current-a",
+                "value-a",
+                &owner,
+                &scope,
+                SystemTime::now() - Duration::from_secs(1),
+            )),
+            None,
+        ))
+        .await
+        .expect("store works");
+
+    let expired_confirmation_budget = AuthOperationBudget::standalone(10);
+    assert!(!auth
+        .confirm_reissue_delivery_with_budget(
+            &session,
+            "value-a",
+            &h2,
+            credential_replace_before(),
+            &expired_confirmation_budget,
+        )
+        .await
+        .expect("an idempotent retry refuses an expired exact current value"));
+    let still_current = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        still_current.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert!(still_current.pending.is_none());
+    assert!(still_current.revoke_debt.is_empty());
+
+    assert_eq!(
+        auth.prepare_credential_delivery(&session, &owner, &services, None, &h2)
+            .await
+            .expect("an expired current value causes a fresh replacement"),
+        Some("full-key-1".into())
+    );
+    assert_eq!(mints.load(Ordering::SeqCst), 1);
+    let prepared = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        prepared.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a"),
+        "expired A remains custody evidence until C promotion"
+    );
+    assert_eq!(
+        prepared.pending.as_ref().map(|held| held.id.as_str()),
+        Some("provider-key-1")
+    );
+    assert_eq!(prepared.pending_target.as_ref(), Some(&h2));
+    assert!(prepared.revoke_debt.is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn binding_rechecks_unbound_pending_expiry() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let target = delivery_target(40, "runtime-h2");
+    let session = SessionId("sesn_expiry_recheck_bind".into());
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-a", "value-a", &owner, "scope")),
+            Some(credential_expiring_at(
+                "pending-b",
+                "value-b",
+                &owner,
+                "scope",
+                SystemTime::now() + CREDENTIAL_EXPIRY_MARGIN,
+            )),
+        ))
+        .await
+        .expect("store works");
+    let budget = AuthOperationBudget::standalone(10);
+    assert!(!auth
+        .prepare_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            credential_replace_before(),
+            &budget,
+        )
+        .await
+        .expect("binding recheck settles stale unbound B"));
+
+    let settled = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        settled.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert!(settled.pending.is_none());
+    assert!(settled.pending_target.is_none());
+    assert_eq!(settled.revoke_debt.len(), 1);
+    assert_eq!(settled.revoke_debt[0].id, "pending-b");
+}
+
+#[tokio::test]
+async fn newer_reissue_cutoff_between_binding_and_ack_cannot_retire_pending() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let delivering = auth(store.clone());
+    let sweeping = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_bound_pending_cutoff_race".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let target = delivery_target(41, "runtime-h2");
+    let first_cutoff = credential_replace_before();
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-a", "value-a", &owner, &scope)),
+            Some(credential_expiring_at(
+                "pending-b",
+                "value-b",
+                &owner,
+                &scope,
+                first_cutoff + Duration::from_millis(1),
+            )),
+        ))
+        .await
+        .expect("store works");
+
+    let delivery_budget = AuthOperationBudget::standalone(10);
+    assert!(delivering
+        .prepare_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            first_cutoff,
+            &delivery_budget,
+        )
+        .await
+        .expect("B binds before leaving custody"));
+
+    let newer_cutoff = first_cutoff + Duration::from_secs(1);
+    let sweep_budget = AuthOperationBudget::standalone(crate::auth::AUTH_REISSUE_ATTEMPT_BUDGET);
+    assert_eq!(
+        sweeping
+            .reissue_with_budget(&session, &owner, &services, newer_cutoff, sweep_budget,)
+            .await
+            .expect("the newer sweep defers to B's durable target binding"),
+        Some("value-b".into())
+    );
+    let still_bound = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(still_bound.pending_target.as_ref(), Some(&target));
+    assert!(still_bound.revoke_debt.is_empty());
+
+    assert!(delivering
+        .confirm_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            first_cutoff,
+            &delivery_budget,
+        )
+        .await
+        .expect("the exact acknowledgement remains promotable"));
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(promoted.pending.is_none());
+    assert!(promoted.pending_target.is_none());
+    assert_eq!(promoted.revoke_debt.len(), 1);
+    assert_eq!(promoted.revoke_debt[0].id, "current-a");
+}
+
+#[tokio::test]
+async fn same_runtime_retry_finishes_bound_pending_across_a_newer_cutoff() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_same_target_cutoff_retry".into());
+    let target = delivery_target(42, "runtime-h2");
+    let first_cutoff = credential_replace_before();
+    let mut custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, "scope")),
+        Some(credential_expiring_at(
+            "pending-b",
+            "value-b",
+            &owner,
+            "scope",
+            first_cutoff + Duration::from_millis(1),
+        )),
+    );
+    custody.pending_target = Some(target.clone());
+    store.insert_credential(custody).await.expect("store works");
+
+    let newer_cutoff = first_cutoff + Duration::from_secs(1);
+    let budget = AuthOperationBudget::standalone(10);
+    assert!(auth
+        .prepare_reissue_delivery_with_budget(&session, "value-b", &target, newer_cutoff, &budget,)
+        .await
+        .expect("the same runtime target may retry its bound B"));
+    let still_bound = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(still_bound.pending_target.as_ref(), Some(&target));
+    assert!(still_bound.revoke_debt.is_empty());
+
+    assert!(auth
+        .confirm_reissue_delivery_with_budget(&session, "value-b", &target, newer_cutoff, &budget,)
+        .await
+        .expect("the same target's exact ACK settles hard-valid B"));
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(promoted.pending.is_none());
+    assert_eq!(promoted.revoke_debt.len(), 1);
+    assert_eq!(promoted.revoke_debt[0].id, "current-a");
+}
+
+#[tokio::test]
+async fn one_frozen_cutoff_carries_from_binding_through_promotion() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_frozen_delivery_cutoff".into());
+    let target = delivery_target(45, "runtime-h2");
+    let replace_before = credential_replace_before();
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-a", "value-a", &owner, "scope")),
+            Some(credential_expiring_at(
+                "pending-b",
+                "value-b",
+                &owner,
+                "scope",
+                replace_before + Duration::from_nanos(1),
+            )),
+        ))
+        .await
+        .expect("store works");
+
+    let budget = AuthOperationBudget::standalone(10);
+    assert!(
+        auth.prepare_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            replace_before,
+            &budget,
+        )
+        .await
+        .expect("B is eligible at the attempt's frozen boundary")
+    );
+    let rebound = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert!(
+        !credential_is_deliverable(
+            rebound.pending.as_ref().expect("B remains pending"),
+            credential_replace_before(),
+        ),
+        "a separately recomputed cutoff would create the post-ACK revocation race"
+    );
+
+    assert!(
+        auth.confirm_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            replace_before,
+            &budget,
+        )
+        .await
+        .expect("promotion reuses the pre-send boundary")
+    );
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert_eq!(promoted.revoke_debt.len(), 1);
+    assert_eq!(promoted.revoke_debt[0].id, "current-a");
+}
+
+#[tokio::test]
+async fn runtime_confirmation_uses_its_recorded_prepare_cutoff() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_runtime_delivery_cutoff".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let target = delivery_target(46, "runtime-h2");
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-a", "value-a", &owner, &scope)),
+            Some(credential_expiring_at(
+                "pending-b",
+                "value-b",
+                &owner,
+                &scope,
+                SystemTime::now() + CREDENTIAL_EXPIRY_MARGIN + Duration::from_secs(30),
+            )),
+        ))
+        .await
+        .expect("store works");
+
+    assert_eq!(
+        auth.prepare_credential_delivery(&session, &owner, &services, None, &target)
+            .await
+            .expect("pending B is eligible and bound at preparation"),
+        Some("value-b".into())
+    );
+    let replace_before = auth
+        .credential_delivery_cutoff(&session, &target)
+        .await
+        .expect("preparation records pending B's frozen cutoff");
+    let mut custody = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    let generation = custody.generation;
+    custody.generation += 1;
+    custody
+        .pending
+        .as_mut()
+        .expect("B remains pending")
+        .expires_at = Some(replace_before + Duration::from_millis(1));
+    assert!(store
+        .replace_credential(generation, custody)
+        .await
+        .expect("boundary expiry persists"));
+    tokio::time::sleep(Duration::from_millis(5)).await;
+
+    let latest = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert!(
+        !credential_is_deliverable(
+            latest.pending.as_ref().expect("B remains pending"),
+            credential_replace_before(),
+        ),
+        "a newly computed confirmation cutoff would reject B"
+    );
+
+    assert!(auth
+        .confirm_credential_delivery(&session, &owner, &services, "value-b", &target)
+        .await
+        .expect("runtime acknowledgement uses its preparation boundary"));
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(auth
+        .credential_delivery_cutoff(&session, &target)
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn runtime_current_confirmation_uses_its_recorded_prepare_cutoff() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_runtime_current_delivery_cutoff".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let target = delivery_target(47, "runtime-h2");
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential_expiring_at(
+                "current-a",
+                "value-a",
+                &owner,
+                &scope,
+                SystemTime::now() + CREDENTIAL_EXPIRY_MARGIN + Duration::from_secs(30),
+            )),
+            None,
+        ))
+        .await
+        .expect("store works");
+
+    assert_eq!(
+        auth.prepare_credential_delivery(&session, &owner, &services, None, &target)
+            .await
+            .expect("current A is eligible at preparation"),
+        Some("value-a".into())
+    );
+    let replace_before = auth
+        .credential_delivery_cutoff(&session, &target)
+        .await
+        .expect("preparation records current A's frozen cutoff");
+    let mut custody = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    let generation = custody.generation;
+    custody.generation += 1;
+    custody
+        .current
+        .as_mut()
+        .expect("A remains current")
+        .expires_at = Some(replace_before + Duration::from_millis(1));
+    assert!(store
+        .replace_credential(generation, custody)
+        .await
+        .expect("boundary expiry persists"));
+    tokio::time::sleep(Duration::from_millis(5)).await;
+
+    let latest = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert!(
+        !credential_is_deliverable(
+            latest.current.as_ref().expect("A remains current"),
+            credential_replace_before(),
+        ),
+        "a newly computed confirmation cutoff would reject A"
+    );
+    assert!(auth
+        .confirm_credential_delivery(&session, &owner, &services, "value-a", &target)
+        .await
+        .expect("confirmation reuses A's preparation boundary"));
+    assert!(auth
+        .credential_delivery_cutoff(&session, &target)
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn runtime_fallback_delivery_does_not_record_an_expiry_cutoff() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store);
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_runtime_fallback_delivery".into());
+    let services = [ServiceId::new("model")];
+    let target = delivery_target(48, "runtime-h2");
+
+    assert_eq!(
+        auth.prepare_credential_delivery(
+            &session,
+            &owner,
+            &services,
+            Some(&CallerCredential::from("subject-wide")),
+            &target,
+        )
+        .await
+        .expect("uncustodied fallback remains available"),
+        Some("subject-wide".into())
+    );
+    assert!(
+        auth.credential_delivery_cutoff(&session, &target)
+            .await
+            .is_none(),
+        "fallback values do not participate in expiring durable custody"
+    );
+}
+
+#[tokio::test]
+async fn stale_pending_cleanup_errors_return_no_value_and_preserve_current_a() {
+    let (base, mints, server) = mint_platform().await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    auth.use_issuer(Arc::new(crate::auth::keys::KeyIssuer::new(
+        reqwest::Client::new(),
+        base,
+        "test",
+    )))
+    .await;
+    let owner = SubjectId("owner".into());
+    store_owner_token(&auth, &owner).await;
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+
+    let failed_session = SessionId("sesn_stale_cleanup_store_failure".into());
+    let failed = state(
+        &failed_session,
+        Some(credential("failed-current-a", "failed-a", &owner, &scope)),
+        Some(credential_expiring_at(
+            "failed-pending-b",
+            "failed-b",
+            &owner,
+            &scope,
+            SystemTime::now() - Duration::from_secs(1),
+        )),
+    );
+    store.insert_credential(failed).await.expect("store works");
+    store.fail_credential_replace_on_call(1);
+
+    assert!(matches!(
+        auth.reissue(&failed_session, &owner, &services).await,
+        Err(StoreError::Unavailable(_))
+    ));
+    assert_eq!(mints.load(Ordering::SeqCst), 0, "an error mints nothing");
+    let unchanged = store
+        .credential(&failed_session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        unchanged.current.as_ref().map(|held| held.id.as_str()),
+        Some("failed-current-a")
+    );
+    assert_eq!(
+        unchanged.pending.as_ref().map(|held| held.id.as_str()),
+        Some("failed-pending-b")
+    );
+    assert!(unchanged.pending_target.is_none());
+    assert!(unchanged.revoke_debt.is_empty());
+
+    store.clear_credential_replace_failure();
+    let ambiguous_session = SessionId("sesn_stale_cleanup_lost_response".into());
+    let ambiguous = state(
+        &ambiguous_session,
+        Some(credential(
+            "ambiguous-current-a",
+            "ambiguous-a",
+            &owner,
+            &scope,
+        )),
+        Some(credential_expiring_at(
+            "ambiguous-pending-b",
+            "ambiguous-b",
+            &owner,
+            &scope,
+            SystemTime::now() - Duration::from_secs(1),
+        )),
+    );
+    store
+        .insert_credential(ambiguous)
+        .await
+        .expect("store works");
+    store.lose_credential_replace_response_on_call(1);
+
+    assert!(matches!(
+        auth.reissue(&ambiguous_session, &owner, &services).await,
+        Err(StoreError::Unavailable(_))
+    ));
+    assert_eq!(
+        mints.load(Ordering::SeqCst),
+        0,
+        "ambiguous cleanup sends and mints nothing in the same attempt"
+    );
+    let applied = store
+        .credential(&ambiguous_session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        applied.current.as_ref().map(|held| held.id.as_str()),
+        Some("ambiguous-current-a")
+    );
+    assert!(applied.pending.is_none());
+    assert!(applied.pending_target.is_none());
+    assert_eq!(applied.revoke_debt.len(), 1);
+    assert_eq!(applied.revoke_debt[0].id, "ambiguous-pending-b");
+    assert_eq!(
+        applied.generation, 1,
+        "stale B retirement is one atomic generation fence"
+    );
+
+    store.clear_credential_replace_failure();
+    assert_eq!(
+        auth.reissue(&ambiguous_session, &owner, &services)
+            .await
+            .expect("retry rereads the applied cleanup and mints C"),
+        Some("full-key-1".into())
+    );
+    let retried = store
+        .credential(&ambiguous_session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        retried.current.as_ref().map(|held| held.id.as_str()),
+        Some("ambiguous-current-a")
+    );
+    assert_eq!(
+        retried.pending.as_ref().map(|held| held.id.as_str()),
+        Some("provider-key-1")
+    );
+    assert_eq!(
+        retried
+            .revoke_debt
+            .iter()
+            .filter(|debt| debt.id == "ambiguous-pending-b")
+            .count(),
+        1,
+        "retry does not duplicate stale-B cleanup debt"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn competing_replicas_cleanup_unbound_stale_b_and_mint_exactly_one_c() {
+    let (base, mints, server) = mint_platform().await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let first = auth(store.clone());
+    let second = auth(store.clone());
+    let issuer = Arc::new(crate::auth::keys::KeyIssuer::new(
+        reqwest::Client::new(),
+        base,
+        "test",
+    ));
+    first.use_issuer(Arc::clone(&issuer)).await;
+    second.use_issuer(issuer).await;
+    let owner = SubjectId("owner".into());
+    store_owner_token(&first, &owner).await;
+    let session = SessionId("sesn_competing_stale_cleanup".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, &scope)),
+        Some(credential_expiring_at(
+            "pending-b",
+            "value-b",
+            &owner,
+            &scope,
+            SystemTime::now() - Duration::from_secs(1),
+        )),
+    );
+    store.insert_credential(custody).await.expect("store works");
+
+    let (first_result, second_result) = tokio::join!(
+        first.reissue(&session, &owner, &services),
+        second.reissue(&session, &owner, &services),
+    );
+    assert_eq!(
+        first_result.expect("first replica converges"),
+        Some("full-key-1".into())
+    );
+    assert_eq!(
+        second_result.expect("second replica rereads the winner"),
+        Some("full-key-1".into())
+    );
+    assert_eq!(mints.load(Ordering::SeqCst), 1);
+
+    let converged = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        converged.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert_eq!(
+        converged.pending.as_ref().map(|held| held.id.as_str()),
+        Some("provider-key-1")
+    );
+    assert!(converged.pending_target.is_none());
+    assert_eq!(
+        converged
+            .revoke_debt
+            .iter()
+            .filter(|debt| debt.id == "pending-b")
+            .count(),
+        1
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn delivery_confirmation_promotes_only_the_exact_pending_value() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_exact_delivery".into());
+    let target = delivery_target(4, "runtime-h1");
+    let mut custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, "scope")),
+        Some(credential("pending-b", "value-b", &owner, "scope")),
+    );
+    custody.pending_target = Some(target.clone());
+    store.insert_credential(custody).await.expect("store works");
+
+    let budget = AuthOperationBudget::standalone(10);
+    assert!(!auth
+        .confirm_reissue_delivery_with_budget(
+            &session,
+            "different-value",
+            &target,
+            credential_replace_before(),
+            &budget,
+        )
+        .await
+        .expect("mismatch is a closed answer"));
+    let unchanged = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert_eq!(
+        unchanged.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert_eq!(
+        unchanged.pending.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert_eq!(unchanged.pending_target.as_ref(), Some(&target));
+    assert!(unchanged.revoke_debt.is_empty());
+    assert_eq!(unchanged.generation, 0);
+}
+
+#[tokio::test]
+async fn pending_delivery_binding_persists_and_retargets_only_the_same_value() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_target_binding".into());
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-a", "value-a", &owner, "scope")),
+            Some(credential("pending-b", "value-b", &owner, "scope")),
+        ))
+        .await
+        .expect("store works");
+
+    let h1 = delivery_target(3, "runtime-h1");
+    let first_budget = AuthOperationBudget::standalone(10);
+    assert!(auth
+        .prepare_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &h1,
+            credential_replace_before(),
+            &first_budget,
+        )
+        .await
+        .expect("H1 target binds"));
+    let bound_h1 = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(bound_h1.pending_target.as_ref(), Some(&h1));
+    assert_eq!(bound_h1.generation, 1);
+
+    let h2 = delivery_target(4, "runtime-h2");
+    let retry_budget = AuthOperationBudget::standalone(10);
+    assert!(auth
+        .prepare_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &h2,
+            credential_replace_before(),
+            &retry_budget,
+        )
+        .await
+        .expect("the same pending value can move to H2"));
+    assert!(!auth
+        .prepare_reissue_delivery_with_budget(
+            &session,
+            "different-value",
+            &h1,
+            credential_replace_before(),
+            &retry_budget,
+        )
+        .await
+        .expect("a different value fails closed"));
+    let rebound = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(rebound.pending_target.as_ref(), Some(&h2));
+    assert_eq!(rebound.generation, 2);
+}
+
+#[tokio::test]
+async fn a_lost_target_binding_response_is_idempotent_on_exact_retry() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_lost_target_binding_response".into());
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-a", "value-a", &owner, "scope")),
+            Some(credential("pending-b", "value-b", &owner, "scope")),
+        ))
+        .await
+        .expect("store works");
+    store.lose_credential_replace_response_on_call(1);
+
+    let target = delivery_target(3, "runtime-h1");
+    let first_budget = AuthOperationBudget::standalone(10);
+    assert!(matches!(
+        auth.prepare_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            credential_replace_before(),
+            &first_budget,
+        )
+        .await,
+        Err(StoreError::Unavailable(_))
+    ));
+    store.clear_credential_replace_failure();
+
+    let retry_budget = AuthOperationBudget::standalone(10);
+    assert!(auth
+        .prepare_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            credential_replace_before(),
+            &retry_budget,
+        )
+        .await
+        .expect("already-bound exact target confirms idempotently"));
+    let bound = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(bound.generation, 1, "retry performs no second CAS");
+    assert_eq!(bound.pending_target.as_ref(), Some(&target));
+}
+
+#[tokio::test]
+async fn acknowledgement_for_another_runtime_target_cannot_promote_pending() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_wrong_runtime_ack".into());
+    let h1 = delivery_target(5, "runtime-h1");
+    let h2 = delivery_target(6, "runtime-h2");
+    let mut custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, "scope")),
+        Some(credential("pending-b", "value-b", &owner, "scope")),
+    );
+    custody.pending_target = Some(h2.clone());
+    store.insert_credential(custody).await.expect("store works");
+
+    let budget = AuthOperationBudget::standalone(10);
+    assert!(!auth
+        .confirm_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &h1,
+            credential_replace_before(),
+            &budget,
+        )
+        .await
+        .expect("wrong-target acknowledgement fails closed"));
+    let unchanged = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("custody remains");
+    assert_eq!(
+        unchanged.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert_eq!(
+        unchanged.pending.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert_eq!(unchanged.pending_target.as_ref(), Some(&h2));
+    assert!(unchanged.revoke_debt.is_empty());
+    assert_eq!(unchanged.generation, 0);
+}
+
+#[tokio::test]
+async fn failed_exact_promotion_leaves_b_pending_and_queues_no_predecessor_debt() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_failed_exact_promotion".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    let target = delivery_target(7, "runtime-h1");
+    let mut custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, &scope)),
+        Some(credential("pending-b", "value-b", &owner, &scope)),
+    );
+    custody.pending_target = Some(target.clone());
+    store.insert_credential(custody).await.expect("store works");
+    store.fail_credential_replace_on_call(1);
+
+    let failed_budget = AuthOperationBudget::standalone(10);
+    assert!(matches!(
+        auth.confirm_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            credential_replace_before(),
+            &failed_budget,
+        )
+        .await,
+        Err(StoreError::Unavailable(_))
+    ));
+    let failed = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert_eq!(
+        failed.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert_eq!(
+        failed.pending.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b"),
+        "the retry must resend B rather than selecting ordinary current A"
+    );
+    assert_eq!(failed.pending_target.as_ref(), Some(&target));
+    assert!(failed.revoke_debt.is_empty());
+    assert_eq!(failed.generation, 0);
+    assert_eq!(
+        auth.reissue(&session, &owner, &services)
+            .await
+            .expect("retry selection reads pending custody"),
+        Some("value-b".into()),
+        "retry resends pending B rather than ordinary current A"
+    );
+
+    store.clear_credential_replace_failure();
+    let retry_budget = AuthOperationBudget::standalone(10);
+    assert!(auth
+        .confirm_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            credential_replace_before(),
+            &retry_budget,
+        )
+        .await
+        .expect("the same delivered B remains promotable"));
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(promoted.pending.is_none());
+    assert!(promoted.pending_target.is_none());
+    assert_eq!(promoted.revoke_debt.len(), 1);
+    assert_eq!(promoted.revoke_debt[0].id, "current-a");
+}
+
+#[tokio::test]
+async fn a_lost_promotion_response_is_idempotent_on_exact_value_retry() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_lost_promotion_response".into());
+    let target = delivery_target(9, "runtime-h1");
+    let mut custody = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, "scope")),
+        Some(credential("pending-b", "value-b", &owner, "scope")),
+    );
+    custody.pending_target = Some(target.clone());
+    store.insert_credential(custody).await.expect("store works");
+    store.lose_credential_replace_response_on_call(1);
+
+    let first_budget = AuthOperationBudget::standalone(10);
+    assert!(matches!(
+        auth.confirm_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            credential_replace_before(),
+            &first_budget,
+        )
+        .await,
+        Err(StoreError::Unavailable(_))
+    ));
+    store.clear_credential_replace_failure();
+
+    let retry_budget = AuthOperationBudget::standalone(10);
+    assert!(auth
+        .confirm_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            credential_replace_before(),
+            &retry_budget,
+        )
+        .await
+        .expect("already-current exact B confirms idempotently"));
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert_eq!(promoted.generation, 1, "retry performs no second CAS");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(promoted.pending.is_none());
+    assert_eq!(promoted.revoke_debt.len(), 1);
+    assert_eq!(promoted.revoke_debt[0].id, "current-a");
+}
+
+#[tokio::test]
+async fn retired_custody_refuses_delivery_confirmation_without_mutation() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_retired_delivery".into());
+    let mut retired = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, "scope")),
+        Some(credential("pending-b", "value-b", &owner, "scope")),
+    );
+    let target = delivery_target(11, "runtime-h1");
+    retired.pending_target = Some(target.clone());
+    retired.retired = true;
+    store.insert_credential(retired).await.expect("store works");
+
+    let budget = AuthOperationBudget::standalone(10);
+    assert!(!auth
+        .confirm_reissue_delivery_with_budget(
+            &session,
+            "value-b",
+            &target,
+            credential_replace_before(),
+            &budget,
+        )
+        .await
+        .expect("retired state fails closed"));
+    let unchanged = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert!(unchanged.retired);
+    assert_eq!(
+        unchanged.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert_eq!(
+        unchanged.pending.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert_eq!(unchanged.pending_target.as_ref(), Some(&target));
+    assert!(unchanged.revoke_debt.is_empty());
+    assert_eq!(unchanged.generation, 0);
 }
 
 #[tokio::test]

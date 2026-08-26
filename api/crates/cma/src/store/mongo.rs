@@ -14,7 +14,10 @@ use std::{
 
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
-    store::{Page, PageCursor, SessionListQuery, SessionRecord, SessionStore, StoreError},
+    store::{
+        Page, PageCursor, PendingHandover, SessionListQuery, SessionRecord, SessionStore,
+        StoreError,
+    },
     ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
     ConversationWriteAuthority, Event, Rate, RateCardId, Reserved, RuntimeAuthority,
     RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup,
@@ -182,6 +185,16 @@ struct SessionDoc {
     /// Absent on records written before durable handover claims existed.
     #[serde(default)]
     rotation_claim: Option<String>,
+    /// Recoverable snapshot and target for an interrupted runtime handover.
+    ///
+    /// Compatibility-only metadata; it does not change Mongo's coordinated
+    /// writer protocol, whose handovers remain fenced by runtime authority.
+    ///
+    /// Optional for documents written before durable snapshot recovery. It is
+    /// intentionally independent of `rotation_claim`: a reversible stop may
+    /// retain the snapshot for a later revive after its live claim is cleared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_handover: Option<PendingHandover>,
     /// Runtime version, rotation count and snapshot time.
     ///
     /// All optional so documents written before rotation existed still load. A
@@ -4225,6 +4238,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         runtime_id: r.runtime_id.clone(),
         context_ref: r.context_ref.clone(),
         rotation_claim: r.rotation_claim.clone(),
+        pending_handover: r.pending_handover.clone(),
         runtime_version: s.runtime_version.clone(),
         rotations: Some(i64::from(s.rotations)),
         rotated_at: s.rotated_at.clone(),
@@ -4486,6 +4500,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
         runtime_id: d.runtime_id,
         context_ref: d.context_ref,
         rotation_claim: d.rotation_claim,
+        pending_handover: d.pending_handover,
         revision: u64::try_from(d.revision)
             .map_err(|_| StoreError::Malformed("session revision must not be negative".into()))?,
     })
@@ -5378,7 +5393,7 @@ impl MongoSessionStore {
                             .await?;
                         let mut receipt_cursor = receipts
                             .clone_with_type::<Document>()
-                            .find(all_session_receipts_filter(&id))
+                            .find(all_session_receipts_filter(id))
                             .session(&mut *session)
                             .await?;
                         let mut receipt_documents = Vec::new();
@@ -5442,7 +5457,7 @@ impl MongoSessionStore {
                             .session(&mut *session)
                             .await?;
                         receipts
-                            .delete_many(all_session_receipts_filter(&id))
+                            .delete_many(all_session_receipts_filter(id))
                             .session(&mut *session)
                             .await?;
                         Ok(())
