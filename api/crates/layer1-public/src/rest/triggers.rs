@@ -3,23 +3,25 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use layer2_core::{
     BillingMode, CommercialPolicy, Confirmation, ConfirmationAction, ContributionPolicy,
-    CredentialRoute, EditableField, ExecutorPolicy, InputFieldDefinition, Launch, LaunchId,
-    LaunchOverrides, LaunchStep, OperationStore, OverridePolicy, PublicProjectionPolicy,
-    PublicTriggerId, RepositoryAccessPolicy, RequiredCapability, ResourcePolicy, ScopeClass,
-    SetupPolicy, SourceMode, TriggerAvailability, TriggerConnection,
-    TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft, TriggerId,
-    TriggerPageRequest, TriggerPreview, TriggerRepositorySelection, TriggerRevision,
+    CredentialRoute, DiffArtifact, DiffArtifactId, EditableField, ExecutorPolicy,
+    InputFieldDefinition, Launch, LaunchId, LaunchOverrides, LaunchStep, OperationStore,
+    OverridePolicy, PublicProjectionPolicy, PublicTriggerId, RepositoryAccessPolicy,
+    RequiredCapability, ResourcePolicy, ScopeClass, SetupPolicy, SourceMode, TriggerAvailability,
+    TriggerConnection, TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft,
+    TriggerId, TriggerPageRequest, TriggerPreview, TriggerRepositorySelection, TriggerRevision,
     TriggerRevisionContent, TriggerRevisionId, TriggerServiceError, TriggerSessionPolicy,
     TriggerStoreError, TriggerTask, UpstreamRevision, WorkflowChangePolicy,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -49,6 +51,8 @@ pub(super) fn documented_router(state: TriggersState) -> OpenApiRouter {
         .routes(routes!(update_launch_overrides))
         .routes(routes!(select_launch_connection))
         .routes(routes!(start_launch))
+        .routes(routes!(review_launch_diff))
+        .routes(routes!(download_diff_artifact))
         .routes(routes!(cancel_launch))
         .routes(routes!(launch_progress))
         .with_state(state)
@@ -500,8 +504,8 @@ struct LaunchView {
     reach: Option<Value>,
     #[schema(value_type = Object)]
     delivery: Option<Value>,
-    #[schema(value_type = Object)]
-    diff: Option<Value>,
+    contribution_checkpoint_version: Option<u64>,
+    diff: Option<DiffArtifactView>,
     #[schema(value_type = Object)]
     contribution: Option<Value>,
     #[schema(value_type = Object)]
@@ -510,6 +514,64 @@ struct LaunchView {
     updated_at: String,
     started_at: Option<String>,
     terminal_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct DiffArtifactView {
+    id: String,
+    checkpoint_id: String,
+    baseline_digest: String,
+    checkpoint_digest: String,
+    expected_branch_head: String,
+    observed_branch_head: String,
+    changed_file_limit: u32,
+    total_changed_files: u32,
+    #[schema(value_type = Vec<Object>)]
+    files: Vec<Value>,
+    changed_bytes: u64,
+    digest: String,
+    object_bytes: u64,
+    #[schema(value_type = Object)]
+    author: Value,
+    #[schema(value_type = Object)]
+    committer: Value,
+    workflow_paths: Vec<String>,
+    validation: String,
+    #[schema(value_type = Vec<Object>)]
+    checks: Vec<Value>,
+    created_at: String,
+    delete_after: String,
+    download_url: String,
+}
+
+impl DiffArtifactView {
+    fn from_artifact(launch_id: &str, value: DiffArtifact) -> Self {
+        let artifact_id = value.id.0;
+        Self {
+            id: artifact_id.clone(),
+            checkpoint_id: value.checkpoint_id.0,
+            baseline_digest: value.baseline_digest,
+            checkpoint_digest: value.checkpoint_digest,
+            expected_branch_head: value.expected_branch_head,
+            observed_branch_head: value.observed_branch_head,
+            changed_file_limit: value.changed_file_limit,
+            total_changed_files: value.total_changed_files,
+            files: value.files.into_iter().map(json_value).collect(),
+            changed_bytes: value.changed_bytes,
+            digest: value.digest,
+            object_bytes: value.object_bytes,
+            author: json_value(value.author),
+            committer: json_value(value.committer),
+            workflow_paths: value.workflow_paths,
+            validation: enum_name(value.validation),
+            checks: value.checks.into_iter().map(json_value).collect(),
+            created_at: value.created_at,
+            delete_after: value.delete_after,
+            download_url: format!(
+                "/api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download"
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -545,6 +607,10 @@ impl From<LaunchStep> for LaunchStepView {
 
 impl From<Launch> for LaunchView {
     fn from(value: Launch) -> Self {
+        let launch_id = value.id.0.clone();
+        let diff = value
+            .diff
+            .map(|diff| DiffArtifactView::from_artifact(&launch_id, diff));
         let connection = value.connection.map(|connection| {
             TriggerConnectionView::from(TriggerConnection {
                 service_id: connection.service_id,
@@ -578,7 +644,8 @@ impl From<Launch> for LaunchView {
             session: value.session.map(json_value),
             reach: value.reach.map(json_value),
             delivery: value.delivery.map(json_value),
-            diff: value.diff.map(json_value),
+            contribution_checkpoint_version: value.contribution_checkpoint_version,
+            diff,
             contribution: value.contribution.map(json_value),
             pull_request: value.pull_request.map(json_value),
             created_at: value.created_at,
@@ -671,6 +738,10 @@ fn parse_public_id(value: String) -> Result<PublicTriggerId, TriggerServiceError
 
 fn parse_launch_id(value: String) -> Result<LaunchId, TriggerServiceError> {
     LaunchId::parse(value).map_err(|_| TriggerServiceError::NotFound)
+}
+
+fn parse_diff_artifact_id(value: String) -> Result<DiffArtifactId, TriggerServiceError> {
+    DiffArtifactId::parse(value).map_err(|_| TriggerServiceError::NotFound)
 }
 
 #[utoipa::path(
@@ -1349,6 +1420,134 @@ async fn start_launch(
     }
     .await;
     guard.finish(result).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/launches/{launch_id}/contributions/review",
+    tag = "launches",
+    params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = ConfirmLaunchRequest,
+    responses((status = 202, description = "Read-only contribution review accepted", body = LaunchView))
+)]
+async fn review_launch_diff(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<ConfirmLaunchRequest>, BodyProblem>,
+) -> Response {
+    let operation = format!("trigger-launch-diff-review:{launch_id}");
+    let (guard, body, confirmation_hash) =
+        match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
+            Ok(parts) => parts,
+            Err(response) => return response,
+        };
+    let result: Result<Response, RequestFailure> = async {
+        let body = body.map_err(RequestFailure::from)?;
+        let timestamp = now();
+        let launch = state
+            .triggers
+            .request_diff_review(
+                &caller.subject,
+                &parse_launch_id(launch_id)?,
+                body.expected_revision,
+                Confirmation {
+                    action: ConfirmationAction::ReviewDiff,
+                    subject: caller.subject.clone(),
+                    snapshot_digest: body.snapshot_digest,
+                    confirmed_at: timestamp.clone(),
+                    idempotency_key_hash: confirmation_hash,
+                },
+                timestamp,
+                correlation_id(&headers),
+            )
+            .await?;
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+    }
+    .await;
+    guard.finish(result).await
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download",
+    tag = "launches",
+    params(("launch_id" = String, Path), ("artifact_id" = String, Path)),
+    responses(
+        (status = 200, description = "Tenant-isolated immutable diff artifact", content_type = "application/octet-stream"),
+        (status = 404, description = "Launch or artifact not found")
+    )
+)]
+async fn download_diff_artifact(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path((launch_id, artifact_id)): Path<(String, String)>,
+) -> Result<Response, TriggerProblem> {
+    let launch_id = parse_launch_id(launch_id)?;
+    let artifact_id = parse_diff_artifact_id(artifact_id)?;
+    let launch = state
+        .triggers
+        .get_launch(&caller.subject, &launch_id)
+        .await?;
+    let artifact = launch
+        .diff
+        .as_ref()
+        .filter(|artifact| artifact.id == artifact_id)
+        .ok_or(TriggerServiceError::NotFound)?;
+    artifact.validate_for_review(&launch).map_err(|error| {
+        TriggerServiceError::Store(TriggerStoreError::Malformed(format!(
+            "retained diff review: {error}"
+        )))
+    })?;
+    let store = state.diff_artifacts.as_ref().ok_or_else(|| {
+        TriggerServiceError::Store(TriggerStoreError::Unavailable(
+            "diff artifact storage is not configured".into(),
+        ))
+    })?;
+    let bytes = store
+        .get_diff_artifact(&caller.subject, artifact)
+        .await
+        .map_err(TriggerServiceError::Store)?
+        .ok_or(TriggerServiceError::NotFound)?;
+    let retained_sha256 = format!("{:x}", Sha256::digest(&bytes));
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != artifact.object_bytes
+        || retained_sha256 != artifact.object_sha256
+    {
+        return Err(TriggerServiceError::Store(TriggerStoreError::Malformed(
+            "diff artifact bytes failed their retained size or SHA-256".into(),
+        ))
+        .into());
+    }
+
+    let filename = format!("cma-trigger-diff-{}.json", artifact.id.0);
+    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+        .expect("a parsed artifact ID always produces a valid attachment header");
+    let mut response = Response::new(Body::from(bytes));
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    headers.insert(header::CONTENT_DISPOSITION, disposition);
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static("sandbox; default-src 'none'"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    Ok(response)
 }
 
 #[utoipa::path(

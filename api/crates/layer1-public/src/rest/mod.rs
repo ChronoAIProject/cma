@@ -14,9 +14,10 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    Caller, CoreError, EnvironmentProfileService, OperationStore, PublicIdentity, Quote, Session,
-    SessionCapabilities, SessionCapability, SessionId, SessionService, SessionSpec,
-    TerminalGeometry, TriggerConnectionManager, TriggerService, UserDirectory,
+    Caller, CoreError, DiffArtifactObjectStore, EnvironmentProfileService, OperationStore,
+    PublicIdentity, Quote, Session, SessionCapabilities, SessionCapability, SessionId,
+    SessionService, SessionSpec, TerminalGeometry, TriggerConnectionManager, TriggerService,
+    UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -987,6 +988,9 @@ pub struct TriggersState {
     pub connections: Arc<dyn TriggerConnectionManager>,
     /// The same durable operation claims used by the existing REST commands.
     pub operations: Arc<dyn OperationStore>,
+    /// Complete immutable review artifacts, when durable Trigger workspace
+    /// storage is configured for this deployment.
+    pub diff_artifacts: Option<Arc<dyn DiffArtifactObjectStore>>,
 }
 
 /// What the session routes are served from.
