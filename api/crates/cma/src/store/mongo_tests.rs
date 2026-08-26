@@ -1709,6 +1709,7 @@ fn raw_append_touches_the_session_without_lowering_a_legacy_tail() {
         doc! {
             "$set": {
                 "_cma_write_protocol": WRITE_PROTOCOL,
+                "_cma_coordination_protocol": COORDINATION_PROTOCOL,
                 "revision": 0_i64,
             },
             "$max": { "last_seq": 7_i64 },
@@ -1717,7 +1718,10 @@ fn raw_append_touches_the_session_without_lowering_a_legacy_tail() {
     assert_eq!(
         appended_event_session_update(&doc! { "last_seq": 4_i64, "revision": 3_i64 }, 5),
         doc! {
-            "$set": { "_cma_write_protocol": WRITE_PROTOCOL },
+            "$set": {
+                "_cma_write_protocol": WRITE_PROTOCOL,
+                "_cma_coordination_protocol": COORDINATION_PROTOCOL,
+            },
             "$max": { "last_seq": 5_i64 },
         }
     );
