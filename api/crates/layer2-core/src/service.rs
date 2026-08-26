@@ -54,6 +54,7 @@ impl SessionService {
             handovers,
             credentials,
             skills,
+            skill_packs,
             settings,
         } = ports;
         let sequences = Arc::new(crate::sequence::Sequences::default());
@@ -69,6 +70,7 @@ impl SessionService {
             conversation_order_gates: Default::default(),
             prompt_gates: Default::default(),
             skills,
+            skill_packs,
             sequences,
             event_logs,
             starting: RwLock::new(HashSet::new()),
