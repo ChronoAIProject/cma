@@ -1211,7 +1211,7 @@ async fn assert_every_runtime_operation_fails_with(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn every_operation_sees_the_real_post_removal_rotation_gap_and_retries_on_the_replacement() {
+async fn every_operation_refuses_the_retained_outgoing_runtime_and_retries_on_the_replacement() {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
     let svc = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
@@ -1242,9 +1242,16 @@ async fn every_operation_sees_the_real_post_removal_rotation_gap_and_retries_on_
     });
     adapter.wait_until_provision_paused().await;
 
-    assert!(
-        !svc.entries.read().await.contains_key(&created.id),
-        "the outgoing entry is removed before replacement provisioning"
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the authoritative outgoing entry remains installed")
+            .session
+            .status,
+        crate::session::SessionStatus::Rotating,
+        "the outgoing entry remains present but cannot accept input"
     );
     assert_eq!(
         store
@@ -1277,9 +1284,16 @@ async fn every_operation_sees_the_real_post_removal_rotation_gap_and_retries_on_
 
     adapter.resume_provision();
     svc.wait_until_live_install_paused().await;
-    assert!(
-        !svc.entries.read().await.contains_key(&created.id),
-        "readiness is durable before the replacement entry is installed"
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the outgoing entry remains until replacement installation")
+            .session
+            .status,
+        crate::session::SessionStatus::Rotating,
+        "durable readiness alone must not make the outgoing entry interactive"
     );
     assert_eq!(
         store

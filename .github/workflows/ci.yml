@@ -326,6 +326,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - name: HTTPRoute ownership
+        run: ruby .github/scripts/check-http-route-backends.rb
       - name: kubeconform
         run: |
           curl -sSL -o kubeconform.tar.gz \

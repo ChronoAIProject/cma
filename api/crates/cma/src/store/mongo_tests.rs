@@ -1,11 +1,9 @@
 use super::*;
-use layer2_core::coordination::{
-    RuntimeCleanupReason, SessionBoundary, SessionLeaseRequest, SessionOperation,
-};
 use layer2_core::{
     AgentOptions, Event, EventKind, KernelId, PageCursor, PageRequest, Rate, RateCardId,
-    RecoveryState, Session, SessionId, SessionListQuery, SessionPricing, SessionRecord,
-    SessionStatus, StopReason, SubjectId, TerminalGeometry,
+    RecoveryState, RuntimeCleanupReason, Session, SessionBoundary, SessionId, SessionLeaseRequest,
+    SessionListQuery, SessionOperation, SessionPricing, SessionRecord, SessionStatus, StopReason,
+    SubjectId, TerminalGeometry,
 };
 use std::io::Write;
 use std::sync::{

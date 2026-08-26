@@ -97,6 +97,27 @@ async fn keep_current_updates_open(
         .clone()
 }
 
+async fn assert_readoption_lease_released(
+    service: &Arc<SessionService>,
+    store: &Arc<FakeStore>,
+    id: &crate::ids::SessionId,
+) {
+    let current = store
+        .get(id)
+        .await
+        .expect("the store is readable")
+        .expect("the durable session remains");
+    let lease = service
+        .acquire_runtime_lease_at(&current, crate::coordination::SessionOperation::Interact)
+        .await
+        .expect("a new operation can acquire after readoption")
+        .expect("the fake store has coordination enabled");
+    store
+        .release_session_lease(&lease)
+        .await
+        .expect("the follow-up operation releases its lease");
+}
+
 #[tokio::test]
 async fn terminal_readoption_does_not_depend_on_conversation_history() {
     let store = Arc::new(FakeStore::default());
@@ -456,6 +477,7 @@ async fn a_request_arriving_between_history_read_and_install_is_answerable() {
     let replacement = replacement_service(Arc::clone(&store), Arc::clone(&adapter));
     let recovered = replacement.reconcile().await;
     assert_eq!(recovered.readopted_sessions, 1);
+    assert_readoption_lease_released(&replacement, &store, &created.id).await;
 
     let events = replacement
         .events_since(&alice, &created.id, None)
