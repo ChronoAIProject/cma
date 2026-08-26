@@ -1056,6 +1056,7 @@ impl SessionLog {
         record: SessionRecord,
         events: Vec<Event>,
         owned_fields: Option<RecordFields>,
+        conversation_authority: Option<ConversationWriteAuthority>,
         retained: Box<dyn RetainedCommitWork>,
         after_allocation: F,
     ) where
@@ -1069,7 +1070,7 @@ impl SessionLog {
                 owned_fields,
                 ..CommitSemantics::default()
             },
-            None,
+            conversation_authority,
             Some(retained),
             after_allocation,
         );
@@ -2298,6 +2299,7 @@ impl SessionService {
             record,
             events,
             None,
+            None,
             retained,
             |_| {},
         );
@@ -3010,6 +3012,71 @@ where
     RFut: Future<Output = ()> + Send + 'static,
     U: FnOnce(T, H) + Send + 'static,
 {
+    append_with_authority(
+        entry,
+        kind,
+        change,
+        None,
+        continuation,
+        on_rejected,
+        on_undelivered,
+    )
+}
+
+/// Queue a semantic conversation event under its exact durable link fence.
+///
+/// The proposed record participates in inheriting lineage immediately, while
+/// retained completion keeps it out of live state until durability. If the
+/// link or lifecycle changes first, rejection rebuilds that lineage before a
+/// later producer can enqueue behind it. Compatibility stores pass no durable
+/// authority and retain the same process-local ordering behavior.
+pub(crate) fn append_conversation_with<T, H, F, Fut, R, RFut, U>(
+    entry: &mut SessionEntry,
+    kind: EventKind,
+    change: impl FnOnce(&mut SessionRecord),
+    authority: Option<crate::coordination::ConversationLink>,
+    continuation: F,
+    on_rejected: R,
+    on_undelivered: U,
+) -> CommitReceiver<T>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+    F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+    Fut: Future<Output = (T, H)> + Send + 'static,
+    R: FnOnce(StoreError) -> RFut + Send + 'static,
+    RFut: Future<Output = ()> + Send + 'static,
+    U: FnOnce(T, H) + Send + 'static,
+{
+    append_with_authority(
+        entry,
+        kind,
+        change,
+        authority.map(ConversationWriteAuthority::Active),
+        continuation,
+        on_rejected,
+        on_undelivered,
+    )
+}
+
+fn append_with_authority<T, H, F, Fut, R, RFut, U>(
+    entry: &mut SessionEntry,
+    kind: EventKind,
+    change: impl FnOnce(&mut SessionRecord),
+    authority: Option<ConversationWriteAuthority>,
+    continuation: F,
+    on_rejected: R,
+    on_undelivered: U,
+) -> CommitReceiver<T>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+    F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+    Fut: Future<Output = (T, H)> + Send + 'static,
+    R: FnOnce(StoreError) -> RFut + Send + 'static,
+    RFut: Future<Output = ()> + Send + 'static,
+    U: FnOnce(T, H) + Send + 'static,
+{
     let event = Event {
         session_id: entry.session.id.clone(),
         seq: 0,
@@ -3033,6 +3100,7 @@ where
         record,
         vec![event],
         None,
+        authority,
         retained,
         |last_seq| live_tail = Some(last_seq.saturating_sub(1)),
     );

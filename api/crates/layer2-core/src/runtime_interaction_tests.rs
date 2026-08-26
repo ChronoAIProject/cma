@@ -4,14 +4,16 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
-use layer3_adapter::ConversationInput;
+use layer3_adapter::{ConversationInput, KernelAdapter};
 use tokio::sync::{Mutex, Notify};
 
-use crate::conversation_support::conversing;
+use crate::conversation::ApprovalDecision;
+use crate::conversation_support::{asking, conversing};
 use crate::coordination::{
-    RuntimeAuthority, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeReservation,
-    SessionBoundary, SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest,
-    SessionOperation,
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthoritySwitch, RuntimeCandidate,
+    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
+    SessionLeaseRequest, SessionOperation,
 };
 use crate::environment::AgentConfiguration;
 use crate::event::{Event, EventKind, StoredEvent};
@@ -22,7 +24,7 @@ use crate::session::{RecoveryState, Session, SessionStatus};
 use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
     await_settled, environments_defaulting_to, kernel, service_over,
-    service_over_with_environments, spec, user, FakeAdapter, FakeStore,
+    service_over_with_environments, spec, user, FakeAdapter, FakeStore, NullScreen,
 };
 use crate::{AgentOptions, CoreError, Reserved, SessionService, TerminalGeometry};
 
@@ -52,7 +54,12 @@ struct InteractionStore {
     stall_prompt_commit: AtomicBool,
     prompt_commit_stalled: Notify,
     prompt_commit_may_return: Notify,
+    stall_approval_commit: AtomicBool,
+    approval_commit_stalled: Notify,
+    approval_commit_may_return: Notify,
+    approval_request_committed: Notify,
     renewal_failures: AtomicUsize,
+    renewal_unavailable: Notify,
     unknown_renewal_results: AtomicUsize,
     detach_next_renewal: AtomicBool,
     detached_renewal_dispatched: AtomicBool,
@@ -133,6 +140,67 @@ impl InteractionStore {
 
     fn resume_prompt_commit(&self) {
         self.prompt_commit_may_return.notify_one();
+    }
+
+    fn stall_next_approval_commit(&self) {
+        assert!(!self.stall_approval_commit.swap(true, Ordering::SeqCst));
+    }
+
+    async fn wait_until_approval_commit_stalled(&self) {
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            self.approval_commit_stalled.notified(),
+        )
+        .await
+        .expect("the receipted approval reached its durable commit");
+    }
+
+    fn resume_approval_commit(&self) {
+        self.approval_commit_may_return.notify_one();
+    }
+
+    async fn wait_until_approval_request_committed(&self) {
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            self.approval_request_committed.notified(),
+        )
+        .await
+        .expect("the runtime approval request became durable");
+    }
+
+    async fn wait_until_renewal_unavailable(&self) {
+        tokio::time::timeout(Duration::from_secs(2), self.renewal_unavailable.notified())
+            .await
+            .expect("the receipted interaction attempted an unavailable renewal");
+    }
+
+    async fn gate_receipted_commit(&self, events: &[Event]) {
+        if events
+            .iter()
+            .any(|event| matches!(&event.kind, EventKind::TurnStarted))
+            && self.stall_prompt_commit.swap(false, Ordering::SeqCst)
+        {
+            self.prompt_commit_stalled.notify_one();
+            self.prompt_commit_may_return.notified().await;
+        }
+        if events
+            .iter()
+            .any(|event| matches!(&event.kind, EventKind::ApprovalResolved { .. }))
+            && self.stall_approval_commit.swap(false, Ordering::SeqCst)
+        {
+            self.approval_commit_stalled.notify_one();
+            self.approval_commit_may_return.notified().await;
+        }
+    }
+
+    fn note_approval_request(&self, events: &[Event], result: &Result<u64, StoreError>) {
+        if result.is_ok()
+            && events
+                .iter()
+                .any(|event| matches!(&event.kind, EventKind::ApprovalRequested { .. }))
+        {
+            self.approval_request_committed.notify_one();
+        }
     }
 
     async fn wait_until_interaction_released(&self) {
@@ -232,6 +300,7 @@ impl SessionStore for InteractionStore {
             return std::future::pending().await;
         }
         if Self::consume(&self.renewal_failures) {
+            self.renewal_unavailable.notify_one();
             return Err(StoreError::Unavailable(
                 "interaction renewal unavailable".into(),
             ));
@@ -283,6 +352,48 @@ impl SessionStore for InteractionStore {
             ));
         }
         released
+    }
+
+    async fn acquire_conversation_opening(
+        &self,
+        request: &ConversationOpeningLeaseRequest,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        self.inner
+            .acquire_conversation_opening(request, session_lease)
+            .await
+    }
+
+    async fn renew_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        self.inner
+            .renew_conversation_opening(opening, session_lease, ttl)
+            .await
+    }
+
+    async fn publish_conversation_link(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        self.inner
+            .publish_conversation_link(opening, session_lease)
+            .await
+    }
+
+    async fn release_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+    ) -> Result<(), StoreError> {
+        self.inner.release_conversation_opening(opening).await
+    }
+
+    async fn validate_conversation_link(&self, link: &ConversationLink) -> Result<(), StoreError> {
+        self.inner.validate_conversation_link(link).await
     }
 
     async fn reserve_runtime_generation(
@@ -342,17 +453,29 @@ impl SessionStore for InteractionStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        if events
-            .iter()
-            .any(|event| matches!(&event.kind, EventKind::TurnStarted))
-            && self.stall_prompt_commit.swap(false, Ordering::SeqCst)
-        {
-            self.prompt_commit_stalled.notify_one();
-            self.prompt_commit_may_return.notified().await;
-        }
-        self.inner
+        self.gate_receipted_commit(events).await;
+        let committed = self
+            .inner
             .commit_session_idempotent(write_id, record, events)
-            .await
+            .await;
+        self.note_approval_request(events, &committed);
+        committed
+    }
+
+    async fn commit_conversation_idempotent(
+        &self,
+        write_id: &str,
+        authority: &ConversationWriteAuthority,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.gate_receipted_commit(events).await;
+        let committed = self
+            .inner
+            .commit_conversation_idempotent(write_id, authority, record, events)
+            .await;
+        self.note_approval_request(events, &committed);
+        committed
     }
 
     async fn create_session_idempotent(
@@ -398,6 +521,126 @@ fn record() -> SessionRecord {
     });
     record.runtime_id = Some("runtime-original".into());
     record
+}
+
+fn versioned_conversation_service(
+    store: Arc<InteractionStore>,
+    adapter: Arc<FakeAdapter>,
+    environments: Arc<crate::environment_service::EnvironmentProfileService>,
+    version: &str,
+) -> Arc<SessionService> {
+    let factory: crate::service::ScreenFactory =
+        Arc::new(|geometry| Box::new(NullScreen(geometry)));
+    let mut adapters: std::collections::HashMap<KernelId, Arc<dyn KernelAdapter>> =
+        std::collections::HashMap::new();
+    adapters.insert(kernel(), adapter);
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store,
+        crate::service::SessionPorts::default(),
+        environments,
+        crate::service::Deployment {
+            runtime_version: Some(version.to_string()),
+            ..crate::test_support::owned()
+        },
+    );
+    service.retry_backoff_ms.store(1, Ordering::Relaxed);
+    service
+}
+
+struct ReceiptRace {
+    store: Arc<InteractionStore>,
+    adapter: Arc<FakeAdapter>,
+    origin: Arc<SessionService>,
+    successor: Arc<SessionService>,
+    owner: crate::authz::Caller,
+    id: SessionId,
+}
+
+async fn receipt_race(owner: &str) -> ReceiptRace {
+    let store = Arc::new(InteractionStore::default());
+    let mut capabilities = conversing();
+    capabilities.terminal = true;
+    let adapter = Arc::new(FakeAdapter {
+        capabilities,
+        ..FakeAdapter::default()
+    });
+    let environments = environments_defaulting_to(AgentConfiguration {
+        kernel: kernel(),
+        mode: SessionMode::Conversation,
+        ..Default::default()
+    });
+    let origin = versioned_conversation_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&environments),
+        "runtime:receipt-origin",
+    );
+    let successor = versioned_conversation_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        environments,
+        "runtime:receipt-successor",
+    );
+    let owner = user(owner);
+    let created = origin
+        .create_session(&owner, spec())
+        .await
+        .expect("created");
+    await_settled(&origin, &owner, &created.id).await;
+    ReceiptRace {
+        store,
+        adapter,
+        origin,
+        successor,
+        owner,
+        id: created.id,
+    }
+}
+
+async fn expire_receipted_interaction(store: &InteractionStore, id: &SessionId) -> SessionLease {
+    let held = store
+        .inner
+        .active_session_lease(id)
+        .await
+        .expect("the receipted interaction retains its lease");
+    assert_eq!(held.operation, SessionOperation::Interact);
+    store.fail_renewals(usize::MAX);
+    tokio::time::advance(Duration::from_secs(10)).await;
+    store.wait_until_renewal_unavailable().await;
+    tokio::time::advance(Duration::from_secs(21)).await;
+    tokio::task::yield_now().await;
+    held
+}
+
+async fn start_paused_handover(race: &ReceiptRace) -> tokio::task::JoinHandle<bool> {
+    race.adapter.pause_next_provision();
+    let durable = race.store.get(&race.id).await.unwrap().unwrap();
+    let rotation = tokio::spawn({
+        let successor = Arc::clone(&race.successor);
+        async move { successor.rotate(durable).await }
+    });
+    race.adapter.wait_until_provision_paused().await;
+
+    let lease = race
+        .store
+        .inner
+        .active_session_lease(&race.id)
+        .await
+        .expect("the successor holds durable handover authority");
+    assert_eq!(lease.operation, SessionOperation::Handover);
+    assert_eq!(
+        race.store
+            .get(&race.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .session
+            .status,
+        SessionStatus::Rotating
+    );
+    rotation
 }
 
 async fn promote_runtime(store: &InteractionStore) -> SessionRecord {
@@ -1362,6 +1605,11 @@ async fn cancelled_prompt_keeps_renewing_until_receipted_commit_settles() {
         .await;
     assert!(matches!(sent.as_slice(), [ConversationInput::Prompt(_)]));
 
+    // The retained continuation runs on a runtime that is deliberately
+    // independent of this test's paused clock. Resume real time now that the
+    // renewal horizon assertions are complete so the cleanup deadline cannot
+    // auto-elapse before that executor receives a scheduling turn.
+    tokio::time::resume();
     store.resume_prompt_commit();
     store.wait_until_interaction_released().await;
     assert!(store
@@ -1369,6 +1617,22 @@ async fn cancelled_prompt_keeps_renewing_until_receipted_commit_settles() {
         .active_session_lease(&created.id)
         .await
         .is_none());
+    assert_eq!(
+        store.releases.lock().await.as_slice(),
+        &[held],
+        "prompt finalization releases its exact interaction lease once"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .session
+            .status,
+        SessionStatus::Running,
+        "the optional running transition settles before interaction cleanup"
+    );
     let events = service
         .events_since(&alice, &created.id, None)
         .await
@@ -1377,6 +1641,22 @@ async fn cancelled_prompt_keeps_renewing_until_receipted_commit_settles() {
         &event.kind,
         EventKind::OwnerMessage { content } if content == "retain the finalization fence"
     )));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Running,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        1,
+        "one receipted idle prompt records one running transition"
+    );
 
     service
         .interrupt_turn(&alice, &created.id)
@@ -1395,6 +1675,451 @@ async fn cancelled_prompt_keeps_renewing_until_receipted_commit_settles() {
         sent.as_slice(),
         [ConversationInput::Prompt(_), ConversationInput::Cancel]
     ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_fenced_running_proposal_retires_its_superseded_conversation_link() {
+    let race = receipt_race("running-fence-readoption-owner").await;
+    let (old_updates, old_received) = {
+        let conversation = race.adapter.conversation.lock().await;
+        let conversation = conversation
+            .as_ref()
+            .expect("the origin conversation is live");
+        (
+            conversation.updates.clone(),
+            Arc::clone(&conversation.received),
+        )
+    };
+    let (old_link, old_authority) = {
+        let entries = race.origin.entries.read().await;
+        let entry = entries
+            .get(&race.id)
+            .expect("the origin entry is installed");
+        (
+            entry.conversation_link.expect("the origin link is named"),
+            entry
+                .conversation_authority
+                .clone()
+                .expect("the origin link has durable authority"),
+        )
+    };
+
+    race.store.stall_next_prompt_commit();
+    let prompt = tokio::spawn({
+        let service = Arc::clone(&race.origin);
+        let owner = race.owner.clone();
+        let id = race.id.clone();
+        async move {
+            service
+                .send_prompt(&owner, &id, "receipt before readoption".into())
+                .await
+        }
+    });
+    race.store.wait_until_prompt_commit_stalled().await;
+    let _expired = expire_receipted_interaction(&race.store, &race.id).await;
+
+    let durable = race
+        .store
+        .get(&race.id)
+        .await
+        .unwrap()
+        .expect("the same runtime remains durable");
+    race.successor
+        .readopt(&durable)
+        .await
+        .expect("a successor republishes the same runtime");
+    let replacement_authority = race
+        .successor
+        .entries
+        .read()
+        .await
+        .get(&race.id)
+        .expect("the replacement conversation is installed")
+        .conversation_authority
+        .clone()
+        .expect("the replacement link has durable authority");
+    assert_eq!(
+        replacement_authority.runtime_generation,
+        old_authority.runtime_generation
+    );
+    assert_eq!(replacement_authority.runtime_id, old_authority.runtime_id);
+    assert_ne!(replacement_authority.epoch, old_authority.epoch);
+    assert!(
+        race.origin
+            .entries
+            .read()
+            .await
+            .get(&race.id)
+            .is_some_and(|entry| {
+                entry.conversation_link == Some(old_link)
+                    && entry.conversation_authority.as_ref() == Some(&old_authority)
+            }),
+        "the still-open predecessor remains installed until its fenced proposal settles"
+    );
+    assert!(!old_updates.is_closed());
+
+    tokio::time::resume();
+    race.store.resume_prompt_commit();
+    prompt
+        .await
+        .expect("the origin prompt task completes")
+        .expect("definite prompt history survives same-runtime readoption");
+    assert!(
+        !race.origin.entries.read().await.contains_key(&race.id),
+        "proposal rejection retires the exact superseded local link"
+    );
+    assert!(matches!(
+        old_received.lock().await.as_slice(),
+        [ConversationInput::Prompt(_)]
+    ));
+
+    race.origin
+        .send_prompt(&race.owner, &race.id, "use a fresh link".into())
+        .await
+        .expect("the origin readopts instead of reusing its stale sender");
+    let fresh = race
+        .adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("a fresh conversation link is live")
+        .sent()
+        .await;
+    assert!(matches!(fresh.as_slice(), [ConversationInput::Prompt(_)]));
+    assert!(matches!(
+        old_received.lock().await.as_slice(),
+        [ConversationInput::Prompt(_)]
+    ));
+    drop(old_updates);
+}
+
+#[tokio::test(start_paused = true)]
+async fn receipted_prompt_history_rebases_over_a_successor_handover() {
+    let race = receipt_race("prompt-receipt-handover-owner").await;
+    race.store.stall_next_prompt_commit();
+    let prompt = tokio::spawn({
+        let service = Arc::clone(&race.origin);
+        let owner = race.owner.clone();
+        let id = race.id.clone();
+        async move {
+            service
+                .send_prompt(&owner, &id, "history survives handover".into())
+                .await
+        }
+    });
+    race.store.wait_until_prompt_commit_stalled().await;
+    let expired = expire_receipted_interaction(&race.store, &race.id).await;
+
+    let rotation = start_paused_handover(&race).await;
+    let handover = race
+        .store
+        .inner
+        .active_session_lease(&race.id)
+        .await
+        .expect("the successor replaced the expired interaction lease");
+    assert_ne!(handover.token, expired.token);
+    let sent = race
+        .adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the outgoing conversation remains live until replacement")
+        .sent()
+        .await;
+    assert!(matches!(sent.as_slice(), [ConversationInput::Prompt(_)]));
+
+    race.store.resume_prompt_commit();
+    let cursor = prompt
+        .await
+        .expect("the origin prompt task completes")
+        .expect("the receipted prompt history rebases over Rotating");
+    let events = race
+        .origin
+        .events_since(&race.owner, &race.id, None)
+        .await
+        .expect("the rebased prompt history is readable");
+    let rotating_seq = events
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Rotating,
+                    ..
+                }
+            )
+        })
+        .expect("the successor durably announced its handover")
+        .seq;
+    let turns = events
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::TurnStarted))
+        .collect::<Vec<_>>();
+    let messages = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                &event.kind,
+                EventKind::OwnerMessage { content } if content == "history survives handover"
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(turns.len(), 1, "one receipt records one turn boundary");
+    assert_eq!(messages.len(), 1, "one receipt records one owner message");
+    assert_eq!(cursor, turns[0].seq);
+    assert_eq!(messages[0].seq, turns[0].seq + 1);
+    assert!(turns[0].seq > rotating_seq);
+    assert!(
+        events.iter().all(|event| {
+            event.seq <= rotating_seq
+                || !matches!(
+                    event.kind,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Running,
+                        ..
+                    }
+                )
+        }),
+        "the origin must not append a stale Running transition after Rotating: {events:?}"
+    );
+    assert_eq!(
+        race.store
+            .get(&race.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .session
+            .status,
+        SessionStatus::Rotating,
+        "history-only finalization cannot settle the successor's handover"
+    );
+    assert_eq!(
+        race.store
+            .inner
+            .active_session_lease(&race.id)
+            .await
+            .expect("the successor still owns its handover")
+            .operation,
+        SessionOperation::Handover
+    );
+
+    race.adapter.resume_provision();
+    assert!(rotation.await.expect("the handover task completes"));
+    let settled = await_settled(&race.successor, &race.owner, &race.id).await;
+    assert_ne!(settled.status, SessionStatus::Rotating);
+    assert!(
+        race.store
+            .runtime_authority(&race.id)
+            .await
+            .unwrap()
+            .expect("the replacement authority is durable")
+            .generation
+            > 0
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn receipted_approval_history_rebases_over_a_successor_handover() {
+    const REQUEST_ID: &str = "approval-receipt-before-handover";
+
+    let race = receipt_race("approval-receipt-handover-owner").await;
+    let updates = race
+        .adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation is open")
+        .updates
+        .clone();
+    updates
+        .send(layer3_adapter::ConversationUpdate::Asked(asking(
+            REQUEST_ID,
+            "preserve one approval receipt",
+        )))
+        .await
+        .expect("the core is listening");
+    race.store.wait_until_approval_request_committed().await;
+    assert_eq!(
+        race.store
+            .get(&race.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .session
+            .status,
+        SessionStatus::Idle
+    );
+    assert_eq!(
+        race.origin
+            .entries
+            .read()
+            .await
+            .get(&race.id)
+            .expect("the origin conversation remains installed")
+            .pending_approvals
+            .get(REQUEST_ID),
+        Some(&None)
+    );
+
+    race.store.stall_next_approval_commit();
+    let approval = tokio::spawn({
+        let service = Arc::clone(&race.origin);
+        let owner = race.owner.clone();
+        let id = race.id.clone();
+        async move {
+            service
+                .resolve_approval(&owner, &id, REQUEST_ID.into(), ApprovalDecision::Allow)
+                .await
+        }
+    });
+    race.store.wait_until_approval_commit_stalled().await;
+    assert_eq!(
+        race.origin
+            .entries
+            .read()
+            .await
+            .get(&race.id)
+            .expect("the receipted approval remains locally owned")
+            .pending_approvals
+            .get(REQUEST_ID),
+        Some(&None),
+        "a receipt alone cannot remove pending state before ApprovalResolved is durable"
+    );
+    let expired = expire_receipted_interaction(&race.store, &race.id).await;
+
+    let rotation = start_paused_handover(&race).await;
+    let handover = race
+        .store
+        .inner
+        .active_session_lease(&race.id)
+        .await
+        .expect("the successor replaced the expired interaction lease");
+    assert_ne!(handover.token, expired.token);
+    let sent = race
+        .adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the outgoing conversation remains live until replacement")
+        .sent()
+        .await;
+    assert!(matches!(
+        sent.as_slice(),
+        [ConversationInput::PermissionAnswer { id, .. }] if id == REQUEST_ID
+    ));
+    assert_eq!(
+        race.origin
+            .entries
+            .read()
+            .await
+            .get(&race.id)
+            .expect("the origin entry remains installed")
+            .pending_approvals
+            .get(REQUEST_ID),
+        Some(&None)
+    );
+
+    race.store.resume_approval_commit();
+    approval
+        .await
+        .expect("the origin approval task completes")
+        .expect("the receipted approval history rebases over Rotating");
+    let events = race
+        .origin
+        .events_since(&race.owner, &race.id, None)
+        .await
+        .expect("the rebased approval history is readable");
+    let rotating_seq = events
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Rotating,
+                    ..
+                }
+            )
+        })
+        .expect("the successor durably announced its handover")
+        .seq;
+    let resolved = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                &event.kind,
+                EventKind::ApprovalResolved { request_id, allowed }
+                    if request_id == REQUEST_ID && *allowed
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(resolved.len(), 1, "one receipt records one resolved prefix");
+    assert!(resolved[0].seq > rotating_seq);
+    assert!(
+        events.iter().all(|event| {
+            event.seq <= rotating_seq
+                || !matches!(
+                    event.kind,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Running,
+                        ..
+                    }
+                )
+        }),
+        "the origin must not append a stale Running transition after Rotating: {events:?}"
+    );
+    let approval_state = crate::conversation_log::pending_approvals_from(&events)
+        .expect("the durable approval history folds");
+    assert!(approval_state.pending.is_empty());
+    assert!(
+        !race
+            .origin
+            .entries
+            .read()
+            .await
+            .get(&race.id)
+            .expect("the origin entry remains installed")
+            .pending_approvals
+            .contains_key(REQUEST_ID),
+        "only durable ApprovalResolved removes the private pending entry"
+    );
+    assert_eq!(
+        race.store
+            .get(&race.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .session
+            .status,
+        SessionStatus::Rotating,
+        "approval history finalization cannot settle the successor's handover"
+    );
+    assert_eq!(
+        race.store
+            .inner
+            .active_session_lease(&race.id)
+            .await
+            .expect("the successor still owns its handover")
+            .operation,
+        SessionOperation::Handover
+    );
+
+    race.adapter.resume_provision();
+    assert!(rotation.await.expect("the handover task completes"));
+    let settled = await_settled(&race.successor, &race.owner, &race.id).await;
+    assert_ne!(settled.status, SessionStatus::Rotating);
+    let successor_entries = race.successor.entries.read().await;
+    assert!(
+        successor_entries
+            .get(&race.id)
+            .expect("the replacement conversation is installed")
+            .pending_approvals
+            .is_empty(),
+        "the successor rebuilds no pending request after durable resolution"
+    );
 }
 
 #[tokio::test]
