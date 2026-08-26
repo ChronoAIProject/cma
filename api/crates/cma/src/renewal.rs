@@ -49,10 +49,11 @@ pub fn spawn(auth: Arc<AuthState>, service: Arc<SessionService>) {
 
 /// How long a minted session credential is kept before it is replaced.
 ///
-/// The platform does not give these keys an expiry. Twelve hours is a local
-/// rotation cadence: it limits how long one value is used without pretending
-/// the provider will invalidate it on that schedule.
-const CREDENTIAL_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
+/// Twelve hours is the normal rotation age for a provider key whose hard
+/// expiry is thirty days. Once a credential reaches this age it remains due on
+/// every bounded sweep until its replacement is acknowledged, leaving 29.5
+/// days of retry margin rather than making a long session depend on one key.
+const CREDENTIAL_ROTATION_AGE: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// One pass: renew what is close to expiry, then push it into live sessions.
 pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usize {
@@ -77,10 +78,10 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
     // A control plane that stopped between minting and releasing leaves one
     // behind, and nothing else records the pairing — the key's own name is
     // what says whose it was. Reclaiming needs the owner's token, which this
-    // process may not hold after a restart, and there is no expiry behind it:
-    // until that owner signs in again the key stays valid. This sweep is the
-    // only thing that takes it back, so a pass it cannot make is a credential
-    // still open, not a tidy-up postponed.
+    // process may not hold after a restart. New keys then remain valid only to
+    // their provider expiry, while legacy keys may have no bound at all. This
+    // sweep is the path that takes both back promptly, so a pass it cannot make
+    // is still a credential open, not a tidy-up postponed.
     match auth
         .reclaim_orphaned_credentials_with_budgets(
             service,
@@ -127,7 +128,7 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
         // while this keeps the sessions able to act.
         let due_for_reissue = if reissue_budget.remaining() > 0 {
             match auth
-                .sessions_due_for_reissue_with_budget(CREDENTIAL_LIFETIME, &reissue_budget)
+                .sessions_due_for_reissue_with_budget(CREDENTIAL_ROTATION_AGE, &reissue_budget)
                 .await
             {
                 Ok(batch) => {
@@ -352,6 +353,14 @@ mod tests {
             refresh_token: refresh.map(|r| r.to_string()),
             expires_at: std::time::Instant::now() + expires_in,
         }
+    }
+
+    #[test]
+    fn session_key_rotation_leaves_the_documented_provider_expiry_margin() {
+        assert_eq!(
+            crate::auth::keys::SESSION_KEY_LIFETIME - CREDENTIAL_ROTATION_AGE,
+            Duration::from_secs((29 * 24 + 12) * 60 * 60)
+        );
     }
 
     #[test]
