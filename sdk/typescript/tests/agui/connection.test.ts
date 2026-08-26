@@ -592,7 +592,7 @@ describe('liveness is not history', () => {
 });
 
 describe('a cursorless interface boundary', () => {
-  it('delivers RUN_STARTED before liveness and advances only on the numbered ending', async () => {
+  it('fails the GET connection permanently without moving its cursor', async () => {
     const fake = new Fake();
     fake.onOpen = [
       { type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_resume', seq: 0 },
@@ -608,29 +608,17 @@ describe('a cursorless interface boundary', () => {
       { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_resume', seq: 7 },
     ];
     fake.responses = [[]];
-    const seen: AguiEvent[] = [];
-    const cursorAtDelivery: number[] = [];
-    const connection = new AguiConnection(fake, 'sesn_1', {
-      backoffMs: 0,
-      maxBackoffMs: 0,
-      sleep: () => Promise.resolve(),
-    });
-    const stop = connection.subscribe((event) => {
-      seen.push(event);
-      cursorAtDelivery.push(connection.cursor);
-    });
+    const { connection, errors, seen, statuses, stop } = connect(fake);
 
-    await vi.waitFor(() => expect(connection.cursor).toBe(7));
+    await vi.waitFor(() => expect(statuses).toContain('failed'));
     stop();
 
-    expect(seen.map((event) => event.type)).toEqual([
-      'RUN_STARTED',
-      'TEXT_MESSAGE_CONTENT',
-      'RUN_FINISHED',
-    ]);
-    expect(seen.map((event) => event.ephemeral === true)).toEqual([false, true, false]);
-    expect(cursorAtDelivery).toEqual([0, 0, 0]);
-    expect(connection.cursor).toBe(7);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(ProtocolError);
+    expect(errors[0]?.message).toContain('reserved for POST run responses');
+    expect(seen).toEqual([]);
+    expect(connection.cursor).toBe(0);
+    expect(fake.opens).toBe(1);
   });
 });
 

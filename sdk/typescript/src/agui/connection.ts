@@ -430,22 +430,22 @@ export class AguiConnection {
     if (this.#closed) {
       return;
     }
-    const events = assembler.accept(toEvent(raw));
+    const event = toEvent(raw);
+    const eventKind = event.type === 'UNKNOWN' ? event.kind : event.type;
+    if (isCursorlessInterfaceBoundary(eventKind, event.seq, event.ephemeral)) {
+      throw new ProtocolError(
+        'AG-UI GET event stream returned a cursorless RUN_STARTED reserved for POST run responses',
+      );
+    }
+    const events = assembler.accept(event);
     if (events.length === 0) {
       return;
     }
     const first = events[0] as AguiEvent;
-    const firstKind = first.type === 'UNKNOWN' ? first.kind : first.type;
-    /*
-     * Cursorless interface boundaries and liveness pass straight through,
-     * touching neither the cursor nor the seen-set. The former orders a
-     * continuation before its live frames; the latter has no log position.
-     * Recording either would turn a non-cursor into reconnect state.
-     */
-    if (
-      first.ephemeral === true ||
-      isCursorlessInterfaceBoundary(firstKind, first.seq, first.ephemeral)
-    ) {
+    // Liveness passes straight through without turning its non-cursor into
+    // reconnect state. Cursorless interface boundaries were rejected above:
+    // this connection consumes GET history/tail, never a POST run response.
+    if (first.ephemeral === true) {
       onEvent(first);
       return;
     }
