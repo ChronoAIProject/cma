@@ -195,9 +195,14 @@ pub struct SessionService {
     /// Serializes rebuilding one runtime attachment after process replacement.
     ///
     /// Separate from lifecycle ordering because opening a conversation may wait
-    /// on a human-paced sign-in. The permit spans the history read, network
-    /// open, folder creation and installation so two callers cannot leave two
-    /// sockets draining and folding the same runtime conversation.
+    /// on a human-paced sign-in. Within this process, the permit spans the
+    /// history read, network open, folder creation and installation so two
+    /// callers cannot leave two sockets draining and folding the same runtime
+    /// conversation.
+    ///
+    /// Process-local exclusion is sufficient only while
+    /// `infra/api/deployment.yaml` keeps `replicas: 1`. Horizontal scaling
+    /// requires durable cross-process ownership before that value can grow.
     pub(crate) readoption_gates: SessionGates,
     /// Orders accepted prompts before the runtime updates they cause.
     ///
