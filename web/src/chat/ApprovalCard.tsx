@@ -150,7 +150,9 @@ export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCard
        * at `--text-title` + 1, and `AgentContent` would impose its own
        * paragraph typography over it.
        */}
-      <p className="approval__question">{questionOf(interrupt.message)}</p>
+      {interrupt.message === null ? null : (
+        <p className="approval__question">{questionOf(interrupt.message)}</p>
+      )}
 
       {/*
        * The answers the kernel offered, rendered from what arrived. A kernel
