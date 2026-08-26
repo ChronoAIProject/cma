@@ -12,7 +12,7 @@
 //! lease exist only while a runtime is running and are rebuilt on attach;
 //! persisting them would be persisting a snapshot of something already gone.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::SystemTime};
 
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::directory::{DirectoryQuery, RegisteredUser};
@@ -228,6 +228,116 @@ pub enum StoreError {
         /// Revision currently durable.
         actual: u64,
     },
+}
+
+/// One subject-scoped attempt to perform a named operation once.
+///
+/// The name, key, and fingerprint are opaque to the core. The interface that
+/// accepts the request decides how to derive them; persistence only guarantees
+/// that one exact fingerprint can hold a key until the claim expires.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationClaim {
+    subject: SubjectId,
+    operation: String,
+    key: String,
+    fingerprint: [u8; 32],
+    expires_at: SystemTime,
+}
+
+impl OperationClaim {
+    /// Build a durable operation claim.
+    pub fn new(
+        subject: SubjectId,
+        operation: impl Into<String>,
+        key: impl Into<String>,
+        fingerprint: [u8; 32],
+        expires_at: SystemTime,
+    ) -> Self {
+        Self {
+            subject,
+            operation: operation.into(),
+            key: key.into(),
+            fingerprint,
+            expires_at,
+        }
+    }
+
+    /// The subject whose operation this is.
+    pub fn subject(&self) -> &SubjectId {
+        &self.subject
+    }
+
+    /// The interface-defined operation name.
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+
+    /// The caller-supplied operation key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// A stable digest of everything that distinguishes this request.
+    pub fn fingerprint(&self) -> &[u8; 32] {
+        &self.fingerprint
+    }
+
+    /// When persistence may forget this claim and permit the key again.
+    pub fn expires_at(&self) -> SystemTime {
+        self.expires_at
+    }
+}
+
+/// What an atomic attempt to reserve an operation key found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationReservation {
+    /// This caller acquired a new claim and may perform the operation.
+    Acquired,
+    /// The same operation is still being performed elsewhere.
+    Pending,
+    /// The operation finished and its opaque outcome can be replayed.
+    Complete(Vec<u8>),
+    /// This key already names a different request fingerprint.
+    FingerprintMismatch,
+}
+
+/// Durable, subject-scoped operation claims and their opaque outcomes.
+///
+/// The stored bytes belong to the interface that produced them. Keeping them
+/// opaque here lets any interface use this guarantee without placing its
+/// response vocabulary in the core.
+#[async_trait::async_trait]
+pub trait OperationStore: Send + Sync {
+    /// Atomically acquire a new claim or inspect the one already holding it.
+    async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError>;
+
+    /// Replace a held claim's pending marker with its replayable outcome.
+    async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError>;
+}
+
+#[cfg(test)]
+mod operation_claim_tests {
+    use std::time::{Duration, SystemTime};
+
+    use super::*;
+
+    #[test]
+    fn a_claim_preserves_every_part_of_its_durable_identity() {
+        let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+        let claim = OperationClaim::new(
+            SubjectId("subject-a".into()),
+            "create-resource",
+            "attempt-a",
+            [9; 32],
+            expires_at,
+        );
+
+        assert_eq!(claim.subject(), &SubjectId("subject-a".into()));
+        assert_eq!(claim.operation(), "create-resource");
+        assert_eq!(claim.key(), "attempt-a");
+        assert_eq!(claim.fingerprint(), &[9; 32]);
+        assert_eq!(claim.expires_at(), expires_at);
+    }
 }
 
 /// Durable session records and their event history.
