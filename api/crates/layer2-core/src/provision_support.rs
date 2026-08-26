@@ -798,7 +798,172 @@ enum RuntimeInteractionAcquisition {
     },
 }
 
+/// Skill bytes resolved during one bring-up and whether their durable write
+/// still needs to be confirmed.
+pub(crate) struct PreparedSkillPacks {
+    packs: Vec<crate::store::SkillPack>,
+    needs_persistence: bool,
+}
+
+impl PreparedSkillPacks {
+    fn durable(packs: Vec<crate::store::SkillPack>) -> Self {
+        Self {
+            packs,
+            needs_persistence: false,
+        }
+    }
+
+    fn pending(packs: Vec<crate::store::SkillPack>) -> Self {
+        Self {
+            packs,
+            needs_persistence: true,
+        }
+    }
+}
+
 impl SessionService {
+    /// Restore the exact skills already held for this session, or resolve and
+    /// preserve them once when no durable packs predate this start.
+    ///
+    /// `prepared` belongs to one bring-up task. Keeping a resolved answer there
+    /// means provider retries replay the same bytes even when the durable store is
+    /// briefly unavailable; neither retry can touch the registry a second time.
+    pub(crate) async fn prepare_skill_packs(
+        &self,
+        id: &SessionId,
+        caller_credential: Option<&str>,
+        wanted: &[String],
+        prepared: &mut Option<PreparedSkillPacks>,
+    ) -> Result<Vec<crate::store::SkillPack>, crate::provision_failure::StartFailure> {
+        if let Some(cached) = prepared.as_mut() {
+            self.preserve_prepared_skill_packs(id, cached).await?;
+            return Ok(cached.packs.clone());
+        }
+
+        if let Some(store) = self.skill_packs.as_ref() {
+            match store.get(id).await {
+                Ok(Some(packs)) => {
+                    tracing::info!(
+                        session_id = %id,
+                        skills = packs.len(),
+                        "restored this session's stored skills"
+                    );
+                    *prepared = Some(PreparedSkillPacks::durable(packs.clone()));
+                    return Ok(packs);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return Err(crate::provision_failure::StartFailure::transient(format!(
+                        "this session's stored skills could not be read: {error}"
+                    )));
+                }
+            }
+        }
+
+        if wanted.is_empty() {
+            // Empty is still an exact resolution. Its durable marker prevents a
+            // later profile change from silently granting this session a skill
+            // it did not have when it was created.
+            *prepared = Some(PreparedSkillPacks::pending(Vec::new()));
+            self.preserve_prepared_skill_packs(
+                id,
+                prepared.as_mut().expect("the empty resolution was cached"),
+            )
+            .await?;
+            return Ok(Vec::new());
+        }
+
+        let Some(source) = self.skills.as_ref() else {
+            // A deployment with no registry still starts sessions; they carry
+            // whatever their image does. Do not store this empty fallback: a
+            // later correctly configured process must still get one chance to
+            // recover a legacy session's packs.
+            *prepared = Some(PreparedSkillPacks::durable(Vec::new()));
+            return Ok(Vec::new());
+        };
+        let wanted: Vec<crate::environment::SkillId> = wanted
+            .iter()
+            .map(|skill| crate::environment::SkillId::new(skill.clone()))
+            .collect();
+        let packs = match source.packs_for(caller_credential, &wanted).await {
+            Ok(packs) => packs,
+            // At creation a caller is present and should hear a named refusal
+            // before anything is provisioned. A legacy rotation has no caller;
+            // losing its work to avoid one missing file is the production
+            // failure this fallback exists to prevent.
+            Err(why) if caller_credential.is_some() => {
+                return Err(crate::provision_failure::StartFailure::permanent(format!(
+                    "this session's skills could not be prepared: {why}"
+                )));
+            }
+            Err(why) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %why,
+                    "no stored skill packs predate this start and the legacy refetch failed; \
+                     carrying the session forward without skills"
+                );
+                *prepared = Some(PreparedSkillPacks::durable(Vec::new()));
+                return Ok(Vec::new());
+            }
+        };
+
+        // Keep the exact resolved bytes before attempting storage. If storage
+        // fails, the retry writes these again rather than refetching a newer
+        // revision from the registry.
+        *prepared = Some(PreparedSkillPacks::pending(packs.clone()));
+        self.preserve_prepared_skill_packs(
+            id,
+            prepared.as_mut().expect("the resolved packs were cached"),
+        )
+        .await?;
+        Ok(packs)
+    }
+
+    async fn preserve_prepared_skill_packs(
+        &self,
+        id: &SessionId,
+        prepared: &mut PreparedSkillPacks,
+    ) -> Result<(), crate::provision_failure::StartFailure> {
+        if !prepared.needs_persistence {
+            return Ok(());
+        }
+        self.preserve_skill_packs(id, &prepared.packs).await?;
+        prepared.needs_persistence = false;
+        Ok(())
+    }
+
+    async fn preserve_skill_packs(
+        &self,
+        id: &SessionId,
+        packs: &[crate::store::SkillPack],
+    ) -> Result<(), crate::provision_failure::StartFailure> {
+        let Some(store) = self.skill_packs.as_ref() else {
+            return Ok(());
+        };
+        store.put(id, packs).await.map_err(|error| {
+            crate::provision_failure::StartFailure::transient(format!(
+                "this session's skills could not be stored for recovery: {error}"
+            ))
+        })
+    }
+
+    /// Remove session-owned skill bytes without making lifecycle cleanup
+    /// one-shot. The store's deterministic key and absent-delete contract make
+    /// this safe to call after every terminal observation.
+    pub(crate) async fn remove_skill_packs(&self, id: &SessionId) {
+        let Some(store) = self.skill_packs.as_ref() else {
+            return;
+        };
+        if let Err(error) = store.delete(id).await {
+            tracing::error!(
+                session_id = %id,
+                %error,
+                "could not remove this ended session's stored skills"
+            );
+        }
+    }
+
     /// Provision a runtime for an existing session and attach its terminal.
     pub(crate) async fn bring_up(
         self: &Arc<Self>,
