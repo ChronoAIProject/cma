@@ -3,6 +3,7 @@ pub(crate) mod capability_worker;
 pub(crate) mod github;
 pub(crate) mod github_effects;
 pub(crate) mod worker;
+pub(crate) mod workspace_diff;
 
 use async_trait::async_trait;
 use layer2_core::{
