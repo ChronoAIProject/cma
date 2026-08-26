@@ -16,6 +16,30 @@
 /** Where an AG-UI event's RFC 6902 patches live — `docs/API_AGUI.md` §3. */
 export const STATE_DELTA_PATCHES = 'delta';
 
+/** Exact session-status spellings serialized by Layer 2 on REST and AG-UI. */
+export const SESSION_STATUSES = [
+  'provisioning',
+  'ready',
+  'running',
+  'rotating',
+  'idle',
+  'terminated',
+] as const;
+
+export type SessionStatus = (typeof SESSION_STATUSES)[number];
+
+/** Exact provisioning-stage spellings serialized by Layer 2 on AG-UI. */
+export const PROVISIONING_STAGES = [
+  'accepted',
+  'runtime_requested',
+  'runtime_created',
+  'skills_installed',
+  'attaching',
+  'ready',
+] as const;
+
+export type ProvisioningStage = (typeof PROVISIONING_STAGES)[number];
+
 /** The durable state value for one approval the session is waiting on. */
 export interface PendingApprovalState {
   readonly id: string;
@@ -35,6 +59,8 @@ export interface AguiState {
     contextUsed: number | null;
     contextWindow: number | null;
   };
+  status: SessionStatus | null;
+  progress: ProvisioningStage | null;
   mode: unknown;
   plan: unknown;
   configOptions: unknown;
@@ -63,6 +89,8 @@ export function initialState(): AguiState {
       contextUsed: null,
       contextWindow: null,
     },
+    status: null,
+    progress: null,
     mode: null,
     plan: null,
     configOptions: null,
@@ -118,6 +146,10 @@ export const PRICING_WIRE = {
  * explicitly unwritten local placeholder, recorded at its declaration below.
  */
 export const PATHS = {
+  /** The session lifecycle reported by Layer 2. */
+  status: '/status',
+  /** The latest named step in provisioning a runtime. */
+  progress: '/progress',
   /** A session's live resource readings. Replaced whole; never accumulated. */
   resources: '/resources',
   /** An open memory-pressure episode, or null when there is none. */
