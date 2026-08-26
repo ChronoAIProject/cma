@@ -94,12 +94,12 @@ fn every_durable_kind() -> Vec<EventKind> {
             rows: 40,
         },
         EventKind::ApprovalRequested {
-            request_id: "approval_state_contract".into(),
+            request_id: "approval/~state_contract".into(),
             action: Some("run a command".into()),
             detail: None,
         },
         EventKind::ApprovalResolved {
-            request_id: "approval_state_contract".into(),
+            request_id: "approval/~state_contract".into(),
             allowed: true,
         },
         EventKind::PlaneChanged {
@@ -249,10 +249,36 @@ fn emitted_state_delta_paths() -> BTreeSet<String> {
             let path = operation["path"]
                 .as_str()
                 .unwrap_or_else(|| panic!("{operation} carried no JSON-Pointer path"));
-            paths.insert(path.to_string());
+            paths.insert(canonical_state_delta_path(path));
         }
     }
     paths
+}
+
+fn canonical_state_delta_path(path: &str) -> String {
+    const PREFIX: &str = "/pendingApprovals/";
+    let Some(token) = path.strip_prefix(PREFIX) else {
+        return path.to_string();
+    };
+
+    assert!(
+        !token.is_empty(),
+        "a pending approval path carried no request id"
+    );
+    assert!(
+        !token.contains('/'),
+        "a pending approval id was not encoded as one JSON-Pointer token: {path}"
+    );
+    let mut chars = token.chars();
+    while let Some(character) = chars.next() {
+        if character == '~' {
+            assert!(
+                matches!(chars.next(), Some('0' | '1')),
+                "a pending approval path used an invalid RFC 6901 escape: {path}"
+            );
+        }
+    }
+    "/pendingApprovals/{requestId}".to_string()
 }
 
 fn canonical_state_delta_paths() -> BTreeSet<String> {
@@ -302,11 +328,62 @@ fn apply_all(mut state: Value, events: &[crate::agui::project::AguiEvent]) -> Va
 #[test]
 fn every_emitted_state_delta_applies_with_a_conforming_library() {
     for event in every_state_delta() {
+        if is_pending_approval_tombstone(&event) {
+            continue;
+        }
         let mut state = initial_state();
         let patch = patch_of(&event);
         json_patch::patch(&mut state, &patch)
             .unwrap_or_else(|error| panic!("{} did not apply: {error}", event.body));
     }
+}
+
+fn is_pending_approval_tombstone(event: &crate::agui::project::AguiEvent) -> bool {
+    let Some(operations) = event.body["delta"].as_array() else {
+        return false;
+    };
+    operations.len() == 1
+        && operations[0]["op"] == "remove"
+        && operations[0]["path"]
+            .as_str()
+            .is_some_and(|path| canonical_state_delta_path(path) == "/pendingApprovals/{requestId}")
+}
+
+#[test]
+fn an_approval_request_and_resolution_are_strictly_applicable_in_order() {
+    let requested = project(
+        &logged(
+            1,
+            EventKind::ApprovalRequested {
+                request_id: "approval/~one".into(),
+                action: Some("command_execution".into()),
+                detail: Some("Run the command?".into()),
+            },
+        ),
+        "run_state_contract",
+        "sesn_state_contract",
+    );
+    let resolved = project(
+        &logged(
+            2,
+            EventKind::ApprovalResolved {
+                request_id: "approval/~one".into(),
+                allowed: true,
+            },
+        ),
+        "run_state_contract",
+        "sesn_state_contract",
+    );
+    let deltas = requested
+        .events
+        .iter()
+        .chain(&resolved.events)
+        .filter(|event| event.kind == "STATE_DELTA")
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let state = apply_all(initial_state(), &deltas);
+    assert_eq!(state["pendingApprovals"], json!({}));
 }
 
 #[test]

@@ -74,6 +74,20 @@ describe('the card', () => {
     expect(screen.getByText(/cma:command_execution/)).toBeInTheDocument();
   });
 
+  it('keeps absent kernel wording absent', () => {
+    const { container } = render(
+      <ApprovalCard
+        interrupt={{ id: 'a', reason: 'confirmation', message: null }}
+        onAnswer={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector('.approval__question')).toBeNull();
+    expect(screen.getByText(/confirmation/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+  });
+
   it('draws the command as code rather than as punctuation', () => {
     // §18.3 requires it, and this is the one sentence in the product where the
     // exact command is the whole decision. It was rendering its backticks.
