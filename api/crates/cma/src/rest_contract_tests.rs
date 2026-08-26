@@ -11,6 +11,7 @@ use std::{
 
 use axum::{
     body::{to_bytes, Body, BodyDataStream},
+    extract::DefaultBodyLimit,
     http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode},
     Extension, Router,
 };
@@ -36,10 +37,10 @@ use layer3_adapter::{
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tower::ServiceExt;
 
-use super::{rest_api_router, with_cors, with_request_context};
+use super::{rest_api_router, with_cors, with_request_context, REQUEST_BODY_LIMIT_BYTES};
 use crate::activity::{self, ActivityRecorder};
 
-const OVERSIZED_BODY_LEN: usize = 2 * 1024 * 1024 + 1;
+const OVERSIZED_BODY_LEN: usize = REQUEST_BODY_LIMIT_BYTES + 1;
 const LISTED_ORIGIN: &str = "https://integrator.example";
 const UNLISTED_ORIGIN: &str = "https://unlisted.example";
 const TEST_SERVICE_ID: &str = "api-github";
@@ -1146,7 +1147,8 @@ fn test_surface(authenticated: bool) -> TestSurface {
         .layer(axum::middleware::from_fn_with_state(
             ActivityRecorder::new(activity),
             activity::record,
-        ));
+        ))
+        .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
     let app = if authenticated {
         app.layer(Extension(caller.authorization.clone()))
             .layer(Extension(AuthenticatedSubject(caller.subject.clone())))
@@ -4962,6 +4964,7 @@ async fn the_production_body_capture_limit_returns_a_coded_413() {
 async fn unbuffered_json_and_optional_body_limits_return_the_same_coded_413() {
     let app = test_surface(true).app;
     for (uri, content_type) in [
+        ("/api/v1/agui/run", Some("application/json")),
         ("/api/v1/sessions/sesn_bad/input", Some("application/json")),
         (
             "/api/v1/sessions/sesn_bad/terminal-ticket",

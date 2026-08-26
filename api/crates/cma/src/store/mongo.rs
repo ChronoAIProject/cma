@@ -14,12 +14,10 @@ use std::{
 
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
-    coordination::{
-        RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
-        RuntimeCleanup, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
-    },
     store::{Page, PageCursor, SessionListQuery, SessionRecord, SessionStore, StoreError},
-    Event, Rate, RateCardId, Reserved, SessionId, SessionPricing, SessionStatus, StopReason,
+    Event, Rate, RateCardId, Reserved, RuntimeAuthority, RuntimeAuthorityRetirement,
+    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeReservation, SessionBoundary,
+    SessionId, SessionLease, SessionLeaseRequest, SessionPricing, SessionStatus, StopReason,
     StoredEvent, SubjectId,
 };
 use mongodb::bson::{doc, Binary, Bson, Document};

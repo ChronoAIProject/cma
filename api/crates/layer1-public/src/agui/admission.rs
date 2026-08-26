@@ -12,6 +12,7 @@ use std::{
 
 use axum::{
     body::to_bytes,
+    extract::rejection::JsonRejection,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -23,7 +24,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     auth::StoreUnavailable,
-    rest::{problem_document, problem_response, Problem},
+    rest::{problem_document, problem_response, BodyProblem, Problem},
 };
 
 const OUTCOME_VERSION: u8 = 1;
@@ -217,6 +218,7 @@ impl IntoResponse for CoordinationProblem {
 
 /// Anything that can refuse the run before its SSE response is returned.
 pub(super) enum RunFailure {
+    Body(BodyProblem),
     Core(Problem),
     Stored(StoredProblem),
     Coordination(CoordinationProblem),
@@ -226,6 +228,7 @@ pub(super) enum RunFailure {
 impl std::fmt::Debug for RunFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Body(_) => formatter.write_str("Body(..)"),
             Self::Core(_) => formatter.write_str("Core(..)"),
             Self::Stored(problem) => formatter.debug_tuple("Stored").field(problem).finish(),
             Self::Coordination(problem) => formatter
@@ -234,6 +237,12 @@ impl std::fmt::Debug for RunFailure {
                 .finish(),
             Self::Store(problem) => formatter.debug_tuple("Store").field(problem).finish(),
         }
+    }
+}
+
+impl From<JsonRejection> for RunFailure {
+    fn from(error: JsonRejection) -> Self {
+        Self::Body(error.into())
     }
 }
 
@@ -252,6 +261,7 @@ impl From<StoreError> for RunFailure {
 impl IntoResponse for RunFailure {
     fn into_response(self) -> Response {
         match self {
+            Self::Body(problem) => problem.into_response(),
             Self::Core(problem) => problem.into_response(),
             Self::Stored(problem) => problem
                 .into_response()

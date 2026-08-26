@@ -144,6 +144,11 @@ Content-Type: application/json
 
 `forwardedProps` is ignored on an existing thread because what it sets is frozen at session creation. Changing it requires a new thread.
 
+A request that reaches JSON body collection is capped at 2 MiB (2,097,152
+bytes). Crossing that ceiling returns HTTP 413 `application/problem+json` with
+code `request_too_large` before a run starts or any SSE frame is emitted.
+Authentication or rate limiting can reject a request before its body is read.
+
 When `runId` is omitted or `null`, CMA still generates `run_` followed by 32
 lowercase hexadecimal characters and echoes it for wire validity. That value
 was not supplied by the caller, so a later POST cannot identify the earlier

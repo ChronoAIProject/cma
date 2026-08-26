@@ -4,10 +4,115 @@
 //! read here but absent there is a divergence that will only show up in
 //! production, so the two must be changed together.
 
+use std::num::NonZeroU32;
+
 use axum::http::HeaderValue;
+use ipnet::IpNet;
 
 use crate::auth::AuthMode;
 use crate::store::AuthEncryptionKey;
+
+const ADMISSION_RATE_REQUESTS_PER_MINUTE: u32 = 6_000;
+const HEALTH_RATE_REQUESTS_PER_MINUTE: u32 = 120;
+const MINIMUM_HEALTH_RATE_REQUESTS_PER_MINUTE: u32 = 30;
+const DEFAULT_RATE_REQUESTS_PER_MINUTE: u32 = 600;
+const CREATE_RATE_REQUESTS_PER_MINUTE: u32 = 10;
+const INPUT_RATE_REQUESTS_PER_MINUTE: u32 = 120;
+const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
+const MAX_TRUSTED_PROXY_HOPS: usize = 16;
+
+/// Per-key request budgets enforced by this process.
+#[derive(Debug, Clone, Copy)]
+pub struct RateLimitConfig {
+    /// Cheap per-network admission decisions made before authentication.
+    pub admission_per_minute: NonZeroU32,
+    /// Health requests, isolated from caller traffic so probes remain viable.
+    pub health_per_minute: NonZeroU32,
+    /// Requests per minute for routes without a stricter operation budget.
+    pub default_per_minute: NonZeroU32,
+    /// Session creations per minute.
+    pub create_per_minute: NonZeroU32,
+    /// Session input deliveries per minute.
+    pub input_per_minute: NonZeroU32,
+}
+
+impl RateLimitConfig {
+    fn from_env() -> Result<Self, String> {
+        Ok(Self {
+            admission_per_minute: positive_u32(
+                "CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE",
+                ADMISSION_RATE_REQUESTS_PER_MINUTE,
+            )?,
+            health_per_minute: u32_at_least(
+                "CHRONO_SERVER_RATE_HEALTH_PER_MINUTE",
+                HEALTH_RATE_REQUESTS_PER_MINUTE,
+                MINIMUM_HEALTH_RATE_REQUESTS_PER_MINUTE,
+            )?,
+            default_per_minute: positive_u32(
+                "CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE",
+                DEFAULT_RATE_REQUESTS_PER_MINUTE,
+            )?,
+            create_per_minute: positive_u32(
+                "CHRONO_SERVER_RATE_CREATE_PER_MINUTE",
+                CREATE_RATE_REQUESTS_PER_MINUTE,
+            )?,
+            input_per_minute: positive_u32(
+                "CHRONO_SERVER_RATE_INPUT_PER_MINUTE",
+                INPUT_RATE_REQUESTS_PER_MINUTE,
+            )?,
+        })
+    }
+
+    #[cfg(test)]
+    fn sample() -> Self {
+        Self {
+            admission_per_minute: NonZeroU32::new(ADMISSION_RATE_REQUESTS_PER_MINUTE).unwrap(),
+            health_per_minute: NonZeroU32::new(HEALTH_RATE_REQUESTS_PER_MINUTE).unwrap(),
+            default_per_minute: NonZeroU32::new(DEFAULT_RATE_REQUESTS_PER_MINUTE).unwrap(),
+            create_per_minute: NonZeroU32::new(CREATE_RATE_REQUESTS_PER_MINUTE).unwrap(),
+            input_per_minute: NonZeroU32::new(INPUT_RATE_REQUESTS_PER_MINUTE).unwrap(),
+        }
+    }
+}
+
+/// Which TCP peers may supply the load balancer's client-address chain.
+#[derive(Debug, Clone)]
+pub struct TrustedProxyConfig {
+    /// Networks from which a forwarding header is accepted.
+    pub cidrs: Vec<IpNet>,
+    /// Tokens to skip from the right before selecting the client address.
+    pub forwarded_hops: usize,
+}
+
+impl TrustedProxyConfig {
+    fn from_env() -> Result<Self, String> {
+        let cidrs = parse_ip_networks(
+            "CHRONO_SERVER_TRUSTED_PROXY_CIDRS",
+            &var_or("CHRONO_SERVER_TRUSTED_PROXY_CIDRS", ""),
+        )?;
+        let forwarded_hops = parse_bounded_usize(
+            "CHRONO_SERVER_TRUSTED_PROXY_HOPS",
+            &var_or(
+                "CHRONO_SERVER_TRUSTED_PROXY_HOPS",
+                &DEFAULT_TRUSTED_PROXY_HOPS.to_string(),
+            ),
+            1,
+            MAX_TRUSTED_PROXY_HOPS,
+        )?;
+        Ok(Self {
+            cidrs,
+            forwarded_hops,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sample() -> Self {
+        Self {
+            cidrs: Vec::new(),
+            forwarded_hops: DEFAULT_TRUSTED_PROXY_HOPS,
+        }
+    }
+}
 
 /// Resolved configuration for the control plane.
 #[derive(Debug, Clone)]
@@ -18,6 +123,10 @@ pub struct Config {
     pub public_url: String,
     /// Origins permitted to call this API from a browser.
     pub cors_origins: Vec<HeaderValue>,
+    /// Per-key request budgets enforced by this process.
+    pub rate_limits: RateLimitConfig,
+    /// Peers whose load-balancer forwarding chain may identify a client.
+    pub trusted_proxies: TrustedProxyConfig,
     /// Base URL of the sandbox provider's lifecycle API.
     pub sandbox_base_url: String,
     /// API key for the sandbox provider.
@@ -168,6 +277,8 @@ impl Config {
     pub fn from_env() -> Result<Self, String> {
         let bind = var_or("CHRONO_SERVER_BIND", "0.0.0.0:8080");
         let public_url = var_or("CHRONO_SERVER_PUBLIC_URL", "http://localhost:8080");
+        let rate_limits = RateLimitConfig::from_env()?;
+        let trusted_proxies = TrustedProxyConfig::from_env()?;
         let sandbox_base_url = var_or(
             "CHRONO_SANDBOX_BASE_URL",
             "http://example-host-02.example-namespace.svc.cluster.local",
@@ -326,6 +437,8 @@ impl Config {
             bind,
             public_url,
             cors_origins,
+            rate_limits,
+            trusted_proxies,
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
@@ -379,6 +492,67 @@ fn require(key: &str) -> Result<String, String> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| format!("{key} is required and was not set"))
+}
+
+fn positive_u32(key: &str, default: u32) -> Result<NonZeroU32, String> {
+    parse_positive_u32(key, &var_or(key, &default.to_string()))
+}
+
+fn parse_positive_u32(key: &str, raw: &str) -> Result<NonZeroU32, String> {
+    let value: u32 = raw
+        .trim()
+        .parse()
+        .map_err(|e| format!("{key} must be a positive whole number, got {raw:?}: {e}"))?;
+    NonZeroU32::new(value).ok_or_else(|| format!("{key} must be greater than zero, got {raw:?}"))
+}
+
+fn u32_at_least(key: &str, default: u32, minimum: u32) -> Result<NonZeroU32, String> {
+    parse_u32_at_least(key, &var_or(key, &default.to_string()), minimum)
+}
+
+fn parse_u32_at_least(key: &str, raw: &str, minimum: u32) -> Result<NonZeroU32, String> {
+    let value = parse_positive_u32(key, raw)?;
+    if value.get() < minimum {
+        return Err(format!(
+            "{key} must be at least {minimum} so configured health probes cannot exhaust it, got {}",
+            value.get()
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_bounded_usize(
+    key: &str,
+    raw: &str,
+    minimum: usize,
+    maximum: usize,
+) -> Result<usize, String> {
+    let value: usize = raw
+        .trim()
+        .parse()
+        .map_err(|e| format!("{key} must be a whole number, got {raw:?}: {e}"))?;
+    if !(minimum..=maximum).contains(&value) {
+        return Err(format!(
+            "{key} must be between {minimum} and {maximum}, got {raw:?}"
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_ip_networks(key: &str, raw: &str) -> Result<Vec<IpNet>, String> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    raw.split(',')
+        .map(|part| {
+            let part = part.trim();
+            if part.is_empty() {
+                return Err(format!("{key} contains an empty network in {raw:?}"));
+            }
+            part.parse::<IpNet>()
+                .map_err(|e| format!("{key} contains an invalid IP network {part:?}: {e}"))
+        })
+        .collect()
 }
 
 /// Read a number of days as a duration.
@@ -451,6 +625,8 @@ impl Config {
             bind: "0.0.0.0:8080".into(),
             public_url: "http://x".into(),
             cors_origins: vec![],
+            rate_limits: RateLimitConfig::sample(),
+            trusted_proxies: TrustedProxyConfig::sample(),
             sandbox_base_url: "http://r".into(),
             sandbox_api_key: "k".into(),
             sandbox_image: "img".into(),
@@ -560,6 +736,75 @@ mod tests {
         let err =
             parse_days("CHRONO_ACTIVITY_RETENTION_DAYS", "0").expect_err("zero is not a retention");
         assert!(err.contains("at least one day"), "got {err}");
+    }
+
+    #[test]
+    fn request_rates_accept_only_positive_whole_numbers() {
+        assert_eq!(
+            parse_positive_u32("CHRONO_SERVER_RATE_CREATE_PER_MINUTE", " 17 ")
+                .expect("a positive rate is usable")
+                .get(),
+            17
+        );
+        for raw in ["0", "-1", "1.5", "many", ""] {
+            let error = parse_positive_u32("CHRONO_SERVER_RATE_CREATE_PER_MINUTE", raw)
+                .expect_err("an unusable rate must fail startup");
+            assert!(
+                error.contains("CHRONO_SERVER_RATE_CREATE_PER_MINUTE"),
+                "got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn health_rate_cannot_starve_the_declared_probe_schedule() {
+        assert_eq!(
+            u32_at_least(
+                "CHRONO_SERVER_RATE_HEALTH_PER_MINUTE",
+                HEALTH_RATE_REQUESTS_PER_MINUTE,
+                MINIMUM_HEALTH_RATE_REQUESTS_PER_MINUTE,
+            )
+            .unwrap()
+            .get(),
+            HEALTH_RATE_REQUESTS_PER_MINUTE
+        );
+        let error = parse_u32_at_least(
+            "CHRONO_SERVER_RATE_HEALTH_PER_MINUTE",
+            "29",
+            MINIMUM_HEALTH_RATE_REQUESTS_PER_MINUTE,
+        )
+        .expect_err("a probe-starving budget must be refused");
+        assert!(error.contains("at least 30"), "got {error}");
+    }
+
+    #[test]
+    fn trusted_proxy_configuration_is_explicit_and_bounded() {
+        let networks = parse_ip_networks(
+            "CHRONO_SERVER_TRUSTED_PROXY_CIDRS",
+            " 35.191.0.0/16, 2600:2d00:1:1::/64 ",
+        )
+        .expect("documented GFE networks parse");
+        assert_eq!(networks.len(), 2);
+        assert!(networks[0].contains(&"35.191.4.2".parse::<std::net::IpAddr>().unwrap()));
+        assert!(networks[1].contains(&"2600:2d00:1:1::9".parse::<std::net::IpAddr>().unwrap()));
+        assert!(parse_ip_networks("CIDRS", "").unwrap().is_empty());
+        for raw in [",", "35.191.0.0/16,", "not-a-network"] {
+            assert!(
+                parse_ip_networks("CHRONO_SERVER_TRUSTED_PROXY_CIDRS", raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+
+        assert_eq!(
+            parse_bounded_usize("CHRONO_SERVER_TRUSTED_PROXY_HOPS", "1", 1, 16).unwrap(),
+            1
+        );
+        for raw in ["0", "17", "many"] {
+            assert!(
+                parse_bounded_usize("CHRONO_SERVER_TRUSTED_PROXY_HOPS", raw, 1, 16).is_err(),
+                "accepted {raw:?}"
+            );
+        }
     }
 
     #[test]

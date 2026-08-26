@@ -56,8 +56,8 @@ async fn a_running_session_appears_with_its_owner() {
     );
     assert_eq!(
         runtimes[0].authority_comparison,
-        RuntimeAuthorityComparison::Legacy,
-        "compatibility provisioning has no non-zero generation to compare"
+        RuntimeAuthorityComparison::Matches,
+        "provider and durable generations agree for coordinated provisioning"
     );
 }
 

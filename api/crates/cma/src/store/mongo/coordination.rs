@@ -11,7 +11,7 @@ use std::{
 };
 
 use futures_util::{FutureExt, TryStreamExt};
-use layer2_core::coordination::{
+use layer2_core::{
     RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
     RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionLease,
     SessionLeaseRequest, SessionOperation,

@@ -66,6 +66,11 @@ pub struct ProblemDocument {
 pub enum HttpProblem {
     /// The request body exceeded the service's accepted limit.
     RequestTooLarge,
+    /// The caller exhausted the request budget for this route class.
+    RateLimited {
+        /// Whole seconds until one request token is expected to be available.
+        retry_after_seconds: u64,
+    },
     /// No REST route matched the request path.
     NotFound,
     /// The REST route exists but does not accept this method.
@@ -74,6 +79,24 @@ pub enum HttpProblem {
 
 impl IntoResponse for HttpProblem {
     fn into_response(self) -> Response {
+        if let Self::RateLimited {
+            retry_after_seconds,
+        } = self
+        {
+            let body = problem_document(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate-limited",
+                "This caller has exhausted the request budget for this route.",
+                "rate_limited",
+            );
+            let mut response = problem_response(StatusCode::TOO_MANY_REQUESTS, body);
+            response.headers_mut().insert(
+                header::RETRY_AFTER,
+                HeaderValue::from_str(&retry_after_seconds.max(1).to_string())
+                    .expect("a positive integer is a valid Retry-After value"),
+            );
+            return response;
+        }
         let (status, slug, detail, code) = match self {
             Self::RequestTooLarge => (
                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -93,6 +116,7 @@ impl IntoResponse for HttpProblem {
                 "This REST route does not accept the request method.",
                 "method_not_allowed",
             ),
+            Self::RateLimited { .. } => unreachable!("handled above"),
         };
         let body = problem_document(status, slug, detail, code);
         problem_response(status, body)

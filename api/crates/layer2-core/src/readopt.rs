@@ -272,10 +272,24 @@ impl SessionService {
             _permit: _readoption,
             history,
         } = readoption;
-        let mut lease = self
+        let mut lease = match self
             .acquire_runtime_lease_at(record, crate::coordination::SessionOperation::Readopt)
             .await
-            .map_err(store_failed)?;
+        {
+            Ok(lease) => lease,
+            Err(error @ StoreError::SessionAuthorityChanged { .. }) => {
+                let current = self
+                    .store
+                    .get(&record.session.id)
+                    .await
+                    .map_err(store_failed)?;
+                if current.is_some_and(|record| record.session.status.is_terminal()) {
+                    return Err(CoreError::SessionTerminated);
+                }
+                return Err(store_failed(error));
+            }
+            Err(error) => return Err(store_failed(error)),
+        };
         let result = self.readopt_with_lease(record, history, &mut lease).await;
         if let Some(held) = lease.take() {
             if let Err(error) = self.store.release_session_lease(&held).await {
@@ -444,9 +458,6 @@ impl SessionService {
         // and termination, so neither can complete and then be locally undone
         // by this stale snapshot. The service-wide entries lock is never held
         // across the durable read or write.
-        self.renew_runtime_lease(lease.as_ref())
-            .await
-            .map_err(store_failed)?;
         let installation = self.lock_lifecycle(&id).await;
         let input_fence = self.input_gates.gate(&id).read_owned().await;
         let ordering = self.conversation_order_gates.gate(&id);
@@ -463,17 +474,40 @@ impl SessionService {
         if current.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
+        let status_changed_by_conversation = matches!(
+            current.session.status,
+            SessionStatus::Ready | SessionStatus::Running
+        ) || (current.session.status == SessionStatus::Idle
+            && current.session.stop_reason == Some(crate::session::StopReason::RequiresAction));
         if !current.session.wants_runtime()
+            || (current.session.status != record.session.status && !status_changed_by_conversation)
             || current.session.kernel != record.session.kernel
             || current.runtime_id.as_deref() != Some(handle.0.as_str())
-            || lease.as_ref().is_some_and(|held| {
-                current.session.status != held.boundary.status
-                    || current.runtime_id != held.boundary.authority.runtime_id
-            })
         {
             return Err(CoreError::RuntimeUnavailable(
                 "the session changed while its runtime was being reconnected".into(),
             ));
+        }
+        if let Some(held) = lease.as_mut() {
+            let current_boundary = crate::coordination::SessionBoundary::for_record(
+                &current,
+                held.boundary.authority.generation,
+            );
+            if current_boundary == held.boundary {
+                self.renew_runtime_lease(Some(held))
+                    .await
+                    .map_err(store_failed)?;
+            } else {
+                // A rejoined runtime can report a request, completion, or
+                // resolution while its channel is opening. Those conversation
+                // updates change status without changing runtime authority. The
+                // store advances only if this lease is still current and the
+                // record is exactly the boundary just validated above.
+                self.store
+                    .advance_session_lease(held, &current_boundary)
+                    .await
+                    .map_err(store_failed)?;
+            }
         }
 
         // The first snapshot selected the conversation to rejoin. Updates can
@@ -573,6 +607,15 @@ impl SessionService {
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
+        if let Some(held) = lease.take() {
+            if let Err(error) = self.store.release_session_lease(&held).await {
+                tracing::debug!(
+                    session_id = %id,
+                    %error,
+                    "readoption lease ended before explicit release"
+                );
+            }
+        }
         drop(ordered_installation);
         drop(input_fence);
         drop(installation);
