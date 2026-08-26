@@ -452,9 +452,16 @@ pub trait SessionStore: Send + Sync {
     /// Acquire a bounded lease for one runtime interaction.
     ///
     /// Unlike provider-operation acquisition, this does not retain a permanent
-    /// token receipt. The store issues its token from monotonic per-session
-    /// state, so expiry cannot make an old request authoritative again while
-    /// frequent terminal traffic keeps durable state bounded.
+    /// token receipt. The store issues each lease token from monotonic
+    /// per-session state, so expiry cannot make an old lease token authoritative
+    /// again while frequent terminal traffic keeps durable state bounded.
+    ///
+    /// Calls carrying one exact request nonce may overlap while an unavailable
+    /// outcome is recovered. Once one such call returns `Ok(lease)`, it must be
+    /// ordered after every earlier overlapping call with that nonce: no earlier
+    /// call may subsequently create or extend authority after exact release of
+    /// `lease`. This lets bounded request state recover cancellation without a
+    /// permanent receipt for every interaction.
     async fn acquire_interaction_lease(
         &self,
         _request: &SessionInteractionLeaseRequest,

@@ -58,6 +58,9 @@ struct InteractionStore {
     detached_renewal_dispatched: AtomicBool,
     detached_renewal_may_commit: Arc<Notify>,
     detached_renewal_committed: Arc<AtomicBool>,
+    stall_acquisition_after_commit: AtomicBool,
+    acquisition_committed: Notify,
+    unknown_acquisition_results: AtomicUsize,
     acquisitions: Mutex<Vec<SessionInteractionLeaseRequest>>,
     renewals: Mutex<Vec<(SessionLease, Duration)>>,
     releases: Mutex<Vec<SessionLease>>,
@@ -89,6 +92,17 @@ impl InteractionStore {
 
     fn allow_detached_renewal_to_commit(&self) {
         self.detached_renewal_may_commit.notify_one();
+    }
+
+    fn stall_next_acquisition_after_commit(&self) {
+        assert!(!self
+            .stall_acquisition_after_commit
+            .swap(true, Ordering::SeqCst));
+    }
+
+    fn obscure_acquisition_successes(&self, count: usize) {
+        self.unknown_acquisition_results
+            .store(count, Ordering::SeqCst);
     }
 
     fn fail_releases(&self, count: usize) {
@@ -169,7 +183,21 @@ impl SessionStore for InteractionStore {
         request: &SessionInteractionLeaseRequest,
     ) -> Result<SessionLease, StoreError> {
         self.acquisitions.lock().await.push(request.clone());
-        self.inner.acquire_interaction_lease(request).await
+        let acquired = self.inner.acquire_interaction_lease(request).await;
+        if acquired.is_ok()
+            && self
+                .stall_acquisition_after_commit
+                .swap(false, Ordering::SeqCst)
+        {
+            self.acquisition_committed.notify_one();
+            return std::future::pending().await;
+        }
+        if acquired.is_ok() && Self::consume(&self.unknown_acquisition_results) {
+            return Err(StoreError::Unavailable(
+                "interaction acquisition result was lost".into(),
+            ));
+        }
+        acquired
     }
 
     async fn renew_session_lease(
@@ -489,6 +517,210 @@ async fn caller_cancellation_does_not_cancel_a_durable_interaction() {
 #[tokio::test]
 async fn caller_cancellation_does_not_cancel_a_compatibility_interaction() {
     cancellation_keeps_action_owned(Arc::new(InteractionStore::compatibility())).await;
+}
+
+#[tokio::test]
+async fn caller_cancellation_recovers_and_releases_an_unknown_acquisition() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    store.stall_next_acquisition_after_commit();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let action_runs = Arc::new(AtomicUsize::new(0));
+
+    let caller = tokio::spawn({
+        let service = Arc::clone(&service);
+        let action_runs = Arc::clone(&action_runs);
+        let durable = durable.clone();
+        async move {
+            service
+                .run_runtime_interaction_at(&durable, move |authority| async move {
+                    authority.ensure_delivery_allowed()?;
+                    action_runs.fetch_add(1, Ordering::SeqCst);
+                    Ok::<_, CoreError>(())
+                })
+                .await
+        }
+    });
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        store.acquisition_committed.notified(),
+    )
+    .await
+    .expect("the first acquisition commits before its response stalls");
+    let hidden = store
+        .inner
+        .active_session_lease(&durable.session.id)
+        .await
+        .expect("the stalled response hides an active interaction lease");
+
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    wait_for_releases(&store, 1).await;
+    assert_eq!(action_runs.load(Ordering::SeqCst), 0);
+    assert!(store
+        .inner
+        .active_session_lease(&durable.session.id)
+        .await
+        .is_none());
+
+    let acquisitions = store.acquisitions.lock().await;
+    assert_eq!(acquisitions.len(), 2);
+    assert_eq!(acquisitions[0].nonce, acquisitions[1].nonce);
+    drop(acquisitions);
+    assert_eq!(store.releases.lock().await.as_slice(), &[hidden.clone()]);
+
+    service
+        .run_runtime_interaction_at(&durable, |authority| async move {
+            authority.ensure_delivery_allowed()?;
+            Ok::<_, CoreError>(())
+        })
+        .await
+        .expect("a successor acquires before the hidden lease TTL");
+    wait_for_releases(&store, 2).await;
+    let releases = store.releases.lock().await;
+    assert_ne!(releases[0].token, releases[1].token);
+}
+
+#[tokio::test(start_paused = true)]
+async fn unknown_acquisition_recovery_outlives_every_hidden_lease_extension() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    // Initial acquisition plus recovery at t=0 and once per second through
+    // t=29 all commit successfully while hiding their same-nonce response.
+    store.obscure_acquisition_successes(31);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let action_runs = Arc::new(AtomicUsize::new(0));
+
+    let result = service
+        .run_runtime_interaction_at(&durable, {
+            let action_runs = Arc::clone(&action_runs);
+            move |authority| async move {
+                authority.ensure_delivery_allowed()?;
+                action_runs.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, CoreError>(())
+            }
+        })
+        .await;
+    assert!(matches!(result, Err(CoreError::RuntimeUnavailable(_))));
+    while store.acquisitions.lock().await.len() < 2 {
+        tokio::task::yield_now().await;
+    }
+    for expected in 3..=31 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        while store.acquisitions.lock().await.len() < expected {
+            tokio::task::yield_now().await;
+        }
+    }
+    assert_eq!(action_runs.load(Ordering::SeqCst), 0);
+    assert!(store
+        .inner
+        .active_session_lease(&durable.session.id)
+        .await
+        .is_some());
+
+    // At t=30 the definitive same-nonce response resolves every earlier
+    // overlapping attempt and cleanup switches irreversibly to exact release.
+    tokio::time::advance(Duration::from_secs(1)).await;
+    wait_for_releases(&store, 1).await;
+    assert!(store
+        .inner
+        .active_session_lease(&durable.session.id)
+        .await
+        .is_none());
+    let acquisitions = store.acquisitions.lock().await;
+    assert_eq!(acquisitions.len(), 32);
+    assert!(acquisitions
+        .windows(2)
+        .all(|attempts| attempts[0].nonce == attempts[1].nonce));
+    drop(acquisitions);
+
+    service
+        .run_runtime_interaction_at(&durable, |authority| async move {
+            authority.ensure_delivery_allowed()?;
+            Ok::<_, CoreError>(())
+        })
+        .await
+        .expect("a successor acquires before the t=59 hidden lease expiry");
+    wait_for_releases(&store, 2).await;
+    let releases = store.releases.lock().await;
+    assert_ne!(releases[0].token, releases[1].token);
+}
+
+#[test]
+fn unknown_acquisition_cleanup_survives_origin_runtime_destruction() {
+    let origin = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("origin runtime builds");
+    let store = Arc::new(InteractionStore::default());
+    origin.block_on(store.inner.seed(&record())).unwrap();
+    store.stall_next_acquisition_after_commit();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = origin
+        .block_on(store.get(&record().session.id))
+        .unwrap()
+        .unwrap();
+    let action_runs = Arc::new(AtomicUsize::new(0));
+
+    let caller = origin.block_on(async {
+        let caller = tokio::spawn({
+            let service = Arc::clone(&service);
+            let durable = durable.clone();
+            let action_runs = Arc::clone(&action_runs);
+            async move {
+                service
+                    .run_runtime_interaction_at(&durable, move |authority| async move {
+                        authority.ensure_delivery_allowed()?;
+                        action_runs.fetch_add(1, Ordering::SeqCst);
+                        Ok::<_, CoreError>(())
+                    })
+                    .await
+            }
+        });
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            store.acquisition_committed.notified(),
+        )
+        .await
+        .expect("the origin polls the acquisition through its hidden commit");
+        caller
+    });
+    let hidden = origin
+        .block_on(store.inner.active_session_lease(&durable.session.id))
+        .expect("the origin runtime owns a hidden exact lease");
+    drop(origin);
+    drop(caller);
+
+    let replacement = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("replacement runtime builds");
+    replacement.block_on(async {
+        service
+            .run_runtime_interaction_at(&durable, |authority| async move {
+                authority.ensure_delivery_allowed()?;
+                Ok::<_, CoreError>(())
+            })
+            .await
+            .expect("a successor drains origin-owned acquisition recovery");
+        wait_for_releases(&store, 2).await;
+    });
+
+    assert_eq!(action_runs.load(Ordering::SeqCst), 0);
+    let acquisitions = replacement.block_on(store.acquisitions.lock());
+    assert!(
+        acquisitions
+            .iter()
+            .filter(|request| request.nonce == acquisitions[0].nonce)
+            .count()
+            >= 2
+    );
+    drop(acquisitions);
+    let releases = replacement.block_on(store.releases.lock());
+    assert_eq!(releases[0], hidden);
+    assert_ne!(releases[0].token, releases[1].token);
 }
 
 #[tokio::test]
