@@ -462,8 +462,24 @@ pub trait SessionStore: Send + Sync {
         Err(StoreError::CoordinationDisabled)
     }
 
-    /// Extend a lease using the store's authoritative clock.
+    /// Extend a provider-operation lease using the store's authoritative clock.
+    ///
+    /// Interaction leases must use [`Self::renew_interaction_lease`], whose
+    /// authority check deliberately permits action-owned status changes.
     async fn renew_session_lease(
+        &self,
+        _lease: &SessionLease,
+        _ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Extend an interaction lease while its exact runtime authority is current.
+    ///
+    /// The active token, holder, and operation must still match, as must the
+    /// runtime id and generation. Current lifecycle status is intentionally not
+    /// part of renewal: the interaction's retained work may own that transition.
+    async fn renew_interaction_lease(
         &self,
         _lease: &SessionLease,
         _ttl: std::time::Duration,
