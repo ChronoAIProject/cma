@@ -25,6 +25,7 @@ use crate::ids::SessionId;
 use crate::sequence::Sequences;
 use crate::service::{SessionEntry, SessionService};
 use crate::store::{SessionRecord, SessionStore, StoreError};
+use crate::ConversationWriteAuthority;
 
 const FIRST_RETRY_DELAY: Duration = Duration::from_millis(5);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -57,6 +58,7 @@ enum PendingOperation {
         record: Box<SessionRecord>,
         change: Option<Box<RecordChange>>,
         events: Vec<Event>,
+        conversation_authority: Option<ConversationWriteAuthority>,
         target: Option<CommitTarget>,
         progress: CommitProgress,
         /// Set before post-commit work is first polled, so that phase resumes
@@ -67,6 +69,7 @@ enum PendingOperation {
         write_id: String,
         record: Box<SessionRecord>,
         events: Vec<Event>,
+        conversation_authority: Option<ConversationWriteAuthority>,
         outcome: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
         progress: CommitProgress,
     },
@@ -978,6 +981,24 @@ impl SessionLog {
         self.enqueue_commit_with(mode, record, events, None, |_| {})
     }
 
+    fn enqueue_conversation_commit(
+        self: &Arc<Self>,
+        mode: CommitMode,
+        record: SessionRecord,
+        events: Vec<Event>,
+        authority: ConversationWriteAuthority,
+    ) -> EnqueuedCommit {
+        self.enqueue_commit_inner(
+            mode,
+            record,
+            events,
+            CommitSemantics::default(),
+            Some(authority),
+            None,
+            |_| {},
+        )
+    }
+
     fn enqueue_commit_with<F>(
         self: &Arc<Self>,
         mode: CommitMode,
@@ -997,6 +1018,7 @@ impl SessionLog {
                 owned_fields,
                 ..CommitSemantics::default()
             },
+            None,
             None,
             after_allocation,
         )
@@ -1023,6 +1045,7 @@ impl SessionLog {
                 rotation_precondition: Some(rotation_precondition),
             },
             None,
+            None,
             after_allocation,
         )
     }
@@ -1046,6 +1069,7 @@ impl SessionLog {
                 owned_fields,
                 ..CommitSemantics::default()
             },
+            None,
             Some(retained),
             after_allocation,
         );
@@ -1054,8 +1078,17 @@ impl SessionLog {
 
     fn enqueue_restartable_commit(
         self: &Arc<Self>,
+        record: SessionRecord,
+        events: Vec<Event>,
+    ) -> RestartableCommit {
+        self.enqueue_restartable_commit_with_authority(record, events, None)
+    }
+
+    fn enqueue_restartable_commit_with_authority(
+        self: &Arc<Self>,
         mut record: SessionRecord,
         mut events: Vec<Event>,
+        conversation_authority: Option<ConversationWriteAuthority>,
     ) -> RestartableCommit {
         let (outcome, receiver) = oneshot::channel();
         if record.session.id != self.id || events.iter().any(|event| event.session_id != self.id) {
@@ -1106,6 +1139,7 @@ impl SessionLog {
                 write_id: format!("sesw_{}", uuid::Uuid::new_v4().simple()),
                 record: Box::new(record),
                 events,
+                conversation_authority,
                 outcome: Some(outcome),
                 progress: CommitProgress::default(),
             });
@@ -1131,6 +1165,7 @@ impl SessionLog {
         mut record: SessionRecord,
         mut events: Vec<Event>,
         semantics: CommitSemantics,
+        conversation_authority: Option<ConversationWriteAuthority>,
         mut retained: Option<Box<dyn RetainedCommitWork>>,
         after_allocation: F,
     ) -> EnqueuedCommit
@@ -1278,6 +1313,7 @@ impl SessionLog {
                 record: Box::new(record),
                 change,
                 events,
+                conversation_authority,
                 target: Some(match retained.take() {
                     Some(retained) => CommitTarget::Retained(retained),
                     None => CommitTarget::Ordinary {
@@ -1392,6 +1428,7 @@ impl SessionLog {
                     record,
                     change,
                     events,
+                    conversation_authority,
                     target,
                     progress,
                     outcome,
@@ -1412,6 +1449,7 @@ impl SessionLog {
                                 record,
                                 change.as_deref(),
                                 events,
+                                conversation_authority.as_ref(),
                                 &mut reporter,
                             )
                             .await
@@ -1469,6 +1507,7 @@ impl SessionLog {
                     write_id,
                     record,
                     events,
+                    conversation_authority,
                     outcome,
                     progress,
                 } => {
@@ -1484,6 +1523,7 @@ impl SessionLog {
                             record,
                             None,
                             events,
+                            conversation_authority.as_ref(),
                             &mut reporter,
                         )
                         .await
@@ -1531,6 +1571,7 @@ impl SessionLog {
         record: &mut SessionRecord,
         change: Option<&RecordChange>,
         events: &mut [Event],
+        conversation_authority: Option<&ConversationWriteAuthority>,
         reporter: &mut CommitReporter<'_>,
     ) -> Result<(), StoreError> {
         self.resolve_reported_error(reporter).await?;
@@ -1545,13 +1586,21 @@ impl SessionLog {
                 record.session.last_seq = last.seq;
             }
 
-            let result = match mode {
-                CommitMode::Create => {
+            let result = match (mode, conversation_authority) {
+                (CommitMode::Create, Some(_)) => Err(StoreError::Malformed(
+                    "a conversation authority cannot create a session".into(),
+                )),
+                (CommitMode::UpdateExact | CommitMode::UpdateInheriting, Some(authority)) => {
+                    self.store
+                        .commit_conversation_idempotent(write_id, authority, record, events)
+                        .await
+                }
+                (CommitMode::Create, None) => {
                     self.store
                         .create_session_idempotent(write_id, record, events)
                         .await
                 }
-                CommitMode::UpdateExact | CommitMode::UpdateInheriting => {
+                (CommitMode::UpdateExact | CommitMode::UpdateInheriting, None) => {
                     self.store
                         .commit_session_idempotent(write_id, record, events)
                         .await
@@ -2131,6 +2180,23 @@ impl SessionService {
         Ok(())
     }
 
+    /// Persist an exact proposal under one durable conversation predicate.
+    pub(crate) async fn persist_conversation_durably(
+        &self,
+        record: &mut SessionRecord,
+        events: Vec<Event>,
+        authority: ConversationWriteAuthority,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        let result = lane
+            .enqueue_conversation_commit(CommitMode::UpdateExact, record.clone(), events, authority)
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
     /// Complete a handover while preserving history written after its claim.
     ///
     /// The claim itself is the compare precondition. A later handover has a
@@ -2335,6 +2401,70 @@ impl SessionService {
             }
             Err(error) => {
                 tracing::error!(session_id = %id, error = %error, "cannot persist session");
+            }
+        }
+    }
+
+    /// Wait for every earlier update from one exact conversation link.
+    ///
+    /// The empty barrier carries the same durable epoch as the events ahead of
+    /// it. A stale replica therefore observes revocation instead of reporting a
+    /// successful flush after all of its event-bearing writes were refused.
+    pub(crate) async fn flush_conversation(
+        &self,
+        id: &SessionId,
+        link: crate::conversation_opening::ConversationLinkId,
+    ) -> bool {
+        let (receiver, authority) = {
+            let entries = self.entries.read().await;
+            let Some(entry) = entries
+                .get(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return false;
+            };
+            let Some(authority) = entry.conversation_authority.clone() else {
+                return false;
+            };
+            let receiver = entry
+                .event_log
+                .enqueue_conversation_commit(
+                    CommitMode::UpdateInheriting,
+                    record_from_entry(entry),
+                    Vec::new(),
+                    ConversationWriteAuthority::Active(authority.clone()),
+                )
+                .complete;
+            (receiver, authority)
+        };
+        match receiver
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))
+            .and_then(|result| result)
+        {
+            Ok(record) => {
+                if let Some(entry) = self
+                    .entries
+                    .write()
+                    .await
+                    .get_mut(id)
+                    .filter(|entry| entry.conversation_link == Some(link))
+                {
+                    let event_log = Arc::clone(&entry.event_log);
+                    entry.session.last_seq = record.session.last_seq;
+                    event_log.synchronize_tail(&mut entry.session.last_seq);
+                }
+                true
+            }
+            Err(error @ StoreError::ConversationLinkChanged { .. }) => {
+                self.retire_conversation_link(id, link, &authority).await;
+                tracing::debug!(session_id = %id, %error, "stale conversation link write was fenced");
+                false
+            }
+            Err(error) => {
+                self.retire_conversation_link(id, link, &authority).await;
+                tracing::error!(session_id = %id, error = %error, "cannot persist conversation");
+                false
             }
         }
     }
@@ -2796,6 +2926,32 @@ pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
             .enqueue_commit(CommitMode::UpdateInheriting, record, vec![event]);
     // Fire-and-forget events describe state that is already live, so their
     // allocated cursor is live immediately as well.
+    entry.session.last_seq = enqueued.last_seq;
+    drop(enqueued.complete);
+}
+
+/// Record an inbound conversation event under the entry's durable link epoch.
+pub(crate) fn append_conversation(entry: &mut SessionEntry, kind: EventKind) {
+    let Some(authority) = entry.conversation_authority.clone() else {
+        tracing::error!(
+            session_id = %entry.session.id,
+            "conversation entry has no durable link authority"
+        );
+        return;
+    };
+    let event = Event {
+        session_id: entry.session.id.clone(),
+        seq: 0,
+        kind,
+        appended_at: String::new(),
+    };
+    let record = record_from_entry(entry);
+    let enqueued = entry.event_log.enqueue_conversation_commit(
+        CommitMode::UpdateInheriting,
+        record,
+        vec![event],
+        ConversationWriteAuthority::Active(authority),
+    );
     entry.session.last_seq = enqueued.last_seq;
     drop(enqueued.complete);
 }

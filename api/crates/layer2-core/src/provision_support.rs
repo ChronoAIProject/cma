@@ -38,6 +38,8 @@ const PROVISION_DEADLINE: Duration = Duration::from_secs(600);
 /// Long enough to cover one bounded provider create and attachment attempt.
 /// Renewed at every durable/provider boundary rather than trusted for its age.
 pub(crate) const RUNTIME_OPERATION_LEASE_TTL: Duration = Duration::from_secs(600);
+/// Refresh a pending conversation before either it or its backing operation can expire.
+pub(crate) const CONVERSATION_OPENING_RENEW_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Interaction work is short and frequent, so a crashed holder should clear quickly.
 const INTERACTION_LEASE_TTL: Duration = Duration::from_secs(30);
