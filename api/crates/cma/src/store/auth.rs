@@ -101,6 +101,8 @@ struct LoginAttemptDoc {
     #[serde(rename = "_id")]
     id: Binary,
     verifier: CipherEnvelope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    return_to: Option<String>,
     expires_at: DateTime,
 }
 
@@ -2023,6 +2025,7 @@ fn login_to_doc(attempt: LoginAttempt, cipher: &AuthCipher) -> Result<LoginAttem
             VERIFIER_FIELD,
             attempt.verifier.expose(),
         )?,
+        return_to: attempt.return_to,
         expires_at: DateTime::from_system_time(attempt.expires_at),
     })
 }
@@ -2036,6 +2039,7 @@ fn login_from_doc(
     Ok(LoginAttempt {
         id,
         verifier: SecretValue::new(verifier),
+        return_to: stored.return_to,
         expires_at: stored.expires_at.to_system_time(),
     })
 }

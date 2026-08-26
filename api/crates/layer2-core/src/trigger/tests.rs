@@ -137,7 +137,7 @@ fn cancellation_is_idempotent_but_never_skips_ambiguous_pr_reconciliation() {
         last_failure: None,
         updated_at: NOW.into(),
     });
-    let cancel = confirmation(ConfirmationAction::Cancel, &owner, "cancel-snapshot");
+    let cancel = confirmation(ConfirmationAction::Cancel, &owner, &launch.effective.digest);
     assert!(launch.cancel(cancel.clone(), LATER, "cancel").is_err());
     assert_eq!(launch.state, LaunchState::PrPending);
 
@@ -238,12 +238,17 @@ async fn a_readme_reclick_resumes_current_and_new_launch_explicitly_supersedes_i
         .create_new_launch(
             contributor.clone(),
             &published.revision.public_id,
+            "new-launch-key-hash",
             LATER,
             "new-launch",
         )
         .await
         .unwrap();
     assert_ne!(first.id, next.id);
+    assert!(next.confirmations.iter().any(|confirmation| {
+        confirmation.action == ConfirmationAction::NewLaunch
+            && confirmation.snapshot_digest == next.revision_digest
+    }));
     assert_eq!(
         service
             .create_or_resume_launch(
@@ -552,6 +557,7 @@ impl TriggerAuthorityVerifier for TestAuthority {
                 observed_at: NOW.into(),
             },
             connection,
+            source_sha: "a".repeat(40),
         })
     }
 }
