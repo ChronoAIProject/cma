@@ -417,15 +417,21 @@ mod tests {
         // have to provoke.
         let auth = provider_auth();
         let subject = SubjectId("subject-a".into());
-        auth.store_authorization(
+        auth.store_sign_in(
             &subject,
+            DurableSubjectTokens {
+                access_token: Some(SecretValue::new("access-a".into())),
+                refresh_token: None,
+                expires_at: SystemTime::now() + Duration::from_secs(3600),
+            },
             layer2_core::Authorization::from_capabilities([
                 layer2_core::Capability::ReadAllSessions,
                 layer2_core::Capability::ControlAnySession,
             ]),
+            crate::auth::profile::Profile::default(),
         )
         .await
-        .expect("authorization persists");
+        .expect("sign-in persists");
         let token = auth.issue_session(subject).await.expect("session persists");
         let mut headers = HeaderMap::new();
         headers.insert(

@@ -70,6 +70,17 @@ pub(super) const AUTHORIZATION_CHECK_PAGE_BUDGET: usize = 2;
 pub(super) const AUTHORIZATION_CHECK_LANE_BUDGET: usize = AUTHORIZATION_CHECK_PAGE_BUDGET
     + AUTHORIZATION_CHECK_BATCH_SIZE * AUTHORIZATION_CHECK_ATTEMPT_BUDGET;
 
+/// A provider answer cannot authorize a cookie beyond the token it describes.
+fn authorization_check_deadline(
+    tokens: &DurableSubjectTokens,
+    completed_at: SystemTime,
+) -> SystemTime {
+    completed_at
+        .checked_add(AUTHORIZATION_CHECK_INTERVAL)
+        .unwrap_or(tokens.expires_at)
+        .min(tokens.expires_at)
+}
+
 struct AuthPassBudgetState {
     remaining: AtomicUsize,
     used: AtomicUsize,
@@ -1015,7 +1026,8 @@ impl AuthState {
             // Sign-in just obtained a complete provider answer. Request-time
             // enforcement will require another one no later than this deadline,
             // independent of where the background ticker happens to be.
-            state.authorization_check_after = SystemTime::now() + AUTHORIZATION_CHECK_INTERVAL;
+            state.authorization_check_after =
+                authorization_check_deadline(&tokens, SystemTime::now());
             state.profile = profile.clone();
             Ok(())
         })

@@ -430,16 +430,13 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
         .get_array("$or")
         .unwrap();
     assert_eq!(legacy_position.len(), 2);
-    assert_eq!(
-        legacy_position[0]
-            .as_document()
-            .unwrap()
-            .get_document("authorization_check_after")
-            .unwrap()
-            .get_bool("$exists")
-            .unwrap(),
-        false
-    );
+    assert!(!legacy_position[0]
+        .as_document()
+        .unwrap()
+        .get_document("authorization_check_after")
+        .unwrap()
+        .get_bool("$exists")
+        .unwrap());
     assert_eq!(
         legacy_position[0]
             .as_document()

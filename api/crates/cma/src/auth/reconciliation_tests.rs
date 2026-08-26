@@ -27,6 +27,7 @@ use super::{
 #[derive(Clone)]
 enum IntrospectionBody {
     Active(bool),
+    SubjectMismatch,
     MissingActive,
     MissingPermissions,
     MalformedPermissions,
@@ -103,6 +104,12 @@ async fn introspection(
             "permissions": provider.permissions,
         }))
         .into_response(),
+        IntrospectionBody::SubjectMismatch => Json(serde_json::json!({
+            "active": true,
+            "sub": "another-subject",
+            "permissions": provider.permissions,
+        }))
+        .into_response(),
         IntrospectionBody::MissingActive => Json(serde_json::json!({
             "permissions": provider.permissions,
         }))
@@ -163,8 +170,11 @@ async fn provider(
 struct OrderedProviderState {
     base: String,
     calls: Arc<AtomicUsize>,
+    first_active: bool,
     first_started: Arc<Notify>,
     release_first: Arc<Notify>,
+    refresh_started: Arc<Notify>,
+    release_refresh: Arc<Notify>,
 }
 
 async fn ordered_discovery(
@@ -182,6 +192,13 @@ async fn ordered_introspection(State(provider): State<OrderedProviderState>) -> 
     if call == 0 {
         provider.first_started.notify_one();
         provider.release_first.notified().await;
+        if !provider.first_active {
+            return Json(serde_json::json!({
+                "active": false,
+                "permissions": [],
+            }))
+            .into_response();
+        }
         return Json(serde_json::json!({
             "active": true,
             "permissions": ["cma:admin"],
@@ -195,7 +212,24 @@ async fn ordered_introspection(State(provider): State<OrderedProviderState>) -> 
     .into_response()
 }
 
+async fn ordered_refresh(State(provider): State<OrderedProviderState>) -> Response {
+    provider.refresh_started.notify_one();
+    provider.release_refresh.notified().await;
+    Json(serde_json::json!({
+        "access_token": "access-new",
+        "refresh_token": "refresh-new",
+        "expires_in": 3600,
+    }))
+    .into_response()
+}
+
 async fn ordered_provider() -> (OrderedProviderState, tokio::task::JoinHandle<()>) {
+    ordered_provider_with_first_active(true).await
+}
+
+async fn ordered_provider_with_first_active(
+    first_active: bool,
+) -> (OrderedProviderState, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ordered provider");
@@ -206,12 +240,16 @@ async fn ordered_provider() -> (OrderedProviderState, tokio::task::JoinHandle<()
     let state = OrderedProviderState {
         base,
         calls: Arc::new(AtomicUsize::new(0)),
+        first_active,
         first_started: Arc::new(Notify::new()),
         release_first: Arc::new(Notify::new()),
+        refresh_started: Arc::new(Notify::new()),
+        release_refresh: Arc::new(Notify::new()),
     };
     let app = Router::new()
         .route("/.well-known/openid-configuration", get(ordered_discovery))
         .route("/introspect", post(ordered_introspection))
+        .route("/token", post(ordered_refresh))
         .with_state(state.clone());
     let server = tokio::spawn(async move {
         axum::serve(listener, app)
@@ -597,6 +635,68 @@ async fn an_expired_lease_takeover_fences_a_late_more_privileged_answer() {
 }
 
 #[tokio::test]
+async fn refresh_rotation_cancels_an_inflight_check_before_it_can_quarantine_the_old_token() {
+    let (provider, server) = ordered_provider_with_first_active(false).await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let checking = provider_auth(provider.base.clone(), store.clone());
+    let refreshing = provider_auth(provider.base.clone(), store.clone());
+    seed_subject(
+        &store,
+        "subject-a",
+        "access-old",
+        Some("refresh-old"),
+        SystemTime::now() + Duration::from_secs(60),
+    )
+    .await;
+    let selected = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let incarnation = selected.incarnation.clone();
+    let token_generation = selected.token_generation;
+    let check = tokio::spawn(async move {
+        let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+        checking
+            .reconcile_authorization_with_budget(selected, SystemTime::now(), &budget)
+            .await
+    });
+    provider.first_started.notified().await;
+
+    let subject = SubjectId("subject-a".into());
+    let refresh = tokio::spawn(async move {
+        refreshing
+            .refresh(&subject, "refresh-old", &incarnation, token_generation)
+            .await
+    });
+    provider.refresh_started.notified().await;
+
+    // The provider has consumed the rotating refresh token, but withholds the
+    // response while the old access token is reported inactive.
+    provider.release_first.notify_one();
+    assert!(matches!(
+        check.await.unwrap().unwrap(),
+        AuthorizationCheckOutcome::Skipped
+    ));
+    provider.release_refresh.notify_one();
+    assert_eq!(refresh.await.unwrap().unwrap(), "access-new");
+
+    let durable = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(durable.token_generation, token_generation + 1);
+    assert!(durable.authorization_lease.is_none());
+    assert!(durable.refresh_lease.is_none());
+    assert_eq!(durable.authorization_check_after, SystemTime::UNIX_EPOCH);
+    let tokens = durable.tokens.unwrap();
+    assert_eq!(tokens.access_token.unwrap().expose(), "access-new");
+    assert_eq!(tokens.refresh_token.unwrap().expose(), "refresh-new");
+    server.abort();
+}
+
+#[tokio::test]
 async fn a_cancelled_worker_is_taken_over_after_its_durable_lease_expires() {
     let (provider, server) = ordered_provider().await;
     let store = Arc::new(MemoryAuthStore::default());
@@ -727,6 +827,33 @@ async fn a_successful_check_schedules_from_provider_completion_not_sweep_start()
     assert!(
         durable.authorization_check_after >= completion_floor + super::AUTHORIZATION_CHECK_INTERVAL
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_complete_answer_never_extends_authority_past_access_token_expiry() {
+    let (provider, server) = provider(
+        StatusCode::OK,
+        StatusCode::OK,
+        IntrospectionBody::Active(true),
+        &["cma:session:use"],
+        None,
+    )
+    .await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = provider_auth(provider.base, store.clone());
+    let expires_at = SystemTime::now() + Duration::from_secs(30);
+    seed_subject(&store, "subject-a", "access-only", None, expires_at).await;
+
+    crate::renewal::sweep_once(&auth, &super::empty_session_service()).await;
+
+    let durable = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(durable.authorization_check_after, expires_at);
+    assert!(!durable.authorization.allows(Capability::ReadAllSessions));
     server.abort();
 }
 
@@ -880,6 +1007,40 @@ async fn authoritative_inactive_and_subject_mismatch_answers_fail_closed() {
 }
 
 #[tokio::test]
+async fn an_active_introspection_answer_for_another_subject_retires_the_delegation() {
+    let (provider, server) = provider(
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::OK,
+        IntrospectionBody::SubjectMismatch,
+        &["cma:admin"],
+        None,
+    )
+    .await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = provider_auth(provider.base, store.clone());
+    seed_subject(
+        &store,
+        "subject-a",
+        "token:subject-a",
+        Some("refresh-a"),
+        SystemTime::now() + Duration::from_secs(3600),
+    )
+    .await;
+
+    crate::renewal::sweep_once(&auth, &super::empty_session_service()).await;
+
+    let durable = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(durable.authorization.capabilities().count(), 0);
+    assert!(durable.tokens.is_none());
+    assert!(provider.seen_userinfo_tokens.lock().unwrap().is_empty());
+    server.abort();
+}
+
+#[tokio::test]
 async fn an_explicit_empty_permission_array_authoritatively_clears_the_grant() {
     let (provider, server) = provider(
         StatusCode::OK,
@@ -970,6 +1131,101 @@ async fn browser_sign_in_still_accepts_a_token_without_refresh_custody() {
         .unwrap()
         .refresh_token
         .is_none());
+}
+
+#[tokio::test]
+async fn an_expired_access_only_sign_in_cannot_serve_cookie_authority() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = provider_auth("http://provider.invalid".into(), store.clone());
+    auth.store_sign_in(
+        &SubjectId("subject-a".into()),
+        DurableSubjectTokens {
+            access_token: Some(SecretValue::new("access-expired".into())),
+            refresh_token: None,
+            expires_at: SystemTime::UNIX_EPOCH,
+        },
+        Authorization::from_capabilities([Capability::ReadAllSessions]),
+        super::profile::Profile::default(),
+    )
+    .await
+    .unwrap();
+    issue_cookie(&store, "subject-a", "expired-cookie").await;
+
+    assert_eq!(
+        cookie_status(auth, "expired-cookie").await,
+        StatusCode::FORBIDDEN
+    );
+    let durable = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(durable.authorization.capabilities().count(), 0);
+    assert!(durable.tokens.is_none());
+}
+
+#[tokio::test]
+async fn a_tokenless_legacy_grant_cannot_serve_cookie_authority() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = provider_auth("http://provider.invalid".into(), store.clone());
+    let subject = SubjectId("subject-a".into());
+    auth.store_authorization(
+        &subject,
+        Authorization::from_capabilities([Capability::ReadAllSessions]),
+    )
+    .await
+    .unwrap();
+    let mut legacy = store.subject(&subject).await.unwrap().unwrap();
+    let revision = legacy.revision;
+    let incarnation = legacy.incarnation.clone();
+    legacy.revision += 1;
+    legacy.authorization_check_after = SystemTime::now() + Duration::from_secs(60);
+    assert!(store
+        .replace_subject(&incarnation, revision, legacy)
+        .await
+        .unwrap());
+    issue_cookie(&store, "subject-a", "tokenless-cookie").await;
+
+    assert_eq!(
+        cookie_status(auth, "tokenless-cookie").await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    let durable = store.subject(&subject).await.unwrap().unwrap();
+    assert!(durable.authorization.allows(Capability::ReadAllSessions));
+    assert!(durable.tokens.is_none());
+}
+
+#[tokio::test]
+async fn a_legacy_future_deadline_cannot_outlive_its_expired_access_token() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = provider_auth("http://provider.invalid".into(), store.clone());
+    seed_subject(
+        &store,
+        "subject-a",
+        "access-expired",
+        None,
+        SystemTime::UNIX_EPOCH,
+    )
+    .await;
+    let subject = SubjectId("subject-a".into());
+    let mut legacy = store.subject(&subject).await.unwrap().unwrap();
+    let revision = legacy.revision;
+    let incarnation = legacy.incarnation.clone();
+    legacy.revision += 1;
+    legacy.authorization_check_after = SystemTime::now() + Duration::from_secs(60);
+    assert!(store
+        .replace_subject(&incarnation, revision, legacy)
+        .await
+        .unwrap());
+    issue_cookie(&store, "subject-a", "legacy-cookie").await;
+
+    assert_eq!(
+        cookie_status(auth, "legacy-cookie").await,
+        StatusCode::FORBIDDEN
+    );
+    let durable = store.subject(&subject).await.unwrap().unwrap();
+    assert_eq!(durable.authorization.capabilities().count(), 0);
+    assert!(durable.tokens.is_none());
 }
 
 #[tokio::test]
