@@ -1948,6 +1948,12 @@ impl EventLogs {
         self.cleanups.drain_at(id, gate).await;
     }
 
+    /// Resume service-owned cleanup before retrying an operation it may fence.
+    pub(crate) async fn drain_retained_cleanups(&self, id: &SessionId) {
+        let gate = self.cleanup_gate(id);
+        self.drain_cleanups_at(id, &gate).await;
+    }
+
     fn cleanup_pending(&self, id: &SessionId) -> bool {
         self.cleanups.has_pending(id)
     }
