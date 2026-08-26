@@ -97,6 +97,7 @@ fn every_durable_kind() -> Vec<EventKind> {
             request_id: "approval/~state_contract".into(),
             action: Some("run a command".into()),
             detail: None,
+            locator: None,
         },
         EventKind::ApprovalResolved {
             request_id: "approval/~state_contract".into(),
@@ -358,6 +359,7 @@ fn an_approval_request_and_resolution_are_strictly_applicable_in_order() {
                 request_id: "approval/~one".into(),
                 action: Some("command_execution".into()),
                 detail: Some("Run the command?".into()),
+                locator: None,
             },
         ),
         "run_state_contract",
