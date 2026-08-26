@@ -46,6 +46,13 @@ pub(crate) struct FakeStore {
     /// When set, every operation fails, so callers can be checked against a
     /// store that is down rather than merely empty.
     pub(crate) broken: Mutex<bool>,
+    /// When set, durable history alone is unavailable.
+    ///
+    /// Reconciliation can still read the desired session record and the
+    /// provider can still report its runtime alive. This isolates the case
+    /// where readoption must defer rather than mistake an incomplete rebuild
+    /// for a lost sandbox.
+    pub(crate) broken_event_reads: Mutex<bool>,
     /// Monotonic stand-in for promotion after the exact old-writer-drain proof.
     legacy_cleanup_authorized: std::sync::atomic::AtomicBool,
 }
@@ -1001,7 +1008,7 @@ impl SessionStore for FakeStore {
         let _transaction = self.transaction.lock().await;
         let mut reserved = Reserved::default();
         for record in self.sessions.lock().await.values() {
-            if record.session.status.wants_runtime() {
+            if record.session.wants_runtime() {
                 reserved.include(record.session.options.size);
             }
         }
@@ -1097,6 +1104,9 @@ impl SessionStore for FakeStore {
         after: u64,
     ) -> Result<Vec<StoredEvent>, StoreError> {
         self.guard().await?;
+        if *self.broken_event_reads.lock().await {
+            return Err(StoreError::Unavailable("test event history is down".into()));
+        }
         let mut out: Vec<StoredEvent> = self
             .events
             .lock()

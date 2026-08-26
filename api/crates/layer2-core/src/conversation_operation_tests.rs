@@ -459,7 +459,7 @@ async fn every_conversation_input_is_refused_while_rotating_and_reusable_afterwa
         let mut entries = svc.entries.write().await;
         let entry = entries.get_mut(&created.id).expect("live entry");
         entry.session.status = SessionStatus::Rotating;
-        entry.pending_approvals.insert("approval-1".into());
+        entry.pending_approvals.insert("approval-1".into(), None);
     }
 
     assert_eq!(
@@ -732,7 +732,7 @@ async fn conversation_input_crosses_a_real_rotation_only_after_replacement() {
         .get_mut(&created.id)
         .expect("replacement entry")
         .pending_approvals
-        .insert(APPROVAL.into());
+        .insert(APPROVAL.into(), None);
 
     svc.send_prompt(&alice, &created.id, PROMPT.into())
         .await
@@ -759,7 +759,7 @@ async fn conversation_input_crosses_a_real_rotation_only_after_replacement() {
     assert!(matches!(sent[1], ConversationInput::Cancel));
     assert!(matches!(
         &sent[2],
-        ConversationInput::PermissionAnswer { id, decision }
+        ConversationInput::PermissionAnswer { id, decision, .. }
             if id == APPROVAL && *decision == PermissionDecision::Allow
     ));
     assert!(
@@ -1127,7 +1127,7 @@ async fn answering_an_approval_reaches_the_runtime_and_the_record() {
     assert!(
         sent.iter().any(|input| matches!(
             input,
-            ConversationInput::PermissionAnswer { id, decision }
+            ConversationInput::PermissionAnswer { id, decision, .. }
                 if id == "req-1" && *decision == PermissionDecision::Allow
         )),
         "the answer must reach the runtime, which is the only thing that can act on it: {sent:?}"
@@ -1249,6 +1249,13 @@ async fn an_immediate_completion_cannot_overtake_approval_resolution() {
         resolved < completed,
         "resolution must precede the runtime effect it enabled: {events:?}"
     );
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&id).expect("the conversation remains live");
+    assert!(entry.pending_approvals.is_empty());
+    assert!(
+        entry.approval_locators.is_empty(),
+        "turn completion expires duplicate-delivery fingerprints"
+    );
 }
 
 #[tokio::test]
@@ -1335,8 +1342,8 @@ async fn an_invalid_approval_batch_sends_and_mutates_nothing() {
         .expect("the session remains live")
         .pending_approvals;
     assert_eq!(pending.len(), 2);
-    assert!(pending.contains("req-batch-1"));
-    assert!(pending.contains("req-batch-2"));
+    assert!(pending.contains_key("req-batch-1"));
+    assert!(pending.contains_key("req-batch-2"));
     drop(entries);
     assert!(
         svc.events_since(&alice, &id, Some(cursor))
@@ -1446,8 +1453,8 @@ async fn an_accepted_batch_prefix_is_durable_before_a_later_delivery_error() {
         .get(&id)
         .expect("the session remains live")
         .pending_approvals;
-    assert!(!pending.contains("req-prefix-1"));
-    assert!(pending.contains("req-prefix-2"));
+    assert!(!pending.contains_key("req-prefix-1"));
+    assert!(pending.contains_key("req-prefix-2"));
 }
 
 #[tokio::test]
