@@ -139,8 +139,8 @@ pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
 pub use coordination::{
     RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
-    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionLease,
-    SessionLeaseRequest, SessionOperation,
+    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary,
+    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionOperation,
 };
 pub use deployment_capacity::{DeploymentCapacity, Reserved};
 pub use directory::{

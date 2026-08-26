@@ -17,7 +17,8 @@ use std::{collections::HashSet, time::SystemTime};
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::coordination::{
     RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
-    RuntimeCleanup, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
+    RuntimeCleanup, RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest,
+    SessionLease, SessionLeaseRequest,
 };
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
@@ -251,6 +252,14 @@ pub enum StoreError {
         /// Session whose exclusive lease is occupied.
         id: SessionId,
     },
+    /// A runtime interaction met another active operation.
+    #[error("session {id} interaction is blocked by {operation:?}")]
+    SessionInteractionBlocked {
+        /// Session whose runtime is currently fenced.
+        id: SessionId,
+        /// Operation holding the durable fence.
+        operation: crate::coordination::SessionOperation,
+    },
     /// The session no longer has the authority or status the caller observed.
     #[error("session {id} authority changed")]
     SessionAuthorityChanged {
@@ -436,6 +445,19 @@ pub trait SessionStore: Send + Sync {
     async fn acquire_session_lease(
         &self,
         _request: &SessionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Acquire a bounded lease for one runtime interaction.
+    ///
+    /// Unlike provider-operation acquisition, this does not retain a permanent
+    /// token receipt. The store issues its token from monotonic per-session
+    /// state, so expiry cannot make an old request authoritative again while
+    /// frequent terminal traffic keeps durable state bounded.
+    async fn acquire_interaction_lease(
+        &self,
+        _request: &SessionInteractionLeaseRequest,
     ) -> Result<SessionLease, StoreError> {
         Err(StoreError::CoordinationDisabled)
     }
