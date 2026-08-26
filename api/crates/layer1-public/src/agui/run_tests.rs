@@ -162,3 +162,60 @@ fn a_durable_batch_keeps_the_complete_first_ending_projection_and_stops() {
     assert_eq!(ending[1].kind, "STATE_DELTA");
     assert_eq!(ending[1].seq, Some(7));
 }
+
+#[test]
+fn an_initiating_run_stops_at_rotation_before_same_batch_replacement_events() {
+    let id = SessionId("sesn_rotation_batch".into());
+    let event = |seq, kind| Event {
+        session_id: id.clone(),
+        seq,
+        kind,
+        appended_at: "2026-08-26T00:00:00Z".into(),
+    };
+    let mut pending = std::collections::VecDeque::new();
+    let mut seq = 8;
+
+    let ended = queue_durable_batch(
+        [
+            event(
+                9,
+                layer2_core::EventKind::StatusChanged {
+                    status: layer2_core::SessionStatus::Rotating,
+                    stop_reason: None,
+                    detail: Some("moving this session to a replacement runtime".into()),
+                    capability: None,
+                },
+            ),
+            event(
+                10,
+                layer2_core::EventKind::Progress {
+                    stage: layer2_core::session::ProvisioningStage::RuntimeRequested,
+                },
+            ),
+            event(
+                11,
+                layer2_core::EventKind::StatusChanged {
+                    status: layer2_core::SessionStatus::Ready,
+                    stop_reason: None,
+                    detail: None,
+                    capability: None,
+                },
+            ),
+        ],
+        &mut pending,
+        &mut seq,
+        "run_rotation_batch",
+        &id.0,
+    );
+
+    assert!(ended);
+    assert_eq!(seq, 9, "the initiating POST stops at the rotation cursor");
+    let ending = pending.into_iter().collect::<Vec<_>>();
+    assert_eq!(
+        ending.iter().map(|frame| frame.kind).collect::<Vec<_>>(),
+        ["RUN_ERROR"],
+        "replacement progress and ready belong only on the followed session stream"
+    );
+    assert_eq!(ending[0].seq, Some(9));
+    assert_eq!(ending[0].body["cma:returns"], true);
+}
