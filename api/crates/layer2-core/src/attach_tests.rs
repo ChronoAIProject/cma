@@ -622,6 +622,152 @@ async fn a_second_client_is_refused_while_one_holds_the_terminal() {
     );
 }
 
+#[tokio::test]
+async fn an_observed_attachment_releases_interaction_authority_before_handle_drop() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("observed-attachment-authority-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    adapter.terminal_inputs.lock().await.clear();
+    adapter.pause_next_terminal_input();
+
+    let attaching = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(
+                &alice,
+                &id,
+                TerminalGeometry::new(101, 37).expect("valid geometry"),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+        }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+    let held = wait_for_interaction_lease(&store, &created.id).await;
+    assert_eq!(store.active_session_lease(&created.id).await, Some(held));
+
+    adapter.resume_terminal_input();
+    let attachment = attaching
+        .await
+        .expect("attachment task remains live")
+        .expect("attachment succeeds");
+    wait_for_interaction_release(&store, &created.id).await;
+    assert!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .is_some_and(|entry| entry.attached.is_some()),
+        "the handle keeps the local attachment, not interaction authority"
+    );
+    assert_eq!(
+        svc.attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err(),
+        Some(CoreError::AlreadyAttached)
+    );
+    wait_for_interaction_release(&store, &created.id).await;
+    drop(attachment);
+}
+
+#[tokio::test]
+async fn cancelling_an_admitted_attach_finishes_receipt_then_detaches_exactly_once() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("cancelled-admitted-attachment-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    adapter.terminal_inputs.lock().await.clear();
+    adapter.pause_next_terminal_input();
+    let geometry = TerminalGeometry::new(103, 39).expect("valid geometry");
+
+    let attaching = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(&alice, &id, geometry, AttachmentClaim::Exclusive)
+                .await
+        }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+    let held = wait_for_interaction_lease(&store, &created.id).await;
+    attaching.abort();
+    assert!(attaching.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        store.active_session_lease(&created.id).await,
+        Some(held),
+        "an admitted attachment resize retains exact authority through receipt and cleanup"
+    );
+
+    adapter.resume_terminal_input();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let events = store
+                .events_since(&created.id, before.session.last_seq)
+                .await
+                .expect("attachment events are readable");
+            let detached = events.iter().filter(|event| {
+                matches!(
+                    event.kind,
+                    crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                )
+            });
+            if events.len() == 2
+                && detached.count() == 1
+                && svc
+                    .entries
+                    .read()
+                    .await
+                    .get(&created.id)
+                    .is_some_and(|entry| entry.attached.is_none())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the unread admitted attachment is detached once");
+    wait_for_interaction_release(&store, &created.id).await;
+
+    let delivered = adapter.terminal_inputs.lock().await;
+    assert!(matches!(
+        delivered.as_slice(),
+        [(_, TerminalInput::Resize(size))]
+            if size.cols == geometry.columns() && size.rows == geometry.rows()
+    ));
+    drop(delivered);
+    let events = store
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .expect("attachment events are readable");
+    assert!(matches!(
+        events[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+    ));
+    assert!(matches!(
+        events[1].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+    ));
+}
+
 #[test]
 fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_runtime() {
     let origin = tokio::runtime::Builder::new_current_thread()
