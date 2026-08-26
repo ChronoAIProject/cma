@@ -164,6 +164,7 @@ session.
   "plan": null,
   "configOptions": null,
   "availableCommands": null,
+  "pendingApprovals": {},
   "signIn": null,
   "gaps": [],
   "planeChanges": [],
@@ -175,9 +176,10 @@ session.
 ```
 
 `STATE_SNAPSHOT` is not emitted. Create this document once for each session and
-apply every `STATE_DELTA` to it, in stream order, with RFC 6902 semantics. The
-parents and replace targets are present deliberately: applying the same patches
-to `{}` is invalid JSON Patch. For report-valued members, an initial `null`
+apply every `STATE_DELTA` to it in stream order. Operations use RFC 6902
+semantics except for the one pending-approval tombstone rule below. The parents
+and replace targets are present deliberately: applying the same patches to `{}`
+is invalid JSON Patch. For report-valued members, an initial `null`
 means no value has been reported. Zero input and output token counts and an empty
 command list are real reports, arriving as `0` and `[]` rather than remaining
 unknown. `/usage/contextUsed` is different only at the core event boundary:
@@ -188,8 +190,8 @@ For `/memoryPressure`, `null` means no pressure episode is currently open.
 ### `STATE_DELTA` paths
 
 This is the complete JSON-Pointer vocabulary emitted by this build. Operations
-apply to the canonical initial state above with RFC 6902 semantics. A path not
-listed here is not part of the current contract.
+apply to the canonical initial state above. A path not listed here is not part
+of the current contract.
 
 | Path | Operation | Value shape | Emitted when |
 |---|---|---|---|
@@ -199,6 +201,7 @@ listed here is not part of the current contract.
 | `/gaps/-` | `add` | `{frames: integer}` | the runtime reports that conversation frames were dropped |
 | `/memoryPressure` | `replace` | `{usedBytes: integer, limitBytes: integer, occupancyPermille: integer, since: string or null}` or `null` | a durable memory-pressure episode opens or closes |
 | `/mode` | `replace` | permission-mode string in the kernel's own vocabulary | the session's permission mode changes |
+| `/pendingApprovals/{requestId}` | `add` or `remove` | on `add`, `{id: string, reason: string, message: string or null}`; `remove` carries no value | an approval is requested or resolved |
 | `/plan` | `replace` | array of `{title: string, status: string}` | the agent reports a complete plan revision |
 | `/planeChanges/-` | `add` | `{from: string, to: string, snapshotAt: string}` | the owner moves the session between terminal and conversation planes |
 | `/resources` | `replace` | object containing all fourteen numeric-or-null resource fields shown below | a resource reading arrives on the cursorless live lane |
@@ -208,6 +211,20 @@ listed here is not part of the current contract.
 | `/usage/contextWindow` | `replace` | non-negative integer token count | a usage report states the context ceiling; omission preserves the prior value |
 | `/usage/inputTokens` | `replace` | non-negative integer token count | any usage report arrives, including a zero count |
 | `/usage/outputTokens` | `replace` | non-negative integer token count | any usage report arrives, including a zero count |
+
+`{requestId}` is one RFC 6901 reference token, not a literal path segment copied
+from the identifier. Encode `~` as `~0` first and then `/` as `~1`. For example,
+the request id `approval/~one` is written at
+`/pendingApprovals/approval~1~0one`; decoding that pointer recovers the original
+id exactly.
+
+An approval resolution uses `remove` at that member. Strict RFC 6902 rejects a
+remove when the member is absent, but a client can legitimately observe a
+durable resolution without having observed its request. CMA therefore defines
+one narrow fold exception: a remove whose decoded pointer is exactly
+`["pendingApprovals", requestId]` is **remove-if-present**, and is a no-op when
+that own member is absent. This is not strict RFC 6902. No other missing remove
+is relaxed, and malformed pointers or missing parents remain protocol errors.
 
 #### `/signIn` is the own-account prompt
 
@@ -447,6 +464,18 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
 
 Between step 2 and step 4 the session is `idle` with `stop_reason: requires_action`. **That state is durable.** A client that closes the tab and returns finds the interrupt still pending and answerable; it does not need to have held the stream.
 
+The durable projection makes that pending state explicit. `RUN_FINISHED` is the
+first, unnumbered frame of the approval-request projection, and the following
+`STATE_DELTA` add at `/pendingApprovals/{requestId}` is its sole numbered final
+frame. Advance the projection cursor only after that state delta. When any tab
+answers the approval, the durable `ApprovalResolved` record projects a remove at
+the same member. Every watcher and a replay from the beginning therefore fold to
+the same pending set; the tab that submitted the answer has no private exception.
+
+An approval can be resolved once. A second answer is refused as HTTP `409` with
+problem type `https://spec.chrono-ai.fun/cma/1.0/problems/invalid-state` and code
+`invalid_state`; it is never forwarded to the runtime as another decision.
+
 `status: "cancelled"` on resume is a deny.
 
 ---
@@ -537,7 +566,7 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 
   Parsing the raw fields removes the inherited-`lastEventId` ambiguity native `EventSource` creates. The SDK's fetch transport reconstructs each request with its current cursor, while `AguiConnection` performs the open-stream-before-history ordering, projection grouping, acknowledgement, deduplication, and retry policy.
 - **The events route identifies replay, not a run.** Route provenance is authoritative: every AG-UI event frame in both its initial history and followed tail carries the effective `threadId` as `runId`, because no one run owns the whole session history. The run route rejects explicit blank identifiers and `runId == threadId`, and its generated identifiers are also kept distinct, so equality is an exclusive replay-envelope signature on accepted responses. Do not derive conversation or per-run rendering state from it. The repository TypeScript SDK follows this rule: `AguiConnection` assembles each complete durable projection around its numbered final frame, preserves an unacknowledged projection for exact retry, and advances the cursor only after every callback accepts it; the conversation fold ignores `runId`, so run-stream and replay envelopes render the same conversation.
-- **`STATE_DELTA` patches, it does not replace.** Apply deltas in order to the canonical initial state defined in §3; no `STATE_SNAPSHOT` arrives.
+- **`STATE_DELTA` patches, it does not replace.** Apply deltas in order to the canonical initial state defined in §3; no `STATE_SNAPSHOT` arrives. Preserve strict RFC 6902 failure behavior except for §3's exact `/pendingApprovals/{requestId}` remove-if-present rule.
 
 ---
 
