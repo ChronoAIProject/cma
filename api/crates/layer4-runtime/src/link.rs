@@ -114,6 +114,9 @@ pub(crate) enum ControlFrame {
     /// pod's proxy, and a kernel with no terminal still calls out on its
     /// owner's behalf.
     Credential {
+        /// Absent on legacy frames. New callers receive this exact value back.
+        #[serde(default)]
+        operation_id: Option<String>,
         value: String,
     },
     /// Restart the supervised program under a different front-end.
@@ -136,6 +139,9 @@ pub(crate) const CONTROL_REPLIES: usize = 4;
 /// Named here and matched by the adapter: the two ends have to agree on one
 /// word, and a literal repeated in two crates is how they stop agreeing.
 pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
+
+/// The tag returned after a correlated credential was atomically installed.
+pub(crate) const CREDENTIAL_RESULT: &str = "credential_result";
 
 /// A process ending sent to the control plane after its terminal is drained.
 #[derive(Debug, serde::Serialize)]
@@ -428,10 +434,30 @@ pub(crate) async fn control(
     replies: &mpsc::Sender<String>,
 ) {
     match serde_json::from_str::<ControlFrame>(text) {
-        Ok(ControlFrame::Credential { value }) => {
+        Ok(ControlFrame::Credential {
+            operation_id,
+            value,
+        }) => {
             // Never logged with its value; the holder reports only that a
             // replacement happened.
             state.credential.set(value).await;
+            // Legacy callers sent no operation id and expect no unsolicited
+            // result frame. Current callers get an answer only after `set`
+            // completed, so the answer is evidence that the new value is live.
+            if let Some(operation_id) = operation_id {
+                let answer = serde_json::json!({
+                    "t": CREDENTIAL_RESULT,
+                    "operation_id": operation_id,
+                    "installed": true,
+                })
+                .to_string();
+                if replies.send(answer).await.is_err() {
+                    tracing::warn!(
+                        runtime,
+                        "the link closed before credential installation could be acknowledged"
+                    );
+                }
+            }
         }
         Ok(ControlFrame::SwitchPlane { command }) => {
             // The program is swapped in place — the pod, its filesystem and
