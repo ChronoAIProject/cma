@@ -105,6 +105,7 @@ const PRELUDE_PATH: &str = "/runtime/prelude";
 /// Versioned repository workspace restore/checkpoint endpoint.
 const WORKSPACE_PATH: &str = "/runtime/workspace";
 const WORKSPACE_VERSION: u64 = 1;
+const RUNTIME_POLICY_VERSION: u64 = 1;
 
 /// Where a pod says what it is and what it can take.
 const READY_PATH: &str = "/readyz";
@@ -399,6 +400,91 @@ impl CredentialWaiters {
     }
 }
 
+/// Runtime-policy acknowledgements, correlated to one operation and socket generation.
+#[derive(Clone, Default)]
+pub(crate) struct RuntimePolicyWaiters(
+    std::sync::Arc<tokio::sync::Mutex<BTreeMap<(String, String), RuntimePolicyWaiter>>>,
+);
+
+struct RuntimePolicyWaiter {
+    link: mpsc::WeakSender<TerminalInput>,
+    answer: oneshot::Sender<link::RuntimePolicyAnswer>,
+}
+
+impl RuntimePolicyWaiters {
+    pub(crate) async fn expect(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &mpsc::Sender<TerminalInput>,
+    ) -> oneshot::Receiver<link::RuntimePolicyAnswer> {
+        let (tx, rx) = oneshot::channel();
+        self.0.lock().await.insert(
+            (handle.to_string(), operation_id.to_string()),
+            RuntimePolicyWaiter {
+                link: link.downgrade(),
+                answer: tx,
+            },
+        );
+        rx
+    }
+
+    pub(crate) async fn settle(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &mpsc::Sender<TerminalInput>,
+        answer: link::RuntimePolicyAnswer,
+    ) {
+        let key = (handle.to_string(), operation_id.to_string());
+        let mut waiters = self.0.lock().await;
+        let same_link = waiters
+            .get(&key)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if !same_link {
+            return;
+        }
+        if let Some(waiter) = waiters.remove(&key) {
+            let _ = waiter.answer.send(answer);
+        }
+    }
+
+    pub(crate) async fn forget_operation(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &mpsc::Sender<TerminalInput>,
+    ) {
+        let key = (handle.to_string(), operation_id.to_string());
+        let mut waiters = self.0.lock().await;
+        let same_link = waiters
+            .get(&key)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if same_link {
+            waiters.remove(&key);
+        }
+    }
+
+    pub(crate) async fn fail(&self, handle: &str, operation_id: &str) {
+        self.0
+            .lock()
+            .await
+            .remove(&(handle.to_string(), operation_id.to_string()));
+    }
+
+    pub(crate) async fn forget_link(&self, handle: &str, link: &mpsc::Sender<TerminalInput>) {
+        self.0.lock().await.retain(|(runtime, _), waiter| {
+            runtime != handle
+                || waiter
+                    .link
+                    .upgrade()
+                    .is_some_and(|expected| !expected.same_channel(link))
+        });
+    }
+}
+
 /// Registration and cleanup for one runtime link generation.
 ///
 /// The socket reader owns the ending of a generation, while callers use the
@@ -411,6 +497,7 @@ pub(crate) struct LinkLifecycle {
     links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>>,
     switch_waiters: SwitchWaiters,
     credential_waiters: CredentialWaiters,
+    runtime_policy_waiters: RuntimePolicyWaiters,
 }
 
 impl LinkLifecycle {
@@ -433,6 +520,9 @@ impl LinkLifecycle {
             self.credential_waiters
                 .forget_link(&self.runtime, &previous)
                 .await;
+            self.runtime_policy_waiters
+                .forget_link(&self.runtime, &previous)
+                .await;
         }
     }
 
@@ -450,6 +540,9 @@ impl LinkLifecycle {
         // previous waiter, so waiter cleanup independently checks identity.
         self.switch_waiters.forget(&self.runtime, link).await;
         self.credential_waiters
+            .forget_link(&self.runtime, link)
+            .await;
+        self.runtime_policy_waiters
             .forget_link(&self.runtime, link)
             .await;
     }
@@ -476,6 +569,23 @@ impl LinkLifecycle {
     /// Fail an exact operation after this link's WebSocket write failed.
     pub(crate) async fn fail_credential(&self, operation_id: &str) {
         self.credential_waiters
+            .fail(&self.runtime, operation_id)
+            .await;
+    }
+
+    pub(crate) async fn settle_runtime_policy(
+        &self,
+        link: &mpsc::Sender<TerminalInput>,
+        operation_id: &str,
+        answer: link::RuntimePolicyAnswer,
+    ) {
+        self.runtime_policy_waiters
+            .settle(&self.runtime, operation_id, link, answer)
+            .await;
+    }
+
+    pub(crate) async fn fail_runtime_policy(&self, operation_id: &str) {
+        self.runtime_policy_waiters
             .fail(&self.runtime, operation_id)
             .await;
     }
@@ -513,6 +623,8 @@ pub struct HostedKernel {
     switch_waiters: SwitchWaiters,
     /// Credential acknowledgements awaiting an exact operation and link generation.
     credential_waiters: CredentialWaiters,
+    /// Opaque runtime-policy acknowledgements awaiting this socket generation.
+    runtime_policy_waiters: RuntimePolicyWaiters,
 }
 
 impl HostedKernel {
@@ -533,6 +645,7 @@ impl HostedKernel {
             links: std::sync::Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             switch_waiters: SwitchWaiters::default(),
             credential_waiters: CredentialWaiters::default(),
+            runtime_policy_waiters: RuntimePolicyWaiters::default(),
         }
     }
 
@@ -572,6 +685,26 @@ impl HostedKernel {
             "sandbox provisioned"
         );
         let sandbox = self.await_running(&sandbox.id).await?;
+
+        if spec.runtime_policy_required && !self.supports_runtime_policy(&sandbox.id).await {
+            // This sandbox can never become eligible. Delete the exact object
+            // just created before returning a permanent refusal so no failed
+            // rollout probe leaves a billed orphan behind.
+            if let Err(error) = self.client.delete(&sandbox.id).await {
+                tracing::error!(
+                    sandbox = %sandbox.id,
+                    %error,
+                    "ineligible runtime could not be reclaimed"
+                );
+                return Err(AdapterError::Unavailable(format!(
+                    "runtime {} lacks authenticated policy support and could not be reclaimed: {error}",
+                    sandbox.id
+                )));
+            }
+            return Err(AdapterError::Unsupported(
+                "this runtime image does not advertise github_capability_v1".into(),
+            ));
+        }
 
         if let Some(workspace) = spec.workspace.as_ref() {
             self.hand_over_workspace(&sandbox.id, workspace).await?;
@@ -715,6 +848,20 @@ impl HostedKernel {
             .unwrap_or(false)
     }
 
+    async fn supports_runtime_policy(&self, sandbox: &str) -> bool {
+        let Ok(endpoint) = self.client.endpoint(sandbox, SUPERVISOR_PORT).await else {
+            return false;
+        };
+        let Ok(Some(body)) = self
+            .client
+            .get_from_sandbox(&endpoint.endpoint, READY_PATH)
+            .await
+        else {
+            return false;
+        };
+        readiness_supports_runtime_policy(&body)
+    }
+
     async fn hand_over_workspace(
         &self,
         sandbox: &str,
@@ -842,6 +989,9 @@ impl HostedKernel {
         if let Some(link) = link {
             self.switch_waiters.forget(&handle.0, &link).await;
             self.credential_waiters.forget_link(&handle.0, &link).await;
+            self.runtime_policy_waiters
+                .forget_link(&handle.0, &link)
+                .await;
         }
         self.client.delete(&handle.0).await?;
         tracing::info!(sandbox = %handle.0, "sandbox deleted");
@@ -897,6 +1047,7 @@ impl HostedKernel {
             links: std::sync::Arc::clone(&self.links),
             switch_waiters: self.switch_waiters.clone(),
             credential_waiters: self.credential_waiters.clone(),
+            runtime_policy_waiters: self.runtime_policy_waiters.clone(),
         }
     }
 
@@ -917,6 +1068,27 @@ impl HostedKernel {
             tokio::time::sleep(READY_POLL).await;
         }
     }
+}
+
+fn readiness_supports_runtime_policy(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            let capability = value.get("githubCapability")?;
+            Some(
+                capability.get("name").and_then(serde_json::Value::as_str)
+                    == Some("github_capability_v1")
+                    && capability
+                        .get("version")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(RUNTIME_POLICY_VERSION)
+                    && capability
+                        .pointer("/runtime/supported")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true),
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -959,6 +1131,10 @@ where
                 TerminalInput::Credential { operation_id, .. } => Some(operation_id.clone()),
                 _ => None,
             };
+            let policy_operation = match &input {
+                TerminalInput::RuntimePolicy { operation_id, .. } => Some(operation_id.clone()),
+                _ => None,
+            };
             let message = match input {
                 TerminalInput::Credential {
                     operation_id,
@@ -968,6 +1144,17 @@ where
                         "t": "credential",
                         "operation_id": operation_id,
                         "value": value,
+                    })
+                    .to_string(),
+                ),
+                TerminalInput::RuntimePolicy {
+                    operation_id,
+                    envelope,
+                } => tokio_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "t": "github_capability",
+                        "operation_id": operation_id,
+                        "envelope": envelope,
                     })
                     .to_string(),
                 ),
@@ -990,6 +1177,11 @@ where
                     (credential_operation, lifecycle.as_ref())
                 {
                     lifecycle.fail_credential(&operation_id).await;
+                }
+                if let (Some(operation_id), Some(lifecycle)) =
+                    (policy_operation, lifecycle.as_ref())
+                {
+                    lifecycle.fail_runtime_policy(&operation_id).await;
                 }
                 break;
             }

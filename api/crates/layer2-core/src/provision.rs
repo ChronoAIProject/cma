@@ -186,6 +186,12 @@ impl SessionService {
             .into_iter()
             .map(|service| service.0)
             .collect();
+        let runtime_policy_required = self
+            .entries
+            .read()
+            .await
+            .get(&id)
+            .is_some_and(|entry| entry.trigger_origin.is_some());
         let workspace = self.workspace_for(&id).await?;
         // Kept for redaction: a tool body must not carry a value the session
         // was handed, and these are exactly those values.
@@ -219,6 +225,7 @@ impl SessionService {
                     .collect(),
                 platform_briefing: platform_briefing.to_string(),
                 reaches,
+                runtime_policy_required,
                 environment: environment.into(),
                 created_by: self.identity.clone(),
             })

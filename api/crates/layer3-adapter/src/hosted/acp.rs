@@ -263,6 +263,16 @@ impl Bridge {
                                         installed,
                                     )
                                     .await;
+                            } else if let Some((operation_id, answer)) =
+                                super::link::runtime_policy_answer(&text)
+                            {
+                                lifecycle
+                                    .settle_runtime_policy(
+                                        &control_for_reader,
+                                        &operation_id,
+                                        answer,
+                                    )
+                                    .await;
                             } else if let Some(accepted) = super::link::switch_answer(&text) {
                                 lifecycle.settle(&control_for_reader, accepted).await;
                             }

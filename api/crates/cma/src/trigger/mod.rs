@@ -1,3 +1,4 @@
+pub(crate) mod capability_signing;
 pub(crate) mod github;
 pub(crate) mod github_effects;
 pub(crate) mod worker;

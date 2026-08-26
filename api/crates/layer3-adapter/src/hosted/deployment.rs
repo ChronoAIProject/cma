@@ -56,6 +56,12 @@ pub struct Deployment {
     /// Empty means the session gets a sandbox and a model but cannot use the
     /// owner's connected capabilities.
     pub platform_base_url: String,
+    /// Public verification keyring for authenticated runtime policies.
+    ///
+    /// Public by construction: only the control plane receives the signing
+    /// key. Passing this through the sandbox environment therefore gives an
+    /// agent no ability to mint or widen a policy.
+    pub runtime_policy_verification_keys: String,
     /// How this kernel's protocol bridge is invoked.
     ///
     /// Configured rather than fixed because it belongs to the kernel and
@@ -136,6 +142,15 @@ impl Deployment {
                 "CHRONO_PLATFORM_BASE_URL".to_string(),
                 self.platform_base_url.clone(),
             ),
+            ("CHRONO_SESSION_ID".to_string(), spec.session_id.clone()),
+            (
+                "CHRONO_GITHUB_CAPABILITY_REQUIRED".to_string(),
+                spec.runtime_policy_required.to_string(),
+            ),
+            (
+                "CHRONO_GITHUB_CAPABILITY_VERIFY_KEYS".to_string(),
+                self.runtime_policy_verification_keys.clone(),
+            ),
             // The CLI reads its endpoint and token from the environment, and
             // environment wins over any saved session. Pointing it at the local
             // proxy with an inert token means the real credential never lands
@@ -206,6 +221,17 @@ impl Deployment {
                 "this runtime's agent reads no skills, so it cannot be given {}",
                 environment.skills.join(", ")
             )));
+        }
+        Ok(())
+    }
+
+    /// Refuse a policy-required runtime before creating a billable sandbox if
+    /// this deployment has no verifier to give it.
+    pub fn refuse_missing_policy_verifier(&self, spec: &RuntimeSpec) -> Result<(), AdapterError> {
+        if spec.runtime_policy_required && self.runtime_policy_verification_keys.trim().is_empty() {
+            return Err(AdapterError::Unsupported(
+                "this deployment has no runtime-policy verification keyring".to_string(),
+            ));
         }
         Ok(())
     }

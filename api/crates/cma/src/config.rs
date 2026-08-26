@@ -236,6 +236,8 @@ pub struct Config {
     /// their own retention and deletion policy, and must never inherit the
     /// transcript lifecycle merely because both use platform object storage.
     pub trigger_workspace_bucket: String,
+    /// Current Ed25519 signer for short-lived runtime policies, when enabled.
+    pub github_capability_signing: Option<GithubCapabilitySigningConfig>,
     /// This service's own machine identity on the identity platform, used to
     /// store session context.
     ///
@@ -250,6 +252,28 @@ pub struct Config {
     pub storage_client_secret: String,
     /// How callers are authenticated.
     pub auth_mode: AuthMode,
+}
+
+/// Secret signing material and public-key rotation inputs.
+#[derive(Clone)]
+pub struct GithubCapabilitySigningConfig {
+    pub key_id: String,
+    pub private_key_pkcs8_base64: String,
+    pub previous_verification_keys_json: String,
+}
+
+impl std::fmt::Debug for GithubCapabilitySigningConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GithubCapabilitySigningConfig")
+            .field("key_id", &self.key_id)
+            .field("private_key_pkcs8_base64", &"<redacted>")
+            .field(
+                "previous_verification_keys_json",
+                &self.previous_verification_keys_json,
+            )
+            .finish()
+    }
 }
 
 /// Services every session's credential may reach when a deployment names none.
@@ -383,6 +407,26 @@ impl Config {
         // guessing a name would mean writing somewhere nobody chose.
         let context_bucket = var_or("CHRONO_CONTEXT_BUCKET", "");
         let trigger_workspace_bucket = var_or("CHRONO_TRIGGER_WORKSPACE_BUCKET", "");
+        let capability_key_id = var_or("CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_ID", "");
+        let capability_private_key = var_or("CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_PKCS8", "");
+        let previous_verification_keys_json =
+            var_or("CHRONO_GITHUB_CAPABILITY_PREVIOUS_VERIFY_KEYS", "{}");
+        let github_capability_signing = match (
+            capability_key_id.is_empty(),
+            capability_private_key.is_empty(),
+        ) {
+            (true, true) => None,
+            (false, false) => Some(GithubCapabilitySigningConfig {
+                key_id: capability_key_id,
+                private_key_pkcs8_base64: capability_private_key,
+                previous_verification_keys_json,
+            }),
+            _ => {
+                return Err("CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_ID and \
+                     CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_PKCS8 must be set together"
+                    .into())
+            }
+        };
         let storage_client_id = var_or("CHRONO_STORAGE_CLIENT_ID", "");
         let storage_client_secret = var_or("CHRONO_STORAGE_CLIENT_SECRET", "");
         // The key is read from a file rather than an environment variable so it
@@ -466,6 +510,7 @@ impl Config {
             activity_retention,
             context_bucket,
             trigger_workspace_bucket,
+            github_capability_signing,
             storage_client_id,
             storage_client_secret,
             auth_mode,
@@ -657,6 +702,7 @@ impl Config {
             activity_retention: std::time::Duration::from_secs(90 * 86_400),
             context_bucket: "bkt".into(),
             trigger_workspace_bucket: "trigger-bkt".into(),
+            github_capability_signing: None,
             storage_client_id: "sa-id".into(),
             storage_client_secret: "sa-secret".into(),
             auth_mode: AuthMode::Trusted {

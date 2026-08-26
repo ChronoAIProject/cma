@@ -86,6 +86,7 @@ impl KernelAdapter for CodexAdapter {
         self.spec
             .deployment
             .refuse_undeliverable(&spec.environment)?;
+        self.spec.deployment.refuse_missing_policy_verifier(spec)?;
 
         self.hosted
             .provision(spec, self.environment_for(spec))
@@ -134,6 +135,14 @@ impl KernelAdapter for CodexAdapter {
         credential: &str,
     ) -> Result<(), AdapterError> {
         self.hosted.refresh_credential(handle, credential).await
+    }
+
+    async fn install_runtime_policy(
+        &self,
+        handle: &RuntimeHandle,
+        envelope: &str,
+    ) -> Result<crate::RuntimePolicyReceipt, AdapterError> {
+        self.hosted.install_runtime_policy(handle, envelope).await
     }
 
     async fn switch_plane(
