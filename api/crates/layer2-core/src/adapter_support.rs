@@ -9,7 +9,8 @@ use std::collections::HashMap;
 
 use layer3_adapter::{
     AdapterError, KernelAdapter, RuntimeHandle, RuntimeListing, RuntimeLossReason, RuntimeMode,
-    RuntimeSpec, TerminalChannel, TerminalOutput,
+    RuntimeSpec, TerminalChannel, TerminalOutput, WorkspaceCheckpointPackage,
+    WorkspaceCheckpointRequest,
 };
 use tokio::sync::{mpsc, Mutex, Semaphore};
 
@@ -124,6 +125,13 @@ pub(crate) struct FakeAdapter {
     pub(crate) fail_watch: bool,
     /// Resource watch attempts, including refusals and transient failures.
     pub(crate) resource_watch_calls: std::sync::atomic::AtomicUsize,
+    /// A sealed workspace capture returned to Layer 2 when a test configures
+    /// this runtime to support the v2 checkpoint capability.
+    pub(crate) checkpoint: Mutex<Option<WorkspaceCheckpointPackage>>,
+    pub(crate) checkpoint_calls: std::sync::atomic::AtomicUsize,
+    pub(crate) hold_checkpoint: std::sync::atomic::AtomicBool,
+    pub(crate) checkpoint_started: Semaphore,
+    pub(crate) continue_checkpoint: Semaphore,
 }
 
 impl Default for FakeAdapter {
@@ -175,6 +183,11 @@ impl Default for FakeAdapter {
             refuse_watch: false,
             fail_watch: false,
             resource_watch_calls: std::sync::atomic::AtomicUsize::new(0),
+            checkpoint: Mutex::default(),
+            checkpoint_calls: std::sync::atomic::AtomicUsize::new(0),
+            hold_checkpoint: std::sync::atomic::AtomicBool::new(false),
+            checkpoint_started: Semaphore::new(0),
+            continue_checkpoint: Semaphore::new(0),
         }
     }
 }
@@ -415,6 +428,32 @@ impl KernelAdapter for FakeAdapter {
             return Err(AdapterError::Unsupported("cannot capture".into()));
         }
         Ok(self.conversations.lock().await.get(&handle.0).cloned())
+    }
+
+    async fn checkpoint_workspace(
+        &self,
+        handle: &RuntimeHandle,
+        _request: &WorkspaceCheckpointRequest,
+    ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+        self.checkpoint_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if !self.running.lock().await.contains_key(&handle.0) {
+            return Err(AdapterError::Unavailable("no such runtime".into()));
+        }
+        if self
+            .hold_checkpoint
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.checkpoint_started.add_permits(1);
+            self.continue_checkpoint
+                .acquire()
+                .await
+                .expect("the test adapter remains alive")
+                .forget();
+        }
+        self.checkpoint.lock().await.clone().ok_or_else(|| {
+            AdapterError::Unsupported("this test runtime cannot checkpoint its workspace".into())
+        })
     }
 
     async fn switch_plane(

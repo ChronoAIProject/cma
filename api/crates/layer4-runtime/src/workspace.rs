@@ -5,9 +5,12 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha1::Sha1;
 use sha2::{Digest as _, Sha256};
 
 pub const VERSION: u32 = 1;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub const CAPABILITY_VERSION: u32 = 2;
 pub const MAX_FILES: usize = 100_000;
 pub const MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 1_024;
@@ -27,6 +30,10 @@ enum EntryKind {
 struct Header {
     cma_workspace: u32,
     workspace_epoch: u64,
+    #[serde(default)]
+    checkpoint_version: u64,
+    #[serde(default)]
+    quiesced_writers: u32,
     source_revision: String,
     manifest_digest: String,
     entries: Vec<Entry>,
@@ -51,6 +58,374 @@ pub struct Restored {
     pub manifest_digest: String,
     pub entries: usize,
     pub bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Captured {
+    pub workspace_epoch: u64,
+    pub checkpoint_version: u64,
+    pub source_revision: String,
+    pub manifest_digest: String,
+    pub archive_sha256: String,
+    pub entries: usize,
+    pub bytes: u64,
+    pub quiesced_writers: u32,
+    pub archive: Vec<u8>,
+}
+
+#[derive(Debug, Serialize)]
+struct CaptureAcknowledgement<'a> {
+    cma_checkpoint: u32,
+    workspace_epoch: u64,
+    checkpoint_version: u64,
+    source_revision: &'a str,
+    manifest_digest: &'a str,
+    archive_sha256: &'a str,
+    entries: usize,
+    bytes: u64,
+    quiesced_writers: u32,
+    writers_resumed: bool,
+}
+
+impl Captured {
+    /// Length-delimited acknowledgement followed by the exact sealed archive.
+    pub fn into_wire(self) -> Result<Vec<u8>, String> {
+        let acknowledgement = serde_json::to_vec(&CaptureAcknowledgement {
+            cma_checkpoint: VERSION,
+            workspace_epoch: self.workspace_epoch,
+            checkpoint_version: self.checkpoint_version,
+            source_revision: &self.source_revision,
+            manifest_digest: &self.manifest_digest,
+            archive_sha256: &self.archive_sha256,
+            entries: self.entries,
+            bytes: self.bytes,
+            quiesced_writers: self.quiesced_writers,
+            writers_resumed: true,
+        })
+        .map_err(|error| format!("encode checkpoint acknowledgement: {error}"))?;
+        let header_len = u64::try_from(acknowledgement.len())
+            .map_err(|_| "checkpoint acknowledgement is too large".to_string())?;
+        let mut wire = Vec::with_capacity(
+            8_usize
+                .saturating_add(acknowledgement.len())
+                .saturating_add(self.archive.len()),
+        );
+        wire.extend_from_slice(&header_len.to_be_bytes());
+        wire.extend_from_slice(&acknowledgement);
+        wire.extend_from_slice(&self.archive);
+        Ok(wire)
+    }
+}
+
+pub struct PreparedCapture {
+    temporary: PathBuf,
+    committed: PathBuf,
+    captured: Option<Captured>,
+}
+
+impl PreparedCapture {
+    /// Make a fully flushed capture authoritative only after writers resumed.
+    pub fn commit(mut self) -> Result<Captured, String> {
+        if self.committed.exists() {
+            let retained = load_capture_path(
+                &self.committed,
+                self.captured
+                    .as_ref()
+                    .expect("prepared capture exists")
+                    .workspace_epoch,
+                self.captured
+                    .as_ref()
+                    .expect("prepared capture exists")
+                    .checkpoint_version,
+                &self
+                    .captured
+                    .as_ref()
+                    .expect("prepared capture exists")
+                    .source_revision,
+            )?;
+            if retained.archive_sha256
+                != self
+                    .captured
+                    .as_ref()
+                    .expect("prepared capture exists")
+                    .archive_sha256
+            {
+                return Err("checkpoint version already names different workspace bytes".into());
+            }
+            let _ = std::fs::remove_file(&self.temporary);
+            self.temporary = PathBuf::new();
+            return Ok(retained);
+        }
+        std::fs::rename(&self.temporary, &self.committed)
+            .map_err(|error| format!("commit workspace checkpoint: {error}"))?;
+        self.temporary = PathBuf::new();
+        if let Some(parent) = self.committed.parent() {
+            std::fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| format!("flush workspace checkpoint directory: {error}"))?;
+        }
+        Ok(self.captured.take().expect("prepared capture exists"))
+    }
+}
+
+impl Drop for PreparedCapture {
+    fn drop(&mut self) {
+        if !self.temporary.as_os_str().is_empty() {
+            let _ = std::fs::remove_file(&self.temporary);
+        }
+    }
+}
+
+/// Read an exact prior capture for an ambiguous retry.
+pub fn load_capture(
+    checkpoint_root: &Path,
+    epoch: u64,
+    version: u64,
+    source_revision: &str,
+) -> Result<Option<Captured>, String> {
+    validate_capture_request(epoch, version, source_revision)?;
+    let path = capture_path(checkpoint_root, epoch, version);
+    if !path.exists() {
+        return Ok(None);
+    }
+    load_capture_path(&path, epoch, version, source_revision).map(Some)
+}
+
+/// Walk a quiescent tree, seal it deterministically, verify it, and flush a
+/// temporary artifact. The caller must resume writers before calling commit.
+pub fn prepare_capture(
+    workspace_root: &Path,
+    checkpoint_root: &Path,
+    epoch: u64,
+    version: u64,
+    source_revision: &str,
+    quiesced_writers: u32,
+) -> Result<PreparedCapture, String> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    validate_capture_request(epoch, version, source_revision)?;
+    if !workspace_root.is_dir() {
+        return Err("workspace root is not a directory".into());
+    }
+    let mut paths = Vec::new();
+    collect_capture_paths(workspace_root, workspace_root, &mut paths)?;
+    if paths.len() > MAX_FILES {
+        return Err("workspace contains too many files".into());
+    }
+    paths.sort();
+
+    let mut entries = Vec::with_capacity(paths.len());
+    let mut payload = Vec::new();
+    let mut offset = 0_u64;
+    for relative in paths {
+        validate_path(&relative)?;
+        let path = workspace_root.join(&relative);
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("inspect workspace entry {relative}: {error}"))?;
+        let (kind, mode, bytes) = if metadata.file_type().is_file() {
+            let bytes = std::fs::read(&path)
+                .map_err(|error| format!("read workspace entry {relative}: {error}"))?;
+            let mode = if metadata.permissions().mode() & 0o111 == 0 {
+                0o100644
+            } else {
+                0o100755
+            };
+            (EntryKind::Regular, mode, bytes)
+        } else if metadata.file_type().is_symlink() {
+            let target = std::fs::read_link(&path)
+                .map_err(|error| format!("read workspace symlink {relative}: {error}"))?;
+            let target = target
+                .to_str()
+                .ok_or_else(|| "workspace symlink target is not UTF-8".to_string())?;
+            validate_symlink(&relative, target)?;
+            (EntryKind::Symlink, 0o120000, target.as_bytes().to_vec())
+        } else {
+            return Err(format!(
+                "workspace entry {relative} has an unsupported type"
+            ));
+        };
+        let size = u64::try_from(bytes.len())
+            .map_err(|_| "workspace entry exceeds this runtime".to_string())?;
+        offset = offset
+            .checked_add(size)
+            .ok_or_else(|| "workspace size overflowed".to_string())?;
+        if offset > MAX_BYTES {
+            return Err("workspace exceeds its byte bound".into());
+        }
+        entries.push(Entry {
+            path: relative,
+            kind,
+            mode,
+            size,
+            content_sha256: hex(&Sha256::digest(&bytes)),
+            provider_object_id: Some(git_blob_id(&bytes)),
+            offset: offset - size,
+        });
+        payload.extend_from_slice(&bytes);
+    }
+
+    let mut header = Header {
+        cma_workspace: VERSION,
+        workspace_epoch: epoch,
+        checkpoint_version: version,
+        quiesced_writers,
+        source_revision: source_revision.to_ascii_lowercase(),
+        manifest_digest: "0".repeat(64),
+        entries,
+    };
+    header.manifest_digest = manifest_digest(&header, &payload)?;
+    let encoded = serde_json::to_vec(&header)
+        .map_err(|error| format!("encode workspace checkpoint header: {error}"))?;
+    if encoded.is_empty() || encoded.len() > MAX_HEADER_BYTES {
+        return Err("workspace checkpoint header exceeds its bound".into());
+    }
+    let header_len = u64::try_from(encoded.len())
+        .map_err(|_| "workspace checkpoint header exceeds this runtime".to_string())?;
+    let mut archive = Vec::with_capacity(
+        8_usize
+            .saturating_add(encoded.len())
+            .saturating_add(payload.len()),
+    );
+    archive.extend_from_slice(&header_len.to_be_bytes());
+    archive.extend_from_slice(&encoded);
+    archive.extend_from_slice(&payload);
+    validate_archive(&archive, epoch, version, source_revision)?;
+
+    std::fs::create_dir_all(checkpoint_root)
+        .map_err(|error| format!("create workspace checkpoint directory: {error}"))?;
+    let committed = capture_path(checkpoint_root, epoch, version);
+    let temporary = checkpoint_root.join(format!(
+        ".epoch-{epoch}-v{version}-{}-{}.pending",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("create workspace checkpoint: {error}"))?;
+    file.write_all(&archive)
+        .map_err(|error| format!("write workspace checkpoint: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("flush workspace checkpoint: {error}"))?;
+    let captured = captured_from(header, archive);
+    Ok(PreparedCapture {
+        temporary,
+        committed,
+        captured: Some(captured),
+    })
+}
+
+fn validate_capture_request(epoch: u64, version: u64, source_revision: &str) -> Result<(), String> {
+    if epoch == 0 || version == 0 {
+        return Err("workspace checkpoint epoch and version must be positive".into());
+    }
+    if source_revision.len() != 40 || !source_revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("workspace checkpoint source revision is invalid".into());
+    }
+    Ok(())
+}
+
+fn capture_path(root: &Path, epoch: u64, version: u64) -> PathBuf {
+    root.join(format!("epoch-{epoch}-v{version}.pack"))
+}
+
+fn load_capture_path(
+    path: &Path,
+    epoch: u64,
+    version: u64,
+    source_revision: &str,
+) -> Result<Captured, String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("inspect retained workspace checkpoint: {error}"))?;
+    if metadata.len() > u64::try_from(MAX_ARCHIVE_BYTES).unwrap_or(u64::MAX) {
+        return Err("retained workspace checkpoint exceeds its bound".into());
+    }
+    let archive = std::fs::read(path)
+        .map_err(|error| format!("read retained workspace checkpoint: {error}"))?;
+    let header = validate_archive(&archive, epoch, version, source_revision)?;
+    Ok(captured_from(header, archive))
+}
+
+fn validate_archive(
+    archive: &[u8],
+    epoch: u64,
+    version: u64,
+    source_revision: &str,
+) -> Result<Header, String> {
+    if archive.len() > MAX_ARCHIVE_BYTES {
+        return Err("workspace checkpoint archive exceeds its bound".into());
+    }
+    let (header, payload) = open(archive)?;
+    if header.workspace_epoch != epoch
+        || header.checkpoint_version != version
+        || !header.source_revision.eq_ignore_ascii_case(source_revision)
+    {
+        return Err("workspace checkpoint does not match the requested fence".into());
+    }
+    validate_header(&header, payload)?;
+    if manifest_digest(&header, payload)? != header.manifest_digest {
+        return Err("workspace checkpoint manifest digest does not match its entries".into());
+    }
+    Ok(header)
+}
+
+fn captured_from(header: Header, archive: Vec<u8>) -> Captured {
+    Captured {
+        workspace_epoch: header.workspace_epoch,
+        checkpoint_version: header.checkpoint_version,
+        source_revision: header.source_revision,
+        manifest_digest: header.manifest_digest,
+        archive_sha256: hex(&Sha256::digest(&archive)),
+        entries: header.entries.len(),
+        bytes: header.entries.iter().map(|entry| entry.size).sum(),
+        quiesced_writers: header.quiesced_writers,
+        archive,
+    }
+}
+
+fn collect_capture_paths(
+    root: &Path,
+    directory: &Path,
+    paths: &mut Vec<String>,
+) -> Result<(), String> {
+    for item in std::fs::read_dir(directory)
+        .map_err(|error| format!("inspect workspace directory: {error}"))?
+    {
+        let item = item.map_err(|error| format!("inspect workspace entry: {error}"))?;
+        let path = item.path();
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| "workspace entry escaped its root".to_string())?
+            .to_str()
+            .ok_or_else(|| "workspace path is not UTF-8".to_string())?
+            .to_string();
+        validate_path(&relative)?;
+        let kind = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("inspect workspace entry {relative}: {error}"))?
+            .file_type();
+        if kind.is_dir() {
+            collect_capture_paths(root, &path, paths)?;
+        } else if kind.is_file() || kind.is_symlink() {
+            paths.push(relative);
+        } else {
+            return Err(format!(
+                "workspace entry {relative} has an unsupported type"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn git_blob_id(bytes: &[u8]) -> String {
+    let mut digest = Sha1::new();
+    digest.update(format!("blob {}\0", bytes.len()).as_bytes());
+    digest.update(bytes);
+    hex(&digest.finalize())
 }
 
 /// Verify a complete archive, materialize it away from the live path, verify

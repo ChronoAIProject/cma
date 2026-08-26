@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 
+use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
 
 /// Header carrying the provider API key.
@@ -306,6 +307,20 @@ impl SandboxClient {
         path: &str,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, SandboxError> {
+        self.post_to_sandbox_with_bounded_response(endpoint, path, body, 64 * 1024)
+            .await
+    }
+
+    /// Post bytes and stream a response only up to the caller's explicit
+    /// artifact bound. Used for sealed workspace archives, whose response is
+    /// intentionally much larger than a control acknowledgement.
+    pub async fn post_to_sandbox_with_bounded_response(
+        &self,
+        endpoint: &str,
+        path: &str,
+        body: Vec<u8>,
+        max_response_bytes: usize,
+    ) -> Result<Vec<u8>, SandboxError> {
         let url = self.sandbox_url(endpoint, path);
         let resp = self
             .http
@@ -322,16 +337,26 @@ impl SandboxClient {
                 detail: format!("{path} on the sandbox refused the request"),
             });
         }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|error| SandboxError::Unreachable(error.to_string()))?;
-        if bytes.len() > 64 * 1024 {
+        if resp
+            .content_length()
+            .is_some_and(|length| length > max_response_bytes as u64)
+        {
             return Err(SandboxError::Malformed(
-                "sandbox acknowledgement exceeds its bound".into(),
+                "sandbox response exceeds its explicit bound".into(),
             ));
         }
-        Ok(bytes.to_vec())
+        let mut stream = resp.bytes_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| SandboxError::Unreachable(error.to_string()))?;
+            if bytes.len().saturating_add(chunk.len()) > max_response_bytes {
+                return Err(SandboxError::Malformed(
+                    "sandbox response exceeds its explicit bound".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
     }
 
     /// Every sandbox this key can see.

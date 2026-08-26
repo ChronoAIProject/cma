@@ -17,6 +17,7 @@ mod resources;
 mod telemetry;
 mod upstream;
 mod workspace;
+mod writer_fence;
 
 use std::net::SocketAddr;
 
@@ -52,6 +53,13 @@ pub(crate) struct AppState {
     /// The repository workspace, kept outside the agent's configuration and
     /// conversation directories.
     workspace_root: std::path::PathBuf,
+    /// Sealed checkpoint artifacts live outside the repository tree so they
+    /// can never appear in a diff or be recursively captured.
+    checkpoint_root: std::path::PathBuf,
+    /// Exact Launch workspace authority established by verified restore.
+    workspace_authority: std::sync::Arc<RwLock<Option<WorkspaceAuthority>>>,
+    /// One capture/version fence at a time within this runtime generation.
+    checkpoint_gate: std::sync::Arc<Mutex<()>>,
     /// Serializes pre-start filesystem mutations against the first process
     /// start. Readers may start an agent; writers must finish before any
     /// agent process can observe the filesystem.
@@ -122,6 +130,9 @@ impl AppState {
             github_capability: GithubCapabilityGate::disabled(),
             home: std::path::PathBuf::from("/home/chrono"),
             workspace_root: std::path::PathBuf::from("/home/chrono/workspace"),
+            checkpoint_root: std::path::PathBuf::from("/home/chrono/.cma-checkpoints"),
+            workspace_authority: std::sync::Arc::new(RwLock::new(None)),
+            checkpoint_gate: std::sync::Arc::new(Mutex::new(())),
             startup_gate: std::sync::Arc::new(RwLock::new(())),
             snapshot_dir: None,
             resume_args: None,
@@ -226,6 +237,27 @@ impl AppState {
             Err(_) => false,
         }
     }
+
+    async fn writer_session_roots(&self) -> Vec<i32> {
+        let mut roots = self.registry.writer_session_roots().await;
+        if let Some(root) = self
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|bridge| bridge.writer_session_root())
+        {
+            roots.push(root);
+        }
+        roots
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspaceAuthority {
+    epoch: u64,
+    source_revision: String,
+    baseline_manifest_digest: String,
 }
 
 #[tokio::main]
@@ -394,6 +426,9 @@ async fn main() {
         github_capability,
         home: home.clone(),
         workspace_root,
+        checkpoint_root: home.join(".cma-workspace-checkpoints"),
+        workspace_authority: std::sync::Arc::new(RwLock::new(None)),
+        checkpoint_gate: std::sync::Arc::new(Mutex::new(())),
         startup_gate: std::sync::Arc::new(RwLock::new(())),
         snapshot_dir,
         resume_args,
@@ -421,6 +456,10 @@ async fn main() {
         .route(
             "/runtime/workspace",
             post(workspace_restore).layer(DefaultBodyLimit::max(workspace::MAX_ARCHIVE_BYTES)),
+        )
+        .route(
+            "/runtime/workspace/checkpoint",
+            post(workspace_checkpoint).layer(DefaultBodyLimit::max(1)),
         )
         .with_state(state);
 
@@ -647,6 +686,7 @@ async fn prelude_write(
 struct WorkspaceRestoreParams {
     epoch: u64,
     source: String,
+    baseline: String,
     manifest: String,
     archive: String,
 }
@@ -676,9 +716,22 @@ async fn workspace_restore(
         )
             .into_response();
     }
+    if params.baseline.len() != 64 || !params.baseline.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "the workspace baseline digest is invalid",
+        )
+            .into_response();
+    }
 
     let target = state.workspace_root.clone();
     let archive = body.to_vec();
+    let authority = WorkspaceAuthority {
+        epoch: params.epoch,
+        source_revision: params.source.clone(),
+        baseline_manifest_digest: params.baseline.clone(),
+    };
     let restored = tokio::task::spawn_blocking(move || {
         workspace::restore(
             &target,
@@ -691,7 +744,21 @@ async fn workspace_restore(
     })
     .await;
     match restored {
-        Ok(Ok(restored)) => (axum::http::StatusCode::OK, axum::Json(restored)).into_response(),
+        Ok(Ok(restored)) => {
+            *state.workspace_authority.write().await = Some(authority);
+            (
+                axum::http::StatusCode::OK,
+                axum::Json(serde_json::json!({
+                    "workspace_epoch": restored.workspace_epoch,
+                    "source_revision": restored.source_revision,
+                    "baseline_manifest_digest": params.baseline,
+                    "manifest_digest": restored.manifest_digest,
+                    "entries": restored.entries,
+                    "bytes": restored.bytes,
+                })),
+            )
+                .into_response()
+        }
         Ok(Err(why)) => {
             tracing::warn!(reason = %why, "workspace restore refused");
             (axum::http::StatusCode::UNPROCESSABLE_ENTITY, why).into_response()
@@ -701,6 +768,119 @@ async fn workspace_restore(
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "workspace restore failed",
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceCheckpointParams {
+    epoch: u64,
+    version: u64,
+    source: String,
+    baseline: String,
+}
+
+/// Capture one coherent repository tree while the existing agent remains the
+/// session's writer before and after the operation.
+async fn workspace_checkpoint(
+    State(state): State<AppState>,
+    Query(params): Query<WorkspaceCheckpointParams>,
+) -> impl IntoResponse {
+    let _checkpoint = state.checkpoint_gate.lock().await;
+    let authority = state.workspace_authority.read().await.clone();
+    if authority.as_ref().is_none_or(|authority| {
+        authority.epoch != params.epoch
+            || !authority
+                .source_revision
+                .eq_ignore_ascii_case(&params.source)
+            || !authority
+                .baseline_manifest_digest
+                .eq_ignore_ascii_case(&params.baseline)
+    }) {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "workspace checkpoint authority does not match this runtime",
+        )
+            .into_response();
+    }
+
+    let checkpoint_root = state.checkpoint_root.clone();
+    let source = params.source.clone();
+    let retained = tokio::task::spawn_blocking({
+        let checkpoint_root = checkpoint_root.clone();
+        let source = source.clone();
+        move || workspace::load_capture(&checkpoint_root, params.epoch, params.version, &source)
+    })
+    .await;
+    match retained {
+        Ok(Ok(Some(captured))) => return checkpoint_response(captured),
+        Ok(Ok(None)) => {}
+        Ok(Err(why)) => {
+            tracing::error!(reason = %why, "retained workspace checkpoint is corrupt");
+            return (axum::http::StatusCode::CONFLICT, why).into_response();
+        }
+        Err(error) => {
+            tracing::error!(%error, "workspace checkpoint lookup task failed");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "workspace checkpoint lookup failed",
+            )
+                .into_response();
+        }
+    }
+
+    // Agent input and process starts take the read side. This write guard
+    // closes admission before the kernel process groups are stopped.
+    let _admission = state.startup_gate.write().await;
+    let writer_roots = state.writer_session_roots().await;
+    let workspace_root = state.workspace_root.clone();
+    let capture = tokio::task::spawn_blocking(move || {
+        let mut writers = writer_fence::WriterFence::quiesce(writer_roots)?;
+        let prepared = workspace::prepare_capture(
+            &workspace_root,
+            &checkpoint_root,
+            params.epoch,
+            params.version,
+            &source,
+            writers.writer_count()?,
+        )?;
+        writers.resume()?;
+        prepared.commit()
+    })
+    .await;
+    match capture {
+        Ok(Ok(captured)) => checkpoint_response(captured),
+        Ok(Err(why)) => {
+            tracing::warn!(reason = %why, "workspace checkpoint refused");
+            (axum::http::StatusCode::UNPROCESSABLE_ENTITY, why).into_response()
+        }
+        Err(error) => {
+            tracing::error!(%error, "workspace checkpoint task failed");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "workspace checkpoint failed",
+            )
+                .into_response()
+        }
+    }
+}
+
+fn checkpoint_response(captured: workspace::Captured) -> axum::response::Response {
+    match captured.into_wire() {
+        Ok(wire) => (
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+            wire,
+        )
+            .into_response(),
+        Err(why) => {
+            tracing::error!(reason = %why, "workspace checkpoint acknowledgement failed");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "workspace checkpoint acknowledgement failed",
             )
                 .into_response()
         }
@@ -730,7 +910,7 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // to a router without the route answers 404 — which the adapter reads
         // as a sandbox that is gone and replaces a healthy one.
         "prelude": true,
-        "workspaceCheckpoint": { "version": workspace::VERSION },
+        "workspaceCheckpoint": workspace_checkpoint_readiness(),
         "githubCapability": {
             "name": "github_capability_v1",
             "version": github_capability::POLICY_VERSION,
@@ -746,6 +926,18 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // an older pod reads an unfamiliar lane as the terminal.
         "resources": reports_resources,
     }))
+}
+
+#[cfg(target_os = "linux")]
+fn workspace_checkpoint_readiness() -> serde_json::Value {
+    serde_json::json!({ "version": workspace::CAPABILITY_VERSION })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn workspace_checkpoint_readiness() -> serde_json::Value {
+    // The production proof relies on Linux procfs process-session enumeration.
+    // Development hosts must not claim a capability they cannot enforce.
+    serde_json::Value::Null
 }
 
 async fn shutdown_signal() {

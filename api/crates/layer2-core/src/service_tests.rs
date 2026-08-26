@@ -230,6 +230,10 @@ struct TriggerWorkspaceBytes {
 
 struct MalformedTriggerWorkspace;
 
+struct LatestTriggerWorkspace {
+    package: layer3_adapter::WorkspacePackage,
+}
+
 #[async_trait]
 impl crate::SessionWorkspaceSource for MalformedTriggerWorkspace {
     async fn load_workspace(
@@ -252,6 +256,25 @@ impl crate::SessionWorkspaceSource for TriggerWorkspaceBytes {
     ) -> Result<Option<Vec<u8>>, StoreError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         Ok(Some(self.archive.clone()))
+    }
+}
+
+#[async_trait]
+impl crate::SessionWorkspaceSource for LatestTriggerWorkspace {
+    async fn load_workspace(
+        &self,
+        _owner: &SubjectId,
+        _origin: &crate::TriggerSessionOrigin,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        panic!("the Launch-aware recovery path must not fall back to baseline bytes")
+    }
+
+    async fn resolve_workspace(
+        &self,
+        _owner: &SubjectId,
+        _origin: &crate::TriggerSessionOrigin,
+    ) -> Result<Option<layer3_adapter::WorkspacePackage>, StoreError> {
+        Ok(Some(self.package.clone()))
     }
 }
 
@@ -463,6 +486,161 @@ async fn trigger_session_creation_is_deterministic_and_hands_over_exact_workspac
             .trigger_origin
             .unwrap(),
         durable_origin
+    );
+}
+
+#[tokio::test]
+async fn trigger_checkpoint_capture_is_authority_checked_and_lifecycle_fenced() {
+    let archive = b"versioned repository archive".to_vec();
+    let archive_sha256 = format!("{:x}", Sha256::digest(&archive));
+    let launch = crate::trigger::tests::session_launch(&archive_sha256);
+    let (service, store, adapter, _profiles, _workspaces) = trigger_session_service(archive);
+    let created = service.ensure_trigger_session(&launch).await.unwrap();
+    for _ in 0..400 {
+        let ready = store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .is_some_and(|record| record.session.status == SessionStatus::Ready);
+        if ready && service.entries.read().await.contains_key(&created.id) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(service.entries.read().await.contains_key(&created.id));
+
+    let workspace = launch.workspace.as_ref().unwrap();
+    let request = layer3_adapter::WorkspaceCheckpointRequest {
+        epoch: workspace.workspace_epoch,
+        version: 1,
+        source_revision: launch.source_sha.clone(),
+        baseline_manifest_digest: workspace.baseline.digest.clone(),
+    };
+    let package = layer3_adapter::WorkspaceCheckpointPackage {
+        epoch: request.epoch,
+        version: request.version,
+        source_revision: request.source_revision.clone(),
+        manifest_digest: workspace.baseline.digest.clone(),
+        archive_sha256: "e".repeat(64),
+        entries: Vec::new(),
+        total_bytes: 0,
+        quiesced_writers: 1,
+        archive: b"sealed checkpoint".to_vec(),
+    };
+    *adapter.checkpoint.lock().await = Some(package.clone());
+
+    let wrong_owner = SubjectId("another-owner".into());
+    let wrong_launch = crate::LaunchId("lnch_another".into());
+    let mut wrong_epoch = request.clone();
+    wrong_epoch.epoch += 1;
+    for result in [
+        service
+            .checkpoint_trigger_workspace(&created.id, &launch.id, &wrong_owner, 1, &request)
+            .await,
+        service
+            .checkpoint_trigger_workspace(&created.id, &wrong_launch, &launch.owner, 1, &request)
+            .await,
+        service
+            .checkpoint_trigger_workspace(&created.id, &launch.id, &launch.owner, 2, &request)
+            .await,
+        service
+            .checkpoint_trigger_workspace(&created.id, &launch.id, &launch.owner, 1, &wrong_epoch)
+            .await,
+    ] {
+        assert!(matches!(result, Err(CoreError::InvalidRequest(_))));
+    }
+    assert_eq!(adapter.checkpoint_calls.load(Ordering::SeqCst), 0);
+
+    assert_eq!(
+        service
+            .checkpoint_trigger_workspace(&created.id, &launch.id, &launch.owner, 1, &request)
+            .await
+            .unwrap(),
+        (package.clone(), 1)
+    );
+    assert_eq!(adapter.checkpoint_calls.load(Ordering::SeqCst), 1);
+
+    let mut rotated = store.get(&created.id).await.unwrap().unwrap();
+    rotated.session.rotations = 1;
+    store.seed(&rotated).await.unwrap();
+    service
+        .entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .unwrap()
+        .session
+        .rotations = 1;
+
+    adapter.hold_checkpoint.store(true, Ordering::SeqCst);
+    let lifecycle_gate = service.lifecycle_gates.gate(&created.id);
+    let capture = {
+        let service = Arc::clone(&service);
+        let session = created.id.clone();
+        let launch_id = launch.id.clone();
+        let owner = launch.owner.clone();
+        let request = request.clone();
+        tokio::spawn(async move {
+            service
+                .checkpoint_trigger_workspace(&session, &launch_id, &owner, 1, &request)
+                .await
+        })
+    };
+    adapter.checkpoint_started.acquire().await.unwrap().forget();
+    assert!(
+        lifecycle_gate.try_lock().is_err(),
+        "rotation and teardown must remain excluded through runtime capture"
+    );
+    adapter.continue_checkpoint.add_permits(1);
+    assert_eq!(capture.await.unwrap().unwrap(), (package, 2));
+    assert!(lifecycle_gate.try_lock().is_ok());
+}
+
+#[tokio::test]
+async fn runtime_replacement_restores_the_latest_launch_authorized_checkpoint() {
+    let baseline_archive = b"baseline repository archive".to_vec();
+    let baseline_sha256 = format!("{:x}", Sha256::digest(&baseline_archive));
+    let launch = crate::trigger::tests::session_launch(&baseline_sha256);
+    let (initial, store, adapter, profiles, _workspaces) =
+        trigger_session_service(baseline_archive);
+    let created = initial.ensure_trigger_session(&launch).await.unwrap();
+
+    let checkpoint_archive = b"latest complete checkpoint".to_vec();
+    let current_manifest = crate::WorkspaceManifest::seal(
+        launch.source_sha.clone(),
+        vec![crate::WorkspaceEntry {
+            path: "work.txt".into(),
+            kind: crate::WorkspaceEntryKind::Regular,
+            mode: 0o100644,
+            size: 7,
+            content_sha256: format!("{:x}", Sha256::digest(b"changed")),
+            provider_object_id: Some("b".repeat(40)),
+            symlink_target: None,
+        }],
+    )
+    .unwrap();
+    let latest = Arc::new(LatestTriggerWorkspace {
+        package: layer3_adapter::WorkspacePackage {
+            epoch: launch.workspace.as_ref().unwrap().workspace_epoch,
+            source_revision: launch.source_sha.clone(),
+            baseline_manifest_digest: launch.workspace.as_ref().unwrap().baseline.digest.clone(),
+            manifest_digest: current_manifest.digest.clone(),
+            archive_sha256: format!("{:x}", Sha256::digest(&checkpoint_archive)),
+            archive: checkpoint_archive.clone(),
+        },
+    });
+    let restarted = build_trigger_session_service(store, adapter, profiles, latest);
+
+    let resolved = match restarted.workspace_for(&created.id).await {
+        Ok(Some(workspace)) => workspace,
+        Ok(None) => panic!("a Trigger session always has a workspace"),
+        Err(error) => panic!("the latest checkpoint authority is valid: {}", error.reason),
+    };
+    assert_eq!(resolved.archive, checkpoint_archive);
+    assert_eq!(resolved.manifest_digest, current_manifest.digest);
+    assert_eq!(
+        resolved.baseline_manifest_digest,
+        launch.workspace.unwrap().baseline.digest
     );
 }
 
