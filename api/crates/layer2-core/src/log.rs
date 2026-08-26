@@ -14,7 +14,7 @@ use std::pin::Pin;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, Weak};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -464,6 +464,29 @@ type RetainedContinuation<T, H> =
 type RetainedRejection = Box<dyn FnOnce(StoreError) -> RetainedAttempt<'static, ()> + Send>;
 type RetainedUndelivered<T, H> = Box<dyn FnOnce(T, H) + Send>;
 
+fn retained_executor() -> &'static tokio::runtime::Handle {
+    static EXECUTOR: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+    EXECUTOR.get_or_init(|| {
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let _thread = std::thread::Builder::new()
+            .name("cma-retained-work".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("the retained-work runtime builds");
+                ready
+                    .send(runtime.handle().clone())
+                    .expect("the retained-work executor has an initializer");
+                runtime.block_on(std::future::pending::<()>());
+            })
+            .expect("the retained-work executor thread starts");
+        started
+            .recv()
+            .expect("the retained-work executor reports readiness")
+    })
+}
+
 /// Type-erased post-commit work kept inside its guarded lane operation.
 trait RetainedCommitWork: Send {
     fn report_error(&mut self, error: StoreError) -> bool;
@@ -482,9 +505,9 @@ struct RetainedCommit<T, H> {
     error_observed: Option<oneshot::Receiver<()>>,
     error_was_observed: bool,
     continuation: Option<RetainedContinuation<T, H>>,
-    continuing: Option<RetainedAttempt<'static, (T, H)>>,
+    continuing: Option<oneshot::Receiver<(T, H)>>,
     on_rejected: Option<RetainedRejection>,
-    rejecting: Option<RetainedAttempt<'static, ()>>,
+    rejecting: Option<oneshot::Receiver<()>>,
     rejection: Option<StoreError>,
     on_undelivered: Option<RetainedUndelivered<T, H>>,
     outcome_prepared: bool,
@@ -537,14 +560,25 @@ where
                     .continuation
                     .take()
                     .expect("a retained continuation is prepared at most once");
-                self.continuing = Some(continuation(record));
+                let (completed, continuing) = oneshot::channel();
+                retained_executor().spawn(async move {
+                    let output = continuation(record).await;
+                    let _ = completed.send(output);
+                });
+                self.continuing = Some(continuing);
             }
             Err(error) => {
                 let on_rejected = self
                     .on_rejected
                     .take()
                     .expect("a retained rejection is prepared at most once");
-                self.rejecting = Some(on_rejected(error.clone()));
+                let (completed, rejecting) = oneshot::channel();
+                let rejection = error.clone();
+                retained_executor().spawn(async move {
+                    on_rejected(rejection).await;
+                    let _ = completed.send(());
+                });
+                self.rejecting = Some(rejecting);
                 self.rejection = Some(error);
             }
         }
@@ -553,8 +587,25 @@ where
     fn finish(&mut self) -> RetainedAttempt<'_, ()> {
         Box::pin(async move {
             if let Some(continuing) = self.continuing.as_mut() {
-                let (output, ownership) = continuing.as_mut().await;
+                let continued = continuing.await;
                 self.continuing.take();
+                let Ok((output, ownership)) = continued else {
+                    let error = StoreError::Unavailable(
+                        "retained session continuation task stopped".into(),
+                    );
+                    if let Some(report) = self.report.take() {
+                        let _ = report.send(Err(error.clone()));
+                    } else {
+                        tracing::error!(
+                            session_id = %self.id,
+                            %error,
+                            "a detached durable session continuation stopped"
+                        );
+                    }
+                    self.on_undelivered.take();
+                    self.lane_keepalive.take();
+                    return;
+                };
                 let on_undelivered = self
                     .on_undelivered
                     .take()
@@ -573,8 +624,24 @@ where
             }
 
             if let Some(rejecting) = self.rejecting.as_mut() {
-                rejecting.as_mut().await;
+                let rejected = rejecting.await;
                 self.rejecting.take();
+                if rejected.is_err() {
+                    let error =
+                        StoreError::Unavailable("retained session rejection task stopped".into());
+                    if let Some(report) = self.report.take() {
+                        let _ = report.send(Err(error.clone()));
+                    } else if !self.error_was_observed {
+                        tracing::error!(
+                            session_id = %self.id,
+                            %error,
+                            "a detached durable session rejection stopped"
+                        );
+                    }
+                    self.rejection.take();
+                    self.lane_keepalive.take();
+                    return;
+                }
                 let error = self
                     .rejection
                     .take()
@@ -603,9 +670,9 @@ where
 
 /// Build post-commit work before its lane operation can start.
 ///
-/// Both the closures and any future already produced from them remain fields of
-/// the guarded operation. Dropping one Tokio runtime therefore requeues the
-/// exact durable/continuation phase for a waiter on another runtime to resume.
+/// Closures remain fields of the guarded operation until durability chooses one.
+/// The selected continuation then runs to completion on the stable retained-work
+/// executor; the lane stores only its runtime-agnostic result receiver.
 fn retain_commit<T, H, F, Fut, R, RFut, U>(
     id: SessionId,
     lane: Arc<SessionLog>,
