@@ -215,7 +215,7 @@ async fn main() {
         }
     }
 
-    let adapters = crate::kernels::registry(&config);
+    let adapters = crate::kernels::registry(&config).await;
 
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
         Box::new(VtScreen::new(geometry)) as Box<dyn ScreenModel>

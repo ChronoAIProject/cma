@@ -367,6 +367,31 @@ fn an_informational_event_does_not_claim_a_pending_status_change() {
     assert_eq!(after_status.context_ref.as_deref(), Some("rival-state"));
 }
 
+#[test]
+fn an_informational_event_cannot_resurrect_runtime_authority_from_its_snapshot() {
+    let before = record();
+    let mut intended = before.clone();
+    intended.runtime_id = Some("runtime-outgoing".into());
+    let fields = super::RecordFields::for_commit(
+        &before,
+        &intended,
+        &[said(1, "queued-before-authority-switch")],
+    );
+    let change = super::RecordChange {
+        before: Box::new(before),
+        fields,
+        rotation_precondition: None,
+    };
+    let mut durable = record();
+    durable.runtime_id = Some("runtime-current".into());
+    durable.revision = 1;
+
+    let rebased = change
+        .apply(&intended, durable)
+        .expect("history does not own runtime authority");
+    assert_eq!(rebased.runtime_id.as_deref(), Some("runtime-current"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sequence_allocation_cannot_be_inverted_before_lane_insertion() {
     let store = Arc::new(FakeStore::default());

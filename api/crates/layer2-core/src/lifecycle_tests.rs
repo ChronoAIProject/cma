@@ -5,8 +5,10 @@
 //! written against the durable record rather than against live memory.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::authz::{Authorization, Caller, Capability};
+use crate::coordination::{SessionBoundary, SessionLeaseRequest, SessionOperation};
 use crate::error::CoreError;
 use crate::ids::{SessionId, SubjectId};
 use crate::session::SessionStatus;
@@ -26,6 +28,51 @@ fn operator() -> Caller {
             Capability::ReadAllSessions,
         ]),
     )
+}
+
+async fn install_coordinated_authority(
+    store: &FakeStore,
+    adapter: &FakeAdapter,
+    id: &SessionId,
+) -> String {
+    let record = store.get(id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(id).await.unwrap().unwrap();
+    let request = SessionLeaseRequest::new(
+        id.clone(),
+        "lifecycle-coordination-test",
+        SessionBoundary {
+            status: record.session.status,
+            authority,
+        },
+        SessionOperation::Handover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store.acquire_session_lease(&request).await.unwrap();
+    let reservation = store
+        .reserve_runtime_generation(&lease, "lifecycle-candidate")
+        .await
+        .unwrap();
+    let runtime = "runtime-coordinated".to_string();
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(runtime.clone(), Some(id.0.clone()));
+    adapter
+        .generations
+        .lock()
+        .await
+        .insert(runtime.clone(), reservation.generation);
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, &runtime)
+        .await
+        .unwrap();
+    store
+        .switch_runtime_authority(&mut lease, &candidate)
+        .await
+        .unwrap();
+    store.release_session_lease(&lease).await.unwrap();
+    runtime
 }
 
 #[tokio::test]
@@ -49,7 +96,6 @@ async fn a_terminated_session_remains_listed_until_it_is_deleted() {
         1,
         "terminating must not remove the session"
     );
-
     svc.delete_session(&caller, &created.id)
         .await
         .expect("deletes");
@@ -60,6 +106,45 @@ async fn a_terminated_session_remains_listed_until_it_is_deleted() {
             .items
             .is_empty(),
         "deleting must remove it"
+    );
+}
+
+#[tokio::test]
+async fn coordinated_lifecycle_refuses_handle_only_provider_mutations() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let caller = user("alice");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+    let current = install_coordinated_authority(&store, &adapter, &created.id).await;
+    let terminated_before = adapter.terminated.lock().await.len();
+
+    assert!(matches!(
+        svc.stop_session(&caller, &created.id).await,
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    assert!(matches!(
+        svc.terminate_session(&caller, &created.id).await,
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    assert!(matches!(
+        svc.delete_session(&caller, &created.id).await,
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+
+    assert_eq!(adapter.terminated.lock().await.len(), terminated_before);
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Ready);
+    assert_eq!(durable.runtime_id.as_deref(), Some(current.as_str()));
+    assert_eq!(
+        store
+            .runtime_authority(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation,
+        1
     );
 }
 #[tokio::test]

@@ -250,6 +250,11 @@ pub struct SessionService {
     /// entirely. Without an identity on each one, a second control plane reads
     /// every session it has never heard of as an orphan and tears it down.
     pub(crate) identity: Option<String>,
+    /// Unique identity of this process instance for durable operation leases.
+    ///
+    /// Deployment identity deliberately is not enough: two replicas from one
+    /// rollout share it and must still be distinguishable across lease expiry.
+    pub(crate) coordination_holder: String,
     /// Whether runtimes carrying no identity are this control plane's to judge.
     ///
     /// True for the deployment that owns a provider, so runtimes created before

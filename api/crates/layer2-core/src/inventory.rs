@@ -15,10 +15,12 @@
 use std::collections::HashMap;
 
 use crate::authz::{Caller, Capability};
+use crate::coordination::{RuntimeAuthority, RuntimeCleanup, RuntimeCleanupReason};
 use crate::error::CoreError;
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::{store_failed, SessionService};
 use crate::session::SessionStatus;
+use crate::store::StoreError;
 
 /// What provider metadata says about a runtime's durable generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +45,21 @@ impl From<layer3_adapter::RuntimeGeneration> for ProviderRuntimeGeneration {
     }
 }
 
+/// Whether provider metadata names the authority durable in the session store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeAuthorityComparison {
+    /// The provider names a session for which no durable record exists.
+    Unaccounted,
+    /// This deployment is still on a store protocol without runtime authority.
+    CoordinationDisabled,
+    /// Both sides name the same legacy handle, but neither can prove a generation.
+    Legacy,
+    /// Provider handle and non-zero generation exactly match durable authority.
+    Matches,
+    /// The provider handle or generation differs from durable authority.
+    Mismatch,
+}
+
 /// One runtime, and what the record knows about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeEntry {
@@ -53,6 +70,12 @@ pub struct RuntimeEntry {
     /// Absence marks a legacy runtime. It must stay visible as absence so an
     /// operator or reclamation path cannot mistake it for current authority.
     pub generation: ProviderRuntimeGeneration,
+    /// Runtime authority read from the durable coordination record, when enabled.
+    pub durable_authority: Option<RuntimeAuthority>,
+    /// Exact comparison between provider metadata and durable authority.
+    pub authority_comparison: RuntimeAuthorityComparison,
+    /// Why this exact provider identity remains durably scheduled for cleanup.
+    pub cleanup_reason: Option<RuntimeCleanupReason>,
     /// Which control plane created it, when the provider records one.
     ///
     /// A provider is shared, so an operator reading this may be looking at
@@ -72,7 +95,8 @@ impl RuntimeEntry {
     ///
     /// Either it names no session, or it names one nothing has heard of. Both
     /// mean the same thing to whoever is looking at it: something is running
-    /// that nobody is entitled to, and the sweep will reclaim it.
+    /// that nobody is entitled to. Reclamation still requires exact durable
+    /// cleanup debt and generation proof.
     pub fn is_unaccounted(&self) -> bool {
         self.owner.is_none()
     }
@@ -158,10 +182,52 @@ impl SessionService {
         // no runtime can be attributed to anybody, and an inventory of
         // anonymous sandboxes would be worse than saying so.
         let records = self.store.scan_all().await.map_err(store_failed)?;
-        let owners: HashMap<&str, (&SubjectId, SessionStatus)> = records
-            .iter()
-            .map(|r| (r.session.id.as_str(), (&r.session.owner, r.session.status)))
-            .collect();
+        enum AuthorityKnowledge {
+            CoordinationDisabled,
+            Present(RuntimeAuthority),
+        }
+
+        struct KnownSession {
+            kernel: KernelId,
+            owner: SubjectId,
+            status: SessionStatus,
+            authority: AuthorityKnowledge,
+            cleanup_debts: Vec<RuntimeCleanup>,
+        }
+
+        let mut known_sessions = HashMap::with_capacity(records.len());
+        for record in records {
+            let (authority, cleanup_debts) =
+                match self.store.runtime_authority(&record.session.id).await {
+                    Ok(Some(authority)) => (
+                        AuthorityKnowledge::Present(authority),
+                        self.store
+                            .runtime_cleanup_debts(&record.session.id)
+                            .await
+                            .map_err(store_failed)?,
+                    ),
+                    Ok(None) => {
+                        return Err(CoreError::RuntimeUnavailable(format!(
+                            "the runtime authority for {} disappeared while inventory was read",
+                            record.session.id
+                        )))
+                    }
+                    Err(StoreError::CoordinationDisabled) => {
+                        (AuthorityKnowledge::CoordinationDisabled, Vec::new())
+                    }
+                    Err(error) => return Err(store_failed(error)),
+                };
+            known_sessions.insert(
+                record.session.id.0,
+                KnownSession {
+                    kernel: record.session.kernel,
+                    owner: record.session.owner,
+                    status: record.session.status,
+                    authority,
+                    cleanup_debts,
+                },
+            );
+        }
 
         let mut providers = Vec::with_capacity(self.adapters.len());
         for (kernel, adapter) in &self.adapters {
@@ -170,18 +236,75 @@ impl SessionService {
                     runtimes
                         .into_iter()
                         .map(|listing| {
-                            let known = listing.session.as_deref().and_then(|s| owners.get(s));
+                            let known = listing
+                                .session
+                                .as_deref()
+                                .and_then(|session| known_sessions.get(session));
+                            let listed_generation = match listing.generation {
+                                layer3_adapter::RuntimeGeneration::Legacy => Some(0),
+                                layer3_adapter::RuntimeGeneration::Recorded(generation) => {
+                                    Some(generation.get())
+                                }
+                                layer3_adapter::RuntimeGeneration::Malformed => None,
+                            };
+                            let cleanup_reason = known.and_then(|session| {
+                                session
+                                    .cleanup_debts
+                                    .iter()
+                                    .find(|cleanup| {
+                                        cleanup.runtime_id == listing.handle.0
+                                            && Some(cleanup.generation) == listed_generation
+                                    })
+                                    .map(|cleanup| cleanup.reason)
+                            });
+                            let (durable_authority, authority_comparison) = match known {
+                                None => (None, RuntimeAuthorityComparison::Unaccounted),
+                                Some(KnownSession {
+                                    authority: AuthorityKnowledge::CoordinationDisabled,
+                                    ..
+                                }) => (None, RuntimeAuthorityComparison::CoordinationDisabled),
+                                Some(KnownSession {
+                                    kernel: durable_kernel,
+                                    authority: AuthorityKnowledge::Present(authority),
+                                    ..
+                                }) => {
+                                    let same_runtime = durable_kernel == kernel
+                                        && authority.runtime_id.as_deref()
+                                            == Some(listing.handle.0.as_str());
+                                    let comparison = match (
+                                        authority.generation,
+                                        listing.generation,
+                                        same_runtime,
+                                    ) {
+                                        (0, layer3_adapter::RuntimeGeneration::Legacy, true) => {
+                                            RuntimeAuthorityComparison::Legacy
+                                        }
+                                        (
+                                            durable,
+                                            layer3_adapter::RuntimeGeneration::Recorded(provider),
+                                            true,
+                                        ) if durable == provider.get() => {
+                                            RuntimeAuthorityComparison::Matches
+                                        }
+                                        _ => RuntimeAuthorityComparison::Mismatch,
+                                    };
+                                    (Some(authority.clone()), comparison)
+                                }
+                            };
                             RuntimeEntry {
                                 runtime: listing.handle.0,
                                 generation: listing.generation.into(),
+                                durable_authority,
+                                authority_comparison,
+                                cleanup_reason,
                                 // Which control plane created it, so an
                                 // operator reading a shared provider can tell
                                 // this deployment's sandboxes from another's
                                 // rather than wondering whose a stranger is.
                                 created_by: listing.created_by,
                                 session: listing.session.map(SessionId),
-                                owner: known.map(|(owner, _)| (*owner).clone()),
-                                status: known.map(|(_, status)| *status),
+                                owner: known.map(|session| session.owner.clone()),
+                                status: known.map(|session| session.status),
                             }
                         })
                         .collect(),

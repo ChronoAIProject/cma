@@ -16,7 +16,8 @@ use std::collections::HashSet;
 
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::coordination::{
-    RuntimeAuthority, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
+    RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
+    RuntimeCleanup, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
 };
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
@@ -268,6 +269,30 @@ pub enum StoreError {
         /// Session whose reservation no longer matches.
         id: SessionId,
     },
+    /// A reservation was already registered against a different provider runtime.
+    #[error("session {id} runtime candidate changed")]
+    RuntimeCandidateChanged {
+        /// Session whose candidate no longer matches.
+        id: SessionId,
+    },
+    /// A cleanup debt was replaced, completed, or names current authority.
+    #[error("session {id} runtime cleanup changed")]
+    RuntimeCleanupChanged {
+        /// Session whose cleanup no longer matches.
+        id: SessionId,
+    },
+    /// Removing the session would erase authority needed to reclaim a runtime.
+    #[error(
+        "session {id} still has runtime authority {runtime_id:?} or {cleanup_debts} cleanup debts"
+    )]
+    SessionCleanupPending {
+        /// Session that cannot yet be removed safely.
+        id: SessionId,
+        /// Runtime still authoritative, when one remains.
+        runtime_id: Option<String>,
+        /// Number of unacknowledged cleanup debts.
+        cleanup_debts: usize,
+    },
 }
 
 /// Durable session records and their event history.
@@ -294,6 +319,10 @@ pub trait SessionStore: Send + Sync {
     }
 
     /// Acquire the one durable operation lease for a session.
+    ///
+    /// Retrying a token while its exact lease remains active is idempotent.
+    /// Once expired or released, that token is permanently spent and cannot
+    /// acquire authority again even when the session boundary is unchanged.
     async fn acquire_session_lease(
         &self,
         _request: &SessionLeaseRequest,
@@ -330,6 +359,72 @@ pub trait SessionStore: Send + Sync {
         _lease: &SessionLease,
         _reservation_token: &str,
     ) -> Result<RuntimeReservation, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Register the provider handle returned for one exact reservation.
+    async fn register_runtime_candidate(
+        &self,
+        _lease: &SessionLease,
+        _reservation: &RuntimeReservation,
+        _runtime_id: &str,
+    ) -> Result<RuntimeCandidate, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Atomically switch both the session record handle and durable authority.
+    ///
+    /// This changes no lifecycle or event fields, so event folds that committed
+    /// while provisioning was in flight remain intact. The candidate generation
+    /// must strictly exceed current authority. An unknown-result retry returns
+    /// its receipt only while that switch is still the durable lease boundary;
+    /// a later switch can never be mistaken for the earlier result.
+    async fn switch_runtime_authority(
+        &self,
+        _lease: &mut SessionLease,
+        _candidate: &RuntimeCandidate,
+    ) -> Result<RuntimeAuthoritySwitch, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Atomically clear current authority and retain its exact cleanup debt.
+    ///
+    /// `retirement_token` is generated once per logical operation. Retrying it
+    /// after an unknown store result returns the same receipt only while this
+    /// lease still owns the resulting boundary.
+    async fn retire_runtime_authority(
+        &self,
+        _lease: &mut SessionLease,
+        _retirement_token: &str,
+    ) -> Result<RuntimeAuthorityRetirement, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Cleanup debts currently durable for one session.
+    async fn runtime_cleanup_debts(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Vec<RuntimeCleanup>, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Whether absent generation metadata is an exact, stable legacy identity.
+    ///
+    /// This may become true only as a monotonic store-protocol promotion after
+    /// every legacy writer has been fenced by the store's exact old-writer-drain
+    /// acknowledgement; merely observing no legacy writers at one instant is
+    /// not sufficient. The default retains generation-zero cleanup debt for an
+    /// operator or a later capable binary.
+    async fn legacy_runtime_cleanup_authorized(&self) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Acknowledge exact cleanup after a conditional provider teardown succeeds.
+    async fn acknowledge_runtime_cleanup(
+        &self,
+        _lease: &SessionLease,
+        _cleanup: &RuntimeCleanup,
+    ) -> Result<(), StoreError> {
         Err(StoreError::CoordinationDisabled)
     }
 
@@ -429,7 +524,10 @@ pub trait SessionStore: Send + Sync {
     /// Remove a session and its history permanently.
     ///
     /// Distinct from ending one: a terminated session stays visible until its
-    /// owner chooses to remove it.
+    /// owner chooses to remove it. A coordination-enabled store keeps cleanup
+    /// authority with the live session row, so it must refuse with
+    /// [`StoreError::SessionCleanupPending`] while a runtime remains authoritative
+    /// or any exact cleanup debt is unacknowledged.
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError>;
 
     /// Append durable events.

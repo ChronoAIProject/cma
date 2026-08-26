@@ -12,6 +12,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::sandbox_reclaimer::BatchSandboxReclaimer;
+use crate::{RuntimeHandle, RuntimeIdentity, RuntimeReservationIdentity};
+
 /// Header carrying the provider API key.
 const API_KEY_HEADER: &str = "OPEN-SANDBOX-API-KEY";
 
@@ -172,6 +175,13 @@ pub enum SandboxError {
     /// complete list as authoritative about what is running.
     #[error("sandbox listing did not end after {pages} pages of {page_size}")]
     Incomplete { pages: u32, page_size: u32 },
+    /// The provider object exists, but is not the exact runtime authorised for
+    /// a destructive operation.
+    #[error("sandbox provider identity changed: {0}")]
+    IdentityMismatch(String),
+    /// The configured provider surface cannot perform the requested operation.
+    #[error("sandbox provider does not support this operation: {0}")]
+    Unsupported(String),
 }
 
 /// Thin client over the sandbox lifecycle API.
@@ -179,6 +189,7 @@ pub struct SandboxClient {
     base_url: String,
     api_key: String,
     http: reqwest::Client,
+    reclaimer: Option<BatchSandboxReclaimer>,
 }
 
 /// Strip any scheme and trailing slash from a provider endpoint.
@@ -224,7 +235,38 @@ impl SandboxClient {
                 .timeout(PROVIDER_TIMEOUT)
                 .build()
                 .expect("http client builds"),
+            reclaimer: None,
         }
+    }
+
+    /// Add namespaced Kubernetes authority for exact discovery and deletion.
+    #[must_use]
+    pub fn with_reclaimer(mut self, reclaimer: BatchSandboxReclaimer) -> Self {
+        self.reclaimer = Some(reclaimer);
+        self
+    }
+
+    /// Delete only the exact provider identity, with Kubernetes preconditions.
+    pub async fn delete_if_identity(&self, identity: &RuntimeIdentity) -> Result<(), SandboxError> {
+        let reclaimer = self.reclaimer.as_ref().ok_or_else(|| {
+            SandboxError::Unsupported(
+                "no namespaced Kubernetes BatchSandbox reclaimer is configured".into(),
+            )
+        })?;
+        reclaimer.delete_if_identity(identity).await
+    }
+
+    /// Discover every provider create for an exact durable reservation.
+    pub async fn discover_runtime_candidates(
+        &self,
+        reservation: &RuntimeReservationIdentity,
+    ) -> Result<Vec<RuntimeHandle>, SandboxError> {
+        let reclaimer = self.reclaimer.as_ref().ok_or_else(|| {
+            SandboxError::Unsupported(
+                "no namespaced Kubernetes BatchSandbox discovery client is configured".into(),
+            )
+        })?;
+        reclaimer.discover_runtime_candidates(reservation).await
     }
 
     /// Base URL this client talks to.

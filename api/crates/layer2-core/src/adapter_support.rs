@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use layer3_adapter::{
-    AdapterError, KernelAdapter, RuntimeGeneration, RuntimeHandle, RuntimeListing,
+    AdapterError, KernelAdapter, RuntimeGeneration, RuntimeHandle, RuntimeIdentity, RuntimeListing,
     RuntimeLossReason, RuntimeMode, RuntimeSpec, TerminalChannel, TerminalOutput,
 };
 use tokio::sync::{mpsc, Mutex, Notify};
@@ -457,6 +457,27 @@ impl KernelAdapter for FakeAdapter {
         self.terminated.lock().await.push(handle.0.clone());
         self.running.lock().await.remove(&handle.0);
         self.generations.lock().await.remove(&handle.0);
+        Ok(())
+    }
+
+    async fn terminate_if_identity(&self, identity: &RuntimeIdentity) -> Result<(), AdapterError> {
+        let mut terminated = self.terminated.lock().await;
+        let mut running = self.running.lock().await;
+        let mut generations = self.generations.lock().await;
+        let owner = running.get(&identity.handle.0);
+        let generation = generations.get(&identity.handle.0).copied();
+        if owner.is_none() && generation.is_none() {
+            return Ok(());
+        }
+        let owner_matches = owner.and_then(Option::as_deref) == Some(identity.session.as_str());
+        if !owner_matches || generation != identity.generation {
+            return Err(AdapterError::Rejected(
+                "the runtime handle belongs to another session or generation".into(),
+            ));
+        }
+        terminated.push(identity.handle.0.clone());
+        running.remove(&identity.handle.0);
+        generations.remove(&identity.handle.0);
         Ok(())
     }
 

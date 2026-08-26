@@ -47,7 +47,8 @@ use crate::sandbox::SandboxClient;
 use crate::ConversationUpdate;
 use crate::{
     AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, ResourceSample,
-    RuntimeHandle, RuntimeListing, RuntimeOptions, RuntimePermission, RuntimeSpec,
+    RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeOptions, RuntimePermission,
+    RuntimeReservationIdentity, RuntimeSpec,
 };
 use tokio::sync::mpsc;
 
@@ -191,6 +192,17 @@ impl KernelAdapter for DshAdapter {
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
         self.hosted.terminate(handle).await
+    }
+
+    async fn terminate_if_identity(&self, identity: &RuntimeIdentity) -> Result<(), AdapterError> {
+        self.hosted.terminate_if_identity(identity).await
+    }
+
+    async fn discover_runtime_candidates(
+        &self,
+        reservation: &RuntimeReservationIdentity,
+    ) -> Result<Vec<RuntimeHandle>, AdapterError> {
+        self.hosted.discover_runtime_candidates(reservation).await
     }
 }
 
