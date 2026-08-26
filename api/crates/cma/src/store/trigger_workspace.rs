@@ -4,16 +4,18 @@ use std::sync::Arc;
 
 use futures_util::StreamExt as _;
 use layer2_core::{
-    BaselineObjectStore, CheckpointObjectStore, EffectState, LaunchEffectKind, LaunchId,
-    LaunchStore, SessionWorkspaceSource, StoreError, SubjectId, TriggerSessionOrigin,
-    TriggerStoreError, WorkspaceCheckpoint, WorkspaceManifest, MAX_REPOSITORY_BYTES,
+    BaselineObjectStore, CheckpointObjectStore, DiffArtifact, DiffArtifactId,
+    DiffArtifactObjectStore, EffectState, LaunchEffectKind, LaunchId, LaunchStore,
+    SessionWorkspaceSource, StoreError, SubjectId, TriggerSessionOrigin, TriggerStoreError,
+    WorkspaceCheckpoint, WorkspaceManifest, MAX_DIFF_ARTIFACT_BYTES, MAX_REPOSITORY_BYTES,
 };
 use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
 
 use super::token::TokenSource;
 
-const CONTENT_TYPE: &str = "application/vnd.chrono.cma-workspace.v1";
+const WORKSPACE_CONTENT_TYPE: &str = "application/vnd.chrono.cma-workspace.v1";
+const DIFF_CONTENT_TYPE: &str = "application/vnd.chrono.cma-trigger-diff.v1+json";
 const ARCHIVE_OVERHEAD_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Repository artifacts reached through CMA's one storage machine identity.
@@ -73,6 +75,20 @@ impl ChronoStorageTriggerWorkspaceStore {
         )
     }
 
+    pub(crate) fn diff_key(
+        owner: &SubjectId,
+        launch: &LaunchId,
+        artifact: &DiffArtifactId,
+        sha256: &str,
+    ) -> String {
+        let owner_hash = hex(&Sha256::digest(owner.0.as_bytes()));
+        let artifact_hash = hex(&Sha256::digest(artifact.0.as_bytes()));
+        format!(
+            "trigger-workspaces/subjects/{owner_hash}/launches/{}/diffs/{artifact_hash}-{sha256}.json",
+            launch.0
+        )
+    }
+
     fn require_reference(
         owner: &SubjectId,
         launch: &LaunchId,
@@ -107,7 +123,7 @@ impl ChronoStorageTriggerWorkspaceStore {
             .map_err(|error| TriggerStoreError::Unavailable(format!("storage identity: {error}")))
     }
 
-    async fn read_raw(&self, key: &str) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+    async fn read_raw(&self, key: &str, max: u64) -> Result<Option<Vec<u8>>, TriggerStoreError> {
         let url = self.download_url();
         let response = self
             .http
@@ -128,7 +144,6 @@ impl ChronoStorageTriggerWorkspaceStore {
                 response.status()
             )));
         }
-        let max = MAX_REPOSITORY_BYTES.saturating_add(ARCHIVE_OVERHEAD_BYTES);
         if response.content_length().is_some_and(|length| length > max) {
             return Err(TriggerStoreError::Malformed(
                 "workspace object exceeds the configured archive bound".into(),
@@ -156,8 +171,10 @@ impl ChronoStorageTriggerWorkspaceStore {
     async fn write_verified(
         &self,
         key: &str,
+        content_type: &str,
         archive_sha256: &str,
         archive: &[u8],
+        max: u64,
     ) -> Result<(), TriggerStoreError> {
         require_sha256(archive_sha256)?;
         if digest(archive) != archive_sha256 {
@@ -165,13 +182,12 @@ impl ChronoStorageTriggerWorkspaceStore {
                 "workspace archive does not match its SHA-256".into(),
             ));
         }
-        let max = MAX_REPOSITORY_BYTES.saturating_add(ARCHIVE_OVERHEAD_BYTES);
         if u64::try_from(archive.len()).unwrap_or(u64::MAX) > max {
             return Err(TriggerStoreError::Malformed(
                 "workspace archive exceeds the configured bound".into(),
             ));
         }
-        if let Some(retained) = self.read_raw(key).await? {
+        if let Some(retained) = self.read_raw(key, max).await? {
             if digest(&retained) == archive_sha256 {
                 return Ok(());
             }
@@ -182,7 +198,7 @@ impl ChronoStorageTriggerWorkspaceStore {
         let response = self
             .http
             .post(self.objects_url())
-            .query(&[("key", key), ("contentType", CONTENT_TYPE)])
+            .query(&[("key", key), ("contentType", content_type)])
             .bearer_auth(self.token().await?)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(archive.to_vec())
@@ -197,7 +213,7 @@ impl ChronoStorageTriggerWorkspaceStore {
                 response.status()
             )));
         }
-        let retained = self.read_raw(key).await?.ok_or_else(|| {
+        let retained = self.read_raw(key, max).await?.ok_or_else(|| {
             TriggerStoreError::Unavailable(
                 "workspace upload was acknowledged but no object was readable".into(),
             )
@@ -245,7 +261,14 @@ impl BaselineObjectStore for ChronoStorageTriggerWorkspaceStore {
             TriggerStoreError::Malformed(format!("workspace manifest: {error}"))
         })?;
         let key = Self::baseline_key(owner, launch);
-        self.write_verified(&key, archive_sha256, archive).await?;
+        self.write_verified(
+            &key,
+            WORKSPACE_CONTENT_TYPE,
+            archive_sha256,
+            archive,
+            workspace_archive_limit(),
+        )
+        .await?;
         Ok(key)
     }
 
@@ -258,7 +281,7 @@ impl BaselineObjectStore for ChronoStorageTriggerWorkspaceStore {
     ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
         let key = Self::require_reference(owner, launch, reference)?;
         require_sha256(archive_sha256)?;
-        let Some(bytes) = self.read_raw(&key).await? else {
+        let Some(bytes) = self.read_raw(&key, workspace_archive_limit()).await? else {
             return Ok(None);
         };
         if digest(&bytes) != archive_sha256 {
@@ -297,8 +320,14 @@ impl CheckpointObjectStore for ChronoStorageTriggerWorkspaceStore {
         candidate
             .validate_complete(&candidate.launch_id)
             .map_err(|error| TriggerStoreError::Malformed(error.to_string()))?;
-        self.write_verified(&key, &checkpoint.archive_sha256, archive)
-            .await?;
+        self.write_verified(
+            &key,
+            WORKSPACE_CONTENT_TYPE,
+            &checkpoint.archive_sha256,
+            archive,
+            workspace_archive_limit(),
+        )
+        .await?;
         Ok(key)
     }
 
@@ -308,7 +337,7 @@ impl CheckpointObjectStore for ChronoStorageTriggerWorkspaceStore {
         checkpoint: &WorkspaceCheckpoint,
     ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
         let key = Self::require_checkpoint_reference(owner, checkpoint)?;
-        let Some(bytes) = self.read_raw(&key).await? else {
+        let Some(bytes) = self.read_raw(&key, workspace_archive_limit()).await? else {
             return Ok(None);
         };
         if digest(&bytes) != checkpoint.archive_sha256 {
@@ -326,6 +355,85 @@ impl CheckpointObjectStore for ChronoStorageTriggerWorkspaceStore {
     ) -> Result<(), TriggerStoreError> {
         let key = Self::require_checkpoint_reference(owner, checkpoint)?;
         self.delete_raw(&key).await
+    }
+}
+
+#[async_trait::async_trait]
+impl DiffArtifactObjectStore for ChronoStorageTriggerWorkspaceStore {
+    async fn put_diff_artifact(
+        &self,
+        owner: &SubjectId,
+        launch: &LaunchId,
+        artifact: &DiffArtifactId,
+        sha256: &str,
+        bytes: &[u8],
+    ) -> Result<String, TriggerStoreError> {
+        require_sha256(sha256)?;
+        if bytes.is_empty()
+            || u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_DIFF_ARTIFACT_BYTES
+        {
+            return Err(TriggerStoreError::Malformed(
+                "diff review artifact is outside its storage bound".into(),
+            ));
+        }
+        let key = Self::diff_key(owner, launch, artifact, sha256);
+        self.write_verified(
+            &key,
+            DIFF_CONTENT_TYPE,
+            sha256,
+            bytes,
+            MAX_DIFF_ARTIFACT_BYTES,
+        )
+        .await?;
+        Ok(key)
+    }
+
+    async fn get_diff_artifact(
+        &self,
+        owner: &SubjectId,
+        artifact: &DiffArtifact,
+    ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+        let expected = Self::diff_key(
+            owner,
+            &artifact.launch_id,
+            &artifact.id,
+            &artifact.object_sha256,
+        );
+        if artifact.object_reference != expected || artifact.object_sha256 != artifact.digest {
+            return Err(TriggerStoreError::Malformed(
+                "diff artifact does not belong to this subject and Launch".into(),
+            ));
+        }
+        let Some(bytes) = self.read_raw(&expected, MAX_DIFF_ARTIFACT_BYTES).await? else {
+            return Ok(None);
+        };
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != artifact.object_bytes
+            || digest(&bytes) != artifact.object_sha256
+        {
+            return Err(TriggerStoreError::Malformed(
+                "diff artifact failed its retained size or SHA-256".into(),
+            ));
+        }
+        Ok(Some(bytes))
+    }
+
+    async fn delete_diff_artifact(
+        &self,
+        owner: &SubjectId,
+        artifact: &DiffArtifact,
+    ) -> Result<(), TriggerStoreError> {
+        let expected = Self::diff_key(
+            owner,
+            &artifact.launch_id,
+            &artifact.id,
+            &artifact.object_sha256,
+        );
+        if artifact.object_reference != expected {
+            return Err(TriggerStoreError::Malformed(
+                "diff artifact does not belong to this subject and Launch".into(),
+            ));
+        }
+        self.delete_raw(&expected).await
     }
 }
 
@@ -495,6 +603,10 @@ fn digest(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+fn workspace_archive_limit() -> u64 {
+    MAX_REPOSITORY_BYTES.saturating_add(ARCHIVE_OVERHEAD_BYTES)
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -566,6 +678,40 @@ mod tests {
             ChronoStorageTriggerWorkspaceStore::require_checkpoint_reference(&bob, &checkpoint)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn diff_keys_are_subject_launch_artifact_and_content_scoped() {
+        let alice = SubjectId("alice@example.test".into());
+        let bob = SubjectId("bob@example.test".into());
+        let launch = LaunchId("lnch_1".into());
+        let other_launch = LaunchId("lnch_2".into());
+        let artifact = DiffArtifactId("../hostile-artifact-id".into());
+        let sha256 = "a".repeat(64);
+        let alice_key =
+            ChronoStorageTriggerWorkspaceStore::diff_key(&alice, &launch, &artifact, &sha256);
+
+        assert_ne!(
+            alice_key,
+            ChronoStorageTriggerWorkspaceStore::diff_key(&bob, &launch, &artifact, &sha256)
+        );
+        assert_ne!(
+            alice_key,
+            ChronoStorageTriggerWorkspaceStore::diff_key(&alice, &other_launch, &artifact, &sha256,)
+        );
+        assert_ne!(
+            alice_key,
+            ChronoStorageTriggerWorkspaceStore::diff_key(
+                &alice,
+                &launch,
+                &artifact,
+                &"b".repeat(64),
+            )
+        );
+        assert!(!alice_key.contains(&alice.0));
+        assert!(!alice_key.contains(&artifact.0));
+        assert!(alice_key.contains("/launches/lnch_1/diffs/"));
+        assert!(alice_key.ends_with(&format!("-{sha256}.json")));
     }
 
     #[test]

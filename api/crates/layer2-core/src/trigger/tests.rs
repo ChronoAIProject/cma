@@ -278,6 +278,7 @@ fn checkpoint_completion_accepts_only_the_next_artifact_from_the_current_runtime
     };
     launch.session = Some(session.clone());
     launch.state = LaunchState::Contributing;
+    launch.contribution_checkpoint_version = Some(1);
     launch.fencing_counter = 1;
     let lease = WorkerLease {
         holder: "checkpoint-worker".into(),

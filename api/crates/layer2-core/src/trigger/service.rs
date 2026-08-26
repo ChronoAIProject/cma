@@ -598,6 +598,20 @@ impl TriggerService {
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
     }
 
+    pub async fn request_diff_review(
+        &self,
+        owner: &SubjectId,
+        id: &LaunchId,
+        expected_revision: u64,
+        confirmation: Confirmation,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<Launch, TriggerServiceError> {
+        let mut launch = self.get_launch(owner, id).await?;
+        launch.request_diff_review(confirmation, now, correlation_id)?;
+        persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
+    }
+
     pub async fn acquire_worker(
         &self,
         id: &LaunchId,

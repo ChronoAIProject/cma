@@ -621,10 +621,14 @@ async fn main() {
                         Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
                     let checkpoint_store: Arc<dyn layer2_core::CheckpointObjectStore> =
                         Arc::clone(workspace_store) as Arc<dyn layer2_core::CheckpointObjectStore>;
+                    let diff_store: Arc<dyn layer2_core::DiffArtifactObjectStore> =
+                        Arc::clone(workspace_store)
+                            as Arc<dyn layer2_core::DiffArtifactObjectStore>;
                     Arc::new(trigger::github_effects::GithubEffectExecutor::with_runtime(
                         github,
                         baseline_store,
                         checkpoint_store,
+                        diff_store,
                         Arc::clone(&service),
                         Arc::clone(signer),
                     ))
@@ -670,6 +674,9 @@ async fn main() {
             triggers: trigger_service,
             connections: trigger_connections,
             operations: operation_store,
+            diff_artifacts: trigger_workspace_store
+                .clone()
+                .map(|store| store as Arc<dyn layer2_core::DiffArtifactObjectStore>),
         }),
     };
     let rest = rest_api_router(

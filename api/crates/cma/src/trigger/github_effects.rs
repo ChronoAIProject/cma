@@ -8,12 +8,13 @@ use async_trait::async_trait;
 use layer2_core::{
     rfc3339_at, seconds_from_rfc3339, AuthorityProvenance, BaselineObjectStore, BranchRecord,
     CapabilityOperation, CapabilityRevocationState, CheckpointId, CheckpointIntegrity,
-    CheckpointObjectStore, ConnectionSnapshot, CoreError, DelegationState, EffectClaim,
-    FailureClass, Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind, LaunchEffectResult,
-    LaunchFailure, RepositoryIdentity, Session, SessionId, SessionLink, SessionService,
-    SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier, TriggerServiceError,
-    TriggerStoreError, WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest,
-    WorkspaceRecord, CAPABILITY_MAX_LIFETIME_SECONDS, CAPABILITY_POLICY_VERSION,
+    CheckpointObjectStore, ConnectionSnapshot, CoreError, DelegationState, DiffArtifactObjectStore,
+    DiffValidationOutcome, EffectClaim, FailureClass, Launch, LaunchAuthority, LaunchCapability,
+    LaunchEffectKind, LaunchEffectResult, LaunchFailure, RepositoryIdentity, Session, SessionId,
+    SessionLink, SessionService, SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier,
+    TriggerServiceError, TriggerStoreError, WorkspaceCheckpoint, WorkspaceEntry,
+    WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord, CAPABILITY_MAX_LIFETIME_SECONDS,
+    CAPABILITY_POLICY_VERSION,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -25,10 +26,16 @@ use super::github::{
     GithubBrokerError, ImportedWorkspace, WorkspaceContext, WorkspaceUnsupported,
 };
 use super::worker::{EffectExecution, EffectExecutor};
+use super::workspace_diff::{
+    build_diff_artifact, build_invalid_diff_artifact, deterministic_diff_id, DiffBuildError,
+};
 
 const DEFAULT_FORK_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_PROVIDER_RETRY: Duration = Duration::from_secs(300);
 const MAX_RETRY_AFTER: u64 = 3_600;
+/// Conservative implementation default until #666's pinned-provider exercise
+/// establishes the deployment-owned publication ceiling.
+const PROVISIONAL_CHANGED_FILE_LIMIT: u32 = 1_000;
 
 #[derive(Debug, Clone)]
 struct CapabilityAuthorityEvidence {
@@ -370,9 +377,11 @@ pub(crate) struct GithubEffectExecutor {
     github: Arc<dyn GithubEffectPort>,
     workspace_store: Option<Arc<dyn BaselineObjectStore>>,
     checkpoint_store: Option<Arc<dyn CheckpointObjectStore>>,
+    diff_store: Option<Arc<dyn DiffArtifactObjectStore>>,
     sessions: Option<Arc<dyn TriggerSessionEffectPort>>,
     capability_signer: Option<Arc<CapabilitySigner>>,
     fork_readiness_timeout: Duration,
+    changed_file_limit: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -398,9 +407,11 @@ impl GithubEffectExecutor {
             github,
             workspace_store: None,
             checkpoint_store: None,
+            diff_store: None,
             sessions: None,
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+            changed_file_limit: PROVISIONAL_CHANGED_FILE_LIMIT,
         }
     }
 
@@ -408,6 +419,7 @@ impl GithubEffectExecutor {
         github: Arc<GithubBroker>,
         workspace_store: Arc<dyn BaselineObjectStore>,
         checkpoint_store: Arc<dyn CheckpointObjectStore>,
+        diff_store: Arc<dyn DiffArtifactObjectStore>,
         sessions: Arc<SessionService>,
         capability_signer: Arc<CapabilitySigner>,
     ) -> Self {
@@ -415,9 +427,11 @@ impl GithubEffectExecutor {
             github,
             workspace_store: Some(workspace_store),
             checkpoint_store: Some(checkpoint_store),
+            diff_store: Some(diff_store),
             sessions: Some(Arc::new(SessionServiceEffectPort(sessions))),
             capability_signer: Some(capability_signer),
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+            changed_file_limit: PROVISIONAL_CHANGED_FILE_LIMIT,
         }
     }
 
@@ -427,9 +441,11 @@ impl GithubEffectExecutor {
             github,
             workspace_store: None,
             checkpoint_store: None,
+            diff_store: None,
             sessions: None,
             capability_signer: None,
             fork_readiness_timeout,
+            changed_file_limit: PROVISIONAL_CHANGED_FILE_LIMIT,
         }
     }
 
@@ -442,9 +458,11 @@ impl GithubEffectExecutor {
             github,
             workspace_store: None,
             checkpoint_store: None,
+            diff_store: None,
             sessions: Some(sessions),
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+            changed_file_limit: PROVISIONAL_CHANGED_FILE_LIMIT,
         }
     }
 
@@ -458,9 +476,11 @@ impl GithubEffectExecutor {
             github,
             workspace_store: None,
             checkpoint_store: None,
+            diff_store: None,
             sessions: Some(sessions),
             capability_signer: Some(capability_signer),
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+            changed_file_limit: PROVISIONAL_CHANGED_FILE_LIMIT,
         }
     }
 
@@ -474,9 +494,11 @@ impl GithubEffectExecutor {
             github,
             workspace_store: None,
             checkpoint_store: Some(checkpoint_store),
+            diff_store: None,
             sessions: Some(sessions),
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+            changed_file_limit: PROVISIONAL_CHANGED_FILE_LIMIT,
         }
     }
 
@@ -1420,6 +1442,205 @@ impl GithubEffectExecutor {
             external_resource_ids: resources,
         }
     }
+
+    async fn run_diff(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let (Some(baseline_store), Some(checkpoint_store), Some(diff_store)) = (
+            self.workspace_store.as_ref(),
+            self.checkpoint_store.as_ref(),
+            self.diff_store.as_ref(),
+        ) else {
+            return unsupported_effect(claim);
+        };
+        let Some(workspace) = launch.workspace.as_ref() else {
+            return diff_failure(
+                claim,
+                FailureClass::TerminalSecurity,
+                "diff_workspace_missing",
+                "The Launch has no immutable workspace baseline.",
+                "Contact support; CMA will not infer review authority.",
+            );
+        };
+        let Some(checkpoint) = workspace.latest_checkpoint.as_ref() else {
+            return diff_failure(
+                claim,
+                FailureClass::RecoveryRequired,
+                "diff_checkpoint_missing",
+                "No complete checkpoint is available for review.",
+                "Request a fresh contribution review after the session is recoverable.",
+            );
+        };
+        if launch.contribution_checkpoint_version != Some(checkpoint.version) {
+            return diff_failure(
+                claim,
+                FailureClass::RecoveryRequired,
+                "diff_checkpoint_fence_mismatch",
+                "The retained checkpoint is not the version selected for this review.",
+                "Request a fresh contribution review; CMA will not review stale workspace bytes.",
+            );
+        }
+
+        let authority = match self.github.preflight_capability(launch).await {
+            Ok(authority) => authority,
+            Err(error) => return broker_failure(error, claim, false),
+        };
+        let baseline = match baseline_store
+            .get_baseline(
+                &launch.owner,
+                &launch.id,
+                &workspace.baseline_object_reference,
+                &workspace.baseline_archive_sha256,
+            )
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(TriggerStoreError::Unavailable(_)) => {
+                return transient_failure(
+                    claim,
+                    false,
+                    "diff_baseline_temporarily_unavailable",
+                    "The immutable baseline could not be read for review.",
+                    None,
+                )
+            }
+            Err(_) => None,
+        };
+        let current = match checkpoint_store
+            .get_checkpoint(&launch.owner, checkpoint)
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(TriggerStoreError::Unavailable(_)) => {
+                return transient_failure(
+                    claim,
+                    false,
+                    "diff_checkpoint_temporarily_unavailable",
+                    "The complete checkpoint could not be read for review.",
+                    None,
+                )
+            }
+            Err(_) => None,
+        };
+
+        let artifact_id = deterministic_diff_id(&claim.intent_key);
+        let created_at = checkpoint.created_at.clone();
+        let invalid = |outcome| {
+            build_invalid_diff_artifact(
+                launch,
+                checkpoint,
+                &authority.branch.current_head,
+                self.changed_file_limit,
+                artifact_id.clone(),
+                created_at.clone(),
+                outcome,
+            )
+        };
+        let built = match (baseline.as_deref(), current.as_deref()) {
+            (None, _) => invalid(DiffValidationOutcome::MissingBaseline),
+            (Some(_), None) => invalid(DiffValidationOutcome::CorruptCheckpoint),
+            (Some(baseline), Some(current)) => match build_diff_artifact(
+                launch,
+                checkpoint,
+                baseline,
+                current,
+                &authority.branch.current_head,
+                self.changed_file_limit,
+                artifact_id.clone(),
+                created_at.clone(),
+            ) {
+                Err(DiffBuildError::Corrupt(_)) => {
+                    invalid(DiffValidationOutcome::CorruptCheckpoint)
+                }
+                Err(DiffBuildError::ArtifactTooLarge) => {
+                    invalid(DiffValidationOutcome::ArtifactTooLarge)
+                }
+                other => other,
+            },
+        };
+        let mut built = match built {
+            Ok(built) => built,
+            Err(
+                DiffBuildError::Corrupt(_)
+                | DiffBuildError::ArtifactTooLarge
+                | DiffBuildError::Invalid(_),
+            ) => {
+                return diff_failure(
+                    claim,
+                    FailureClass::TerminalSecurity,
+                    "diff_artifact_invalid",
+                    "CMA could not represent the review artifact within its safety contract.",
+                    "Contact support; no GitHub write is authorized.",
+                );
+            }
+        };
+        let reference = match diff_store
+            .put_diff_artifact(
+                &launch.owner,
+                &launch.id,
+                &built.artifact.id,
+                &built.artifact.object_sha256,
+                &built.object,
+            )
+            .await
+        {
+            Ok(reference) => reference,
+            Err(TriggerStoreError::Unavailable(_)) => {
+                return transient_failure(
+                    claim,
+                    false,
+                    "diff_artifact_storage_unavailable",
+                    "The review artifact could not yet be proven in durable storage.",
+                    None,
+                )
+            }
+            Err(_) => {
+                return diff_failure(
+                    claim,
+                    FailureClass::TerminalSecurity,
+                    "diff_artifact_storage_integrity_failed",
+                    "Durable storage did not prove the exact review artifact.",
+                    "Contact support; no GitHub write is authorized.",
+                )
+            }
+        };
+        built.artifact.object_reference = reference.clone();
+        if built.artifact.validate_for_review(launch).is_err()
+            || (built.artifact.validation == DiffValidationOutcome::Valid
+                && built.artifact.validate_for_publication(launch).is_err())
+        {
+            return diff_failure(
+                claim,
+                FailureClass::TerminalSecurity,
+                "diff_publication_preflight_invalid",
+                "The completed review did not satisfy the publication boundary.",
+                "Contact support; no GitHub write is authorized.",
+            );
+        }
+        let mut resources = retained_resources(launch, claim);
+        resources.insert("diff_artifact_id".into(), built.artifact.id.0.clone());
+        resources.insert("diff_artifact_digest".into(), built.artifact.digest.clone());
+        resources.insert("diff_artifact_object".into(), reference);
+        resources.insert(
+            "diff_changed_files".into(),
+            built.artifact.total_changed_files.to_string(),
+        );
+        resources.insert(
+            "diff_validation".into(),
+            diff_validation_name(built.artifact.validation),
+        );
+        let validation = built.artifact.validation;
+        EffectExecution::Completed {
+            result: LaunchEffectResult::Diff {
+                diff: built.artifact,
+            },
+            safe_detail: if validation == DiffValidationOutcome::Valid {
+                "The exact workspace changes are sealed in a read-only review artifact.".into()
+            } else {
+                "The read-only review completed with a named validation outcome; no GitHub write is authorized."
+                    .into()
+            },
+            external_resource_ids: resources,
+        }
+    }
 }
 
 #[async_trait]
@@ -1435,6 +1656,7 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Reach => self.run_reach(launch, claim).await,
             LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
             LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
+            LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -1452,6 +1674,10 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Reach => self.run_reach(launch, claim).await,
             LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
             LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
+            // Diff generation performs only fenced reads plus an immutable,
+            // content-addressed object write, so the same intent is safely
+            // repeatable during reconciliation.
+            LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -1477,6 +1703,34 @@ fn checkpoint_failure(
     EffectExecution::Failed {
         failure: failure(class, code, detail, remediation, claim, None),
     }
+}
+
+fn diff_failure(
+    claim: &EffectClaim,
+    class: FailureClass,
+    code: &'static str,
+    detail: &'static str,
+    remediation: &'static str,
+) -> EffectExecution {
+    EffectExecution::Failed {
+        failure: failure(class, code, detail, remediation, claim, None),
+    }
+}
+
+fn diff_validation_name(outcome: DiffValidationOutcome) -> String {
+    match outcome {
+        DiffValidationOutcome::Valid => "valid",
+        DiffValidationOutcome::NoChanges => "no_changes",
+        DiffValidationOutcome::StaleHead => "stale_head",
+        DiffValidationOutcome::WorkflowScopeRequired => "workflow_scope_required",
+        DiffValidationOutcome::TooManyChanges => "too_many_changes",
+        DiffValidationOutcome::TooManyBytes => "too_many_bytes",
+        DiffValidationOutcome::UnsupportedFile => "unsupported_file",
+        DiffValidationOutcome::MissingBaseline => "missing_baseline",
+        DiffValidationOutcome::CorruptCheckpoint => "corrupt_checkpoint",
+        DiffValidationOutcome::ArtifactTooLarge => "artifact_too_large",
+    }
+    .into()
 }
 
 fn checkpoint_runtime_failure(error: CoreError, claim: &EffectClaim) -> EffectExecution {
@@ -2269,6 +2523,136 @@ mod tests {
         }
     }
 
+    struct FakeReviewStore {
+        baseline_reads: Mutex<VecDeque<Result<Option<Vec<u8>>, TriggerStoreError>>>,
+        checkpoint_reads: Mutex<VecDeque<Result<Option<Vec<u8>>, TriggerStoreError>>>,
+        diff_answers: Mutex<VecDeque<Result<String, TriggerStoreError>>>,
+        diff_writes: Mutex<Vec<Vec<u8>>>,
+    }
+
+    impl FakeReviewStore {
+        fn new(
+            baseline_reads: impl IntoIterator<Item = Result<Option<Vec<u8>>, TriggerStoreError>>,
+            checkpoint_reads: impl IntoIterator<Item = Result<Option<Vec<u8>>, TriggerStoreError>>,
+            diff_answers: impl IntoIterator<Item = Result<String, TriggerStoreError>>,
+        ) -> Self {
+            Self {
+                baseline_reads: Mutex::new(baseline_reads.into_iter().collect()),
+                checkpoint_reads: Mutex::new(checkpoint_reads.into_iter().collect()),
+                diff_answers: Mutex::new(diff_answers.into_iter().collect()),
+                diff_writes: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BaselineObjectStore for FakeReviewStore {
+        async fn put_baseline(
+            &self,
+            _owner: &SubjectId,
+            _launch: &layer2_core::LaunchId,
+            _manifest: &WorkspaceManifest,
+            _archive_sha256: &str,
+            _archive: &[u8],
+        ) -> Result<String, TriggerStoreError> {
+            Err(TriggerStoreError::Malformed(
+                "a review test cannot write a baseline".into(),
+            ))
+        }
+
+        async fn get_baseline(
+            &self,
+            _owner: &SubjectId,
+            _launch: &layer2_core::LaunchId,
+            _reference: &str,
+            _archive_sha256: &str,
+        ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+            self.baseline_reads
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a baseline read answer was configured")
+        }
+
+        async fn delete_baseline(
+            &self,
+            _owner: &SubjectId,
+            _launch: &layer2_core::LaunchId,
+            _reference: &str,
+        ) -> Result<(), TriggerStoreError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl CheckpointObjectStore for FakeReviewStore {
+        async fn put_checkpoint(
+            &self,
+            _owner: &SubjectId,
+            _checkpoint: &WorkspaceCheckpoint,
+            _archive: &[u8],
+        ) -> Result<String, TriggerStoreError> {
+            Err(TriggerStoreError::Malformed(
+                "a review test cannot write a checkpoint".into(),
+            ))
+        }
+
+        async fn get_checkpoint(
+            &self,
+            _owner: &SubjectId,
+            _checkpoint: &WorkspaceCheckpoint,
+        ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+            self.checkpoint_reads
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a checkpoint read answer was configured")
+        }
+
+        async fn delete_checkpoint(
+            &self,
+            _owner: &SubjectId,
+            _checkpoint: &WorkspaceCheckpoint,
+        ) -> Result<(), TriggerStoreError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl DiffArtifactObjectStore for FakeReviewStore {
+        async fn put_diff_artifact(
+            &self,
+            _owner: &SubjectId,
+            _launch: &layer2_core::LaunchId,
+            _artifact: &layer2_core::DiffArtifactId,
+            _sha256: &str,
+            bytes: &[u8],
+        ) -> Result<String, TriggerStoreError> {
+            self.diff_writes.lock().unwrap().push(bytes.to_vec());
+            self.diff_answers
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a diff storage answer was configured")
+        }
+
+        async fn get_diff_artifact(
+            &self,
+            _owner: &SubjectId,
+            _artifact: &layer2_core::DiffArtifact,
+        ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+            Ok(None)
+        }
+
+        async fn delete_diff_artifact(
+            &self,
+            _owner: &SubjectId,
+            _artifact: &layer2_core::DiffArtifact,
+        ) -> Result<(), TriggerStoreError> {
+            Ok(())
+        }
+    }
+
     #[async_trait]
     impl CheckpointObjectStore for FakeCheckpointStore {
         async fn put_checkpoint(
@@ -2987,6 +3371,108 @@ mod tests {
         assert!(store.writes.lock().unwrap().is_empty());
     }
 
+    #[tokio::test]
+    async fn diff_executor_retains_named_missing_and_corrupt_outcomes_without_github_writes() {
+        for (baseline, checkpoint, expected) in [
+            (
+                Ok(None),
+                Ok(Some(b"unused checkpoint".to_vec())),
+                DiffValidationOutcome::MissingBaseline,
+            ),
+            (
+                Ok(Some(b"unused baseline".to_vec())),
+                Ok(None),
+                DiffValidationOutcome::CorruptCheckpoint,
+            ),
+        ] {
+            let launch = diff_launch();
+            let github = Arc::new(FakeGithub::new([]));
+            let store = Arc::new(FakeReviewStore::new(
+                [baseline],
+                [checkpoint],
+                [Ok("trigger-test/diff-artifact.json".into())],
+            ));
+            let executor = diff_executor(github.clone(), store.clone());
+
+            let result = executor
+                .execute(
+                    &launch,
+                    &claim_for(LaunchEffectKind::Diff, EffectClaimMode::Execute),
+                )
+                .await;
+            let EffectExecution::Completed {
+                result: LaunchEffectResult::Diff { diff },
+                ..
+            } = result
+            else {
+                panic!("a named, non-publishable review outcome should complete");
+            };
+            assert_eq!(diff.validation, expected);
+            assert!(diff.validate_for_review(&launch).is_ok());
+            assert!(diff.validate_for_publication(&launch).is_err());
+            assert_eq!(store.diff_writes.lock().unwrap().len(), 1);
+            assert_eq!(github.create_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(github.reconcile_calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn diff_executor_retries_storage_outages_without_retaining_or_mutating() {
+        let launch = diff_launch();
+        let github = Arc::new(FakeGithub::new([]));
+        let unavailable = Arc::new(FakeReviewStore::new(
+            [Err(TriggerStoreError::Unavailable(
+                "baseline timeout".into(),
+            ))],
+            [],
+            [],
+        ));
+        let executor = diff_executor(github.clone(), unavailable.clone());
+        assert!(matches!(
+            executor
+                .execute(
+                    &launch,
+                    &claim_for(LaunchEffectKind::Diff, EffectClaimMode::Execute),
+                )
+                .await,
+            EffectExecution::RetryLater {
+                failure: LaunchFailure {
+                    class: FailureClass::RetryableTransient,
+                    ref code,
+                    ..
+                },
+                ..
+            } if code == "diff_baseline_temporarily_unavailable"
+        ));
+        assert!(unavailable.diff_writes.lock().unwrap().is_empty());
+
+        let destination = Arc::new(FakeReviewStore::new(
+            [Ok(None)],
+            [Ok(None)],
+            [Err(TriggerStoreError::Unavailable("object timeout".into()))],
+        ));
+        let executor = diff_executor(github.clone(), destination.clone());
+        assert!(matches!(
+            executor
+                .execute(
+                    &launch,
+                    &claim_for(LaunchEffectKind::Diff, EffectClaimMode::Execute),
+                )
+                .await,
+            EffectExecution::RetryLater {
+                failure: LaunchFailure {
+                    class: FailureClass::RetryableTransient,
+                    ref code,
+                    ..
+                },
+                ..
+            } if code == "diff_artifact_storage_unavailable"
+        ));
+        assert_eq!(destination.diff_writes.lock().unwrap().len(), 1);
+        assert_eq!(github.create_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(github.reconcile_calls.load(Ordering::SeqCst), 0);
+    }
+
     fn fork_launch() -> Launch {
         let mut launch = super::super::worker::tests::launch_fixture();
         launch.state = LaunchState::ForkPending;
@@ -3030,6 +3516,27 @@ mod tests {
             delete_after: "2026-09-27T00:00:00Z".into(),
         });
         launch.state = LaunchState::Contributing;
+        launch
+    }
+
+    fn diff_launch() -> Launch {
+        let mut launch = checkpoint_launch();
+        let workspace = launch.workspace.as_mut().unwrap();
+        workspace.latest_checkpoint = Some(WorkspaceCheckpoint {
+            id: CheckpointId::new(),
+            launch_id: launch.id.clone(),
+            version: 1,
+            workspace_epoch: workspace.workspace_epoch,
+            session_id: launch.session.as_ref().unwrap().session_id.clone(),
+            runtime_generation: 1,
+            object_reference: "trigger-test/checkpoint-v1.pack".into(),
+            archive_sha256: "b".repeat(64),
+            manifest: WorkspaceManifest::seal(launch.source_sha.clone(), Vec::new()).unwrap(),
+            integrity: CheckpointIntegrity::Complete,
+            created_at: "2026-08-27T00:00:00Z".into(),
+            delete_after: Some(workspace.delete_after.clone()),
+        });
+        launch.contribution_checkpoint_version = Some(1);
         launch
     }
 
@@ -3123,6 +3630,19 @@ mod tests {
             Arc::new(FakeGithub::new([])),
             sessions as Arc<dyn TriggerSessionEffectPort>,
         )
+    }
+
+    fn diff_executor(github: Arc<FakeGithub>, store: Arc<FakeReviewStore>) -> GithubEffectExecutor {
+        GithubEffectExecutor {
+            github,
+            workspace_store: Some(store.clone() as Arc<dyn BaselineObjectStore>),
+            checkpoint_store: Some(store.clone() as Arc<dyn CheckpointObjectStore>),
+            diff_store: Some(store as Arc<dyn DiffArtifactObjectStore>),
+            sessions: None,
+            capability_signer: None,
+            fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+            changed_file_limit: PROVISIONAL_CHANGED_FILE_LIMIT,
+        }
     }
 
     fn trigger_session(launch: &Launch, status: SessionStatus, rotations: u32) -> Session {

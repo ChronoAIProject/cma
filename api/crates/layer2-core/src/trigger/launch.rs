@@ -344,6 +344,7 @@ pub struct PricingSnapshot {
 pub enum ConfirmationAction {
     Start,
     WorkflowRisk,
+    ReviewDiff,
     PublishBranch,
     OpenPullRequest,
     UpdatePullRequest,
@@ -480,6 +481,11 @@ pub struct Launch {
     pub reach: Option<super::ReachStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<PromptDelivery>,
+    /// Checkpoint version selected by the latest explicit diff-review request.
+    /// This prevents a later contribution from accidentally reviewing an old
+    /// complete checkpoint merely because one is already retained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contribution_checkpoint_version: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff: Option<DiffArtifact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -544,6 +550,7 @@ impl Launch {
             session: None,
             reach: None,
             delivery: None,
+            contribution_checkpoint_version: None,
             diff: None,
             contribution: None,
             pull_request: None,
@@ -930,6 +937,66 @@ impl Launch {
         }
         self.transition(LaunchState::Cancelled, now.clone(), correlation_id)?;
         self.push_event(now, "cancel", LaunchEventKind::Cancelled)
+    }
+
+    /// Begin or refresh a read-only contribution review.
+    ///
+    /// Every request selects the next checkpoint version before any worker is
+    /// allowed to capture it. The later publication confirmation is separate
+    /// and binds the resulting diff digest, so this action never authorizes a
+    /// GitHub write.
+    pub fn request_diff_review(
+        &mut self,
+        confirmation: Confirmation,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        if !matches!(
+            self.state,
+            LaunchState::Ready | LaunchState::Contributing | LaunchState::PrOpen
+        ) {
+            return Err(TriggerValidationError::new(
+                "a diff can be reviewed only from a ready session or its open pull request",
+            ));
+        }
+        if confirmation.action != ConfirmationAction::ReviewDiff
+            || confirmation.subject != self.owner
+            || confirmation.snapshot_digest != self.effective.digest
+        {
+            return Err(TriggerValidationError::field(
+                "confirmation",
+                "does not request a review for this exact Launch configuration",
+            ));
+        }
+        let current = self
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.latest_checkpoint.as_ref())
+            .map_or(0, |checkpoint| checkpoint.version);
+        let requested = current.checked_add(1).ok_or_else(|| {
+            TriggerValidationError::field(
+                "contribution_checkpoint_version",
+                "cannot advance beyond the retained checkpoint",
+            )
+        })?;
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        self.contribution_checkpoint_version = Some(requested);
+        self.diff = None;
+        self.contribution = None;
+        self.confirmations.push(confirmation.clone());
+        self.updated_at = now.clone();
+        self.push_event(
+            now.clone(),
+            correlation_id.clone(),
+            LaunchEventKind::ConfirmationRecorded {
+                action: ConfirmationAction::ReviewDiff,
+            },
+        )?;
+        if self.state != LaunchState::Contributing {
+            self.transition(LaunchState::Contributing, now, correlation_id)?;
+        }
+        Ok(())
     }
 
     pub fn events_after(&self, cursor: u64) -> Vec<LaunchEvent> {
