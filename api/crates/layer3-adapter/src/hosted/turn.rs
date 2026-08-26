@@ -5,6 +5,8 @@
 //! said across it. A turn's ending is the part a person sees as the agent
 //! stopping, and it is worth being able to read without the socket around it.
 
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
 use crate::conversation::{ConversationInput, ConversationUpdate, PromptResponse};
@@ -26,6 +28,18 @@ impl Bridge {
         };
         match input {
             ConversationInput::Prompt(content) => {
+                // Permission request ids are JSON-RPC correlation ids, not
+                // conversation-global identities. A later turn may reuse one;
+                // retaining an earlier answer would silently apply the old
+                // owner's decision to a new request and grow for the life of
+                // the socket.
+                self.answered.lock().await.clear();
+                // Set before writing the prompt. A runtime can raise its first
+                // permission request on the reader task before `begin` returns,
+                // and an answer to that request must still know this Bridge
+                // owns the eventual prompt response.
+                self.owned_prompt_waiters
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 // The turn's answer is the turn ending, so it is awaited on its
                 // own task: a prompt takes as long as the model takes, and
                 // blocking here would stop the caller cancelling it.
@@ -37,8 +51,16 @@ impl Bridge {
                 // the model takes.
                 match self.begin("session/prompt", params).await {
                     Ok(waiting) => {
+                        let answered_permissions = Arc::clone(&self.answered);
+                        let owned_prompt_waiters = Arc::clone(&self.owned_prompt_waiters);
                         tokio::spawn(async move {
                             let answered = tokio::time::timeout(TURN_DEADLINE, waiting).await;
+                            let previous = owned_prompt_waiters
+                                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                            debug_assert!(previous > 0, "a prompt waiter is released once");
+                            // A response ends the scope in which permission
+                            // request ids and their duplicate answers are live.
+                            answered_permissions.lock().await.clear();
                             let outcome = match answered {
                                 // Nothing at all, for an hour. Said rather
                                 // than left running: a turn nobody will ever
@@ -69,6 +91,10 @@ impl Bridge {
                     // not a silent no-op: the caller is waiting on an answer
                     // that is never coming.
                     Err(e) => {
+                        let previous = self
+                            .owned_prompt_waiters
+                            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                        debug_assert!(previous > 0, "a failed prompt releases its waiter");
                         tracing::warn!(error = %e, "could not send a prompt");
                         let _ = updates
                             .send(ConversationUpdate::Failed {
@@ -89,13 +115,25 @@ impl Bridge {
                 if let Some(answer) = repeated_answer {
                     return self.send(&answer).await;
                 }
+                let durable_route = locator.is_some();
                 let held = match locator {
-                    Some(locator) => blocked_from_locator(&id, &locator, &session),
-                    None => self.blocked.lock().await.remove(&id).ok_or_else(|| {
-                        crate::AdapterError::Rejected(
-                            "nothing is waiting for this permission answer".to_string(),
-                        )
-                    }),
+                    Some(locator) => match blocked_from_locator(&id, &locator, &session) {
+                        Ok(restored) => match self.blocked.lock().await.remove(&id) {
+                            Some(live) => Ok(live),
+                            None => Ok(restored),
+                        },
+                        Err(error) => Err(error),
+                    },
+                    None => self
+                        .blocked
+                        .lock()
+                        .await
+                        .remove(&id)
+                        .ok_or_else(|| {
+                            crate::AdapterError::Rejected(
+                                "nothing is waiting for this permission answer".to_string(),
+                            )
+                        }),
                 };
                 let held = match held {
                     Ok(held) => held,
@@ -106,15 +144,35 @@ impl Bridge {
                         return Err(error);
                     }
                 };
-                self.blocked.lock().await.remove(&id);
                 let outcome = outcome_for(decision, &held.options);
                 let answer = serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": held.call,
                     "result": { "outcome": outcome },
                 });
-                self.send(&answer).await?;
-                self.answered.lock().await.insert(id, answer);
+                let orphaned_prompt = durable_route && !held.owns_prompt_waiter;
+                if orphaned_prompt {
+                    // Register before the response is written: a fast runtime
+                    // can finish the prompt on the reader task before `send`
+                    // returns to this one.
+                    self.orphaned_prompt_response
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                // Cache before writing for the same ordering reason. Prompt
+                // completion clears the whole turn; inserting afterwards can
+                // race that clear and leave a stale decision in the next turn.
+                self.answered
+                    .lock()
+                    .await
+                    .insert(id.clone(), answer.clone());
+                if let Err(error) = self.send(&answer).await {
+                    self.answered.lock().await.remove(&id);
+                    if orphaned_prompt {
+                        self.orphaned_prompt_response
+                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    return Err(error);
+                }
                 Ok(())
             }
             ConversationInput::Cancel => {
@@ -130,7 +188,7 @@ impl Bridge {
 }
 
 impl Outcome {
-    fn into_update(self) -> ConversationUpdate {
+    pub(super) fn into_update(self) -> ConversationUpdate {
         match self {
             Outcome::Ended(ended) => ConversationUpdate::TurnEnded(ended),
             Outcome::Failed {

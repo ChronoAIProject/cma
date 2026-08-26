@@ -15,6 +15,7 @@ use crate::conversation_support::{asking, conversing, until_logged, until_sent};
 use crate::error::CoreError;
 use crate::event::{EventKind, StoredEvent, StoredEventKind};
 use crate::service::SessionService;
+use crate::store::SessionStore;
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
 
 #[derive(Clone, Default)]
@@ -193,6 +194,76 @@ async fn revoked_session_use_cannot_trigger_conversation_readoption() {
         replacement.entries.read().await.get(&created.id).is_none(),
         "authorization is checked before a replacement entry or network link is created"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn concurrent_readoption_opens_one_conversation_and_one_folder() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let owner = user("concurrent-readoption-owner");
+    let first = replacement_service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&owner, spec()).await.expect("created");
+    await_settled(&first, &owner, &created.id).await;
+    let keep_original_updates_open = keep_current_updates_open(&adapter).await;
+    drop(first);
+
+    adapter
+        .hold_conversation_open
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let replacement = replacement_service(Arc::clone(&store), Arc::clone(&adapter));
+    let record = store
+        .get(&created.id)
+        .await
+        .expect("the store is readable")
+        .expect("the durable session remains");
+    let opens_before = adapter.rejoined.lock().await.len();
+
+    let first_readoption = tokio::spawn({
+        let replacement = Arc::clone(&replacement);
+        let record = record.clone();
+        async move { replacement.readopt(&record).await }
+    });
+    adapter
+        .conversation_open_started
+        .acquire()
+        .await
+        .expect("the first readoption reaches the network open")
+        .forget();
+    let second_readoption = tokio::spawn({
+        let replacement = Arc::clone(&replacement);
+        let record = record.clone();
+        async move { replacement.readopt(&record).await }
+    });
+
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            adapter.conversation_open_started.acquire(),
+        )
+        .await
+        .is_err(),
+        "the second caller must wait before opening another socket or spawning another folder"
+    );
+    assert_eq!(
+        adapter.rejoined.lock().await.len(),
+        opens_before + 1,
+        "only the permit holder may open and create the matching folder"
+    );
+
+    adapter.continue_conversation_open.add_permits(1);
+    first_readoption
+        .await
+        .expect("the first task finishes")
+        .expect("the first readoption succeeds");
+    second_readoption
+        .await
+        .expect("the second task finishes")
+        .expect("the second caller observes the installed entry");
+    assert_eq!(adapter.rejoined.lock().await.len(), opens_before + 1);
+    drop(keep_original_updates_open);
 }
 
 #[tokio::test(flavor = "current_thread")]
