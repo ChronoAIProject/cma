@@ -17,10 +17,18 @@ use std::{collections::HashSet, time::SystemTime};
 use serde::{Deserialize, Serialize};
 
 use crate::activity::{ActivityQuery, ActivityRecord};
+use crate::capabilities::SessionCapabilities;
+use crate::coordination::{
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
+    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeReservation, SessionBoundary,
+    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest,
+};
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
 use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
+use crate::options::SessionMode;
 use crate::session::{Session, SessionStatus, TriggerSessionOrigin};
 use crate::trigger::PromptDelivery;
 use crate::Reserved;
@@ -68,6 +76,30 @@ pub struct SessionRecord {
     pub trigger_origin: Option<TriggerSessionOrigin>,
     /// Durable initial Trigger prompt reservation, absent on ordinary sessions.
     pub initial_prompt: Option<InitialPromptDispatch>,
+    /// Unique owner of an in-progress runtime handover.
+    ///
+    /// Kept on the durable record rather than the public session because it is
+    /// a compare token, not user-visible lifecycle state. History may advance a
+    /// record's revision while a runtime is being captured; this claim lets the
+    /// handover rebase over that history without mistaking a later rotation of
+    /// the same runtime for its own work. It remains present after the public
+    /// status advances from `Rotating` until the replacement runtime has been
+    /// published locally, so every control-plane replica observes the same
+    /// non-interactive boundary during recovery and readoption.
+    #[doc(hidden)]
+    pub rotation_claim: Option<String>,
+    /// Durable recovery instructions for a compatibility handover.
+    ///
+    /// Compatibility stores cannot keep H1 authoritative while provisioning
+    /// H2. This descriptor therefore names the separately stored snapshot and
+    /// the exact target that must be published after H1 is cleared. Its claim
+    /// must equal [`Self::rotation_claim`] while the handover is active; an
+    /// explicit owner stop may clear the active claim and retain the descriptor
+    /// on an `Idle` session for verified revive. Every other mismatch is fenced
+    /// rather than interpreted. It is cleared atomically with the claim only
+    /// after H2 is published.
+    #[doc(hidden)]
+    pub pending_handover: Option<PendingHandover>,
     /// Store-owned optimistic revision.
     ///
     /// Zero means the record has not been created yet. Stores increment this
@@ -87,9 +119,69 @@ impl SessionRecord {
             context_ref: None,
             trigger_origin: None,
             initial_prompt: None,
+            rotation_claim: None,
+            pending_handover: None,
             revision: 0,
         }
     }
+
+    /// Whether this durable record is still inside a runtime handover.
+    ///
+    /// The public status describes the current provisioning stage. The claim
+    /// spans the later `Provisioning` and `Ready` publication gaps that status
+    /// alone cannot identify across control-plane replicas.
+    pub(crate) fn is_effectively_rotating(&self) -> bool {
+        self.session.status.is_rotating() || self.rotation_claim.is_some()
+    }
+}
+
+/// Durable instructions for completing one compatibility runtime handover.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingHandover {
+    /// Exact rotation owner. Must equal the record's rotation claim.
+    pub claim: String,
+    /// Stable object-store reference returned for this session's handover blob.
+    pub snapshot_ref: String,
+    /// Conservative time at which the first usable snapshot was captured.
+    pub snapshot_at: String,
+    /// Rotation count at the exact source boundary.
+    pub rotations_from: u32,
+    /// Rotation count to publish with the target semantics.
+    pub rotations_to: u32,
+    /// Session semantics to publish after H1 is durably gone.
+    pub target: PendingHandoverTarget,
+}
+
+/// The semantic change a pending compatibility handover must publish.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PendingHandoverTarget {
+    /// Move onto this exact recorded runtime version.
+    RuntimeVersion {
+        from_runtime_version: Option<String>,
+        runtime_version: String,
+    },
+    /// Move onto this plane with the capabilities derived before teardown.
+    Plane {
+        from_mode: SessionMode,
+        mode: SessionMode,
+        capabilities: SessionCapabilities,
+    },
+}
+
+/// Claim-bound opaque bytes stored outside the session document.
+///
+/// `None` is distinct from an empty snapshot on the storage wire. Rotation
+/// writes `Some`, while retaining the distinction makes malformed or future
+/// envelope versions fail closed instead of silently becoming blank restores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoverSnapshot {
+    /// Claim whose descriptor is allowed to consume these bytes.
+    pub claim: String,
+    /// Capture time for these exact bytes.
+    pub snapshot_at: String,
+    /// Opaque adapter state, when the envelope contains a captured snapshot.
+    pub restore: Option<Vec<u8>>,
 }
 
 /// The stable position after which a newest-first listing continues.
@@ -251,6 +343,83 @@ pub enum StoreError {
         /// Revision currently durable.
         actual: u64,
     },
+    /// This store is running in a compatibility stage without coordination.
+    #[error("durable session coordination is not enabled")]
+    CoordinationDisabled,
+    /// Another unexpired operation currently owns this session.
+    #[error("session {id} is held by another operation")]
+    SessionLeaseHeld {
+        /// Session whose exclusive lease is occupied.
+        id: SessionId,
+    },
+    /// A runtime interaction met another active operation.
+    #[error("session {id} interaction is blocked by {operation:?}")]
+    SessionInteractionBlocked {
+        /// Session whose runtime is currently fenced.
+        id: SessionId,
+        /// Operation holding the durable fence.
+        operation: crate::coordination::SessionOperation,
+    },
+    /// The session no longer has the authority or status the caller observed.
+    #[error("session {id} authority changed")]
+    SessionAuthorityChanged {
+        /// Session whose boundary no longer matches.
+        id: SessionId,
+    },
+    /// This lease expired or was replaced by a later holder.
+    #[error("session {id} lease is no longer authoritative")]
+    SessionLeaseLost {
+        /// Session whose lease no longer matches.
+        id: SessionId,
+    },
+    /// Another unexpired conversation opening currently owns this session.
+    #[error("session {id} conversation opening is held by another replica")]
+    ConversationOpeningHeld {
+        /// Session whose opening claim is occupied.
+        id: SessionId,
+    },
+    /// This conversation opening expired, was released, or was replaced.
+    #[error("session {id} conversation opening is no longer authoritative")]
+    ConversationOpeningLost {
+        /// Session whose opening claim no longer matches.
+        id: SessionId,
+    },
+    /// A conversation write came from a link superseded by a later publication.
+    #[error("session {id} conversation link is no longer authoritative")]
+    ConversationLinkChanged {
+        /// Session whose published link no longer matches.
+        id: SessionId,
+    },
+    /// This runtime reservation expired, was replaced, or belongs to another lease.
+    #[error("session {id} runtime reservation is no longer authoritative")]
+    RuntimeReservationChanged {
+        /// Session whose reservation no longer matches.
+        id: SessionId,
+    },
+    /// A reservation was already registered against a different provider runtime.
+    #[error("session {id} runtime candidate changed")]
+    RuntimeCandidateChanged {
+        /// Session whose candidate no longer matches.
+        id: SessionId,
+    },
+    /// A cleanup debt was replaced, completed, or names current authority.
+    #[error("session {id} runtime cleanup changed")]
+    RuntimeCleanupChanged {
+        /// Session whose cleanup no longer matches.
+        id: SessionId,
+    },
+    /// Removing the session would erase authority needed to reclaim a runtime.
+    #[error(
+        "session {id} still has runtime authority {runtime_id:?} or {cleanup_debts} cleanup debts"
+    )]
+    SessionCleanupPending {
+        /// Session that cannot yet be removed safely.
+        id: SessionId,
+        /// Runtime still authoritative, when one remains.
+        runtime_id: Option<String>,
+        /// Number of unacknowledged cleanup debts.
+        cleanup_debts: usize,
+    },
 }
 
 /// One subject-scoped attempt to perform a named operation once.
@@ -376,6 +545,215 @@ pub trait SessionStore: Send + Sync {
     /// Read one session, whoever owns it. Ownership is decided above this.
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError>;
 
+    /// Read the separately stored runtime generation and handle.
+    ///
+    /// A compatibility-stage store returns [`StoreError::CoordinationDisabled`].
+    async fn runtime_authority(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Option<RuntimeAuthority>, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Acquire the one durable operation lease for a session.
+    ///
+    /// Retrying a token while its exact lease remains active is idempotent.
+    /// Once expired or released, that token is permanently spent and cannot
+    /// acquire authority again even when the session boundary is unchanged.
+    async fn acquire_session_lease(
+        &self,
+        _request: &SessionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Acquire a bounded lease for one runtime interaction.
+    ///
+    /// Unlike provider-operation acquisition, this does not retain a permanent
+    /// token receipt. The store issues each lease token from monotonic
+    /// per-session state, so expiry cannot make an old lease token authoritative
+    /// again while frequent terminal traffic keeps durable state bounded.
+    ///
+    /// Calls carrying one exact request nonce may overlap while an unavailable
+    /// outcome is recovered. Once one such call returns `Ok(lease)`, it must be
+    /// ordered after every earlier overlapping call with that nonce: no earlier
+    /// call may subsequently create or extend authority after exact release of
+    /// `lease`. This lets bounded request state recover cancellation without a
+    /// permanent receipt for every interaction.
+    async fn acquire_interaction_lease(
+        &self,
+        _request: &SessionInteractionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Extend a provider-operation lease using the store's authoritative clock.
+    ///
+    /// Interaction leases must use [`Self::renew_interaction_lease`], whose
+    /// authority check deliberately permits action-owned status changes.
+    async fn renew_session_lease(
+        &self,
+        _lease: &SessionLease,
+        _ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Extend an interaction lease while its exact runtime authority is current.
+    ///
+    /// The active token, holder, and operation must still match, as must the
+    /// runtime id and generation. Current lifecycle status is intentionally not
+    /// part of renewal: the interaction's retained work may own that transition.
+    async fn renew_interaction_lease(
+        &self,
+        _lease: &SessionLease,
+        _ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Move a held lease onto a status boundary this holder just committed.
+    async fn advance_session_lease(
+        &self,
+        _lease: &mut SessionLease,
+        _boundary: &SessionBoundary,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Release only this exact lease; a stale holder cannot release a successor.
+    async fn release_session_lease(&self, _lease: &SessionLease) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Reserve one pending conversation opening without replacing the active link.
+    ///
+    /// `session_lease` is required by coordinated callers and must be the real
+    /// current provider-operation lease. Compatibility callers pass none; the
+    /// store then conditions the claim on the exact runtime handle in `request`.
+    async fn acquire_conversation_opening(
+        &self,
+        _request: &ConversationOpeningLeaseRequest,
+        _session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Extend an exact pending opening using the store's authoritative clock.
+    async fn renew_conversation_opening(
+        &self,
+        _opening: &ConversationOpeningLease,
+        _session_lease: Option<&SessionLease>,
+        _ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Promote a pending opening into the sole active conversation link.
+    ///
+    /// Publication is the cross-replica linearization point. It advances a
+    /// monotonic epoch and atomically makes every older link unable to commit.
+    async fn publish_conversation_link(
+        &self,
+        _opening: &ConversationOpeningLease,
+        _session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Release this exact opening, including a publication whose response was
+    /// never observed; stale release cannot retire a successor link.
+    async fn release_conversation_opening(
+        &self,
+        _opening: &ConversationOpeningLease,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Check one published link without changing the session or its history.
+    ///
+    /// Conversation frames use this as their durable admission point before
+    /// changing replica-local state or broadcasting liveness. Publication and
+    /// validation must therefore observe one total order for a session.
+    async fn validate_conversation_link(&self, _link: &ConversationLink) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Reserve a never-reused runtime generation while holding a lease.
+    async fn reserve_runtime_generation(
+        &self,
+        _lease: &SessionLease,
+        _reservation_token: &str,
+    ) -> Result<RuntimeReservation, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Register the provider handle returned for one exact reservation.
+    async fn register_runtime_candidate(
+        &self,
+        _lease: &SessionLease,
+        _reservation: &RuntimeReservation,
+        _runtime_id: &str,
+    ) -> Result<RuntimeCandidate, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Atomically switch both the session record handle and durable authority.
+    ///
+    /// This changes no lifecycle or event fields, so event folds that committed
+    /// while provisioning was in flight remain intact. The candidate generation
+    /// must strictly exceed current authority. An unknown-result retry returns
+    /// its receipt only while that switch is still the durable lease boundary;
+    /// a later switch can never be mistaken for the earlier result.
+    async fn switch_runtime_authority(
+        &self,
+        _lease: &mut SessionLease,
+        _candidate: &RuntimeCandidate,
+    ) -> Result<RuntimeAuthoritySwitch, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Atomically clear current authority and retain its exact cleanup debt.
+    ///
+    /// `retirement_token` is generated once per logical operation. Retrying it
+    /// after an unknown store result returns the same receipt only while this
+    /// lease still owns the resulting boundary.
+    async fn retire_runtime_authority(
+        &self,
+        _lease: &mut SessionLease,
+        _retirement_token: &str,
+    ) -> Result<RuntimeAuthorityRetirement, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Cleanup debts currently durable for one session.
+    async fn runtime_cleanup_debts(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Vec<RuntimeCleanup>, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Whether absent generation metadata is an exact, stable legacy identity.
+    ///
+    /// This may become true only as a monotonic store-protocol promotion after
+    /// every legacy writer has been fenced by the store's exact old-writer-drain
+    /// acknowledgement; merely observing no legacy writers at one instant is
+    /// not sufficient. The default retains generation-zero cleanup debt for an
+    /// operator or a later capable binary.
+    async fn legacy_runtime_cleanup_authorized(&self) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Acknowledge exact cleanup after a conditional provider teardown succeeds.
+    async fn acknowledge_runtime_cleanup(
+        &self,
+        _lease: &SessionLease,
+        _cleanup: &RuntimeCleanup,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
     /// One bounded page of a subject's sessions, newest first.
     async fn list_for(
         &self,
@@ -472,7 +850,10 @@ pub trait SessionStore: Send + Sync {
     /// Remove a session and its history permanently.
     ///
     /// Distinct from ending one: a terminated session stays visible until its
-    /// owner chooses to remove it.
+    /// owner chooses to remove it. A coordination-enabled store keeps cleanup
+    /// authority with the live session row, so it must refuse with
+    /// [`StoreError::SessionCleanupPending`] while a runtime remains authoritative
+    /// or any exact cleanup debt is unacknowledged.
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError>;
 
     /// Append durable events.
@@ -525,6 +906,20 @@ pub trait SessionStore: Send + Sync {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError>;
+
+    /// Atomically commit a session write only while its conversation authority
+    /// is still current. A committed `write_id` remains replayable after later
+    /// publication; otherwise an old opening or active link is refused before
+    /// any record or event mutation becomes durable.
+    async fn commit_conversation_idempotent(
+        &self,
+        _write_id: &str,
+        _authority: &ConversationWriteAuthority,
+        _record: &SessionRecord,
+        _events: &[Event],
+    ) -> Result<u64, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
 
     /// Atomically create a session and its initial events.
     ///
@@ -738,6 +1133,45 @@ pub trait CredentialSource: Send + Sync {
         caller_credential: Option<&crate::session::CallerCredential>,
     ) -> Result<Option<String>, StoreError>;
 
+    /// Select the credential for one exact runtime delivery target.
+    ///
+    /// Called only after the receiving runtime generation exists and while the
+    /// core owns the runtime's durable interaction or lifecycle authority. A
+    /// source with pending custody must use this as its ordering point: select
+    /// the pending value when one exists and bind it to `target` atomically
+    /// before returning it. If a prior target's acknowledgement wins first, the
+    /// retry must instead return the newly current value.
+    ///
+    /// The default re-reads ordinary selection at this late boundary. Sources
+    /// that maintain current/pending custody must override it.
+    async fn prepare_credential_delivery(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        caller_credential: Option<&crate::session::CallerCredential>,
+        _target: &crate::CredentialDeliveryTarget,
+    ) -> Result<Option<String>, StoreError> {
+        self.credential_for(session, subject, services, caller_credential)
+            .await
+    }
+
+    /// Confirm a correlated acknowledgement for an exact runtime target.
+    ///
+    /// Sources with pending custody promote only when both the delivered value
+    /// and `target` still match their durable binding. Returning `false` leaves
+    /// the runtime without local delivery evidence so a later pass retries.
+    async fn confirm_credential_delivery(
+        &self,
+        _session: &SessionId,
+        _subject: &SubjectId,
+        _services: &[ServiceId],
+        _delivered_value: &str,
+        _target: &crate::CredentialDeliveryTarget,
+    ) -> Result<bool, StoreError> {
+        Ok(true)
+    }
+
     /// Whether this session should receive later subject-token renewals.
     ///
     /// Sources that mint per-session credentials or pin an initiating bearer
@@ -756,6 +1190,10 @@ pub trait CredentialSource: Send + Sync {
     ///
     /// A store failure leaves the recorded credential discoverable for a later
     /// reconciliation pass and is returned to the caller.
+    ///
+    /// Implementations must be idempotent for one exact session. Lifecycle and
+    /// reconciliation deliberately retry this call when a process can fail
+    /// after durable runtime cleanup but before observing custody retirement.
     async fn release(&self, session: &SessionId) -> Result<(), StoreError>;
 
     /// Whether retirement has durably settled every credential this session
@@ -819,6 +1257,28 @@ pub trait SessionWorkspaceSource: Send + Sync {
             }
         }))
     }
+}
+
+/// Stable object storage for compatibility runtime handovers.
+///
+/// Separate from [`ContextStore`]: terminal context is a whole transcript at a
+/// fixed key, while this is opaque adapter state with a claim-bound envelope.
+/// Implementations keep one stable object per session, overwrite it on `put`,
+/// retain it after successful publication, and remove it with the session.
+#[async_trait::async_trait]
+pub trait HandoverStore: Send + Sync {
+    /// Store one claim-bound envelope and return its stable reference.
+    async fn put(&self, id: &SessionId, snapshot: HandoverSnapshot) -> Result<String, StoreError>;
+
+    /// Load a stored envelope after binding its reference to this session.
+    async fn get_for(
+        &self,
+        id: &SessionId,
+        reference: &str,
+    ) -> Result<Option<HandoverSnapshot>, StoreError>;
+
+    /// Remove the stable handover object derived for this session.
+    async fn delete_for(&self, id: &SessionId) -> Result<(), StoreError>;
 }
 
 #[cfg(test)]

@@ -65,6 +65,7 @@ fn current_state(session: &SessionId, owner: &SubjectId) -> SessionCredentialSta
             revocation_credential: None,
         }),
         pending: None,
+        pending_target: None,
         revoke_debt: Vec::new(),
         lease: None,
         retired: false,
@@ -78,6 +79,7 @@ fn debt_state(session: &SessionId, id: &str, owner: &SubjectId) -> SessionCreden
         request_bound_credential: None,
         current: None,
         pending: None,
+        pending_target: None,
         revoke_debt: vec![RevokeDebt {
             id: id.into(),
             owner: owner.clone(),

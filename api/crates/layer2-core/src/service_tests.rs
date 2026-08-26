@@ -361,6 +361,7 @@ fn build_trigger_session_service(
         SessionPorts {
             context: None,
             credentials: Some(Arc::new(TriggerCredential)),
+            handovers: None,
             skills: None,
             workspaces: Some(workspaces),
             settings: None,
@@ -1074,12 +1075,23 @@ async fn proven_pre_write_failure_retries_the_same_logical_prompt() {
         .await
         .expect("the first operation entered the handler")
         .forget();
-    assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(20),
-        input.send_classified(ConversationInput::Cancel),
-    )
-    .await
-    .is_err());
+    let queued_input = input.clone();
+    let (queued, queued_once) = tokio::sync::oneshot::channel();
+    let filler = tokio::spawn(async move {
+        let delivery = queued_input.send_classified(ConversationInput::Cancel);
+        tokio::pin!(delivery);
+        tokio::select! {
+            biased;
+            outcome = &mut delivery => outcome,
+            _ = tokio::task::yield_now() => {
+                let _ = queued.send(());
+                delivery.await
+            }
+        }
+    });
+    queued_once
+        .await
+        .expect("the filler operation occupied the remaining queue slot");
     replace_prompt_input(&fixture.service, &fixture.session.id, input).await;
 
     let queued = fixture
@@ -1110,6 +1122,10 @@ async fn proven_pre_write_failure_retries_the_same_logical_prompt() {
         .forget();
     release.add_permits(1);
     first.await.unwrap().unwrap();
+    assert!(matches!(
+        filler.await.unwrap(),
+        layer3_adapter::ConversationSendOutcome::WriteConfirmed
+    ));
     let delivered = fixture
         .service
         .dispatch_trigger_prompt(&fixture.launch, &fixture.claim)
@@ -1509,6 +1525,16 @@ async fn expired_authority_and_out_of_order_readiness_never_create_an_outbox() {
 #[tokio::test]
 async fn two_control_plane_replicas_cannot_send_two_initial_prompts() {
     let fixture = trigger_prompt_fixture().await;
+    // Keep the first runtime endpoint alive while the second control plane
+    // opens its own link. The fake adapter ordinarily retains only the newest
+    // endpoint, which models generation replacement rather than two replicas.
+    let _first_runtime_link = fixture
+        .adapter
+        .conversation
+        .lock()
+        .await
+        .take()
+        .expect("the first replica has an open runtime link");
     let replacement = build_trigger_session_service(
         Arc::clone(&fixture.store),
         Arc::clone(&fixture.adapter),

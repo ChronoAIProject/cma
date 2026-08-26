@@ -14,6 +14,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::task_retirement::TaskRetirement;
 use crate::AdapterError;
 
 /// How long a local adapter has to deliver one operation to its runtime link.
@@ -142,6 +143,29 @@ pub enum ConversationSendOutcome {
     Ambiguous(AdapterError),
 }
 
+struct AbortWriterOnDrop {
+    abort: tokio::task::AbortHandle,
+    armed: bool,
+}
+
+impl AbortWriterOnDrop {
+    fn new(abort: tokio::task::AbortHandle) -> Self {
+        Self { abort, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AbortWriterOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.abort.abort();
+        }
+    }
+}
+
 /// The sending half of a runtime conversation.
 ///
 /// A Tokio sender confirms only that a queue slot accepted a value. It says
@@ -151,6 +175,8 @@ pub enum ConversationSendOutcome {
 #[derive(Clone)]
 pub struct ConversationInputSender {
     inner: mpsc::Sender<PendingInput>,
+    abort: tokio::task::AbortHandle,
+    retirement: TaskRetirement,
 }
 
 impl std::fmt::Debug for ConversationInputSender {
@@ -178,15 +204,32 @@ impl ConversationInputSender {
 
     /// Send one operation and wait until the adapter has delivered it.
     pub async fn send(&self, input: ConversationInput) -> Result<(), AdapterError> {
-        match self.send_classified(input).await {
+        self.send_with_deadline(input, DELIVERY_DEADLINE).await
+    }
+
+    /// Send one operation without collapsing the only safe retry boundary.
+    pub async fn send_classified(&self, input: ConversationInput) -> ConversationSendOutcome {
+        self.send_classified_with_deadline(input, DELIVERY_DEADLINE)
+            .await
+    }
+
+    async fn send_with_deadline(
+        &self,
+        input: ConversationInput,
+        deadline: Duration,
+    ) -> Result<(), AdapterError> {
+        match self.send_classified_with_deadline(input, deadline).await {
             ConversationSendOutcome::WriteConfirmed => Ok(()),
             ConversationSendOutcome::PreWriteFailure(error)
             | ConversationSendOutcome::Ambiguous(error) => Err(error),
         }
     }
 
-    /// Send one operation without collapsing the only safe retry boundary.
-    pub async fn send_classified(&self, input: ConversationInput) -> ConversationSendOutcome {
+    async fn send_classified_with_deadline(
+        &self,
+        input: ConversationInput,
+        deadline: Duration,
+    ) -> ConversationSendOutcome {
         let (delivered, receipt) = oneshot::channel();
         if let Err(error) = self.inner.try_send(PendingInput { input, delivered }) {
             let error = match error {
@@ -200,16 +243,28 @@ impl ConversationInputSender {
             return ConversationSendOutcome::PreWriteFailure(error);
         }
 
-        match tokio::time::timeout(DELIVERY_DEADLINE, receipt).await {
-            Err(_) => ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
-                "the conversation input task did not deliver the operation".to_string(),
-            )),
-            Ok(Err(_)) => ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
-                "the conversation input task ended before delivery".to_string(),
-            )),
-            Ok(Ok(Err(error))) => ConversationSendOutcome::Ambiguous(error),
+        let mut abort_on_drop = AbortWriterOnDrop::new(self.abort.clone());
+        let result = match tokio::time::timeout(deadline, receipt).await {
+            Err(_) => {
+                self.retire().await;
+                ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
+                    "the conversation input task did not deliver the operation".to_string(),
+                ))
+            }
+            Ok(Err(_)) => {
+                self.retire().await;
+                ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
+                    "the conversation input task ended before delivery".to_string(),
+                ))
+            }
             Ok(Ok(Ok(()))) => ConversationSendOutcome::WriteConfirmed,
-        }
+            Ok(Ok(Err(error))) => {
+                self.retire().await;
+                ConversationSendOutcome::Ambiguous(error)
+            }
+        };
+        abort_on_drop.disarm();
+        result
     }
 
     /// Hosted adapters stop this consumer when the socket's read half ends.
@@ -222,13 +277,49 @@ impl ConversationInputSender {
         Fut: Future<Output = Result<(), AdapterError>> + Send + 'static,
     {
         let (inner, mut pending) = mpsc::channel::<PendingInput>(capacity);
+        let retirement = TaskRetirement::default();
+        let retired = retirement.guard();
         let task = tokio::spawn(async move {
+            let _retired = retired;
             while let Some(PendingInput { input, delivered }) = pending.recv().await {
-                let _ = delivered.send(handler(input).await);
+                let result = handler(input).await;
+                let failed = result.is_err();
+                if failed {
+                    pending.close();
+                }
+                let _ = delivered.send(result);
+                if failed {
+                    break;
+                }
             }
         });
         let abort = task.abort_handle();
-        (Self { inner }, abort)
+        (
+            Self {
+                inner,
+                abort: abort.clone(),
+                retirement,
+            },
+            abort,
+        )
+    }
+
+    pub(crate) async fn retire(&self) {
+        self.abort.abort();
+        self.retirement.wait().await;
+    }
+
+    pub(crate) fn abort_handle(&self) -> tokio::task::AbortHandle {
+        self.abort.clone()
+    }
+
+    pub(crate) fn retirement(&self) -> TaskRetirement {
+        self.retirement.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_retired(&self) {
+        self.retirement.wait().await;
     }
 }
 
@@ -335,19 +426,41 @@ pub struct ConversationChannel {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use tokio::sync::{oneshot, Notify};
+
     use super::*;
+
+    fn sender_with_unrelated_retirement(
+        inner: mpsc::Sender<PendingInput>,
+    ) -> ConversationInputSender {
+        let retirement = TaskRetirement::default();
+        let retired = retirement.guard();
+        let task = tokio::spawn(async move {
+            let _retired = retired;
+            std::future::pending::<()>().await;
+        });
+        ConversationInputSender {
+            inner,
+            abort: task.abort_handle(),
+            retirement,
+        }
+    }
 
     #[tokio::test]
     async fn a_closed_queue_is_a_proven_pre_write_failure() {
         let (inner, pending) = mpsc::channel(1);
         drop(pending);
-        let input = ConversationInputSender { inner };
+        let input = sender_with_unrelated_retirement(inner);
 
         assert!(matches!(
             input.send_classified(ConversationInput::Cancel).await,
             ConversationSendOutcome::PreWriteFailure(AdapterError::Unavailable(message))
                 if message.contains("task has ended")
         ));
+        input.retire().await;
     }
 
     #[tokio::test]
@@ -360,13 +473,14 @@ mod tests {
                 delivered,
             })
             .is_ok());
-        let input = ConversationInputSender { inner };
+        let input = sender_with_unrelated_retirement(inner);
 
         assert!(matches!(
             input.send_classified(ConversationInput::Cancel).await,
             ConversationSendOutcome::PreWriteFailure(AdapterError::Unavailable(message))
                 if message.contains("not being consumed")
         ));
+        input.retire().await;
     }
 
     #[tokio::test]
@@ -384,8 +498,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handler_failure_is_ambiguous_and_the_compatibility_api_preserves_the_error() {
-        let input = ConversationInputSender::spawn(2, |_input| async {
+    async fn writer_failure_is_ambiguous_and_closes_the_generation() {
+        let input = ConversationInputSender::spawn(1, |_input| async {
             Err(AdapterError::Rejected(
                 "runtime link refused the frame".into(),
             ))
@@ -396,9 +510,10 @@ mod tests {
             ConversationSendOutcome::Ambiguous(AdapterError::Rejected(message))
                 if message.contains("refused the frame")
         ));
+        input.wait_retired().await;
         assert!(matches!(
             input.send(ConversationInput::Cancel).await,
-            Err(AdapterError::Rejected(message)) if message.contains("refused the frame")
+            Err(AdapterError::Unavailable(message)) if message.contains("task has ended")
         ));
     }
 
@@ -431,15 +546,59 @@ mod tests {
     async fn a_queue_slot_without_a_draining_consumer_is_not_delivery() {
         // This is the shape that used to produce a false success: the receiver
         // is alive, so Tokio accepts the value, but no task ever reads it.
-        let (inner, _held_open) = mpsc::channel(1);
-        let input = ConversationInputSender { inner };
+        let input = ConversationInputSender::spawn(1, |_input| std::future::pending());
 
         let error = input
-            .send(ConversationInput::Cancel)
+            .send_with_deadline(ConversationInput::Cancel, Duration::from_millis(10))
             .await
             .expect_err("an undrained queue did not deliver an interrupt");
 
         assert!(matches!(error, AdapterError::Unavailable(message)
             if message.contains("did not deliver")));
+    }
+
+    #[tokio::test]
+    async fn canceling_a_receipt_wait_poisons_its_writer_generation() {
+        let (started, started_rx) = oneshot::channel();
+        let mut started = Some(started);
+        let resume = Arc::new(Notify::new());
+        let wrote = Arc::new(AtomicBool::new(false));
+        let input = ConversationInputSender::spawn(1, {
+            let resume = Arc::clone(&resume);
+            let wrote = Arc::clone(&wrote);
+            move |_input| {
+                let started = started.take();
+                let resume = Arc::clone(&resume);
+                let wrote = Arc::clone(&wrote);
+                async move {
+                    if let Some(started) = started {
+                        let _ = started.send(());
+                    }
+                    resume.notified().await;
+                    wrote.store(true, Ordering::SeqCst);
+                    Ok(())
+                }
+            }
+        });
+
+        let delivery = tokio::spawn({
+            let input = input.clone();
+            async move { input.send(ConversationInput::Cancel).await }
+        });
+        started_rx.await.expect("the writer started the operation");
+        delivery.abort();
+        assert!(delivery
+            .await
+            .expect_err("delivery was canceled")
+            .is_cancelled());
+        input.wait_retired().await;
+
+        resume.notify_waiters();
+        tokio::task::yield_now().await;
+        assert!(!wrote.load(Ordering::SeqCst));
+        assert!(matches!(
+            input.send(ConversationInput::Cancel).await,
+            Err(AdapterError::Unavailable(detail)) if detail == "the conversation input task has ended"
+        ));
     }
 }

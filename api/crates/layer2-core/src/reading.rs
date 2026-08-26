@@ -24,6 +24,34 @@ impl SessionService {
         Ok(record.session)
     }
 
+    /// Read the lifecycle boundary an interaction must cross before capability.
+    ///
+    /// This is a non-authoritative preflight: the operation itself revalidates
+    /// after acquiring its delivery fences. It exists so an interface can keep
+    /// lifecycle precedence while deciding whether to reserve, defer, or issue
+    /// preparatory state. A recovered rotation may be durably `Provisioning` or
+    /// `Ready` while its replacement is installed, so its durable claim spans
+    /// that boundary across replicas. The process-local marker remains a
+    /// compatibility fallback while a legacy `Rotating` row is being claimed.
+    pub async fn session_for_interaction(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<Session, CoreError> {
+        caller.authorization.require(Capability::UseOwnSessions)?;
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if record.is_effectively_rotating() || self.rotation_in_progress(id).await {
+            return Err(CoreError::SessionRotating);
+        }
+        Ok(record.session)
+    }
+
     /// List the sessions visible to the caller, newest first.
     pub async fn list_sessions(
         &self,
