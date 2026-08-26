@@ -69,6 +69,36 @@ struct RuntimeInteractionValidity {
     invalid_reason: Option<String>,
 }
 
+/// Invalidates work that has not begun delivery when its caller stops waiting.
+///
+/// The spawned interaction still owns its action and lease cleanup. Invalidation
+/// only makes its next delivery-boundary check fail, so an external send that
+/// already returned a receipt can still finish its mandatory local work.
+struct RuntimeInteractionCallerGuard {
+    authority: Option<RuntimeInteractionAuthority>,
+}
+
+impl RuntimeInteractionCallerGuard {
+    fn new(authority: RuntimeInteractionAuthority) -> Self {
+        Self {
+            authority: Some(authority),
+        }
+    }
+
+    fn complete(&mut self) {
+        self.authority = None;
+    }
+}
+
+impl Drop for RuntimeInteractionCallerGuard {
+    fn drop(&mut self) {
+        if let Some(authority) = self.authority.take() {
+            authority
+                .invalidate("the interaction caller stopped before delivery could begin".into());
+        }
+    }
+}
+
 impl RuntimeInteractionAuthority {
     fn new(boundary: SessionBoundary, deadline: Option<tokio::time::Instant>) -> Self {
         Self {
@@ -88,6 +118,15 @@ impl RuntimeInteractionAuthority {
     /// operations at the store boundary.
     pub(crate) fn is_durably_fenced(&self) -> bool {
         self.deadline().is_some()
+    }
+
+    /// Whether a process-local sender belongs to this exact runtime generation.
+    ///
+    /// This comparison grants no delivery permission. Callers must still invoke
+    /// [`Self::ensure_delivery_allowed`] after all local validation and
+    /// immediately before the external send.
+    pub(crate) fn fences_runtime_generation(&self, generation: u64) -> bool {
+        self.boundary.authority.generation == generation
     }
 
     /// Refuse a new delivery without enough authority for its bounded send.
@@ -579,6 +618,7 @@ impl SessionService {
             .as_ref()
             .map(|_| acquisition_started + INTERACTION_LEASE_TTL);
         let authority = RuntimeInteractionAuthority::new(boundary, lease_deadline);
+        let mut caller = RuntimeInteractionCallerGuard::new(authority.clone());
         let (finished, result) = tokio::sync::oneshot::channel();
         let service = Arc::clone(self);
         tokio::spawn(async move {
@@ -604,9 +644,11 @@ impl SessionService {
                 }
             }
         });
-        result.await.map_err(|_| {
+        let action_result = result.await.map_err(|_| {
             CoreError::RuntimeUnavailable("this session's interaction task stopped".into())
-        })?
+        });
+        caller.complete();
+        action_result?
     }
 
     /// Drive one action independently of its caller while maintaining its lease.

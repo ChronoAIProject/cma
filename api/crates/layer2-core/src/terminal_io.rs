@@ -10,13 +10,14 @@ use std::sync::Arc;
 use layer3_adapter::{TermSize, TerminalInput, TerminalOutput};
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
-use crate::authz::Caller;
+use crate::authz::{Caller, Capability as AuthorizationCapability};
 use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
 use crate::log::{append_with, drop_undelivered};
 use crate::service::{store_failed, SessionService};
+use crate::store::SessionRecord;
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 
 /// Pump runtime output into the screen model and out to any live subscriber.
@@ -85,15 +86,13 @@ impl SessionService {
     /// the holder may write is a question about that caller, and is asked where
     /// the caller is known — see [`Self::terminal_is_held`].
     pub async fn send_input(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
         bytes: Vec<u8>,
     ) -> Result<(), CoreError> {
-        let _input_fence = self.input_gates.gate(id).read_owned().await;
-        self.may_drive_terminal(caller, id).await?;
-        self.forward_input(id, TerminalInput::Bytes(bytes)).await;
-        Ok(())
+        self.deliver_terminal_input(caller, id, TerminalInput::Bytes(bytes))
+            .await
     }
     /// Send a named, bounded terminal control request to the runtime.
     ///
@@ -102,14 +101,121 @@ impl SessionService {
     /// action an owner may need from elsewhere to stop a runaway command while
     /// a screen is held open.
     pub async fn send_signal(
-        &self,
+        self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
         signal: String,
     ) -> Result<(), CoreError> {
-        let _input_fence = self.input_gates.gate(id).read_owned().await;
-        self.may_drive_terminal(caller, id).await?;
-        self.forward_input(id, TerminalInput::Signal(signal)).await;
+        self.deliver_terminal_input(caller, id, TerminalInput::Signal(signal))
+            .await
+    }
+
+    /// Deliver one receipt-only mutation to the exact authoritative terminal.
+    async fn deliver_terminal_input(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+        input: TerminalInput,
+    ) -> Result<(), CoreError> {
+        let record = self.terminal_interaction_record(caller, id).await?;
+        let service = Arc::clone(self);
+        let owner = caller.subject.clone();
+        let id = id.clone();
+        self.run_runtime_interaction_at(&record, move |authority| async move {
+            // Compatibility lifecycle operations have only process-local
+            // exclusion and take this gate before the input fence. Coordinated
+            // Interact already excludes Lifecycle at the store boundary.
+            let _lifecycle = if authority.is_durably_fenced() {
+                None
+            } else {
+                Some(service.lock_lifecycle(&id).await)
+            };
+            let _input_fence = service.input_gates.gate(&id).read_owned().await;
+            let (runtime_generation, sender) = {
+                let entries = service.entries.read().await;
+                let entry = entries.get(&id).ok_or_else(|| {
+                    CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
+                })?;
+                if !entry.session.is_owned_by(&owner) {
+                    return Err(CoreError::Forbidden);
+                }
+                if entry.session.status.is_terminal() {
+                    return Err(CoreError::SessionTerminated);
+                }
+                if entry.session.status.is_rotating() {
+                    return Err(CoreError::SessionRotating);
+                }
+                entry.session.capabilities.require(Capability::Terminal)?;
+                let sender = entry.input.clone().ok_or_else(|| {
+                    CoreError::RuntimeUnavailable(
+                        "this session holds no terminal input sender".into(),
+                    )
+                })?;
+                (entry.runtime_generation, sender)
+            };
+
+            if !authority.fences_runtime_generation(runtime_generation) {
+                return Err(CoreError::RuntimeUnavailable(
+                    "the live terminal belongs to another runtime generation".into(),
+                ));
+            }
+            authority.ensure_delivery_allowed()?;
+            service.forward_input(&id, &sender, input).await
+        })
+        .await
+    }
+
+    /// Authorize and rebuild local runtime state before interaction acquisition.
+    async fn terminal_interaction_record(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SessionRecord, CoreError> {
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
+        let record = self.record(id).await?;
+        Self::require_terminal_interaction_record(caller, &record)?;
+
+        let entries = self.entries.read().await;
+        let live_is_rotating = entries
+            .get(id)
+            .is_some_and(|entry| entry.session.status.is_rotating());
+        let missing_live_entry = !entries.contains_key(id);
+        drop(entries);
+        if live_is_rotating {
+            return Err(CoreError::SessionRotating);
+        }
+        if missing_live_entry {
+            if self.rotation_in_progress(id).await {
+                return Err(CoreError::SessionRotating);
+            }
+            self.readopt(&record).await?;
+        }
+
+        // Readoption may settle capabilities or advance readiness. Interaction
+        // acquisition must name the exact durable boundary after that work.
+        let record = self.record(id).await?;
+        Self::require_terminal_interaction_record(caller, &record)?;
+        Ok(record)
+    }
+
+    fn require_terminal_interaction_record(
+        caller: &Caller,
+        record: &SessionRecord,
+    ) -> Result<(), CoreError> {
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if record.session.status.is_rotating() {
+            return Err(CoreError::SessionRotating);
+        }
+        if !record.session.capabilities.unrecorded() {
+            record.session.capabilities.require(Capability::Terminal)?;
+        }
         Ok(())
     }
     /// Change the session's terminal geometry.
