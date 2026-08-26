@@ -1462,32 +1462,31 @@ async fn the_commands_a_kernel_offers_are_recorded_rather_than_only_broadcast() 
 
 #[tokio::test]
 async fn the_commands_a_kernel_offers_survive_arriving_before_the_entry_exists() {
-    /*
-     * The real timing, pinned directly. `entries` holds only sessions with a
-     * running runtime, and this announcement is made as the conversation
-     * opens — so arriving with no entry is the ordinary case for it, not a
-     * fault. Before the fallback it returned early and the list was gone.
-     */
-    let (svc, alice, id, adapter) = conversation().await;
-    svc.entries.write().await.remove(&id);
-
-    {
-        let held = adapter.conversation.lock().await;
-        let kernel = held.as_ref().expect("the conversation was opened");
-        kernel
-            .updates
-            .send(said(
-                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[(
-                    "compact",
-                    "Summarise the conversation so far",
-                )])),
-            ))
-            .await
-            .expect("the core is listening");
-    }
+    // The opening receiver is the only authority allowed to persist a frame
+    // before the live entry exists. Drive the adapter's real opening path so
+    // this cannot pass through the stale-link fallback the durable protocol
+    // deliberately removed.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        opening_updates: tokio::sync::Mutex::new(vec![said(
+            layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[(
+                "compact",
+                "Summarise the conversation so far",
+            )])),
+        )]),
+        ..FakeAdapter::default()
+    });
+    let svc = versioned_conversation_service(store, adapter, "runtime:opening-commands");
+    let alice = user("opening-commands-owner");
+    let created = svc
+        .create_session(&alice, spec())
+        .await
+        .expect("the conversation is accepted");
+    await_settled(&svc, &alice, &created.id).await;
 
     assert!(
-        until_logged(&svc, &alice, &id, |kind| matches!(
+        until_logged(&svc, &alice, &created.id, |kind| matches!(
             kind,
             EventKind::AvailableCommandsSet { commands }
                 if commands.iter().any(|c| c.name == "compact")
@@ -1527,33 +1526,28 @@ async fn a_kernel_that_offers_nothing_records_that_rather_than_staying_silent() 
 
 #[tokio::test]
 async fn a_sign_in_is_recorded_for_a_session_with_no_live_entry() {
-    /*
-     * The fallback itself, pinned directly rather than through the timing of
-     * an open. `entries` holds only sessions with a running runtime, so its
-     * absence is what the sign-in path has to survive — removing the entry
-     * from a settled session reproduces that exactly, and driving the update
-     * down the kernel's own channel keeps the test on the real path rather
-     * than on a hook that exists only for it.
-     */
-    let (svc, alice, id, adapter) = conversation().await;
-    svc.entries.write().await.remove(&id);
-
-    {
-        let held = adapter.conversation.lock().await;
-        let kernel = held.as_ref().expect("the conversation was opened");
-        kernel
-            .updates
-            .send(layer3_adapter::ConversationUpdate::SignInRequired {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        opening_updates: tokio::sync::Mutex::new(vec![
+            layer3_adapter::ConversationUpdate::SignInRequired {
                 url: "https://auth.example.test/device".to_string(),
                 code: Some("WDJB-MJHT".to_string()),
                 message: None,
-            })
-            .await
-            .expect("the core is listening");
-    }
+            },
+        ]),
+        ..FakeAdapter::default()
+    });
+    let svc = versioned_conversation_service(store, adapter, "runtime:opening-sign-in");
+    let alice = user("opening-sign-in-owner");
+    let created = svc
+        .create_session(&alice, spec())
+        .await
+        .expect("the conversation is accepted");
+    await_settled(&svc, &alice, &created.id).await;
 
     assert!(
-        until_logged(&svc, &alice, &id, |kind| matches!(
+        until_logged(&svc, &alice, &created.id, |kind| matches!(
             kind,
             EventKind::SignInRequired { code, .. } if code.as_deref() == Some("WDJB-MJHT")
         ))
