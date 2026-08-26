@@ -25,6 +25,8 @@
 mod conversation;
 mod runtime;
 mod sandbox_reclaimer;
+mod task_retirement;
+mod terminal_input;
 
 pub use runtime::{
     ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeGeneration, RuntimeHandle,
@@ -32,6 +34,7 @@ pub use runtime::{
     RuntimePermission, RuntimeReservationIdentity, RuntimeSpec, SkillPackage, TermSize,
     TerminalChannel, TerminalInput, TerminalOutput,
 };
+pub use terminal_input::TerminalInputSender;
 
 use tokio::sync::mpsc;
 
