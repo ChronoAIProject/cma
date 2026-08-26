@@ -90,7 +90,7 @@ impl SessionService {
         self.conversation_input(caller, id, Capability::Conversation)
             .await?;
         let ordering = self.conversation_order_gates.gate(id);
-        let _ordered_turn = ordering.lock().await;
+        let ordered_turn = ordering.lock().await;
         // The entry may have been replaced between readoption and the gate.
         // Drive the sender that is live now, under the same gate its folder
         // takes before recording anything that delivery can cause.
@@ -140,6 +140,9 @@ impl SessionService {
                 },
             );
         }
+        // The lane already owns the prompt events in their required order. Do
+        // not make unrelated runtime folding wait for their store round trip.
+        drop(ordered_turn);
         self.flush(id).await;
         Ok(())
     }
