@@ -109,8 +109,11 @@ pub struct LoginAttempt {
 /// Provider tokens retained for one subject.
 #[derive(Debug, Clone)]
 pub struct DurableSubjectTokens {
-    /// Currently delegated access token.
-    pub access_token: SecretValue,
+    /// Currently delegated access token, absent once the provider marks it inactive.
+    ///
+    /// The surrounding token fact can remain so its refresh grant is still
+    /// eligible for an immediate exchange without exposing the rejected bearer.
+    pub access_token: Option<SecretValue>,
     /// Token used for renewal, when the provider issued one.
     pub refresh_token: Option<SecretValue>,
     /// Absolute access-token expiry.
@@ -126,6 +129,23 @@ pub struct SubjectRefreshLease {
     pub expires_at: SystemTime,
 }
 
+/// Durable ownership of one provider authorization check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectAuthorizationLease {
+    /// Unique replica operation allowed to publish the provider answer.
+    pub holder: String,
+    /// Subject revision written by acquisition; monotonically fences takeovers.
+    pub fence: u64,
+    /// When the provider check was claimed.
+    pub acquired_at: SystemTime,
+    /// When another worker may take over after cancellation or process loss.
+    pub expires_at: SystemTime,
+    /// Subject lifecycle whose token was presented to the provider.
+    pub checked_incarnation: String,
+    /// Token generation whose access bearer was presented to the provider.
+    pub checked_token_generation: u64,
+}
+
 /// Stable position in either time-ordered subject refresh work set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubjectRefreshCursor {
@@ -133,6 +153,16 @@ pub struct SubjectRefreshCursor {
     pub ready_at: SystemTime,
     /// Mutation sequence that freezes this record version into one sweep epoch.
     pub sweep_sequence: u64,
+    /// Tie-breaker for subjects sharing the same deadline.
+    pub subject: SubjectId,
+}
+
+/// Stable position in the authorization recheck work set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectAuthorizationCursor {
+    /// Deadline at or before which the provider answer must be refreshed.
+    /// Missing means a legacy record that is immediately due.
+    pub ready_at: Option<SystemTime>,
     /// Tie-breaker for subjects sharing the same deadline.
     pub subject: SubjectId,
 }
@@ -163,6 +193,10 @@ pub struct SubjectAuthState {
     pub refresh_lease: Option<SubjectRefreshLease>,
     /// Capabilities resolved from provider permissions.
     pub authorization: Authorization,
+    /// Earliest instant at which the provider must be asked again.
+    pub authorization_check_after: SystemTime,
+    /// Fences provider authorization checks across replicas.
+    pub authorization_lease: Option<SubjectAuthorizationLease>,
     /// Non-authoritative display material.
     pub profile: Profile,
 }
@@ -390,6 +424,14 @@ pub trait AuthStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<AuthSweepItem<SubjectRefreshCursor, SubjectAuthState>>, StoreError>;
 
+    /// Token-bearing subjects whose authorization answer is due for replacement.
+    async fn subjects_due_for_authorization_check(
+        &self,
+        now: SystemTime,
+        after: Option<&SubjectAuthorizationCursor>,
+        limit: usize,
+    ) -> Result<Vec<AuthSweepItem<SubjectAuthorizationCursor, SubjectAuthState>>, StoreError>;
+
     /// Subjects with tokens used for provider orphan reconciliation, in stable-ID order.
     async fn subjects_with_tokens(
         &self,
@@ -473,6 +515,9 @@ pub struct MemoryAuthStore {
     fail_scan_call: AtomicUsize,
     failed_subject_read: Mutex<Option<SubjectId>>,
     failed_credential_read: Mutex<Option<SessionId>>,
+    subject_replace_calls: AtomicUsize,
+    contend_subject_replaces: AtomicBool,
+    concurrent_subject_winner: Mutex<Option<(usize, SubjectAuthState)>>,
     credential_replace_calls: AtomicUsize,
     fail_credential_replace_call: AtomicUsize,
     lose_credential_replace_response_call: AtomicUsize,
@@ -499,6 +544,25 @@ impl MemoryAuthStore {
     /// Fail reads for one subject until cleared.
     pub async fn fail_subject_read(&self, subject: Option<SubjectId>) {
         *self.failed_subject_read.lock().await = subject;
+    }
+
+    /// Make every subject replacement lose its CAS until cleared.
+    pub fn contend_subject_replaces(&self, contend: bool) {
+        self.subject_replace_calls.store(0, Ordering::SeqCst);
+        self.contend_subject_replaces
+            .store(contend, Ordering::SeqCst);
+    }
+
+    /// Install a concurrent winner immediately before one selected CAS.
+    /// A new incarnation models TTL deletion followed by subject recreation.
+    pub async fn install_subject_winner_on_replace(&self, call: usize, winner: SubjectAuthState) {
+        self.subject_replace_calls.store(0, Ordering::SeqCst);
+        *self.concurrent_subject_winner.lock().await = Some((call, winner));
+    }
+
+    /// Number of subject replacements attempted since the last injection.
+    pub fn subject_replace_calls(&self) -> usize {
+        self.subject_replace_calls.load(Ordering::SeqCst)
     }
 
     /// Fail reads for one credential custody record until cleared.
@@ -571,6 +635,16 @@ fn subject_refresh_cursor_cmp(
     left.ready_at
         .cmp(&right.ready_at)
         .then_with(|| left.sweep_sequence.cmp(&right.sweep_sequence))
+        .then_with(|| left.subject.as_str().cmp(right.subject.as_str()))
+}
+
+#[cfg(test)]
+fn subject_authorization_cursor_cmp(
+    left: &SubjectAuthorizationCursor,
+    right: &SubjectAuthorizationCursor,
+) -> std::cmp::Ordering {
+    left.ready_at
+        .cmp(&right.ready_at)
         .then_with(|| left.subject.as_str().cmp(right.subject.as_str()))
 }
 
@@ -720,11 +794,43 @@ impl AuthStore for MemoryAuthStore {
     ) -> Result<bool, StoreError> {
         self.available()?;
         next_revision(expected_revision, state.revision, "subject auth")?;
+        let call = self.subject_replace_calls.fetch_add(1, Ordering::SeqCst) + 1;
         let mut subjects = self.subjects.lock().await;
         let Some(current) = subjects.get(&state.subject) else {
             return Ok(false);
         };
         if current.incarnation != expected_incarnation || current.revision != expected_revision {
+            return Ok(false);
+        }
+        let concurrent = {
+            let mut injected = self.concurrent_subject_winner.lock().await;
+            if injected
+                .as_ref()
+                .is_some_and(|(selected, _)| *selected == call)
+            {
+                injected.take().map(|(_, winner)| winner)
+            } else {
+                None
+            }
+        };
+        if let Some(winner) = concurrent {
+            if winner.subject != state.subject {
+                return Err(StoreError::Malformed(
+                    "injected concurrent subject winner changed its subject".into(),
+                ));
+            }
+            if winner.incarnation == current.incarnation {
+                next_revision(current.revision, winner.revision, "concurrent subject auth")?;
+            }
+            let subject = winner.subject.clone();
+            subjects.insert(subject.clone(), winner);
+            self.subject_sweep_sequences
+                .lock()
+                .await
+                .insert(subject, self.next_sweep_sequence());
+            return Ok(false);
+        }
+        if self.contend_subject_replaces.load(Ordering::SeqCst) {
             return Ok(false);
         }
         if expected_incarnation.is_empty() && state.incarnation.is_empty() {
@@ -823,6 +929,52 @@ impl AuthStore for MemoryAuthStore {
             })
             .collect();
         page.sort_by(|left, right| subject_refresh_cursor_cmp(&left.cursor, &right.cursor));
+        page.truncate(limit);
+        Ok(page)
+    }
+
+    async fn subjects_due_for_authorization_check(
+        &self,
+        now: SystemTime,
+        after: Option<&SubjectAuthorizationCursor>,
+        limit: usize,
+    ) -> Result<Vec<AuthSweepItem<SubjectAuthorizationCursor, SubjectAuthState>>, StoreError> {
+        self.scan_available()?;
+        let failed = self.failed_subject_read.lock().await.clone();
+        let subjects = self.subjects.lock().await;
+        let mut page: Vec<_> = subjects
+            .values()
+            .filter(|state| {
+                state.tokens.is_some()
+                    && state.authorization_check_after <= now
+                    && state
+                        .authorization_lease
+                        .as_ref()
+                        .is_none_or(|lease| lease.expires_at <= now)
+            })
+            .map(|state| {
+                let cursor = SubjectAuthorizationCursor {
+                    ready_at: Some(state.authorization_check_after),
+                    subject: state.subject.clone(),
+                };
+                AuthSweepItem {
+                    cursor,
+                    state: if failed.as_ref() == Some(&state.subject) {
+                        Err(StoreError::Unavailable(
+                            "injected subject read failure".into(),
+                        ))
+                    } else {
+                        Ok(state.clone())
+                    },
+                }
+            })
+            .filter(|item| {
+                after.is_none_or(|after| {
+                    subject_authorization_cursor_cmp(&item.cursor, after).is_gt()
+                })
+            })
+            .collect();
+        page.sort_by(|left, right| subject_authorization_cursor_cmp(&left.cursor, &right.cursor));
         page.truncate(limit);
         Ok(page)
     }

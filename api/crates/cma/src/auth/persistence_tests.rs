@@ -12,6 +12,8 @@ fn subject_state(revision: u64) -> SubjectAuthState {
         tokens: None,
         refresh_lease: None,
         authorization: Authorization::none(),
+        authorization_check_after: SystemTime::UNIX_EPOCH,
+        authorization_lease: None,
         profile: Profile::default(),
     }
 }
@@ -31,7 +33,7 @@ fn credential_state(generation: u64) -> SessionCredentialState {
 
 fn subject_tokens(expires_at: SystemTime, refresh: Option<&str>) -> DurableSubjectTokens {
     DurableSubjectTokens {
-        access_token: SecretValue::new("access".into()),
+        access_token: Some(SecretValue::new("access".into())),
         refresh_token: refresh.map(|value| SecretValue::new(value.into())),
         expires_at,
     }
@@ -312,6 +314,93 @@ async fn due_subject_pages_follow_each_index_order_and_keep_lease_lanes_disjoint
         .await
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test]
+async fn authorization_due_pages_order_by_deadline_then_subject() {
+    let store = MemoryAuthStore::default();
+    let now = SystemTime::now();
+    let first_deadline = now - Duration::from_secs(2);
+    for (id, deadline) in [
+        ("subject-b", first_deadline),
+        ("subject-a", first_deadline),
+        ("subject-c", now - Duration::from_secs(1)),
+        ("subject-future", now + Duration::from_secs(1)),
+    ] {
+        let mut state = subject_state(0);
+        state.subject = SubjectId(id.into());
+        state.tokens = Some(subject_tokens(now + Duration::from_secs(600), None));
+        state.authorization_check_after = deadline;
+        assert!(store.insert_subject(state).await.unwrap());
+    }
+    let mut tokenless = subject_state(0);
+    tokenless.subject = SubjectId("subject-tokenless".into());
+    tokenless.authorization_check_after = first_deadline;
+    assert!(store.insert_subject(tokenless).await.unwrap());
+
+    let first = store
+        .subjects_due_for_authorization_check(now, None, 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        first
+            .iter()
+            .map(|item| item.cursor.subject.as_str())
+            .collect::<Vec<_>>(),
+        ["subject-a", "subject-b"]
+    );
+    let second = store
+        .subjects_due_for_authorization_check(now, Some(&first[1].cursor), 2)
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].cursor.subject.as_str(), "subject-c");
+    assert_eq!(
+        second[0].cursor.ready_at,
+        Some(now - Duration::from_secs(1))
+    );
+    assert!(store
+        .subjects_due_for_authorization_check(now, None, 0)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let mut leased = subject_state(0);
+    leased.subject = SubjectId("subject-leased".into());
+    leased.tokens = Some(subject_tokens(
+        now + Duration::from_secs(600),
+        Some("refresh"),
+    ));
+    leased.authorization_check_after = first_deadline;
+    leased.authorization_lease = Some(SubjectAuthorizationLease {
+        holder: "worker-a".into(),
+        fence: 0,
+        acquired_at: now,
+        expires_at: now + Duration::from_secs(30),
+        checked_incarnation: leased.incarnation.clone(),
+        checked_token_generation: leased.token_generation,
+    });
+    assert!(store.insert_subject(leased.clone()).await.unwrap());
+    assert!(store
+        .subjects_due_for_authorization_check(now, None, 10)
+        .await
+        .unwrap()
+        .iter()
+        .all(|item| item.cursor.subject.as_str() != "subject-leased"));
+
+    leased.revision += 1;
+    leased.authorization_lease.as_mut().unwrap().expires_at = now;
+    let incarnation = leased.incarnation.clone();
+    assert!(store
+        .replace_subject(&incarnation, 0, leased)
+        .await
+        .unwrap());
+    assert!(store
+        .subjects_due_for_authorization_check(now, None, 10)
+        .await
+        .unwrap()
+        .iter()
+        .any(|item| item.cursor.subject.as_str() == "subject-leased"));
 }
 
 #[tokio::test]
