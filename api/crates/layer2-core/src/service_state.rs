@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 
-use layer3_adapter::{KernelAdapter, RuntimeHandle, TerminalInput};
+use layer3_adapter::{KernelAdapter, PermissionLocator, RuntimeHandle, TerminalInput};
 use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
 
 use crate::environment_service::EnvironmentProfileService;
@@ -115,7 +115,11 @@ pub(crate) struct SessionEntry {
     /// Held so an answer to something nothing is waiting for is refused rather
     /// than forwarded: a runtime handed one will either ignore it or act on
     /// the wrong thing, and neither is visible to whoever answered.
-    pub(crate) pending_approvals: HashSet<String>,
+    pub(crate) pending_approvals: HashMap<String, Option<PermissionLocator>>,
+    /// Locator fingerprints observed in the active turn, including requests
+    /// already resolved. Retained until the turn or runtime changes so a late
+    /// duplicate cannot reopen an approval that was already answered.
+    pub(crate) approval_locators: HashMap<String, Option<PermissionLocator>>,
     /// The live attachment, when one is held.
     pub(crate) attached: Option<Attachment>,
     /// How many attachments this session has issued.

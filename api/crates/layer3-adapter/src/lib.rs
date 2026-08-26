@@ -36,10 +36,10 @@ use tokio::sync::mpsc;
 pub use conversation::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
     ConversationId, ConversationInput, ConversationInputSender, ConversationUpdate, MessageId,
-    PermissionDecision, PermissionOption, PermissionOptionId, PermissionOptionKind,
-    PermissionRequest, PromptResponse, RequestPermissionRequest, SessionUpdate, ToolCall,
-    ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, TurnStopReason,
-    TurnUsage, UsageUpdate,
+    PermissionDecision, PermissionLocator, PermissionOption, PermissionOptionId,
+    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
+    SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ToolKind, TurnStopReason, TurnUsage, UsageUpdate,
 };
 
 pub mod claude_code;
@@ -446,11 +446,17 @@ mod tests {
         // and accept back minutes later, possibly after a restart.
         let input = ConversationInput::PermissionAnswer {
             id: "req-1".into(),
+            locator: None,
             decision: PermissionDecision::Abort,
         };
         match input {
-            ConversationInput::PermissionAnswer { id, decision } => {
+            ConversationInput::PermissionAnswer {
+                id,
+                locator,
+                decision,
+            } => {
                 assert_eq!(id, "req-1");
+                assert!(locator.is_none());
                 assert_eq!(decision, PermissionDecision::Abort);
             }
             other => panic!("expected a permission answer, got {other:?}"),

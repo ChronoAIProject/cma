@@ -296,6 +296,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             request_id,
             action,
             detail,
+            ..
         } => {
             let reason = reason_for(action.as_deref());
             let message = detail.clone().or_else(|| action.clone());

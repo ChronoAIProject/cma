@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use crate::conversation::{ConversationInput, ConversationUpdate, PromptResponse};
 
 use super::acp::{Bridge, Outcome, TURN_DEADLINE};
-use super::inbound::outcome_for;
+use super::inbound::{blocked_from_locator, outcome_for};
 
 impl Bridge {
     /// Act on something a caller sent toward the runtime.
@@ -80,24 +80,42 @@ impl Bridge {
                     }
                 }
             }
-            ConversationInput::PermissionAnswer { id, decision } => {
-                let held = self.blocked.lock().await.remove(&id);
-                let Some(held) = held else {
-                    // Answered after the bridge stopped waiting — a turn that
-                    // was cancelled, or a runtime that went away. Nothing to
-                    // send, and saying so beats a frame nothing will read.
-                    tracing::info!(request = %id, "nothing is waiting for this answer any more");
-                    return Err(crate::AdapterError::Rejected(
-                        "nothing is waiting for this permission answer".to_string(),
-                    ));
+            ConversationInput::PermissionAnswer {
+                id,
+                locator,
+                decision,
+            } => {
+                let repeated_answer = self.answered.lock().await.get(&id).cloned();
+                if let Some(answer) = repeated_answer {
+                    return self.send(&answer).await;
+                }
+                let held = match locator {
+                    Some(locator) => blocked_from_locator(&id, &locator, &session),
+                    None => self.blocked.lock().await.remove(&id).ok_or_else(|| {
+                        crate::AdapterError::Rejected(
+                            "nothing is waiting for this permission answer".to_string(),
+                        )
+                    }),
                 };
+                let held = match held {
+                    Ok(held) => held,
+                    Err(error) => {
+                        // Answered after the bridge stopped waiting, or with a
+                        // locator that cannot safely route this id.
+                        tracing::info!(request = %id, "nothing is waiting for this answer any more");
+                        return Err(error);
+                    }
+                };
+                self.blocked.lock().await.remove(&id);
                 let outcome = outcome_for(decision, &held.options);
                 let answer = serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": held.call,
                     "result": { "outcome": outcome },
                 });
-                self.send(&answer).await
+                self.send(&answer).await?;
+                self.answered.lock().await.insert(id, answer);
+                Ok(())
             }
             ConversationInput::Cancel => {
                 let notice = serde_json::json!({

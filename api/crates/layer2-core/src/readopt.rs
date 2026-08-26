@@ -5,9 +5,9 @@
 //! with a session that already exists and whose runtime is either gone or
 //! still there without anything attached to it.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
-use layer3_adapter::RuntimeHandle;
+use layer3_adapter::{PermissionLocator, RuntimeHandle};
 use tokio::sync::{broadcast, watch, Mutex};
 
 use crate::authz::{Caller, Capability};
@@ -24,8 +24,9 @@ use crate::SessionMode;
 /// Durable conversation state a replacement process needs before it attaches.
 #[derive(Default)]
 pub(crate) struct ReadoptionHistory {
-    conversation_id: Option<String>,
-    pending_approvals: HashSet<String>,
+    pub(crate) conversation_id: Option<String>,
+    pub(crate) pending_approvals: HashMap<String, Option<PermissionLocator>>,
+    pub(crate) approval_locators: HashMap<String, Option<PermissionLocator>>,
 }
 
 impl SessionService {
@@ -137,13 +138,24 @@ impl SessionService {
             return Ok(ReadoptionHistory::default());
         }
         let id = &record.session.id;
-        let durable_events: Vec<Event> = self
-            .store
-            .events_since(id, 0)
-            .await?
-            .into_iter()
-            .filter_map(crate::event::StoredEvent::into_known)
-            .collect();
+        let stored_events = self.store.events_since(id, 0).await?;
+        let mut durable_events = Vec::with_capacity(stored_events.len());
+        for stored in stored_events {
+            let seq = stored.seq;
+            match stored.kind {
+                crate::event::StoredEventKind::Known(kind) => durable_events.push(Event {
+                    session_id: stored.session_id,
+                    seq,
+                    kind,
+                    appended_at: stored.appended_at,
+                }),
+                crate::event::StoredEventKind::Unknown { tag, .. } => {
+                    return Err(StoreError::Malformed(format!(
+                        "cannot restore approval state past unknown event {tag} at sequence {seq}"
+                    )))
+                }
+            }
+        }
         let conversation_id = durable_events
             .iter()
             .rev()
@@ -151,10 +163,12 @@ impl SessionService {
                 EventKind::ConversationOpened { conversation_id } => Some(conversation_id.clone()),
                 _ => None,
             });
-        let pending_approvals = crate::conversation_log::pending_approvals_from(&durable_events);
+        let approvals = crate::conversation_log::pending_approvals_from(&durable_events)
+            .map_err(StoreError::Malformed)?;
         Ok(ReadoptionHistory {
             conversation_id,
-            pending_approvals,
+            pending_approvals: approvals.pending,
+            approval_locators: approvals.locators,
         })
     }
 
@@ -185,7 +199,8 @@ impl SessionService {
         let id = record.session.id.clone();
         let ReadoptionHistory {
             conversation_id,
-            pending_approvals,
+            pending_approvals: _,
+            approval_locators: _,
         } = history;
         let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
             // Nothing to reclaim: the session never got a runtime, or its
@@ -256,7 +271,7 @@ impl SessionService {
                 // rejoined before. Rejoining is the whole point: without it the
                 // runtime opens a second conversation beside the first.
                 let mut options = crate::provision::runtime_options(&record.session.options);
-                options.resume_conversation = conversation_id;
+                options.resume_conversation = conversation_id.clone();
                 if options.resume_conversation.is_none() {
                     tracing::warn!(
                         session_id = %id,
@@ -325,6 +340,8 @@ impl SessionService {
         // by this stale snapshot. The service-wide entries lock is never held
         // across the durable read or write.
         let installation = self.lock_lifecycle(&id).await;
+        let ordering = self.conversation_order_gates.gate(&id);
+        let ordered_installation = ordering.lock().await;
         if self.entries.read().await.contains_key(&id) {
             return Ok(());
         }
@@ -345,6 +362,27 @@ impl SessionService {
                 "the session changed while its runtime was being reconnected".into(),
             ));
         }
+
+        // The first snapshot selected the conversation to rejoin. Updates can
+        // become durable while the network attachment is being built, so fold
+        // approval state again at the installation boundary. The folder takes
+        // this same gate before recording an update; none can land between
+        // this read and publishing the entry.
+        let final_history = self
+            .readoption_history(&current)
+            .await
+            .map_err(|error| {
+                CoreError::RuntimeRefused(format!(
+                    "the runtime was reached but its final conversation state could not be rebuilt: {error}"
+                ))
+            })?;
+        if final_history.conversation_id != conversation_id {
+            return Err(CoreError::RuntimeRefused(
+                "the conversation changed while its runtime was being reconnected".into(),
+            ));
+        }
+        let pending_approvals = final_history.pending_approvals;
+        let approval_locators = final_history.approval_locators;
 
         // A reachable runtime proves that a recorded provisioning state has
         // completed. Make that fact durable before publishing the entry; doing
@@ -403,6 +441,7 @@ impl SessionService {
             readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),
             pending_approvals,
+            approval_locators,
             assembling: None,
             context_reading: None,
             attached: None,
@@ -411,6 +450,7 @@ impl SessionService {
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
+        drop(ordered_installation);
         drop(installation);
         crate::resources::spawn_resource_watch(
             Arc::clone(self),

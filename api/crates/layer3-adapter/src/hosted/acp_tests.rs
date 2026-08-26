@@ -797,6 +797,178 @@ async fn every_request_this_bridge_sends_is_dispatchable() {
     }
 }
 
+#[tokio::test]
+async fn a_permission_answer_survives_replacing_the_entire_hosted_bridge() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let call_id = serde_json::json!("permission-call-before-restart");
+    let request = crate::RequestPermissionRequest::new(
+        crate::ConversationId::new("conv-durable-permission"),
+        crate::ToolCallUpdate::new(
+            crate::ToolCallId::new("tool-call-not-in-locator"),
+            crate::ToolCallUpdateFields::new().title("sensitive tool title".to_string()),
+        ),
+        vec![
+            crate::PermissionOption::new(
+                crate::PermissionOptionId::new("reject-once"),
+                "Reject this time".to_string(),
+                crate::PermissionOptionKind::RejectOnce,
+            ),
+            crate::PermissionOption::new(
+                crate::PermissionOptionId::new("allow-once"),
+                "Allow this time".to_string(),
+                crate::PermissionOptionKind::AllowOnce,
+            ),
+        ],
+    );
+    let request_params = serde_json::to_value(request).expect("the ACP request serializes");
+    let expected_call_id = call_id.clone();
+
+    let served = tokio::spawn(async move {
+        async fn send(ws: &mut WebSocketStream<tokio::net::TcpStream>, value: serde_json::Value) {
+            let body = value.to_string();
+            let framed = supervisor::frame(supervisor::LANE_CONVERSATION, body.as_bytes());
+            ws.send(Message::Binary(framed)).await.expect("frame sent");
+        }
+
+        async fn receive(ws: &mut WebSocketStream<tokio::net::TcpStream>) -> serde_json::Value {
+            loop {
+                let frame = ws.next().await.expect("a frame").expect("a valid frame");
+                let Message::Binary(bytes) = frame else {
+                    continue;
+                };
+                let Some((supervisor::LANE_CONVERSATION, payload)) = supervisor::unframe(&bytes)
+                else {
+                    continue;
+                };
+                return serde_json::from_slice(payload).expect("JSON-RPC");
+            }
+        }
+
+        // The original control plane opens the conversation and receives the
+        // request. Closing this whole socket discards its process-local map.
+        let (socket, _) = listener.accept().await.expect("the first client");
+        let mut first = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        first
+            .send(Message::Text(declaration(None)))
+            .await
+            .expect("the declaration is sent");
+        loop {
+            let call = receive(&mut first).await;
+            let method = call["method"].as_str().unwrap_or_default();
+            let result = if method == "session/new" {
+                serde_json::json!({ "sessionId": "conv-durable-permission" })
+            } else {
+                serde_json::json!({})
+            };
+            send(
+                &mut first,
+                serde_json::json!({ "jsonrpc": "2.0", "id": call["id"], "result": result }),
+            )
+            .await;
+            if method == "session/new" {
+                send(
+                    &mut first,
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": expected_call_id,
+                        "method": "session/request_permission",
+                        "params": request_params,
+                    }),
+                )
+                .await;
+                first.close(None).await.expect("the old link closes");
+                break;
+            }
+        }
+
+        // A replacement control plane gets a new Bridge with an empty blocked
+        // map, rejoins the held conversation, and returns the old call's
+        // response from the durable locator alone.
+        let (socket, _) = listener.accept().await.expect("the replacement client");
+        let mut replacement = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        replacement
+            .send(Message::Text(declaration(None)))
+            .await
+            .expect("the declaration is sent");
+        let initialize = receive(&mut replacement).await;
+        assert_eq!(initialize["method"], "initialize");
+        send(
+            &mut replacement,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": initialize["id"],
+                "result": {},
+            }),
+        )
+        .await;
+        receive(&mut replacement).await
+    });
+
+    let first_stream = connect(&url).await;
+    let (first_channel, first_control, mut first_updates) =
+        open_bridge(first_stream, "/home/chrono".into(), None, None, None, false)
+            .await
+            .expect("the original bridge opens");
+    let asked = tokio::time::timeout(std::time::Duration::from_secs(1), first_updates.recv())
+        .await
+        .expect("the request arrives")
+        .expect("the update stream stays open");
+    let crate::ConversationUpdate::Asked(asked) = asked else {
+        panic!("expected a permission request, got {asked:?}");
+    };
+    let locator = asked
+        .locator
+        .expect("hosted requests carry a durable locator");
+    assert!(
+        !locator.as_str().contains("sensitive tool title")
+            && !locator.as_str().contains("tool-call-not-in-locator")
+            && !locator.as_str().contains("Allow this time"),
+        "the locator contains routing metadata, not the tool payload or option labels"
+    );
+    drop(first_channel);
+    drop(first_control);
+    drop(first_updates);
+
+    let replacement_stream = connect(&url).await;
+    let (replacement, _control, _updates) = open_bridge(
+        replacement_stream,
+        "/home/chrono".into(),
+        None,
+        Some("conv-durable-permission".into()),
+        None,
+        false,
+    )
+    .await
+    .expect("the replacement bridge rejoins");
+    replacement
+        .input
+        .send(crate::ConversationInput::PermissionAnswer {
+            id: asked.id,
+            locator: Some(locator),
+            decision: crate::PermissionDecision::Allow,
+        })
+        .await
+        .expect("the restored answer reaches the hosted bridge");
+
+    let answer = served.await.expect("the fixture completes");
+    assert_eq!(
+        answer["id"], call_id,
+        "the original JSON-RPC call is answered"
+    );
+    assert_eq!(answer["result"]["outcome"]["outcome"], "selected");
+    assert_eq!(
+        answer["result"]["outcome"]["optionId"], "allow-once",
+        "the answer selects an option the original call genuinely offered"
+    );
+}
+
 #[test]
 fn a_turn_reports_the_reason_the_kernel_gave() {
     // The answer arriving here is the whole JSON-RPC frame — `inbound` hands
