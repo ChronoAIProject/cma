@@ -172,6 +172,7 @@ impl TerminalInputSender {
         self.retirement.wait().await;
     }
 
+    #[cfg(test)]
     pub(crate) async fn wait_retired(&self) {
         self.retirement.wait().await;
     }

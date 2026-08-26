@@ -283,6 +283,7 @@ impl ConversationInputSender {
         self.retirement.clone()
     }
 
+    #[cfg(test)]
     pub(crate) async fn wait_retired(&self) {
         self.retirement.wait().await;
     }
