@@ -17,6 +17,7 @@ mod screen;
 mod skills;
 mod store;
 mod sweep;
+mod trigger;
 
 #[cfg(test)]
 mod pty_integration_tests;
