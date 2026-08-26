@@ -86,6 +86,7 @@ pub(crate) async fn relay_conversation(
             match frame {
                 Ok(Message::Binary(bytes)) => match lanes::unframe(&bytes) {
                     Some((LANE_CONVERSATION, payload)) => {
+                        let _admission = state_in.startup_gate.read().await;
                         if !bridge_in.send(payload.to_vec()).await {
                             tracing::warn!(runtime = %runtime, "the bridge stopped accepting frames");
                             break;

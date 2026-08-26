@@ -165,7 +165,7 @@ pub trait CheckpointObjectStore: Send + Sync {
         owner: &SubjectId,
         checkpoint: &WorkspaceCheckpoint,
         archive: &[u8],
-    ) -> Result<(), TriggerStoreError>;
+    ) -> Result<String, TriggerStoreError>;
 
     async fn get_checkpoint(
         &self,

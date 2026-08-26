@@ -452,6 +452,7 @@ async fn main() {
                     ),
                     config.trigger_workspace_bucket.clone(),
                     tokens,
+                    trigger_store.clone() as Arc<dyn layer2_core::LaunchStore>,
                 ),
             )),
             None => {
@@ -616,11 +617,14 @@ async fn main() {
             .as_ref()
             .and_then(|workspace_store| {
                 github_capability_signer.as_ref().map(|signer| {
-                    let workspace_store: Arc<dyn layer2_core::BaselineObjectStore> =
+                    let baseline_store: Arc<dyn layer2_core::BaselineObjectStore> =
                         Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
+                    let checkpoint_store: Arc<dyn layer2_core::CheckpointObjectStore> =
+                        Arc::clone(workspace_store) as Arc<dyn layer2_core::CheckpointObjectStore>;
                     Arc::new(trigger::github_effects::GithubEffectExecutor::with_runtime(
                         github,
-                        workspace_store,
+                        baseline_store,
+                        checkpoint_store,
                         Arc::clone(&service),
                         Arc::clone(signer),
                     ))

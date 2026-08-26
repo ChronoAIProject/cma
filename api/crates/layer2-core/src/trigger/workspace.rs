@@ -231,10 +231,15 @@ pub struct WorkspaceCheckpoint {
 
 impl WorkspaceCheckpoint {
     pub fn validate_complete(&self, launch: &LaunchId) -> Result<(), TriggerValidationError> {
-        if &self.launch_id != launch || self.workspace_epoch == 0 || self.version == 0 {
+        if &self.launch_id != launch
+            || self.workspace_epoch == 0
+            || self.version == 0
+            || self.session_id.0.trim().is_empty()
+            || self.runtime_generation == 0
+        {
             return Err(TriggerValidationError::field(
                 "checkpoint",
-                "does not belong to the requested Launch epoch",
+                "does not belong to the requested Launch workspace and runtime generation",
             ));
         }
         if self.integrity != CheckpointIntegrity::Complete {

@@ -268,6 +268,112 @@ fn prompt_delivery_progress_is_identity_bound_monotonic_and_evented() {
 }
 
 #[test]
+fn checkpoint_completion_accepts_only_the_next_artifact_from_the_current_runtime() {
+    let mut launch = session_launch(&"a".repeat(64));
+    let session = SessionLink {
+        session_id: SessionId("sesn_checkpoint_runtime".into()),
+        environment_profile_id: "envp_checkpoint_runtime".into(),
+        runtime_generation: 3,
+        created_at: NOW.into(),
+    };
+    launch.session = Some(session.clone());
+    launch.state = LaunchState::Contributing;
+    launch.fencing_counter = 1;
+    let lease = WorkerLease {
+        holder: "checkpoint-worker".into(),
+        fencing_token: 1,
+        acquired_at: NOW.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.lease = Some(lease.clone());
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "claim-checkpoint")
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.kind, LaunchEffectKind::Checkpoint);
+    let workspace = launch.workspace.as_ref().unwrap();
+    let valid = WorkspaceCheckpoint {
+        id: CheckpointId("checkpoint-current-runtime".into()),
+        launch_id: launch.id.clone(),
+        version: 1,
+        workspace_epoch: workspace.workspace_epoch,
+        session_id: session.session_id.clone(),
+        runtime_generation: session.runtime_generation + 1,
+        object_reference: "trigger-test/checkpoint-v1.pack".into(),
+        archive_sha256: "b".repeat(64),
+        manifest: WorkspaceManifest::seal(launch.source_sha.clone(), Vec::new()).unwrap(),
+        integrity: CheckpointIntegrity::Complete,
+        created_at: NOW.into(),
+        delete_after: Some(workspace.delete_after.clone()),
+    };
+
+    for malformed in [
+        {
+            let mut value = valid.clone();
+            value.session_id = SessionId("sesn_other".into());
+            value
+        },
+        {
+            let mut value = valid.clone();
+            value.runtime_generation = session.runtime_generation - 1;
+            value
+        },
+        {
+            let mut value = valid.clone();
+            value.version += 1;
+            value
+        },
+        {
+            let mut value = valid.clone();
+            value.manifest = WorkspaceManifest::seal("c".repeat(40), Vec::new()).unwrap();
+            value
+        },
+        {
+            let mut value = valid.clone();
+            value.delete_after = Some("2026-08-26T12:00:01Z".into());
+            value
+        },
+    ] {
+        let mut candidate = launch.clone();
+        assert!(candidate
+            .complete_effect(
+                &lease,
+                &claim,
+                LaunchEffectResult::Checkpoint {
+                    checkpoint: malformed,
+                },
+                "must not attach",
+                Default::default(),
+                LATER,
+                "reject-checkpoint",
+            )
+            .is_err());
+        assert!(candidate
+            .workspace
+            .as_ref()
+            .unwrap()
+            .latest_checkpoint
+            .is_none());
+    }
+
+    launch
+        .complete_effect(
+            &lease,
+            &claim,
+            LaunchEffectResult::Checkpoint {
+                checkpoint: valid.clone(),
+            },
+            "checkpoint complete",
+            Default::default(),
+            LATER,
+            "complete-checkpoint",
+        )
+        .unwrap();
+    assert_eq!(launch.workspace.unwrap().latest_checkpoint, Some(valid));
+    assert_eq!(launch.session.unwrap().runtime_generation, 4);
+}
+
+#[test]
 fn a_long_initial_turn_uses_its_session_deadline_not_the_generic_poll_budget() {
     let session_launch = session_launch(&"b".repeat(64));
     let session_id = crate::service::trigger_session_origin(&session_launch)

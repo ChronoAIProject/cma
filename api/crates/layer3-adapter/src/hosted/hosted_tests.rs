@@ -131,10 +131,70 @@ fn workspace_package() -> WorkspacePackage {
     WorkspacePackage {
         epoch: 7,
         source_revision: "a".repeat(40),
+        baseline_manifest_digest: "b".repeat(64),
         manifest_digest: "b".repeat(64),
         archive_sha256: "c".repeat(64),
         archive: vec![0, 1, 2, 3, 255],
     }
+}
+
+fn checkpoint_request() -> WorkspaceCheckpointRequest {
+    WorkspaceCheckpointRequest {
+        epoch: 7,
+        version: 3,
+        source_revision: "a".repeat(40),
+        baseline_manifest_digest: "b".repeat(64),
+    }
+}
+
+fn length_delimited(header: serde_json::Value, body: &[u8]) -> Vec<u8> {
+    let header = serde_json::to_vec(&header).unwrap();
+    let mut framed = (header.len() as u64).to_be_bytes().to_vec();
+    framed.extend_from_slice(&header);
+    framed.extend_from_slice(body);
+    framed
+}
+
+fn checkpoint_wire(request: &WorkspaceCheckpointRequest, writers_resumed: bool) -> Vec<u8> {
+    let payload = b"edited\n";
+    let content_sha256 = hex(&Sha256::digest(payload));
+    let manifest_digest = "d".repeat(64);
+    let archive = length_delimited(
+        serde_json::json!({
+            "cma_workspace": WORKSPACE_ARCHIVE_VERSION,
+            "workspace_epoch": request.epoch,
+            "checkpoint_version": request.version,
+            "quiesced_writers": 2,
+            "source_revision": request.source_revision,
+            "manifest_digest": manifest_digest,
+            "entries": [{
+                "path": "README.md",
+                "kind": "regular",
+                "mode": 0o100644,
+                "size": payload.len(),
+                "content_sha256": content_sha256,
+                "provider_object_id": "c".repeat(40),
+                "offset": 0
+            }]
+        }),
+        payload,
+    );
+    let archive_sha256 = hex(&Sha256::digest(&archive));
+    length_delimited(
+        serde_json::json!({
+            "cma_checkpoint": WORKSPACE_ARCHIVE_VERSION,
+            "workspace_epoch": request.epoch,
+            "checkpoint_version": request.version,
+            "source_revision": request.source_revision,
+            "manifest_digest": manifest_digest,
+            "archive_sha256": archive_sha256,
+            "entries": 1,
+            "bytes": payload.len(),
+            "quiesced_writers": 2,
+            "writers_resumed": writers_resumed
+        }),
+        &archive,
+    )
 }
 
 /// Serve one provider listing response and then stop.
@@ -217,10 +277,11 @@ async fn an_old_runtime_image_is_refused_without_sending_workspace_bytes() {
 async fn workspace_handover_sends_exact_bytes_and_requires_an_exact_acknowledgement() {
     let package = workspace_package();
     let fixture = workspace_fixture(
-        serde_json::json!({ "workspaceCheckpoint": { "version": 1 } }),
+        serde_json::json!({ "workspaceCheckpoint": { "version": 2 } }),
         Some(serde_json::json!({
             "workspace_epoch": package.epoch,
             "source_revision": package.source_revision,
+            "baseline_manifest_digest": package.baseline_manifest_digest,
             "manifest_digest": package.manifest_digest,
             "entries": 0,
             "bytes": 0
@@ -230,15 +291,18 @@ async fn workspace_handover_sends_exact_bytes_and_requires_an_exact_acknowledgem
     let kernel = hosted(&fixture.base_url);
 
     kernel
-        .hand_over_workspace("sbx-v1", &package)
+        .hand_over_workspace("sbx-v2", &package)
         .await
         .expect("the exact acknowledgement is accepted");
 
     let requests = fixture.finish().await;
     assert_eq!(requests.len(), 3);
     assert!(requests[2].0.starts_with(&format!(
-        "POST /runtime/workspace?epoch=7&source={}&manifest={}&archive={} ",
-        package.source_revision, package.manifest_digest, package.archive_sha256
+        "POST /runtime/workspace?epoch=7&source={}&baseline={}&manifest={}&archive={} ",
+        package.source_revision,
+        package.baseline_manifest_digest,
+        package.manifest_digest,
+        package.archive_sha256
     )));
     assert_eq!(requests[2].1, package.archive);
 }
@@ -247,10 +311,11 @@ async fn workspace_handover_sends_exact_bytes_and_requires_an_exact_acknowledgem
 async fn workspace_handover_rejects_a_mismatched_success_acknowledgement() {
     let package = workspace_package();
     let fixture = workspace_fixture(
-        serde_json::json!({ "workspaceCheckpoint": { "version": 1 } }),
+        serde_json::json!({ "workspaceCheckpoint": { "version": 2 } }),
         Some(serde_json::json!({
             "workspace_epoch": package.epoch + 1,
             "source_revision": package.source_revision,
+            "baseline_manifest_digest": package.baseline_manifest_digest,
             "manifest_digest": package.manifest_digest,
             "entries": 1,
             "bytes": 5
@@ -266,6 +331,48 @@ async fn workspace_handover_rejects_a_mismatched_success_acknowledgement() {
     assert!(matches!(error, AdapterError::Rejected(_)));
 
     assert_eq!(fixture.finish().await.len(), 3);
+}
+
+#[test]
+fn checkpoint_capture_requires_v2_and_validates_the_exact_sealed_wire() {
+    assert!(!readiness_supports_workspace_checkpoint(
+        br#"{"workspaceCheckpoint":{"version":1}}"#
+    ));
+    assert!(readiness_supports_workspace_checkpoint(
+        br#"{"workspaceCheckpoint":{"version":2}}"#
+    ));
+
+    let request = checkpoint_request();
+    let wire = checkpoint_wire(&request, true);
+    let package = parse_workspace_checkpoint(&wire, &request).expect("v2 checkpoint is valid");
+    assert_eq!(package.epoch, request.epoch);
+    assert_eq!(package.version, request.version);
+    assert_eq!(package.total_bytes, 7);
+    assert_eq!(package.quiesced_writers, 2);
+    assert_eq!(package.entries.len(), 1);
+    assert_eq!(package.entries[0].path, "README.md");
+    assert_eq!(
+        package.archive_sha256,
+        hex(&Sha256::digest(&package.archive))
+    );
+}
+
+#[test]
+fn checkpoint_capture_rejects_unresumed_mismatched_truncated_and_corrupt_results() {
+    let request = checkpoint_request();
+    assert!(parse_workspace_checkpoint(&checkpoint_wire(&request, false), &request).is_err());
+
+    let mut other_version = request.clone();
+    other_version.version += 1;
+    assert!(parse_workspace_checkpoint(&checkpoint_wire(&request, true), &other_version).is_err());
+
+    let mut truncated = checkpoint_wire(&request, true);
+    truncated.pop();
+    assert!(parse_workspace_checkpoint(&truncated, &request).is_err());
+
+    let mut corrupt = checkpoint_wire(&request, true);
+    *corrupt.last_mut().unwrap() ^= 0xff;
+    assert!(parse_workspace_checkpoint(&corrupt, &request).is_err());
 }
 
 #[test]

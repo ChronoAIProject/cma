@@ -28,12 +28,14 @@ pub(super) mod turn;
 
 use std::collections::BTreeMap;
 
+use sha2::{Digest as _, Sha256};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::{
     AdapterError, RuntimeCapacity, RuntimeHandle, RuntimeListing, RuntimeSpec, SkillPackage,
-    TerminalInput, WorkspacePackage,
+    TerminalInput, WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
+    WorkspaceEntryPackage, WorkspacePackage,
 };
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
@@ -104,7 +106,14 @@ const PRELUDE_PATH: &str = "/runtime/prelude";
 
 /// Versioned repository workspace restore/checkpoint endpoint.
 const WORKSPACE_PATH: &str = "/runtime/workspace";
-const WORKSPACE_VERSION: u64 = 1;
+const WORKSPACE_CHECKPOINT_PATH: &str = "/runtime/workspace/checkpoint";
+const WORKSPACE_VERSION: u64 = 2;
+const WORKSPACE_ARCHIVE_VERSION: u32 = 1;
+const MAX_WORKSPACE_FILES: usize = 100_000;
+const MAX_WORKSPACE_BYTES: usize = 2 * 1024 * 1024 * 1024;
+const MAX_WORKSPACE_HEADER_BYTES: usize = 128 * 1024 * 1024;
+const MAX_WORKSPACE_RESPONSE_BYTES: usize =
+    MAX_WORKSPACE_BYTES + MAX_WORKSPACE_HEADER_BYTES + 128 * 1024;
 const RUNTIME_POLICY_VERSION: u64 = 1;
 
 /// Where a pod says what it is and what it can take.
@@ -884,11 +893,12 @@ impl HostedKernel {
             == Some(WORKSPACE_VERSION);
         if !supported {
             return Err(AdapterError::Unsupported(
-                "this runtime image does not advertise workspace checkpoint v1".into(),
+                "this runtime image does not advertise coherent workspace checkpoint v2".into(),
             ));
         }
         if workspace.epoch == 0
             || workspace.source_revision.len() != 40
+            || workspace.baseline_manifest_digest.len() != 64
             || workspace.manifest_digest.len() != 64
             || workspace.archive_sha256.len() != 64
         {
@@ -897,9 +907,10 @@ impl HostedKernel {
             ));
         }
         let path = format!(
-            "{WORKSPACE_PATH}?epoch={}&source={}&manifest={}&archive={}",
+            "{WORKSPACE_PATH}?epoch={}&source={}&baseline={}&manifest={}&archive={}",
             workspace.epoch,
             workspace.source_revision,
+            workspace.baseline_manifest_digest,
             workspace.manifest_digest,
             workspace.archive_sha256
         );
@@ -913,6 +924,7 @@ impl HostedKernel {
             })?;
         if acknowledgement.workspace_epoch != workspace.epoch
             || acknowledgement.source_revision != workspace.source_revision
+            || acknowledgement.baseline_manifest_digest != workspace.baseline_manifest_digest
             || acknowledgement.manifest_digest != workspace.manifest_digest
         {
             return Err(AdapterError::Rejected(
@@ -927,6 +939,61 @@ impl HostedKernel {
             "verified this session's repository workspace"
         );
         Ok(())
+    }
+
+    /// Ask the shared Layer 4 supervisor for one coherent, resumable capture.
+    pub async fn checkpoint_workspace(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceCheckpointRequest,
+    ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let ready = self
+            .client
+            .get_from_sandbox(&endpoint.endpoint, READY_PATH)
+            .await?
+            .unwrap_or_default();
+        if !readiness_supports_workspace_checkpoint(&ready) {
+            return Err(AdapterError::Unsupported(
+                "this runtime image does not advertise coherent workspace checkpoint v2".into(),
+            ));
+        }
+        if request.epoch == 0
+            || request.version == 0
+            || !is_hex(&request.source_revision, 40)
+            || !is_hex(&request.baseline_manifest_digest, 64)
+        {
+            return Err(AdapterError::Rejected(
+                "workspace checkpoint request metadata is invalid".into(),
+            ));
+        }
+        let path = format!(
+            "{WORKSPACE_CHECKPOINT_PATH}?epoch={}&version={}&source={}&baseline={}",
+            request.epoch,
+            request.version,
+            request.source_revision,
+            request.baseline_manifest_digest,
+        );
+        let wire = self
+            .client
+            .post_to_sandbox_with_bounded_response(
+                &endpoint.endpoint,
+                &path,
+                Vec::new(),
+                MAX_WORKSPACE_RESPONSE_BYTES,
+            )
+            .await?;
+        let checkpoint = parse_workspace_checkpoint(&wire, request)?;
+        tracing::info!(
+            sandbox = %handle.0,
+            epoch = checkpoint.epoch,
+            version = checkpoint.version,
+            files = checkpoint.entries.len(),
+            bytes = checkpoint.total_bytes,
+            writers = checkpoint.quiesced_writers,
+            "verified a coherent repository workspace checkpoint"
+        );
+        Ok(checkpoint)
     }
 
     /// Capture the agent's conversation so it can be resumed elsewhere.
@@ -1091,13 +1158,237 @@ fn readiness_supports_runtime_policy(body: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
+fn readiness_supports_workspace_checkpoint(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/workspaceCheckpoint/version")
+                .and_then(serde_json::Value::as_u64)
+        })
+        == Some(WORKSPACE_VERSION)
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct WorkspaceAcknowledgement {
     workspace_epoch: u64,
     source_revision: String,
+    baseline_manifest_digest: String,
     manifest_digest: String,
     entries: usize,
     bytes: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointAcknowledgement {
+    cma_checkpoint: u32,
+    workspace_epoch: u64,
+    checkpoint_version: u64,
+    source_revision: String,
+    manifest_digest: String,
+    archive_sha256: String,
+    entries: usize,
+    bytes: u64,
+    quiesced_writers: u32,
+    writers_resumed: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointArchiveHeader {
+    cma_workspace: u32,
+    workspace_epoch: u64,
+    #[serde(default)]
+    checkpoint_version: u64,
+    #[serde(default)]
+    quiesced_writers: u32,
+    source_revision: String,
+    manifest_digest: String,
+    entries: Vec<CheckpointArchiveEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CheckpointArchiveEntryKind {
+    Regular,
+    Symlink,
+    Submodule,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointArchiveEntry {
+    path: String,
+    kind: CheckpointArchiveEntryKind,
+    mode: u32,
+    size: u64,
+    content_sha256: String,
+    provider_object_id: Option<String>,
+    offset: u64,
+}
+
+fn parse_workspace_checkpoint(
+    wire: &[u8],
+    request: &WorkspaceCheckpointRequest,
+) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+    let (acknowledgement_bytes, archive) =
+        open_length_delimited(wire, 64 * 1024, "workspace checkpoint acknowledgement")?;
+    let acknowledgement: CheckpointAcknowledgement = serde_json::from_slice(acknowledgement_bytes)
+        .map_err(|_| {
+            AdapterError::Rejected("runtime checkpoint acknowledgement is malformed".into())
+        })?;
+    if acknowledgement.cma_checkpoint != WORKSPACE_ARCHIVE_VERSION
+        || acknowledgement.workspace_epoch != request.epoch
+        || acknowledgement.checkpoint_version != request.version
+        || !acknowledgement
+            .source_revision
+            .eq_ignore_ascii_case(&request.source_revision)
+        || !is_hex(&acknowledgement.manifest_digest, 64)
+        || !is_hex(&acknowledgement.archive_sha256, 64)
+        || !acknowledgement.writers_resumed
+        || acknowledgement.entries > MAX_WORKSPACE_FILES
+        || acknowledgement.bytes > MAX_WORKSPACE_BYTES as u64
+        || hex(&Sha256::digest(archive)) != acknowledgement.archive_sha256
+    {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint acknowledgement did not prove the requested artifact".into(),
+        ));
+    }
+    let (header_bytes, payload) = open_length_delimited(
+        archive,
+        MAX_WORKSPACE_HEADER_BYTES,
+        "workspace checkpoint archive header",
+    )?;
+    let header: CheckpointArchiveHeader = serde_json::from_slice(header_bytes).map_err(|_| {
+        AdapterError::Rejected("runtime checkpoint archive header is malformed".into())
+    })?;
+    if header.cma_workspace != WORKSPACE_ARCHIVE_VERSION
+        || header.workspace_epoch != request.epoch
+        || header.checkpoint_version != request.version
+        || header.quiesced_writers != acknowledgement.quiesced_writers
+        || !header
+            .source_revision
+            .eq_ignore_ascii_case(&request.source_revision)
+        || header.manifest_digest != acknowledgement.manifest_digest
+        || header.entries.len() != acknowledgement.entries
+    {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint archive does not match its acknowledgement".into(),
+        ));
+    }
+
+    let mut expected_offset = 0_u64;
+    let mut entries = Vec::with_capacity(header.entries.len());
+    for entry in header.entries {
+        if entry.offset != expected_offset
+            || !is_hex(&entry.content_sha256, 64)
+            || entry
+                .provider_object_id
+                .as_deref()
+                .is_some_and(|object| !is_hex(object, 40))
+        {
+            return Err(AdapterError::Rejected(
+                "runtime checkpoint archive entry metadata is invalid".into(),
+            ));
+        }
+        expected_offset = expected_offset.checked_add(entry.size).ok_or_else(|| {
+            AdapterError::Rejected("runtime checkpoint archive size overflowed".into())
+        })?;
+        let start = usize::try_from(entry.offset).map_err(|_| {
+            AdapterError::Rejected("runtime checkpoint archive offset is unsupported".into())
+        })?;
+        let end = usize::try_from(expected_offset).map_err(|_| {
+            AdapterError::Rejected("runtime checkpoint archive size is unsupported".into())
+        })?;
+        let bytes = payload.get(start..end).ok_or_else(|| {
+            AdapterError::Rejected("runtime checkpoint archive entry is truncated".into())
+        })?;
+        if hex(&Sha256::digest(bytes)) != entry.content_sha256 {
+            return Err(AdapterError::Rejected(
+                "runtime checkpoint archive entry failed integrity verification".into(),
+            ));
+        }
+        let (kind, symlink_target) = match entry.kind {
+            CheckpointArchiveEntryKind::Regular => (WorkspaceEntryKind::Regular, None),
+            CheckpointArchiveEntryKind::Symlink => (
+                WorkspaceEntryKind::Symlink,
+                Some(
+                    std::str::from_utf8(bytes)
+                        .map_err(|_| {
+                            AdapterError::Rejected(
+                                "runtime checkpoint symlink target is not UTF-8".into(),
+                            )
+                        })?
+                        .to_string(),
+                ),
+            ),
+            CheckpointArchiveEntryKind::Submodule => {
+                return Err(AdapterError::Rejected(
+                    "runtime checkpoint contains an unsupported submodule".into(),
+                ))
+            }
+        };
+        entries.push(WorkspaceEntryPackage {
+            path: entry.path,
+            kind,
+            mode: entry.mode,
+            size: entry.size,
+            content_sha256: entry.content_sha256,
+            provider_object_id: entry.provider_object_id,
+            symlink_target,
+        });
+    }
+    if usize::try_from(expected_offset).ok() != Some(payload.len())
+        || expected_offset != acknowledgement.bytes
+    {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint archive payload length is invalid".into(),
+        ));
+    }
+    Ok(WorkspaceCheckpointPackage {
+        epoch: request.epoch,
+        version: request.version,
+        source_revision: header.source_revision,
+        manifest_digest: header.manifest_digest,
+        archive_sha256: acknowledgement.archive_sha256,
+        entries,
+        total_bytes: acknowledgement.bytes,
+        quiesced_writers: acknowledgement.quiesced_writers,
+        archive: archive.to_vec(),
+    })
+}
+
+fn open_length_delimited<'a>(
+    bytes: &'a [u8],
+    max_header: usize,
+    name: &str,
+) -> Result<(&'a [u8], &'a [u8]), AdapterError> {
+    let prefix: [u8; 8] = bytes
+        .get(..8)
+        .ok_or_else(|| AdapterError::Rejected(format!("{name} has no length")))?
+        .try_into()
+        .map_err(|_| AdapterError::Rejected(format!("{name} length is malformed")))?;
+    let length = usize::try_from(u64::from_be_bytes(prefix))
+        .map_err(|_| AdapterError::Rejected(format!("{name} is too large")))?;
+    if length == 0 || length > max_header {
+        return Err(AdapterError::Rejected(format!("{name} exceeds its bound")));
+    }
+    let end = 8_usize
+        .checked_add(length)
+        .ok_or_else(|| AdapterError::Rejected(format!("{name} length overflowed")))?;
+    let header = bytes
+        .get(8..end)
+        .ok_or_else(|| AdapterError::Rejected(format!("{name} is truncated")))?;
+    Ok((header, &bytes[end..]))
+}
+
+fn is_hex(value: &str, length: usize) -> bool {
+    value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]
