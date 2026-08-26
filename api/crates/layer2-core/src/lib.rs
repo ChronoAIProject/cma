@@ -71,6 +71,8 @@ mod test_support;
 #[cfg(test)]
 mod allowance_tests;
 #[cfg(test)]
+mod approval_recovery_tests;
+#[cfg(test)]
 mod capacity_bounds_service_tests;
 #[cfg(test)]
 mod deployment_capacity_tests;

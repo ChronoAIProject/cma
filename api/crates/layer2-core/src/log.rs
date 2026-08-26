@@ -2237,7 +2237,7 @@ impl RecordChange {
         let runtime = self.fields.runtime
             || self.fields.plane
             || self.fields.runtime_loss
-            || (self.fields.status && !intended.session.status.wants_runtime());
+            || (self.fields.status && !intended.session.wants_runtime());
         let mut compatible = true;
 
         compatible &= rebase_selected(
@@ -2367,7 +2367,7 @@ impl RecordChange {
         let runtime = self.fields.runtime
             || self.fields.plane
             || self.fields.runtime_loss
-            || (self.fields.status && !intended.session.status.wants_runtime());
+            || (self.fields.status && !intended.session.wants_runtime());
 
         copy_selected(
             plane,

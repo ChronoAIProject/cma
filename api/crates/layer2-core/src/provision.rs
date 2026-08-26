@@ -346,7 +346,7 @@ impl SessionService {
         let installation = self.lock_lifecycle(&id).await;
         let current = match self.store.get(&id).await {
             Ok(Some(record))
-                if record.session.status.wants_runtime()
+                if record.session.wants_runtime()
                     && record.session.kernel == session.kernel
                     && record.runtime_id.as_deref() == Some(handle.0.as_str()) =>
             {
