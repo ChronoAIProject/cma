@@ -52,6 +52,8 @@ pub enum SessionOperation {
     Provision,
     /// Capture and replace an authoritative runtime.
     Handover,
+    /// Retire a runtime confirmed lost and provision its replacement.
+    Recover,
     /// Attach this replica to an already authoritative runtime.
     Readopt,
     /// Reclaim a runtime only after authority has been rechecked.
@@ -68,6 +70,9 @@ pub struct SessionLeaseRequest {
     /// Process instance asking. Deployment identity alone is not unique.
     pub holder: String,
     /// Idempotency and ABA token generated once per acquisition attempt.
+    ///
+    /// It may renew one still-active acquisition but must never become active
+    /// again after that lease expires or is released.
     pub token: String,
     /// Exact authority and status the caller read before asking.
     pub boundary: SessionBoundary,
@@ -104,7 +109,7 @@ pub struct SessionLease {
     pub session_id: SessionId,
     /// Exact process instance holding it.
     pub holder: String,
-    /// Acquisition token. A later holder always has a different one.
+    /// Acquisition token. A later acquisition always has a different one.
     pub token: String,
     /// Boundary whose external side effects this lease authorises.
     pub boundary: SessionBoundary,
@@ -123,6 +128,79 @@ pub struct RuntimeReservation {
     pub token: String,
 }
 
+/// A provider runtime durably registered before it can become authoritative.
+///
+/// Once registration commits, reconciliation no longer has to guess whether
+/// the provisioning caller survived: until an atomic authority switch consumes
+/// this candidate, it remains cleanup debt. The provider-create/register gap is
+/// separate. Recovery must match provider-visible `(session, generation)` back
+/// to the durable reservation; registration alone cannot close a crash between
+/// a successful provider create and this store write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeCandidate {
+    /// Session this candidate was provisioned for.
+    pub session_id: SessionId,
+    /// Reserved generation written into provider-visible metadata.
+    pub generation: NonZeroU64,
+    /// Opaque provider handle returned by provisioning.
+    pub runtime_id: String,
+    /// Reservation identity that makes registration and switching idempotent.
+    pub token: String,
+}
+
+/// Why a provider runtime remains durably scheduled for exact cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeCleanupReason {
+    /// Provisioning completed, but this candidate never became authority.
+    UncommittedCandidate,
+    /// An atomic switch replaced this formerly authoritative runtime.
+    RetiredAuthority,
+}
+
+/// One exact provider runtime that still has to be reclaimed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeCleanup {
+    /// Session whose operation created this debt.
+    pub session_id: SessionId,
+    /// Durable generation of the runtime. Zero identifies legacy authority and
+    /// is deletable only by atomically comparing the same session ownership plus
+    /// absent generation metadata after legacy writers are permanently fenced.
+    pub generation: u64,
+    /// Opaque provider handle. A handle alone is never sufficient authority to
+    /// perform the cleanup.
+    pub runtime_id: String,
+    /// Stable debt identity used for exact acknowledgement and retry.
+    pub token: String,
+    /// Boundary that produced this debt.
+    pub reason: RuntimeCleanupReason,
+}
+
+/// Result of atomically changing the session record and runtime authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeAuthoritySwitch {
+    /// Store revision after changing the record's runtime handle.
+    pub revision: u64,
+    /// Exact boundary now durable and held by the caller's lease.
+    pub boundary: SessionBoundary,
+    /// Previous authority left for retryable cleanup, when one existed.
+    pub cleanup: Option<RuntimeCleanup>,
+}
+
+/// Result of atomically retiring the currently authoritative runtime.
+///
+/// The generation is retained as the monotonic floor while the handle becomes
+/// absent. The exact former authority becomes cleanup debt in the same commit,
+/// so no crash can clear the only identity capable of reclaiming it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeAuthorityRetirement {
+    /// Store revision after clearing the record's runtime handle.
+    pub revision: u64,
+    /// Exact no-runtime boundary now durable and held by the caller's lease.
+    pub boundary: SessionBoundary,
+    /// Former current authority, retained for conditional provider cleanup.
+    pub cleanup: RuntimeCleanup,
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -131,7 +209,7 @@ mod tests {
     use crate::ids::{KernelId, SubjectId};
     use crate::session::{RecoveryState, Session};
     use crate::store::{SessionStore, StoreError};
-    use crate::test_support::FakeStore;
+    use crate::test_support::{FakeAdapter, FakeStore};
     use crate::{AgentOptions, TerminalGeometry};
 
     fn record() -> crate::store::SessionRecord {
@@ -228,6 +306,41 @@ mod tests {
         let first = store.acquire_session_lease(&request).await.unwrap();
         let retry = store.acquire_session_lease(&request).await.unwrap();
         assert_eq!(retry, first);
+    }
+
+    #[tokio::test]
+    async fn an_expired_acquisition_token_can_never_become_active_again() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let expired = request(
+            &store,
+            "replica-a",
+            SessionOperation::Interact,
+            Duration::from_millis(1),
+        )
+        .await;
+        store.acquire_session_lease(&expired).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        assert!(matches!(
+            store.acquire_session_lease(&expired).await,
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        let successor = request(
+            &store,
+            "replica-b",
+            SessionOperation::Interact,
+            Duration::from_secs(30),
+        )
+        .await;
+        assert_eq!(
+            store
+                .acquire_session_lease(&successor)
+                .await
+                .unwrap()
+                .holder,
+            "replica-b"
+        );
     }
 
     #[tokio::test]
@@ -385,5 +498,517 @@ mod tests {
             .unwrap();
         assert_eq!(first.generation.get(), 1);
         assert_eq!(second.generation.get(), 2);
+    }
+
+    #[tokio::test]
+    async fn registering_a_candidate_is_idempotent_but_cannot_change_its_handle() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let lease = store.acquire_session_lease(&request).await.unwrap();
+        let reservation = store
+            .reserve_runtime_generation(&lease, "reservation-a")
+            .await
+            .unwrap();
+        let candidate = store
+            .register_runtime_candidate(&lease, &reservation, "runtime-candidate")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store
+                .register_runtime_candidate(&lease, &reservation, "runtime-candidate")
+                .await
+                .unwrap(),
+            candidate
+        );
+        assert!(matches!(
+            store
+                .register_runtime_candidate(&lease, &reservation, "runtime-different")
+                .await,
+            Err(StoreError::RuntimeCandidateChanged { .. })
+        ));
+        assert_eq!(
+            store
+                .runtime_cleanup_debts(&record().session.id)
+                .await
+                .unwrap(),
+            [RuntimeCleanup {
+                session_id: record().session.id,
+                generation: 1,
+                runtime_id: "runtime-candidate".into(),
+                token: "candidate:reservation-a".into(),
+                reason: RuntimeCleanupReason::UncommittedCandidate,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn authority_switch_changes_handle_and_generation_as_one_idempotent_commit() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let mut lease = store.acquire_session_lease(&request).await.unwrap();
+        let reservation = store
+            .reserve_runtime_generation(&lease, "reservation-a")
+            .await
+            .unwrap();
+        let candidate = store
+            .register_runtime_candidate(&lease, &reservation, "runtime-replacement")
+            .await
+            .unwrap();
+
+        let switched = store
+            .switch_runtime_authority(&mut lease, &candidate)
+            .await
+            .unwrap();
+        assert_eq!(switched.revision, 1);
+        assert_eq!(switched.boundary, lease.boundary);
+        assert_eq!(switched.boundary.authority.generation, 1);
+        assert_eq!(
+            switched.boundary.authority.runtime_id.as_deref(),
+            Some("runtime-replacement")
+        );
+        assert_eq!(
+            store
+                .get(&record().session.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .runtime_id
+                .as_deref(),
+            Some("runtime-replacement")
+        );
+        assert_eq!(
+            store
+                .runtime_authority(&record().session.id)
+                .await
+                .unwrap()
+                .unwrap(),
+            switched.boundary.authority
+        );
+        assert_eq!(
+            store
+                .switch_runtime_authority(&mut lease, &candidate)
+                .await
+                .unwrap(),
+            switched,
+            "an unknown commit result is retried without another switch"
+        );
+        assert_eq!(
+            store
+                .runtime_cleanup_debts(&record().session.id)
+                .await
+                .unwrap(),
+            [RuntimeCleanup {
+                session_id: record().session.id,
+                generation: 0,
+                runtime_id: "runtime-original".into(),
+                token: "retired:reservation-a".into(),
+                reason: RuntimeCleanupReason::RetiredAuthority,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn authority_retirement_atomically_clears_the_handle_and_creates_exact_debt() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let handover_request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let mut handover = store.acquire_session_lease(&handover_request).await.unwrap();
+        let reservation = store
+            .reserve_runtime_generation(&handover, "reservation-current")
+            .await
+            .unwrap();
+        let candidate = store
+            .register_runtime_candidate(&handover, &reservation, "runtime-current")
+            .await
+            .unwrap();
+        store
+            .switch_runtime_authority(&mut handover, &candidate)
+            .await
+            .unwrap();
+        store.release_session_lease(&handover).await.unwrap();
+
+        let recovery_request = request(
+            &store,
+            "replica-b",
+            SessionOperation::Recover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let mut recovery = store.acquire_session_lease(&recovery_request).await.unwrap();
+        let retired = store
+            .retire_runtime_authority(&mut recovery, "confirmed-loss")
+            .await
+            .unwrap();
+
+        assert_eq!(retired.boundary, recovery.boundary);
+        assert_eq!(retired.boundary.authority.generation, 1);
+        assert!(retired.boundary.authority.runtime_id.is_none());
+        assert_eq!(retired.cleanup.generation, 1);
+        assert_eq!(retired.cleanup.runtime_id, "runtime-current");
+        assert_eq!(retired.cleanup.reason, RuntimeCleanupReason::RetiredAuthority);
+        assert!(store
+            .get(&record().session.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .runtime_id
+            .is_none());
+        assert_eq!(
+            store
+                .retire_runtime_authority(&mut recovery, "confirmed-loss")
+                .await
+                .unwrap(),
+            retired,
+            "an unknown commit result returns the same retirement receipt"
+        );
+    }
+
+    #[tokio::test]
+    async fn authority_can_never_move_back_to_an_older_reserved_generation() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let mut lease = store.acquire_session_lease(&request).await.unwrap();
+        let older_reservation = store
+            .reserve_runtime_generation(&lease, "reservation-older")
+            .await
+            .unwrap();
+        let older = store
+            .register_runtime_candidate(&lease, &older_reservation, "runtime-older")
+            .await
+            .unwrap();
+        let newer_reservation = store
+            .reserve_runtime_generation(&lease, "reservation-newer")
+            .await
+            .unwrap();
+        let newer = store
+            .register_runtime_candidate(&lease, &newer_reservation, "runtime-newer")
+            .await
+            .unwrap();
+
+        store
+            .switch_runtime_authority(&mut lease, &newer)
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.switch_runtime_authority(&mut lease, &older).await,
+            Err(StoreError::RuntimeCandidateChanged { .. })
+        ));
+        assert_eq!(
+            store
+                .runtime_authority(&record().session.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .generation,
+            newer.generation.get()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_old_switch_receipt_cannot_regress_a_later_authority() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let mut lease = store.acquire_session_lease(&request).await.unwrap();
+        let stale_lease = lease.clone();
+        let first_reservation = store
+            .reserve_runtime_generation(&lease, "reservation-first")
+            .await
+            .unwrap();
+        let first = store
+            .register_runtime_candidate(&lease, &first_reservation, "runtime-first")
+            .await
+            .unwrap();
+        store
+            .switch_runtime_authority(&mut lease, &first)
+            .await
+            .unwrap();
+        let second_reservation = store
+            .reserve_runtime_generation(&lease, "reservation-second")
+            .await
+            .unwrap();
+        let second = store
+            .register_runtime_candidate(&lease, &second_reservation, "runtime-second")
+            .await
+            .unwrap();
+        store
+            .switch_runtime_authority(&mut lease, &second)
+            .await
+            .unwrap();
+
+        let mut stale_retry = stale_lease;
+        assert!(matches!(
+            store
+                .switch_runtime_authority(&mut stale_retry, &first)
+                .await,
+            Err(StoreError::RuntimeCandidateChanged { .. })
+        ));
+        assert_eq!(
+            store
+                .runtime_authority(&record().session.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .generation,
+            second.generation.get()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_crash_before_switch_leaves_the_candidate_recoverable_not_authoritative() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let provision_request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Provision,
+            Duration::from_millis(1),
+        )
+        .await;
+        let mut expired = store
+            .acquire_session_lease(&provision_request)
+            .await
+            .unwrap();
+        let reservation = store
+            .reserve_runtime_generation(&expired, "reservation-abandoned")
+            .await
+            .unwrap();
+        let candidate = store
+            .register_runtime_candidate(&expired, &reservation, "runtime-abandoned")
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        let reclaim_request = request(
+            &store,
+            "replica-b",
+            SessionOperation::Reclaim,
+            Duration::from_secs(30),
+        )
+        .await;
+        let reclaim = store.acquire_session_lease(&reclaim_request).await.unwrap();
+        let cleanup = store
+            .runtime_cleanup_debts(&record().session.id)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(cleanup.runtime_id, candidate.runtime_id);
+        assert_eq!(cleanup.generation, candidate.generation.get());
+        assert_eq!(cleanup.reason, RuntimeCleanupReason::UncommittedCandidate);
+        store
+            .acknowledge_runtime_cleanup(&reclaim, &cleanup)
+            .await
+            .unwrap();
+
+        assert!(store
+            .runtime_cleanup_debts(&record().session.id)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(matches!(
+            store
+                .switch_runtime_authority(&mut expired, &candidate)
+                .await,
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        assert_eq!(
+            store
+                .runtime_authority(&record().session.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .runtime_id
+                .as_deref(),
+            Some("runtime-original")
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_acknowledgement_cannot_remove_current_authority() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let handover_request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let mut handover = store
+            .acquire_session_lease(&handover_request)
+            .await
+            .unwrap();
+        let reservation = store
+            .reserve_runtime_generation(&handover, "reservation-a")
+            .await
+            .unwrap();
+        let candidate = store
+            .register_runtime_candidate(&handover, &reservation, "runtime-current")
+            .await
+            .unwrap();
+        store
+            .switch_runtime_authority(&mut handover, &candidate)
+            .await
+            .unwrap();
+        store.release_session_lease(&handover).await.unwrap();
+
+        let reclaim_request = request(
+            &store,
+            "replica-b",
+            SessionOperation::Reclaim,
+            Duration::from_secs(30),
+        )
+        .await;
+        let reclaim = store.acquire_session_lease(&reclaim_request).await.unwrap();
+        let retired = store
+            .runtime_cleanup_debts(&record().session.id)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        store
+            .acknowledge_runtime_cleanup(&reclaim, &retired)
+            .await
+            .unwrap();
+        store
+            .acknowledge_runtime_cleanup(&reclaim, &retired)
+            .await
+            .unwrap();
+
+        let invented = RuntimeCleanup {
+            session_id: record().session.id,
+            generation: candidate.generation.get(),
+            runtime_id: candidate.runtime_id,
+            token: "invented-current-cleanup".into(),
+            reason: RuntimeCleanupReason::RetiredAuthority,
+        };
+        assert!(matches!(
+            store.acknowledge_runtime_cleanup(&reclaim, &invented).await,
+            Err(StoreError::RuntimeCleanupChanged { .. })
+        ));
+        assert_eq!(
+            store
+                .runtime_authority(&record().session.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .runtime_id
+                .as_deref(),
+            Some("runtime-current")
+        );
+        assert!(matches!(
+            store.delete(&record().session.id).await,
+            Err(StoreError::SessionCleanupPending { .. })
+        ));
+        assert!(store.get(&record().session.id).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn conditional_teardown_compares_session_generation_and_legacy_absence() {
+        use layer3_adapter::{KernelAdapter, RuntimeHandle, RuntimeIdentity};
+
+        let adapter = FakeAdapter::default();
+        adapter
+            .running
+            .lock()
+            .await
+            .insert("runtime-reused".into(), Some("sesn_other".into()));
+        adapter.generations.lock().await.insert(
+            "runtime-reused".into(),
+            NonZeroU64::new(2).expect("non-zero fixture"),
+        );
+
+        let stale = RuntimeIdentity {
+            handle: RuntimeHandle("runtime-reused".into()),
+            session: "sesn_other".into(),
+            generation: NonZeroU64::new(1),
+        };
+        assert!(matches!(
+            adapter.terminate_if_identity(&stale).await,
+            Err(layer3_adapter::AdapterError::Rejected(_))
+        ));
+        assert!(adapter.running.lock().await.contains_key("runtime-reused"));
+        assert!(adapter.terminated.lock().await.is_empty());
+
+        let wrong_session = RuntimeIdentity {
+            handle: RuntimeHandle("runtime-reused".into()),
+            session: "sesn_reused_elsewhere".into(),
+            generation: NonZeroU64::new(2),
+        };
+        assert!(matches!(
+            adapter.terminate_if_identity(&wrong_session).await,
+            Err(layer3_adapter::AdapterError::Rejected(_))
+        ));
+        assert!(
+            adapter.running.lock().await.contains_key("runtime-reused"),
+            "a per-session generation match is not global identity proof"
+        );
+
+        let current = RuntimeIdentity {
+            handle: RuntimeHandle("runtime-reused".into()),
+            session: "sesn_other".into(),
+            generation: NonZeroU64::new(2),
+        };
+        adapter.terminate_if_identity(&current).await.unwrap();
+        assert!(!adapter.running.lock().await.contains_key("runtime-reused"));
+
+        adapter
+            .running
+            .lock()
+            .await
+            .insert("runtime-legacy".into(), Some("sesn_legacy".into()));
+        let recorded = RuntimeIdentity {
+            handle: RuntimeHandle("runtime-legacy".into()),
+            session: "sesn_legacy".into(),
+            generation: NonZeroU64::new(3),
+        };
+        assert!(matches!(
+            adapter.terminate_if_identity(&recorded).await,
+            Err(layer3_adapter::AdapterError::Rejected(_))
+        ));
+        assert!(adapter.running.lock().await.contains_key("runtime-legacy"));
+
+        let legacy = RuntimeIdentity {
+            handle: RuntimeHandle("runtime-legacy".into()),
+            session: "sesn_legacy".into(),
+            generation: None,
+        };
+        adapter.terminate_if_identity(&legacy).await.unwrap();
+        assert!(!adapter.running.lock().await.contains_key("runtime-legacy"));
     }
 }

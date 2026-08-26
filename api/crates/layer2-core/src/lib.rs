@@ -134,8 +134,9 @@ pub use capabilities::{servable_modes, Capability as SessionCapability, SessionC
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{ApprovalDecision, Usage};
 pub use coordination::{
-    RuntimeAuthority, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
-    SessionOperation,
+    RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
+    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionLease,
+    SessionLeaseRequest, SessionOperation,
 };
 pub use deployment_capacity::{DeploymentCapacity, Reserved};
 pub use directory::{
@@ -153,7 +154,8 @@ pub use error::CoreError;
 pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
 pub use ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
 pub use inventory::{
-    ProviderInventory, ProviderRuntimeGeneration, ProviderView, RuntimeEntry, RuntimeInventory,
+    ProviderInventory, ProviderRuntimeGeneration, ProviderView, RuntimeAuthorityComparison,
+    RuntimeEntry, RuntimeInventory,
 };
 pub use limits::SessionAllowance;
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};

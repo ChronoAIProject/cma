@@ -46,7 +46,6 @@ impl SessionService {
             // provision a second sandbox for one session.
             return Ok(record.session);
         }
-
         let settings = self.settings.for_provisioning().await;
         let limit_guard = self
             .refuse_at_session_limit(caller, settings.live_sessions)
@@ -60,10 +59,18 @@ impl SessionService {
                 CoreError::RuntimeUnavailable(format!("no runtime {}", record.session.kernel))
             })?;
 
+        let mut lease = self
+            .acquire_runtime_lease_at(
+                &record,
+                crate::coordination::SessionOperation::Provision,
+            )
+            .await
+            .map_err(store_failed)?;
+
         let mut starting = record.clone();
         starting.session.status = SessionStatus::Provisioning;
         starting.session.stop_reason = None;
-        self.persist_durably(
+        if let Err(error) = self.persist_durably(
             &mut starting,
             vec![Event {
                 session_id: id.clone(),
@@ -78,7 +85,22 @@ impl SessionService {
             }],
         )
         .await
-        .map_err(store_failed)?;
+        {
+            if let Some(held) = lease.as_ref() {
+                let _ = self.store.release_session_lease(held).await;
+            }
+            return Err(store_failed(error));
+        }
+        if let Some(held) = lease.as_mut() {
+            let boundary = crate::coordination::SessionBoundary::for_record(
+                &starting,
+                held.boundary.authority.generation,
+            );
+            if let Err(error) = self.store.advance_session_lease(held, &boundary).await {
+                let _ = self.store.release_session_lease(held).await;
+                return Err(store_failed(error));
+            }
+        }
         limit_guard.record_written(self.store.as_ref()).await;
 
         let geometry = starting.session.geometry;
@@ -100,13 +122,15 @@ impl SessionService {
         let spawned = session.clone();
         tokio::spawn(async move {
             service
-                .bring_up(
+                .bring_up_with_lease(
                     spawned,
-                    spec,
                     adapter,
+                    spec,
                     geometry,
                     None,
                     crate::provision_failure::Abandonment::Keep,
+                    lease,
+                    None,
                 )
                 .await;
         });
@@ -151,6 +175,31 @@ impl SessionService {
     }
 
     pub(crate) async fn readopt(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
+        let mut lease = self
+            .acquire_runtime_lease_at(
+                record,
+                crate::coordination::SessionOperation::Readopt,
+            )
+            .await
+            .map_err(store_failed)?;
+        let result = self.readopt_with_lease(record, &mut lease).await;
+        if let Some(held) = lease.take() {
+            if let Err(error) = self.store.release_session_lease(&held).await {
+                tracing::debug!(
+                    session_id = %record.session.id,
+                    %error,
+                    "readoption lease ended before explicit release"
+                );
+            }
+        }
+        result
+    }
+
+    async fn readopt_with_lease(
+        self: &Arc<Self>,
+        record: &SessionRecord,
+        lease: &mut Option<crate::coordination::SessionLease>,
+    ) -> Result<(), CoreError> {
         let id = record.session.id.clone();
         let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
             // Nothing to reclaim: the session never got a runtime, or its
@@ -204,6 +253,9 @@ impl SessionService {
             ))
         };
 
+        self.renew_runtime_lease(lease.as_ref())
+            .await
+            .map_err(store_failed)?;
         let terminal = match conversing {
             false => Some(
                 adapter
@@ -215,6 +267,9 @@ impl SessionService {
         };
         let conversation = match conversing {
             true => {
+                self.renew_runtime_lease(lease.as_ref())
+                    .await
+                    .map_err(store_failed)?;
                 // What the runtime calls the conversation already running in
                 // it, read from the record because this process was not here
                 // when it was opened. Rejoining is the whole point: without it
@@ -289,6 +344,9 @@ impl SessionService {
         // and termination, so neither can complete and then be locally undone
         // by this stale snapshot. The service-wide entries lock is never held
         // across the durable read or write.
+        self.renew_runtime_lease(lease.as_ref())
+            .await
+            .map_err(store_failed)?;
         let installation = self.lock_lifecycle(&id).await;
         if self.entries.read().await.contains_key(&id) {
             return Ok(());
@@ -305,6 +363,10 @@ impl SessionService {
         if !current.session.status.wants_runtime()
             || current.session.kernel != record.session.kernel
             || current.runtime_id.as_deref() != Some(handle.0.as_str())
+            || lease.as_ref().is_some_and(|held| {
+                current.session.status != held.boundary.status
+                    || current.runtime_id != held.boundary.authority.runtime_id
+            })
         {
             return Err(CoreError::RuntimeUnavailable(
                 "the session changed while its runtime was being reconnected".into(),
@@ -335,6 +397,16 @@ impl SessionService {
             )
             .await
             .map_err(store_failed)?;
+            if let Some(held) = lease.as_mut() {
+                let boundary = crate::coordination::SessionBoundary::for_record(
+                    &current,
+                    held.boundary.authority.generation,
+                );
+                self.store
+                    .advance_session_lease(held, &boundary)
+                    .await
+                    .map_err(store_failed)?;
+            }
         }
 
         let owner = current.session.owner.clone();

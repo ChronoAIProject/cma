@@ -27,20 +27,28 @@
 //! merely because this process has not heard of it.
 
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU64;
 use std::sync::Arc;
+use std::time::Duration;
 
-use layer3_adapter::RuntimeHandle;
+use layer3_adapter::{RuntimeHandle, RuntimeIdentity};
 
+use crate::coordination::{
+    RuntimeAuthority, RuntimeCleanup, RuntimeCleanupReason, SessionBoundary, SessionLease,
+    SessionLeaseRequest, SessionOperation,
+};
 use crate::event::{Event, EventKind};
 use crate::ids::KernelId;
 use crate::service::SessionService;
 use crate::session::{RecoveryState, RuntimeLossCause, SessionSpec, SessionStatus};
 use crate::store::{SessionRecord, StoreError};
 
+const RECLAIM_LEASE_TTL: Duration = Duration::from_secs(30);
+
 /// What a sweep did, for logging and for tests.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Reclaimed {
-    /// Runtimes torn down because no session was entitled to them.
+    /// Exact generation-tagged cleanup debts successfully torn down.
     pub orphaned_runtimes: usize,
     /// Live runtimes this process took back over.
     pub readopted_sessions: usize,
@@ -76,8 +84,8 @@ struct RuntimeCensus {
     /// `running` for nineteen minutes after the kernel had killed its
     /// container.
     ///
-    /// Reclaiming walks `owners` rather than this, so a stopped sandbox that
-    /// no session is entitled to is still found and deleted.
+    /// Cleanup debt is processed separately. Provider census rows remain
+    /// diagnostic input and never authorise handle-only deletion.
     serving: HashSet<String>,
     /// Provider-visible generation for every listed runtime.
     generations: HashMap<String, layer3_adapter::RuntimeGeneration>,
@@ -109,6 +117,10 @@ impl SessionService {
 
         let census = self.take_census().await;
 
+        for record in &records {
+            self.reclaim_cleanup_debts(record, &mut reclaimed).await;
+        }
+
         // Only these are entitled to a runtime. A stopped session is not — that
         // is what stopping means — so its sandbox is reclaimed below.
         let entitled: HashSet<String> = records
@@ -117,13 +129,10 @@ impl SessionService {
             .map(|r| r.session.id.0.clone())
             .collect();
 
-        for (kernel, view) in &census {
+        for view in census.values() {
             if !view.trusted {
                 continue;
             }
-            let Some(adapter) = self.adapters.get(kernel) else {
-                continue;
-            };
             for (runtime, session) in &view.owners {
                 if session.as_deref().is_some_and(|s| entitled.contains(s)) {
                     continue;
@@ -133,14 +142,8 @@ impl SessionService {
                     runtime = %runtime,
                     ?generation,
                     session = session.as_deref().unwrap_or("<none>"),
-                    "reclaiming a runtime no session is entitled to"
+                    "runtime is unaccounted but has no exact durable cleanup debt; deferring reclamation"
                 );
-                match adapter.terminate(&RuntimeHandle(runtime.clone())).await {
-                    Ok(()) => reclaimed.orphaned_runtimes += 1,
-                    Err(e) => {
-                        tracing::warn!(runtime = %runtime, error = %e, "could not reclaim runtime")
-                    }
-                }
             }
         }
 
@@ -233,6 +236,219 @@ impl SessionService {
         }
     }
 
+    /// Reclaim only runtimes a durable transaction named exactly.
+    ///
+    /// Census rows are diagnostic input, never deletion authority. A candidate
+    /// or retired runtime becomes deletable only after the store records its
+    /// handle and generation as debt, and a fresh exclusive lease proves the
+    /// session still has a different authority at the provider-mutation edge.
+    async fn reclaim_cleanup_debts(&self, observed: &SessionRecord, reclaimed: &mut Reclaimed) {
+        let debts = match self.store.runtime_cleanup_debts(&observed.session.id).await {
+            Ok(debts) => debts,
+            Err(StoreError::CoordinationDisabled) => return,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %observed.session.id,
+                    %error,
+                    "cannot read runtime cleanup debt; deferring reclamation"
+                );
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+        };
+        if debts.is_empty() {
+            return;
+        }
+        let legacy_cleanup_authorized = if debts.iter().any(|cleanup| cleanup.generation == 0) {
+            match self.store.legacy_runtime_cleanup_authorized().await {
+                Ok(authorized) => authorized,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %observed.session.id,
+                        %error,
+                        "cannot prove legacy writers are fenced; legacy cleanup debt will remain"
+                    );
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        let Some(adapter) = self.adapters.get(&observed.session.kernel) else {
+            tracing::warn!(
+                session_id = %observed.session.id,
+                kernel = %observed.session.kernel,
+                "cleanup debt names a runtime adapter this deployment does not have"
+            );
+            reclaimed.deferred_sessions += 1;
+            return;
+        };
+
+        let Some((record, lease)) = self.acquire_reclaim_lease(&observed.session.id).await else {
+            reclaimed.deferred_sessions += 1;
+            return;
+        };
+        if record.session.kernel != observed.session.kernel {
+            tracing::warn!(
+                session_id = %observed.session.id,
+                observed_kernel = %observed.session.kernel,
+                current_kernel = %record.session.kernel,
+                "session runtime adapter changed while cleanup was being claimed"
+            );
+            let _ = self.store.release_session_lease(&lease).await;
+            reclaimed.deferred_sessions += 1;
+            return;
+        }
+
+        // Retirement is the only durable copy of the old runtime id after an
+        // atomic authority clear. If this process died before recording the
+        // loss, recovery still needs that exact id for the RuntimeLost event.
+        // Leave this one debt in place until settlement below has recorded the
+        // loss; all other debts remain independently reclaimable here.
+        let retains_unrecorded_loss = record.session.status.wants_runtime()
+            && record.runtime_id.is_none()
+            && record.session.status != SessionStatus::Provisioning
+            && record.session.recovery_state != RecoveryState::Recovering;
+
+        for cleanup in debts {
+            if cleanup.session_id != lease.session_id {
+                tracing::error!(
+                    leased_session_id = %lease.session_id,
+                    cleanup_session_id = %cleanup.session_id,
+                    runtime = %cleanup.runtime_id,
+                    "store returned cleanup debt outside the leased session; refusing teardown"
+                );
+                continue;
+            }
+            if retains_unrecorded_loss
+                && cleanup.reason == RuntimeCleanupReason::RetiredAuthority
+                && cleanup.generation == lease.boundary.authority.generation
+            {
+                tracing::debug!(
+                    session_id = %cleanup.session_id,
+                    runtime = %cleanup.runtime_id,
+                    generation = cleanup.generation,
+                    "retaining retired runtime identity until its loss is recorded"
+                );
+                continue;
+            }
+            if cleanup.generation == 0 && !legacy_cleanup_authorized {
+                tracing::warn!(
+                    session_id = %cleanup.session_id,
+                    runtime = %cleanup.runtime_id,
+                    "legacy cleanup requires the monotonic old-writer-drain proof; debt remains"
+                );
+                continue;
+            }
+            if lease.boundary.authority.generation == cleanup.generation
+                && lease.boundary.authority.runtime_id.as_deref()
+                    == Some(cleanup.runtime_id.as_str())
+            {
+                tracing::error!(
+                    session_id = %cleanup.session_id,
+                    runtime = %cleanup.runtime_id,
+                    generation = cleanup.generation,
+                    "cleanup debt names current authority; refusing teardown"
+                );
+                continue;
+            }
+            if let Err(error) = self
+                .store
+                .renew_session_lease(&lease, RECLAIM_LEASE_TTL)
+                .await
+            {
+                tracing::warn!(
+                    session_id = %cleanup.session_id,
+                    %error,
+                    "cleanup lease was lost before provider mutation"
+                );
+                break;
+            }
+            let identity = RuntimeIdentity {
+                handle: RuntimeHandle(cleanup.runtime_id.clone()),
+                session: cleanup.session_id.0.clone(),
+                generation: NonZeroU64::new(cleanup.generation),
+            };
+            if let Err(error) = adapter.terminate_if_identity(&identity).await {
+                tracing::warn!(
+                    session_id = %cleanup.session_id,
+                    runtime = %cleanup.runtime_id,
+                    generation = cleanup.generation,
+                    %error,
+                    "conditional runtime cleanup was refused; debt remains retryable"
+                );
+                continue;
+            }
+            match self
+                .store
+                .acknowledge_runtime_cleanup(&lease, &cleanup)
+                .await
+            {
+                Ok(()) => reclaimed.orphaned_runtimes += 1,
+                Err(error) => tracing::warn!(
+                    session_id = %cleanup.session_id,
+                    runtime = %cleanup.runtime_id,
+                    %error,
+                    "runtime was removed but cleanup acknowledgement failed; retry remains safe"
+                ),
+            }
+        }
+        if let Err(error) = self.store.release_session_lease(&lease).await {
+            tracing::debug!(
+                session_id = %lease.session_id,
+                %error,
+                "cleanup lease ended before explicit release"
+            );
+        }
+    }
+
+    /// Read a fresh boundary and acquire its exact reclaim lease.
+    async fn acquire_reclaim_lease(
+        &self,
+        id: &crate::ids::SessionId,
+    ) -> Option<(SessionRecord, crate::coordination::SessionLease)> {
+        let record = match self.store.get(id).await {
+            Ok(Some(record)) => record,
+            Ok(None) | Err(StoreError::SessionDeleted { .. }) => return None,
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "cannot refresh session before cleanup");
+                return None;
+            }
+        };
+        let authority = match self.store.runtime_authority(id).await {
+            Ok(Some(authority)) => authority,
+            Ok(None) | Err(StoreError::CoordinationDisabled) => return None,
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "cannot refresh runtime authority before cleanup");
+                return None;
+            }
+        };
+        let request = SessionLeaseRequest::new(
+            id.clone(),
+            self.coordination_holder.clone(),
+            SessionBoundary {
+                status: record.session.status,
+                authority,
+            },
+            SessionOperation::Reclaim,
+            RECLAIM_LEASE_TTL,
+        );
+        match self.store.acquire_session_lease(&request).await {
+            Ok(lease) => Some((record, lease)),
+            Err(
+                StoreError::SessionLeaseHeld { .. }
+                | StoreError::SessionAuthorityChanged { .. }
+                | StoreError::SessionLeaseLost { .. }
+                | StoreError::SessionDeleted { .. }
+                | StoreError::CoordinationDisabled,
+            ) => None,
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "cannot acquire runtime cleanup lease");
+                None
+            }
+        }
+    }
+
     /// Give one session whatever it is missing.
     async fn settle_session(
         self: &Arc<Self>,
@@ -247,6 +463,42 @@ impl SessionService {
         if self.starting.read().await.contains(&id) {
             return;
         }
+
+        // The compatibility reconciler below can record loss, rotate, readopt,
+        // and provision. Every one of those paths mutates provider or runtime
+        // ownership without carrying a durable lease. Once a non-zero authority
+        // exists, entering any of them would either bypass that authority or
+        // leave the session record disagreeing with it. Coordinated settlement
+        // is therefore one indivisible rollout boundary: until its lease-aware
+        // implementation is installed, cleanup debt may be reclaimed above but
+        // the current authority is otherwise left exactly as it is.
+        let coordinated_authority = match self.store.runtime_authority(&id).await {
+            Ok(Some(authority)) if authority.generation != 0 => {
+                if authority.runtime_id != record.runtime_id {
+                    tracing::error!(
+                        session_id = %id,
+                        record_runtime = ?record.runtime_id,
+                        authority_runtime = ?authority.runtime_id,
+                        generation = authority.generation,
+                        "session record disagrees with coordinated runtime authority"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+                Some(authority)
+            }
+            Ok(Some(_)) | Err(StoreError::CoordinationDisabled) => None,
+            Ok(None) | Err(StoreError::SessionDeleted { .. }) => return,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "cannot read runtime authority before reconciliation"
+                );
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+        };
 
         // Three answers, not two. "The provider says it is gone" and "the
         // provider could not be asked" are different facts, and collapsing them
@@ -268,6 +520,52 @@ impl SessionService {
                 return;
             }
         };
+
+        // Every path in this branch carries the current durable authority:
+        // confirmed loss retires it before replacement, rotation retains it
+        // until a usable candidate can switch atomically, and readoption holds
+        // it while rebuilding this process's attachment.
+        if let Some(authority) = coordinated_authority {
+            if record.runtime_id.is_none() {
+                self.resume_coordinated_runtime(record, authority, census, reclaimed)
+                    .await;
+                return;
+            }
+            if alive == Some(false) {
+                if let Some(runtime) = record.runtime_id.clone() {
+                    let cause = census
+                        .get(&record.session.kernel)
+                        .and_then(|view| view.stopped_because.get(&runtime))
+                        .copied()
+                        .map(RuntimeLossCause::from);
+                    self.recover_coordinated_runtime(record, runtime, cause, reclaimed)
+                        .await;
+                }
+                return;
+            }
+            if alive != Some(false)
+                && self.needs_rotation(&record)
+                && self.rotate(record.clone()).await
+            {
+                reclaimed.rotated_sessions += 1;
+                return;
+            }
+            if self.entries.read().await.contains_key(&id) {
+                return;
+            }
+            match self.readopt(&record).await {
+                Ok(()) => reclaimed.readopted_sessions += 1,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "coordinated runtime readoption failed; authority remains unchanged"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                }
+            }
+            return;
+        }
 
         /*
          * The moment the loss is established, and the only place it is.
@@ -421,6 +719,437 @@ impl SessionService {
         }
 
         self.reprovision(record, reclaimed).await;
+    }
+
+    /// Retire a runtime positively confirmed lost and start its replacement.
+    ///
+    /// The store clears authority and creates exact cleanup debt atomically.
+    /// Input remains write-fenced until the loss is durable and the stale live
+    /// entry is gone, so no operation accepted for the former runtime can cross
+    /// the retirement boundary.
+    async fn recover_coordinated_runtime(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        runtime: String,
+        cause: Option<RuntimeLossCause>,
+        reclaimed: &mut Reclaimed,
+    ) {
+        let id = record.session.id.clone();
+        let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
+            tracing::warn!(
+                session_id = %id,
+                kernel = %record.session.kernel,
+                "cannot recover a lost runtime without its adapter"
+            );
+            reclaimed.deferred_sessions += 1;
+            return;
+        };
+        if !self.begin_start(&id).await {
+            return;
+        }
+
+        let mut lease = match self
+            .acquire_runtime_lease_at(&record, SessionOperation::Recover)
+            .await
+        {
+            Ok(Some(lease)) => lease,
+            Ok(None) => {
+                tracing::error!(
+                    session_id = %id,
+                    "coordinated loss recovery unexpectedly received no durable lease"
+                );
+                self.finish_start(&id).await;
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "cannot acquire authority to recover the lost runtime"
+                );
+                self.finish_start(&id).await;
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+        };
+
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+        let retired = match self.retire_current_runtime(&mut lease).await {
+            Ok(retired) => retired,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    runtime = %runtime,
+                    %error,
+                    "cannot retire the lost runtime authority"
+                );
+                drop(input_fence);
+                self.finish_failed_coordinated_recovery(&id, &lease, false, reclaimed)
+                    .await;
+                return;
+            }
+        };
+        if retired.cleanup.runtime_id != runtime {
+            tracing::error!(
+                session_id = %id,
+                observed_runtime = %runtime,
+                retired_runtime = %retired.cleanup.runtime_id,
+                "retired authority does not match the runtime confirmed lost"
+            );
+            drop(input_fence);
+            self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                .await;
+            return;
+        }
+
+        let mut recovering = match self.store.get(&id).await {
+            Ok(Some(current))
+                if current.runtime_id.is_none()
+                    && current.session.status == lease.boundary.status
+                    && current.session.kernel == record.session.kernel =>
+            {
+                current
+            }
+            Ok(Some(_)) => {
+                tracing::error!(
+                    session_id = %id,
+                    "session changed after its lost runtime authority was retired"
+                );
+                drop(input_fence);
+                self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                    .await;
+                return;
+            }
+            Ok(None) | Err(StoreError::SessionDeleted { .. }) => {
+                tracing::warn!(session_id = %id, "session disappeared during runtime recovery");
+                drop(input_fence);
+                self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                    .await;
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "cannot reload the session after retiring its lost runtime"
+                );
+                drop(input_fence);
+                self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                    .await;
+                return;
+            }
+        };
+        if let Err(error) = self
+            .record_runtime_lost(&mut recovering, &runtime, cause)
+            .await
+        {
+            tracing::error!(
+                session_id = %id,
+                runtime = %runtime,
+                %error,
+                "lost authority was retired but its loss could not be recorded"
+            );
+            drop(input_fence);
+            self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                .await;
+            return;
+        }
+        reclaimed.lost_runtimes += 1;
+        self.entries.write().await.remove(&id);
+        drop(input_fence);
+
+        self.launch_coordinated_replacement(
+            recovering,
+            adapter,
+            lease,
+            Some(retired.cleanup),
+            reclaimed,
+        )
+        .await;
+    }
+
+    /// Continue recovery after a process died with authority already absent.
+    ///
+    /// `Provisioning` or `Recovering` proves the loss/revive transition was
+    /// already recorded. Otherwise the current-generation retired cleanup debt
+    /// supplies the exact former runtime id needed to finish the loss event.
+    async fn resume_coordinated_runtime(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        authority: RuntimeAuthority,
+        census: &HashMap<KernelId, RuntimeCensus>,
+        reclaimed: &mut Reclaimed,
+    ) {
+        let id = record.session.id.clone();
+        if record.session.status == SessionStatus::Rotating {
+            tracing::warn!(
+                session_id = %id,
+                generation = authority.generation,
+                "cannot resume a handover whose former authority is already absent"
+            );
+            reclaimed.deferred_sessions += 1;
+            return;
+        }
+        let Some(adapter) = self.adapters.get(&record.session.kernel).cloned() else {
+            tracing::warn!(
+                session_id = %id,
+                kernel = %record.session.kernel,
+                "cannot resume runtime recovery without its adapter"
+            );
+            reclaimed.deferred_sessions += 1;
+            return;
+        };
+        if !self.begin_start(&id).await {
+            return;
+        }
+
+        let needs_loss = record.session.status != SessionStatus::Provisioning
+            && record.session.recovery_state != RecoveryState::Recovering;
+        let lost_cleanup = if needs_loss {
+            let debts = match self.store.runtime_cleanup_debts(&id).await {
+                Ok(debts) => debts,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "cannot recover the retired runtime identity"
+                    );
+                    self.finish_start(&id).await;
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            let mut matching = debts.into_iter().filter(|cleanup| {
+                cleanup.reason == RuntimeCleanupReason::RetiredAuthority
+                    && cleanup.generation == authority.generation
+            });
+            let cleanup = matching.next();
+            if cleanup.is_none() || matching.next().is_some() {
+                tracing::error!(
+                    session_id = %id,
+                    generation = authority.generation,
+                    "no unique retired runtime identity remains for the unrecorded loss"
+                );
+                self.finish_start(&id).await;
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+            cleanup
+        } else {
+            None
+        };
+
+        let lease = match self
+            .acquire_runtime_lease_at(&record, SessionOperation::Recover)
+            .await
+        {
+            Ok(Some(lease)) => lease,
+            Ok(None) => {
+                tracing::error!(
+                    session_id = %id,
+                    "coordinated recovery resume unexpectedly received no durable lease"
+                );
+                self.finish_start(&id).await;
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "cannot reacquire the interrupted recovery boundary"
+                );
+                self.finish_start(&id).await;
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+        };
+
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+        if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
+            tracing::warn!(session_id = %id, %error, "interrupted recovery lease could not be renewed");
+            drop(input_fence);
+            self.finish_failed_coordinated_recovery(&id, &lease, false, reclaimed)
+                .await;
+            return;
+        }
+        let mut current = match self.store.get(&id).await {
+            Ok(Some(current))
+                if current.runtime_id.is_none()
+                    && SessionBoundary::for_record(&current, authority.generation)
+                        == lease.boundary =>
+            {
+                current
+            }
+            Ok(Some(_)) => {
+                tracing::debug!(session_id = %id, "interrupted recovery boundary changed");
+                drop(input_fence);
+                self.finish_failed_coordinated_recovery(&id, &lease, false, reclaimed)
+                    .await;
+                return;
+            }
+            Ok(None) | Err(StoreError::SessionDeleted { .. }) => {
+                tracing::warn!(session_id = %id, "session disappeared during recovery resume");
+                drop(input_fence);
+                self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                    .await;
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "cannot reload interrupted recovery");
+                drop(input_fence);
+                self.finish_failed_coordinated_recovery(&id, &lease, false, reclaimed)
+                    .await;
+                return;
+            }
+        };
+
+        if let Some(cleanup) = lost_cleanup.as_ref() {
+            let cause = census
+                .get(&current.session.kernel)
+                .and_then(|view| view.stopped_because.get(&cleanup.runtime_id))
+                .copied()
+                .map(RuntimeLossCause::from);
+            if let Err(error) = self
+                .record_runtime_lost(&mut current, &cleanup.runtime_id, cause)
+                .await
+            {
+                tracing::error!(
+                    session_id = %id,
+                    runtime = %cleanup.runtime_id,
+                    %error,
+                    "cannot finish recording the interrupted runtime loss"
+                );
+                drop(input_fence);
+                self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                    .await;
+                return;
+            }
+            reclaimed.lost_runtimes += 1;
+        }
+        self.entries.write().await.remove(&id);
+        drop(input_fence);
+
+        self.launch_coordinated_replacement(current, adapter, lease, lost_cleanup, reclaimed)
+            .await;
+    }
+
+    /// Move a held no-runtime recovery boundary into provisioning and detach it.
+    async fn launch_coordinated_replacement(
+        self: &Arc<Self>,
+        mut starting: SessionRecord,
+        adapter: Arc<dyn layer3_adapter::KernelAdapter>,
+        mut lease: SessionLease,
+        cleanup: Option<RuntimeCleanup>,
+        reclaimed: &mut Reclaimed,
+    ) {
+        let id = starting.session.id.clone();
+        if starting.runtime_id.is_some() {
+            tracing::error!(session_id = %id, "replacement launch still names a runtime");
+            self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                .await;
+            return;
+        }
+        if starting.session.status != SessionStatus::Provisioning
+            || starting.session.stop_reason.is_some()
+        {
+            starting.session.status = SessionStatus::Provisioning;
+            starting.session.stop_reason = None;
+            if let Err(error) = self.persist_durably(&mut starting, Vec::new()).await {
+                tracing::error!(
+                    session_id = %id,
+                    %error,
+                    "cannot record coordinated replacement provisioning"
+                );
+                self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                    .await;
+                return;
+            }
+        }
+
+        let boundary = SessionBoundary::for_record(&starting, lease.boundary.authority.generation);
+        if boundary != lease.boundary {
+            if let Err(error) = self
+                .store
+                .advance_session_lease(&mut lease, &boundary)
+                .await
+            {
+                tracing::error!(
+                    session_id = %id,
+                    %error,
+                    "cannot advance the coordinated recovery lease to provisioning"
+                );
+                self.finish_failed_coordinated_recovery(&id, &lease, true, reclaimed)
+                    .await;
+                return;
+            }
+        }
+
+        if let Some(cleanup) = cleanup.as_ref() {
+            if let Err(error) = self
+                .reclaim_runtime_with_lease(&adapter, &lease, cleanup)
+                .await
+            {
+                tracing::warn!(
+                    session_id = %id,
+                    runtime = %cleanup.runtime_id,
+                    %error,
+                    "lost runtime cleanup remains durable while replacement continues"
+                );
+            }
+        }
+
+        let geometry = starting.session.geometry;
+        let spec = SessionSpec {
+            geometry: Some(geometry),
+            options: starting.session.options.clone(),
+            environment_profile: starting.session.environment_profile.clone(),
+            caller_credential: None,
+            runtime_credential: None,
+            requested_mode: None,
+            quoted_rate_card: None,
+        };
+        tracing::warn!(session_id = %id, "starting a coordinated replacement runtime");
+        let service = Arc::clone(self);
+        let session = starting.session;
+        tokio::spawn(async move {
+            service
+                .bring_up_with_lease(
+                    session,
+                    adapter,
+                    spec,
+                    geometry,
+                    None,
+                    crate::provision_failure::Abandonment::Keep,
+                    Some(lease),
+                    None,
+                )
+                .await;
+        });
+        reclaimed.reprovisioned_sessions += 1;
+    }
+
+    /// Release every local and durable claim after recovery cannot continue.
+    async fn finish_failed_coordinated_recovery(
+        &self,
+        id: &crate::ids::SessionId,
+        lease: &SessionLease,
+        discard_entry: bool,
+        reclaimed: &mut Reclaimed,
+    ) {
+        if discard_entry {
+            self.entries.write().await.remove(id);
+        }
+        if let Err(error) = self.store.release_session_lease(lease).await {
+            tracing::debug!(
+                session_id = %id,
+                %error,
+                "recovery lease ended before explicit release"
+            );
+        }
+        self.finish_start(id).await;
+        reclaimed.deferred_sessions += 1;
     }
 
     /// Record that a session's runtime is gone, and stop naming it.
