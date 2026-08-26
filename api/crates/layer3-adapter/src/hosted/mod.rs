@@ -798,6 +798,7 @@ impl HostedKernel {
     }
 
     /// The link to a runtime, if one is open.
+    #[cfg(test)]
     pub(crate) async fn link_to(&self, handle: &str) -> Option<mpsc::Sender<TerminalInput>> {
         self.links.lock().await.get(handle).cloned()
     }
