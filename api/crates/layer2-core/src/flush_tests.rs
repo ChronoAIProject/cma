@@ -676,15 +676,20 @@ async fn public_cursor_waits_for_a_lower_runtime_event_racing_send_prompt() {
             .await
     });
     tokio::time::timeout(Duration::from_secs(2), async {
-        // One running folder event, its record barrier, three prompt events,
-        // and the prompt's barrier must all be present before the read. A lower
-        // threshold could pass before `send_prompt` had enqueued any history.
-        while lane.queued() < 6 {
+        // The running folder event is held inside the store. Its record barrier
+        // and the prompt's atomic three-event unit must both be queued before
+        // the read; a lower threshold could pass before `send_prompt` had
+        // enqueued any history.
+        while lane.queued() < 2 {
             tokio::task::yield_now().await;
         }
     })
     .await
     .expect("prompt commits queue behind the held runtime update");
+    assert!(
+        !prompt.is_finished(),
+        "prompt admission waits for its atomic event unit to commit"
+    );
 
     assert!(
         service
