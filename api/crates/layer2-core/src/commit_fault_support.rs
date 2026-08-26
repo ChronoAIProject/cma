@@ -13,7 +13,7 @@ use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreErr
 use crate::test_support::FakeStore;
 use crate::{
     ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, Reserved, SessionLease,
+    ConversationWriteAuthority, Reserved,
 };
 
 /// Wraps the canonical fake and faults only commits selected by `matches`.

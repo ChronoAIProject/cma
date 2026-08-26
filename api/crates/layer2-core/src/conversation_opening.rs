@@ -237,12 +237,14 @@ impl ConversationOpeningClaim {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn authority(&self) -> &ConversationOpeningLease {
         self.authority
             .as_ref()
             .expect("an acquired conversation claim owns its authority until transfer")
     }
 
+    #[cfg(test)]
     pub(crate) async fn revoke(mut self) {
         self.authority.take();
         self.cleanup_disarm.take();
