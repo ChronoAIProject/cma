@@ -521,7 +521,7 @@ async fn a_request_arriving_between_history_read_and_install_is_answerable() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_resolution_committed_after_the_first_history_read_is_not_resurrected() {
+async fn readoption_fences_resolution_until_the_replacement_is_live() {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter {
         capabilities: conversing(),
@@ -556,9 +556,25 @@ async fn a_resolution_committed_after_the_first_history_read_is_not_resurrected(
         .expect("the replacement reaches its network open")
         .forget();
 
-    // The original process commits the answer after the replacement's first
-    // snapshot, while replacement attachment is deliberately paused.
-    first
+    // Once readoption owns durable runtime authority, the old process cannot
+    // mutate the conversation snapshot it is replacing.
+    let blocked = first
+        .resolve_approval(
+            &alice,
+            &created.id,
+            "resolved-during-readoption".into(),
+            ApprovalDecision::Deny,
+        )
+        .await;
+    assert!(
+        matches!(blocked, Err(CoreError::RuntimeUnavailable(_))),
+        "readoption must fence the outgoing process, got {blocked:?}"
+    );
+    adapter.continue_conversation_open.add_permits(1);
+
+    let recovered = reconciling.await.expect("reconciliation finishes");
+    assert_eq!(recovered.readopted_sessions, 1);
+    replacement
         .resolve_approval(
             &alice,
             &created.id,
@@ -566,19 +582,15 @@ async fn a_resolution_committed_after_the_first_history_read_is_not_resurrected(
             ApprovalDecision::Deny,
         )
         .await
-        .expect("the original process records the resolution");
+        .expect("the replacement records the resolution");
     assert!(
-        until_logged(&first, &alice, &created.id, |kind| matches!(
+        until_logged(&replacement, &alice, &created.id, |kind| matches!(
             kind,
             EventKind::ApprovalResolved { request_id, .. }
                 if request_id == "resolved-during-readoption"
         ))
         .await
     );
-    adapter.continue_conversation_open.add_permits(1);
-
-    let recovered = reconciling.await.expect("reconciliation finishes");
-    assert_eq!(recovered.readopted_sessions, 1);
     assert_eq!(
         replacement
             .resolve_approval(
@@ -589,7 +601,7 @@ async fn a_resolution_committed_after_the_first_history_read_is_not_resurrected(
             )
             .await,
         Err(CoreError::InvalidState),
-        "the final installation snapshot must include the intervening resolution"
+        "the replacement keeps its recorded resolution final"
     );
     drop(keep_original_updates_open);
 }
