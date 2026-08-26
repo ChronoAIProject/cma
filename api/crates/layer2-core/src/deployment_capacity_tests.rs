@@ -477,7 +477,7 @@ async fn sized_records_are_checked_even_when_no_unsized_assumption_exists() {
 }
 
 #[tokio::test]
-async fn reserved_capacity_counts_only_the_four_runtime_wanting_states() {
+async fn reserved_capacity_includes_approval_waits_but_not_stopped_idle_sessions() {
     let store = Arc::new(FakeStore::default());
     assert_eq!(
         store.reserved_capacity().await.unwrap(),
@@ -495,13 +495,22 @@ async fn reserved_capacity_counts_only_the_four_runtime_wanting_states() {
 
     let mut records = store.sessions.lock().await;
     records.clear();
-    for (index, (status, session_size)) in [
-        (SessionStatus::Provisioning, Some(size(100, 200))),
-        (SessionStatus::Ready, None),
-        (SessionStatus::Running, Some(size(300, 400))),
-        (SessionStatus::Rotating, None),
-        (SessionStatus::Idle, Some(size(500, 600))),
-        (SessionStatus::Terminated, Some(size(700, 800))),
+    for (index, (status, stop_reason, session_size)) in [
+        (SessionStatus::Provisioning, None, Some(size(100, 200))),
+        (SessionStatus::Ready, None, None),
+        (SessionStatus::Running, None, Some(size(300, 400))),
+        (SessionStatus::Rotating, None, None),
+        (SessionStatus::Idle, None, Some(size(500, 600))),
+        (
+            SessionStatus::Idle,
+            Some(crate::session::StopReason::RequiresAction),
+            Some(size(700, 800)),
+        ),
+        (
+            SessionStatus::Terminated,
+            Some(crate::session::StopReason::UserTerminated),
+            Some(size(900, 1_000)),
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -509,6 +518,7 @@ async fn reserved_capacity_counts_only_the_four_runtime_wanting_states() {
         let mut record = template.clone();
         record.session.id = SessionId(format!("sesn_capacity_{index}"));
         record.session.status = status;
+        record.session.stop_reason = stop_reason;
         record.session.options.size = session_size;
         records.insert(record.session.id.0.clone(), record);
     }
@@ -517,10 +527,10 @@ async fn reserved_capacity_counts_only_the_four_runtime_wanting_states() {
     assert_eq!(
         store.reserved_capacity().await.unwrap(),
         Reserved {
-            sessions: 4,
+            sessions: 5,
             unsized_sessions: 2,
-            cpu_millis: 400,
-            memory_mib: 600,
+            cpu_millis: 1_100,
+            memory_mib: 1_400,
         }
     );
 }

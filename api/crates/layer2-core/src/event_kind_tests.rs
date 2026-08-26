@@ -112,6 +112,7 @@ fn one_of_every_kind() -> Vec<EventKind> {
             request_id: "r-1".into(),
             action: Some("run a command".into()),
             detail: None,
+            locator: None,
         },
         EventKind::ApprovalResolved {
             request_id: "r-1".into(),
