@@ -58,6 +58,8 @@ mod adapter_support;
 #[cfg(test)]
 mod commit_fault_support;
 #[cfg(test)]
+mod conversation_readiness_tests;
+#[cfg(test)]
 mod conversation_support;
 #[cfg(test)]
 mod environment_support;
@@ -131,7 +133,7 @@ pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
-pub use conversation::{ApprovalDecision, Usage};
+pub use conversation::{ApprovalDecision, ConversationReadinessError, Usage};
 pub use deployment_capacity::{DeploymentCapacity, Reserved};
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
