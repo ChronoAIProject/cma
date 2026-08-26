@@ -209,7 +209,7 @@ impl SessionStore for MemorySessions {
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
         let mut reserved = Reserved::default();
         for record in self.state.lock().await.records.values() {
-            if record.session.status.wants_runtime() {
+            if record.session.wants_runtime() {
                 reserved.include(record.session.options.size);
             }
         }
