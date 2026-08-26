@@ -30,6 +30,13 @@ use crate::{InterfaceProfile, Operation};
 
 mod attach;
 
+#[cfg(feature = "test-support")]
+mod test_support;
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use test_support::{DisconnectGate, OperationGate, OutboundGate};
+
 use attach::serve;
 
 /// Conformance classes this interface satisfies.
@@ -391,6 +398,7 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::InvalidRequest(_) => "invalid_request",
         CoreError::AlreadyAttached => "already_attached",
         CoreError::SessionTerminated => "session_terminated",
+        CoreError::SessionRotating => "session_rotating",
         CoreError::InvalidGeometry(_) => "invalid_geometry",
         // This interface attaches to an existing session and never authors a
         // platform policy. Keep the impossible variant explicit so the next

@@ -139,8 +139,12 @@ impl SessionService {
 
         // A live session's screen is ahead of anything stored, since capture
         // runs on a sweep rather than on every byte.
-        if let Some(entry) = self.entries.read().await.get(id) {
-            return Ok(entry.screen.lock().await.repaint_bytes());
+        let live_screen = {
+            let entries = self.entries.read().await;
+            entries.get(id).map(|entry| entry.screen.clone())
+        };
+        if let Some(screen) = live_screen {
+            return Ok(screen.lock().await.repaint_bytes());
         }
         Ok(self
             .stored_transcript(record.context_ref.as_deref())

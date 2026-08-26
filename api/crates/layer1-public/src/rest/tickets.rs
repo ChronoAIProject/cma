@@ -63,10 +63,10 @@ pub(super) async fn terminal_ticket(
     OptionalJson(body): OptionalJson<TicketRequest>,
 ) -> Result<Json<TicketView>, RequestFailure> {
     let id = SessionId(id);
-    // Reading the session is what establishes that this caller may have it at
-    // all; a subject who cannot see a session is told it does not exist, and
-    // gets no ticket for it either.
-    let session = service.get_session(&caller, &id).await?;
+    // Attachment lifecycle is decided before the plane-specific grant. This
+    // keeps a stale outgoing grant from masking rotation or termination, and
+    // prevents issuing a ticket the core would immediately refuse on redemption.
+    let session = service.session_for_interaction(&caller, &id).await?;
     if !session.capabilities.terminal {
         return Err(CoreError::CapabilityUnsupported("terminal".into()).into());
     }

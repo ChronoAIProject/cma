@@ -104,9 +104,6 @@ pub(super) async fn prepare(
     action: RunAction,
 ) -> Result<StreamPlan, RunFailure> {
     let id = session.id;
-    let status = session.status;
-    let capabilities = session.capabilities;
-    let deferred = action.is_prompt() && status == SessionStatus::Provisioning;
     let reservation = match explicit_run_id {
         Some(key) => Some(
             admission::reserve::<RunAdmissionOutcome>(
@@ -131,6 +128,25 @@ pub(super) async fn prepare(
                 None => None,
                 Some(Reservation::Complete(_)) => unreachable!("handled above"),
             };
+            let session = match service.session_for_interaction(&caller, &id).await {
+                Ok(session) => session,
+                Err(error) => {
+                    return plan_from_report(
+                        complete_refusal(core_problem(error).await, false, claim).await,
+                    )
+                }
+            };
+            if let Err(error) = session
+                .capabilities
+                .require(SessionCapability::Conversation)
+            {
+                return plan_from_report(
+                    complete_refusal(core_problem(error).await, false, claim).await,
+                );
+            }
+            let status = session.status;
+            let capabilities = session.capabilities;
+            let deferred = action.is_prompt() && status == SessionStatus::Provisioning;
             if action.is_prompt() && status == SessionStatus::Running {
                 if let Err(error) = capabilities.require(SessionCapability::Steer) {
                     let problem = core_problem(error).await;

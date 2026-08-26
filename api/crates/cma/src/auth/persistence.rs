@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::SystemTime;
 
 use layer2_core::store::StoreError;
-use layer2_core::{Authorization, SessionId, SubjectId};
+use layer2_core::{Authorization, CredentialDeliveryTarget, SessionId, SubjectId};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
 use tokio::sync::Mutex;
@@ -212,7 +212,7 @@ pub struct DurableCredential {
     pub owner: SubjectId,
     /// Absolute issue time.
     pub issued_at: SystemTime,
-    /// Provider-enforced expiry, once #524 supplies one.
+    /// Exact provider expiry requested when this credential was minted.
     pub expires_at: Option<SystemTime>,
     /// Hash of the frozen service grant this key represents.
     pub scope_fingerprint: String,
@@ -230,6 +230,17 @@ pub struct CredentialReissueCursor {
     /// Mutation sequence that freezes this record version into one sweep epoch.
     pub sweep_sequence: u64,
     /// Tie-breaker for sessions sharing the same issue time.
+    pub session: SessionId,
+}
+
+/// Stable position in the expiry-ordered current-credential work set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialExpiryCursor {
+    /// Provider expiry that makes this credential due for replacement.
+    pub expires_at: SystemTime,
+    /// Mutation sequence that freezes this record version into one sweep epoch.
+    pub sweep_sequence: u64,
+    /// Tie-breaker for sessions sharing the same expiry.
     pub session: SessionId,
 }
 
@@ -336,6 +347,11 @@ pub struct SessionCredentialState {
     pub current: Option<DurableCredential>,
     /// Replacement minted but not yet confirmed delivered.
     pub pending: Option<DurableCredential>,
+    /// Exact runtime generation selected for the pending delivery attempt.
+    ///
+    /// `None` means the pending value has not yet left durable custody, or that
+    /// this record predates target binding and the next attempt must bind it.
+    pub pending_target: Option<CredentialDeliveryTarget>,
     /// Keys that must be revoked and retried until settled.
     pub revoke_debt: Vec<RevokeDebt>,
     /// Durable mint intent and generation fence.
@@ -345,12 +361,32 @@ pub struct SessionCredentialState {
 }
 
 impl SessionCredentialState {
+    /// Reject impossible target state before it crosses any store boundary.
+    pub(crate) fn validate(&self) -> Result<(), StoreError> {
+        if self.pending.is_none() && self.pending_target.is_some() {
+            return Err(StoreError::Malformed(
+                "credential delivery target exists without a pending credential".into(),
+            ));
+        }
+        if self
+            .pending_target
+            .as_ref()
+            .is_some_and(|target| target.runtime_id.is_empty())
+        {
+            return Err(StoreError::Malformed(
+                "credential delivery target runtime id must not be empty".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Whether this terminal fence has no credential work left to protect.
     pub(crate) fn is_settled_retired(&self) -> bool {
         self.retired
             && self.request_bound_credential.is_none()
             && self.current.is_none()
             && self.pending.is_none()
+            && self.pending_target.is_none()
             && self.revoke_debt.is_empty()
             && self.lease.is_none()
     }
@@ -464,6 +500,15 @@ pub trait AuthStore: Send + Sync {
         through_sequence: u64,
         limit: usize,
     ) -> Result<Vec<AuthSweepItem<CredentialReissueCursor, SessionCredentialState>>, StoreError>;
+
+    /// Active current credentials whose provider expiry requires early replacement.
+    async fn current_credentials_expiring_before(
+        &self,
+        expires_before: SystemTime,
+        after: Option<&CredentialExpiryCursor>,
+        through_sequence: u64,
+        limit: usize,
+    ) -> Result<Vec<AuthSweepItem<CredentialExpiryCursor, SessionCredentialState>>, StoreError>;
 
     /// Active pending credentials awaiting delivery, in stable-ID order.
     async fn pending_credentials_due_for_reissue(
@@ -665,6 +710,17 @@ fn credential_reissue_cursor_cmp(
 ) -> std::cmp::Ordering {
     left.issued_at
         .cmp(&right.issued_at)
+        .then_with(|| left.sweep_sequence.cmp(&right.sweep_sequence))
+        .then_with(|| left.session.as_str().cmp(right.session.as_str()))
+}
+
+#[cfg(test)]
+fn credential_expiry_cursor_cmp(
+    left: &CredentialExpiryCursor,
+    right: &CredentialExpiryCursor,
+) -> std::cmp::Ordering {
+    left.expires_at
+        .cmp(&right.expires_at)
         .then_with(|| left.sweep_sequence.cmp(&right.sweep_sequence))
         .then_with(|| left.session.as_str().cmp(right.session.as_str()))
 }
@@ -1021,6 +1077,7 @@ impl AuthStore for MemoryAuthStore {
 
     async fn insert_credential(&self, state: SessionCredentialState) -> Result<bool, StoreError> {
         self.available()?;
+        state.validate()?;
         if state.generation != 0 {
             return Err(StoreError::Malformed(
                 "new credential state must start at generation zero".into(),
@@ -1045,6 +1102,7 @@ impl AuthStore for MemoryAuthStore {
         state: SessionCredentialState,
     ) -> Result<bool, StoreError> {
         self.available()?;
+        state.validate()?;
         let call = self.credential_replace_calls.fetch_add(1, Ordering::SeqCst) + 1;
         if self.fail_credential_replace_call.load(Ordering::SeqCst) == call {
             return Err(StoreError::Unavailable(
@@ -1119,6 +1177,53 @@ impl AuthStore for MemoryAuthStore {
             })
             .collect();
         page.sort_by(|left, right| credential_reissue_cursor_cmp(&left.cursor, &right.cursor));
+        page.truncate(limit);
+        Ok(page)
+    }
+
+    async fn current_credentials_expiring_before(
+        &self,
+        expires_before: SystemTime,
+        after: Option<&CredentialExpiryCursor>,
+        through_sequence: u64,
+        limit: usize,
+    ) -> Result<Vec<AuthSweepItem<CredentialExpiryCursor, SessionCredentialState>>, StoreError>
+    {
+        self.scan_available()?;
+        let failed = self.failed_credential_read.lock().await.clone();
+        let credentials = self.credentials.lock().await;
+        let sequences = self.credential_sweep_sequences.lock().await;
+        let mut page: Vec<_> = credentials
+            .values()
+            .filter_map(|state| {
+                let sequence = *sequences.get(&state.session)?;
+                let current = state.current.as_ref()?;
+                let expires_at = current.expires_at?;
+                let cursor = CredentialExpiryCursor {
+                    expires_at,
+                    sweep_sequence: sequence,
+                    session: state.session.clone(),
+                };
+                (!state.retired
+                    && state.lease.is_none()
+                    && state.pending.is_none()
+                    && expires_at <= expires_before
+                    && sequence <= through_sequence
+                    && after
+                        .is_none_or(|after| credential_expiry_cursor_cmp(&cursor, after).is_gt()))
+                .then(|| AuthSweepItem {
+                    cursor,
+                    state: if failed.as_ref() == Some(&state.session) {
+                        Err(StoreError::Unavailable(
+                            "injected credential read failure".into(),
+                        ))
+                    } else {
+                        Ok(state.clone())
+                    },
+                })
+            })
+            .collect();
+        page.sort_by(|left, right| credential_expiry_cursor_cmp(&left.cursor, &right.cursor));
         page.truncate(limit);
         Ok(page)
     }

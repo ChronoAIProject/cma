@@ -214,6 +214,9 @@ pub struct Config {
     /// operator has already stopped every pre-cutover control plane and waited
     /// for its MongoDB operations to drain.
     pub mongodb_legacy_cutover: bool,
+    /// Explicit acknowledgement that every pre-coordination process and its
+    /// in-flight provider operations have permanently drained.
+    pub mongodb_coordination_cutover: bool,
     /// Dedicated key for recoverable authentication secrets stored in MongoDB.
     pub auth_encryption_key: AuthEncryptionKey,
     /// How long a recorded action is kept.
@@ -360,9 +363,13 @@ impl Config {
         // store would accept work it silently cannot keep.
         let mongodb_uri = require("CHRONO_MONGODB_URI")?;
         let mongodb_database = var_or("CHRONO_MONGODB_DATABASE", "chrono_bot");
-        let mongodb_legacy_cutover = parse_legacy_cutover(
+        let mongodb_legacy_cutover = parse_cutover_drain(
             "CHRONO_MONGODB_LEGACY_CUTOVER",
             &var_or("CHRONO_MONGODB_LEGACY_CUTOVER", ""),
+        )?;
+        let mongodb_coordination_cutover = parse_cutover_drain(
+            "CHRONO_MONGODB_COORDINATION_CUTOVER",
+            &var_or("CHRONO_MONGODB_COORDINATION_CUTOVER", ""),
         )?;
         let auth_encryption_key =
             AuthEncryptionKey::from_base64(&require("CHRONO_AUTH_ENCRYPTION_KEY")?)?;
@@ -454,6 +461,7 @@ impl Config {
             mongodb_uri,
             mongodb_database,
             mongodb_legacy_cutover,
+            mongodb_coordination_cutover,
             auth_encryption_key,
             activity_retention,
             context_bucket,
@@ -569,12 +577,12 @@ fn parse_days(key: &str, raw: &str) -> Result<std::time::Duration, String> {
     Ok(std::time::Duration::from_secs(days * 86_400))
 }
 
-fn parse_legacy_cutover(key: &str, raw: &str) -> Result<bool, String> {
+fn parse_cutover_drain(key: &str, raw: &str) -> Result<bool, String> {
     match raw {
         "" => Ok(false),
         "drained" => Ok(true),
         _ => Err(format!(
-            "{key} must be unset or exactly \"drained\" after every legacy CMA replica and its MongoDB operations have stopped"
+            "{key} must be unset or exactly \"drained\" after every incompatible CMA process and its MongoDB and provider operations have stopped"
         )),
     }
 }
@@ -641,6 +649,7 @@ impl Config {
             mongodb_uri: "mongodb://h/db".into(),
             mongodb_database: "db".into(),
             mongodb_legacy_cutover: false,
+            mongodb_coordination_cutover: false,
             auth_encryption_key: AuthEncryptionKey::from_base64(
                 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             )
@@ -799,11 +808,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_cutover_requires_the_exact_post_drain_acknowledgement() {
-        assert!(!parse_legacy_cutover("CUTOVER", "").unwrap());
-        assert!(parse_legacy_cutover("CUTOVER", "drained").unwrap());
+    fn cutover_gates_require_the_exact_post_drain_acknowledgement() {
+        assert!(!parse_cutover_drain("CUTOVER", "").unwrap());
+        assert!(parse_cutover_drain("CUTOVER", "drained").unwrap());
         for unsafe_value in ["true", "yes", "drain", "DRAINED", " drained", "drained "] {
-            let error = parse_legacy_cutover("CUTOVER", unsafe_value)
+            let error = parse_cutover_drain("CUTOVER", unsafe_value)
                 .expect_err("an imprecise acknowledgement must stay closed");
             assert!(error.contains("exactly \"drained\""), "got {error}");
         }

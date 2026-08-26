@@ -28,12 +28,18 @@ pub(super) mod turn;
 
 use std::collections::BTreeMap;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
+use crate::sandbox_reclaimer::{
+    CREATOR_METADATA_KEY, GENERATION_METADATA_KEY, RESERVATION_METADATA_KEY, SESSION_METADATA_KEY,
+};
+use crate::task_retirement::TaskRetirement;
+use crate::terminal_input::WeakTerminalInputSender;
 use crate::{
-    AdapterError, RuntimeCapacity, RuntimeHandle, RuntimeListing, RuntimeSpec, SkillPackage,
-    TerminalInput,
+    AdapterError, RuntimeCapacity, RuntimeGeneration, RuntimeHandle, RuntimeIdentity,
+    RuntimeListing, RuntimeReservationIdentity, RuntimeSpec, SkillPackage, TerminalInput,
+    TerminalInputSender,
 };
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
@@ -46,8 +52,6 @@ pub(crate) const SUPERVISOR_PORT: u16 = 9090;
 /// Written at provisioning and read by reconciliation, so a provider shared
 /// between control planes can be told apart. Absent on sandboxes created before
 /// this was recorded, which reconciliation treats as its own business to decide.
-const CREATOR_METADATA_KEY: &str = "cma/control-plane";
-
 /// Historical control-plane key, kept while old-only sandboxes remain live.
 const LEGACY_CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 
@@ -55,8 +59,6 @@ const LEGACY_CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 ///
 /// Written at provisioning and read by reconciliation, so the two must agree;
 /// naming it once is what keeps them in step.
-const SESSION_METADATA_KEY: &str = "cma/session";
-
 /// Historical session key, kept while old-only sandboxes remain live.
 const LEGACY_SESSION_METADATA_KEY: &str = "chrono-bot/session";
 
@@ -78,6 +80,18 @@ fn correlation_value(
         .cloned()
 }
 
+/// Decode a generation without conflating corrupt metadata with legacy absence.
+fn runtime_generation(metadata: &BTreeMap<String, String>) -> RuntimeGeneration {
+    match metadata.get(GENERATION_METADATA_KEY) {
+        None => RuntimeGeneration::Legacy,
+        Some(value) => value
+            .parse()
+            .ok()
+            .and_then(std::num::NonZeroU64::new)
+            .map_or(RuntimeGeneration::Malformed, RuntimeGeneration::Recorded),
+    }
+}
+
 /// Give new and old control planes the same ownership facts during rollout.
 fn provisioning_metadata(spec: &RuntimeSpec, kernel: &str) -> BTreeMap<String, String> {
     let mut metadata = BTreeMap::from([
@@ -89,6 +103,12 @@ fn provisioning_metadata(spec: &RuntimeSpec, kernel: &str) -> BTreeMap<String, S
         (KERNEL_METADATA_KEY.to_string(), kernel.to_string()),
         (LEGACY_KERNEL_METADATA_KEY.to_string(), kernel.to_string()),
     ]);
+    if let Some(generation) = spec.generation {
+        metadata.insert(GENERATION_METADATA_KEY.to_string(), generation.to_string());
+    }
+    if let Some(reservation) = spec.reservation_token.as_ref() {
+        metadata.insert(RESERVATION_METADATA_KEY.to_string(), reservation.clone());
+    }
     if let Some(creator) = spec.created_by.as_ref() {
         metadata.insert(CREATOR_METADATA_KEY.to_string(), creator.clone());
         metadata.insert(LEGACY_CREATOR_METADATA_KEY.to_string(), creator.clone());
@@ -150,6 +170,8 @@ impl From<SandboxError> for AdapterError {
             SandboxError::Rejected { status, detail } => {
                 AdapterError::Rejected(format!("{status}: {detail}"))
             }
+            SandboxError::IdentityMismatch(detail) => AdapterError::Rejected(detail),
+            SandboxError::Unsupported(detail) => AdapterError::Unsupported(detail),
             other => AdapterError::Unavailable(other.to_string()),
         }
     }
@@ -237,7 +259,7 @@ impl Default for SandboxShape {
 pub(crate) struct SwitchWaiters(std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, SwitchWaiter>>>);
 
 struct SwitchWaiter {
-    link: mpsc::WeakSender<TerminalInput>,
+    link: WeakTerminalInputSender,
     answer: oneshot::Sender<bool>,
 }
 
@@ -246,7 +268,7 @@ impl SwitchWaiters {
     pub(crate) async fn expect(
         &self,
         handle: &str,
-        link: &mpsc::Sender<TerminalInput>,
+        link: &TerminalInputSender,
     ) -> oneshot::Receiver<bool> {
         let (tx, rx) = oneshot::channel();
         // A second switch replaces the first waiter; the earlier caller sees
@@ -268,12 +290,7 @@ impl SwitchWaiters {
     /// An answer nobody awaits is dropped. In particular, an old socket may
     /// answer after a replacement has registered its own waiter, and that old
     /// answer says nothing about the command sent through the replacement.
-    pub(crate) async fn settle(
-        &self,
-        handle: &str,
-        link: &mpsc::Sender<TerminalInput>,
-        accepted: bool,
-    ) {
+    pub(crate) async fn settle(&self, handle: &str, link: &TerminalInputSender, accepted: bool) {
         let mut waiters = self.0.lock().await;
         let is_same_link = waiters
             .get(handle)
@@ -288,7 +305,7 @@ impl SwitchWaiters {
     }
 
     /// Forget a waiter only if it belongs to the link that has gone.
-    pub(crate) async fn forget(&self, handle: &str, link: &mpsc::Sender<TerminalInput>) {
+    pub(crate) async fn forget(&self, handle: &str, link: &TerminalInputSender) {
         let mut waiters = self.0.lock().await;
         let is_same_link = waiters
             .get(handle)
@@ -300,6 +317,43 @@ impl SwitchWaiters {
     }
 }
 
+#[derive(Clone)]
+struct RegisteredLink {
+    sender: TerminalInputSender,
+    retired: TaskRetirement,
+}
+
+impl RegisteredLink {
+    async fn retire(&self) {
+        self.sender.retire().await;
+        self.retired.wait().await;
+    }
+}
+
+/// Abort a generation when opening it is canceled or returns an error.
+pub(crate) struct AbortLinkOnDrop {
+    link: TerminalInputSender,
+    armed: bool,
+}
+
+impl AbortLinkOnDrop {
+    pub(crate) fn new(link: TerminalInputSender) -> Self {
+        Self { link, armed: true }
+    }
+
+    pub(crate) fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AbortLinkOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.link.abort();
+        }
+    }
+}
+
 /// Credential-install acknowledgements, correlated to one request and socket generation.
 #[derive(Clone, Default)]
 pub(crate) struct CredentialWaiters(
@@ -307,7 +361,7 @@ pub(crate) struct CredentialWaiters(
 );
 
 struct CredentialWaiter {
-    link: mpsc::WeakSender<TerminalInput>,
+    link: WeakTerminalInputSender,
     answer: oneshot::Sender<bool>,
 }
 
@@ -317,7 +371,7 @@ impl CredentialWaiters {
         &self,
         handle: &str,
         operation_id: &str,
-        link: &mpsc::Sender<TerminalInput>,
+        link: &TerminalInputSender,
     ) -> oneshot::Receiver<bool> {
         let (tx, rx) = oneshot::channel();
         self.0.lock().await.insert(
@@ -335,7 +389,7 @@ impl CredentialWaiters {
         &self,
         handle: &str,
         operation_id: &str,
-        link: &mpsc::Sender<TerminalInput>,
+        link: &TerminalInputSender,
         installed: bool,
     ) {
         let key = (handle.to_string(), operation_id.to_string());
@@ -357,7 +411,7 @@ impl CredentialWaiters {
         &self,
         handle: &str,
         operation_id: &str,
-        link: &mpsc::Sender<TerminalInput>,
+        link: &TerminalInputSender,
     ) {
         let key = (handle.to_string(), operation_id.to_string());
         let mut waiters = self.0.lock().await;
@@ -383,7 +437,7 @@ impl CredentialWaiters {
     }
 
     /// Cancel every request belonging to a socket that closed or was replaced.
-    pub(crate) async fn forget_link(&self, handle: &str, link: &mpsc::Sender<TerminalInput>) {
+    pub(crate) async fn forget_link(&self, handle: &str, link: &TerminalInputSender) {
         let mut waiters = self.0.lock().await;
         waiters.retain(|(runtime, _), waiter| {
             runtime != handle
@@ -397,47 +451,85 @@ impl CredentialWaiters {
 
 /// Registration and cleanup for one runtime link generation.
 ///
-/// The socket reader owns the ending of a generation, while callers use the
-/// shared map to deliver credentials and switches. Keeping both pieces here
-/// makes registration happen before the reader can close and makes every close
-/// remove only the sender belonging to that socket.
+/// A generation supervisor owns reader, writer, and registry cleanup, while
+/// callers use the shared map to deliver credentials and switches. Keeping the
+/// completion receipt beside the sender makes replacement wait for that whole
+/// supervisor and makes every close remove only its exact socket generation.
 #[derive(Clone)]
 pub(crate) struct LinkLifecycle {
     runtime: String,
-    links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>>,
+    links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, RegisteredLink>>>,
     switch_waiters: SwitchWaiters,
     credential_waiters: CredentialWaiters,
 }
 
 impl LinkLifecycle {
-    /// Record this generation before its reader begins observing the socket.
-    pub(crate) async fn register(&self, link: mpsc::Sender<TerminalInput>) {
+    /// Install a fully supervised generation and retire the one it displaced.
+    pub(crate) async fn register(
+        &self,
+        link: TerminalInputSender,
+        retired: TaskRetirement,
+        installed: oneshot::Sender<()>,
+    ) -> bool {
+        let registration = RegisteredLink {
+            sender: link.clone(),
+            retired,
+        };
         let previous = {
             let mut links = self.links.lock().await;
             if links
                 .get(&self.runtime)
-                .is_some_and(|current| current.same_channel(&link))
+                .is_some_and(|current| current.sender.same_channel(&link))
             {
-                return;
+                if link.is_closed() {
+                    links.remove(&self.runtime);
+                    let _ = installed.send(());
+                    return false;
+                }
+                let _ = installed.send(());
+                return true;
             }
-            links.insert(self.runtime.clone(), link)
+            let previous = links.insert(self.runtime.clone(), registration);
+            // There is no await between insertion and opening this barrier. If
+            // the caller is canceled before insertion, dropping `installed`
+            // tells the already-running supervisor there is nothing to forget.
+            let _ = installed.send(());
+            previous
         };
         if let Some(previous) = previous {
-            // Replacing a generation invalidates only a request that was sent
-            // through that old socket.
-            self.switch_waiters.forget(&self.runtime, &previous).await;
-            self.credential_waiters
-                .forget_link(&self.runtime, &previous)
-                .await;
+            // This cleanup is service-owned once the map swap commits. If the
+            // opening caller is canceled while waiting, the displaced socket
+            // must still retire instead of surviving unregistered.
+            let runtime = self.runtime.clone();
+            let switch_waiters = self.switch_waiters.clone();
+            let credential_waiters = self.credential_waiters.clone();
+            let retirement = tokio::spawn(async move {
+                switch_waiters.forget(&runtime, &previous.sender).await;
+                credential_waiters
+                    .forget_link(&runtime, &previous.sender)
+                    .await;
+                previous.retire().await;
+            });
+            let _ = retirement.await;
         }
+
+        let mut links = self.links.lock().await;
+        let is_current = links
+            .get(&self.runtime)
+            .is_some_and(|current| current.sender.same_channel(&link));
+        if is_current && link.is_closed() {
+            links.remove(&self.runtime);
+            return false;
+        }
+        is_current
     }
 
     /// Forget this generation without disturbing a successor already present.
-    pub(crate) async fn forget(&self, link: &mpsc::Sender<TerminalInput>) {
+    pub(crate) async fn forget(&self, link: &TerminalInputSender) {
         let mut links = self.links.lock().await;
         if links
             .get(&self.runtime)
-            .is_some_and(|current| current.same_channel(link))
+            .is_some_and(|current| current.sender.same_channel(link))
         {
             links.remove(&self.runtime);
         }
@@ -450,17 +542,41 @@ impl LinkLifecycle {
             .await;
     }
 
+    pub(crate) async fn forget_if_whole_retired(&self, link: &TerminalInputSender) {
+        let removed = {
+            let mut links = self.links.lock().await;
+            let can_forget = links.get(&self.runtime).is_some_and(|current| {
+                current.sender.same_channel(link) && current.retired.is_retired()
+            });
+            can_forget.then(|| links.remove(&self.runtime)).flatten()
+        };
+        if removed.is_some() {
+            self.switch_waiters.forget(&self.runtime, link).await;
+            self.credential_waiters
+                .forget_link(&self.runtime, link)
+                .await;
+        }
+    }
+
     /// Settle a switch only when it was sent through this same generation.
-    pub(crate) async fn settle(&self, link: &mpsc::Sender<TerminalInput>, accepted: bool) {
+    pub(crate) async fn settle(&self, link: &TerminalInputSender, accepted: bool) {
         self.switch_waiters
             .settle(&self.runtime, link, accepted)
             .await;
     }
 
+    pub(crate) async fn is_current(&self, link: &TerminalInputSender) -> bool {
+        self.links
+            .lock()
+            .await
+            .get(&self.runtime)
+            .is_some_and(|current| current.sender.same_channel(link) && !link.is_closed())
+    }
+
     /// Settle a credential request only on the link generation that carried it.
     pub(crate) async fn settle_credential(
         &self,
-        link: &mpsc::Sender<TerminalInput>,
+        link: &TerminalInputSender,
         operation_id: &str,
         installed: bool,
     ) {
@@ -498,7 +614,7 @@ pub struct HostedKernel {
     /// already open. Opening a second attachment to deliver it is not an
     /// option: attaching declares a geometry, and a connection made without
     /// one would resize the pty under whoever is looking at it.
-    links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, mpsc::Sender<TerminalInput>>>>,
+    links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, RegisteredLink>>>,
     /// Who is waiting to hear whether a plane switch was performed.
     ///
     /// A switch is only recorded once the runtime says it happened (#289):
@@ -543,6 +659,12 @@ impl HostedKernel {
         spec: &RuntimeSpec,
         env: BTreeMap<String, String>,
     ) -> Result<RuntimeHandle, AdapterError> {
+        if spec.generation.is_some() != spec.reservation_token.is_some() {
+            return Err(AdapterError::Rejected(
+                "coordinated provisioning requires both a runtime generation and its reservation token"
+                    .into(),
+            ));
+        }
         let resource_limits = self.shape.limits_for(spec.capacity);
         let request = SandboxRequest {
             image: ImageSpec {
@@ -740,6 +862,7 @@ impl HostedKernel {
                     SESSION_METADATA_KEY,
                     LEGACY_SESSION_METADATA_KEY,
                 ),
+                generation: runtime_generation(&s.metadata),
                 created_by: correlation_value(
                     &s.metadata,
                     CREATOR_METADATA_KEY,
@@ -760,17 +883,86 @@ impl HostedKernel {
 
     /// Tear a sandbox down.
     pub async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
-        // Dropped first: the link belongs to a sandbox that is about to stop
-        // existing, and keeping it would leave this map growing with the
-        // remains of every session this process has ever served.
-        let link = self.links.lock().await.remove(&handle.0);
-        if let Some(link) = link {
-            self.switch_waiters.forget(&handle.0, &link).await;
-            self.credential_waiters.forget_link(&handle.0, &link).await;
+        // Remember the generation that is already stale if the provider says
+        // this handle is absent. This snapshot is never authority to delete.
+        let absent_link = self.links.lock().await.get(&handle.0).cloned();
+
+        // Provider authority precedes the link snapshot used by deletion. A
+        // link can take indefinitely to retire, and a provider object that
+        // disappears during that wait may have its handle reused. The
+        // configured reclaimer captures the exact Kubernetes
+        // UID/resourceVersion; the compatibility fallback explicitly relies on
+        // handles not being reused during one lifecycle operation.
+        let Some(target) = self.client.capture_delete_target(&handle.0).await? else {
+            if let Some(absent_link) = absent_link.as_ref() {
+                self.retire_captured_link(&handle.0, absent_link).await;
+            }
+            tracing::info!(sandbox = %handle.0, "sandbox already absent");
+            return Ok(());
+        };
+        let captured = self.links.lock().await.get(&handle.0).cloned();
+        self.client.delete_captured(target).await?;
+        if let Some(captured) = captured.as_ref() {
+            self.retire_captured_link(&handle.0, captured).await;
         }
-        self.client.delete(&handle.0).await?;
         tracing::info!(sandbox = %handle.0, "sandbox deleted");
         Ok(())
+    }
+
+    /// Tear down only the exact provider object carrying this identity.
+    pub async fn terminate_if_identity(
+        &self,
+        identity: &RuntimeIdentity,
+    ) -> Result<(), AdapterError> {
+        let captured = self.links.lock().await.get(&identity.handle.0).cloned();
+        self.client.delete_if_identity(identity).await?;
+        if let Some(captured) = captured.as_ref() {
+            self.retire_captured_link(&identity.handle.0, captured)
+                .await;
+        }
+        tracing::info!(
+            sandbox = %identity.handle.0,
+            session_id = %identity.session,
+            generation = ?identity.generation,
+            "sandbox identity deleted with Kubernetes preconditions"
+        );
+        Ok(())
+    }
+
+    async fn retire_captured_link(&self, handle: &str, captured: &RegisteredLink) {
+        let removed = {
+            let mut links = self.links.lock().await;
+            let is_same = links
+                .get(handle)
+                .is_some_and(|current| current.sender.same_channel(&captured.sender));
+            is_same.then(|| links.remove(handle)).flatten()
+        };
+        if let Some(link) = removed {
+            self.retire_removed_link(handle, link).await;
+        }
+    }
+
+    async fn retire_removed_link(&self, handle: &str, link: RegisteredLink) {
+        let handle = handle.to_string();
+        let switch_waiters = self.switch_waiters.clone();
+        let credential_waiters = self.credential_waiters.clone();
+        let retirement = tokio::spawn(async move {
+            switch_waiters.forget(&handle, &link.sender).await;
+            credential_waiters.forget_link(&handle, &link.sender).await;
+            link.retire().await;
+        });
+        let _ = retirement.await;
+    }
+
+    /// Find every sandbox produced for one durable reservation.
+    pub async fn discover_runtime_candidates(
+        &self,
+        reservation: &RuntimeReservationIdentity,
+    ) -> Result<Vec<RuntimeHandle>, AdapterError> {
+        self.client
+            .discover_runtime_candidates(reservation)
+            .await
+            .map_err(AdapterError::from)
     }
 
     /// Give a new sandbox the conversation it is taking over.
@@ -794,14 +986,27 @@ impl HostedKernel {
 
     /// Remember the link to a runtime, so a credential can reach it later.
     #[cfg(test)]
-    pub(crate) async fn remember_link(&self, handle: &str, link: mpsc::Sender<TerminalInput>) {
-        self.link_lifecycle(handle).register(link).await;
+    pub(crate) async fn remember_link(&self, handle: &str, link: TerminalInputSender) {
+        let lifecycle = self.link_lifecycle(handle);
+        if lifecycle.is_current(&link).await {
+            return;
+        }
+        // Unit-test links have no socket reader or generation supervisor. Their
+        // writer is therefore the whole generation, so its retirement is the
+        // truthful completion receipt replacement and termination can await.
+        let retired = link.retirement();
+        let (installed, _installation) = oneshot::channel();
+        let _ = lifecycle.register(link, retired, installed).await;
     }
 
     /// The link to a runtime, if one is open.
     #[cfg(test)]
-    pub(crate) async fn link_to(&self, handle: &str) -> Option<mpsc::Sender<TerminalInput>> {
-        self.links.lock().await.get(handle).cloned()
+    pub(crate) async fn link_to(&self, handle: &str) -> Option<TerminalInputSender> {
+        self.links
+            .lock()
+            .await
+            .get(handle)
+            .map(|registered| registered.sender.clone())
     }
 
     /// The registry a link's inbound task answers into.
@@ -857,20 +1062,21 @@ mod hosted_tests;
 /// credential". Two of the three kernels serve only conversations, so for
 /// those there was no path to a credential at all.
 ///
-/// Only a credential is written here. Anything else arriving on this sender is
-/// dropped loudly rather than framed onto a lane it does not belong to: the
-/// conversation itself has its own typed channel, and terminal bytes have no
-/// meaning on a socket nobody is painting.
+/// Only credentials and plane switches are written here. Anything else
+/// arriving on this sender is dropped loudly rather than framed onto a lane it
+/// does not belong to: the conversation itself has its own typed channel, and
+/// terminal bytes have no meaning on a socket nobody is painting.
 pub(crate) fn control_lane<S>(
     sink: std::sync::Arc<tokio::sync::Mutex<S>>,
     lifecycle: Option<LinkLifecycle>,
-) -> mpsc::Sender<TerminalInput>
+) -> TerminalInputSender
 where
     S: futures_util::SinkExt<tokio_tungstenite::tungstenite::Message> + Unpin + Send + 'static,
 {
-    let (tx, mut rx) = mpsc::channel::<TerminalInput>(CONTROL_BUFFER);
-    tokio::spawn(async move {
-        while let Some(input) = rx.recv().await {
+    TerminalInputSender::spawn(CONTROL_BUFFER, move |input| {
+        let sink = std::sync::Arc::clone(&sink);
+        let lifecycle = lifecycle.clone();
+        async move {
             let credential_operation = match &input {
                 TerminalInput::Credential { operation_id, .. } => Some(operation_id.clone()),
                 _ => None,
@@ -893,10 +1099,10 @@ where
                     )
                 }
                 _ => {
-                    tracing::warn!(
-                        "a conversation's control lane carries credentials and plane switches only"
-                    );
-                    continue;
+                    return Err(AdapterError::Rejected(
+                        "a conversation control lane carries credentials and plane switches only"
+                            .into(),
+                    ));
                 }
             };
             // Never logged with a credential's value, here or anywhere below this line.
@@ -907,11 +1113,13 @@ where
                 {
                     lifecycle.fail_credential(&operation_id).await;
                 }
-                break;
+                return Err(AdapterError::Unavailable(
+                    "the conversation control link write failed".into(),
+                ));
             }
+            Ok(())
         }
-    });
-    tx
+    })
 }
 
 /// How many control frames may queue for one runtime.
