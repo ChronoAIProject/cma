@@ -35,6 +35,8 @@ agent-client-protocol-schema = { version = "1.5", features = [
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
 futures-util = "0.3"
+governor = { version = "0.10", default-features = false, features = ["std", "dashmap"] }
+ipnet = "2.12"
 libc = "0.2"
 mongodb = { version = "3", default-features = false, features = [
     "bson-3",
