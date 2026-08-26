@@ -1150,6 +1150,98 @@ fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_
     });
 }
 
+#[test]
+fn dropping_an_observed_attachment_after_its_runtime_stops_releases_it() {
+    let origin = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("origin runtime builds");
+    let (store, svc, alice, created, before, held) = origin.block_on(async {
+        let store = Arc::new(FakeStore::default());
+        let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+        let alice = user("outside-runtime-observed-attachment-owner");
+        let created = svc.create_session(&alice, spec()).await.expect("created");
+        await_settled(&svc, &alice, &created.id).await;
+        let before = store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .expect("settled record exists");
+        let held = svc
+            .attach_terminal(
+                &alice,
+                &created.id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+            .expect("the attachment is observed");
+        (store, svc, alice, created, before, held)
+    });
+
+    drop(origin);
+    assert!(tokio::runtime::Handle::try_current().is_err());
+    drop(held);
+
+    let replacement = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("replacement runtime builds");
+    replacement.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if svc
+                    .entries
+                    .read()
+                    .await
+                    .get(&created.id)
+                    .is_some_and(|entry| entry.attached.is_none())
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("drop cleanup runs without the origin runtime");
+
+        let (replacement_input, _received) = terminal_input_channel(1);
+        svc.entries
+            .write()
+            .await
+            .get_mut(&created.id)
+            .expect("the live entry survives the origin runtime")
+            .input = Some(replacement_input);
+        let later = svc
+            .attach_terminal(
+                &alice,
+                &created.id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+            .expect("the terminal is attachable after outside-runtime drop");
+        let events = store
+            .events_since(&created.id, before.session.last_seq)
+            .await
+            .expect("attachment events are readable");
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            events[0].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+        ));
+        assert!(matches!(
+            events[1].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+        ));
+        assert!(matches!(
+            events[2].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+        ));
+        drop(later);
+    });
+}
+
 #[tokio::test]
 async fn a_cancelled_attach_keeps_the_active_cleanup_drain_service_owned() {
     let inner = Arc::new(FakeStore::default());
@@ -1468,6 +1560,95 @@ async fn a_takeover_supersedes_the_holder_and_tells_them() {
         first.superseded.try_recv().is_ok(),
         "a superseded client must be told, not merely starved of output"
     );
+}
+
+#[tokio::test]
+async fn attachment_generation_exhaustion_cannot_replace_the_current_holder() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("attachment-generation-exhaustion-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let id = created.id;
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the terminal entry is live")
+        .attachments_issued = u64::MAX - 1;
+    let mut current = svc
+        .attach_terminal(
+            &alice,
+            &id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("the final distinct generation is issued");
+    assert_eq!(current.generation, u64::MAX);
+    adapter.terminal_inputs.lock().await.clear();
+    let tail_before_refusal = store
+        .get(&id)
+        .await
+        .unwrap()
+        .expect("the attached session remains durable")
+        .session
+        .last_seq;
+
+    let error = svc
+        .attach_terminal(
+            &alice,
+            &id,
+            TerminalGeometry::new(101, 37).expect("valid geometry"),
+            AttachmentClaim::Takeover,
+        )
+        .await
+        .err()
+        .expect("an exhausted generation is refused");
+    assert_eq!(
+        error,
+        CoreError::RuntimeUnavailable("the terminal attachment generation is exhausted".into())
+    );
+    assert!(adapter.terminal_inputs.lock().await.is_empty());
+    assert!(store
+        .events_since(&id, tail_before_refusal)
+        .await
+        .expect("attachment events are readable")
+        .is_empty());
+    assert!(matches!(
+        current.superseded.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&id).expect("the terminal entry remains live");
+    assert_eq!(entry.attachments_issued, u64::MAX);
+    assert_eq!(
+        entry
+            .attached
+            .as_ref()
+            .map(|attachment| attachment.generation),
+        Some(u64::MAX)
+    );
+    drop(entries);
+
+    drop(current);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if svc
+                .entries
+                .read()
+                .await
+                .get(&id)
+                .is_some_and(|entry| entry.attached.is_none())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the final distinct holder still releases normally");
 }
 
 #[tokio::test]

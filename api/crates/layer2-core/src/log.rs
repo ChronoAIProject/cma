@@ -487,6 +487,11 @@ fn retained_executor() -> &'static tokio::runtime::Handle {
     })
 }
 
+/// Run service-owned cleanup without depending on the dropping thread's runtime.
+pub(crate) fn spawn_retained_work(work: impl Future<Output = ()> + Send + 'static) {
+    let _detached = retained_executor().spawn(work);
+}
+
 /// Type-erased post-commit work kept inside its guarded lane operation.
 trait RetainedCommitWork: Send {
     fn report_error(&mut self, error: StoreError) -> bool;

@@ -91,9 +91,7 @@ impl Drop for AttachmentHandle {
         let id = self.session_id.clone();
         let generation = self.generation;
         let entry_screen = Arc::clone(&self.entry_screen);
-        // Release synchronously where possible; the lock is never held across
-        // an await inside the service, so a blocking release cannot deadlock.
-        tokio::spawn(async move {
+        crate::log::spawn_retained_work(async move {
             service
                 .release_attachment_from(&id, generation, &entry_screen)
                 .await;
