@@ -491,6 +491,11 @@ impl SessionStore for FakeStore {
         lease: &SessionLease,
         ttl: std::time::Duration,
     ) -> Result<(), StoreError> {
+        if lease.operation == SessionOperation::Interact {
+            return Err(StoreError::Malformed(
+                "interaction leases require interaction renewal".into(),
+            ));
+        }
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
         let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
@@ -513,6 +518,51 @@ impl SessionStore for FakeStore {
             });
         };
         if held.lease != *lease || current != lease.boundary {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        }
+        held.expires_at = now
+            .checked_add(ttl)
+            .ok_or_else(|| StoreError::Malformed("session lease expiry overflow".into()))?;
+        Ok(())
+    }
+
+    async fn renew_interaction_lease(
+        &self,
+        lease: &SessionLease,
+        ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        if lease.operation != SessionOperation::Interact {
+            return Err(StoreError::Malformed(
+                "provider-operation leases require provider renewal".into(),
+            ));
+        }
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
+            return Err(StoreError::SessionDeleted {
+                id: lease.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        let current = SessionBoundary::for_record(&record, state.authority.generation);
+        let Some(held) = state.lease.as_mut() else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        if held.lease != *lease
+            || current.authority != lease.boundary.authority
+            || state.authority.runtime_id != record.runtime_id
+        {
             return Err(StoreError::SessionLeaseLost {
                 id: lease.session_id.clone(),
             });

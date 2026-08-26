@@ -1,0 +1,593 @@
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::Mutex;
+
+use crate::coordination::{
+    RuntimeAuthority, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeReservation,
+    SessionBoundary, SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest,
+    SessionOperation,
+};
+use crate::event::{Event, StoredEvent};
+use crate::ids::{KernelId, SessionId, SubjectId};
+use crate::session::{RecoveryState, Session, SessionStatus};
+use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
+use crate::test_support::{service_over, FakeAdapter, FakeStore};
+use crate::{AgentOptions, CoreError, Reserved, TerminalGeometry};
+
+#[derive(Default)]
+struct InteractionStore {
+    inner: Arc<FakeStore>,
+    compatibility: AtomicBool,
+    release_failures: AtomicUsize,
+    unknown_release_results: AtomicUsize,
+    renewal_failures: AtomicUsize,
+    acquisitions: Mutex<Vec<SessionInteractionLeaseRequest>>,
+    renewals: Mutex<Vec<(SessionLease, Duration)>>,
+    releases: Mutex<Vec<SessionLease>>,
+}
+
+impl InteractionStore {
+    fn compatibility() -> Self {
+        Self {
+            compatibility: AtomicBool::new(true),
+            ..Self::default()
+        }
+    }
+
+    fn fail_renewals(&self, count: usize) {
+        self.renewal_failures.store(count, Ordering::SeqCst);
+    }
+
+    fn fail_releases(&self, count: usize) {
+        self.release_failures.store(count, Ordering::SeqCst);
+    }
+
+    fn obscure_release_success(&self) {
+        self.unknown_release_results.store(1, Ordering::SeqCst);
+    }
+
+    fn consume(counter: &AtomicUsize) -> bool {
+        counter
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionStore for InteractionStore {
+    async fn ping(&self) -> Result<(), StoreError> {
+        self.inner.ping().await
+    }
+
+    async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
+        self.inner.get(id).await
+    }
+
+    async fn runtime_authority(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<RuntimeAuthority>, StoreError> {
+        if self.compatibility.load(Ordering::SeqCst) {
+            Err(StoreError::CoordinationDisabled)
+        } else {
+            self.inner.runtime_authority(id).await
+        }
+    }
+
+    async fn acquire_session_lease(
+        &self,
+        request: &SessionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        self.inner.acquire_session_lease(request).await
+    }
+
+    async fn acquire_interaction_lease(
+        &self,
+        request: &SessionInteractionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        self.acquisitions.lock().await.push(request.clone());
+        self.inner.acquire_interaction_lease(request).await
+    }
+
+    async fn renew_session_lease(
+        &self,
+        lease: &SessionLease,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        self.inner.renew_session_lease(lease, ttl).await
+    }
+
+    async fn renew_interaction_lease(
+        &self,
+        lease: &SessionLease,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        self.renewals.lock().await.push((lease.clone(), ttl));
+        if Self::consume(&self.renewal_failures) {
+            return Err(StoreError::Unavailable(
+                "interaction renewal unavailable".into(),
+            ));
+        }
+        self.inner.renew_interaction_lease(lease, ttl).await
+    }
+
+    async fn release_session_lease(&self, lease: &SessionLease) -> Result<(), StoreError> {
+        if lease.operation != SessionOperation::Interact {
+            return self.inner.release_session_lease(lease).await;
+        }
+        self.releases.lock().await.push(lease.clone());
+        if Self::consume(&self.release_failures) {
+            return Err(StoreError::Unavailable(
+                "interaction release unavailable".into(),
+            ));
+        }
+        let released = self.inner.release_session_lease(lease).await;
+        if released.is_ok() && Self::consume(&self.unknown_release_results) {
+            return Err(StoreError::Unavailable(
+                "interaction release result was lost".into(),
+            ));
+        }
+        released
+    }
+
+    async fn reserve_runtime_generation(
+        &self,
+        lease: &SessionLease,
+        token: &str,
+    ) -> Result<RuntimeReservation, StoreError> {
+        self.inner.reserve_runtime_generation(lease, token).await
+    }
+
+    async fn register_runtime_candidate(
+        &self,
+        lease: &SessionLease,
+        reservation: &RuntimeReservation,
+        runtime_id: &str,
+    ) -> Result<RuntimeCandidate, StoreError> {
+        self.inner
+            .register_runtime_candidate(lease, reservation, runtime_id)
+            .await
+    }
+
+    async fn switch_runtime_authority(
+        &self,
+        lease: &mut SessionLease,
+        candidate: &RuntimeCandidate,
+    ) -> Result<RuntimeAuthoritySwitch, StoreError> {
+        self.inner.switch_runtime_authority(lease, candidate).await
+    }
+
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError> {
+        self.inner.list_for(owner, query).await
+    }
+
+    async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
+        self.inner.reserved_capacity().await
+    }
+
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
+        self.inner.list_all(query).await
+    }
+
+    async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
+        self.inner.delete(id).await
+    }
+
+    async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
+        self.inner.append_events(events).await
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .commit_session_idempotent(write_id, record, events)
+            .await
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .create_session_idempotent(write_id, record, events)
+            .await
+    }
+
+    async fn events_since(
+        &self,
+        id: &SessionId,
+        after: u64,
+    ) -> Result<Vec<StoredEvent>, StoreError> {
+        self.inner.events_since(id, after).await
+    }
+}
+
+fn record() -> SessionRecord {
+    let mut record = SessionRecord::new(Session {
+        id: SessionId("sesn_runtime_interaction".into()),
+        owner: SubjectId("subject-runtime-interaction".into()),
+        kernel: KernelId::new("fake"),
+        status: SessionStatus::Ready,
+        recovery_state: RecoveryState::Normal,
+        stop_reason: None,
+        options: AgentOptions::default(),
+        environment_profile: None,
+        geometry: TerminalGeometry::default(),
+        last_seq: 0,
+        runtime_version: None,
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: None,
+        granted_skills: None,
+        pricing: None,
+        created_at: "2026-08-26T00:00:00Z".into(),
+    });
+    record.runtime_id = Some("runtime-original".into());
+    record
+}
+
+async fn promote_runtime(store: &InteractionStore) -> SessionRecord {
+    let current = store.get(&record().session.id).await.unwrap().unwrap();
+    let authority = store
+        .runtime_authority(&current.session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let request = SessionLeaseRequest::new(
+        current.session.id.clone(),
+        "runtime-promoter",
+        SessionBoundary::for_record(&current, authority.generation),
+        SessionOperation::Handover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store.acquire_session_lease(&request).await.unwrap();
+    let reservation = store
+        .reserve_runtime_generation(&lease, "interaction-runtime-generation")
+        .await
+        .unwrap();
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, "runtime-generation-one")
+        .await
+        .unwrap();
+    let switched = store
+        .switch_runtime_authority(&mut lease, &candidate)
+        .await
+        .unwrap();
+    assert_eq!(switched.boundary.authority.generation, 1);
+    store.release_session_lease(&lease).await.unwrap();
+    store.get(&current.session.id).await.unwrap().unwrap()
+}
+
+async fn wait_for_releases(store: &InteractionStore, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if store.releases.lock().await.len() >= expected {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("interaction release attempts completed");
+}
+
+async fn cancellation_keeps_action_owned(store: Arc<InteractionStore>) {
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let (started, is_started) = tokio::sync::oneshot::channel();
+    let (finish, may_finish) = tokio::sync::oneshot::channel();
+    let (completed, is_completed) = tokio::sync::oneshot::channel();
+    let caller = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move {
+            service
+                .run_runtime_interaction_at(&durable, move |authority| async move {
+                    let boundary = authority.ensure_delivery_allowed()?.clone();
+                    let _ = started.send(boundary);
+                    let _ = may_finish.await;
+                    let _ = completed.send(());
+                    Ok::<_, CoreError>(())
+                })
+                .await
+        }
+    });
+
+    let boundary = is_started.await.expect("the owned action started");
+    assert_eq!(
+        boundary.authority.runtime_id.as_deref(),
+        Some("runtime-original")
+    );
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    finish.send(()).unwrap();
+    is_completed.await.expect("the owned action completed");
+
+    if store.compatibility.load(Ordering::SeqCst) {
+        assert!(store.releases.lock().await.is_empty());
+    } else {
+        wait_for_releases(&store, 1).await;
+    }
+}
+
+#[tokio::test]
+async fn caller_cancellation_does_not_cancel_a_durable_interaction() {
+    cancellation_keeps_action_owned(Arc::new(InteractionStore::default())).await;
+}
+
+#[tokio::test]
+async fn caller_cancellation_does_not_cancel_a_compatibility_interaction() {
+    cancellation_keeps_action_owned(Arc::new(InteractionStore::compatibility())).await;
+}
+
+#[tokio::test]
+async fn action_success_survives_an_unknown_release_and_retries_the_exact_lease() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    store.obscure_release_success();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let runs = Arc::new(AtomicUsize::new(0));
+
+    let result = service
+        .run_runtime_interaction_at(&durable, {
+            let runs = Arc::clone(&runs);
+            move |authority| async move {
+                authority.ensure_delivery_allowed()?;
+                runs.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, CoreError>("delivered")
+            }
+        })
+        .await;
+
+    assert_eq!(result.unwrap(), "delivered");
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+    wait_for_releases(&store, 2).await;
+    let releases = store.releases.lock().await;
+    assert_eq!(releases.len(), 2);
+    assert_eq!(releases[0], releases[1]);
+}
+
+#[tokio::test]
+async fn action_success_survives_an_unavailable_release() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    store.fail_releases(2);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+
+    let result = service
+        .run_runtime_interaction_at(&durable, |authority| async move {
+            authority.ensure_delivery_allowed()?;
+            Ok::<_, CoreError>("known-success")
+        })
+        .await;
+
+    assert_eq!(result.unwrap(), "known-success");
+    wait_for_releases(&store, 2).await;
+    let releases = store.releases.lock().await;
+    assert_eq!(releases[0], releases[1]);
+}
+
+#[tokio::test]
+async fn active_action_excludes_another_service_and_receives_the_exact_generation() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let durable = promote_runtime(&store).await;
+    let first = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let second = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let (started, is_started) = tokio::sync::oneshot::channel();
+    let (finish, may_finish) = tokio::sync::oneshot::channel();
+    let first_action = tokio::spawn({
+        let first = Arc::clone(&first);
+        let durable = durable.clone();
+        async move {
+            first
+                .run_runtime_interaction_at(&durable, move |authority| async move {
+                    let boundary = authority.ensure_delivery_allowed()?.clone();
+                    let _ = started.send(boundary);
+                    let _ = may_finish.await;
+                    Ok::<_, CoreError>(())
+                })
+                .await
+        }
+    });
+
+    let boundary = is_started.await.expect("the first action holds the lease");
+    assert_eq!(boundary.authority.generation, 1);
+    assert_eq!(
+        boundary.authority.runtime_id.as_deref(),
+        Some("runtime-generation-one")
+    );
+    let second_runs = Arc::new(AtomicUsize::new(0));
+    let blocked = second
+        .run_runtime_interaction_at(&durable, {
+            let second_runs = Arc::clone(&second_runs);
+            move |authority| async move {
+                authority.ensure_delivery_allowed()?;
+                second_runs.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, CoreError>(())
+            }
+        })
+        .await;
+    assert!(matches!(blocked, Err(CoreError::RuntimeUnavailable(_))));
+    assert_eq!(second_runs.load(Ordering::SeqCst), 0);
+
+    let acquisitions = store.acquisitions.lock().await;
+    assert_eq!(acquisitions[0].ttl, Duration::from_secs(30));
+    drop(acquisitions);
+    finish.send(()).unwrap();
+    first_action.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn renewal_survives_an_action_owned_status_transition() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let (changed, is_changed) = tokio::sync::oneshot::channel();
+    let (finish, may_finish) = tokio::sync::oneshot::channel();
+    let runner = tokio::spawn({
+        let service = Arc::clone(&service);
+        let store = Arc::clone(&store);
+        let mut changed_record = durable.clone();
+        async move {
+            service
+                .run_runtime_interaction_at(&durable, move |authority| async move {
+                    authority.ensure_delivery_allowed()?;
+                    changed_record.session.status = SessionStatus::Idle;
+                    store
+                        .commit_session_idempotent(
+                            "runner-interaction-status-drift",
+                            &changed_record,
+                            &[],
+                        )
+                        .await
+                        .unwrap();
+                    let _ = changed.send(());
+                    let _ = may_finish.await;
+                    Ok::<_, CoreError>(())
+                })
+                .await
+        }
+    });
+
+    is_changed.await.unwrap();
+    tokio::time::advance(Duration::from_secs(11)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(store.renewals.lock().await.len(), 1);
+    assert!(!runner.is_finished());
+    finish.send(()).unwrap();
+    runner.await.unwrap().unwrap();
+    let renewals = store.renewals.lock().await;
+    assert_eq!(renewals[0].1, Duration::from_secs(30));
+}
+
+#[tokio::test(start_paused = true)]
+async fn transient_renewal_failure_is_retried_without_canceling_the_action() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    store.fail_renewals(1);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let (started, is_started) = tokio::sync::oneshot::channel();
+    let (finish, may_finish) = tokio::sync::oneshot::channel();
+    let runner = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move {
+            service
+                .run_runtime_interaction_at(&durable, move |authority| async move {
+                    authority.ensure_delivery_allowed()?;
+                    let _ = started.send(());
+                    let _ = may_finish.await;
+                    Ok::<_, CoreError>("settled")
+                })
+                .await
+        }
+    });
+
+    is_started.await.unwrap();
+    tokio::time::advance(Duration::from_secs(10)).await;
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    let renewals = store.renewals.lock().await;
+    assert_eq!(renewals.len(), 2);
+    assert_eq!(renewals[0].0, renewals[1].0);
+    drop(renewals);
+    assert!(!runner.is_finished());
+    finish.send(()).unwrap();
+    assert_eq!(runner.await.unwrap().unwrap(), "settled");
+}
+
+#[tokio::test(start_paused = true)]
+async fn confirmed_renewal_loss_does_not_drop_a_known_action_success() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let (started, is_started) = tokio::sync::oneshot::channel();
+    let (finish, may_finish) = tokio::sync::oneshot::channel();
+    let runner = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move {
+            service
+                .run_runtime_interaction_at(&durable, move |authority| async move {
+                    authority.ensure_delivery_allowed()?;
+                    let _ = started.send(());
+                    let _ = may_finish.await;
+                    Ok::<_, CoreError>("committed")
+                })
+                .await
+        }
+    });
+
+    is_started.await.unwrap();
+    store
+        .inner
+        .sessions
+        .lock()
+        .await
+        .get_mut(&record().session.id.0)
+        .unwrap()
+        .runtime_id = Some("runtime-changed".into());
+    tokio::time::advance(Duration::from_secs(10)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(store.renewals.lock().await.len(), 1);
+    assert!(!runner.is_finished());
+    finish.send(()).unwrap();
+    assert_eq!(runner.await.unwrap().unwrap(), "committed");
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_action_too_close_to_expiry_is_refused_at_its_mutation_boundary() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    store.fail_renewals(usize::MAX);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let mutations = Arc::new(AtomicUsize::new(0));
+    let (started, is_started) = tokio::sync::oneshot::channel();
+    let (enter_gate, gate_opened) = tokio::sync::oneshot::channel();
+    let runner = tokio::spawn({
+        let service = Arc::clone(&service);
+        let mutations = Arc::clone(&mutations);
+        async move {
+            service
+                .run_runtime_interaction_at(&durable, move |authority| async move {
+                    let _ = started.send(());
+                    let _ = gate_opened.await;
+                    authority.ensure_delivery_allowed()?;
+                    mutations.fetch_add(1, Ordering::SeqCst);
+                    Ok::<_, CoreError>(())
+                })
+                .await
+        }
+    });
+
+    is_started.await.unwrap();
+    tokio::time::advance(Duration::from_secs(26)).await;
+    tokio::task::yield_now().await;
+    enter_gate.send(()).unwrap();
+    assert!(matches!(
+        runner.await.unwrap(),
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    assert_eq!(mutations.load(Ordering::SeqCst), 0);
+}

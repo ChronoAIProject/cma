@@ -1,5 +1,6 @@
 //! Coordination and record helpers for bringing a session runtime up.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,11 +10,15 @@ use layer3_adapter::{
 };
 
 use crate::capabilities::SessionCapabilities;
-use crate::coordination::{SessionBoundary, SessionLease, SessionLeaseRequest, SessionOperation};
+use crate::coordination::{
+    SessionBoundary, SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest,
+    SessionOperation,
+};
+use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::options::{AgentOptions, PermissionMode};
-use crate::service::SessionService;
+use crate::service::{store_failed, SessionService};
 use crate::session::{ProvisioningStage, Session, SessionSpec};
 use crate::size::SessionSize;
 use crate::terminal::TerminalGeometry;
@@ -31,6 +36,95 @@ const PROVISION_DEADLINE: Duration = Duration::from_secs(600);
 /// Long enough to cover one bounded provider create and attachment attempt.
 /// Renewed at every durable/provider boundary rather than trusted for its age.
 pub(crate) const RUNTIME_OPERATION_LEASE_TTL: Duration = Duration::from_secs(600);
+
+/// Interaction work is short and frequent, so a crashed holder should clear quickly.
+const INTERACTION_LEASE_TTL: Duration = Duration::from_secs(30);
+
+/// Refresh well before expiry while a durable interaction commit is pending.
+const INTERACTION_LEASE_RENEW_INTERVAL: Duration = Duration::from_secs(10);
+
+/// A transient store outage gets another chance while the current lease can still be valid.
+const INTERACTION_LEASE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Leave enough authority for the bounded sender to finish after its final check.
+const INTERACTION_DELIVERY_MARGIN: Duration = Duration::from_secs(5);
+
+/// Exact runtime boundary plus the live permission to begin one mutation.
+///
+/// Interaction closures may wait on process-local gates after durable
+/// acquisition. They must call [`Self::ensure_delivery_allowed`] while holding
+/// that gate, immediately before cloning a sender or committing a mutation.
+#[derive(Clone)]
+pub(crate) struct RuntimeInteractionAuthority {
+    boundary: SessionBoundary,
+    validity: Arc<std::sync::Mutex<RuntimeInteractionValidity>>,
+}
+
+struct RuntimeInteractionValidity {
+    deadline: Option<tokio::time::Instant>,
+    invalid_reason: Option<String>,
+}
+
+impl RuntimeInteractionAuthority {
+    fn new(boundary: SessionBoundary, deadline: Option<tokio::time::Instant>) -> Self {
+        Self {
+            boundary,
+            validity: Arc::new(std::sync::Mutex::new(RuntimeInteractionValidity {
+                deadline,
+                invalid_reason: None,
+            })),
+        }
+    }
+
+    /// Refuse delivery without enough authority for the bounded send to finish.
+    ///
+    /// This is the only boundary accessor so generation validation cannot be
+    /// separated from the live validity check. Multi-send work must call it
+    /// again immediately before each delivery.
+    pub(crate) fn ensure_delivery_allowed(&self) -> Result<&SessionBoundary, CoreError> {
+        let validity = self
+            .validity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(reason) = validity.invalid_reason.as_ref() {
+            return Err(CoreError::RuntimeUnavailable(reason.clone()));
+        }
+        if validity.deadline.is_some_and(|deadline| {
+            deadline.saturating_duration_since(tokio::time::Instant::now())
+                <= INTERACTION_DELIVERY_MARGIN
+        }) {
+            return Err(CoreError::RuntimeUnavailable(
+                "the interaction lease cannot cover another bounded delivery".into(),
+            ));
+        }
+        Ok(&self.boundary)
+    }
+
+    fn deadline(&self) -> Option<tokio::time::Instant> {
+        self.validity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .deadline
+    }
+
+    fn extend(&self, deadline: tokio::time::Instant) {
+        let mut validity = self
+            .validity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if validity.invalid_reason.is_none() {
+            validity.deadline = Some(deadline);
+        }
+    }
+
+    fn invalidate(&self, reason: String) {
+        let mut validity = self
+            .validity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        validity.invalid_reason.get_or_insert(reason);
+    }
+}
 
 impl SessionService {
     /// Provision a runtime for an existing session and attach its terminal.
@@ -377,14 +471,198 @@ impl SessionService {
             Err(StoreError::CoordinationDisabled) => return Ok(None),
             Err(error) => return Err(error),
         };
-        let request = SessionLeaseRequest::new(
-            id.clone(),
-            self.coordination_holder.clone(),
-            SessionBoundary::for_record(record, authority.generation),
-            operation,
-            RUNTIME_OPERATION_LEASE_TTL,
+        let boundary = SessionBoundary::for_record(record, authority.generation);
+        if operation == SessionOperation::Interact {
+            let request = SessionInteractionLeaseRequest::new(
+                id.clone(),
+                self.coordination_holder.clone(),
+                boundary,
+                INTERACTION_LEASE_TTL,
+            );
+            self.store
+                .acquire_interaction_lease(&request)
+                .await
+                .map(Some)
+        } else {
+            let request = SessionLeaseRequest::new(
+                id.clone(),
+                self.coordination_holder.clone(),
+                boundary,
+                operation,
+                RUNTIME_OPERATION_LEASE_TTL,
+            );
+            self.store.acquire_session_lease(&request).await.map(Some)
+        }
+    }
+
+    /// Run one interaction while its exact runtime authority remains fenced.
+    ///
+    /// The action must take any process-local input gate itself. Acquiring the
+    /// durable lease first is the lock order used by handover and prevents a
+    /// local reader from holding that gate while waiting behind a handover that
+    /// needs the corresponding writer.
+    pub(crate) async fn run_runtime_interaction_at<T, A, F>(
+        self: &Arc<Self>,
+        record: &crate::store::SessionRecord,
+        action: A,
+    ) -> Result<T, CoreError>
+    where
+        T: Send + 'static,
+        A: FnOnce(RuntimeInteractionAuthority) -> F + Send + 'static,
+        F: Future<Output = Result<T, CoreError>> + Send + 'static,
+    {
+        // The request start is a conservative lower bound for the store's
+        // authoritative acquisition time. If even this local window elapsed,
+        // delivery must not begin against an already-expired exclusion.
+        let acquisition_started = tokio::time::Instant::now();
+        let lease = match self
+            .acquire_runtime_lease_at(record, SessionOperation::Interact)
+            .await
+        {
+            Ok(lease) => lease,
+            Err(StoreError::SessionInteractionBlocked {
+                operation: SessionOperation::Handover,
+                ..
+            }) => return Err(CoreError::SessionRotating),
+            Err(StoreError::SessionAuthorityChanged { .. }) => {
+                let current = self
+                    .store
+                    .get(&record.session.id)
+                    .await
+                    .map_err(store_failed)?;
+                return match current {
+                    None => Err(CoreError::SessionNotFound),
+                    Some(current) if current.session.status.is_terminal() => {
+                        Err(CoreError::SessionTerminated)
+                    }
+                    Some(current) if current.session.status.is_rotating() => {
+                        Err(CoreError::SessionRotating)
+                    }
+                    Some(_) => Err(CoreError::RuntimeUnavailable(
+                        "the session runtime changed before interaction delivery".into(),
+                    )),
+                };
+            }
+            Err(error) => return Err(store_failed(error)),
+        };
+
+        let boundary = lease.as_ref().map_or_else(
+            || SessionBoundary::for_record(record, 0),
+            |lease| lease.boundary.clone(),
         );
-        self.store.acquire_session_lease(&request).await.map(Some)
+        let lease_deadline = lease
+            .as_ref()
+            .map(|_| acquisition_started + INTERACTION_LEASE_TTL);
+        let authority = RuntimeInteractionAuthority::new(boundary, lease_deadline);
+        let (finished, result) = tokio::sync::oneshot::channel();
+        let service = Arc::clone(self);
+        tokio::spawn(async move {
+            let action_result = service
+                .run_owned_runtime_interaction(lease.as_ref(), authority, action)
+                .await;
+
+            let Some(lease) = lease else {
+                let _ = finished.send(action_result);
+                return;
+            };
+            match service.store.release_session_lease(&lease).await {
+                Ok(()) => {
+                    let _ = finished.send(action_result);
+                }
+                Err(first_error) => {
+                    // Delivery has a known result. Report it before cleanup so
+                    // an unavailable release cannot invite duplicate input.
+                    let _ = finished.send(action_result);
+                    if let Err(retry_error) = service.store.release_session_lease(&lease).await {
+                        tracing::warn!(
+                            session_id = %lease.session_id,
+                            error = %retry_error,
+                            first_error = %first_error,
+                            "interaction lease release remained unresolved after exact retry"
+                        );
+                    }
+                }
+            }
+        });
+        result.await.map_err(|_| {
+            CoreError::RuntimeUnavailable("this session's interaction task stopped".into())
+        })?
+    }
+
+    /// Drive one action independently of its caller while maintaining its lease.
+    async fn run_owned_runtime_interaction<T, A, F>(
+        &self,
+        lease: Option<&SessionLease>,
+        authority: RuntimeInteractionAuthority,
+        action: A,
+    ) -> Result<T, CoreError>
+    where
+        A: FnOnce(RuntimeInteractionAuthority) -> F,
+        F: Future<Output = Result<T, CoreError>>,
+    {
+        authority.ensure_delivery_allowed()?;
+        let action = action(authority.clone());
+        let Some(lease) = lease else {
+            return action.await;
+        };
+        tokio::pin!(action);
+        let mut next_renewal = authority
+            .deadline()
+            .expect("a durable interaction has a deadline")
+            - (INTERACTION_LEASE_TTL - INTERACTION_LEASE_RENEW_INTERVAL);
+        loop {
+            tokio::select! {
+                result = &mut action => return result,
+                _ = tokio::time::sleep_until(next_renewal) => {
+                    let renewal_started = tokio::time::Instant::now();
+                    let deadline = authority
+                        .deadline()
+                        .expect("a durable interaction has a deadline");
+                    if renewal_started >= deadline {
+                        authority.invalidate(
+                            "the interaction lease expired while delivery was settling".into()
+                        );
+                        tracing::warn!(
+                            session_id = %lease.session_id,
+                            "interaction lease expired while service-owned delivery was still settling"
+                        );
+                        return action.await;
+                    }
+                    match self
+                        .store
+                        .renew_interaction_lease(lease, INTERACTION_LEASE_TTL)
+                        .await
+                    {
+                        Ok(()) => {
+                            authority.extend(renewal_started + INTERACTION_LEASE_TTL);
+                            next_renewal =
+                                renewal_started + INTERACTION_LEASE_RENEW_INTERVAL;
+                        }
+                        Err(StoreError::Unavailable(error)) => {
+                            tracing::debug!(
+                                session_id = %lease.session_id,
+                                %error,
+                                "interaction lease renewal is temporarily unavailable"
+                            );
+                            next_renewal = (tokio::time::Instant::now()
+                                + INTERACTION_LEASE_RETRY_INTERVAL)
+                                .min(deadline);
+                        }
+                        Err(error) => {
+                            authority.invalidate(format!(
+                                "the interaction lease ended before delivery: {error}"
+                            ));
+                            tracing::warn!(
+                                session_id = %lease.session_id,
+                                %error,
+                                "interaction lease ended while service-owned delivery was still settling"
+                            );
+                            return action.await;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Refresh a coordinated runtime operation at a provider boundary.

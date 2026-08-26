@@ -161,6 +161,10 @@ pub(super) enum CoordinationCommand {
         lease: SessionLease,
         ttl: std::time::Duration,
     },
+    RenewInteraction {
+        lease: SessionLease,
+        ttl: std::time::Duration,
+    },
     Advance {
         lease: SessionLease,
         boundary: SessionBoundary,
@@ -535,6 +539,7 @@ impl CoordinationCommand {
             Self::Acquire(request) => &request.session_id,
             Self::AcquireInteraction(request) => &request.session_id,
             Self::Renew { lease, .. }
+            | Self::RenewInteraction { lease, .. }
             | Self::Advance { lease, .. }
             | Self::Release(lease)
             | Self::Reserve { lease, .. }
@@ -550,6 +555,7 @@ impl CoordinationCommand {
             Self::Acquire(_) => "acquire session lease",
             Self::AcquireInteraction(_) => "acquire interaction lease",
             Self::Renew { .. } => "renew session lease",
+            Self::RenewInteraction { .. } => "renew interaction lease",
             Self::Advance { .. } => "advance session lease",
             Self::Release(_) => "release session lease",
             Self::Reserve { .. } => "reserve runtime generation",
@@ -617,6 +623,7 @@ impl CoordinationCommand {
             Self::AcquireInteraction(_)
             | Self::Release(_)
             | Self::Renew { .. }
+            | Self::RenewInteraction { .. }
             | Self::Advance { .. } => Vec::new(),
         }
     }
@@ -828,6 +835,26 @@ fn require_current_lease_identity(
         });
     };
     if !stored.matches_lease(lease)? {
+        return Err(StoreError::SessionLeaseLost {
+            id: lease.session_id.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn require_current_interaction_lease(
+    session: &mut SessionDoc,
+    lease: &SessionLease,
+    now: DateTime,
+) -> Result<(), StoreError> {
+    if lease.operation != SessionOperation::Interact {
+        return Err(StoreError::Malformed(
+            "provider-operation leases require provider renewal".into(),
+        ));
+    }
+    let current = current_boundary(session)?;
+    require_current_lease_identity(session, lease, now)?;
+    if current.authority != lease.boundary.authority {
         return Err(StoreError::SessionLeaseLost {
             id: lease.session_id.clone(),
         });
@@ -1296,12 +1323,27 @@ fn apply_command_transition(
             Ok((CoordinationOutcome::Lease(outcome), Vec::new()))
         }
         CoordinationCommand::Renew { lease, ttl } => {
+            if lease.operation == SessionOperation::Interact {
+                return Err(StoreError::Malformed(
+                    "interaction leases require interaction renewal".into(),
+                ));
+            }
             require_current_lease(session, lease, now)?;
             session
                 .coordination
                 .as_mut()
                 .and_then(|state| state.lease.as_mut())
                 .expect("the current lease was validated")
+                .expires_at = expiry(now, *ttl)?;
+            Ok((CoordinationOutcome::Unit, Vec::new()))
+        }
+        CoordinationCommand::RenewInteraction { lease, ttl } => {
+            require_current_interaction_lease(session, lease, now)?;
+            session
+                .coordination
+                .as_mut()
+                .and_then(|state| state.lease.as_mut())
+                .expect("the current interaction lease was validated")
                 .expires_at = expiry(now, *ttl)?;
             Ok((CoordinationOutcome::Unit, Vec::new()))
         }
@@ -2800,7 +2842,7 @@ mod tests {
     }
 
     #[test]
-    fn interaction_renewal_requires_boundary_but_exact_release_allows_drift() {
+    fn interaction_renewal_allows_status_drift_but_rejects_runtime_drift() {
         let mut session = session_doc();
         let mut receipts = Vec::new();
         let request = interaction_request(&session, "interaction-nonce-drift");
@@ -2816,11 +2858,33 @@ mod tests {
         };
         session.status = serde_plain_string(&SessionStatus::Idle).unwrap();
 
+        run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::RenewInteraction {
+                lease: lease.clone(),
+                ttl: std::time::Duration::from_secs(30),
+            },
+        )
+        .expect("an interaction may renew across its own status transition");
         assert!(matches!(
             run(
                 &mut session,
                 &mut receipts,
                 CoordinationCommand::Renew {
+                    lease: lease.clone(),
+                    ttl: std::time::Duration::from_secs(30),
+                },
+            ),
+            Err(StoreError::Malformed(message)) if message.contains("interaction renewal")
+        ));
+
+        session.runtime_id = Some("runtime-successor".into());
+        assert!(matches!(
+            run(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::RenewInteraction {
                     lease: lease.clone(),
                     ttl: std::time::Duration::from_secs(30),
                 },
@@ -2833,6 +2897,68 @@ mod tests {
             CoordinationCommand::Release(lease),
         )
         .expect("the exact bounded token can be cleared after status drift");
+    }
+
+    #[test]
+    fn interaction_renewal_rejects_runtime_generation_drift() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let request = interaction_request(&session, "interaction-nonce-generation-drift");
+        let lease = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::AcquireInteraction(request),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("interaction lease expected"),
+        };
+        let state = session.coordination.as_mut().unwrap();
+        state.authority_generation += 1;
+        state.next_generation = state.authority_generation;
+
+        assert!(matches!(
+            run(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::RenewInteraction {
+                    lease,
+                    ttl: std::time::Duration::from_secs(30),
+                },
+            ),
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+    }
+
+    #[test]
+    fn provider_renewal_still_requires_status_to_match() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let request = request(&session, "provider-status-renewal");
+        let lease = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Acquire(request),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("provider lease expected"),
+        };
+        session.status = serde_plain_string(&SessionStatus::Idle).unwrap();
+
+        assert!(matches!(
+            run(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::Renew {
+                    lease,
+                    ttl: std::time::Duration::from_secs(30),
+                },
+            ),
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
     }
 
     #[test]
@@ -2890,7 +3016,7 @@ mod tests {
         assert!(matches!(
             apply_command(
                 &mut session,
-                &CoordinationCommand::Renew {
+                &CoordinationCommand::RenewInteraction {
                     lease: old.clone(),
                     ttl: std::time::Duration::from_secs(30),
                 },
