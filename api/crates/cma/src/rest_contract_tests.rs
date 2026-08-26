@@ -44,10 +44,62 @@ const TEST_SERVICE_ID: &str = "api-github";
 const TEST_SKILL_NAME: &str = "repository-review";
 const TEST_DELEGATED_CREDENTIAL: &str = "contract-delegated-credential";
 
+struct RecordReadPause {
+    reached: Semaphore,
+    resume: Semaphore,
+}
+
+impl RecordReadPause {
+    fn new() -> Self {
+        Self {
+            reached: Semaphore::new(0),
+            resume: Semaphore::new(0),
+        }
+    }
+
+    async fn wait_until_reached(&self) {
+        self.reached
+            .acquire()
+            .await
+            .expect("the event-read barrier remains open")
+            .forget();
+    }
+
+    fn release(&self) {
+        self.resume.add_permits(1);
+    }
+
+    async fn hold_after_snapshot(&self) {
+        self.reached.add_permits(1);
+        self.resume
+            .acquire()
+            .await
+            .expect("the event-read barrier remains open")
+            .forget();
+    }
+}
+
 #[derive(Default)]
 struct MemorySessions {
     state: Mutex<MemorySessionState>,
     fail_lists: AtomicBool,
+    record_read_pause: Mutex<Option<(usize, Arc<RecordReadPause>)>>,
+}
+
+impl MemorySessions {
+    async fn pause_nth_record_read(&self, nth: usize) -> Arc<RecordReadPause> {
+        assert!(nth > 0, "a record-read pause needs a positive position");
+        let pause = Arc::new(RecordReadPause::new());
+        assert!(
+            self.record_read_pause
+                .lock()
+                .await
+                .replace((nth, Arc::clone(&pause)))
+                .is_none(),
+            "only one record read may be paused at a time"
+        );
+        pause
+    }
 }
 
 #[derive(Default)]
@@ -182,7 +234,22 @@ impl SessionStore for MemorySessions {
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        Ok(self.state.lock().await.records.get(&id.0).cloned())
+        let record = self.state.lock().await.records.get(&id.0).cloned();
+        let pause = {
+            let mut armed = self.record_read_pause.lock().await;
+            if let Some((remaining, _)) = armed.as_mut() {
+                *remaining -= 1;
+            }
+            if armed.as_ref().is_some_and(|(remaining, _)| *remaining == 0) {
+                armed.take().map(|(_, pause)| pause)
+            } else {
+                None
+            }
+        };
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
+        }
+        Ok(record)
     }
 
     async fn list_for(
@@ -653,6 +720,25 @@ impl TestKernel {
             .send(layer3_adapter::ConversationUpdate::Said(
                 layer3_adapter::SessionUpdate::AgentMessageChunk(
                     layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(text)),
+                ),
+            ))
+            .await
+            .expect("the conversation fixture is listening");
+    }
+
+    async fn emit_available_commands(&self) {
+        let updates = self
+            .conversation_updates
+            .lock()
+            .await
+            .clone()
+            .expect("the conversation fixture is connected");
+        updates
+            .send(layer3_adapter::ConversationUpdate::Said(
+                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(
+                    layer3_adapter::AvailableCommandsUpdate::new(vec![
+                        layer3_adapter::AvailableCommand::new("inspect", "Inspect the workspace"),
+                    ]),
                 ),
             ))
             .await
@@ -1490,6 +1576,72 @@ async fn followed_live_and_resource_frames_use_the_session_id_for_both_contexts(
     assert_eq!(resources["delta"][0]["path"], "/resources");
     assert_eq!(resources["delta"][0]["value"]["memoryBytesUsed"], 128);
     assert_agui_ids(&resources, &id.0, &id);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_prompt_run_starts_at_its_own_boundary_after_a_racing_runtime_event() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    // The run route reads the session once, then prompt admission reads it
+    // again. Pause that second snapshot so a durable runtime update lands in
+    // the exact window that an earlier route-level cursor snapshot exposed.
+    let pause = store.pause_nth_record_read(2).await;
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": id.0,
+            "runId": "run_racing_history",
+            "messages": [{ "role": "user", "content": "start after my boundary" }]
+        })
+        .to_string(),
+    );
+    let response =
+        tokio::spawn(async move { app.oneshot(request).await.expect("the run route answers") });
+    pause.wait_until_reached().await;
+
+    kernel.emit_available_commands().await;
+    let mut unrelated_seq = None;
+    for _ in 0..200 {
+        unrelated_seq = sessions
+            .events_since(&caller, &id, None)
+            .await
+            .expect("history remains readable")
+            .into_iter()
+            .find(|event| matches!(event.kind, EventKind::AvailableCommandsSet { .. }))
+            .map(|event| event.seq);
+        if unrelated_seq.is_some() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let unrelated_seq = unrelated_seq.expect("the racing runtime event becomes durable");
+    pause.release();
+
+    let response = response.await.expect("the run task completes");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let (first, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(first["type"], "RUN_STARTED");
+    assert_agui_ids(&first, "run_racing_history", &id);
+    let first_id = wire
+        .lines()
+        .find_map(|line| line.strip_prefix("id:"))
+        .map(str::trim)
+        .expect("a prompt boundary carries an SSE id")
+        .parse::<u64>()
+        .expect("the prompt boundary id is a sequence");
+    assert!(
+        first_id > unrelated_seq,
+        "the response must start at its own prompt boundary, after the racing event: {wire:?}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]

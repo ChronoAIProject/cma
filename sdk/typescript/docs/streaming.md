@@ -113,8 +113,11 @@ error.
 
 AG-UI also has one cursorless interface boundary: an unnumbered, non-live
 `RUN_STARTED` opens a continuation response that did not create a new durable
-turn. The SDK delivers it immediately and in order, but does not mark it
-ephemeral, deduplicate it, or advance the reconnect cursor. An unnumbered
+turn. Only an accepted `POST /api/v1/agui/run` continuation response emits it;
+`GET /api/v1/agui/events` never does, whether serving bounded history, a
+followed stream, or reconnect replay. The SDK delivers it immediately and in
+order, but does not mark it ephemeral, deduplicate it, or advance the reconnect
+cursor. An unnumbered
 `RUN_FINISHED` is different: it is the durable prefix of an approval request and
 stays buffered until the following numbered pending-state delta completes that
 projection. Every other known durable singleton or final requires a positive
