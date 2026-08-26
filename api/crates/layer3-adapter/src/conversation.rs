@@ -69,7 +69,7 @@ pub enum ConversationInput {
         /// What the owner decided.
         ///
         /// An intent rather than one of the runtime's own options, on the same
-        /// terms as [`RuntimeOptions`]: the caller says what was decided and
+        /// terms as [`crate::RuntimeOptions`]: the caller says what was decided and
         /// the adapter renders it into whatever this runtime offered. Only the
         /// adapter knows what those options meant, and a caller choosing one by
         /// name would have to learn a vocabulary that differs per kernel and
