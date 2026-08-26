@@ -11,6 +11,7 @@ mod config;
 mod health;
 mod kernels;
 mod permissions;
+mod rate_limit;
 mod renewal;
 mod screen;
 mod skills;
@@ -20,11 +21,16 @@ mod sweep;
 #[cfg(test)]
 mod pty_integration_tests;
 
-use std::{sync::Arc, time::Duration};
+#[cfg(test)]
+#[path = "rate_limit_tests.rs"]
+mod rate_limit_tests;
+
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::Request,
-    http::{header, HeaderName, HeaderValue, Method},
+    body::Body,
+    extract::{DefaultBodyLimit, Request, State},
+    http::{header, HeaderMap, HeaderName, HeaderValue, Method},
     middleware::Next,
     response::Response,
     routing::any,
@@ -43,7 +49,6 @@ use layer2_core::{
     SessionService, SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
 };
 use tower_http::{
-    cors::{AllowOrigin, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
@@ -54,9 +59,9 @@ use crate::auth::{AuthState, SignInRecords};
 use crate::config::Config;
 use crate::screen::VtScreen;
 
-const CORS_PREFLIGHT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
-const REST_LINKS: HeaderValue = HeaderValue::from_static(
+pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
     "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
 );
 
@@ -106,27 +111,122 @@ async fn rest_links(request: Request, next: Next) -> Response {
 /// Origins remain an explicit deployment grant. A wildcard is incompatible
 /// with credentialed requests and would let any site embed this service.
 fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
-    router.layer(
-        CorsLayer::new()
-            .allow_origin(AllowOrigin::list(origins))
-            .allow_credentials(true)
-            .allow_headers([
-                header::CONTENT_TYPE,
-                header::AUTHORIZATION,
-                HeaderName::from_static("last-event-id"),
-                HeaderName::from_static("idempotency-key"),
-                X_REQUEST_ID,
-            ])
-            .allow_methods([
-                Method::GET,
-                Method::POST,
-                Method::PUT,
-                Method::PATCH,
-                Method::DELETE,
-            ])
-            .expose_headers([header::LINK, X_REQUEST_ID])
-            .max_age(CORS_PREFLIGHT_MAX_AGE),
-    )
+    router.layer(axum::middleware::from_fn_with_state(
+        Arc::new(CorsPolicy { origins }),
+        cors,
+    ))
+}
+
+#[derive(Clone)]
+struct CorsPolicy {
+    origins: Vec<HeaderValue>,
+}
+
+async fn cors(State(policy): State<Arc<CorsPolicy>>, request: Request, next: Next) -> Response {
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .filter(|origin| policy.origins.iter().any(|allowed| allowed == *origin))
+        .cloned();
+
+    if is_cors_preflight(&request) {
+        let mut response = Response::new(Body::empty());
+        add_preflight_vary(response.headers_mut());
+        if requested_cors_method_is_allowed(request.headers())
+            && requested_cors_headers_are_allowed(request.headers())
+        {
+            if let Some(origin) = origin {
+                add_cors_grant(response.headers_mut(), origin);
+                response.headers_mut().insert(
+                    header::ACCESS_CONTROL_ALLOW_METHODS,
+                    HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE"),
+                );
+                response.headers_mut().insert(
+                    header::ACCESS_CONTROL_ALLOW_HEADERS,
+                    HeaderValue::from_static(
+                        "content-type, authorization, last-event-id, idempotency-key, x-request-id",
+                    ),
+                );
+                response.headers_mut().insert(
+                    header::ACCESS_CONTROL_MAX_AGE,
+                    HeaderValue::from_static("3600"),
+                );
+            }
+        }
+        return response;
+    }
+
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .append(header::VARY, HeaderValue::from_static("origin"));
+    if let Some(origin) = origin {
+        add_cors_grant(response.headers_mut(), origin);
+        response.headers_mut().insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("link, retry-after, x-request-id"),
+        );
+    }
+    response
+}
+
+pub(crate) fn is_cors_preflight(request: &Request) -> bool {
+    request.method() == Method::OPTIONS
+        && request.headers().contains_key(header::ORIGIN)
+        && request
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
+}
+
+fn requested_cors_method_is_allowed(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCESS_CONTROL_REQUEST_METHOD)
+        .and_then(|value| Method::from_bytes(value.as_bytes()).ok())
+        .is_some_and(|method| {
+            matches!(
+                method,
+                Method::GET | Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+            )
+        })
+}
+
+fn requested_cors_headers_are_allowed(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::ACCESS_CONTROL_REQUEST_HEADERS)
+        .iter()
+        .all(|value| {
+            value.to_str().is_ok_and(|raw| {
+                raw.trim().is_empty()
+                    || raw.split(',').all(|candidate| {
+                        matches!(
+                            candidate.trim().to_ascii_lowercase().as_str(),
+                            "content-type"
+                                | "authorization"
+                                | "last-event-id"
+                                | "idempotency-key"
+                                | "x-request-id"
+                        )
+                    })
+            })
+        })
+}
+
+fn add_cors_grant(headers: &mut HeaderMap, origin: HeaderValue) {
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+        HeaderValue::from_static("true"),
+    );
+}
+
+fn add_preflight_vary(headers: &mut HeaderMap) {
+    for value in [
+        "origin",
+        "access-control-request-method",
+        "access-control-request-headers",
+    ] {
+        headers.append(header::VARY, HeaderValue::from_static(value));
+    }
 }
 
 /// Mint or accept a correlation id, put it on the request span, and echo it.
@@ -197,6 +297,13 @@ async fn main() {
         sandbox = %config.sandbox_base_url,
         sandbox_image = %config.sandbox_image,
         auth = config.auth_mode_name(),
+        rate_admission_per_minute = config.rate_limits.admission_per_minute.get(),
+        rate_health_per_minute = config.rate_limits.health_per_minute.get(),
+        rate_default_per_minute = config.rate_limits.default_per_minute.get(),
+        rate_create_per_minute = config.rate_limits.create_per_minute.get(),
+        rate_input_per_minute = config.rate_limits.input_per_minute.get(),
+        trusted_proxy_networks = config.trusted_proxies.cidrs.len(),
+        trusted_proxy_hops = config.trusted_proxies.forwarded_hops,
         "configuration loaded"
     );
 
@@ -456,6 +563,8 @@ async fn main() {
             settings: Arc::clone(&settings),
         }),
     );
+    let rate_limits =
+        rate_limit::RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
 
     let app = with_request_context(with_cors(
         Router::new()
@@ -474,18 +583,31 @@ async fn main() {
             .merge(layer1_public::mcp::router())
             .merge(layer1_public::a2a::router())
             .merge(auth::router(Arc::clone(&auth_state)))
-            // Ordered deliberately. A layer added later wraps the ones before it,
-            // so identity is established first and recording sees both who called
-            // and how their request came out. Reversing these two would record
-            // every request as having no actor.
+            // Added in reverse wrapping order. Activity records admitted work,
+            // never the traffic being refused to protect its own Mongo write.
             .layer(axum::middleware::from_fn_with_state(
                 ActivityRecorder::new(Arc::clone(&activity)),
                 activity::record,
             ))
+            // Exact route-class limits see the identity established outside
+            // them and run before activity buffers a body or writes MongoDB.
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&rate_limits),
+                rate_limit::enforce,
+            ))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(&auth_state),
                 auth::attach_subject,
-            )),
+            ))
+            // A cheap network guard is outside authentication, bounding store
+            // lookups and bearer introspection as well as downstream work.
+            .layer(axum::middleware::from_fn_with_state(
+                rate_limits,
+                rate_limit::admit,
+            ))
+            // The extension is outermost so every body extractor sees the
+            // chosen ceiling. The activity recorder uses the same constant.
+            .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES)),
         config.cors_origins.clone(),
     ));
 
@@ -498,9 +620,12 @@ async fn main() {
     };
     tracing::info!(bind = %config.bind, "control plane listening");
 
-    if let Err(e) = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
+    if let Err(e) = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
     {
         tracing::error!(error = %e, "server stopped with an error");
         std::process::exit(1);
