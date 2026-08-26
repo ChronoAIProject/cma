@@ -84,6 +84,10 @@ impl SessionService {
         id: &SessionId,
         text: String,
     ) -> Result<(), CoreError> {
+        // One prompt must publish its Running transition before the next one
+        // decides whether it is steering. This gate is deliberately separate
+        // from the lifecycle gate `conversation_input` may acquire in readoption.
+        let _admission = self.prompt_gates.gate(id).lock_owned().await;
         // A recorded running conversation can be refused before recovery is
         // attempted, so unsupported mid-turn input reaches neither a runtime
         // nor the log. An older record may still carry an unrecorded grant;

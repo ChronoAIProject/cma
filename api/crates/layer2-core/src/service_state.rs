@@ -187,6 +187,8 @@ pub struct SessionService {
     pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
     /// Serializes lifecycle decisions and installation for one session only.
     pub(crate) lifecycle_gates: SessionGates,
+    /// Serializes prompt admission until an accepted turn is visible.
+    pub(crate) prompt_gates: SessionGates,
     /// The single writer of every session's event sequence.
     ///
     /// Owned by the durable lanes, so allocation and FIFO insertion share the
