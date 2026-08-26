@@ -187,6 +187,12 @@ pub struct SessionService {
     pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
     /// Serializes lifecycle decisions and installation for one session only.
     pub(crate) lifecycle_gates: SessionGates,
+    /// Serializes readoption before any adapter access within this process.
+    ///
+    /// Process-local exclusion is sufficient only while
+    /// `infra/api/deployment.yaml` keeps `replicas: 1`. Horizontal scaling
+    /// requires durable cross-process ownership before that value can grow.
+    pub(crate) readoption_gates: SessionGates,
     /// Serializes prompt admission until an accepted turn is visible.
     pub(crate) prompt_gates: SessionGates,
     /// The single writer of every session's event sequence.

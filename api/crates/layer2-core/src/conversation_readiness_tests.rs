@@ -8,8 +8,10 @@ use crate::event::{Event, EventKind};
 use crate::service::SessionService;
 use crate::session::{SessionSpec, SessionStatus};
 use crate::store::{SessionRecord, SessionStore};
-use crate::test_support::{service_over_with_environments, spec, user, FakeAdapter, FakeStore};
-use crate::{ConversationReadinessError, CoreError};
+use crate::test_support::{
+    await_settled, service_over_with_environments, spec, user, FakeAdapter, FakeStore,
+};
+use crate::{Authorization, Caller, ConversationReadinessError, CoreError};
 
 fn is_ready_commit(_record: &SessionRecord, events: &[Event]) -> bool {
     events.iter().any(|event| {
@@ -28,16 +30,21 @@ fn conversation_service(store: Arc<CommitFaultStore>) -> (Arc<SessionService>, A
         capabilities: conversing(),
         ..FakeAdapter::default()
     });
+    let service = conversation_service_over(store, Arc::clone(&adapter));
+    (service, adapter)
+}
+
+fn conversation_service_over(
+    store: Arc<CommitFaultStore>,
+    adapter: Arc<FakeAdapter>,
+) -> Arc<SessionService> {
     let profiles =
         crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
             kernel: crate::test_support::kernel(),
             mode: crate::options::SessionMode::Conversation,
             ..Default::default()
         });
-    (
-        service_over_with_environments(store, Arc::clone(&adapter), profiles),
-        adapter,
-    )
+    service_over_with_environments(store, adapter, profiles)
 }
 
 #[tokio::test]
@@ -140,6 +147,144 @@ async fn readiness_preserves_the_conversation_operation_ownership_boundary() {
             .await_conversable(&other, &created.id, Duration::from_secs(1))
             .await,
         Err(ConversationReadinessError::Refused(CoreError::Forbidden))
+    );
+}
+
+#[tokio::test]
+async fn a_live_conversation_precedes_a_trailing_start_claim() {
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::new(FakeStore::default()),
+        is_ready_commit,
+    ));
+    let (service, _) = conversation_service(store);
+    let caller = user("published-owner");
+    let created = service
+        .create_session(&caller, conversation_spec())
+        .await
+        .expect("session is recorded");
+    await_settled(&service, &caller, &created.id).await;
+    assert!(
+        service
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .and_then(|entry| entry.conversation.as_ref())
+            .is_some(),
+        "the conversation is live before the trailing claim is modeled"
+    );
+    assert!(service.begin_start(&created.id).await);
+
+    let result = service
+        .await_conversable(&caller, &created.id, Duration::from_millis(20))
+        .await;
+    service.finish_start(&created.id).await;
+
+    assert_eq!(result, Ok(()));
+}
+
+#[tokio::test]
+async fn an_owner_without_session_entitlement_cannot_use_conversation_input() {
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::new(FakeStore::default()),
+        is_ready_commit,
+    ));
+    let (service, _) = conversation_service(store);
+    let owner = user("unentitled-owner");
+    let created = service
+        .create_session(&owner, conversation_spec())
+        .await
+        .expect("session is recorded");
+    await_settled(&service, &owner, &created.id).await;
+    let unentitled = Caller::new(owner.subject.clone(), Authorization::none());
+
+    assert_eq!(
+        service
+            .await_conversable(&unentitled, &created.id, Duration::from_secs(1))
+            .await,
+        Err(ConversationReadinessError::Refused(CoreError::Forbidden))
+    );
+    assert_eq!(
+        service
+            .send_prompt(&unentitled, &created.id, "not authorized".into())
+            .await,
+        Err(CoreError::Forbidden)
+    );
+}
+
+#[tokio::test]
+async fn concurrent_readoption_waiters_open_one_adapter_channel() {
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::new(FakeStore::default()),
+        is_ready_commit,
+    ));
+    let (original, adapter) = conversation_service(Arc::clone(&store));
+    let caller = user("concurrent-readoption-owner");
+    let created = original
+        .create_session(&caller, conversation_spec())
+        .await
+        .expect("session is recorded");
+    await_settled(&original, &caller, &created.id).await;
+    let opens_before_readoption = adapter.rejoined.lock().await.len();
+    let replacement = conversation_service_over(Arc::clone(&store), Arc::clone(&adapter));
+
+    let (first, second) = tokio::join!(
+        replacement.await_conversable(&caller, &created.id, Duration::from_secs(1)),
+        replacement.await_conversable(&caller, &created.id, Duration::from_secs(1)),
+    );
+
+    assert_eq!(first, Ok(()));
+    assert_eq!(second, Ok(()));
+    assert_eq!(
+        adapter.rejoined.lock().await.len(),
+        opens_before_readoption + 1,
+        "concurrent waiters must share one readoption attempt"
+    );
+}
+
+#[tokio::test]
+async fn timed_out_readoption_continues_and_retry_does_not_open_again() {
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::new(FakeStore::default()),
+        is_ready_commit,
+    ));
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        sign_in_on_open: true,
+        ..FakeAdapter::default()
+    });
+    let original = conversation_service_over(Arc::clone(&store), Arc::clone(&adapter));
+    let caller = user("timed-readoption-owner");
+    let created = original
+        .create_session(&caller, conversation_spec())
+        .await
+        .expect("session is recorded");
+    await_settled(&original, &caller, &created.id).await;
+    let opens_before_readoption = adapter.rejoined.lock().await.len();
+    let replacement = conversation_service_over(store, Arc::clone(&adapter));
+
+    assert_eq!(
+        replacement
+            .await_conversable(&caller, &created.id, Duration::from_millis(20))
+            .await,
+        Err(ConversationReadinessError::ProvisioningTimedOut)
+    );
+    assert_eq!(
+        adapter.rejoined.lock().await.len(),
+        opens_before_readoption + 1,
+        "the adapter open began before the readiness wait expired"
+    );
+
+    assert_eq!(
+        replacement
+            .await_conversable(&caller, &created.id, Duration::from_secs(1))
+            .await,
+        Ok(())
+    );
+    assert_eq!(
+        adapter.rejoined.lock().await.len(),
+        opens_before_readoption + 1,
+        "retry must wait for the owned readoption instead of opening again"
     );
 }
 

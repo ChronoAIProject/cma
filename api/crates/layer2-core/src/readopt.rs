@@ -151,6 +151,30 @@ impl SessionService {
     }
 
     pub(crate) async fn readopt(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
+        let service = Arc::clone(self);
+        let record = record.clone();
+        let id = record.session.id.clone();
+        let task_id = id.clone();
+        let readoption = tokio::spawn(async move {
+            // The task owns the operation once it starts. A caller whose wait
+            // is cancelled detaches from this task instead of abandoning an
+            // adapter channel halfway through opening it.
+            let _operation = service.readoption_gates.gate(&id).lock_owned().await;
+            if service.entries.read().await.contains_key(&id) {
+                return Ok(());
+            }
+            service.readopt_once(&record).await
+        });
+
+        readoption.await.map_err(|error| {
+            tracing::error!(session_id = %task_id, %error, "session readoption task failed");
+            CoreError::RuntimeUnavailable(
+                "session readoption stopped before it could complete".into(),
+            )
+        })?
+    }
+
+    async fn readopt_once(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
         let id = record.session.id.clone();
         let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
             // Nothing to reclaim: the session never got a runtime, or its
