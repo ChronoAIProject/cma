@@ -708,6 +708,19 @@ async fn lost_initial_mint_response_is_reclaimed_after_restart_and_lease_expiry(
             .await,
         Err(StoreError::Unavailable(_))
     ));
+    assert_eq!(platform.remaining_ids(), ["provider-key-1"]);
+    assert_eq!(
+        platform.delete_attempts.load(Ordering::SeqCst),
+        1,
+        "an unreadable session cannot prove the unmatched key is safe to reclaim"
+    );
+    assert_eq!(
+        restarted
+            .reclaim_unrecorded_credentials(&super::reclaim_tests::empty_session_service())
+            .await
+            .expect("a later readable reconciliation reclaims the unmatched key"),
+        1
+    );
     assert!(platform.remaining_ids().is_empty());
     assert_eq!(platform.delete_attempts.load(Ordering::SeqCst), 2);
     server.abort();
@@ -774,6 +787,19 @@ async fn lost_replacement_response_reclaims_only_the_unmatched_key_after_restart
             .await,
         Err(StoreError::Unavailable(_))
     ));
+    assert_eq!(platform.remaining_ids(), ["provider-key-1", "provider-old"]);
+    assert_eq!(
+        platform.delete_attempts.load(Ordering::SeqCst),
+        1,
+        "an unreadable session cannot confirm which sibling reached its runtime"
+    );
+    assert_eq!(
+        restarted
+            .reclaim_unrecorded_credentials(&super::reclaim_tests::empty_session_service())
+            .await
+            .expect("a later readable reconciliation reclaims the unmatched key"),
+        1
+    );
     assert_eq!(platform.remaining_ids(), ["provider-old"]);
     assert_eq!(platform.delete_attempts.load(Ordering::SeqCst), 2);
     let durable = store
@@ -781,11 +807,11 @@ async fn lost_replacement_response_reclaims_only_the_unmatched_key_after_restart
         .await
         .expect("store works")
         .expect("current custody remains");
-    assert_eq!(
-        durable.current.as_ref().map(|held| held.id.as_str()),
-        Some("provider-old")
-    );
+    assert!(durable.retired);
+    assert!(durable.current.is_none());
     assert!(durable.pending.is_none());
+    assert_eq!(durable.revoke_debt.len(), 1);
+    assert_eq!(durable.revoke_debt[0].id, "provider-old");
     server.abort();
 }
 
