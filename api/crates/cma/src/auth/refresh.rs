@@ -95,6 +95,11 @@ impl AuthState {
                 holder: holder.clone(),
                 expires_at: SystemTime::now() + REFRESH_LEASE_LIFETIME,
             });
+            // Token rotation owns the next generation. Cancel a check of the
+            // old access token before the provider can rotate underneath it;
+            // otherwise an inactive answer for that old token could clear this
+            // lease and strand a newly rotated refresh token in the response.
+            next.authorization_lease = None;
             take_operation(budget, 2, "subject refresh lease write")?;
             if self
                 .store
