@@ -460,6 +460,11 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
 
 `reason` is `confirmation` where the runtime offered no description of what it wants, and `cma:<what the runtime called it>` where it did — `cma:command_execution`, `cma:file_write`, `cma:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
 
+`message` is the kernel's wording where it supplied any, and `null` where it
+supplied neither a detail nor an action. The `RUN_FINISHED` interrupt and its
+`/pendingApprovals/{requestId}` state member carry the same nullable value; a
+client must not invent wording when it is absent.
+
 `payload.decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions, and a client that meant the second and sent the first watches the agent try something else instead of stopping. **A decision or status this service does not recognise is read as a refusal** — the one direction this can safely fail in, because the alternative is granting on a word it did not understand.
 
 Between step 2 and step 4 the session is `idle` with `stop_reason: requires_action`. **That state is durable.** A client that closes the tab and returns finds the interrupt still pending and answerable; it does not need to have held the stream.
