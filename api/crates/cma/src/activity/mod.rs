@@ -3,7 +3,7 @@
 //! Sits inside the middleware that establishes who is calling and outside
 //! every handler, which is the only place that can see both the caller and how
 //! their request came out. What it produces is the core's vocabulary and
-//! nothing else — the translation lives in [`classify`], and Layer 2 never
+//! nothing else — the translation lives in [`mod@classify`], and Layer 2 never
 //! learns what carried the request.
 //!
 //! Two decisions worth knowing about.
