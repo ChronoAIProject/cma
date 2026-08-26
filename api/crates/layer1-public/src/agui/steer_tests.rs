@@ -244,6 +244,7 @@ fn app() -> Router {
         tickets: TerminalTickets::in_memory(),
         environments,
         operations: Arc::new(NoOperations),
+        triggers: None,
     };
     let authorization = Authorization::from_capabilities([Capability::UseOwnSessions]);
 

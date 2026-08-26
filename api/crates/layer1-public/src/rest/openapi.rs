@@ -188,7 +188,7 @@ fn finish_document(document: &mut openapi::OpenApi) {
                 }
             }
 
-            if path == DOCUMENT_PATH || path == "/api/v1/conformance" {
+            if anonymous_path(path) {
                 operation.security = Some(Vec::new());
             } else {
                 operation.security = Some(vec![
@@ -204,6 +204,13 @@ fn finish_document(document: &mut openapi::OpenApi) {
             }
         }
     }
+}
+
+pub(super) fn anonymous_path(path: &str) -> bool {
+    matches!(
+        path,
+        DOCUMENT_PATH | "/api/v1/conformance" | "/api/v1/triggers/public/{public_id}"
+    )
 }
 
 fn operation_id(method: &str, path: &str) -> String {

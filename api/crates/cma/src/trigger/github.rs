@@ -8,8 +8,9 @@ use async_trait::async_trait;
 use layer2_core::{
     AuthorityProvenance, ConnectedAccount, ConnectionSnapshot, ConnectionState, DelegationState,
     LaunchAuthority, PublisherAuthority, PublisherRepositoryRole, RepositoryIdentity,
-    RepositoryVisibility, ScopeClass, SubjectId, TriggerAuthorityVerifier, TriggerRevision,
-    TriggerRevisionContent, TriggerServiceError,
+    RepositoryVisibility, ScopeClass, SourceMode, SubjectId, TriggerAuthorityVerifier,
+    TriggerConnection, TriggerConnectionAuthorization, TriggerConnectionManager,
+    TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent, TriggerServiceError,
 };
 use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
@@ -277,6 +278,38 @@ impl GithubBroker {
         Ok(created.value.id)
     }
 
+    async fn reconcile_oauth_placeholder(
+        &self,
+        subject: &SubjectId,
+        label: &str,
+    ) -> Result<String, GithubBrokerError> {
+        let services: Observed<UserServiceListWire> = self
+            .nyxid_json(
+                subject,
+                Method::GET,
+                &["api", "v1", "user-services"],
+                &[],
+                None,
+                MAX_MANAGEMENT_BODY_BYTES,
+            )
+            .await?;
+        let mut matching = services.value.services.into_iter().filter(|service| {
+            service.slug == GITHUB_SERVICE_SLUG
+                && matches!(service.credential_source, CredentialSourceWire::Personal)
+                && service.label.as_deref() == Some(label)
+        });
+        let existing = matching.next();
+        if matching.next().is_some() {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        if let Some(service) = existing {
+            validate_resource_uri(&service.resource_uri)?;
+            validate_opaque_id(&service.id, "UserService ID")?;
+            return Ok(service.id);
+        }
+        self.create_oauth_placeholder(subject, label).await
+    }
+
     pub(crate) async fn begin_oauth(
         &self,
         subject: &SubjectId,
@@ -448,6 +481,41 @@ impl GithubBroker {
         })
     }
 
+    async fn resolve_branch_sha(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+        repository_id: u64,
+        selected_ref: &str,
+    ) -> Result<String, GithubBrokerError> {
+        let components = repository_ref_components(selected_ref)?;
+        let repository_id = repository_id.to_string();
+        let mut path = vec![
+            "repositories",
+            repository_id.as_str(),
+            "git",
+            "ref",
+            "heads",
+        ];
+        path.extend(components);
+        let response: Observed<GithubRefWire> = self
+            .github_json(subject, service_id, Method::GET, &path, &[], None)
+            .await?;
+        if response.value.reference != format!("refs/heads/{selected_ref}")
+            || response.value.object.kind != "commit"
+            || response.value.object.sha.len() != 40
+            || !response
+                .value
+                .object
+                .sha
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        Ok(response.value.object.sha.to_ascii_lowercase())
+    }
+
     async fn require_service(
         &self,
         subject: &SubjectId,
@@ -597,9 +665,19 @@ impl TriggerAuthorityVerifier for GithubBroker {
             )
             .await?;
         repository.identity.selected_ref = content.upstream.repository.selected_ref.clone();
+        let observed_head = self
+            .resolve_branch_sha(
+                subject,
+                selected_service_id,
+                repository.identity.repository_id,
+                &repository.identity.selected_ref,
+            )
+            .await?;
         if repository.identity != content.upstream.repository
             || repository.archived
             || repository.disabled
+            || (content.upstream.source_mode == SourceMode::PinnedCommit
+                && content.upstream.observed_source_sha.as_deref() != Some(observed_head.as_str()))
         {
             return Err(GithubBrokerError::AuthorityDrift.into());
         }
@@ -652,6 +730,14 @@ impl TriggerAuthorityVerifier for GithubBroker {
             .await?;
         repository.identity.selected_ref =
             revision.content.upstream.repository.selected_ref.clone();
+        let observed_head = self
+            .resolve_branch_sha(
+                subject,
+                selected_service_id,
+                repository.identity.repository_id,
+                &repository.identity.selected_ref,
+            )
+            .await?;
         if repository.identity != revision.content.upstream.repository
             || repository.archived
             || repository.disabled
@@ -670,7 +756,107 @@ impl TriggerAuthorityVerifier for GithubBroker {
                 observed_at: layer2_core::rfc3339_at(SystemTime::now()),
             },
             connection: connection.snapshot,
+            source_sha: match revision.content.upstream.source_mode {
+                SourceMode::PinnedCommit => revision
+                    .content
+                    .upstream
+                    .observed_source_sha
+                    .clone()
+                    .ok_or_else(|| {
+                    GithubBrokerError::Malformed("the pinned Trigger has no source commit".into())
+                })?,
+                SourceMode::BranchHeadAtLaunch => observed_head,
+            },
         })
+    }
+}
+
+#[async_trait]
+impl TriggerConnectionManager for GithubBroker {
+    async fn list_connections(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<Vec<TriggerConnection>, TriggerServiceError> {
+        Ok(GithubBroker::list_connections(self, subject)
+            .await?
+            .into_iter()
+            .map(|connection| TriggerConnection {
+                service_id: connection.service_id,
+                state_version: connection.state_version,
+                state: connection.state,
+                account: connection.account,
+                granted_scopes: connection.granted_scopes,
+                consent_observed_at: connection.consent_observed_at,
+            })
+            .collect())
+    }
+
+    async fn begin_connection(
+        &self,
+        subject: &SubjectId,
+        intent_id: &str,
+    ) -> Result<TriggerConnectionAuthorization, TriggerServiceError> {
+        let intent = uuid::Uuid::parse_str(intent_id)
+            .map_err(|_| GithubBrokerError::Malformed("connection intent is not valid".into()))?;
+        let label = format!("cma-trigger:{}", intent.hyphenated());
+        let service_id = self.reconcile_oauth_placeholder(subject, &label).await?;
+        Ok(self.begin_oauth(subject, &service_id).await?.into())
+    }
+
+    async fn reconnect(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<TriggerConnectionAuthorization, TriggerServiceError> {
+        Ok(self.begin_oauth(subject, service_id).await?.into())
+    }
+
+    async fn preflight_connection(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<TriggerConnection, TriggerServiceError> {
+        let evidence = GithubBroker::preflight_connection(self, subject, service_id).await?;
+        Ok(TriggerConnection {
+            service_id: evidence.snapshot.service_id,
+            state_version: evidence.snapshot.service_state_version,
+            state: evidence.snapshot.state,
+            account: Some(evidence.snapshot.account),
+            granted_scopes: evidence.snapshot.granted_scopes,
+            consent_observed_at: Some(evidence.snapshot.consent_observed_at),
+        })
+    }
+
+    async fn resolve_repository(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+        repository_id: u64,
+        selected_ref: &str,
+    ) -> Result<TriggerRepositorySelection, TriggerServiceError> {
+        GithubBroker::preflight_connection(self, subject, service_id).await?;
+        let mut repository = self
+            .repository_by_id(subject, service_id, repository_id)
+            .await?;
+        repository.identity.selected_ref = selected_ref.to_string();
+        repository.identity.validate_public_upstream()?;
+        let source_sha = self
+            .resolve_branch_sha(subject, service_id, repository_id, selected_ref)
+            .await?;
+        Ok(TriggerRepositorySelection {
+            repository: repository.identity,
+            source_sha,
+        })
+    }
+}
+
+impl From<GithubOAuthStart> for TriggerConnectionAuthorization {
+    fn from(value: GithubOAuthStart) -> Self {
+        Self {
+            service_id: value.service_id,
+            authorization_url: value.authorization_url,
+            attempt_nonce: value.attempt_nonce,
+        }
     }
 }
 
@@ -689,6 +875,8 @@ struct UserServiceListWire {
 struct UserServiceWire {
     id: String,
     slug: String,
+    #[serde(default)]
+    label: Option<String>,
     resource_uri: String,
     api_key_id: Option<String>,
     is_active: bool,
@@ -783,6 +971,20 @@ struct GithubRepositoryWire {
     source: Option<GithubRepositoryRefWire>,
 }
 
+#[derive(Debug, Deserialize)]
+struct GithubRefWire {
+    #[serde(rename = "ref")]
+    reference: String,
+    object: GithubRefObjectWire,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubRefObjectWire {
+    sha: String,
+    #[serde(rename = "type")]
+    kind: String,
+}
+
 fn connection_state(service: &UserServiceWire, evidence: &KeyAuthorizationWire) -> ConnectionState {
     if !service.is_active || !evidence.is_active {
         return ConnectionState::Inactive;
@@ -796,6 +998,34 @@ fn connection_state(service: &UserServiceWire, evidence: &KeyAuthorizationWire) 
         ("revoked", _) => ConnectionState::Revoked,
         _ => ConnectionState::Disconnected,
     }
+}
+
+fn repository_ref_components(value: &str) -> Result<Vec<&str>, GithubBrokerError> {
+    if value.is_empty()
+        || value.len() > 255
+        || value.starts_with('/')
+        || value.ends_with('/')
+        || value.contains("..")
+        || value.contains("@{")
+        || value.bytes().any(|byte| {
+            byte.is_ascii_control()
+                || matches!(byte, b' ' | b'~' | b'^' | b':' | b'?' | b'*' | b'[' | b'\\')
+        })
+    {
+        return Err(GithubBrokerError::Malformed(
+            "the selected repository ref is not canonical".into(),
+        ));
+    }
+    let components: Vec<_> = value.split('/').collect();
+    if components
+        .iter()
+        .any(|component| component.is_empty() || matches!(*component, "." | ".."))
+    {
+        return Err(GithubBrokerError::Malformed(
+            "the selected repository ref is not canonical".into(),
+        ));
+    }
+    Ok(components)
 }
 
 fn normalize_scopes(scopes: Vec<String>) -> Result<Vec<String>, GithubBrokerError> {
@@ -1007,6 +1237,7 @@ mod tests {
         authorization_state_version: i64,
         scopes: Vec<String>,
         resource_uri: String,
+        label: Option<String>,
     }
 
     impl Default for Fixture {
@@ -1017,6 +1248,7 @@ mod tests {
                 authorization_state_version: 4,
                 scopes: vec![PUBLIC_REPOSITORY_SCOPE.to_string()],
                 resource_uri: "https://nyxid.test/api/v1/proxy/s/api-github".to_string(),
+                label: None,
             }
         }
     }
@@ -1046,6 +1278,7 @@ mod tests {
                 "services": [{
                     "id": "service-1",
                     "slug": GITHUB_SERVICE_SLUG,
+                    "label": fixture.label,
                     "resource_uri": fixture.resource_uri,
                     "api_key_id": "key-1",
                     "is_active": true,
@@ -1083,6 +1316,15 @@ mod tests {
                 "html_url": "https://github.com/owner/upstream",
                 "permissions": { "pull": true }
             }),
+            ("GET", "/api/v1/proxy/s/api-github/repositories/10/git/ref/heads/main") => {
+                json!({
+                    "ref": "refs/heads/main",
+                    "object": {
+                        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "type": "commit"
+                    }
+                })
+            }
             ("POST", "/api/v1/keys") => json!({
                 "id": "service-created",
                 "slug": GITHUB_SERVICE_SLUG,
@@ -1254,6 +1496,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connect_reconciles_a_prior_placeholder_by_deterministic_label() {
+        let intent = "123e4567-e89b-12d3-a456-426614174001";
+        let fixture = Fixture {
+            label: Some(format!("cma-trigger:{intent}")),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let start = TriggerConnectionManager::begin_connection(
+            &broker(&base_url, true),
+            &subject(),
+            intent,
+        )
+        .await
+        .expect("reconcile and begin OAuth");
+        server.abort();
+
+        assert_eq!(start.service_id, "service-1");
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].uri, "/api/v1/user-services");
+        assert_eq!(requests[1].uri, "/api/v1/user-services");
+        assert!(requests.iter().all(|request| request.method == "GET"));
+        assert_eq!(
+            query(&requests[2].uri, "key_id").as_deref(),
+            Some("service-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn repository_resolution_uses_numeric_identity_and_an_exact_ref() {
+        let (base_url, requests, server) = fixture_server(Fixture::default()).await;
+        let selection = TriggerConnectionManager::resolve_repository(
+            &broker(&base_url, true),
+            &subject(),
+            "service-1",
+            10,
+            "main",
+        )
+        .await
+        .expect("resolve repository");
+        server.abort();
+
+        assert_eq!(selection.repository.repository_id, 10);
+        assert_eq!(selection.repository.owner_id, 11);
+        assert_eq!(selection.repository.selected_ref, "main");
+        assert_eq!(selection.source_sha, "a".repeat(40));
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 5);
+        assert_eq!(
+            requests[3].uri,
+            "/api/v1/proxy/s/api-github/repositories/10?_nyxid_via=service-1"
+        );
+        assert_eq!(
+            requests[4].uri,
+            "/api/v1/proxy/s/api-github/repositories/10/git/ref/heads/main?_nyxid_via=service-1"
+        );
+    }
+
+    #[tokio::test]
     async fn absent_subject_authority_prevents_any_outbound_request() {
         let (base_url, requests, server) = fixture_server(Fixture::default()).await;
         let result = broker(&base_url, false).list_connections(&subject()).await;
@@ -1293,6 +1594,16 @@ mod tests {
         for bad in ["", ".", "..", "a/b", "a\\b"] {
             assert!(endpoint(&base, &[bad], &[]).is_err(), "accepted {bad:?}");
         }
+        for bad_ref in ["", "/main", "main/", "feature//x", "../main", "main~1"] {
+            assert!(
+                repository_ref_components(bad_ref).is_err(),
+                "accepted ref {bad_ref:?}"
+            );
+        }
+        assert_eq!(
+            repository_ref_components("feature/cma-trigger").unwrap(),
+            vec!["feature", "cma-trigger"]
+        );
     }
 
     #[test]

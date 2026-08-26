@@ -3054,6 +3054,7 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
         .put_login_attempt(LoginAttempt {
             id: login_id.clone(),
             verifier: SecretValue::new("pkce-plaintext".into()),
+            return_to: Some("/triggers/123e4567-e89b-12d3-a456-426614174000".into()),
             expires_at: SystemTime::now() + Duration::from_secs(300),
         })
         .await
@@ -3073,15 +3074,11 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     );
     let consumed = [left.unwrap(), right.unwrap()];
     assert_eq!(consumed.iter().filter(|value| value.is_some()).count(), 1);
+    let consumed = consumed.into_iter().flatten().next().unwrap();
+    assert_eq!(consumed.verifier.expose(), "pkce-plaintext");
     assert_eq!(
-        consumed
-            .into_iter()
-            .flatten()
-            .next()
-            .unwrap()
-            .verifier
-            .expose(),
-        "pkce-plaintext"
+        consumed.return_to.as_deref(),
+        Some("/triggers/123e4567-e89b-12d3-a456-426614174000")
     );
 
     let mut initial = subject_state();
