@@ -60,10 +60,12 @@ A key contains 1 to 255 visible ASCII bytes. It is scoped to the authenticated
 subject and the particular operation, so one subject cannot consume another's
 key and a session-create key does not collide with a session-input key. The
 first request reserves the key durably before doing any work. Its status,
-headers, and body are retained until that claim expires, 24 hours after the
-first reservation. A retry with the exact same request body bytes receives the
-same status and byte-identical response body without performing the operation
-again.
+representation headers, and body are retained until that claim expires, 24
+hours after the first reservation. A retry with the exact same request body
+bytes receives the same status and byte-identical response body without
+performing the operation again. Per-request transport headers, including
+`X-Request-Id` and CORS headers, are generated for the retry rather than copied
+from the first request.
 
 Three refusals make ambiguous retries explicit:
 
