@@ -139,7 +139,7 @@ mod tests {
         auth.store_sign_in(
             &subject,
             DurableSubjectTokens {
-                access_token: SecretValue::new("browser-access".into()),
+                access_token: Some(SecretValue::new("browser-access".into())),
                 refresh_token: Some(SecretValue::new("browser-refresh".into())),
                 expires_at: std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
             },
@@ -236,6 +236,7 @@ mod tests {
                 .tokens
                 .expect("renewable browser tokens remain")
                 .access_token
+                .expect("browser access remains active")
                 .expose(),
             "browser-access"
         );
