@@ -104,6 +104,12 @@ trait TriggerSessionEffectPort: Send + Sync {
         &self,
         session_id: &SessionId,
     ) -> Result<bool, CoreError>;
+
+    async fn dispatch_initial_prompt(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+    ) -> Result<layer2_core::PromptDelivery, CoreError>;
 }
 
 struct SessionServiceEffectPort(Arc<SessionService>);
@@ -166,6 +172,14 @@ impl TriggerSessionEffectPort for SessionServiceEffectPort {
         self.0
             .runtime_credential_retirement_settled(session_id)
             .await
+    }
+
+    async fn dispatch_initial_prompt(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+    ) -> Result<layer2_core::PromptDelivery, CoreError> {
+        self.0.dispatch_trigger_prompt(launch, claim).await
     }
 }
 
@@ -1100,6 +1114,96 @@ impl GithubEffectExecutor {
             .await
             .map_err(|error| session_failure(error, claim))
     }
+
+    async fn run_initial_dispatch(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let Some(sessions) = self.sessions.as_ref() else {
+            return unsupported_effect(claim);
+        };
+        let delivery = match sessions.dispatch_initial_prompt(launch, claim).await {
+            Ok(delivery) => delivery,
+            Err(error) => return session_failure(error, claim),
+        };
+        let result = LaunchEffectResult::InitialDispatch {
+            delivery: delivery.clone(),
+        };
+        let mut resources = retained_resources(launch, claim);
+        resources.insert("session_id".into(), delivery.session_id.0.clone());
+        resources.insert("prompt_origin_key".into(), delivery.origin_key.clone());
+        resources.insert("prompt_payload_hash".into(), delivery.payload_hash.clone());
+        if let Some(sequence) = delivery.dispatch_fence_sequence {
+            resources.insert(
+                "prompt_dispatch_fence_sequence".into(),
+                sequence.to_string(),
+            );
+        }
+        match delivery.state {
+            layer2_core::PromptDeliveryState::Completed => EffectExecution::Completed {
+                result,
+                safe_detail: "The initial Trigger task reached a terminal runtime response.".into(),
+                external_resource_ids: resources,
+            },
+            layer2_core::PromptDeliveryState::Queued => {
+                let retry_at = rfc3339_at(SystemTime::now() + retry_delay(claim, None));
+                EffectExecution::RetryWithProgress {
+                    result,
+                    failure: failure(
+                        FailureClass::RetryableTransient,
+                        "initial_prompt_pre_write_failure",
+                        "The runtime input queue refused the initial task before any write.",
+                        "CMA will retry the same immutable task after a bounded backoff.",
+                        claim,
+                        Some(retry_at.clone()),
+                    ),
+                    retry_at,
+                }
+            }
+            layer2_core::PromptDeliveryState::WriteConfirmed
+            | layer2_core::PromptDeliveryState::ExecutionObserved => {
+                let reconcile_at = rfc3339_at(
+                    SystemTime::now()
+                        + Duration::from_secs(reconciliation_delay(claim.reconciliation_attempt)),
+                );
+                EffectExecution::ReconcileWithProgress {
+                    result,
+                    failure: failure(
+                        FailureClass::RetryableTransient,
+                        "initial_prompt_turn_pending",
+                        "The initial Trigger task is waiting for its terminal runtime result.",
+                        "CMA will observe the same session turn without sending the task again.",
+                        claim,
+                        Some(reconcile_at.clone()),
+                    ),
+                    reconcile_at,
+                    external_resource_ids: resources,
+                }
+            }
+            layer2_core::PromptDeliveryState::RecoveryRequired
+            | layer2_core::PromptDeliveryState::DispatchFenced => {
+                EffectExecution::FailedWithProgress {
+                    result,
+                    failure: failure(
+                        FailureClass::RecoveryRequired,
+                        "initial_prompt_recovery_required",
+                        "CMA cannot prove whether the initial task reached the runtime.",
+                        "Review the retained session evidence before explicitly authorizing a replacement dispatch; it may execute twice.",
+                        claim,
+                        None,
+                    ),
+                }
+            }
+            layer2_core::PromptDeliveryState::Failed => EffectExecution::FailedWithProgress {
+                result,
+                failure: failure(
+                    FailureClass::PolicyUserAction,
+                    "initial_prompt_execution_failed",
+                    "The runtime reported that the initial Trigger task failed.",
+                    "Open the retained session to review the failure before deciding how to continue.",
+                    claim,
+                    None,
+                ),
+            },
+        }
+    }
 }
 
 #[async_trait]
@@ -1113,6 +1217,7 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
             LaunchEffectKind::Session => self.run_session(launch, claim).await,
             LaunchEffectKind::Reach => self.run_reach(launch, claim).await,
+            LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -1128,6 +1233,7 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
             LaunchEffectKind::Session => self.run_session(launch, claim).await,
             LaunchEffectKind::Reach => self.run_reach(launch, claim).await,
+            LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -1156,6 +1262,9 @@ fn execution_failure(execution: EffectExecution) -> LaunchFailure {
     match execution {
         EffectExecution::RetryLater { failure, .. }
         | EffectExecution::ReconcileLater { failure, .. }
+        | EffectExecution::RetryWithProgress { failure, .. }
+        | EffectExecution::ReconcileWithProgress { failure, .. }
+        | EffectExecution::FailedWithProgress { failure, .. }
         | EffectExecution::Failed { failure } => failure,
         EffectExecution::Completed { .. } => LaunchFailure {
             class: FailureClass::TerminalSecurity,
@@ -1694,27 +1803,46 @@ mod tests {
 
     struct FakeSessions {
         answers: Mutex<VecDeque<SessionAnswer>>,
+        prompt_answers: Mutex<VecDeque<Result<layer2_core::PromptDelivery, CoreError>>>,
         policy_receipt: Mutex<Option<layer3_adapter::RuntimePolicyReceipt>>,
         installed_policies: Mutex<Vec<LaunchCapability>>,
         calls: AtomicUsize,
+        prompt_calls: AtomicUsize,
     }
 
     impl FakeSessions {
         fn new(answers: impl IntoIterator<Item = SessionAnswer>) -> Self {
             Self {
                 answers: Mutex::new(answers.into_iter().collect()),
+                prompt_answers: Mutex::new(VecDeque::new()),
                 policy_receipt: Mutex::new(None),
                 installed_policies: Mutex::new(Vec::new()),
                 calls: AtomicUsize::new(0),
+                prompt_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn with_prompt_answers(
+            answers: impl IntoIterator<Item = Result<layer2_core::PromptDelivery, CoreError>>,
+        ) -> Self {
+            Self {
+                answers: Mutex::new(VecDeque::new()),
+                prompt_answers: Mutex::new(answers.into_iter().collect()),
+                policy_receipt: Mutex::new(None),
+                installed_policies: Mutex::new(Vec::new()),
+                calls: AtomicUsize::new(0),
+                prompt_calls: AtomicUsize::new(0),
             }
         }
 
         fn with_policy_receipt(receipt: layer3_adapter::RuntimePolicyReceipt) -> Self {
             Self {
                 answers: Mutex::new(VecDeque::new()),
+                prompt_answers: Mutex::new(VecDeque::new()),
                 policy_receipt: Mutex::new(Some(receipt)),
                 installed_policies: Mutex::new(Vec::new()),
                 calls: AtomicUsize::new(0),
+                prompt_calls: AtomicUsize::new(0),
             }
         }
     }
@@ -1797,6 +1925,15 @@ mod tests {
             _session_id: &SessionId,
         ) -> Result<bool, CoreError> {
             Ok(true)
+        }
+
+        async fn dispatch_initial_prompt(
+            &self,
+            _launch: &Launch,
+            _claim: &EffectClaim,
+        ) -> Result<layer2_core::PromptDelivery, CoreError> {
+            self.prompt_calls.fetch_add(1, Ordering::SeqCst);
+            self.prompt_answers.lock().unwrap().pop_front().unwrap()
         }
     }
 
@@ -2231,6 +2368,85 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn initial_dispatch_maps_every_delivery_state_without_collapsing_progress() {
+        use layer2_core::PromptDeliveryState as State;
+
+        for state in [
+            State::Queued,
+            State::DispatchFenced,
+            State::WriteConfirmed,
+            State::ExecutionObserved,
+            State::Completed,
+            State::Failed,
+            State::RecoveryRequired,
+        ] {
+            let launch = reach_launch();
+            let delivery = prompt_delivery(&launch, state);
+            let sessions = Arc::new(FakeSessions::with_prompt_answers([Ok(delivery.clone())]));
+            let executor = session_executor(Arc::clone(&sessions));
+            let result = executor
+                .execute(
+                    &launch,
+                    &claim_for(LaunchEffectKind::InitialDispatch, EffectClaimMode::Execute),
+                )
+                .await;
+
+            match state {
+                State::Queued => assert!(matches!(
+                    result,
+                    EffectExecution::RetryWithProgress {
+                        result: LaunchEffectResult::InitialDispatch { delivery: observed },
+                        failure: LaunchFailure {
+                            class: FailureClass::RetryableTransient,
+                            ..
+                        },
+                        ..
+                    } if observed == delivery
+                )),
+                State::WriteConfirmed | State::ExecutionObserved => assert!(matches!(
+                    result,
+                    EffectExecution::ReconcileWithProgress {
+                        result: LaunchEffectResult::InitialDispatch { delivery: observed },
+                        failure: LaunchFailure {
+                            class: FailureClass::RetryableTransient,
+                            ..
+                        },
+                        ..
+                    } if observed == delivery
+                )),
+                State::Completed => assert!(matches!(
+                    result,
+                    EffectExecution::Completed {
+                        result: LaunchEffectResult::InitialDispatch { delivery: observed },
+                        ..
+                    } if observed == delivery
+                )),
+                State::Failed => assert!(matches!(
+                    result,
+                    EffectExecution::FailedWithProgress {
+                        result: LaunchEffectResult::InitialDispatch { delivery: observed },
+                        failure: LaunchFailure {
+                            class: FailureClass::PolicyUserAction,
+                            ..
+                        },
+                    } if observed == delivery
+                )),
+                State::DispatchFenced | State::RecoveryRequired => assert!(matches!(
+                    result,
+                    EffectExecution::FailedWithProgress {
+                        result: LaunchEffectResult::InitialDispatch { delivery: observed },
+                        failure: LaunchFailure {
+                            class: FailureClass::RecoveryRequired,
+                            ..
+                        },
+                    } if observed == delivery
+                )),
+            }
+            assert_eq!(sessions.prompt_calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
     fn fork_launch() -> Launch {
         let mut launch = super::super::worker::tests::launch_fixture();
         launch.state = LaunchState::ForkPending;
@@ -2272,6 +2488,28 @@ mod tests {
             })
             .unwrap(),
         )
+    }
+
+    fn prompt_delivery(
+        launch: &Launch,
+        state: layer2_core::PromptDeliveryState,
+    ) -> layer2_core::PromptDelivery {
+        layer2_core::PromptDelivery {
+            launch_id: launch.id.clone(),
+            session_id: launch.session.as_ref().unwrap().session_id.clone(),
+            revision_digest: launch.revision_digest.clone(),
+            origin_key: format!(
+                "cma-trigger:{}:{}:initial",
+                launch.id.0, launch.revision_digest
+            ),
+            payload_hash: "a".repeat(64),
+            state,
+            attempt: u32::from(state != layer2_core::PromptDeliveryState::Queued),
+            dispatch_fence_sequence: (state != layer2_core::PromptDeliveryState::Queued)
+                .then_some(42),
+            queued_at: "2026-08-27T00:00:00Z".into(),
+            updated_at: "2026-08-27T00:00:01Z".into(),
+        }
     }
 
     fn claim(mode: EffectClaimMode) -> EffectClaim {

@@ -41,6 +41,21 @@ pub(crate) enum EffectExecution {
         reconcile_at: String,
         external_resource_ids: BTreeMap<String, String>,
     },
+    RetryWithProgress {
+        result: LaunchEffectResult,
+        failure: LaunchFailure,
+        retry_at: String,
+    },
+    ReconcileWithProgress {
+        result: LaunchEffectResult,
+        failure: LaunchFailure,
+        reconcile_at: String,
+        external_resource_ids: BTreeMap<String, String>,
+    },
+    FailedWithProgress {
+        result: LaunchEffectResult,
+        failure: LaunchFailure,
+    },
     Failed {
         failure: LaunchFailure,
     },
@@ -203,6 +218,55 @@ impl EffectWorker {
                     &settled_at,
                 )?;
                 EffectRunOutcome::Deferred
+            }
+            EffectExecution::RetryWithProgress {
+                result,
+                failure,
+                retry_at,
+            } => {
+                launch.observe_effect_progress(
+                    &lease,
+                    &claim,
+                    result,
+                    &settled_at,
+                    correlation_id,
+                )?;
+                launch.fail_effect(&lease, &claim, failure, Some(retry_at), &settled_at)?;
+                EffectRunOutcome::Deferred
+            }
+            EffectExecution::ReconcileWithProgress {
+                result,
+                failure,
+                reconcile_at,
+                external_resource_ids,
+            } => {
+                launch.observe_effect_progress(
+                    &lease,
+                    &claim,
+                    result,
+                    &settled_at,
+                    correlation_id,
+                )?;
+                launch.defer_reconciliation(
+                    &lease,
+                    &claim,
+                    failure,
+                    reconcile_at,
+                    external_resource_ids,
+                    &settled_at,
+                )?;
+                EffectRunOutcome::Deferred
+            }
+            EffectExecution::FailedWithProgress { result, failure } => {
+                launch.observe_effect_progress(
+                    &lease,
+                    &claim,
+                    result,
+                    &settled_at,
+                    correlation_id,
+                )?;
+                launch.fail_effect(&lease, &claim, failure, None, &settled_at)?;
+                EffectRunOutcome::Failed
             }
             EffectExecution::Failed { failure } => {
                 launch.fail_effect(&lease, &claim, failure, None, &settled_at)?;

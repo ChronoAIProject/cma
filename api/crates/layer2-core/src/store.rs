@@ -14,12 +14,15 @@
 
 use std::{collections::HashSet, time::SystemTime};
 
+use serde::{Deserialize, Serialize};
+
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
 use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
 use crate::session::{Session, SessionStatus, TriggerSessionOrigin};
+use crate::trigger::PromptDelivery;
 use crate::Reserved;
 
 /// Records one internal store read asks for while walking a complete set.
@@ -34,6 +37,17 @@ pub const DEFAULT_PAGE_SIZE: u32 = 50;
 
 /// No one store listing may ask persistence to materialize more than this many rows.
 pub const MAX_PAGE_SIZE: u32 = 200;
+
+/// Machine-owned initial Trigger prompt retained beside its public-safe status.
+///
+/// The raw payload never enters a Launch or public session projection. Keeping
+/// it here makes revision retirement and worker replay unable to rewrite what
+/// an already-started Launch will send.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitialPromptDispatch {
+    pub delivery: PromptDelivery,
+    pub payload: String,
+}
 
 /// A session as it is stored.
 #[derive(Debug, Clone)]
@@ -52,6 +66,8 @@ pub struct SessionRecord {
     /// Kept off the public `Session`: clients receive the Launch/session link,
     /// while only the control plane may resolve the machine-owned object.
     pub trigger_origin: Option<TriggerSessionOrigin>,
+    /// Durable initial Trigger prompt reservation, absent on ordinary sessions.
+    pub initial_prompt: Option<InitialPromptDispatch>,
     /// Store-owned optimistic revision.
     ///
     /// Zero means the record has not been created yet. Stores increment this
@@ -70,6 +86,7 @@ impl SessionRecord {
             runtime_id: None,
             context_ref: None,
             trigger_origin: None,
+            initial_prompt: None,
             revision: 0,
         }
     }

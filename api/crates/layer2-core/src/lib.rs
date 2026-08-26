@@ -126,6 +126,7 @@ mod transcript;
 #[path = "transcript_tests.rs"]
 mod transcript_tests;
 pub mod trigger;
+mod trigger_prompt;
 
 pub use activity::{
     ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityTarget,
@@ -178,10 +179,10 @@ pub use session::{
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
 pub use store::{
-    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, OperationClaim,
-    OperationReservation, OperationStore, Page, PageCursor, PageRequest, SessionListQuery,
-    SessionRecord, SessionStore, SessionWorkspaceSource, SkillPack, SkillSource, StoreError,
-    UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, InitialPromptDispatch,
+    OperationClaim, OperationReservation, OperationStore, Page, PageCursor, PageRequest,
+    SessionListQuery, SessionRecord, SessionStore, SessionWorkspaceSource, SkillPack, SkillSource,
+    StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

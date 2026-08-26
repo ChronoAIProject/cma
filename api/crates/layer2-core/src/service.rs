@@ -539,30 +539,10 @@ impl SessionService {
         self: &Arc<Self>,
         launch: &crate::Launch,
     ) -> Result<Session, CoreError> {
-        let workspace = launch.workspace.as_ref().ok_or_else(|| {
-            CoreError::InvalidRequest("the Launch workspace has not been imported".into())
-        })?;
-        workspace
-            .baseline
-            .validate()
-            .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
         let connection = launch.connection.as_ref().ok_or_else(|| {
             CoreError::InvalidRequest("the Launch GitHub connection is not frozen".into())
         })?;
-        let origin = crate::TriggerSessionOrigin {
-            launch_id: launch.id.clone(),
-            revision_digest: launch.revision_digest.clone(),
-            sandbox_profile: launch.revision.content.session.sandbox_profile.clone(),
-            github_service_id: connection.service_id.clone(),
-            workspace_epoch: workspace.workspace_epoch,
-            source_revision: launch.source_sha.clone(),
-            manifest_digest: workspace.baseline.digest.clone(),
-            object_reference: workspace.baseline_object_reference.clone(),
-            archive_sha256: workspace.baseline_archive_sha256.clone(),
-        };
-        origin
-            .validate()
-            .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+        let origin = trigger_session_origin(launch)?;
         if launch.effective.permission == crate::PermissionMode::Unrestricted {
             return Err(CoreError::InvalidRequest(
                 "unrestricted permission is not allowed for a Trigger session".into(),
@@ -693,6 +673,36 @@ impl SessionService {
             }
         }
     }
+}
+
+pub(crate) fn trigger_session_origin(
+    launch: &crate::Launch,
+) -> Result<crate::TriggerSessionOrigin, CoreError> {
+    let workspace = launch.workspace.as_ref().ok_or_else(|| {
+        CoreError::InvalidRequest("the Launch workspace has not been imported".into())
+    })?;
+    workspace
+        .baseline
+        .validate()
+        .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+    let connection = launch.connection.as_ref().ok_or_else(|| {
+        CoreError::InvalidRequest("the Launch GitHub connection is not frozen".into())
+    })?;
+    let origin = crate::TriggerSessionOrigin {
+        launch_id: launch.id.clone(),
+        revision_digest: launch.revision_digest.clone(),
+        sandbox_profile: launch.revision.content.session.sandbox_profile.clone(),
+        github_service_id: connection.service_id.clone(),
+        workspace_epoch: workspace.workspace_epoch,
+        source_revision: launch.source_sha.clone(),
+        manifest_digest: workspace.baseline.digest.clone(),
+        object_reference: workspace.baseline_object_reference.clone(),
+        archive_sha256: workspace.baseline_archive_sha256.clone(),
+    };
+    origin
+        .validate()
+        .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+    Ok(origin)
 }
 
 fn verify_trigger_session_record(

@@ -51,6 +51,9 @@ fn one_of_every_kind() -> Vec<EventKind> {
         },
         EventKind::TurnStarted,
         EventKind::TurnCompleted,
+        EventKind::InitialPromptDeliveryChanged {
+            state: crate::PromptDeliveryState::DispatchFenced,
+        },
         EventKind::MessageCommitted {
             content: "hello".into(),
         },
@@ -154,6 +157,7 @@ fn one_of_every_kind() -> Vec<EventKind> {
             | EventKind::StatusChanged { .. }
             | EventKind::TurnStarted
             | EventKind::TurnCompleted
+            | EventKind::InitialPromptDeliveryChanged { .. }
             | EventKind::ConversationOpened { .. }
             | EventKind::MessageCommitted { .. }
             | EventKind::OwnerMessage { .. }
