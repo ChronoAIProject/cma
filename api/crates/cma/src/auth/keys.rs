@@ -21,18 +21,18 @@
 //! session, and cleanup reads it back. That survives a restart, which a note
 //! held in memory would not.
 //!
-//! **Expiry is the backstop; deletion remains the hygiene.** Every new key asks
-//! NyxID for one exact absolute expiry thirty days after minting. A running
-//! session starts replacement after twelve hours, leaving twenty-nine and a
-//! half days for durable retry before the provider bound is reached. Sessions
-//! may run indefinitely by rotating through bounded keys; no individual key
-//! needs to be indefinite for the session to be indefinite.
+//! **Every new key requests a provider expiry; enforcement evidence is tracked
+//! by #524.** NyxID accepts and stores one exact absolute expiry thirty days
+//! after minting, but the staging/canary gate must still prove that proxy use is
+//! denied after that instant. A running session starts replacement after twelve
+//! hours, leaving twenty-nine and a half days between replacement and the
+//! requested bound. Sessions may run indefinitely by rotating credentials.
 //!
-//! Expiry is not permission to abandon revocation. A key we fail to take back
-//! remains a live `proxy read` credential until its provider deadline, and
-//! legacy keys created without an expiry remain live until explicitly deleted.
-//! Every failed revoke therefore stays visible to the durable reconciliation
-//! paths even though newly minted keys now have a finite last-resort bound.
+//! A requested expiry is not permission to abandon revocation. Until #524
+//! demonstrates provider enforcement, a key we fail to take back is treated as
+//! a live `proxy read` credential, and legacy keys created without an expiry
+//! remain live until explicitly deleted. Every failed revoke therefore stays
+//! visible to the durable reconciliation paths.
 
 use futures_util::StreamExt as _;
 use layer2_core::{ServiceId, SessionId, SubjectId};
@@ -82,12 +82,12 @@ const USER_SERVICES_PATH: &str = "/api/v1/user-services";
 /// that could edit its own allowance would not be an allowance.
 const KEY_SCOPES: &str = "proxy read";
 
-/// Provider-enforced lifetime of one session credential.
+/// Requested provider lifetime of one session credential.
 ///
 /// Session continuity does not depend on one key surviving this long. The
 /// renewal loop starts durable replacement after twelve hours, so this bound
-/// leaves 29.5 days for retries while still putting a finite ceiling on a key
-/// that every explicit revocation path failed to reclaim.
+/// leaves 29.5 days for retries before the requested expiry while #524 verifies
+/// that the provider enforces that bound.
 pub(crate) const SESSION_KEY_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 fn session_key_expiry(now: SystemTime) -> SystemTime {
