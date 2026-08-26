@@ -74,6 +74,7 @@ describe('the canonical AG-UI initial state', () => {
       contextWindow: null,
     });
     expect(state.availableCommands).toBeNull();
+    expect(state.pendingApprovals).toEqual({});
   });
 });
 
@@ -205,6 +206,7 @@ describe('the paths match what the service emits', () => {
     '/gaps/-',
     '/memoryPressure',
     '/mode',
+    '/pendingApprovals/{requestId}',
     '/plan',
     '/planeChanges/-',
     '/resources',

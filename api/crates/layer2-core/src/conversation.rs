@@ -84,9 +84,42 @@ impl SessionService {
         id: &SessionId,
         text: String,
     ) -> Result<(), CoreError> {
+        // One prompt must publish its Running transition before the next one
+        // decides whether it is steering. This gate is deliberately separate
+        // from the lifecycle gate `conversation_input` may acquire in readoption.
+        let _admission = self.prompt_gates.gate(id).lock_owned().await;
+        // A recorded running conversation can be refused before recovery is
+        // attempted, so unsupported mid-turn input reaches neither a runtime
+        // nor the log. An older record may still carry an unrecorded grant;
+        // `conversation_input` settles that record, and the live check below
+        // applies the same rule after it has done so.
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if record.session.status == SessionStatus::Running
+            && !record.session.capabilities.unrecorded()
+        {
+            record
+                .session
+                .capabilities
+                .require(Capability::Conversation)?;
+            record.session.capabilities.require(Capability::Steer)?;
+        }
+
         let input = self
             .conversation_input(caller, id, Capability::Conversation)
             .await?;
+        {
+            let entries = self.entries.read().await;
+            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+            if entry.session.status == SessionStatus::Running {
+                entry.session.capabilities.require(Capability::Steer)?;
+            }
+        }
         // Recorded before the turn begins: the owner's message is what the
         // conversation replays as the owner's side of it, and its time is what
         // §18.1 labels that turn with.
