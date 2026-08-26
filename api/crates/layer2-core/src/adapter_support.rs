@@ -77,8 +77,9 @@ pub(crate) struct FakeAdapter {
     /// Pauses the next provision call after it enters the adapter.
     ///
     /// Armed only by concurrency tests after the original runtime is live. A
-    /// rotation calls provision after removing that runtime's entry, making this
-    /// the deterministic post-removal, pre-replacement boundary those tests need.
+    /// coordinated rotation calls provision after marking that entry rotating,
+    /// making this the deterministic outgoing-retained, pre-replacement boundary
+    /// those tests need.
     pub(crate) pause_next_provision: std::sync::atomic::AtomicBool,
     pub(crate) provision_paused: Notify,
     pub(crate) provision_resume: Notify,
