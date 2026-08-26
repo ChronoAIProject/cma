@@ -54,6 +54,7 @@ struct MemoryOperations {
     state: Mutex<HashMap<OperationIdentity, HeldOperation>>,
     unavailable: AtomicBool,
     completions_unavailable: AtomicBool,
+    completion_pause: Mutex<Option<Arc<StorePause>>>,
 }
 
 impl MemoryOperations {
@@ -63,6 +64,19 @@ impl MemoryOperations {
             claim.operation().to_string(),
             claim.key().to_string(),
         )
+    }
+
+    async fn pause_next_completion(&self) -> Arc<StorePause> {
+        let pause = Arc::new(StorePause::new());
+        assert!(
+            self.completion_pause
+                .lock()
+                .await
+                .replace(Arc::clone(&pause))
+                .is_none(),
+            "only one operation completion may be paused at a time"
+        );
+        pause
     }
 }
 
@@ -103,6 +117,10 @@ impl OperationStore for MemoryOperations {
             return Err(StoreError::Unavailable(
                 "test operation store is down".into(),
             ));
+        }
+        let pause = self.completion_pause.lock().await.take();
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
         }
         let mut state = self.state.lock().await;
         let held = state
@@ -2418,6 +2436,53 @@ async fn a_fresh_agui_run_survives_a_dropped_body_and_replays_both_thread_names_
     assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
     assert_eq!(kernel.provisions.load(Ordering::SeqCst), 1);
     assert_eq!(store.state.lock().await.records.len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn dropping_the_request_during_creation_does_not_cancel_prompt_admission() {
+    let TestSurface {
+        app,
+        operations,
+        kernel,
+        store,
+        ..
+    } = test_surface(true);
+    let completion = operations.pause_next_completion().await;
+    let provision = kernel.pause_next_provision().await;
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": "frontend-thread-request-drop-contract",
+            "runId": "run_request_drop_contract",
+            "messages": [{
+                "role": "user",
+                "content": "continue without an observing request"
+            }]
+        })
+        .to_string(),
+    );
+    let request = tokio::spawn(async move { app.oneshot(request).await });
+
+    completion.wait_until_reached().await;
+    provision.wait_until_reached().await;
+    request.abort();
+    assert!(
+        matches!(request.await, Err(error) if error.is_cancelled()),
+        "the test cancels the request rather than receiving a response"
+    );
+
+    completion.release();
+    provision.release();
+    wait_until_count(
+        kernel.conversation_inputs.as_ref(),
+        1,
+        "the owned opening chain must reach prompt admission after request cancellation",
+    )
+    .await;
+    assert_eq!(store.state.lock().await.records.len(), 1);
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
