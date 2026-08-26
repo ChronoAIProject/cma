@@ -867,6 +867,113 @@ async fn cancelling_before_attach_admission_sends_nothing_and_compensates_durabl
     ));
 }
 
+#[tokio::test]
+async fn a_committed_attach_never_reaches_a_replaced_generation_or_sender() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment,
+    ));
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    let alice = user("stale-attachment-generation-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_screen = svc
+        .screen_snapshot(&alice, &created.id)
+        .await
+        .expect("screen is readable");
+    adapter.terminal_inputs.lock().await.clear();
+    let geometry = TerminalGeometry::new(107, 43).expect("valid geometry");
+
+    store.pause_next();
+    let attaching = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(&alice, &id, geometry, AttachmentClaim::Exclusive)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+    let held = wait_for_interaction_lease(&inner, &created.id).await;
+    let (successor_input, mut successor_received) = terminal_input_channel(1);
+    {
+        let mut entries = svc.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("session is live");
+        entry.runtime_generation = entry
+            .runtime_generation
+            .checked_add(1)
+            .expect("test generations remain bounded");
+        entry.input = Some(successor_input);
+    }
+    store.release();
+
+    let error = attaching
+        .await
+        .expect("attachment task remains live")
+        .err()
+        .expect("the stale attachment is refused");
+    assert!(matches!(error, CoreError::RuntimeUnavailable(_)));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let events = inner
+                .events_since(&created.id, before.session.last_seq)
+                .await
+                .expect("attachment events are readable");
+            if events.len() == 2
+                && events.iter().any(|event| {
+                    matches!(
+                        event.kind,
+                        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                    )
+                })
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the stale durable attach receives a compensating detach");
+    wait_for_interaction_release(&inner, &created.id).await;
+    assert_ne!(
+        inner.active_session_lease(&created.id).await,
+        Some(held),
+        "the exact stale interaction lease is retired after compensation"
+    );
+
+    assert!(
+        adapter.terminal_inputs.lock().await.is_empty(),
+        "the outgoing generation receives no stale resize"
+    );
+    assert!(matches!(
+        successor_received.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+    let entries = svc.entries.read().await;
+    let entry = entries
+        .get(&created.id)
+        .expect("successor entry remains live");
+    assert_eq!(entry.session.geometry, before.session.geometry);
+    assert!(entry.attached.is_none());
+    assert_eq!(entry.attachments_issued, 0);
+    drop(entries);
+    assert_eq!(
+        svc.screen_snapshot(&alice, &created.id)
+            .await
+            .expect("successor screen remains readable")
+            .geometry,
+        before_screen.geometry
+    );
+}
+
 #[test]
 fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_runtime() {
     let origin = tokio::runtime::Builder::new_current_thread()
