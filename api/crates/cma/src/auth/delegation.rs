@@ -395,7 +395,7 @@ async fn finish_mint(
         value: SecretValue::new(minted.full_key),
         owner: subject.clone(),
         issued_at: SystemTime::now(),
-        expires_at: None,
+        expires_at: Some(minted.expires_at),
         scope_fingerprint: fingerprint,
         revocation_credential: revocation_credential.map(SecretValue::new),
     };
