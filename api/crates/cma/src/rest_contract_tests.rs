@@ -1119,9 +1119,7 @@ async fn next_agui_frame(body: &mut BodyDataStream) -> serde_json::Value {
     next_agui_frame_and_wire(body).await.0
 }
 
-async fn next_agui_frame_and_wire(
-    body: &mut BodyDataStream,
-) -> (serde_json::Value, String) {
+async fn next_agui_frame_and_wire(body: &mut BodyDataStream) -> (serde_json::Value, String) {
     loop {
         let bytes = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
             .await
