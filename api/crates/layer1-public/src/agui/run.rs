@@ -38,16 +38,19 @@ use axum::{
 };
 use futures_util::stream::{self, Stream};
 use layer2_core::{
-    ApprovalDecision, ApprovalResolution, CoreError, Event, SessionCapability, SessionId,
-    SessionService, SessionSpec,
+    ApprovalDecision, ApprovalResolution, CoreError, Event, OperationStore, SessionCapability,
+    SessionId, SessionService,
 };
 use serde::Deserialize;
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 
+use super::admission::{RunFailure, StoredFailure, StoredProblem};
 use super::project::project;
 use super::resources::{next_frame, project_reading, Woke, POLL_INTERVAL};
-use super::{Problem, KEEPALIVE_INTERVAL};
+use super::thread_alias::session_for_run;
+use super::turn_admission::{self, RunAction, StreamPlan};
+use super::KEEPALIVE_INTERVAL;
 
 /// One run, as a client posts it.
 #[derive(Debug, Deserialize)]
@@ -126,10 +129,11 @@ struct ForwardedProps {
 /// Open a run: prompt or resume, then stream until the turn ends.
 pub(super) async fn run(
     State(service): State<Arc<SessionService>>,
+    State(operations): State<Arc<dyn OperationStore>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<axum::Extension<DelegatedCredential>>,
     Json(body): Json<RunRequest>,
-) -> Result<Sse<impl Stream<Item = Result<SseEvent, std::convert::Infallible>>>, Problem> {
+) -> Result<Sse<impl Stream<Item = Result<SseEvent, std::convert::Infallible>>>, RunFailure> {
     if body
         .run_id
         .as_ref()
@@ -141,47 +145,76 @@ pub(super) async fn run(
         .into());
     }
 
-    let requested = SessionId(body.thread_id.clone());
-    let session = match service.get_session(&caller, &requested).await {
-        Ok(session) => session,
-        // A thread that does not exist is created, which is how this protocol
-        // projects session creation. Anything else — a session belonging to
-        // somebody else, a store that cannot be reached — is not a missing
-        // thread and must not be answered by making one.
-        Err(CoreError::SessionNotFound) => {
-            let props = body.forwarded_props.as_ref();
-            service
-                .create_session(
-                    &caller,
-                    SessionSpec {
-                        environment_profile: props
-                            .and_then(|p| p.environment_profile.clone())
-                            .map(layer2_core::EnvironmentProfileId),
-                        geometry: None,
-                        options: layer2_core::AgentOptions {
-                            mode: layer2_core::SessionMode::Conversation,
-                            ..Default::default()
-                        },
-                        // Said explicitly, because `options` is filled in from
-                        // the profile or the deployment and what is set above
-                        // is discarded. This interface holds conversations and
-                        // nothing else, so a thread it creates has to be one —
-                        // and without this it created a terminal session on a
-                        // deployment defaulting to terminal, then refused it
-                        // for lacking the ability it had just asked for.
-                        requested_mode: Some(layer2_core::SessionMode::Conversation),
-                        quoted_rate_card: None,
-                        // The caller's own token, for asking the platform as them. It
-                        // is never what the session runs on: the core mints that.
-                        caller_credential: credential
-                            .map(|axum::Extension(c)| c.into_caller_credential()),
-                        runtime_credential: None,
-                    },
-                )
-                .await?
+    // Establish the complete semantic operation before looking up or creating
+    // a session. In particular, a malformed fresh request must not leave a
+    // provisioning session behind merely to discover that it has no prompt.
+    let action = action_of(&body)?;
+    let opening_service = Arc::clone(&service);
+    let opening_caller = caller.clone();
+    let credential = credential.map(|axum::Extension(credential)| credential);
+    let opening = tokio::spawn(async move {
+        prepare_run(
+            opening_service,
+            operations,
+            opening_caller,
+            credential,
+            body,
+            action,
+        )
+        .await
+    });
+    let prepared = match opening.await {
+        Ok(result) => result?,
+        Err(error) => {
+            tracing::error!(%error, "owned AG-UI run opening task failed");
+            return Err(RunFailure::Stored(StoredProblem::opening_task_failed()));
         }
-        Err(e) => return Err(e.into()),
     };
+
+    Ok(Sse::new(events(
+        service,
+        caller,
+        prepared.id,
+        RunBoundary {
+            id: prepared.run_id,
+        },
+        prepared.plan,
+    ))
+    .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL)))
+}
+
+struct PreparedRun {
+    id: SessionId,
+    run_id: String,
+    plan: StreamPlan,
+}
+
+/// Own preparation through creation and admission-task handoff.
+///
+/// If the HTTP request disappears while this future is running, dropping its
+/// `JoinHandle` detaches it. It still resolves the creation alias and reaches
+/// `turn_admission::prepare`, whose own task then owns the prompt or resume.
+async fn prepare_run(
+    service: Arc<SessionService>,
+    operations: Arc<dyn OperationStore>,
+    caller: layer2_core::Caller,
+    credential: Option<DelegatedCredential>,
+    body: RunRequest,
+    action: RunAction,
+) -> Result<PreparedRun, RunFailure> {
+    let requested = SessionId(body.thread_id.clone());
+    let session = session_for_run(
+        Arc::clone(&service),
+        operations.clone(),
+        caller.clone(),
+        requested,
+        credential,
+        body.forwarded_props
+            .as_ref()
+            .and_then(|props| props.environment_profile.clone()),
+        action.is_resume(),
+    )
+    .await?;
 
     // The session's own identifier from here on, which is not always the one
     // that was asked for: a thread that did not exist is created, and the core
@@ -189,7 +222,8 @@ pub(super) async fn run(
     // the prompt, the cursor, the events — belongs to the session that exists,
     // and the events carry its id so a client learns what its thread is called.
     let id = session.id.clone();
-    let run_id = match body.run_id.as_ref() {
+    let explicit_run_id = body.run_id.clone();
+    let run_id = match explicit_run_id.as_ref() {
         Some(run_id) if run_id == &id.0 => {
             return Err(CoreError::InvalidRequest(
                 "runId must differ from the effective threadId".into(),
@@ -212,75 +246,38 @@ pub(super) async fn run(
         .capabilities
         .require(SessionCapability::Conversation)?;
 
-    let continuation = !body.resume.is_empty();
-    let from = if continuation {
-        // A continuation has no durable TurnStarted of its own. Snapshot before
-        // resolving so every durable effect of the answer remains on its run
-        // stream, after the synthetic cursorless boundary.
-        let from = service
-            .events_since(&caller, &id, None)
-            .await?
-            .last()
-            .map(|event| event.seq)
-            .unwrap_or(0);
-        let resolutions = body
-            .resume
-            .iter()
-            .map(|item| ApprovalResolution::new(item.interrupt_id.clone(), decision_of(item)))
-            .collect::<Vec<_>>();
-        service
-            .resolve_approvals(&caller, &id, &resolutions)
-            .await?;
-        from
-    } else {
-        let prompt = body
-            .messages
-            .iter()
-            .rev()
-            .find(|m| m.role == "user")
-            .and_then(|m| m.content.clone())
-            .ok_or_else(|| {
-                CoreError::InvalidRequest("a run needs a user message to send".to_string())
-            })?;
-        // Anchor this response immediately before its own durable boundary.
-        // Another runtime update may have landed while the request was being
-        // admitted; replaying from an earlier snapshot could put that update
-        // ahead of RUN_STARTED even though this prompt itself is ordered.
-        service
-            .send_prompt(&caller, &id, prompt)
-            .await?
-            .checked_sub(1)
-            .expect("a durable TurnStarted has a positive sequence")
-    };
+    let plan = turn_admission::prepare(
+        Arc::clone(&service),
+        operations,
+        caller.clone(),
+        session,
+        explicit_run_id.as_deref(),
+        action,
+    )
+    .await?;
 
-    // Subscribed after the prompt is sent, so the turn is already underway and
-    // the receiver exists before the runtime has anything to say. A session
-    // whose kernel offers no liveness — or whose entry has gone — simply has
-    // none, and the durable stream is unaffected: that is the difference
-    // between a turn nobody can watch and a turn nobody can read.
-    let watching = service.subscribe_live(&caller, &id).await.ok();
-    let resources = service.subscribe_resources(&caller, &id).await.ok();
-
-    Ok(Sse::new(events(
-        service,
-        caller,
-        id,
-        RunBoundary {
-            id: run_id,
-            continuation,
-        },
-        from,
-        watching,
-        resources,
-    ))
-    .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL)))
+    Ok(PreparedRun { id, run_id, plan })
 }
 
-/// What the owner decided, read from the protocol's own vocabulary.
-///
-/// `cancelled` is a refusal — the document says so — and an unfamiliar status
-/// is read the same way. Defaulting to allow would grant on a word this build
-/// does not understand.
+fn action_of(body: &RunRequest) -> Result<RunAction, CoreError> {
+    if !body.resume.is_empty() {
+        return Ok(RunAction::Resume(
+            body.resume
+                .iter()
+                .map(|item| ApprovalResolution::new(item.interrupt_id.clone(), decision_of(item)))
+                .collect(),
+        ));
+    }
+    let prompt = body
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "user")
+        .and_then(|message| message.content.clone())
+        .ok_or_else(|| CoreError::InvalidRequest("a run needs a user message to send".into()))?;
+    Ok(RunAction::Prompt(prompt))
+}
+
 fn decision_of(item: &ResumeItem) -> ApprovalDecision {
     if item.status.as_deref() != Some("resolved") {
         return ApprovalDecision::Deny;
@@ -292,8 +289,8 @@ fn decision_of(item: &ResumeItem) -> ApprovalDecision {
     }
 }
 
-/// Open a continuation run without claiming that another durable turn began.
-fn continuation_started(run_id: &str, thread_id: &str) -> super::project::AguiEvent {
+/// Open an interface run before or around its durable turn boundary.
+fn synthetic_started(run_id: &str, thread_id: &str) -> super::project::AguiEvent {
     super::project::AguiEvent {
         kind: "RUN_STARTED",
         run_id: run_id.to_string(),
@@ -301,8 +298,32 @@ fn continuation_started(run_id: &str, thread_id: &str) -> super::project::AguiEv
         body: serde_json::json!({}),
         timestamp: None,
         // This brackets the interface's run rather than projecting a log
-        // record. Giving it an id would move replay past an event that does not
-        // exist, while recording another TurnStarted would invent a new turn.
+        // record. A continuation has no second turn, while a provisioning run
+        // has not admitted its first one yet. Neither may advance the cursor.
+        seq: None,
+        live: false,
+    }
+}
+
+fn admission_error(
+    run_id: &str,
+    thread_id: &str,
+    failure: &StoredFailure,
+) -> super::project::AguiEvent {
+    let (message, code, capability) = failure.problem.stream_fields();
+    let mut body = serde_json::json!({
+        "message": message,
+        "code": code,
+    });
+    if let Some(capability) = capability {
+        body["capability"] = capability.into();
+    }
+    super::project::AguiEvent {
+        kind: "RUN_ERROR",
+        run_id: run_id.to_string(),
+        thread_id: thread_id.to_string(),
+        body,
+        timestamp: None,
         seq: None,
         live: false,
     }
@@ -336,7 +357,6 @@ fn queue_durable_batch(
 
 struct RunBoundary {
     id: String,
-    continuation: bool,
 }
 
 /// The run's event stream, from `after` until the turn ends.
@@ -356,9 +376,7 @@ fn events(
     caller: layer2_core::Caller,
     id: SessionId,
     run: RunBoundary,
-    after: u64,
-    watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
-    resources: Option<tokio::sync::broadcast::Receiver<layer2_core::ResourceReading>>,
+    mut plan: StreamPlan,
 ) -> impl Stream<Item = Result<SseEvent, std::convert::Infallible>> {
     struct Open {
         service: Arc<SessionService>,
@@ -371,16 +389,24 @@ fn events(
         watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
         /// What this session is using right now, on its independent lag budget.
         resources: Option<tokio::sync::broadcast::Receiver<layer2_core::ResourceReading>>,
+        /// The owned prompt admission this stream observes without owning.
+        admission: Option<tokio::task::JoinHandle<turn_admission::AdmissionReport>>,
         /// Set once something has ended the run, so the last event is still
         /// delivered before the stream closes.
         ended: bool,
     }
 
-    let pending = run
-        .continuation
-        .then(|| continuation_started(&run.id, &id.0))
-        .into_iter()
-        .collect();
+    let mut pending = std::collections::VecDeque::new();
+    if plan.synthetic_start {
+        pending.push_back(synthetic_started(&run.id, &id.0));
+    }
+    let ended = match plan.failure.take() {
+        Some(failure) => {
+            pending.push_back(admission_error(&run.id, &id.0, &failure));
+            true
+        }
+        None => false,
+    };
 
     stream::unfold(
         Open {
@@ -388,11 +414,12 @@ fn events(
             caller,
             id,
             run_id: run.id,
-            seq: after,
+            seq: plan.after,
             pending,
-            watching,
-            resources,
-            ended: false,
+            watching: plan.watching,
+            resources: plan.resources,
+            admission: plan.admission,
+            ended,
         },
         |mut open| async move {
             loop {
@@ -402,6 +429,37 @@ fn events(
                 }
                 if open.ended {
                     return None;
+                }
+                if let Some(admission) = open.admission.take() {
+                    let settled = turn_admission::settle_deferred(admission).await;
+                    match settled {
+                        Ok(mut plan) => {
+                            open.seq = plan.after;
+                            open.watching = plan.watching.take();
+                            open.resources = plan.resources.take();
+                            if let Some(failure) = plan.failure.take() {
+                                open.pending.push_back(admission_error(
+                                    &open.run_id,
+                                    &open.id.0,
+                                    &failure,
+                                ));
+                                open.ended = true;
+                            }
+                        }
+                        Err(_) => {
+                            let failure = StoredFailure {
+                                problem: StoredProblem::task_failed(),
+                                streamed: true,
+                            };
+                            open.pending.push_back(admission_error(
+                                &open.run_id,
+                                &open.id.0,
+                                &failure,
+                            ));
+                            open.ended = true;
+                        }
+                    }
+                    continue;
                 }
                 // Wait for whichever lane speaks first. Sleeping the poll
                 // interval unconditionally would hold a piece of a message for
