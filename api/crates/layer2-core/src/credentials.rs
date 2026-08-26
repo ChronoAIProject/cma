@@ -101,6 +101,32 @@ impl SessionService {
             .is_some_and(|record| !record.session.status.is_terminal()))
     }
 
+    /// Whether taking back an untracked sibling credential can strand this session.
+    ///
+    /// A session with no runtime has nothing presenting a credential, so its
+    /// durable current value is enough to protect the one it will use later. A
+    /// session that should be running is different: one of the values custody
+    /// records must have reached its adapter before another same-session key is
+    /// safe to revoke. During restart readoption, and after a failed delivery,
+    /// the in-memory entry deliberately records no value and this returns false.
+    pub async fn can_reclaim_untracked_credential(
+        &self,
+        id: &SessionId,
+        tracked_values: &[&str],
+    ) -> Result<bool, crate::store::StoreError> {
+        let Some(record) = self.store.get(id).await? else {
+            return Ok(true);
+        };
+        if !record.session.wants_runtime() {
+            return Ok(true);
+        }
+        let entries = self.entries.read().await;
+        let delivered = entries
+            .get(id)
+            .and_then(|entry| entry.subject_credential.as_deref());
+        Ok(delivered.is_some_and(|delivered| tracked_values.contains(&delivered)))
+    }
+
     pub async fn session_services(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
         self.services_for(id).await
     }
@@ -131,14 +157,25 @@ impl SessionService {
     /// not shared: replacing every session's value when one was reissued would
     /// give each of them somebody else's.
     pub async fn push_session_credential(&self, id: &SessionId, credential: String) -> bool {
-        {
-            let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return false;
-            };
-            entry.subject_credential = Some(credential.clone());
+        if !self.deliver_credential(id, &credential).await {
+            return false;
         }
-        self.deliver_credential(id, &credential).await
+        self.remember_credential(id, credential).await
+    }
+
+    /// Record a credential only after its runtime confirmed receipt.
+    ///
+    /// Recording first lets cleanup treat the new value as current after a
+    /// failed delivery and revoke the old value the runtime is still using.
+    /// Delivery first can cause a harmless repeat when the entry disappears
+    /// between the two operations, but it cannot strand a live session.
+    async fn remember_credential(&self, id: &SessionId, credential: String) -> bool {
+        let mut entries = self.entries.write().await;
+        let Some(entry) = entries.get_mut(id) else {
+            return false;
+        };
+        entry.subject_credential = Some(credential);
+        true
     }
 
     pub(crate) async fn services_for(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
@@ -195,14 +232,14 @@ impl SessionService {
                 return;
             }
         };
-        {
-            let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return;
-            };
-            entry.subject_credential = Some(credential.clone());
+        if !self.deliver_credential(id, &credential).await {
+            tracing::warn!(
+                session_id = %id,
+                "credential delivery failed; keeping any predecessor eligible until retry"
+            );
+            return;
         }
-        if self.deliver_credential(id, &credential).await {
+        if self.remember_credential(id, credential).await {
             tracing::info!(session_id = %id, "credential supplied to a recovered session");
         }
     }
@@ -240,6 +277,16 @@ impl SessionService {
             }
         }
         supplied
+    }
+
+    /// Which credential this process has confirmed the runtime received.
+    #[cfg(test)]
+    pub(crate) async fn credential_held(&self, id: &SessionId) -> Option<String> {
+        self.entries
+            .read()
+            .await
+            .get(id)
+            .and_then(|entry| entry.subject_credential.clone())
     }
 
     /// Replace the delegated credential on every live session a subject owns.

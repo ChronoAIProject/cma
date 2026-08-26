@@ -792,6 +792,14 @@ impl AuthState {
                         .as_mut()
                         .expect("the provider snapshot remains initialized")
                         .push_front((id, session));
+                    tracing::info!(
+                        %current.subject,
+                        credentials = current
+                            .remaining_credentials
+                            .as_ref()
+                            .map_or(0, std::collections::VecDeque::len),
+                        "provider credential reconciliation deferred by the pass bound"
+                    );
                     break;
                 }
 
@@ -810,9 +818,31 @@ impl AuthState {
                     Some(state)
                         if custody_protects_provider_credential(&state, &id, SystemTime::now()) => {
                     }
-                    Some(_) => {
-                        if issuer.revoke(&id, &token).await {
-                            reclaimed += 1;
+                    Some(state) => {
+                        let tracked_values = state
+                            .current
+                            .iter()
+                            .chain(state.pending.iter())
+                            .map(|credential| credential.value.expose())
+                            .collect::<Vec<_>>();
+                        match service
+                            .can_reclaim_untracked_credential(&session, &tracked_values)
+                            .await
+                        {
+                            Ok(true) => {
+                                if issuer.revoke(&id, &token).await {
+                                    reclaimed += 1;
+                                }
+                            }
+                            Ok(false) => tracing::warn!(
+                                session_id = %session,
+                                "same-session credential reclaim deferred until recorded custody reaches the runtime"
+                            ),
+                            Err(error) => remember_pass_error(
+                                &mut first_error,
+                                error,
+                                "confirm delivered custody before provider reclaim",
+                            ),
                         }
                     }
                     None => match service.session_claims_credential(&session).await {
@@ -1150,6 +1180,7 @@ impl AuthState {
             // attempt, owner read, provider DELETE, custody read, and the
             // sequence allocation plus CAS write used to settle it.
             if !budget.take(8) {
+                tracing::info!("credential revocation debt deferred by the pass bound");
                 break;
             }
             let mut page = match self
