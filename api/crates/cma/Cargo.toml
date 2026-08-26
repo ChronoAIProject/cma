@@ -33,6 +33,9 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+# Holds PTY receipt, output, and disconnect boundaries so socket races are
+# proved without sleeps or scheduler assumptions.
+layer1-public = { workspace = true, features = ["test-support"] }
 # Drives the composed REST router in public error-contract tests.
 tower = { version = "0.5", features = ["util"] }
 tokio = { workspace = true, features = ["test-util"] }

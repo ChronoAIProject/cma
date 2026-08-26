@@ -55,5 +55,6 @@ async fn rotation_at_the_limit_replaces_one_runtime_without_raising_the_count() 
     assert_eq!(record.session.status, SessionStatus::Ready);
     assert_eq!(record.session.rotations, 1);
     assert_eq!(store.count_live_for(&owner.subject).await.unwrap(), 1);
+    replacement.reconcile().await;
     assert_eq!(adapter.running_count().await, 1);
 }

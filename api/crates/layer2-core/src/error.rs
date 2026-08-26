@@ -34,6 +34,14 @@ pub enum CoreError {
     #[error("session terminated")]
     SessionTerminated,
 
+    /// The session is being carried onto a replacement runtime.
+    ///
+    /// **Transient.** The handover completes on its own, after which the same
+    /// operation may be retried. Distinct from `SessionTerminated`: refusing
+    /// input here prevents it from reaching the runtime being torn down.
+    #[error("session rotating")]
+    SessionRotating,
+
     /// Another client already holds the exclusive terminal attachment.
     #[error("already attached")]
     AlreadyAttached,
@@ -207,6 +215,7 @@ impl CoreError {
             Self::EnvironmentProfileNotFound => "environment_profile_not_found",
             Self::Forbidden => "forbidden",
             Self::SessionTerminated => "session_terminated",
+            Self::SessionRotating => "session_rotating",
             Self::AlreadyAttached => "already_attached",
             Self::InvalidGeometry(_) => "invalid_geometry",
             Self::InvalidPressurePolicy(_) => "invalid_pressure_policy",
@@ -267,6 +276,7 @@ mod tests {
             CoreError::EnvironmentProfileNotFound,
             CoreError::Forbidden,
             CoreError::SessionTerminated,
+            CoreError::SessionRotating,
             CoreError::AlreadyAttached,
             CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).expect_err("zero width fails")),
             CoreError::InvalidPressurePolicy(
@@ -312,6 +322,7 @@ mod tests {
                 | CoreError::EnvironmentProfileNotFound
                 | CoreError::Forbidden
                 | CoreError::SessionTerminated
+                | CoreError::SessionRotating
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
                 | CoreError::InvalidPressurePolicy(_)

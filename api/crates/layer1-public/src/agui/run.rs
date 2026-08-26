@@ -38,8 +38,8 @@ use axum::{
 };
 use futures_util::stream::{self, Stream};
 use layer2_core::{
-    ApprovalDecision, ApprovalResolution, CoreError, Event, OperationStore, SessionCapability,
-    SessionId, SessionService,
+    ApprovalDecision, ApprovalResolution, CoreError, Event, OperationStore, SessionId,
+    SessionService,
 };
 use serde::Deserialize;
 
@@ -240,13 +240,6 @@ async fn prepare_run(
             }
         },
     };
-
-    // Refused before anything is sent. A terminal session has no conversation
-    // to run, and a stream that opened and then said nothing would look like
-    // an agent thinking.
-    session
-        .capabilities
-        .require(SessionCapability::Conversation)?;
 
     let plan = turn_admission::prepare(
         Arc::clone(&service),

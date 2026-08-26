@@ -156,6 +156,11 @@ admission: each retry without an explicit id is a new turn. The owned task still
 survives cancellation of its request and SSE body, but this shape cannot provide
 cross-request deduplication.
 
+A rotating session refuses admission with HTTP `409 session_rotating`. An
+explicit `runId` records that refusal like every other finite outcome, so
+reposting it still replays the `409` after the session becomes ready. Wait for
+readiness and use a fresh `runId` for the intended post-rotation run.
+
 A requested fresh `threadId` is itself a subject-scoped creation alias retained
 for 24 hours. Retrying it with the same creation-affecting properties resolves
 to the same core-minted session, and using the minted id directly reaches that
