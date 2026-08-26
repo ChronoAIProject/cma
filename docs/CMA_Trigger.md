@@ -6,15 +6,16 @@ security, ownership, state, retry, and architecture decisions required by #654.
 If an implementation issue disagrees with this document after this document is
 approved, the implementation issue must be corrected before code is merged.
 
-Status: **proposed for maintainer approval**. The contracts settled in review
-are recorded here. The evidence and governance items in the final checklist
-remain gates; this status must not be changed to accepted merely because the
-document exists.
+Status: **accepted for implementation**. On 2026-08-26 the project maintainer
+approved this design, assigned the milestone to `chronoai-shining`, waived a
+milestone due date, and authorized implementation to proceed while the live
+evidence campaign runs in parallel. Evidence remains mandatory before the
+corresponding end-to-end, security, or release claim is accepted.
 
-Within this document, **selected** means the draft chooses one implementable
-branch so later issues do not invent one. It does not mean approved. A decision
-becomes **accepted** only when the required maintainers approve the exact Git
-revision and #654 records that revision and the named approvals.
+Within this document, **selected** identifies the accepted implementation
+branch so later issues do not invent a different one. A new implementation may
+not weaken that branch without an amended maintainer decision and the review
+appropriate to the affected product or security boundary.
 
 ## 1. Product boundary
 
@@ -593,7 +594,7 @@ Rules shared by every worker:
 
 ## 12. ADR-001: conservative initial-prompt delivery
 
-Decision: **selected for the proposed MVP**.
+Decision: **selected for the MVP**.
 
 The automatic initial Trigger message is dispatched at most once. Layer 2
 enforces a durable single-writer reservation while the initial prompt is
@@ -785,7 +786,7 @@ freeze the filesystem, or acknowledge writer quiescence. A provider-only
 archive can therefore mix workspace states while a turn or descendant process
 is writing, and it fails #662's consistency requirement.
 
-The proposed MVP selects a **versioned Layer 4 workspace checkpoint
+The MVP selects a **versioned Layer 4 workspace checkpoint
 capability**, staged as a runtime-image rollout before any Trigger Launch uses
 it. The protocol must:
 
@@ -837,8 +838,16 @@ advertise the checkpoint capability is ineligible for a Trigger Launch.
 
 ### Start the feature implementation chain (#655 onward)
 
-- [ ] This document is approved by named backend, frontend, runtime, identity,
-      security, and product maintainers; #654 links the approved revision.
+- [x] The project maintainer approved this design on 2026-08-26 and explicitly
+      authorized implementation and evidence collection to proceed in parallel.
+- [x] All milestone issues have the accountable owner `chronoai-shining`.
+- [x] The project maintainer explicitly waived a milestone due date.
+- [x] #662 records the pinned production workspace-transport probe and selects
+      the versioned Layer 4 workspace checkpoint capability. Implementation and
+      staged rollout of that capability remain #662 work.
+
+### Complete before milestone closure and public exposure
+
 - [ ] #131 records a redacted live session-side GitHub transcript and proves
       that an `autonomous` scoped session can use its broker without manual
       approval, retain its broker skills and in-flight turn across runtime
@@ -852,11 +861,6 @@ advertise the checkpoint capability is ineligible for a Trigger Launch.
       environments. Replacement retains the known-working predecessor until
       exact-runtime acknowledgement and durable promotion, then revokes it; a
       revoke-before-mint sequence is not acceptable.
-- [x] #662 records the pinned production workspace-transport probe and selects
-      the versioned Layer 4 workspace checkpoint capability. Implementation and
-      staged rollout of that capability remain #662 work after this design gate.
-- [ ] Every milestone issue has a named owner and milestone `cma-trigger` has a
-      maintainer-selected due date.
 
 ### Expose the public README flow
 
@@ -877,7 +881,8 @@ at-most-once release.
 
 ## 18. Implementation order
 
-After the first checklist is approved, the dependency order is:
+With the implementation-authorization checklist satisfied, the dependency
+order is:
 
 ```text
 #655 -> #656 -> #657 -> #658 -> #659
