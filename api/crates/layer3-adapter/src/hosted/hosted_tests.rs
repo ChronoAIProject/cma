@@ -28,6 +28,10 @@ fn hosted(base: &str) -> HostedKernel {
     )
 }
 
+async fn credential_waiter_count(kernel: &HostedKernel) -> usize {
+    kernel.credential_waiters.0.lock().await.len()
+}
+
 /// Serve one provider listing response and then stop.
 async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -345,6 +349,37 @@ async fn a_credential_reaches_a_runtime_over_the_link_it_already_has() {
         .await
         .expect("a matching acknowledgement confirms installation");
     responder.await.expect("the runtime responder ran");
+    assert_eq!(credential_waiter_count(&k).await, 0);
+}
+
+#[tokio::test]
+async fn a_runtime_credential_refusal_is_not_delivery() {
+    let kernel = Arc::new(hosted("http://127.0.0.1:1"));
+    let handle = RuntimeHandle("sbx-install-refusal".into());
+    let (link, mut input) = mpsc::channel(4);
+    kernel.remember_link(&handle.0, link.clone()).await;
+
+    let attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.refresh_credential(&handle, "refused-value").await })
+    };
+    let TerminalInput::Credential { operation_id, .. } =
+        input.recv().await.expect("the request was queued")
+    else {
+        panic!("a credential request was expected");
+    };
+
+    kernel
+        .credential_waiters()
+        .settle(&handle.0, &operation_id, &link, false)
+        .await;
+    let outcome = attempt.await.expect("the delivery attempt ran");
+    assert!(
+        matches!(outcome, Err(AdapterError::Unavailable(ref why)) if why.contains("did not install")),
+        "a negative acknowledgement must fail closed: {outcome:?}"
+    );
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
 }
 
 #[tokio::test]
@@ -378,6 +413,7 @@ async fn a_queued_credential_whose_socket_write_fails_is_not_delivery() {
         matches!(outcome, Err(AdapterError::Unavailable(ref why)) if why.contains("did not install")),
         "a queue receipt must not count as runtime receipt: {outcome:?}"
     );
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
 }
 
 #[tokio::test]
@@ -399,6 +435,7 @@ async fn silence_from_an_old_runtime_times_out_without_delivery() {
         matches!(outcome, Err(AdapterError::Unavailable(ref why)) if why.contains("did not acknowledge")),
         "a new control plane must not promote on an old runtime's silence: {outcome:?}"
     );
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
 }
 
 #[tokio::test]
@@ -424,12 +461,14 @@ async fn a_wrong_credential_operation_id_does_not_settle_delivery() {
         .await;
     tokio::task::yield_now().await;
     assert!(!attempt.is_finished(), "an unrelated result was ignored");
+    assert_eq!(credential_waiter_count(&kernel).await, 1);
 
     waiters.settle(&handle.0, &operation_id, &link, true).await;
     attempt
         .await
         .expect("the delivery task ran")
         .expect("the matching result settles delivery");
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
 }
 
 #[tokio::test]
@@ -457,6 +496,7 @@ async fn a_replaced_socket_cancels_only_its_credential_operation() {
         old_attempt.await.expect("the old delivery task ran"),
         Err(AdapterError::Unavailable(_))
     ));
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
 
     let new_attempt = {
         let kernel = Arc::clone(&kernel);
@@ -493,6 +533,7 @@ async fn a_replaced_socket_cancels_only_its_credential_operation() {
         .await
         .expect("the successor delivery task ran")
         .expect("its own socket result settles it");
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
 }
 
 #[tokio::test]
@@ -516,6 +557,7 @@ async fn a_link_that_closed_is_forgotten_rather_than_retried_forever() {
     k.remember_link(&handle.0, tx).await;
 
     assert!(k.refresh_credential(&handle, "unused").await.is_err());
+    assert_eq!(credential_waiter_count(&k).await, 0);
     assert!(
         k.link_to(&handle.0).await.is_none(),
         "a dead link kept in the map would fail every renewal the same way forever"
@@ -605,6 +647,31 @@ fn a_malformed_or_unrelated_control_frame_is_not_an_exit() {
     ] {
         assert_eq!(super::link::exit_report(text), None, "accepted {text}");
     }
+}
+
+#[test]
+fn a_malformed_or_unrelated_control_frame_is_not_a_credential_result() {
+    for text in [
+        r#"{"t":"credential_result","operation_id":"opaque"}"#,
+        r#"{"t":"credential_result","installed":true}"#,
+        r#"{"t":"credential_result","operation_id":17,"installed":true}"#,
+        r#"{"t":"credential_result","operation_id":"opaque","installed":"true"}"#,
+        r#"{"t":"something_else","operation_id":"opaque","installed":true}"#,
+        "not json",
+    ] {
+        assert_eq!(
+            super::link::credential_answer(text),
+            None,
+            "accepted {text}"
+        );
+    }
+    assert_eq!(
+        super::link::credential_answer(
+            r#"{"t":"credential_result","operation_id":"opaque","installed":false}"#
+        ),
+        Some(("opaque".to_string(), false)),
+        "a well-formed negative result must reach the fail-closed waiter path"
+    );
 }
 
 #[test]
