@@ -38,7 +38,8 @@ use axum::{
 };
 use futures_util::stream::{self, Stream};
 use layer2_core::{
-    ApprovalDecision, CoreError, SessionCapability, SessionId, SessionService, SessionSpec,
+    ApprovalDecision, ApprovalResolution, CoreError, Event, SessionCapability, SessionId,
+    SessionService, SessionSpec,
 };
 use serde::Deserialize;
 
@@ -211,36 +212,46 @@ pub(super) async fn run(
         .capabilities
         .require(SessionCapability::Conversation)?;
 
-    // Read before the turn is opened, so the stream starts exactly where the
-    // client's own actions begin and replays nothing it has already seen.
-    let from = service
-        .events_since(&caller, &id, None)
-        .await?
-        .last()
-        .map(|e| e.seq)
-        .unwrap_or(0);
-
-    match body.resume.is_empty() {
-        false => {
-            for item in &body.resume {
-                service
-                    .resolve_approval(&caller, &id, item.interrupt_id.clone(), decision_of(item))
-                    .await?;
-            }
-        }
-        true => {
-            let prompt = body
-                .messages
-                .iter()
-                .rev()
-                .find(|m| m.role == "user")
-                .and_then(|m| m.content.clone())
-                .ok_or_else(|| {
-                    CoreError::InvalidRequest("a run needs a user message to send".to_string())
-                })?;
-            service.send_prompt(&caller, &id, prompt).await?;
-        }
-    }
+    let continuation = !body.resume.is_empty();
+    let from = if continuation {
+        // A continuation has no durable TurnStarted of its own. Snapshot before
+        // resolving so every durable effect of the answer remains on its run
+        // stream, after the synthetic cursorless boundary.
+        let from = service
+            .events_since(&caller, &id, None)
+            .await?
+            .last()
+            .map(|event| event.seq)
+            .unwrap_or(0);
+        let resolutions = body
+            .resume
+            .iter()
+            .map(|item| ApprovalResolution::new(item.interrupt_id.clone(), decision_of(item)))
+            .collect::<Vec<_>>();
+        service
+            .resolve_approvals(&caller, &id, &resolutions)
+            .await?;
+        from
+    } else {
+        let prompt = body
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .and_then(|m| m.content.clone())
+            .ok_or_else(|| {
+                CoreError::InvalidRequest("a run needs a user message to send".to_string())
+            })?;
+        // Anchor this response immediately before its own durable boundary.
+        // Another runtime update may have landed while the request was being
+        // admitted; replaying from an earlier snapshot could put that update
+        // ahead of RUN_STARTED even though this prompt itself is ordered.
+        service
+            .send_prompt(&caller, &id, prompt)
+            .await?
+            .checked_sub(1)
+            .expect("a durable TurnStarted has a positive sequence")
+    };
 
     // Subscribed after the prompt is sent, so the turn is already underway and
     // the receiver exists before the runtime has anything to say. A session
@@ -251,7 +262,16 @@ pub(super) async fn run(
     let resources = service.subscribe_resources(&caller, &id).await.ok();
 
     Ok(Sse::new(events(
-        service, caller, id, run_id, from, watching, resources,
+        service,
+        caller,
+        id,
+        RunBoundary {
+            id: run_id,
+            continuation,
+        },
+        from,
+        watching,
+        resources,
     ))
     .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL)))
 }
@@ -272,6 +292,53 @@ fn decision_of(item: &ResumeItem) -> ApprovalDecision {
     }
 }
 
+/// Open a continuation run without claiming that another durable turn began.
+fn continuation_started(run_id: &str, thread_id: &str) -> super::project::AguiEvent {
+    super::project::AguiEvent {
+        kind: "RUN_STARTED",
+        run_id: run_id.to_string(),
+        thread_id: thread_id.to_string(),
+        body: serde_json::json!({}),
+        timestamp: None,
+        // This brackets the interface's run rather than projecting a log
+        // record. Giving it an id would move replay past an event that does not
+        // exist, while recording another TurnStarted would invent a new turn.
+        seq: None,
+        live: false,
+    }
+}
+
+/// Queue one store read, stopping after the first event that ends this run.
+///
+/// Every frame belonging to the ending event remains part of the response. In
+/// particular, an approval request projects to an unnumbered `RUN_FINISHED`
+/// followed by its numbered pending-state delta. Events later in the same store
+/// result belong to a subsequent run and must not cross that complete boundary.
+fn queue_durable_batch(
+    events: impl IntoIterator<Item = Event>,
+    pending: &mut std::collections::VecDeque<super::project::AguiEvent>,
+    seq: &mut u64,
+    run_id: &str,
+    thread_id: &str,
+) -> bool {
+    for event in events {
+        *seq = event.seq;
+        let projected = project(&event, run_id, thread_id);
+        let ending = projected.ending;
+        pending.extend(projected.events);
+        if let Some(ending) = ending {
+            tracing::debug!(session_id = %event.session_id, ?ending, "run ended");
+            return true;
+        }
+    }
+    false
+}
+
+struct RunBoundary {
+    id: String,
+    continuation: bool,
+}
+
 /// The run's event stream, from `after` until the turn ends.
 ///
 /// Three lanes on one stream. The durable one is polled from the log and is
@@ -281,12 +348,14 @@ fn decision_of(item: &ResumeItem) -> ApprovalDecision {
 /// and a client holding several would have to decide how to interleave them.
 ///
 /// The durable lane is drained first on every pass. A committed message must
-/// not arrive behind a piece of itself.
+/// not arrive behind a piece of itself. A continuation boundary is queued
+/// ahead of all three lanes because it brackets this run rather than the turn
+/// already in progress.
 fn events(
     service: Arc<SessionService>,
     caller: layer2_core::Caller,
     id: SessionId,
-    run_id: String,
+    run: RunBoundary,
     after: u64,
     watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
     resources: Option<tokio::sync::broadcast::Receiver<layer2_core::ResourceReading>>,
@@ -307,14 +376,20 @@ fn events(
         ended: bool,
     }
 
+    let pending = run
+        .continuation
+        .then(|| continuation_started(&run.id, &id.0))
+        .into_iter()
+        .collect();
+
     stream::unfold(
         Open {
             service,
             caller,
             id,
-            run_id,
+            run_id: run.id,
             seq: after,
-            pending: Default::default(),
+            pending,
             watching,
             resources,
             ended: false,
@@ -338,21 +413,21 @@ fn events(
                 )
                 .await
                 .unwrap_or(Woke::Idle);
-                match woke {
-                    Woke::Live(frame) => open.pending.extend(super::live::project_live(
-                        &frame,
-                        &open.run_id,
-                        &open.id.0,
-                    )),
-                    Woke::Reading(reading) => {
-                        open.pending
-                            .push_back(project_reading(&reading, &open.run_id, &open.id.0))
+                // Hold the cursorless lane until the log has been drained. A
+                // runtime can answer immediately after accepting a prompt; if
+                // that live piece were queued first, the stream would still
+                // violate RUN_STARTED-first even though TurnStarted was already
+                // durable. The same ordering keeps a committed message ahead of
+                // the live piece it supersedes.
+                let cursorless = match woke {
+                    Woke::Live(frame) => {
+                        super::live::project_live(&frame, &open.run_id, &open.id.0)
                     }
-                    Woke::Idle => {}
-                }
-                if !open.pending.is_empty() {
-                    continue;
-                }
+                    Woke::Reading(reading) => {
+                        Some(project_reading(&reading, &open.run_id, &open.id.0))
+                    }
+                    Woke::Idle => None,
+                };
                 let read = open
                     .service
                     .events_since(&open.caller, &open.id, Some(open.seq))
@@ -363,14 +438,19 @@ fn events(
                     // caller may no longer be entitled to.
                     return None;
                 };
-                for event in events {
-                    open.seq = event.seq;
-                    let projected = project(&event, &open.run_id, &open.id.0);
-                    open.pending.extend(projected.events);
-                    if let Some(ending) = projected.ending {
-                        tracing::debug!(session_id = %open.id, ?ending, "run ended");
-                        open.ended = true;
-                    }
+                open.ended = queue_durable_batch(
+                    events,
+                    &mut open.pending,
+                    &mut open.seq,
+                    &open.run_id,
+                    &open.id.0,
+                );
+                // RUN_FINISHED/RUN_ERROR must remain the last frame. A
+                // cursorless reading that happened alongside the durable ending
+                // belongs before it in time but cannot safely be reordered past
+                // the run boundary, so the durable outcome wins.
+                if !open.ended {
+                    open.pending.extend(cursorless);
                 }
             }
         },
