@@ -58,6 +58,7 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
       return {
         ...state,
         turnInFlight: false,
+        sessionInteractive: false,
         // The turn is over, so nothing is in flight. A message that was being
         // typed has been committed by now and is in the stream; one that was
         // not is gone with the turn, and history has no record of it either —
@@ -86,11 +87,18 @@ export function reduce(state: Conversation, event: AguiEvent): Conversation {
        * the boundary itself is drawn. The turn really has ended either way.
        */
       if (event.returns) {
-        return { ...state, turnInFlight: false, live: undefined, reasoning: undefined };
+        return {
+          ...state,
+          turnInFlight: false,
+          sessionInteractive: false,
+          live: undefined,
+          reasoning: undefined,
+        };
       }
       return {
         ...state,
         turnInFlight: false,
+        sessionInteractive: false,
         live: undefined,
         reasoning: undefined,
         error: { message: event.message, capability: event.capability },
