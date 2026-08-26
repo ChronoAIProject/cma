@@ -7,16 +7,17 @@
 
 use std::sync::Arc;
 
-use layer3_adapter::{TermSize, TerminalInput, TerminalOutput};
+use layer3_adapter::{TermSize, TerminalInput, TerminalInputSender, TerminalOutput};
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
 use crate::authz::{Caller, Capability as AuthorizationCapability};
 use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
-use crate::ids::SessionId;
+use crate::ids::{SessionId, SubjectId};
 use crate::log::{append_with, drop_undelivered};
-use crate::service::{store_failed, SessionService};
+use crate::provision_support::RuntimeInteractionAuthority;
+use crate::service::{store_failed, SessionEntry, SessionService};
 use crate::store::SessionRecord;
 use crate::terminal::{ScreenModel, ScreenSnapshot, TerminalGeometry};
 
@@ -221,113 +222,222 @@ impl SessionService {
     /// Change the session's terminal geometry.
     ///
     /// Unguarded here for the same reason as input: the attached client
-    /// declares its own geometry through this call.
+    /// declares its own geometry through this call. Once the geometry is
+    /// durable it is the desired state for this runtime or its successor. A
+    /// fenced or rejected runtime delivery therefore leaves that durable state
+    /// for retry or readoption to apply instead of rolling it back.
     pub async fn resize_terminal(
         self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
         geometry: TerminalGeometry,
     ) -> Result<(), CoreError> {
-        // Installation holds the lifecycle gate across durable readiness and
-        // live publication. Check first so a resize observed in that final
-        // rotation gap is refused instead of waiting and crossing it. The
-        // fenced check below still closes a rotation that begins afterwards.
-        self.authorize(caller, id).await?;
-        let lifecycle = self.lock_lifecycle(id).await;
-        let input_fence = self.input_gates.gate(id).read_owned().await;
-        self.may_drive_terminal(caller, id).await?;
-        let commit = {
-            let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                drop(entries);
-                let rotation_in_progress = self.rotation_in_progress(id).await;
-                return Err(self
-                    .missing_live_session_error(caller, id, rotation_in_progress)
-                    .await);
-            };
-            if !entry.session.is_owned_by(&caller.subject) {
-                return Err(CoreError::Forbidden);
-            }
-            let screen = Arc::clone(&entry.screen);
-            let input = entry.input.clone();
-            let service = Arc::clone(self);
-            let id = id.clone();
-            let rejected_service = Arc::clone(self);
-            let rejected_id = id.clone();
-            let rejected_screen = Arc::clone(&screen);
-            append_with(
-                entry,
-                EventKind::TerminalResized {
-                    columns: geometry.columns(),
-                    rows: geometry.rows(),
-                },
-                |record| record.session.geometry = geometry,
-                move |committed| async move {
-                    let geometry = committed.session.geometry;
-                    let installed = {
-                        let mut entries = service.entries.write().await;
-                        if let Some(entry) = entries
-                            .get_mut(&id)
-                            .filter(|entry| Arc::ptr_eq(&entry.screen, &screen))
-                        {
-                            entry.session.geometry = geometry;
-                            entry.session.last_seq = committed.session.last_seq;
-                            let event_log = Arc::clone(&entry.event_log);
-                            event_log.synchronize_tail(&mut entry.session.last_seq);
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    let result = if installed {
-                        screen.lock().await.resize(geometry);
-                        if let Some(input) = input {
-                            if input
-                                .send(TerminalInput::Resize(TermSize {
-                                    cols: geometry.columns(),
-                                    rows: geometry.rows(),
-                                }))
-                                .await
-                                .is_err()
+        let record = self.terminal_interaction_record(caller, id).await?;
+        let service = Arc::clone(self);
+        let owner = caller.subject.clone();
+        let id = id.clone();
+        self.run_retained_runtime_interaction_at(
+            &record,
+            move |authority, interaction| async move {
+                // Compatibility lifecycle operations have only process-local
+                // exclusion and take this gate before the input fence. A
+                // coordinated Interact lease excludes Lifecycle durably.
+                let lifecycle = if authority.is_durably_fenced() {
+                    None
+                } else {
+                    Some(service.lock_lifecycle(&id).await)
+                };
+                let input_fence = service.input_gates.gate(&id).read_owned().await;
+                let commit = {
+                    let mut entries = service.entries.write().await;
+                    let entry = entries.get_mut(&id).ok_or_else(|| {
+                        CoreError::RuntimeUnavailable(
+                            "this session has no live terminal entry".into(),
+                        )
+                    })?;
+                    Self::require_resize_entry(entry, &owner)?;
+                    let runtime_generation = entry.runtime_generation;
+                    if !authority.fences_runtime_generation(runtime_generation) {
+                        return Err(CoreError::RuntimeUnavailable(
+                            "the live terminal belongs to another runtime generation".into(),
+                        ));
+                    }
+                    // Committing desired geometry is itself a runtime-scoped
+                    // mutation. Caller cancellation before this final check
+                    // must leave both the store and runtime untouched.
+                    authority.ensure_delivery_allowed()?;
+
+                    let screen = Arc::clone(&entry.screen);
+                    let input = entry.input.clone();
+                    let continued_service = Arc::clone(&service);
+                    let continued_owner = owner.clone();
+                    let continued_id = id.clone();
+                    let continued_screen = Arc::clone(&screen);
+                    let continued_input = input.clone();
+                    let continued_interaction = interaction.clone();
+                    let rejected_service = Arc::clone(&service);
+                    let rejected_id = id.clone();
+                    let rejected_screen = Arc::clone(&screen);
+                    let rejected_interaction = interaction.clone();
+                    append_with(
+                        entry,
+                        EventKind::TerminalResized {
+                            columns: geometry.columns(),
+                            rows: geometry.rows(),
+                        },
+                        |record| record.session.geometry = geometry,
+                        move |committed| async move {
+                            let result = match continued_interaction.resume_before_delivery().await
                             {
-                                tracing::warn!(session_id = %id, "runtime input channel closed");
-                            }
-                        }
-                        Ok(())
-                    } else {
-                        Err(CoreError::SessionNotFound)
-                    };
-                    drop(input_fence);
-                    (result, lifecycle)
-                },
-                move |_error| async move {
-                    rejected_service
-                        .synchronize_ordered_live_tail_for(&rejected_id, &rejected_screen)
-                        .await;
-                },
-                drop_undelivered,
-            )
-        };
-        commit.committed().await.map_err(store_failed)?
+                                Ok(authority) => {
+                                    continued_service
+                                        .finish_terminal_resize(
+                                            &continued_owner,
+                                            &continued_id,
+                                            runtime_generation,
+                                            &continued_screen,
+                                            continued_input.as_ref(),
+                                            &committed,
+                                            &authority,
+                                        )
+                                        .await
+                                }
+                                Err(error) => Err(error),
+                            };
+                            drop(input_fence);
+                            (result, (lifecycle, continued_interaction))
+                        },
+                        move |_error| async move {
+                            rejected_service
+                                .synchronize_ordered_live_tail_for(&rejected_id, &rejected_screen)
+                                .await;
+                            drop(rejected_interaction);
+                        },
+                        drop_undelivered,
+                    )
+                };
+                commit.committed().await.map_err(store_failed)?
+            },
+            |_loss, _result, _interaction| {},
+        )
+        .await
     }
-    /// Whether this caller may drive this session's terminal at all.
-    ///
-    /// Two questions that used to be one. Ownership says who may act; the
-    /// capability says whether there is a terminal to act on. A conversation
-    /// session has none, and writing keystrokes at it would be accepted and
-    /// dropped — which is the shape of failure the capability model exists to
-    /// remove.
-    async fn may_drive_terminal(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
-        self.authorize(caller, id).await?;
-        let entries = self.entries.read().await;
-        let Some(entry) = entries.get(id) else {
-            drop(entries);
-            let rotation_in_progress = self.rotation_in_progress(id).await;
-            return Err(self
-                .missing_live_session_error(caller, id, rotation_in_progress)
-                .await);
-        };
+
+    fn require_resize_entry(entry: &SessionEntry, owner: &SubjectId) -> Result<(), CoreError> {
+        if !entry.session.is_owned_by(owner) {
+            return Err(CoreError::Forbidden);
+        }
+        if entry.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if entry.session.status.is_rotating() {
+            return Err(CoreError::SessionRotating);
+        }
         entry.session.capabilities.require(Capability::Terminal)
+    }
+
+    fn require_same_resize_target(
+        entry: &SessionEntry,
+        owner: &SubjectId,
+        runtime_generation: u64,
+        screen: &Arc<Mutex<Box<dyn ScreenModel>>>,
+        input: Option<&TerminalInputSender>,
+    ) -> Result<(), CoreError> {
+        Self::require_resize_entry(entry, owner)?;
+        if entry.runtime_generation != runtime_generation {
+            return Err(CoreError::RuntimeUnavailable(
+                "the live terminal belongs to another runtime generation".into(),
+            ));
+        }
+        if !Arc::ptr_eq(&entry.screen, screen) {
+            return Err(CoreError::RuntimeUnavailable(
+                "the live terminal changed while its resize was committing".into(),
+            ));
+        }
+        let same_input = match (entry.input.as_ref(), input) {
+            (Some(current), Some(expected)) => current.same_channel(expected),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same_input {
+            return Err(CoreError::RuntimeUnavailable(
+                "the live terminal input changed while its resize was committing".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn finish_terminal_resize(
+        &self,
+        owner: &SubjectId,
+        id: &SessionId,
+        runtime_generation: u64,
+        screen: &Arc<Mutex<Box<dyn ScreenModel>>>,
+        input: Option<&TerminalInputSender>,
+        committed: &SessionRecord,
+        authority: &RuntimeInteractionAuthority,
+    ) -> Result<(), CoreError> {
+        let geometry = committed.session.geometry;
+        if !authority.fences_runtime_generation(runtime_generation) {
+            return Err(CoreError::RuntimeUnavailable(
+                "the live terminal belongs to another runtime generation".into(),
+            ));
+        }
+        if input.is_some() {
+            // Keep the live entry stable from its final identity check through
+            // admission by the exact runtime-link writer. The receipt then
+            // makes local publication mandatory, without another authority
+            // check that could discard an already delivered resize.
+            let entries = self.entries.read().await;
+            let entry = entries.get(id).ok_or_else(|| {
+                CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
+            })?;
+            Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
+            let sender = entry
+                .input
+                .as_ref()
+                .expect("a validated resize sender remains present");
+            authority.ensure_delivery_allowed()?;
+            self.forward_input(
+                id,
+                sender,
+                TerminalInput::Resize(TermSize {
+                    cols: geometry.columns(),
+                    rows: geometry.rows(),
+                }),
+            )
+            .await?;
+            drop(entries);
+
+            let mut entries = self.entries.write().await;
+            let entry = entries.get_mut(id).ok_or_else(|| {
+                CoreError::RuntimeUnavailable(
+                    "the live terminal ended after accepting its resize".into(),
+                )
+            })?;
+            Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
+            Self::install_committed_resize(entry, committed);
+        } else {
+            // A live entry can intentionally have no runtime input link while
+            // its screen remains useful. In that case the same final authority
+            // check admits a local-only update of the durable desired state.
+            let mut entries = self.entries.write().await;
+            let entry = entries.get_mut(id).ok_or_else(|| {
+                CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
+            })?;
+            Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
+            authority.ensure_delivery_allowed()?;
+            Self::install_committed_resize(entry, committed);
+        }
+        screen.lock().await.resize(geometry);
+        Ok(())
+    }
+
+    fn install_committed_resize(entry: &mut SessionEntry, committed: &SessionRecord) {
+        entry.session.geometry = committed.session.geometry;
+        entry.session.last_seq = committed.session.last_seq;
+        let event_log = Arc::clone(&entry.event_log);
+        event_log.synchronize_tail(&mut entry.session.last_seq);
     }
 
     /// Whether a client is currently holding this session's terminal.
