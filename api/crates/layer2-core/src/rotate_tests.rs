@@ -3331,12 +3331,9 @@ async fn a_session_whose_skills_cannot_be_refetched_is_still_carried() {
         "runtime:1",
         Arc::new(RefusingSkills),
     );
-    let created = old.create_session(&alice, spec()).await;
-    // At creation the caller is on the line, so the refusal is theirs to hear.
-    assert!(
-        created.is_err() || created.is_ok(),
-        "creation may go either way here; what matters is the rotation below"
-    );
+    // At creation the caller is on the line, so the refusal is theirs to hear
+    // before a session exists.
+    assert!(old.create_session(&alice, spec()).await.is_err());
 
     // A session that exists, on an older runtime, with no caller present.
     let store2 = Arc::new(FakeStore::default());
@@ -3384,19 +3381,14 @@ impl crate::store::SkillSource for WorkingSkills {
 }
 
 #[tokio::test]
-async fn the_record_says_what_a_session_has_and_not_what_it_asked_for() {
+async fn a_rotation_replays_staged_skills_without_refetching_them() {
     /*
      * The other half of the test above, and the reason it is not enough that
      * the session survives.
      *
-     * A rotation that cannot refetch carries the session forward with no
-     * skills. If the record still lists the ones it was created with, every
-     * interface goes on reporting them — which is worse than reporting none,
-     * because somebody is then told their agent can do something it cannot,
-     * and only finds out when it fails.
-     *
-     * #442 is about not losing them in the first place. Until that lands the
-     * record must at least agree with the disk.
+     * Creation keeps exact bytes in the session record until external custody
+     * lands. A replacement therefore does not ask the mutable registry again,
+     * and the frozen grant continues to describe what reaches the runtime.
      */
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
@@ -3443,8 +3435,8 @@ async fn the_record_says_what_a_session_has_and_not_what_it_asked_for() {
         .expect("recorded");
     assert_eq!(
         rotated.session.granted_skills.as_deref(),
-        Some(&[][..]),
-        "a rotation that lost the skills must not leave the record claiming them"
+        created.session.granted_skills.as_deref(),
+        "a rotation must preserve the exact frozen grant it replayed"
     );
 }
 

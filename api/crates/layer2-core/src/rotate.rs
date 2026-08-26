@@ -302,6 +302,55 @@ impl SessionService {
             return Err(CoreError::InvalidState);
         };
 
+        // Prove the replacement can receive the session's exact frozen skills
+        // before acquiring handover authority or touching the runtime that
+        // still has them. This may settle a legacy record or promote staged
+        // bytes into external custody, so reread the record before acquiring a
+        // lease against its exact current revision.
+        let mut prepared_skills = None;
+        match self
+            .prepare_skill_packs(&record.session, &mut prepared_skills)
+            .await
+        {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                self.finish_start(&id).await;
+                return Err(CoreError::InvalidState);
+            }
+            Err(failure) => {
+                tracing::warn!(
+                    session_id = %id,
+                    reason = %failure.reason,
+                    "cannot reproduce this session's frozen skills; leaving its runtime in place"
+                );
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(format!(
+                    "this session's frozen skills could not be prepared, so its runtime has not been moved: {}",
+                    failure.reason
+                )));
+            }
+        }
+        let record = match self.store.get(&id).await {
+            Ok(Some(current))
+                if current.session.wants_runtime()
+                    && !current.is_effectively_rotating()
+                    && current.session.kernel == record.session.kernel
+                    && current.runtime_id.as_deref() == Some(old.0.as_str()) =>
+            {
+                current
+            }
+            Ok(_) => {
+                self.finish_start(&id).await;
+                return Err(CoreError::InvalidState);
+            }
+            Err(error) => {
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(format!(
+                    "this session could not be checked after its skills were prepared, so its runtime has not been moved: {error}"
+                )));
+            }
+        };
+
         let lease = match self
             .acquire_runtime_lease_at(&record, SessionOperation::Handover)
             .await
