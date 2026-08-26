@@ -278,6 +278,18 @@ pub(crate) fn service_with_credentials(
     adapter: Arc<FakeAdapter>,
     credential: &str,
 ) -> Arc<SessionService> {
+    service_with_credential_source(
+        store,
+        adapter,
+        Arc::new(FixedCredential(credential.to_string())),
+    )
+}
+
+pub(crate) fn service_with_credential_source(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    credentials: Arc<dyn crate::store::CredentialSource>,
+) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(kernel(), adapter);
@@ -287,7 +299,7 @@ pub(crate) fn service_with_credentials(
         store,
         crate::service::SessionPorts {
             context: None,
-            credentials: Some(Arc::new(FixedCredential(credential.to_string()))),
+            credentials: Some(credentials),
             skills: None,
             settings: None,
         },

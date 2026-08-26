@@ -43,6 +43,9 @@ pub(crate) struct FakeStore {
     write_receipts: Mutex<HashMap<String, (SessionId, u64)>>,
     /// Successful record writes, so idempotent migrations can be asserted.
     pub(crate) upserts: std::sync::atomic::AtomicUsize,
+    /// Newly acquired lifecycle leases, so tests can prove a failure path was
+    /// admitted through durable coordination rather than bypassing it.
+    pub(crate) session_lease_acquisitions: std::sync::atomic::AtomicUsize,
     /// When set, every operation fails, so callers can be checked against a
     /// store that is down rather than merely empty.
     pub(crate) broken: Mutex<bool>,
@@ -165,6 +168,11 @@ impl FakeStore {
             .get(&id.0)
             .and_then(|state| state.lease.as_ref())
             .map(|held| held.lease.clone())
+    }
+
+    pub(crate) fn session_lease_acquisitions(&self) -> usize {
+        self.session_lease_acquisitions
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub(crate) async fn fail_everything(&self) {
@@ -421,6 +429,8 @@ impl SessionStore for FakeStore {
                 .checked_add(request.ttl)
                 .ok_or_else(|| StoreError::Malformed("session lease expiry overflow".into()))?,
         });
+        self.session_lease_acquisitions
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(lease)
     }
 
@@ -1369,9 +1379,9 @@ impl ScreenModel for NullScreen {
 pub(crate) use crate::service_support::{
     credential_on, owned, service_as, service_on_version, service_on_version_with_settings,
     service_on_version_with_skills, service_over_with_context, service_with_context,
-    service_with_credentials, service_with_environments_and_settings,
-    service_with_environments_and_settings_service, service_with_environments_on_version,
-    write_screen,
+    service_with_credential_source, service_with_credentials,
+    service_with_environments_and_settings, service_with_environments_and_settings_service,
+    service_with_environments_on_version, write_screen,
 };
 
 pub(crate) fn kernel() -> KernelId {
