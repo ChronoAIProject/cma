@@ -1,9 +1,10 @@
 # How long the load balancer will wait on this service.
 #
-# The frontend is served from here, and so is everything it calls: its bundle
-# uses same-origin paths, and nginx in this image proxies `/api/` to the
-# control plane with an hour's read timeout and buffering off. So the browser's
-# long-lived connections are this service's connections, whatever they reach.
+# The frontend is served from here and still uses same-origin API paths. On the
+# managed Gateway, more-specific API, auth, and discovery rules now send those
+# paths directly to `cma-api`; the web service carries the static application
+# and its client-side routes. nginx retains the same-origin proxy contract for
+# an image reached without that Gateway split.
 #
 # Without this the balancer's default of 30 seconds bounds them, and it bounds
 # the whole response rather than the time to first byte. Measured against
@@ -19,9 +20,10 @@
 # durable, so each cut discards them and the surface goes quiet for the length
 # of the reconnect. It reads as an agent that keeps stalling.
 #
-# nginx allowing an hour is meaningless while the balancer cuts first, which is
-# the same trap the neighbouring policy documents. The value matches it rather
-# than being chosen independently, so both halves of one product behave alike.
+# Keeping this declared avoids recreating that measured failure in a deployment
+# that reaches the image's nginx fallback. The managed route's streams use the
+# neighbouring API policy instead. The values match so either supported path
+# has the same upper bound.
 apiVersion: networking.gke.io/v1
 kind: GCPBackendPolicy
 metadata:

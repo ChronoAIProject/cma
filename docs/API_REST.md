@@ -53,6 +53,74 @@ unmatched routes. A supplied value is echoed; otherwise CMA mints a UUID. The
 same value is attached to the request's tracing span. Include it in any support
 report.
 
+### Request limits
+
+CMA uses continuously refilled token buckets, not fixed one-minute windows.
+The configured rate is also the maximum burst:
+
+| Request class | Default rate and burst | Configuration |
+|---|---:|---|
+| Pre-authentication admission, per client network | 6,000 per minute | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` |
+| `GET` or `HEAD` on `/livez` and `/ready`, per client network | 120 per minute | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` |
+| Provision or rotate: `POST /sessions`, `POST /agui/run`, `POST /sessions/{id}/plane`, `POST /sessions/{id}/revive` | 10 per minute | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` |
+| Deliver a prompt: `POST /sessions/{id}/input`, `POST /sessions/{id}/steer` | 120 per minute | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` |
+| Every other admitted request | 600 per minute | `CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE` |
+
+Every non-preflight, non-health request first consumes the cheap network
+admission bucket, before authentication, body capture, or activity-store I/O.
+Health requests consume their dedicated network bucket instead. An admitted
+non-health request then consumes one operation bucket. Authenticated operation
+traffic on protected routes is keyed by resolved NyxID subject, so changing
+connections or credentials does not create another budget. Routes that are
+public by contract, including REST and AG-UI discovery and the browser auth
+flow, remain keyed by client network even when a request happens to carry a
+cookie or bearer token. Other anonymous traffic and the admission guard are
+also keyed by client network. An AG-UI run can create a billed session when its
+thread is absent, so it always uses the conservative creation budget; the
+middleware does not read its body or query session state to decide whether to
+protect the service.
+
+The direct TCP peer is used unless it belongs to a network explicitly listed in
+`CHRONO_SERVER_TRUSTED_PROXY_CIDRS`. Only then does CMA read
+`X-Forwarded-For`, skip `CHRONO_SERVER_TRUSTED_PROXY_HOPS` tokens from the
+right, and select the next token. The current Google load balancer appends
+`client-ip,load-balancer-ip`, so the configured hop count is one; any
+caller-supplied prefix stays to the left and cannot shard a budget. A missing,
+malformed, or too-short chain falls back to the TCP peer. IPv4-mapped IPv6 is
+the same key as IPv4, and ordinary IPv6 addresses are normalized to `/64`.
+Requests with no peer metadata share one unidentified-client bucket rather than
+bypassing protection. On the managed app hostname the Gateway routes `/api`,
+`/auth`, `/openapi.json`, and `/.well-known/agent-card.json` directly to
+`cma-api`, so the web pod is not an extra untrusted hop and every browser client
+retains its own selected network key.
+
+An exhausted bucket returns `429 application/problem+json` with code
+`rate_limited`. REST rejections retain the profile and service-description
+`Link` headers. `Retry-After` is a positive whole number of seconds, rounded up
+from the token's remaining wait, and is exposed through CORS. Waiting that many
+seconds makes at least one token available if no concurrent request consumes it
+first. Browser CORS preflight `OPTIONS` requests carrying both `Origin` and
+`Access-Control-Request-Method` are exempt and cached for up to one hour; they
+perform no authenticated application operation. An arbitrary `OPTIONS` request
+without that preflight shape consumes the ordinary route budget.
+
+Rejected traffic does not enter durable activity recording: doing a body read
+and MongoDB write for traffic rejected to protect those resources would put the
+expensive work ahead of the boundary. Rejections are counted in process and
+reported through exponentially sampled structured logs. The counters and token
+buckets are process-local. This deployment pins the API to one replica, where
+configured operation values are exact. Running N replicas without shared state
+makes effective allowances up to N times larger.
+
+Routes that consume request bodies are capped at 2 MiB (2,097,152 bytes). REST
+and AG-UI JSON routes that reach body collection return `413
+application/problem+json` with code `request_too_large` when that ceiling is
+crossed. Media-type validation is deliberately earlier on routes that can
+reject without reading: an oversized body with a missing or wrong JSON content
+type can therefore return coded `415 unsupported_media_type`. Bodyless routes
+and handlers that do not consume a supplied body make no unconditional 413
+promise.
+
 ### Idempotent retries
 
 `POST /api/v1/sessions` and `POST /api/v1/sessions/{id}/input` are the two
@@ -1330,10 +1398,10 @@ X-Request-Id: 94ea38a2-c2cb-4a43-9fe2-d25a60b59ec5
 | `404` | No matching REST path (`code: "not_found"`), or no such session/resource visible to this subject |
 | `405` | The REST path exists but does not accept this method (`code: "method_not_allowed"`) |
 | `409` | Conflicts with current state — session terminated, live-session limit reached, quoted rate card changed, or an operation with this key is still running (`code: "idempotency_in_flight"`) |
-| `413` | The request body exceeds the service's accepted limit (`code: "request_too_large"`) |
+| `413` | The request body exceeds 2 MiB / 2,097,152 bytes (`code: "request_too_large"`) |
 | `415` | A JSON route was sent another media type (`code: "unsupported_media_type"`) |
 | `422` | Well-formed but semantically invalid — zero terminal dimension, invalid session size, or an operation key reused with another body (`code: "idempotency_key_reused"`) |
-| `429` | Rate limited; observe `Retry-After` |
+| `429` | The caller exhausted a route-class budget (`code: "rate_limited"`); observe the positive integer `Retry-After` |
 | `501` | The operation exists in the core but this interface does not project it |
 | `503` | Control plane recovering or failing over; retry |
 
