@@ -2562,6 +2562,37 @@ pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
     drop(enqueued.complete);
 }
 
+/// Record one indivisible event unit and return its durable completion.
+///
+/// Some public operations need both properties at once: their related events
+/// must never be interleaved by another replica, and the caller must not act on
+/// an enqueue-time sequence that a normal [`StoreError::SequenceTaken`] rebase
+/// can move. The completion record carries the unit's final committed tail.
+pub(crate) fn append_batch(
+    entry: &mut SessionEntry,
+    kinds: impl IntoIterator<Item = EventKind>,
+) -> CommitReceiver {
+    let events = kinds
+        .into_iter()
+        .map(|kind| Event {
+            session_id: entry.session.id.clone(),
+            seq: 0,
+            kind,
+            appended_at: String::new(),
+        })
+        .collect::<Vec<_>>();
+    debug_assert!(!events.is_empty(), "an event unit must contain an event");
+    let record = record_from_entry(entry);
+    let enqueued = entry
+        .event_log
+        .enqueue_commit(CommitMode::UpdateInheriting, record, events);
+    // Publish the initial reservation to live producers. If another replica
+    // wins a sequence first, the lane moves this unit and all successors as one
+    // FIFO; the returned completion supplies the post-rebase durable tail.
+    entry.session.last_seq = enqueued.last_seq;
+    enqueued.complete
+}
+
 /// Queue a semantic event whose intended record is not live state until commit.
 ///
 /// Public operations that act on a runtime use this form so a cross-replica

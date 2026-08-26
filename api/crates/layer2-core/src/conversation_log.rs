@@ -58,26 +58,31 @@ impl SessionService {
     /// Recorded and then shown, never the other way round: a client that saw
     /// something the log does not hold would find it missing on reconnect with
     /// no way to tell that from having imagined it.
-    async fn fold_update(&self, id: &SessionId, update: ConversationUpdate) {
+    async fn fold_update(
+        &self,
+        id: &SessionId,
+        update: ConversationUpdate,
+        ordered: tokio::sync::MutexGuard<'_, ()>,
+    ) {
         let update = match update {
             ConversationUpdate::Said(update) => update,
             ConversationUpdate::Asked(request) => {
-                self.fold_request(id, request).await;
+                self.fold_request(id, request, ordered).await;
                 return;
             }
             ConversationUpdate::TurnEnded(completed) => {
-                self.fold_completion(id, completed).await;
+                self.fold_completion(id, completed, ordered).await;
                 return;
             }
             ConversationUpdate::SignInRequired { url, code, message } => {
-                self.fold_sign_in(id, url, code, message).await;
+                self.fold_sign_in(id, url, code, message, ordered).await;
                 return;
             }
             ConversationUpdate::Failed {
                 message,
                 capability,
             } => {
-                self.fold_failure(id, message, capability).await;
+                self.fold_failure(id, message, capability, ordered).await;
                 return;
             }
             ConversationUpdate::Lost { frames } => {
@@ -92,6 +97,7 @@ impl SessionService {
                     };
                     append(entry, EventKind::ConversationGap { frames });
                 }
+                drop(ordered);
                 self.flush(id).await;
                 return;
             }
@@ -153,6 +159,7 @@ impl SessionService {
             // A send with no subscriber is not an error: the session is simply
             // unwatched, and the whole message is committed either way.
             let _ = live.send(LiveFrame::MessageDelta(text));
+            drop(ordered);
             self.flush(id).await;
             return;
         }
@@ -200,9 +207,11 @@ impl SessionService {
             match live {
                 Some(live) => {
                     let _ = live.send(LiveFrame::AvailableCommands(commands));
+                    drop(ordered);
                     self.flush(id).await;
                 }
                 None => {
+                    drop(ordered);
                     self.append_without_entry(id, EventKind::AvailableCommandsSet { commands })
                         .await;
                 }
@@ -251,11 +260,17 @@ impl SessionService {
             }
             append(entry, kind);
         }
+        drop(ordered);
         self.flush(id).await;
     }
 
     /// Record something the runtime is blocked on, and park the session.
-    async fn fold_request(&self, id: &SessionId, request: PermissionRequest) {
+    async fn fold_request(
+        &self,
+        id: &SessionId,
+        request: PermissionRequest,
+        ordered: tokio::sync::MutexGuard<'_, ()>,
+    ) {
         {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
@@ -286,6 +301,7 @@ impl SessionService {
                 },
             );
         }
+        drop(ordered);
         self.flush(id).await;
     }
 
@@ -294,7 +310,12 @@ impl SessionService {
     /// The reason is the difference between an agent that finished, one that
     /// was interrupted and one that refused, and a client showing all three
     /// the same way is showing none of them.
-    async fn fold_completion(&self, id: &SessionId, completed: PromptResponse) {
+    async fn fold_completion(
+        &self,
+        id: &SessionId,
+        completed: PromptResponse,
+        ordered: tokio::sync::MutexGuard<'_, ()>,
+    ) {
         {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
@@ -339,6 +360,7 @@ impl SessionService {
                 },
             );
         }
+        drop(ordered);
         self.flush(id).await;
     }
 
@@ -357,6 +379,7 @@ impl SessionService {
         url: String,
         code: Option<String>,
         message: Option<String>,
+        ordered: tokio::sync::MutexGuard<'_, ()>,
     ) {
         tracing::info!(session_id = %id, "this session is waiting for its owner to sign in");
         {
@@ -364,6 +387,7 @@ impl SessionService {
             if let Some(entry) = entries.get_mut(id) {
                 append(entry, EventKind::SignInRequired { url, code, message });
                 drop(entries);
+                drop(ordered);
                 self.flush(id).await;
                 return;
             }
@@ -380,6 +404,7 @@ impl SessionService {
          * already does. The sequence comes from the same shared allocator, so
          * the two paths cannot hand out the same number.
          */
+        drop(ordered);
         self.append_without_entry(id, EventKind::SignInRequired { url, code, message })
             .await;
     }
@@ -436,7 +461,13 @@ impl SessionService {
     /// agent could not answer". The reason travels as the status change's
     /// detail, which every interface already projects — so every caller is
     /// told the same thing without any interface being taught a new shape.
-    async fn fold_failure(&self, id: &SessionId, message: String, capability: Option<String>) {
+    async fn fold_failure(
+        &self,
+        id: &SessionId,
+        message: String,
+        capability: Option<String>,
+        ordered: tokio::sync::MutexGuard<'_, ()>,
+    ) {
         tracing::warn!(session_id = %id, %message, "a turn failed");
         {
             let mut entries = self.entries.write().await;
@@ -462,6 +493,7 @@ impl SessionService {
                 },
             );
         }
+        drop(ordered);
         self.flush(id).await;
     }
 
@@ -470,7 +502,7 @@ impl SessionService {
     /// A dangling turn sits in the log forever looking like work in progress,
     /// which is indistinguishable from an agent that is simply slow. The
     /// reason it actually stopped for is recorded instead.
-    async fn close_open_turn(&self, id: &SessionId) {
+    async fn close_open_turn(&self, id: &SessionId, ordered: tokio::sync::MutexGuard<'_, ()>) {
         {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
@@ -501,6 +533,7 @@ impl SessionService {
                 );
             }
         }
+        drop(ordered);
         self.flush(id).await;
     }
 }
@@ -682,14 +715,24 @@ pub(crate) fn spawn_folder(
     id: SessionId,
     mut updates: mpsc::Receiver<ConversationUpdate>,
 ) {
+    // Kept alive for the folder's lifetime so every prompt and every update
+    // for this runtime meet at the same per-session gate. Each fold drops its
+    // guard after mutation and enqueue, before waiting for store durability:
+    // the event lane preserves that order without letting slow I/O block the
+    // next operation's admission. The gate is deliberately independent of
+    // lifecycle installation because this folder starts first while a
+    // conversation can already be reporting useful updates.
+    let ordering = service.conversation_order_gates.gate(&id);
     tokio::spawn(async move {
         while let Some(update) = updates.recv().await {
-            service.fold_update(&id, update).await;
+            let ordered_update = ordering.lock().await;
+            service.fold_update(&id, update, ordered_update).await;
         }
         // The channel ending is the runtime's conversation ending. A turn left
         // open would sit in the log forever looking like work still in
         // progress, so it is closed with the reason it actually stopped for.
-        service.close_open_turn(&id).await;
+        let ordered_close = ordering.lock().await;
+        service.close_open_turn(&id, ordered_close).await;
         tracing::info!(session_id = %id, "conversation folding ended");
     });
 }
