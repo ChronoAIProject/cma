@@ -1160,6 +1160,10 @@ async fn create(
         Ok(guard) => guard,
         Err(response) => return response,
     };
+    let body = match body {
+        Ok(body) => body,
+        Err(error) => return guard.finish(Err(RequestFailure::from(error))).await,
+    };
     let result: Result<Response, RequestFailure> = async {
         let parts = body.into_parts()?;
         let credential_value = credential
