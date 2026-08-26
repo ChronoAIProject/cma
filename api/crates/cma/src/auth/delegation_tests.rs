@@ -1770,6 +1770,192 @@ async fn confirming_a_reissue_promotes_pending_and_queues_the_old_value() {
 }
 
 #[tokio::test]
+async fn delivery_confirmation_promotes_only_the_exact_pending_value() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_exact_delivery".into());
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-a", "value-a", &owner, "scope")),
+            Some(credential("pending-b", "value-b", &owner, "scope")),
+        ))
+        .await
+        .expect("store works");
+
+    let budget = AuthOperationBudget::standalone(10);
+    assert!(!auth
+        .confirm_reissue_delivery_with_budget(&session, "different-value", &budget)
+        .await
+        .expect("mismatch is a closed answer"));
+    let unchanged = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert_eq!(
+        unchanged.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert_eq!(
+        unchanged.pending.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(unchanged.revoke_debt.is_empty());
+    assert_eq!(unchanged.generation, 0);
+}
+
+#[tokio::test]
+async fn failed_exact_promotion_leaves_b_pending_and_queues_no_predecessor_debt() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_failed_exact_promotion".into());
+    let services = [ServiceId::new("model")];
+    let scope = scope_fingerprint(&services);
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-a", "value-a", &owner, &scope)),
+            Some(credential("pending-b", "value-b", &owner, &scope)),
+        ))
+        .await
+        .expect("store works");
+    store.fail_credential_replace_on_call(1);
+
+    let failed_budget = AuthOperationBudget::standalone(10);
+    assert!(matches!(
+        auth.confirm_reissue_delivery_with_budget(&session, "value-b", &failed_budget)
+            .await,
+        Err(StoreError::Unavailable(_))
+    ));
+    let failed = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert_eq!(
+        failed.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert_eq!(
+        failed.pending.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b"),
+        "the retry must resend B rather than selecting ordinary current A"
+    );
+    assert!(failed.revoke_debt.is_empty());
+    assert_eq!(failed.generation, 0);
+    assert_eq!(
+        auth.reissue(&session, &owner, &services)
+            .await
+            .expect("retry selection reads pending custody"),
+        Some("value-b".into()),
+        "retry resends pending B rather than ordinary current A"
+    );
+
+    store.clear_credential_replace_failure();
+    let retry_budget = AuthOperationBudget::standalone(10);
+    assert!(auth
+        .confirm_reissue_delivery_with_budget(&session, "value-b", &retry_budget)
+        .await
+        .expect("the same delivered B remains promotable"));
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(promoted.pending.is_none());
+    assert_eq!(promoted.revoke_debt.len(), 1);
+    assert_eq!(promoted.revoke_debt[0].id, "current-a");
+}
+
+#[tokio::test]
+async fn a_lost_promotion_response_is_idempotent_on_exact_value_retry() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_lost_promotion_response".into());
+    store
+        .insert_credential(state(
+            &session,
+            Some(credential("current-a", "value-a", &owner, "scope")),
+            Some(credential("pending-b", "value-b", &owner, "scope")),
+        ))
+        .await
+        .expect("store works");
+    store.lose_credential_replace_response_on_call(1);
+
+    let first_budget = AuthOperationBudget::standalone(10);
+    assert!(matches!(
+        auth.confirm_reissue_delivery_with_budget(&session, "value-b", &first_budget)
+            .await,
+        Err(StoreError::Unavailable(_))
+    ));
+    store.clear_credential_replace_failure();
+
+    let retry_budget = AuthOperationBudget::standalone(10);
+    assert!(auth
+        .confirm_reissue_delivery_with_budget(&session, "value-b", &retry_budget)
+        .await
+        .expect("already-current exact B confirms idempotently"));
+    let promoted = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert_eq!(promoted.generation, 1, "retry performs no second CAS");
+    assert_eq!(
+        promoted.current.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(promoted.pending.is_none());
+    assert_eq!(promoted.revoke_debt.len(), 1);
+    assert_eq!(promoted.revoke_debt[0].id, "current-a");
+}
+
+#[tokio::test]
+async fn retired_custody_refuses_delivery_confirmation_without_mutation() {
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = auth(store.clone());
+    let owner = SubjectId("owner".into());
+    let session = SessionId("sesn_retired_delivery".into());
+    let mut retired = state(
+        &session,
+        Some(credential("current-a", "value-a", &owner, "scope")),
+        Some(credential("pending-b", "value-b", &owner, "scope")),
+    );
+    retired.retired = true;
+    store.insert_credential(retired).await.expect("store works");
+
+    let budget = AuthOperationBudget::standalone(10);
+    assert!(!auth
+        .confirm_reissue_delivery_with_budget(&session, "value-b", &budget)
+        .await
+        .expect("retired state fails closed"));
+    let unchanged = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .expect("state exists");
+    assert!(unchanged.retired);
+    assert_eq!(
+        unchanged.current.as_ref().map(|held| held.id.as_str()),
+        Some("current-a")
+    );
+    assert_eq!(
+        unchanged.pending.as_ref().map(|held| held.id.as_str()),
+        Some("pending-b")
+    );
+    assert!(unchanged.revoke_debt.is_empty());
+    assert_eq!(unchanged.generation, 0);
+}
+
+#[tokio::test]
 async fn a_store_outage_is_an_error_not_an_absent_delegation() {
     let store = Arc::new(MemoryAuthStore::default());
     let auth = auth(store.clone());

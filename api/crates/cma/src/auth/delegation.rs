@@ -1112,15 +1112,54 @@ impl AuthState {
         self.promote_pending_credential_inner(session, None).await
     }
 
-    pub(super) async fn promote_pending_credential_with_budget(
+    /// Promote only the exact pending value a runtime acknowledged installing.
+    ///
+    /// Comparing the opaque value closes the response-loss race: a retry for B
+    /// cannot accidentally promote a newer pending C, and an acknowledgement
+    /// for B remains idempotently successful after B is already current.
+    pub(super) async fn promote_delivered_credential_with_budget(
         &self,
         session: &SessionId,
+        delivered_value: &str,
         budget: &AuthOperationBudget,
     ) -> Result<bool, StoreError> {
-        self.promote_pending_credential_inner(session, Some(budget))
-            .await
+        loop {
+            take_operation(Some(budget), 1, "delivered credential promotion read")?;
+            let Some(mut current) = self.store.credential(session).await? else {
+                return Ok(false);
+            };
+            if current.retired {
+                return Ok(false);
+            }
+            if current
+                .current
+                .as_ref()
+                .is_some_and(|held| held.value.expose() == delivered_value)
+            {
+                return Ok(true);
+            }
+            let Some(replacement) = current.pending.as_ref() else {
+                return Ok(false);
+            };
+            if replacement.value.expose() != delivered_value {
+                return Ok(false);
+            }
+
+            let before = current.clone();
+            let replacement = current
+                .pending
+                .take()
+                .expect("the exact pending credential was checked above");
+            if let Some(displaced) = current.current.replace(replacement) {
+                queue_debt(&mut current, &displaced);
+            }
+            if replace_state(&self.store, &before, current, Some(budget)).await? {
+                return Ok(true);
+            }
+        }
     }
 
+    #[cfg(test)]
     async fn promote_pending_credential_inner(
         &self,
         session: &SessionId,
