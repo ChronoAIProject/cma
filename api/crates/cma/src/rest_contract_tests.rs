@@ -824,11 +824,25 @@ impl ScreenModel for EmptyScreen {
 struct TestKernel {
     conversation_updates: Mutex<Option<mpsc::Sender<layer3_adapter::ConversationUpdate>>>,
     resource_samples: Mutex<Option<mpsc::Sender<layer3_adapter::ResourceSample>>>,
+    provision_pause: Mutex<Option<Arc<StorePause>>>,
     provisions: AtomicUsize,
     conversation_inputs: Arc<AtomicUsize>,
 }
 
 impl TestKernel {
+    async fn pause_next_provision(&self) -> Arc<StorePause> {
+        let pause = Arc::new(StorePause::new());
+        assert!(
+            self.provision_pause
+                .lock()
+                .await
+                .replace(Arc::clone(&pause))
+                .is_none(),
+            "only one provision may be paused at a time"
+        );
+        pause
+    }
+
     async fn emit_message_chunk(&self, text: &str) {
         let updates = self
             .conversation_updates
@@ -942,6 +956,10 @@ impl KernelAdapter for TestKernel {
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
         self.provisions.fetch_add(1, Ordering::SeqCst);
+        let pause = self.provision_pause.lock().await.take();
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
+        }
         Ok(RuntimeHandle(format!("runtime-{}", spec.session_id)))
     }
 
@@ -1384,6 +1402,20 @@ fn assert_agui_ids(frame: &serde_json::Value, run_id: &str, thread_id: &SessionI
     assert_eq!(
         frame["threadId"], thread_id.0,
         "unexpected session context: {frame}"
+    );
+}
+
+async fn wait_until_count(counter: &AtomicUsize, expected: usize, description: &str) {
+    for _ in 0..200 {
+        if counter.load(Ordering::SeqCst) == expected {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        expected,
+        "{description}"
     );
 }
 
@@ -2279,6 +2311,450 @@ async fn an_empty_or_whitespace_run_id_is_a_typed_client_refusal() {
             "for {supplied:?}"
         );
     }
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_fresh_agui_run_survives_a_dropped_body_and_replays_both_thread_names_once() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let pause = kernel.pause_next_provision().await;
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+    let requested = "frontend-thread-drop-contract";
+    let run_id = "run_fresh_drop_contract";
+    let prompt = "continue after the browser disconnects";
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": requested,
+            "runId": run_id,
+            "messages": [{ "role": "user", "content": prompt }]
+        })
+        .to_string(),
+    );
+    let request_app = app.clone();
+    let response = tokio::spawn(async move {
+        request_app
+            .oneshot(request)
+            .await
+            .expect("the run route answers")
+    });
+
+    pause.wait_until_reached().await;
+    let response = tokio::time::timeout(std::time::Duration::from_secs(1), response)
+        .await
+        .expect("the SSE response opens while provisioning is blocked")
+        .expect("the request task completes");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let (started, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(started["type"], "RUN_STARTED");
+    let effective = SessionId(
+        started["threadId"]
+            .as_str()
+            .expect("the synthetic start discloses a thread id")
+            .to_string(),
+    );
+    assert_ne!(effective.0, requested, "the core mints the effective id");
+    assert_agui_ids(&started, run_id, &effective);
+    assert!(
+        !wire.lines().any(|line| line.starts_with("id:")),
+        "the pre-admission boundary cannot advance a durable cursor: {wire:?}"
+    );
+    assert_eq!(
+        sessions
+            .get_session(&caller, &effective)
+            .await
+            .expect("the disclosed session is durable")
+            .status,
+        SessionStatus::Provisioning
+    );
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 0);
+
+    drop(body);
+    pause.release();
+    wait_until_ready(&sessions, &caller, &effective).await;
+    wait_until_count(
+        kernel.conversation_inputs.as_ref(),
+        1,
+        "dropping the SSE body must not cancel prompt admission",
+    )
+    .await;
+
+    for thread_id in [requested, effective.0.as_str()] {
+        let replay = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/v1/agui/run",
+                serde_json::json!({
+                    "threadId": thread_id,
+                    "runId": run_id,
+                    "messages": [{ "role": "user", "content": prompt }]
+                })
+                .to_string(),
+            ))
+            .await
+            .expect("the retry route answers");
+        assert_eq!(replay.status(), StatusCode::OK, "for {thread_id}");
+        let mut replay_body = replay.into_body().into_data_stream();
+        let (replayed_start, replayed_wire) = next_agui_frame_and_wire(&mut replay_body).await;
+        assert_eq!(replayed_start["type"], "RUN_STARTED");
+        assert_agui_ids(&replayed_start, run_id, &effective);
+        assert!(
+            !replayed_wire
+                .lines()
+                .any(|line| line.starts_with("id:")),
+            "a replay retains the original synthetic boundary: {replayed_wire:?}"
+        );
+    }
+
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 1);
+    assert_eq!(store.state.lock().await.records.len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_deferred_prompt_suppresses_its_durable_turn_started_projection() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        caller,
+        ..
+    } = test_surface(true);
+    let pause = kernel.pause_next_provision().await;
+    let requested = "frontend-thread-boundary-contract";
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": requested,
+            "runId": "run_deferred_boundary_contract",
+            "messages": [{ "role": "user", "content": "show one start only" }]
+        })
+        .to_string(),
+    );
+    let request_app = app.clone();
+    let response = tokio::spawn(async move {
+        request_app
+            .oneshot(request)
+            .await
+            .expect("the run route answers")
+    });
+    pause.wait_until_reached().await;
+    let response = response.await.expect("the request task completes");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let (synthetic, synthetic_wire) = next_agui_frame_and_wire(&mut body).await;
+    let effective = SessionId(synthetic["threadId"].as_str().unwrap().to_string());
+    assert_eq!(synthetic["type"], "RUN_STARTED");
+    assert!(
+        !synthetic_wire
+            .lines()
+            .any(|line| line.starts_with("id:"))
+    );
+
+    pause.release();
+    wait_until_ready(&sessions, &caller, &effective).await;
+    let (next, next_wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(
+        next["type"], "TEXT_MESSAGE_START",
+        "replay begins after the durable TurnStarted: {next}"
+    );
+    assert!(
+        next_wire.lines().any(|line| line.starts_with("id:")),
+        "the user echo is durable: {next_wire:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn an_explicit_agui_run_id_replays_one_admission_and_refuses_changed_input() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+    let run_id = "run_exact_admission_contract";
+
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/v1/agui/run",
+                serde_json::json!({
+                    "threadId": id.0,
+                    "runId": run_id,
+                    "messages": [{ "role": "user", "content": "deliver once" }]
+                })
+                .to_string(),
+            ))
+            .await
+            .expect("the run route answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+        let started = next_agui_frame(&mut body).await;
+        assert_eq!(started["type"], "RUN_STARTED");
+        assert_agui_ids(&started, run_id, &id);
+    }
+    wait_until_count(
+        kernel.conversation_inputs.as_ref(),
+        1,
+        "one explicit run id delivers one prompt",
+    )
+    .await;
+
+    let mismatch = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0,
+                "runId": run_id,
+                "messages": [{ "role": "user", "content": "deliver something else" }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the mismatch route answers");
+    let problem = assert_problem(mismatch, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "agui_operation_reused");
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn omitted_and_null_run_ids_remain_distinct_admissions_on_retry() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+    let mut generated = Vec::new();
+
+    for explicit_null in [false, true] {
+        let mut request = serde_json::json!({
+            "threadId": id.0,
+            "messages": [{ "role": "user", "content": "anonymous retry" }]
+        });
+        if explicit_null {
+            request["runId"] = serde_json::Value::Null;
+        }
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/v1/agui/run",
+                request.to_string(),
+            ))
+            .await
+            .expect("the run route answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+        let started = next_agui_frame(&mut body).await;
+        generated.push(started["runId"].as_str().unwrap().to_string());
+        wait_until_count(
+            kernel.conversation_inputs.as_ref(),
+            generated.len(),
+            "each anonymous request is admitted",
+        )
+        .await;
+        kernel.emit_turn_ended().await;
+        wait_until_ready(&sessions, &caller, &id).await;
+    }
+
+    assert_ne!(generated[0], generated[1]);
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn a_malformed_fresh_agui_run_creates_nothing() {
+    let TestSurface {
+        app,
+        operations,
+        store,
+        kernel,
+        ..
+    } = test_surface(true);
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": "frontend-thread-without-work",
+                "runId": "run_without_fresh_work"
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the run route answers");
+    let problem = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "invalid_request");
+    assert!(operations.state.lock().await.is_empty());
+    assert!(store.state.lock().await.records.is_empty());
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_duplicate_pending_agui_run_returns_a_typed_conflict() {
+    let TestSurface { app, kernel, .. } = test_surface(true);
+    let pause = kernel.pause_next_provision().await;
+    let run_id = "run_pending_admission_contract";
+    let prompt = "wait for readiness";
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": "frontend-thread-pending-contract",
+            "runId": run_id,
+            "messages": [{ "role": "user", "content": prompt }]
+        })
+        .to_string(),
+    );
+    let request_app = app.clone();
+    let first = tokio::spawn(async move {
+        request_app
+            .oneshot(request)
+            .await
+            .expect("the first run route answers")
+    });
+    pause.wait_until_reached().await;
+    let first = first.await.expect("the first request task completes");
+    assert_eq!(first.status(), StatusCode::OK);
+    let mut first_body = first.into_body().into_data_stream();
+    let started = next_agui_frame(&mut first_body).await;
+    let effective = started["threadId"].as_str().unwrap().to_string();
+
+    let duplicate = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        app.oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": effective,
+                "runId": run_id,
+                "messages": [{ "role": "user", "content": prompt }]
+            })
+            .to_string(),
+        )),
+    )
+    .await
+    .expect("pending coordination is bounded")
+    .expect("the duplicate route answers");
+    let problem = assert_problem(duplicate, StatusCode::CONFLICT).await;
+    assert_eq!(problem["code"], "agui_operation_in_flight");
+
+    drop(first_body);
+    pause.release();
+    wait_until_count(
+        kernel.conversation_inputs.as_ref(),
+        1,
+        "the original pending admission still completes",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn an_agui_operation_store_outage_fails_closed_before_creation() {
+    let TestSurface {
+        app,
+        operations,
+        store,
+        kernel,
+        ..
+    } = test_surface(true);
+    operations.unavailable.store(true, Ordering::SeqCst);
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": "frontend-thread-store-outage",
+                "runId": "run_store_outage",
+                "messages": [{ "role": "user", "content": "must not be sent" }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the run route answers");
+    let problem = assert_problem(response, StatusCode::SERVICE_UNAVAILABLE).await;
+    assert_eq!(problem["code"], "store_failed");
+    assert!(store.state.lock().await.records.is_empty());
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn provisioning_timeout_is_a_terminal_cursorless_run_error() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        caller,
+        ..
+    } = test_surface(true);
+    let pause = kernel.pause_next_provision().await;
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": "frontend-thread-timeout-contract",
+            "runId": "run_provisioning_timeout_contract",
+            "messages": [{ "role": "user", "content": "wait only until the deadline" }]
+        })
+        .to_string(),
+    );
+    let request_app = app.clone();
+    let response = tokio::spawn(async move {
+        request_app
+            .oneshot(request)
+            .await
+            .expect("the run route answers")
+    });
+    pause.wait_until_reached().await;
+    let response = response.await.expect("the request task completes");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let (started, started_wire) = next_agui_frame_and_wire(&mut body).await;
+    let effective = SessionId(started["threadId"].as_str().unwrap().to_string());
+    assert_eq!(started["type"], "RUN_STARTED");
+    assert!(!started_wire.lines().any(|line| line.starts_with("id:")));
+
+    for _ in 0..4 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(std::time::Duration::from_secs(10 * 60 + 1)).await;
+    let (error, error_wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(error["type"], "RUN_ERROR");
+    assert_eq!(error["code"], "provisioning_timeout");
+    assert_agui_ids(
+        &error,
+        "run_provisioning_timeout_contract",
+        &effective,
+    );
+    assert!(
+        !error_wire.lines().any(|line| line.starts_with("id:")),
+        "a synthetic admission failure has no durable cursor: {error_wire:?}"
+    );
+    assert!(body.next().await.is_none(), "RUN_ERROR terminates the SSE body");
+
+    pause.release();
+    wait_until_ready(&sessions, &caller, &effective).await;
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
