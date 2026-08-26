@@ -5,6 +5,7 @@
 //! are about what an owner does.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use layer3_adapter::{AdapterError, ContentBlock, ConversationInput, PermissionDecision};
 
@@ -12,6 +13,7 @@ use crate::conversation::{ApprovalDecision, ApprovalResolution};
 use crate::conversation_support::{
     asking, chunk, conversation, conversation_with, conversing, said, until_logged, until_sent,
 };
+use crate::coordination::{SessionLease, SessionOperation};
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::session::{SessionStatus, StopReason};
@@ -20,6 +22,36 @@ use crate::test_support::{
     await_settled, environments_defaulting_to, service, service_with_environments,
     service_with_environments_on_version, spec, user, FakeAdapter, FakeStore,
 };
+
+async fn wait_for_conversation_interaction(
+    store: &FakeStore,
+    id: &crate::ids::SessionId,
+) -> SessionLease {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(lease) = store
+                .active_session_lease(id)
+                .await
+                .filter(|lease| lease.operation == SessionOperation::Interact)
+            {
+                return lease;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the conversation interaction lease is acquired")
+}
+
+async fn wait_for_conversation_interaction_release(store: &FakeStore, id: &crate::ids::SessionId) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while store.active_session_lease(id).await.is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the conversation interaction lease is released");
+}
 
 #[tokio::test]
 async fn an_idle_prompt_needs_no_steer_grant() {
@@ -429,6 +461,137 @@ async fn an_undeliverable_interrupt_is_runtime_unavailable() {
             "the runtime link is gone".to_string()
         ))
     );
+}
+
+#[tokio::test]
+async fn a_second_service_readopts_before_fenced_interrupt_delivery() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let first = service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&profiles),
+    );
+    let alice = user("conversation-readoption-owner");
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let second = service_with_environments(Arc::clone(&store), Arc::clone(&adapter), profiles);
+    assert!(!second.entries.read().await.contains_key(&created.id));
+    second
+        .interrupt_turn(&alice, &created.id)
+        .await
+        .expect("the second service readopts and interrupts");
+
+    let conversation = adapter.conversation.lock().await;
+    let sent = conversation
+        .as_ref()
+        .expect("the readopted conversation is live")
+        .sent()
+        .await;
+    assert!(matches!(sent.as_slice(), [ConversationInput::Cancel]));
+    assert!(second.entries.read().await.contains_key(&created.id));
+}
+
+#[tokio::test]
+async fn a_stale_conversation_generation_reaches_no_sender() {
+    let (svc, alice, id, adapter) = conversation().await;
+    let mut entries = svc.entries.write().await;
+    let entry = entries.get_mut(&id).expect("the conversation is live");
+    entry.runtime_generation = entry
+        .runtime_generation
+        .checked_add(1)
+        .expect("test generations remain bounded");
+    drop(entries);
+
+    assert_eq!(
+        svc.interrupt_turn(&alice, &id).await,
+        Err(CoreError::RuntimeUnavailable(
+            "the live conversation belongs to another runtime generation".into()
+        ))
+    );
+    assert!(adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains live")
+        .sent()
+        .await
+        .is_empty());
+}
+
+#[tokio::test]
+async fn caller_cancellation_before_interrupt_delivery_retires_the_owned_lease() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let svc = service_with_environments(Arc::clone(&store), Arc::clone(&adapter), profiles);
+    let alice = user("cancelled-interrupt-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let input_fence = svc.input_gates.gate(&created.id).write_owned().await;
+    let caller = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move { svc.interrupt_turn(&alice, &id).await }
+    });
+    let held = wait_for_conversation_interaction(&store, &created.id).await;
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        store.active_session_lease(&created.id).await,
+        Some(held),
+        "the owned interrupt retains its lease while the local gate is blocked"
+    );
+
+    drop(input_fence);
+    wait_for_conversation_interaction_release(&store, &created.id).await;
+    assert!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the conversation remains live")
+            .sent()
+            .await
+            .is_empty(),
+        "cancellation before the final authority check reaches no sender"
+    );
+
+    svc.interrupt_turn(&alice, &created.id)
+        .await
+        .expect("a successor interrupt proceeds after owned cleanup");
+    assert!(matches!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the conversation remains live")
+            .sent()
+            .await
+            .as_slice(),
+        [ConversationInput::Cancel]
+    ));
 }
 
 #[tokio::test]

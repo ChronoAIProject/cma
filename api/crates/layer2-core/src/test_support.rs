@@ -157,6 +157,16 @@ impl FakeStore {
         Ok(())
     }
 
+    /// The exact lease currently held by a fixture session, if any.
+    pub(crate) async fn active_session_lease(&self, id: &SessionId) -> Option<SessionLease> {
+        self.coordination
+            .lock()
+            .await
+            .get(&id.0)
+            .and_then(|state| state.lease.as_ref())
+            .map(|held| held.lease.clone())
+    }
+
     pub(crate) async fn fail_everything(&self) {
         *self.broken.lock().await = true;
     }
