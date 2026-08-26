@@ -242,7 +242,10 @@ impl SessionService {
             .await
             .briefing
             .render(&reaches);
-        spec.runtime_credential = match self
+        // Kept for the common failure path below. Abandoning here would run
+        // before ordinary provisioning acquires its durable runtime lease and
+        // could turn a coordinated authority into handle-only deletion.
+        let mut credential_failure = match self
             .credential_for(
                 &session.id,
                 &session.owner,
@@ -251,34 +254,22 @@ impl SessionService {
             )
             .await
         {
-            Ok(credential) => credential,
+            Ok(credential) => {
+                spec.runtime_credential = credential;
+                None
+            }
             Err(error) => {
                 tracing::error!(
                     session_id = %id,
                     error = %error,
                     "could not establish durable credential custody"
                 );
-                if let Err(cleanup_error) = self
-                    .abandon(
-                        &id,
-                        &adapter,
-                        &crate::provision_failure::StartFailure::transient(
-                            "the durable credential store is unavailable".to_string(),
-                        ),
-                        outcome,
-                    )
-                    .await
-                {
-                    tracing::error!(
-                        session_id = %id,
-                        error = %cleanup_error,
-                        "could not persist cleanup after credential custody failed"
-                    );
-                }
-                return;
+                Some(crate::provision_failure::StartFailure::transient(
+                    "the durable credential store is unavailable".to_string(),
+                ))
             }
         };
-        if spec.runtime_credential.is_none() {
+        if credential_failure.is_none() && spec.runtime_credential.is_none() {
             tracing::warn!(
                 session_id = %id,
                 "no credential could be minted for this session; it will start unable to act \
@@ -295,20 +286,25 @@ impl SessionService {
             match self.acquire_runtime_lease(&id, operation).await {
                 Ok(acquired) => {
                     lease = acquired;
-                    tokio::time::timeout(
-                        PROVISION_DEADLINE,
-                        self.start_with_retries(
-                            &session,
-                            &spec,
-                            &adapter,
-                            geometry,
-                            restore.as_ref(),
-                            &platform_briefing,
-                            &mut lease,
-                            handover.as_ref(),
-                        ),
-                    )
-                    .await
+                    match credential_failure.take() {
+                        Some(failure) => Ok(Err(failure)),
+                        None => {
+                            tokio::time::timeout(
+                                PROVISION_DEADLINE,
+                                self.start_with_retries(
+                                    &session,
+                                    &spec,
+                                    &adapter,
+                                    geometry,
+                                    restore.as_ref(),
+                                    &platform_briefing,
+                                    &mut lease,
+                                    handover.as_ref(),
+                                ),
+                            )
+                            .await
+                        }
+                    }
                 }
                 Err(error) => {
                     coordination_error = true;
@@ -317,6 +313,8 @@ impl SessionService {
                     )))
                 }
             }
+        } else if let Some(failure) = credential_failure {
+            Ok(Err(failure))
         } else {
             tokio::time::timeout(
                 PROVISION_DEADLINE,
