@@ -67,7 +67,10 @@ pub(crate) struct RuntimeInteractionAuthority {
 }
 
 struct RuntimeInteractionValidity {
+    /// Conservative lower bound used to authorize a new bounded delivery.
     deadline: Option<tokio::time::Instant>,
+    /// Upper bound after which the store-issued lease is certain to be expired.
+    lease_expiry_bound: Option<tokio::time::Instant>,
     invalid_reason: Option<String>,
 }
 
@@ -131,6 +134,7 @@ impl RetainedRuntimeInteraction {
         &self,
     ) -> Result<RuntimeInteractionAuthority, CoreError> {
         let authority = self.authority();
+        authority.ensure_not_invalidated()?;
         let Some(lease) = self.state.lease.as_ref() else {
             authority.ensure_delivery_allowed()?;
             return Ok(authority);
@@ -142,6 +146,7 @@ impl RetainedRuntimeInteraction {
         })?;
 
         loop {
+            authority.ensure_not_invalidated()?;
             let renewal_started = tokio::time::Instant::now();
             let deadline = authority
                 .deadline()
@@ -159,7 +164,10 @@ impl RetainedRuntimeInteraction {
                 .await
             {
                 Ok(()) => {
-                    authority.extend(renewal_started + INTERACTION_LEASE_TTL);
+                    authority.extend(
+                        renewal_started + INTERACTION_LEASE_TTL,
+                        tokio::time::Instant::now() + INTERACTION_LEASE_TTL,
+                    );
                     authority.ensure_delivery_allowed()?;
                     return Ok(authority);
                 }
@@ -211,6 +219,8 @@ impl Drop for RetainedRuntimeInteraction {
 
 impl RetainedRuntimeInteractionState {
     fn retain_release(self: &Arc<Self>) {
+        self.authority
+            .invalidate("the retained interaction ended before delivery could begin".into());
         if self.lease.is_none() || self.release_retained.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -238,14 +248,44 @@ impl DeferredCleanup for DeferredRuntimeInteractionRelease {
             let Some(lease) = self.state.lease.as_ref() else {
                 return;
             };
-            if let Err(first_error) = service.store.release_session_lease(lease).await {
-                if let Err(retry_error) = service.store.release_session_lease(lease).await {
-                    tracing::warn!(
-                        session_id = %lease.session_id,
-                        error = %retry_error,
-                        first_error = %first_error,
-                        "interaction lease release remained unresolved after exact retry"
-                    );
+
+            loop {
+                let expiry = self
+                    .state
+                    .authority
+                    .lease_expiry_bound()
+                    .expect("a retained durable interaction has an expiry bound");
+                if tokio::time::Instant::now() >= expiry {
+                    return;
+                }
+
+                let release = service.store.release_session_lease(lease);
+                tokio::pin!(release);
+                let outcome = tokio::select! {
+                    outcome = &mut release => outcome,
+                    _ = tokio::time::sleep_until(expiry) => return,
+                };
+                match outcome {
+                    Ok(()) => return,
+                    Err(StoreError::Unavailable(error)) => {
+                        tracing::debug!(
+                            session_id = %lease.session_id,
+                            %error,
+                            "interaction lease release is temporarily unavailable"
+                        );
+                        let retry_at = (tokio::time::Instant::now()
+                            + INTERACTION_LEASE_RETRY_INTERVAL)
+                            .min(expiry);
+                        tokio::time::sleep_until(retry_at).await;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id = %lease.session_id,
+                            %error,
+                            "exact interaction lease release was rejected"
+                        );
+                        return;
+                    }
                 }
             }
         })
@@ -345,11 +385,16 @@ impl Drop for RuntimeInteractionCallerGuard {
 }
 
 impl RuntimeInteractionAuthority {
-    fn new(boundary: SessionBoundary, deadline: Option<tokio::time::Instant>) -> Self {
+    fn new(
+        boundary: SessionBoundary,
+        deadline: Option<tokio::time::Instant>,
+        lease_expiry_bound: Option<tokio::time::Instant>,
+    ) -> Self {
         Self {
             boundary,
             validity: Arc::new(std::sync::Mutex::new(RuntimeInteractionValidity {
                 deadline,
+                lease_expiry_bound,
                 invalid_reason: None,
             })),
         }
@@ -407,7 +452,14 @@ impl RuntimeInteractionAuthority {
             .deadline
     }
 
-    fn extend(&self, deadline: tokio::time::Instant) {
+    fn lease_expiry_bound(&self) -> Option<tokio::time::Instant> {
+        self.validity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lease_expiry_bound
+    }
+
+    fn extend(&self, deadline: tokio::time::Instant, lease_expiry_bound: tokio::time::Instant) {
         let mut validity = self
             .validity
             .lock()
@@ -421,6 +473,22 @@ impl RuntimeInteractionAuthority {
                 .deadline
                 .map_or(deadline, |held| held.max(deadline)),
         );
+        validity.lease_expiry_bound = Some(
+            validity
+                .lease_expiry_bound
+                .map_or(lease_expiry_bound, |held| held.max(lease_expiry_bound)),
+        );
+    }
+
+    fn ensure_not_invalidated(&self) -> Result<(), CoreError> {
+        let validity = self
+            .validity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match validity.invalid_reason.as_ref() {
+            Some(reason) => Err(CoreError::RuntimeUnavailable(reason.clone())),
+            None => Ok(()),
+        }
     }
 
     fn invalidate(&self, reason: String) {
@@ -853,6 +921,7 @@ impl SessionService {
             + 'static,
     {
         let (lease, acquisition_started) = self.acquire_interaction_for(record).await?;
+        let acquisition_completed = tokio::time::Instant::now();
 
         let boundary = lease.as_ref().map_or_else(
             || SessionBoundary::for_record(record, 0),
@@ -861,7 +930,11 @@ impl SessionService {
         let lease_deadline = lease
             .as_ref()
             .map(|_| acquisition_started + INTERACTION_LEASE_TTL);
-        let authority = RuntimeInteractionAuthority::new(boundary, lease_deadline);
+        let lease_expiry_bound = lease
+            .as_ref()
+            .map(|_| acquisition_completed + INTERACTION_LEASE_TTL);
+        let authority =
+            RuntimeInteractionAuthority::new(boundary, lease_deadline, lease_expiry_bound);
         let interaction = RetainedRuntimeInteraction::new(
             self,
             record.session.id.clone(),
@@ -992,7 +1065,10 @@ impl SessionService {
                         .await
                     {
                         Ok(()) => {
-                            authority.extend(renewal_started + INTERACTION_LEASE_TTL);
+                            authority.extend(
+                                renewal_started + INTERACTION_LEASE_TTL,
+                                tokio::time::Instant::now() + INTERACTION_LEASE_TTL,
+                            );
                             next_renewal =
                                 renewal_started + INTERACTION_LEASE_RENEW_INTERVAL;
                         }
