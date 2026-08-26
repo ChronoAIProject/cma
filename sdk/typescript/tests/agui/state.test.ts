@@ -73,6 +73,46 @@ describe('the public AG-UI state fold', () => {
     expect(next.extension).toEqual({ 'slash/member': 1, 'tilde~member': 2, '': 3 });
   });
 
+  it('folds an escaped approval request and its matching resolution to an empty set', () => {
+    const requested = applyStateDelta(initialState(), [
+      {
+        op: 'add',
+        path: '/pendingApprovals/approval~1~0one',
+        value: {
+          id: 'approval/~one',
+          reason: 'cma:command_execution',
+          message: 'Run the command?',
+        },
+      },
+    ]);
+
+    expect(requested.pendingApprovals).toEqual({
+      'approval/~one': {
+        id: 'approval/~one',
+        reason: 'cma:command_execution',
+        message: 'Run the command?',
+      },
+    });
+    const resolved = applyStateDelta(requested, [
+      { op: 'remove', path: '/pendingApprovals/approval~1~0one' },
+    ]);
+    expect(resolved.pendingApprovals).toEqual({});
+  });
+
+  it('treats only an unseen direct pending-approval tombstone as a no-op', () => {
+    const state = initialState();
+    expect(
+      applyStateDelta(state, [{ op: 'remove', path: '/pendingApprovals/never-seen' }]),
+    ).toEqual(state);
+
+    expect(() => applyStateDelta(state, [{ op: 'remove', path: '/missing' }])).toThrow(
+      ProtocolError,
+    );
+    expect(() =>
+      applyStateDelta(state, [{ op: 'remove', path: '/pendingApprovals/never-seen/child' }]),
+    ).toThrow(ProtocolError);
+  });
+
   it.each([
     { patches: [{ op: 'copy', from: 'not-a-pointer', path: '/extension' }] },
     { patches: [{ op: 'move', from: 'not-a-pointer', path: '/extension' }] },
