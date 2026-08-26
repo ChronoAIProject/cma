@@ -9,18 +9,21 @@ use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
+use std::time::Duration;
 
-use layer3_adapter::TerminalOutput;
+use layer3_adapter::{AdapterError, TermSize, TerminalInput, TerminalOutput};
 
 use crate::attach::AttachmentClaim;
 use crate::commit_fault_support::CommitFaultStore;
+use crate::conversation::ApprovalDecision;
+use crate::coordination::{SessionBoundary, SessionLease, SessionLeaseRequest, SessionOperation};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::store::SessionStore;
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{
-    await_settled, service, service_on_version, service_over, spec, user, write_screen,
-    FakeAdapter, FakeStore,
+    await_settled, service, service_on_version, service_over, spec, terminal_input_channel, user,
+    write_screen, FakeAdapter, FakeStore,
 };
 
 struct WakeFlag(AtomicBool);
@@ -50,6 +53,12 @@ fn is_terminal_attachment_change(_record: &crate::store::SessionRecord, events: 
     })
 }
 
+fn is_rotation_claim_clear(record: &crate::store::SessionRecord, events: &[Event]) -> bool {
+    events.is_empty()
+        && record.session.status == crate::session::SessionStatus::Ready
+        && record.rotation_claim.is_none()
+}
+
 /// A service with one running session, and its owner.
 async fn attached_session() -> (
     Arc<crate::service::SessionService>,
@@ -64,6 +73,33 @@ async fn attached_session() -> (
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
     (svc, alice, created.id)
+}
+
+async fn wait_for_interaction_lease(store: &FakeStore, id: &crate::ids::SessionId) -> SessionLease {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(lease) = store
+                .active_session_lease(id)
+                .await
+                .filter(|lease| lease.operation == SessionOperation::Interact)
+            {
+                return lease;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the interaction lease is acquired")
+}
+
+async fn wait_for_interaction_release(store: &FakeStore, id: &crate::ids::SessionId) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while store.active_session_lease(id).await.is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the interaction lease is released");
 }
 
 #[tokio::test]
@@ -335,15 +371,10 @@ async fn cancelling_after_attachment_install_retains_detach_when_the_entry_disap
     await_settled(&svc, &alice, &created.id).await;
     let before = inner.get(&created.id).await.unwrap().unwrap();
     let lane = svc.event_logs.lane(&created.id);
-    let screen = {
-        let entries = svc.entries.read().await;
-        Arc::clone(&entries.get(&created.id).expect("live entry").screen)
-    };
-    let screen_guard = screen.lock().await;
     let requested = TerminalGeometry::new(127, 49).expect("valid geometry");
 
     store.pause_next();
-    let attach = tokio::spawn({
+    let mut attach = Box::pin({
         let svc = Arc::clone(&svc);
         let alice = alice.clone();
         let id = created.id.clone();
@@ -352,9 +383,13 @@ async fn cancelling_after_attachment_install_retains_detach_when_the_entry_disap
                 .await
         }
     });
+    let woken = Arc::new(WakeFlag(AtomicBool::new(false)));
+    let waker = Waker::from(Arc::clone(&woken));
+    let mut context = Context::from_waker(&waker);
+    assert!(matches!(attach.as_mut().poll(&mut context), Poll::Pending));
     store.wait_until_held().await;
-    // The next selected write is the compensating detach. Holding the screen
-    // keeps handle construction behind the live installation boundary.
+    // The next selected write is the compensating detach. Leave the completed
+    // attachment buffered so dropping its caller exercises unread recovery.
     store.pause_next();
     store.release();
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -366,6 +401,7 @@ async fn cancelling_after_attachment_install_retains_detach_when_the_entry_disap
                 .get(&created.id)
                 .and_then(|entry| entry.attached.as_ref())
                 .is_some()
+                && woken.0.load(Ordering::SeqCst)
             {
                 break;
             }
@@ -383,9 +419,7 @@ async fn cancelling_after_attachment_install_retains_detach_when_the_entry_disap
         .expect("reconciliation removes the original live entry");
     assert_eq!(removed.attached.as_ref().map(|a| a.generation), Some(1));
     drop(removed);
-    attach.abort();
-    let _ = attach.await;
-    drop(screen_guard);
+    drop(attach);
 
     store.wait_until_held().await;
     let interim = inner
@@ -464,11 +498,8 @@ async fn a_terminal_attachment_carries_its_repaint_and_requested_geometry() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn output_crossing_attach_is_in_the_repaint_or_live_stream_exactly_once() {
     let adapter = Arc::new(FakeAdapter::default());
-    let svc = service_on_version(
-        Arc::new(FakeStore::default()),
-        Arc::clone(&adapter),
-        "runtime:test",
-    );
+    let store = Arc::new(FakeStore::default());
+    let svc = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:test");
     let alice = user("alice");
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
@@ -520,22 +551,11 @@ async fn output_crossing_attach_is_in_the_repaint_or_live_stream_exactly_once() 
             .await
         }
     });
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            if svc
-                .entries
-                .read()
-                .await
-                .get(&created.id)
-                .is_some_and(|entry| entry.attached.is_some())
-            {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("attachment reaches the snapshot boundary");
+    wait_for_interaction_lease(&store, &created.id).await;
+    assert!(
+        !attach.is_finished(),
+        "the attachment waits behind the earlier screen update"
+    );
 
     // A subscriber appearing while the screen is locked is the old, broken
     // ordering. Give the spawned attach ample time to expose that ordering.
@@ -589,6 +609,440 @@ async fn a_second_client_is_refused_while_one_holds_the_terminal() {
         .await
         .err(),
         Some(CoreError::AlreadyAttached)
+    );
+}
+
+#[tokio::test]
+async fn an_observed_attachment_releases_interaction_authority_before_handle_drop() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("observed-attachment-authority-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    adapter.terminal_inputs.lock().await.clear();
+    adapter.pause_next_terminal_input();
+
+    let attaching = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(
+                &alice,
+                &id,
+                TerminalGeometry::new(101, 37).expect("valid geometry"),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+        }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+    let held = wait_for_interaction_lease(&store, &created.id).await;
+    assert_eq!(store.active_session_lease(&created.id).await, Some(held));
+
+    adapter.resume_terminal_input();
+    let attachment = attaching
+        .await
+        .expect("attachment task remains live")
+        .expect("attachment succeeds");
+    wait_for_interaction_release(&store, &created.id).await;
+    assert!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .is_some_and(|entry| entry.attached.is_some()),
+        "the handle keeps the local attachment, not interaction authority"
+    );
+    assert_eq!(
+        svc.attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err(),
+        Some(CoreError::AlreadyAttached)
+    );
+    wait_for_interaction_release(&store, &created.id).await;
+    drop(attachment);
+}
+
+#[tokio::test]
+async fn cancelling_an_admitted_attach_finishes_receipt_then_detaches_exactly_once() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("cancelled-admitted-attachment-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    adapter.terminal_inputs.lock().await.clear();
+    adapter.pause_next_terminal_input();
+    let geometry = TerminalGeometry::new(103, 39).expect("valid geometry");
+
+    let attaching = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(&alice, &id, geometry, AttachmentClaim::Exclusive)
+                .await
+        }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+    let held = wait_for_interaction_lease(&store, &created.id).await;
+    attaching.abort();
+    assert!(matches!(attaching.await, Err(error) if error.is_cancelled()));
+    assert_eq!(
+        store.active_session_lease(&created.id).await,
+        Some(held),
+        "an admitted attachment resize retains exact authority through receipt and cleanup"
+    );
+
+    adapter.resume_terminal_input();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let events = store
+                .events_since(&created.id, before.session.last_seq)
+                .await
+                .expect("attachment events are readable");
+            let detached = events.iter().filter(|event| {
+                matches!(
+                    event.kind,
+                    crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                )
+            });
+            if events.len() == 2
+                && detached.count() == 1
+                && svc
+                    .entries
+                    .read()
+                    .await
+                    .get(&created.id)
+                    .is_some_and(|entry| entry.attached.is_none())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the unread admitted attachment is detached once");
+    wait_for_interaction_release(&store, &created.id).await;
+
+    let delivered = adapter.terminal_inputs.lock().await;
+    assert!(matches!(
+        delivered.as_slice(),
+        [(_, TerminalInput::Resize(size))]
+            if size.cols == geometry.columns() && size.rows == geometry.rows()
+    ));
+    drop(delivered);
+    let events = store
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .expect("attachment events are readable");
+    assert!(matches!(
+        events[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+    ));
+    assert!(matches!(
+        events[1].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+    ));
+}
+
+#[tokio::test]
+async fn cancelling_before_attach_admission_sends_nothing_and_compensates_durably() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment,
+    ));
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    let alice = user("cancelled-pre-admission-attachment-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    store.enable_interaction_coordination();
+    let before = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_screen = svc
+        .screen_snapshot(&alice, &created.id)
+        .await
+        .expect("screen is readable");
+    adapter.terminal_inputs.lock().await.clear();
+    let geometry = TerminalGeometry::new(105, 41).expect("valid geometry");
+
+    store.pause_next();
+    let attaching = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(&alice, &id, geometry, AttachmentClaim::Exclusive)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+    let held = wait_for_interaction_lease(&inner, &created.id).await;
+    attaching.abort();
+    assert!(matches!(attaching.await, Err(error) if error.is_cancelled()));
+    assert_eq!(
+        inner.active_session_lease(&created.id).await,
+        Some(held),
+        "the retained append owns authority until its compensation settles"
+    );
+    store.release();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let events = inner
+                .events_since(&created.id, before.session.last_seq)
+                .await
+                .expect("attachment events are readable");
+            if events.len() == 2
+                && events.iter().any(|event| {
+                    matches!(
+                        event.kind,
+                        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                    )
+                })
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the committed proposal receives a compensating detach");
+    wait_for_interaction_release(&inner, &created.id).await;
+
+    assert!(
+        adapter.terminal_inputs.lock().await.is_empty(),
+        "cancellation before final admission reaches no runtime sender"
+    );
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&created.id).expect("session remains live");
+    assert!(entry.attached.is_none());
+    assert_eq!(entry.attachments_issued, 0);
+    drop(entries);
+    assert_eq!(
+        svc.screen_snapshot(&alice, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        before_screen.geometry,
+        "a refused attachment does not resize the local screen"
+    );
+    let events = inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .expect("attachment events are readable");
+    assert!(matches!(
+        events[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+    ));
+    assert!(matches!(
+        events[1].kind,
+        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+    ));
+}
+
+#[tokio::test]
+async fn a_committed_attach_never_reaches_a_replaced_generation_or_sender() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_terminal_attachment,
+    ));
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    let alice = user("stale-attachment-generation-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    store.enable_interaction_coordination();
+    let before = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_screen = svc
+        .screen_snapshot(&alice, &created.id)
+        .await
+        .expect("screen is readable");
+    adapter.terminal_inputs.lock().await.clear();
+    let geometry = TerminalGeometry::new(107, 43).expect("valid geometry");
+
+    store.pause_next();
+    let attaching = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.attach_terminal(&alice, &id, geometry, AttachmentClaim::Exclusive)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+    let held = wait_for_interaction_lease(&inner, &created.id).await;
+    let (successor_input, mut successor_received) = terminal_input_channel(1);
+    {
+        let mut entries = svc.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("session is live");
+        entry.runtime_generation = entry
+            .runtime_generation
+            .checked_add(1)
+            .expect("test generations remain bounded");
+        entry.input = Some(successor_input);
+    }
+    store.release();
+
+    let error = attaching
+        .await
+        .expect("attachment task remains live")
+        .err()
+        .expect("the stale attachment is refused");
+    assert!(matches!(error, CoreError::RuntimeUnavailable(_)));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let events = inner
+                .events_since(&created.id, before.session.last_seq)
+                .await
+                .expect("attachment events are readable");
+            if events.len() == 2
+                && events.iter().any(|event| {
+                    matches!(
+                        event.kind,
+                        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                    )
+                })
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the stale durable attach receives a compensating detach");
+    wait_for_interaction_release(&inner, &created.id).await;
+    assert_ne!(
+        inner.active_session_lease(&created.id).await,
+        Some(held),
+        "the exact stale interaction lease is retired after compensation"
+    );
+
+    assert!(
+        adapter.terminal_inputs.lock().await.is_empty(),
+        "the outgoing generation receives no stale resize"
+    );
+    assert!(matches!(
+        successor_received.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+    let entries = svc.entries.read().await;
+    let entry = entries
+        .get(&created.id)
+        .expect("successor entry remains live");
+    assert_eq!(entry.session.geometry, before.session.geometry);
+    assert!(entry.attached.is_none());
+    assert_eq!(entry.attachments_issued, 0);
+    drop(entries);
+    assert_eq!(
+        svc.screen_snapshot(&alice, &created.id)
+            .await
+            .expect("successor screen remains readable")
+            .geometry,
+        before_screen.geometry
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_attachment_resize_is_reported_and_compensated() {
+    let store = Arc::new(FakeStore::default());
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let alice = user("rejected-attachment-resize-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_screen = svc
+        .screen_snapshot(&alice, &created.id)
+        .await
+        .expect("screen is readable");
+    let rejected = layer3_adapter::TerminalInputSender::spawn(1, |_input| async {
+        Err(AdapterError::Rejected(
+            "the runtime refused the attachment resize".into(),
+        ))
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("session is live")
+        .input = Some(rejected);
+
+    let error = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::new(109, 45).expect("valid geometry"),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err()
+        .expect("the rejected runtime resize is reported");
+    assert_eq!(
+        error,
+        CoreError::RuntimeRefused("the runtime refused the attachment resize".into())
+    );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let events = store
+                .events_since(&created.id, before.session.last_seq)
+                .await
+                .expect("attachment events are readable");
+            if events.len() == 2
+                && events.iter().any(|event| {
+                    matches!(
+                        event.kind,
+                        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                    )
+                })
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the rejected attachment receives a compensating detach");
+    wait_for_interaction_release(&store, &created.id).await;
+
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&created.id).expect("session remains live");
+    assert_eq!(entry.session.geometry, before.session.geometry);
+    assert!(entry.attached.is_none());
+    assert_eq!(entry.attachments_issued, 0);
+    drop(entries);
+    assert_eq!(
+        svc.screen_snapshot(&alice, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        before_screen.geometry
     );
 }
 
@@ -661,6 +1115,13 @@ fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_
         .build()
         .expect("replacement runtime builds");
     replacement.block_on(async {
+        let (replacement_input, _received) = terminal_input_channel(1);
+        svc.entries
+            .write()
+            .await
+            .get_mut(&created.id)
+            .expect("the live entry survives the executor")
+            .input = Some(replacement_input);
         let later = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             svc.attach_terminal(
@@ -695,8 +1156,100 @@ fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_
     });
 }
 
+#[test]
+fn dropping_an_observed_attachment_after_its_runtime_stops_releases_it() {
+    let origin = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("origin runtime builds");
+    let (store, svc, alice, created, before, held) = origin.block_on(async {
+        let store = Arc::new(FakeStore::default());
+        let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+        let alice = user("outside-runtime-observed-attachment-owner");
+        let created = svc.create_session(&alice, spec()).await.expect("created");
+        await_settled(&svc, &alice, &created.id).await;
+        let before = store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .expect("settled record exists");
+        let held = svc
+            .attach_terminal(
+                &alice,
+                &created.id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+            .expect("the attachment is observed");
+        (store, svc, alice, created, before, held)
+    });
+
+    drop(origin);
+    assert!(tokio::runtime::Handle::try_current().is_err());
+    drop(held);
+
+    let replacement = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("replacement runtime builds");
+    replacement.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if svc
+                    .entries
+                    .read()
+                    .await
+                    .get(&created.id)
+                    .is_some_and(|entry| entry.attached.is_none())
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("drop cleanup runs without the origin runtime");
+
+        let (replacement_input, _received) = terminal_input_channel(1);
+        svc.entries
+            .write()
+            .await
+            .get_mut(&created.id)
+            .expect("the live entry survives the origin runtime")
+            .input = Some(replacement_input);
+        let later = svc
+            .attach_terminal(
+                &alice,
+                &created.id,
+                TerminalGeometry::default(),
+                AttachmentClaim::Exclusive,
+            )
+            .await
+            .expect("the terminal is attachable after outside-runtime drop");
+        let events = store
+            .events_since(&created.id, before.session.last_seq)
+            .await
+            .expect("attachment events are readable");
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            events[0].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+        ));
+        assert!(matches!(
+            events[1].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+        ));
+        assert!(matches!(
+            events[2].kind,
+            crate::event::StoredEventKind::Known(EventKind::TerminalAttached)
+        ));
+        drop(later);
+    });
+}
+
 #[tokio::test]
-async fn a_waiting_attach_takes_over_when_the_active_cleanup_drain_is_cancelled() {
+async fn a_cancelled_attach_keeps_the_active_cleanup_drain_service_owned() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(
         Arc::clone(&inner),
@@ -801,13 +1354,11 @@ async fn a_waiting_attach_takes_over_when_the_active_cleanup_drain_is_cancelled(
 
     first.abort();
     assert!(matches!(first.await, Err(error) if error.is_cancelled()));
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while svc.event_logs.cleanup_drain_users(&created.id) != 1 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the waiting attach takes ownership of the cleanup drain");
+    assert_eq!(
+        svc.event_logs.cleanup_drain_users(&created.id),
+        2,
+        "caller cancellation leaves the service-owned interaction draining"
+    );
     store.release();
 
     let later = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
@@ -831,7 +1382,7 @@ async fn a_waiting_attach_takes_over_when_the_active_cleanup_drain_is_cancelled(
             })
             .count(),
         1,
-        "cleanup takeover must not duplicate the durable detach"
+        "service-owned cleanup must not duplicate the durable detach"
     );
     assert!(matches!(
         events[2].kind,
@@ -940,6 +1491,13 @@ fn a_detach_interrupted_after_store_commit_restarts_without_a_duplicate() {
         .build()
         .expect("replacement runtime builds");
     replacement.block_on(async {
+        let (replacement_input, _received) = terminal_input_channel(1);
+        svc.entries
+            .write()
+            .await
+            .get_mut(&created.id)
+            .expect("the live entry survives the executor")
+            .input = Some(replacement_input);
         let later = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             svc.attach_terminal(
@@ -1008,6 +1566,95 @@ async fn a_takeover_supersedes_the_holder_and_tells_them() {
         first.superseded.try_recv().is_ok(),
         "a superseded client must be told, not merely starved of output"
     );
+}
+
+#[tokio::test]
+async fn attachment_generation_exhaustion_cannot_replace_the_current_holder() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("attachment-generation-exhaustion-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let id = created.id;
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the terminal entry is live")
+        .attachments_issued = u64::MAX - 1;
+    let mut current = svc
+        .attach_terminal(
+            &alice,
+            &id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("the final distinct generation is issued");
+    assert_eq!(current.generation, u64::MAX);
+    adapter.terminal_inputs.lock().await.clear();
+    let tail_before_refusal = store
+        .get(&id)
+        .await
+        .unwrap()
+        .expect("the attached session remains durable")
+        .session
+        .last_seq;
+
+    let error = svc
+        .attach_terminal(
+            &alice,
+            &id,
+            TerminalGeometry::new(101, 37).expect("valid geometry"),
+            AttachmentClaim::Takeover,
+        )
+        .await
+        .err()
+        .expect("an exhausted generation is refused");
+    assert_eq!(
+        error,
+        CoreError::RuntimeUnavailable("the terminal attachment generation is exhausted".into())
+    );
+    assert!(adapter.terminal_inputs.lock().await.is_empty());
+    assert!(store
+        .events_since(&id, tail_before_refusal)
+        .await
+        .expect("attachment events are readable")
+        .is_empty());
+    assert!(matches!(
+        current.superseded.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&id).expect("the terminal entry remains live");
+    assert_eq!(entry.attachments_issued, u64::MAX);
+    assert_eq!(
+        entry
+            .attached
+            .as_ref()
+            .map(|attachment| attachment.generation),
+        Some(u64::MAX)
+    );
+    drop(entries);
+
+    drop(current);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if svc
+                .entries
+                .read()
+                .await
+                .get(&id)
+                .is_some_and(|entry| entry.attached.is_none())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the final distinct holder still releases normally");
 }
 
 #[tokio::test]
@@ -1143,6 +1790,1267 @@ async fn the_client_holding_the_terminal_can_still_type_into_it() {
     svc.send_signal(&alice, &id, "INT".to_string())
         .await
         .expect("and can stop what it started");
+}
+
+#[tokio::test]
+async fn a_second_service_readopts_before_fenced_terminal_delivery() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("terminal-readoption-owner");
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let second = service(Arc::clone(&store), Arc::clone(&adapter));
+    assert!(!second.entries.read().await.contains_key(&created.id));
+    adapter.terminal_inputs.lock().await.clear();
+
+    second
+        .send_input(&alice, &created.id, b"from replica two".to_vec())
+        .await
+        .expect("the second service readopts and delivers bytes");
+    wait_for_interaction_release(&store, &created.id).await;
+    second
+        .send_signal(&alice, &created.id, "INT".into())
+        .await
+        .expect("the readopted service delivers a signal");
+
+    let delivered = adapter.terminal_inputs.lock().await;
+    assert_eq!(delivered.len(), 2);
+    assert!(matches!(
+        &delivered[0].1,
+        TerminalInput::Bytes(bytes) if bytes == b"from replica two"
+    ));
+    assert!(matches!(
+        &delivered[1].1,
+        TerminalInput::Signal(signal) if signal == "INT"
+    ));
+    assert!(second.entries.read().await.contains_key(&created.id));
+}
+
+#[tokio::test]
+async fn a_stale_terminal_generation_reaches_no_sender() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("stale-terminal-generation-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    adapter.terminal_inputs.lock().await.clear();
+    let mut entries = svc.entries.write().await;
+    let entry = entries.get_mut(&created.id).expect("the session is live");
+    entry.runtime_generation = entry
+        .runtime_generation
+        .checked_add(1)
+        .expect("test generations remain bounded");
+    drop(entries);
+
+    assert_eq!(
+        svc.send_input(&alice, &created.id, b"stale".to_vec()).await,
+        Err(CoreError::RuntimeUnavailable(
+            "the live channel belongs to another runtime authority".into()
+        ))
+    );
+    assert!(adapter.terminal_inputs.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn terminal_delivery_reports_missing_and_rejected_senders() {
+    let store = Arc::new(FakeStore::default());
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let alice = user("terminal-sender-errors-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("the session is live")
+        .input = None;
+
+    assert_eq!(
+        svc.send_input(&alice, &created.id, b"missing".to_vec())
+            .await,
+        Err(CoreError::RuntimeUnavailable(
+            "this session holds no terminal input sender".into()
+        ))
+    );
+    wait_for_interaction_release(&store, &created.id).await;
+
+    let rejected = layer3_adapter::TerminalInputSender::spawn(1, |_input| async {
+        Err(AdapterError::Rejected(
+            "the runtime refused terminal input".into(),
+        ))
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("the session is live")
+        .input = Some(rejected);
+    assert_eq!(
+        svc.send_signal(&alice, &created.id, "INT".into()).await,
+        Err(CoreError::RuntimeRefused(
+            "the runtime refused terminal input".into()
+        ))
+    );
+}
+
+#[tokio::test]
+async fn caller_cancellation_before_terminal_delivery_retires_the_owned_lease() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("cancelled-terminal-delivery-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    adapter.terminal_inputs.lock().await.clear();
+
+    let input_fence = svc.input_gates.gate(&created.id).write_owned().await;
+    let caller = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move { svc.send_input(&alice, &id, b"cancelled".to_vec()).await }
+    });
+    let held = wait_for_interaction_lease(&store, &created.id).await;
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        store.active_session_lease(&created.id).await,
+        Some(held),
+        "the owned action retains its lease while its local gate is blocked"
+    );
+
+    drop(input_fence);
+    wait_for_interaction_release(&store, &created.id).await;
+    assert!(
+        adapter.terminal_inputs.lock().await.is_empty(),
+        "cancellation before the final authority check reaches no sender"
+    );
+
+    svc.send_signal(&alice, &created.id, "INT".into())
+        .await
+        .expect("a successor proceeds after owned cleanup");
+    assert!(matches!(
+        adapter.terminal_inputs.lock().await.as_slice(),
+        [(_, TerminalInput::Signal(signal))] if signal == "INT"
+    ));
+}
+
+#[tokio::test]
+async fn caller_cancellation_after_terminal_admission_finishes_its_receipt() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("cancelled-admitted-terminal-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    adapter.terminal_inputs.lock().await.clear();
+    adapter.pause_next_terminal_input();
+
+    let caller = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.send_input(&alice, &id, b"already admitted".to_vec())
+                .await
+        }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+    let held = wait_for_interaction_lease(&store, &created.id).await;
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        store.active_session_lease(&created.id).await,
+        Some(held),
+        "an admitted sender retains the lease through its receipt"
+    );
+
+    adapter.resume_terminal_input();
+    wait_for_interaction_release(&store, &created.id).await;
+    assert!(matches!(
+        adapter.terminal_inputs.lock().await.as_slice(),
+        [(_, TerminalInput::Bytes(bytes))] if bytes == b"already admitted"
+    ));
+}
+
+const ROTATION_BYTES: &[u8] = b"retry after rotation";
+const ROTATION_SIGNAL: &str = "INT";
+const ROTATION_PROMPT: &str = "wait for the replacement";
+const ROTATION_APPROVAL: &str = "approval-during-rotation";
+
+fn rotation_resize_geometry() -> TerminalGeometry {
+    TerminalGeometry::new(100, 30).expect("valid resize geometry")
+}
+
+fn rotation_attach_geometry() -> TerminalGeometry {
+    TerminalGeometry::new(120, 40).expect("valid attachment geometry")
+}
+
+async fn assert_every_runtime_operation_fails_with(
+    svc: &Arc<crate::service::SessionService>,
+    caller: &crate::authz::Caller,
+    id: &crate::ids::SessionId,
+    expected: CoreError,
+) {
+    assert_eq!(
+        svc.send_input(caller, id, ROTATION_BYTES.to_vec()).await,
+        Err(expected.clone())
+    );
+    assert_eq!(
+        svc.send_signal(caller, id, ROTATION_SIGNAL.into()).await,
+        Err(expected.clone())
+    );
+    assert_eq!(
+        svc.resize_terminal(caller, id, rotation_resize_geometry())
+            .await,
+        Err(expected.clone())
+    );
+    assert_eq!(
+        svc.terminal_is_held(caller, id).await,
+        Err(expected.clone())
+    );
+    assert_eq!(
+        svc.attach_terminal(
+            caller,
+            id,
+            rotation_attach_geometry(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err(),
+        Some(expected.clone())
+    );
+    assert_eq!(
+        svc.send_prompt(caller, id, ROTATION_PROMPT.into()).await,
+        Err(expected.clone())
+    );
+    assert_eq!(svc.interrupt_turn(caller, id).await, Err(expected.clone()));
+    assert_eq!(
+        svc.resolve_approval(
+            caller,
+            id,
+            ROTATION_APPROVAL.into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(expected)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_operation_refuses_the_retained_outgoing_runtime_and_retries_on_the_replacement() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    let observer = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    let alice = user("rotating-terminal-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let (outgoing_input, mut outgoing_runtime) = terminal_input_channel(8);
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.runtime_version = Some("runtime:1".into());
+    store.seed(&record).await.expect("old version is durable");
+    {
+        let mut entries = svc.entries.write().await;
+        let outgoing = entries.get_mut(&created.id).expect("outgoing entry");
+        outgoing.session.runtime_version = Some("runtime:1".into());
+        outgoing.input = Some(outgoing_input.clone());
+    }
+
+    adapter.pause_next_provision();
+    svc.pause_next_live_install();
+    let reconciling = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        async move { svc.reconcile().await }
+    });
+    adapter.wait_until_provision_paused().await;
+
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the authoritative outgoing entry remains installed")
+            .session
+            .status,
+        crate::session::SessionStatus::Rotating,
+        "the outgoing entry remains present but cannot accept input"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("rotation is readable")
+            .expect("session remains durable")
+            .session
+            .status,
+        crate::session::SessionStatus::Rotating
+    );
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &user("foreign-rotation-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
+    assert!(matches!(
+        outgoing_runtime.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+
+    adapter.resume_provision();
+    svc.wait_until_live_install_paused().await;
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the outgoing entry remains until replacement installation")
+            .session
+            .status,
+        crate::session::SessionStatus::Rotating,
+        "durable readiness alone must not make the outgoing entry interactive"
+    );
+    let ready = store
+        .get(&created.id)
+        .await
+        .expect("readiness is readable")
+        .expect("session remains durable");
+    assert_eq!(
+        ready.session.status,
+        crate::session::SessionStatus::Ready,
+        "the in-progress rotation marker spans the final durable/live disagreement"
+    );
+    assert!(
+        ready.rotation_claim.is_some(),
+        "durable readiness retains the cross-replica rotation fence"
+    );
+    assert!(
+        !observer.rotation_in_progress(&created.id).await,
+        "another replica has no process-local rotation marker"
+    );
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &user("foreign-ready-gap-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
+    assert!(matches!(
+        outgoing_runtime.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+    svc.resume_live_install();
+    assert_eq!(
+        reconciling
+            .await
+            .expect("reconciliation task completes")
+            .rotated_sessions,
+        1
+    );
+    let settled = await_settled(&svc, &alice, &created.id).await;
+    assert_eq!(settled.runtime_version.as_deref(), Some("runtime:2"));
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("published rotation is readable")
+            .expect("rotated session remains durable")
+            .rotation_claim,
+        None
+    );
+
+    let (replacement_input, mut replacement_runtime) = terminal_input_channel(8);
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("replacement entry")
+        .input = Some(replacement_input);
+    assert!(!svc
+        .terminal_is_held(&alice, &created.id)
+        .await
+        .expect("the replacement starts detached"));
+
+    svc.send_input(&alice, &created.id, ROTATION_BYTES.to_vec())
+        .await
+        .expect("the same terminal input succeeds after rotation");
+    svc.send_signal(&alice, &created.id, ROTATION_SIGNAL.into())
+        .await
+        .expect("the same signal succeeds after rotation");
+    svc.resize_terminal(&alice, &created.id, rotation_resize_geometry())
+        .await
+        .expect("the same resize succeeds after rotation");
+    let attachment = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            rotation_attach_geometry(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("the same attach succeeds after rotation");
+    assert!(svc
+        .terminal_is_held(&alice, &created.id)
+        .await
+        .expect("the replacement attachment is visible"));
+    assert_eq!(attachment.geometry, rotation_attach_geometry());
+
+    assert!(matches!(
+        replacement_runtime.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == ROTATION_BYTES
+    ));
+    assert!(matches!(
+        replacement_runtime.recv().await,
+        Some(TerminalInput::Signal(signal)) if signal == ROTATION_SIGNAL
+    ));
+    assert!(matches!(
+        replacement_runtime.recv().await,
+        Some(TerminalInput::Resize(size))
+            if size == TermSize {
+                cols: rotation_resize_geometry().columns(),
+                rows: rotation_resize_geometry().rows(),
+            }
+    ));
+    assert!(matches!(
+        replacement_runtime.recv().await,
+        Some(TerminalInput::Resize(size))
+            if size == TermSize {
+                cols: rotation_attach_geometry().columns(),
+                rows: rotation_attach_geometry().rows(),
+            }
+    ));
+    assert!(matches!(
+        outgoing_runtime.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restarted_rotation_stays_rotating_until_the_replacement_is_live() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("restarted-rotation-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    let outgoing = record
+        .runtime_id
+        .take()
+        .expect("the outgoing runtime was recorded");
+    let rotation_claim = "rotn_restarted_compatibility_attach".to_string();
+    let snapshot_at = "2026-08-27T03:04:05Z".to_string();
+    let snapshot_ref = format!("sessions/{}/handover.snapshot", created.id.0);
+    let target_runtime_version = "runtime:restarted-attach".to_string();
+    let exact_restore = b"restarted rotation attach state".to_vec();
+    record.session.status = crate::session::SessionStatus::Rotating;
+    record.rotation_claim = Some(rotation_claim.clone());
+    record.pending_handover = Some(crate::store::PendingHandover {
+        claim: rotation_claim.clone(),
+        snapshot_ref: snapshot_ref.clone(),
+        snapshot_at: snapshot_at.clone(),
+        rotations_from: record.session.rotations,
+        rotations_to: record.session.rotations.saturating_add(1),
+        target: crate::store::PendingHandoverTarget::RuntimeVersion {
+            from_runtime_version: record.session.runtime_version.clone(),
+            runtime_version: target_runtime_version.clone(),
+        },
+    });
+    adapter.stored_handovers.lock().await.insert(
+        snapshot_ref,
+        crate::store::HandoverSnapshot {
+            claim: rotation_claim.clone(),
+            snapshot_at,
+            restore: Some(exact_restore.clone()),
+        },
+    );
+    store
+        .seed(&record)
+        .await
+        .expect("the post-removal rotation state is durable");
+    adapter.lose(&outgoing).await;
+    drop(first);
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let observer = service(Arc::clone(&store), Arc::clone(&adapter));
+    adapter.pause_next_provision();
+    restarted.pause_next_live_install();
+    let recovered = restarted.reconcile().await;
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    adapter.wait_until_provision_paused().await;
+
+    assert!(
+        !restarted.entries.read().await.contains_key(&created.id),
+        "the recovered replacement has not been provisioned yet"
+    );
+    let provisioning = store
+        .get(&created.id)
+        .await
+        .expect("recovery is readable")
+        .expect("session remains durable");
+    assert_eq!(
+        provisioning.session.status,
+        crate::session::SessionStatus::Provisioning,
+        "reconciliation rewrites the durable rotation state while recovery starts"
+    );
+    assert_eq!(
+        provisioning.rotation_claim.as_deref(),
+        Some(rotation_claim.as_str()),
+        "recovery preserves the exact interrupted claim"
+    );
+    assert_eq!(
+        provisioning
+            .pending_handover
+            .as_ref()
+            .map(|pending| pending.claim.as_str()),
+        Some(rotation_claim.as_str()),
+        "the compatibility descriptor remains durable during provisioning"
+    );
+    assert!(restarted.rotation_in_progress(&created.id).await);
+    assert!(
+        !observer.rotation_in_progress(&created.id).await,
+        "the observing replica has no process-local rotation knowledge"
+    );
+    assert_eq!(
+        restarted
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating)
+    );
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating)
+    );
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &user("foreign-restarted-provision-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
+
+    adapter.resume_provision();
+    restarted.wait_until_live_install_paused().await;
+
+    assert!(
+        !restarted.entries.read().await.contains_key(&created.id),
+        "the recovered replacement is not live before installation"
+    );
+    let ready = store
+        .get(&created.id)
+        .await
+        .expect("readiness is readable")
+        .expect("session remains durable");
+    assert_eq!(
+        ready.session.status,
+        crate::session::SessionStatus::Ready,
+        "recovery rewrites the durable rotation state before live installation"
+    );
+    assert_eq!(
+        ready.rotation_claim.as_deref(),
+        Some(rotation_claim.as_str()),
+        "the exact claim spans durable readiness until live publication"
+    );
+    assert_eq!(
+        ready
+            .pending_handover
+            .as_ref()
+            .map(|pending| pending.claim.as_str()),
+        Some(rotation_claim.as_str()),
+        "the exact descriptor spans durable readiness until live publication"
+    );
+    assert!(
+        !observer.rotation_in_progress(&created.id).await,
+        "the observing replica still has no local marker in the Ready gap"
+    );
+    assert_eq!(
+        restarted
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating)
+    );
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating)
+    );
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &user("foreign-restarted-rotation-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
+
+    restarted.resume_live_install();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if restarted.entries.read().await.contains_key(&created.id)
+                && !restarted.rotation_in_progress(&created.id).await
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the recovered replacement becomes live and clears the marker");
+    let published = store
+        .get(&created.id)
+        .await
+        .expect("published replacement is readable")
+        .expect("published session remains durable");
+    assert_eq!(published.rotation_claim, None);
+    assert_eq!(published.pending_handover, None);
+    assert_eq!(
+        published.session.runtime_version.as_deref(),
+        Some(target_runtime_version.as_str())
+    );
+    assert_eq!(adapter.handovers.lock().await.last(), Some(&exact_restore));
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .expect("every replica admits the published replacement")
+            .status,
+        crate::session::SessionStatus::Ready
+    );
+    restarted
+        .send_input(&alice, &created.id, ROTATION_BYTES.to_vec())
+        .await
+        .expect("input succeeds once the recovered replacement is live");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_coordinated_restarted_rotation_keeps_its_exact_claim_until_publication() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("coordinated-restarted-rotation-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    first.flush(&created.id).await;
+
+    let mut rotating = store
+        .get(&created.id)
+        .await
+        .expect("the coordinated session is readable")
+        .expect("the coordinated session remains durable");
+    let outgoing = rotating
+        .runtime_id
+        .clone()
+        .expect("the coordinated session names its first runtime");
+    let original_authority = store
+        .runtime_authority(&created.id)
+        .await
+        .expect("the first runtime authority is readable")
+        .expect("the first runtime authority exists");
+    assert!(
+        original_authority.generation > 0,
+        "the regression must exercise coordinated recovery"
+    );
+    assert_eq!(
+        original_authority.runtime_id.as_deref(),
+        Some(outgoing.as_str())
+    );
+    let provisioned_before = adapter.issued.load(Ordering::SeqCst);
+    let provision_calls_before = adapter.provision_calls.load(Ordering::SeqCst);
+
+    let request = SessionLeaseRequest::new(
+        created.id.clone(),
+        "interrupted-coordinated-rotation-holder",
+        SessionBoundary::for_record(&rotating, original_authority.generation),
+        SessionOperation::Recover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store
+        .acquire_session_lease(&request)
+        .await
+        .expect("the interrupted rotation acquires exact authority");
+    let exact_claim = "rotn_interrupted_coordinated_exact_claim".to_string();
+    rotating.session.status = crate::session::SessionStatus::Rotating;
+    rotating.rotation_claim = Some(exact_claim.clone());
+    rotating.revision = store
+        .commit_session_idempotent("interrupted-coordinated-rotation-claim", &rotating, &[])
+        .await
+        .expect("the coordinated rotation claim is durable");
+    let rotating_boundary = SessionBoundary::for_record(&rotating, original_authority.generation);
+    store
+        .advance_session_lease(&mut lease, &rotating_boundary)
+        .await
+        .expect("the recovery lease advances to the rotating boundary");
+    let retired = store
+        .retire_runtime_authority(&mut lease, "interrupted-coordinated-rotation-retirement")
+        .await
+        .expect("the exact outgoing authority is retired");
+    assert_eq!(retired.cleanup.runtime_id, outgoing);
+    assert_eq!(retired.cleanup.generation, original_authority.generation);
+    assert_eq!(
+        retired.boundary.authority.runtime_id, None,
+        "retirement creates the no-runtime recovery boundary"
+    );
+    assert_eq!(
+        retired.boundary.authority.generation, original_authority.generation,
+        "retirement cannot reset or reuse the coordinated generation"
+    );
+    store
+        .release_session_lease(&lease)
+        .await
+        .expect("the interrupted process's lease is released");
+    adapter.lose(&retired.cleanup.runtime_id).await;
+    drop(first);
+
+    let interrupted = store
+        .get(&created.id)
+        .await
+        .expect("the interrupted rotation is readable")
+        .expect("the interrupted rotation remains durable");
+    assert_eq!(
+        interrupted.session.status,
+        crate::session::SessionStatus::Rotating
+    );
+    assert_eq!(
+        interrupted.rotation_claim.as_deref(),
+        Some(exact_claim.as_str())
+    );
+    assert_eq!(interrupted.runtime_id, None);
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let observer = service(Arc::clone(&store), Arc::clone(&adapter));
+    adapter.pause_next_provision();
+    restarted.pause_next_live_install();
+    let recovered = restarted.reconcile().await;
+    assert_eq!(recovered.lost_runtimes, 1);
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    adapter.wait_until_provision_paused().await;
+
+    let provisioning = store
+        .get(&created.id)
+        .await
+        .expect("the resumed recovery is readable")
+        .expect("the resumed recovery remains durable");
+    assert_eq!(
+        provisioning.session.status,
+        crate::session::SessionStatus::Provisioning
+    );
+    assert_eq!(
+        provisioning.rotation_claim.as_deref(),
+        Some(exact_claim.as_str()),
+        "the exact interrupted claim survives coordinated recovery"
+    );
+    let provisioning_authority = store
+        .runtime_authority(&created.id)
+        .await
+        .expect("the provisioning authority is readable")
+        .expect("the provisioning authority remains recorded");
+    assert_eq!(provisioning_authority.runtime_id, None);
+    assert_eq!(
+        provisioning_authority.generation, original_authority.generation,
+        "recovery cannot advance authority before a candidate exists"
+    );
+    assert!(!restarted.entries.read().await.contains_key(&created.id));
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+
+    adapter.resume_provision();
+    restarted.wait_until_live_install_paused().await;
+
+    let ready = store
+        .get(&created.id)
+        .await
+        .expect("the coordinated ready boundary is readable")
+        .expect("the coordinated session remains durable");
+    let replacement = ready
+        .runtime_id
+        .clone()
+        .expect("the coordinated replacement has exact authority");
+    assert_ne!(replacement, retired.cleanup.runtime_id);
+    assert_eq!(ready.session.status, crate::session::SessionStatus::Ready);
+    assert_eq!(
+        ready.rotation_claim.as_deref(),
+        Some(exact_claim.as_str()),
+        "durable readiness remains fenced until exact local publication"
+    );
+    let ready_authority = store
+        .runtime_authority(&created.id)
+        .await
+        .expect("the replacement authority is readable")
+        .expect("the replacement authority exists");
+    assert_eq!(
+        ready_authority.runtime_id.as_deref(),
+        Some(replacement.as_str())
+    );
+    assert_eq!(
+        ready_authority.generation,
+        original_authority.generation + 1,
+        "one replacement consumes exactly one never-reused generation"
+    );
+    assert_eq!(
+        adapter.issued.load(Ordering::SeqCst),
+        provisioned_before + 1,
+        "recovery publishes one replacement runtime"
+    );
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provision_calls_before + 1,
+        "recovery makes no duplicate provisioning attempt"
+    );
+    assert!(!restarted.entries.read().await.contains_key(&created.id));
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+
+    restarted.resume_live_install();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let claim_cleared = store
+                .get(&created.id)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|record| record.rotation_claim.is_none());
+            let exact_publication =
+                restarted
+                    .entries
+                    .read()
+                    .await
+                    .get(&created.id)
+                    .is_some_and(|entry| {
+                        entry.publication_complete
+                            && entry.runtime_generation == ready_authority.generation
+                            && entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                                == Some(replacement.as_str())
+                    });
+            if claim_cleared && exact_publication {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the exact coordinated replacement is published and unfenced");
+
+    let published = store
+        .get(&created.id)
+        .await
+        .expect("the published session is readable")
+        .expect("the published session remains durable");
+    assert_eq!(published.rotation_claim, None);
+    assert_eq!(published.runtime_id.as_deref(), Some(replacement.as_str()));
+    assert_eq!(
+        store
+            .runtime_authority(&created.id)
+            .await
+            .expect("the final authority is readable")
+            .expect("the final authority exists"),
+        ready_authority,
+        "publication cannot switch authority or reuse its generation"
+    );
+    assert_eq!(
+        adapter.issued.load(Ordering::SeqCst),
+        provisioned_before + 1
+    );
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provision_calls_before + 1
+    );
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .expect("every replica admits the published replacement")
+            .status,
+        crate::session::SessionStatus::Ready
+    );
+    restarted
+        .send_input(&alice, &created.id, ROTATION_BYTES.to_vec())
+        .await
+        .expect("the exact published replacement accepts retried input");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_live_legacy_rotation_is_published_before_its_claim_clears() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("live-legacy-rotation-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let mut rotating = store
+        .get(&created.id)
+        .await
+        .expect("rotation is readable")
+        .expect("session remains durable");
+    rotating.session.status = crate::session::SessionStatus::Rotating;
+    rotating.rotation_claim = None;
+    store
+        .seed(&rotating)
+        .await
+        .expect("a legacy rotation without a claim is durable");
+    drop(first);
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let observer = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+    assert_eq!(recovered.readopted_sessions, 1);
+    assert!(restarted.entries.read().await.contains_key(&created.id));
+
+    let published = store
+        .get(&created.id)
+        .await
+        .expect("published session is readable")
+        .expect("published session remains durable");
+    assert_eq!(
+        published.session.status,
+        crate::session::SessionStatus::Ready
+    );
+    assert_eq!(published.rotation_claim, None);
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .expect("all replicas admit the republished runtime")
+            .status,
+        crate::session::SessionStatus::Ready
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_completed_publication_survives_claim_clear_failure_for_exact_retry() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_rotation_claim_clear,
+    ));
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("publication-clear-retry-owner");
+    let first = service_over(store.clone(), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let mut legacy = inner
+        .get(&created.id)
+        .await
+        .expect("the legacy rotation is readable")
+        .expect("the session remains durable");
+    legacy.session.status = crate::session::SessionStatus::Rotating;
+    legacy.rotation_claim = None;
+    let runtime_id = legacy
+        .runtime_id
+        .clone()
+        .expect("the retained runtime has an exact handle");
+    let provisioned_before = adapter.issued.load(Ordering::SeqCst);
+    inner
+        .seed(&legacy)
+        .await
+        .expect("the live legacy rotation is durable");
+    drop(first);
+
+    // Exhaust the session log's bounded retries for the final claim-only CAS.
+    store.fail_next(4);
+    let restarted = service_over(store.clone(), Arc::clone(&adapter));
+    let observer = service_over(store.clone(), Arc::clone(&adapter));
+    assert_eq!(restarted.reconcile().await.readopted_sessions, 1);
+
+    let retained = inner
+        .get(&created.id)
+        .await
+        .expect("the failed clear is readable")
+        .expect("the session remains durable");
+    let claim = retained
+        .rotation_claim
+        .clone()
+        .expect("the failed clear retains its exact claim");
+    let (published_screen, published_generation) = {
+        let entries = restarted.entries.read().await;
+        let entry = entries
+            .get(&created.id)
+            .expect("the completed publication remains installed");
+        assert!(entry.publication_complete);
+        (Arc::clone(&entry.screen), entry.runtime_generation)
+    };
+    assert_eq!(retained.runtime_id.as_deref(), Some(runtime_id.as_str()));
+    assert_eq!(adapter.issued.load(Ordering::SeqCst), provisioned_before);
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating),
+        "the retained claim keeps every replica fenced"
+    );
+
+    let retried = restarted.reconcile().await;
+    assert_eq!(retried.readopted_sessions, 0);
+    assert_eq!(retried.reprovisioned_sessions, 0);
+    let settled = inner
+        .get(&created.id)
+        .await
+        .expect("the retried clear is readable")
+        .expect("the session remains durable");
+    assert_eq!(settled.rotation_claim, None);
+    assert_eq!(settled.runtime_id.as_deref(), Some(runtime_id.as_str()));
+    assert_eq!(adapter.issued.load(Ordering::SeqCst), provisioned_before);
+    let entries = restarted.entries.read().await;
+    let entry = entries
+        .get(&created.id)
+        .expect("claim retry reuses the completed publication");
+    assert!(entry.publication_complete);
+    assert_eq!(entry.runtime_generation, published_generation);
+    assert_eq!(
+        entry.runtime.as_ref().map(|handle| handle.0.as_str()),
+        Some(runtime_id.as_str())
+    );
+    assert!(Arc::ptr_eq(&entry.screen, &published_screen));
+    assert_ne!(claim, "", "the retried claim has an opaque identity");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_post_insert_publication_removes_only_its_incomplete_entry() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    svc.retry_backoff_ms.store(1, Ordering::Relaxed);
+    let alice = user("failed-publication-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let mut old = store
+        .get(&created.id)
+        .await
+        .expect("the outgoing runtime is readable")
+        .expect("the session remains durable");
+    old.session.runtime_version = Some("runtime:1".into());
+    store.seed(&old).await.expect("the old version is durable");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("the outgoing entry is live")
+        .session
+        .runtime_version = Some("runtime:1".into());
+
+    adapter.pause_next_provision();
+    svc.pause_next_live_install();
+    let reconciling = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        async move { svc.reconcile().await }
+    });
+    adapter.wait_until_provision_paused().await;
+    adapter.resume_provision();
+    svc.wait_until_live_install_paused().await;
+
+    let ready = store
+        .get(&created.id)
+        .await
+        .expect("the ready publication boundary is readable")
+        .expect("the session remains durable");
+    let claim = ready
+        .rotation_claim
+        .clone()
+        .expect("the replacement remains durably fenced");
+    let runtime_id = ready
+        .runtime_id
+        .clone()
+        .expect("the replacement has exact durable authority");
+    let provisioned_before_failure = adapter.issued.load(Ordering::SeqCst);
+    store.fail_everything().await;
+    svc.resume_live_install();
+    reconciling
+        .await
+        .expect("the reconciliation initiator completes");
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while svc.rotation_in_progress(&created.id).await {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the failed publication attempt settles");
+    assert!(
+        !svc.entries.read().await.contains_key(&created.id),
+        "the failed attempt cannot leave an incomplete entry as publication proof"
+    );
+
+    *store.broken.lock().await = false;
+    let retained = store
+        .get(&created.id)
+        .await
+        .expect("the retained fence is readable")
+        .expect("the session remains durable");
+    assert_eq!(retained.rotation_claim.as_deref(), Some(claim.as_str()));
+    if let Some(lease) = store.active_session_lease(&created.id).await {
+        store
+            .release_session_lease(&lease)
+            .await
+            .expect("the deliberately orphaned fixture lease is released");
+    }
+
+    let recovered = svc.reconcile().await;
+    assert_eq!(recovered.readopted_sessions, 1);
+    assert_eq!(recovered.reprovisioned_sessions, 0);
+    let published = store
+        .get(&created.id)
+        .await
+        .expect("the recovered publication is readable")
+        .expect("the session remains durable");
+    assert_eq!(published.runtime_id.as_deref(), Some(runtime_id.as_str()));
+    assert_eq!(published.rotation_claim, None);
+    assert_eq!(
+        adapter.issued.load(Ordering::SeqCst),
+        provisioned_before_failure,
+        "recovery readopts the switched runtime instead of provisioning again"
+    );
+
+    let (publication_token, published_screen) = {
+        let mut entries = svc.entries.write().await;
+        let entry = entries
+            .get_mut(&created.id)
+            .expect("the recovered entry is installed");
+        assert!(entry.publication_complete);
+        entry.publication_complete = false;
+        (entry.publication_token.clone(), Arc::clone(&entry.screen))
+    };
+    svc.remove_incomplete_runtime_entry(&created.id, "publication_not_the_owner")
+        .await;
+    let mut entries = svc.entries.write().await;
+    let entry = entries
+        .get_mut(&created.id)
+        .expect("a mismatched cleanup token cannot remove the successor");
+    assert_eq!(entry.publication_token, publication_token);
+    assert!(Arc::ptr_eq(&entry.screen, &published_screen));
+    entry.publication_complete = true;
+}
+
+#[tokio::test]
+async fn a_missing_live_entry_preserves_durable_termination_and_owner_precedence() {
+    let store = Arc::new(FakeStore::default());
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let alice = user("terminated-missing-live-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.status = crate::session::SessionStatus::Terminated;
+    store.seed(&record).await.expect("termination is durable");
+    svc.entries.write().await.remove(&created.id);
+    svc.rotations_in_progress
+        .write()
+        .await
+        .insert(created.id.clone());
+
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &alice,
+        &created.id,
+        CoreError::SessionTerminated,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &svc,
+        &user("foreign-terminated-observer"),
+        &created.id,
+        CoreError::Forbidden,
+    )
+    .await;
 }
 
 #[tokio::test]

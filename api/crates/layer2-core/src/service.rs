@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use layer3_adapter::{KernelAdapter, TerminalInput};
+use layer3_adapter::{AdapterError, KernelAdapter, TerminalInput, TerminalInputSender};
 #[cfg(test)]
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::sync::{OwnedMutexGuard, RwLock};
@@ -51,6 +51,7 @@ impl SessionService {
     ) -> Arc<Self> {
         let SessionPorts {
             context,
+            handovers,
             credentials,
             skills,
             workspaces,
@@ -64,6 +65,7 @@ impl SessionService {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
             lifecycle_gates: Default::default(),
+            input_gates: Default::default(),
             readoption_gates: Default::default(),
             conversation_order_gates: Default::default(),
             prompt_gates: Default::default(),
@@ -73,10 +75,12 @@ impl SessionService {
             event_logs,
             starting: RwLock::new(HashSet::new()),
             rotation_refused: RwLock::new(HashSet::new()),
+            rotations_in_progress: RwLock::new(HashSet::new()),
             adapters,
             screen_factory,
             store,
             context,
+            handovers,
             credentials,
             environments,
             settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),
@@ -84,10 +88,17 @@ impl SessionService {
             deployment_capacity_guard: Default::default(),
             runtime_version: deployment.runtime_version,
             identity: deployment.identity,
+            coordination_holder: format!("cma_{}", uuid::Uuid::new_v4().simple()),
             adopts_untagged: deployment.adopts_untagged,
             retry_backoff_ms: std::sync::atomic::AtomicU64::new(
                 crate::provision::DEFAULT_RETRY_BACKOFF_MS,
             ),
+            #[cfg(test)]
+            pause_next_live_install: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            live_install_paused: tokio::sync::Notify::new(),
+            #[cfg(test)]
+            live_install_resume: tokio::sync::Notify::new(),
         })
     }
 
@@ -102,7 +113,75 @@ impl SessionService {
 
     /// Release a bring-up claim, whatever its outcome.
     pub(crate) async fn finish_start(&self, id: &SessionId) {
+        self.rotations_in_progress.write().await.remove(id);
         self.starting.write().await.remove(id);
+    }
+
+    pub(crate) async fn rotation_in_progress(&self, id: &SessionId) -> bool {
+        self.rotations_in_progress.read().await.contains(id)
+    }
+
+    /// Keep legacy provider mutations from bypassing durable coordination.
+    ///
+    /// Compatibility stores and generation-zero sessions still use the old
+    /// lifecycle while the coordinated implementations are rolled out. Once a
+    /// non-zero authority exists, every provider mutation must arrive through a
+    /// lease-aware path; callers without one fail closed instead of falling back
+    /// to a handle-only adapter call. The remaining compatibility path has no
+    /// cross-replica object identity of its own and is limited to providers that
+    /// either capture immutable deletion identity inside the adapter or do not
+    /// reuse a handle while a lifecycle operation is in flight.
+    pub(crate) async fn require_compatibility_provider_mutation(
+        &self,
+        id: &SessionId,
+        operation: &str,
+    ) -> Result<(), CoreError> {
+        match self.store.runtime_authority(id).await {
+            Ok(Some(authority)) if authority.generation != 0 => {
+                Err(CoreError::RuntimeUnavailable(format!(
+                    "{operation} requires a durable session lease for coordinated runtime authority"
+                )))
+            }
+            Ok(Some(_)) | Err(StoreError::CoordinationDisabled) => Ok(()),
+            Ok(None) => Err(CoreError::SessionNotFound),
+            Err(error) => Err(store_failed(error)),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_next_live_install(&self) {
+        assert!(
+            !self
+                .pause_next_live_install
+                .swap(true, std::sync::atomic::Ordering::SeqCst),
+            "a live installation pause is already armed"
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_until_live_install_paused(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.live_install_paused.notified(),
+        )
+        .await
+        .expect("readiness was committed before the replacement entry was installed");
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resume_live_install(&self) {
+        self.live_install_resume.notify_one();
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn pause_live_install_if_armed(&self) {
+        if self
+            .pause_next_live_install
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.live_install_paused.notify_one();
+            self.live_install_resume.notified().await;
+        }
     }
 
     /// The environment profiles this service resolves sessions against.
@@ -521,7 +600,10 @@ impl SessionService {
                     adapter,
                     geometry,
                     None,
-                    crate::provision_failure::Abandonment::Retire,
+                    crate::provision_support::BringUpContext::compatibility(
+                        crate::provision_failure::Abandonment::Retire,
+                        None,
+                    ),
                 )
                 .await;
         });
@@ -651,27 +733,76 @@ impl SessionService {
     /// Scoped to live sessions on purpose: this guards the terminal-driving
     /// operations, which are meaningless without a runtime to drive.
     pub(crate) async fn authorize(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
+        self.session_for_interaction(caller, id).await?;
         let entries = self.entries.read().await;
-        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-        if !entry.session.is_owned_by(&caller.subject) {
-            return Err(CoreError::Forbidden);
+        if let Some(entry) = entries.get(id) {
+            if !entry.session.is_owned_by(&caller.subject) {
+                return Err(CoreError::Forbidden);
+            }
+            if entry.session.status.is_terminal() {
+                return Err(CoreError::SessionTerminated);
+            }
+            // `is_interactive` also excludes provisioning and idle sessions, whose
+            // existing missing-runtime answers remain unchanged. Rotation alone
+            // still holds an outgoing channel that must not receive new input.
+            if entry.session.status.is_rotating() {
+                return Err(CoreError::SessionRotating);
+            }
+            return Ok(());
         }
-        if entry.session.status.is_terminal() {
-            return Err(CoreError::SessionTerminated);
-        }
-        Ok(())
+        drop(entries);
+        let rotation_in_progress = self.rotation_in_progress(id).await;
+        Err(self
+            .missing_live_session_error(caller, id, rotation_in_progress)
+            .await)
     }
 
-    pub(crate) async fn forward_input(&self, id: &SessionId, input: TerminalInput) {
-        let sender = {
-            let entries = self.entries.read().await;
-            entries.get(id).and_then(|e| e.input.clone())
+    /// Classify an operation whose live runtime entry disappeared.
+    ///
+    /// Compatibility handover can lack a live entry while provisioning its
+    /// replacement. The durable record identifies most of that interval; the
+    /// in-process marker spans the final boundary where readiness is durable but
+    /// the replacement entry is not installed yet. Both are consulted only after
+    /// the live lookup misses so ordinary terminal input retains its in-memory
+    /// path. Ownership is checked before lifecycle state so this fallback cannot
+    /// disclose another owner's session.
+    pub(crate) async fn missing_live_session_error(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+        rotation_in_progress: bool,
+    ) -> CoreError {
+        let record = match self.record(id).await {
+            Ok(record) => record,
+            Err(error) => return error,
         };
-        if let Some(tx) = sender {
-            if tx.send(input).await.is_err() {
-                tracing::warn!(session_id = %id, "runtime input channel closed");
-            }
+        if !record.session.is_owned_by(&caller.subject) {
+            return CoreError::Forbidden;
         }
+        if record.session.status.is_terminal() {
+            return CoreError::SessionTerminated;
+        }
+        if record.is_effectively_rotating() || rotation_in_progress {
+            return CoreError::SessionRotating;
+        }
+        CoreError::SessionNotFound
+    }
+
+    pub(crate) async fn forward_input(
+        &self,
+        id: &SessionId,
+        sender: &TerminalInputSender,
+        input: TerminalInput,
+    ) -> Result<(), CoreError> {
+        sender.send(input).await.map_err(|error| {
+            tracing::warn!(session_id = %id, %error, "terminal input was not delivered");
+            match error {
+                AdapterError::Unavailable(detail) => CoreError::RuntimeUnavailable(detail),
+                AdapterError::Rejected(detail)
+                | AdapterError::AtCapacity(detail)
+                | AdapterError::Unsupported(detail) => CoreError::RuntimeRefused(detail),
+            }
+        })
     }
 }
 

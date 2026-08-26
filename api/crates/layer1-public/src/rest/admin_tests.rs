@@ -8,7 +8,8 @@ use super::*;
 
 use layer2_core::{
     ActivityAction, ActivityId, ActivityOutcome, ActivityTarget, DetailKey, EnvironmentProfileId,
-    KernelId, ProviderInventory, RuntimeEntry, SessionStatus,
+    KernelId, ProviderInventory, ProviderRuntimeGeneration, RuntimeAuthority,
+    RuntimeAuthorityComparison, RuntimeCleanupReason, RuntimeEntry, SessionStatus,
 };
 
 fn inventory(providers: Vec<ProviderInventory>) -> RuntimeInventory {
@@ -19,8 +20,15 @@ fn observed_provider() -> ProviderInventory {
     ProviderInventory {
         kernel: KernelId::new("example-runtime"),
         view: ProviderView::Observed(vec![RuntimeEntry {
-            created_by: None,
+            created_by: Some("plane-a".into()),
             runtime: "runtime-1".into(),
+            generation: ProviderRuntimeGeneration::Recorded(7),
+            durable_authority: Some(RuntimeAuthority {
+                generation: 7,
+                runtime_id: Some("runtime-1".into()),
+            }),
+            authority_comparison: RuntimeAuthorityComparison::Matches,
+            cleanup_reason: None,
             session: Some(SessionId("sesn_1".into())),
             owner: Some(SubjectId("subject-a".into())),
             status: Some(SessionStatus::Ready),
@@ -78,11 +86,51 @@ fn a_running_runtime_renders_with_the_session_and_the_owner_it_belongs_to() {
     let runtime = &json["providers"][0]["runtimes"][0];
 
     assert_eq!(runtime["runtime"], "runtime-1");
+    assert_eq!(runtime["generation"], 7);
+    assert_eq!(runtime["generation_state"], "recorded");
+    assert_eq!(runtime["durable_runtime"], "runtime-1");
+    assert_eq!(runtime["durable_generation"], 7);
+    assert_eq!(runtime["authority_state"], "matches");
+    assert_eq!(runtime["created_by"], "plane-a");
     assert_eq!(runtime["session"], "sesn_1");
     assert_eq!(runtime["owner"], "subject-a");
     assert_eq!(runtime["status"], "ready");
     assert_eq!(runtime["unaccounted"], false);
     assert_eq!(json["running"], 1);
+}
+
+#[test]
+fn stale_provider_generation_is_rendered_against_durable_authority() {
+    let mut provider = observed_provider();
+    let ProviderView::Observed(runtimes) = &mut provider.view else {
+        unreachable!("the fixture is observed")
+    };
+    runtimes[0].generation = ProviderRuntimeGeneration::Recorded(6);
+    runtimes[0].authority_comparison = RuntimeAuthorityComparison::Mismatch;
+
+    let view = InventoryView::render(inventory(vec![provider]));
+    let json = serde_json::to_value(&view).expect("serialises");
+    let runtime = &json["providers"][0]["runtimes"][0];
+
+    assert_eq!(runtime["generation"], 6);
+    assert_eq!(runtime["durable_generation"], 7);
+    assert_eq!(runtime["authority_state"], "mismatch");
+}
+
+#[test]
+fn durable_cleanup_debt_is_visible_until_it_is_acknowledged() {
+    let mut provider = observed_provider();
+    let ProviderView::Observed(runtimes) = &mut provider.view else {
+        unreachable!("the fixture is observed")
+    };
+    runtimes[0].cleanup_reason = Some(RuntimeCleanupReason::RetiredAuthority);
+
+    let view = InventoryView::render(inventory(vec![provider]));
+    let json = serde_json::to_value(&view).expect("serialises");
+    assert_eq!(
+        json["providers"][0]["runtimes"][0]["cleanup_reason"],
+        "retired_authority"
+    );
 }
 
 #[test]
@@ -92,6 +140,10 @@ fn a_runtime_nothing_accounts_for_says_so() {
         view: ProviderView::Observed(vec![RuntimeEntry {
             created_by: None,
             runtime: "runtime-stray".into(),
+            generation: ProviderRuntimeGeneration::Legacy,
+            durable_authority: None,
+            authority_comparison: RuntimeAuthorityComparison::Unaccounted,
+            cleanup_reason: None,
             session: Some(SessionId("sesn_forgotten".into())),
             owner: None,
             status: None,
@@ -101,7 +153,33 @@ fn a_runtime_nothing_accounts_for_says_so() {
     let runtime = &json["providers"][0]["runtimes"][0];
 
     assert_eq!(runtime["unaccounted"], true);
+    assert_eq!(runtime["generation_state"], "legacy");
+    assert_eq!(runtime["authority_state"], "unaccounted");
     assert!(runtime.get("owner").is_none(), "got {runtime}");
+}
+
+#[test]
+fn malformed_generation_metadata_is_not_rendered_as_legacy_absence() {
+    let view = InventoryView::render(inventory(vec![ProviderInventory {
+        kernel: KernelId::new("example-runtime"),
+        view: ProviderView::Observed(vec![RuntimeEntry {
+            created_by: Some("plane-a".into()),
+            runtime: "runtime-corrupt".into(),
+            generation: ProviderRuntimeGeneration::Malformed,
+            durable_authority: None,
+            authority_comparison: RuntimeAuthorityComparison::Unaccounted,
+            cleanup_reason: None,
+            session: None,
+            owner: None,
+            status: None,
+        }]),
+    }]));
+    let json = serde_json::to_value(&view).expect("serialises");
+    let runtime = &json["providers"][0]["runtimes"][0];
+
+    assert_eq!(runtime["generation_state"], "malformed");
+    assert_eq!(runtime["authority_state"], "unaccounted");
+    assert!(runtime.get("generation").is_none(), "got {runtime}");
 }
 
 #[test]

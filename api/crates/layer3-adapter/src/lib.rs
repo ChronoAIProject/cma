@@ -24,14 +24,18 @@
 
 mod conversation;
 mod runtime;
+mod sandbox_reclaimer;
+mod task_retirement;
+mod terminal_input;
 
 pub use runtime::{
-    ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeHandle, RuntimeListing,
-    RuntimeLossReason, RuntimeMode, RuntimeOptions, RuntimePermission, RuntimePolicyReceipt,
-    RuntimeSpec, SkillPackage, TermSize, TerminalChannel, TerminalInput, TerminalOutput,
-    WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
-    WorkspaceEntryPackage, WorkspacePackage,
+    ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeGeneration, RuntimeHandle,
+    RuntimeIdentity, RuntimeListing, RuntimeLossReason, RuntimeMode, RuntimeOptions,
+    RuntimePermission, RuntimePolicyReceipt, RuntimeReservationIdentity, RuntimeSpec, SkillPackage,
+    TermSize, TerminalChannel, TerminalInput, TerminalOutput, WorkspaceCheckpointPackage,
+    WorkspaceCheckpointRequest, WorkspaceEntryKind, WorkspaceEntryPackage, WorkspacePackage,
 };
+pub use terminal_input::TerminalInputSender;
 
 use tokio::sync::mpsc;
 
@@ -272,8 +276,47 @@ pub trait KernelAdapter: Send + Sync {
         ))
     }
 
-    /// Tear the runtime down.
+    /// Tear the runtime down using provider authority captured when this call
+    /// begins.
+    ///
+    /// This handle-only operation exists for compatibility stores. Coordinated
+    /// lifecycle paths must use [`KernelAdapter::terminate_if_identity`]. An
+    /// implementor must capture an immutable provider object identity before
+    /// waiting on local cleanup; where the provider exposes no such identity,
+    /// the deployment must guarantee that handles are not reused while one
+    /// lifecycle operation is in flight.
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError>;
+
+    /// Tear down only the runtime carrying this exact session and generation.
+    ///
+    /// A read followed by [`KernelAdapter::terminate`] is not equivalent: the
+    /// provider could reuse the opaque handle between those calls, and runtime
+    /// generations are only unique within a session. Implementors expose this
+    /// only when their provider can enforce both metadata comparisons in the
+    /// same mutation. A legacy identity requires generation metadata to be
+    /// absent; it is not a wildcard. The default fails closed, leaving durable
+    /// cleanup debt available for a later adapter or operator to retry.
+    async fn terminate_if_identity(&self, _identity: &RuntimeIdentity) -> Result<(), AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this provider cannot conditionally delete an exact runtime identity".into(),
+        ))
+    }
+
+    /// Find every provider runtime created for one exact durable reservation.
+    ///
+    /// More than one result is valid: an unknown provider-create result may be
+    /// retried and a provider without create idempotency can accept both calls.
+    /// Recovery must register at most one and retain exact cleanup authority for
+    /// every duplicate. A whole-fleet census is not equivalent because paging
+    /// without a stable snapshot can omit the one row recovery is looking for.
+    async fn discover_runtime_candidates(
+        &self,
+        _reservation: &RuntimeReservationIdentity,
+    ) -> Result<Vec<RuntimeHandle>, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this provider cannot discover an exact runtime reservation".into(),
+        ))
+    }
 
     /// Every runtime this adapter can see, with the session each was created
     /// for.
