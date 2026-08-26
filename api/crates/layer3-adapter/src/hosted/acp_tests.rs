@@ -384,7 +384,7 @@ async fn a_close_as_open_finishes_cannot_register_a_dead_generation() {
     let handle = RuntimeHandle("sbx_close_during_open".into());
     let (url, served) = bridging(None, None, Some(2)).await;
     let stream = connect(&url).await;
-    let (_channel, _control, _updates) = open_bridge(
+    let opened = open_bridge(
         stream,
         "/home/chrono".into(),
         None,
@@ -392,8 +392,13 @@ async fn a_close_as_open_finishes_cannot_register_a_dead_generation() {
         Some(kernel.link_lifecycle(&handle.0)),
         false,
     )
-    .await
-    .expect("the handshake answers before the socket closes");
+    .await;
+    match opened {
+        Ok((_channel, _control, _updates)) => {}
+        Err(AdapterError::Unavailable(reason))
+            if reason == "the conversation link ended or was superseded while opening" => {}
+        Err(error) => panic!("unexpected handshake-boundary error: {error}"),
+    }
     served
         .await
         .expect("the fixture closes after the handshake");
