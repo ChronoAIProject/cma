@@ -1019,6 +1019,7 @@ fn a_pre_enqueue_retained_rejection_survives_runtime_loss_and_precedes_its_succe
             seeded.clone(),
             vec![malformed],
             None,
+            None,
             retained,
             |_| {},
         );

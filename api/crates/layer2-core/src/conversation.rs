@@ -36,12 +36,15 @@ use layer3_adapter::{
 
 use crate::authz::{Caller, Capability as AuthorizationCapability};
 use crate::capabilities::Capability;
+use crate::conversation_opening::ConversationLinkId;
+use crate::coordination::ConversationLink;
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
-use crate::log::append_batch;
+use crate::log::{append_batch, append_conversation_with, drop_undelivered};
 use crate::service::{store_failed, SessionService};
 use crate::session::SessionStatus;
+use crate::store::{SessionRecord, StoreError};
 
 /// What a session has used, as its runtime reports it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -107,6 +110,170 @@ impl ApprovalResolution {
 }
 
 impl SessionService {
+    /// Publish the durable result of receipt history, then propose its optional
+    /// running transition against that exact record and runtime authority.
+    async fn finish_received_history(
+        self: &Arc<Self>,
+        id: &SessionId,
+        runtime_generation: u64,
+        conversation_link: Option<ConversationLinkId>,
+        conversation_authority: Option<ConversationLink>,
+        runtime_id: Option<String>,
+        committed: SessionRecord,
+        running_from: Option<SessionStatus>,
+    ) {
+        let live_matches = self
+            .install_received_history(
+                id,
+                runtime_generation,
+                conversation_link,
+                conversation_authority.as_ref(),
+                runtime_id.as_deref(),
+                &committed,
+            )
+            .await;
+        let Some(running_from) = running_from else {
+            return;
+        };
+        if !live_matches || committed.session.status != running_from {
+            return;
+        }
+
+        // A history-only write may legitimately rebase over a handover. The
+        // lifecycle proposal may not: it describes work accepted by one exact
+        // conversation link and runtime authority.
+        if conversation_authority.as_ref().is_some_and(|authority| {
+            authority.runtime_generation != runtime_generation
+                || Some(authority.runtime_id.as_str()) != runtime_id.as_deref()
+        }) || committed.runtime_id != runtime_id
+        {
+            return;
+        }
+
+        let continued_service = Arc::clone(self);
+        let continued_id = id.clone();
+        let continued_runtime_id = runtime_id.clone();
+        let continued_authority = conversation_authority.clone();
+        let persisted_authority = conversation_authority.clone();
+        let rejected_service = Arc::clone(self);
+        let rejected_id = id.clone();
+        let rejected_authority = conversation_authority.clone();
+        let commit = {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(id).filter(|entry| {
+                entry.runtime_generation == runtime_generation
+                    && entry.conversation_link == conversation_link
+                    && conversation_authority.as_ref().is_none_or(|authority| {
+                        entry.conversation_authority.as_ref() == Some(authority)
+                    })
+                    && entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                        == runtime_id.as_deref()
+                    && entry.session.status == running_from
+            }) else {
+                return;
+            };
+            append_conversation_with(
+                entry,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Running,
+                    stop_reason: None,
+                    detail: None,
+                    capability: None,
+                },
+                |record| {
+                    record.session.status = SessionStatus::Running;
+                    record.session.stop_reason = None;
+                },
+                persisted_authority,
+                move |committed| async move {
+                    let mut entries = continued_service.entries.write().await;
+                    if let Some(entry) = entries.get_mut(&continued_id).filter(|entry| {
+                        entry.runtime_generation == runtime_generation
+                            && entry.conversation_link == conversation_link
+                            && continued_authority.as_ref().is_none_or(|authority| {
+                                entry.conversation_authority.as_ref() == Some(authority)
+                            })
+                            && entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                                == continued_runtime_id.as_deref()
+                    }) {
+                        if entry.session.status == running_from {
+                            entry.session.status = committed.session.status;
+                            entry.session.stop_reason = committed.session.stop_reason;
+                        }
+                        entry.session.last_seq = committed.session.last_seq;
+                        let event_log = Arc::clone(&entry.event_log);
+                        event_log.synchronize_tail(&mut entry.session.last_seq);
+                    }
+                    ((), ())
+                },
+                move |error| async move {
+                    if matches!(error, StoreError::ConversationLinkChanged { .. }) {
+                        if let (Some(link), Some(authority)) =
+                            (conversation_link, rejected_authority.as_ref())
+                        {
+                            rejected_service
+                                .retire_conversation_link(&rejected_id, link, authority)
+                                .await;
+                        }
+                    }
+                },
+                drop_undelivered,
+            )
+        };
+
+        if let Err(error) = commit.committed().await {
+            tracing::debug!(
+                session_id = %id,
+                %error,
+                "an optional running transition lost its exact durable boundary"
+            );
+            if let Ok(current) = self.record(id).await {
+                self.install_received_history(
+                    id,
+                    runtime_generation,
+                    conversation_link,
+                    conversation_authority.as_ref(),
+                    runtime_id.as_deref(),
+                    &current,
+                )
+                .await;
+            }
+        }
+    }
+
+    /// Bring one still-current live entry to the lifecycle snapshot returned by
+    /// its mandatory history commit without replacing runtime-local state.
+    async fn install_received_history(
+        &self,
+        id: &SessionId,
+        runtime_generation: u64,
+        conversation_link: Option<ConversationLinkId>,
+        conversation_authority: Option<&ConversationLink>,
+        runtime_id: Option<&str>,
+        committed: &SessionRecord,
+    ) -> bool {
+        let mut entries = self.entries.write().await;
+        let Some(entry) = entries.get_mut(id).filter(|entry| {
+            entry.runtime_generation == runtime_generation
+                && entry.conversation_link == conversation_link
+                && conversation_authority.is_none_or(|authority| {
+                    entry.conversation_authority.as_ref() == Some(authority)
+                })
+                && entry.runtime.as_ref().map(|runtime| runtime.0.as_str()) == runtime_id
+        }) else {
+            return false;
+        };
+        if committed.runtime_id.as_deref() == runtime_id {
+            entry.session.status = committed.session.status;
+            entry.session.recovery_state = committed.session.recovery_state;
+            entry.session.stop_reason = committed.session.stop_reason;
+        }
+        entry.session.last_seq = committed.session.last_seq;
+        let event_log = Arc::clone(&entry.event_log);
+        event_log.synchronize_tail(&mut entry.session.last_seq);
+        true
+    }
+
     /// Wait for a provisioning session to accept conversation input.
     ///
     /// Readiness means more than a durable `Ready` status: the runtime's live
@@ -251,7 +418,14 @@ impl SessionService {
             // Recheck the exact live generation while holding the same gates its
             // folder and lifecycle replacement use. The authority check is the
             // final synchronous step before the external delivery.
-            let (input, runtime_generation) = {
+            let (
+                input,
+                runtime_generation,
+                conversation_link,
+                conversation_authority,
+                runtime_id,
+                running_from,
+            ) = {
                 let entries = service.entries.read().await;
                 let entry = entries.get(&id).ok_or(CoreError::SessionNotFound)?;
                 if !entry.session.is_owned_by(&owner) {
@@ -282,7 +456,19 @@ impl SessionService {
                 let input = entry.conversation.clone().ok_or_else(|| {
                     CoreError::RuntimeUnavailable("this session holds no conversation".into())
                 })?;
-                (input, entry.runtime_generation)
+                let running_from = matches!(
+                    entry.session.status,
+                    SessionStatus::Ready | SessionStatus::Idle
+                )
+                .then_some(entry.session.status);
+                (
+                    input,
+                    entry.runtime_generation,
+                    entry.conversation_link,
+                    entry.conversation_authority.clone(),
+                    boundary.authority.runtime_id.clone(),
+                    running_from,
+                )
             };
 
             // A successful receipt makes the complete prompt boundary mandatory
@@ -295,7 +481,7 @@ impl SessionService {
                     ConversationInput::Prompt(vec![ContentBlock::from(text.clone())]),
                 )
                 .await?;
-            let committed = {
+            let mandatory = {
                 let mut entries = service.entries.write().await;
                 let entry = entries
                     .get_mut(&id)
@@ -305,37 +491,57 @@ impl SessionService {
                             "the delivered prompt's runtime generation is no longer live".into(),
                         )
                     })?;
-                entry.pending_approvals.clear();
-                entry.approval_locators.clear();
-                entry.session.status = SessionStatus::Running;
-                entry.session.stop_reason = None;
                 append_batch(
                     entry,
                     [
                         EventKind::TurnStarted,
                         EventKind::OwnerMessage { content: text },
-                        EventKind::StatusChanged {
-                            status: SessionStatus::Running,
-                            stop_reason: None,
-                            detail: None,
-                            capability: None,
-                        },
                     ],
                 )
             };
-            // Immediate runtime updates may now enter the same lane behind this
-            // prompt unit. The service-owned runner retains durable authority
-            // while its mandatory commit settles.
-            drop(ordered_turn);
-            drop(admission);
-            drop(input_fence);
-            let record = committed.committed().await.map_err(store_failed)?;
-            drop(lifecycle);
-            record.session.last_seq.checked_sub(2).ok_or_else(|| {
+            // Keep immediate runtime updates behind both receipt phases. The
+            // mandatory history has no lifecycle ownership and can rebase over
+            // a handover; the exact optional proposal below cannot.
+            let record = mandatory.committed().await.map_err(store_failed)?;
+            let turn_started = record.session.last_seq.checked_sub(1).ok_or_else(|| {
                 CoreError::RuntimeUnavailable(
                     "session store: committed prompt boundary had no valid sequence".into(),
                 )
-            })
+            })?;
+            // `TurnStarted` resets approval identity during durable replay. Do
+            // the same locally only after that boundary is committed, and only
+            // on the exact conversation entry that delivered this prompt.
+            {
+                let mut entries = service.entries.write().await;
+                if let Some(entry) = entries.get_mut(&id).filter(|entry| {
+                    entry.runtime_generation == runtime_generation
+                        && entry.conversation_link == conversation_link
+                        && conversation_authority.as_ref().is_none_or(|authority| {
+                            entry.conversation_authority.as_ref() == Some(authority)
+                        })
+                        && entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                            == runtime_id.as_deref()
+                }) {
+                    entry.pending_approvals.clear();
+                    entry.approval_locators.clear();
+                }
+            }
+            service
+                .finish_received_history(
+                    &id,
+                    runtime_generation,
+                    conversation_link,
+                    conversation_authority,
+                    runtime_id,
+                    record,
+                    running_from,
+                )
+                .await;
+            drop(ordered_turn);
+            drop(admission);
+            drop(input_fence);
+            drop(lifecycle);
+            Ok(turn_started)
         })
         .await
     }
@@ -467,7 +673,7 @@ impl SessionService {
             let input_fence = service.input_gates.gate(&id).read_owned().await;
             let ordering = service.conversation_order_gates.gate(&id);
             let ordered_resolution = ordering.lock().await;
-            let (input, locators, runtime_generation) = {
+            let (input, locators, runtime_generation, conversation_link, conversation_authority) = {
                 let entries = service.entries.read().await;
                 let entry = entries.get(&id).ok_or(CoreError::SessionNotFound)?;
                 if !entry.session.is_owned_by(&owner) {
@@ -504,39 +710,53 @@ impl SessionService {
                             .expect("the batch was validated against this map")
                     })
                     .collect::<Vec<_>>();
-                (input, locators, entry.runtime_generation)
+                (
+                    input,
+                    locators,
+                    entry.runtime_generation,
+                    entry.conversation_link,
+                    entry.conversation_authority.clone(),
+                )
             };
 
             let mut delivered: usize = 0;
+            let mut delivered_runtime_id = None;
             let mut delivery_error = None;
-            for (resolution, locator) in resolutions.iter().zip(locators) {
+            for (resolution, locator) in resolutions.iter().zip(locators.iter().cloned()) {
                 let allowed = authority.ensure_delivery_allowed().and_then(|boundary| {
                     if boundary.authority.generation == runtime_generation {
-                        Ok(())
+                        Ok(boundary.authority.runtime_id.clone())
                     } else {
                         Err(CoreError::RuntimeUnavailable(
                             "the live conversation belongs to another runtime generation".into(),
                         ))
                     }
                 });
-                let result = match allowed {
-                    Ok(()) => {
-                        service
-                            .toward_runtime(
-                                &id,
-                                &input,
-                                ConversationInput::PermissionAnswer {
-                                    id: resolution.request_id.clone(),
-                                    locator,
-                                    decision: intent_for(resolution.decision),
-                                },
-                            )
-                            .await
+                let runtime_id = match allowed {
+                    Ok(runtime_id) => runtime_id,
+                    Err(error) => {
+                        delivery_error = Some(error);
+                        break;
                     }
-                    Err(error) => Err(error),
                 };
-                match result {
-                    Ok(()) => delivered += 1,
+                match service
+                    .toward_runtime(
+                        &id,
+                        &input,
+                        ConversationInput::PermissionAnswer {
+                            id: resolution.request_id.clone(),
+                            locator,
+                            decision: intent_for(resolution.decision),
+                        },
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        if delivered_runtime_id.is_none() {
+                            delivered_runtime_id = Some(runtime_id);
+                        }
+                        delivered += 1;
+                    }
                     Err(error) => {
                         delivery_error = Some(error);
                         break;
@@ -547,7 +767,7 @@ impl SessionService {
             // Whatever prefix returned receipts is mandatory finalization, even
             // when a later answer could not start because renewal authority was
             // lost. Never leave a delivered answer outstanding in the log.
-            let commit = if delivered == 0 {
+            let mandatory = if delivered == 0 {
                 None
             } else {
                 let mut entries = service.entries.write().await;
@@ -559,25 +779,8 @@ impl SessionService {
                             "the delivered approvals' runtime generation is no longer live".into(),
                         )
                     })?;
-                let mut events = Vec::with_capacity(delivered.saturating_add(1));
+                let mut events = Vec::with_capacity(delivered);
                 for resolution in &resolutions[..delivered] {
-                    let removed = entry.pending_approvals.remove(&resolution.request_id);
-                    debug_assert!(
-                        removed.is_some(),
-                        "a prevalidated approval remains outstanding"
-                    );
-                    if entry.pending_approvals.is_empty()
-                        && entry.session.status == SessionStatus::Idle
-                    {
-                        entry.session.status = SessionStatus::Running;
-                        entry.session.stop_reason = None;
-                        events.push(EventKind::StatusChanged {
-                            status: SessionStatus::Running,
-                            stop_reason: None,
-                            detail: None,
-                            capability: None,
-                        });
-                    }
                     events.push(EventKind::ApprovalResolved {
                         request_id: resolution.request_id.clone(),
                         allowed: matches!(resolution.decision, ApprovalDecision::Allow),
@@ -586,14 +789,55 @@ impl SessionService {
                 Some(append_batch(entry, events))
             };
 
-            // Immediate runtime updates can now follow the accepted prefix in
-            // the same lane. The durable interaction itself remains service-owned
-            // until the prefix commit settles.
+            // Keep runtime effects behind the exact accepted prefix and its
+            // optional lifecycle proposal. A later delivery error is returned
+            // only after every receipt in that prefix is durable.
+            if let Some(mandatory) = mandatory {
+                let record = mandatory.committed().await.map_err(store_failed)?;
+                let delivered_runtime_id =
+                    delivered_runtime_id.expect("a delivered prefix has runtime authority");
+                let running_from = {
+                    let mut entries = service.entries.write().await;
+                    entries
+                        .get_mut(&id)
+                        .filter(|entry| {
+                            entry.runtime_generation == runtime_generation
+                                && entry.conversation_link == conversation_link
+                                && conversation_authority.as_ref().is_none_or(|authority| {
+                                    entry.conversation_authority.as_ref() == Some(authority)
+                                })
+                                && entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                                    == delivered_runtime_id.as_deref()
+                        })
+                        .and_then(|entry| {
+                            for (resolution, locator) in
+                                resolutions[..delivered].iter().zip(&locators[..delivered])
+                            {
+                                if entry.pending_approvals.get(&resolution.request_id)
+                                    == Some(locator)
+                                {
+                                    entry.pending_approvals.remove(&resolution.request_id);
+                                }
+                            }
+                            (entry.pending_approvals.is_empty()
+                                && entry.session.status == SessionStatus::Idle)
+                                .then_some(SessionStatus::Idle)
+                        })
+                };
+                service
+                    .finish_received_history(
+                        &id,
+                        runtime_generation,
+                        conversation_link,
+                        conversation_authority,
+                        delivered_runtime_id,
+                        record,
+                        running_from,
+                    )
+                    .await;
+            }
             drop(ordered_resolution);
             drop(input_fence);
-            if let Some(commit) = commit {
-                commit.committed().await.map_err(store_failed)?;
-            }
             drop(lifecycle);
             if let Some(error) = delivery_error {
                 return Err(error);
