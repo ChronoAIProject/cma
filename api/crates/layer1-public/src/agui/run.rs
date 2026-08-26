@@ -149,13 +149,66 @@ pub(super) async fn run(
     // a session. In particular, a malformed fresh request must not leave a
     // provisioning session behind merely to discover that it has no prompt.
     let action = action_of(&body)?;
+    let opening_service = Arc::clone(&service);
+    let opening_caller = caller.clone();
+    let credential = credential.map(|axum::Extension(credential)| credential);
+    let opening = tokio::spawn(async move {
+        prepare_run(
+            opening_service,
+            operations,
+            opening_caller,
+            credential,
+            body,
+            action,
+        )
+        .await
+    });
+    let prepared = match opening.await {
+        Ok(result) => result?,
+        Err(error) => {
+            tracing::error!(%error, "owned AG-UI run opening task failed");
+            return Err(RunFailure::Stored(StoredProblem::opening_task_failed()));
+        }
+    };
+
+    Ok(Sse::new(events(
+        service,
+        caller,
+        prepared.id,
+        RunBoundary {
+            id: prepared.run_id,
+        },
+        prepared.plan,
+    ))
+    .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL)))
+}
+
+struct PreparedRun {
+    id: SessionId,
+    run_id: String,
+    plan: StreamPlan,
+}
+
+/// Own preparation through creation and admission-task handoff.
+///
+/// If the HTTP request disappears while this future is running, dropping its
+/// `JoinHandle` detaches it. It still resolves the creation alias and reaches
+/// `turn_admission::prepare`, whose own task then owns the prompt or resume.
+async fn prepare_run(
+    service: Arc<SessionService>,
+    operations: Arc<dyn OperationStore>,
+    caller: layer2_core::Caller,
+    credential: Option<DelegatedCredential>,
+    body: RunRequest,
+    action: RunAction,
+) -> Result<PreparedRun, RunFailure> {
     let requested = SessionId(body.thread_id.clone());
     let session = session_for_run(
         Arc::clone(&service),
         operations.clone(),
         caller.clone(),
         requested,
-        credential.map(|axum::Extension(credential)| credential),
+        credential,
         body.forwarded_props
             .as_ref()
             .and_then(|props| props.environment_profile.clone()),
@@ -204,14 +257,7 @@ pub(super) async fn run(
     )
     .await?;
 
-    Ok(Sse::new(events(
-        service,
-        caller,
-        id,
-        RunBoundary { id: run_id },
-        plan,
-    ))
-    .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL)))
+    Ok(PreparedRun { id, run_id, plan })
 }
 
 fn action_of(body: &RunRequest) -> Result<RunAction, CoreError> {
