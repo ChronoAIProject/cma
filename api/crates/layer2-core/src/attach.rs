@@ -383,6 +383,11 @@ impl SessionService {
             if entry.attached.is_some() && claim == AttachmentClaim::Exclusive {
                 return Err(CoreError::AlreadyAttached);
             }
+            if entry.attachments_issued == u64::MAX {
+                return Err(CoreError::RuntimeUnavailable(
+                    "the terminal attachment generation is exhausted".into(),
+                ));
+            }
             let boundary = authority.ensure_delivery_allowed()?;
             if entry.runtime_generation != boundary.authority.generation {
                 return Err(CoreError::RuntimeUnavailable(
@@ -538,7 +543,18 @@ impl SessionService {
                             .attached
                             .as_ref()
                             .map(|held| held.supersede.clone());
-                        let generation = entry.attachments_issued.saturating_add(1);
+                        let Some(generation) = entry.attachments_issued.checked_add(1) else {
+                            return refuse_committed_attachment(
+                                Arc::clone(&service),
+                                session_id.clone(),
+                                committed,
+                                Arc::clone(&screen),
+                                ownership,
+                                CoreError::RuntimeUnavailable(
+                                    "the terminal attachment generation is exhausted".into(),
+                                ),
+                            );
+                        };
                         let (supersede, superseded) = broadcast::channel(1);
                         entry.session.geometry = committed.session.geometry;
                         entry.session.last_seq = committed.session.last_seq;
