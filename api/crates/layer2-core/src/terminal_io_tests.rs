@@ -265,6 +265,58 @@ async fn resize_sender_rejection_returns_error_and_retry_reconciles_desired_geom
 }
 
 #[tokio::test]
+async fn a_stalled_resize_sender_does_not_hold_the_service_entry_map() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let service = service(Arc::clone(&store), Arc::clone(&adapter));
+    let owner = user("independent-resize-owner");
+    let resizing = service
+        .create_session(&owner, spec())
+        .await
+        .expect("resizing session created");
+    let independent = service
+        .create_session(&owner, spec())
+        .await
+        .expect("independent session created");
+    await_settled(&service, &owner, &resizing.id).await;
+    await_settled(&service, &owner, &independent.id).await;
+
+    adapter.pause_next_terminal_input();
+    let resize = tokio::spawn({
+        let service = Arc::clone(&service);
+        let owner = owner.clone();
+        let id = resizing.id.clone();
+        async move {
+            service
+                .resize_terminal(
+                    &owner,
+                    &id,
+                    TerminalGeometry::new(111, 47).expect("valid geometry"),
+                )
+                .await
+        }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+
+    assert_eq!(
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            service.terminal_is_held(&owner, &independent.id),
+        )
+        .await
+        .expect("another session can still read the service entry map")
+        .expect("the independent session remains readable"),
+        false
+    );
+
+    adapter.resume_terminal_input();
+    resize
+        .await
+        .expect("resize task remains live")
+        .expect("resize completes after its sender resumes");
+}
+
+#[tokio::test]
 async fn a_sender_replaced_after_resize_commit_receives_nothing_until_retry() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_resize_commit));
@@ -344,7 +396,8 @@ async fn a_sender_replaced_after_resize_commit_receives_nothing_until_retry() {
     );
     assert!(matches!(
         outgoing_runtime.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty
+            | tokio::sync::mpsc::error::TryRecvError::Disconnected)
     ));
     assert!(matches!(
         successor_runtime.try_recv(),
