@@ -42,6 +42,14 @@ pub struct BatchSandboxReclaimer {
     namespace: String,
 }
 
+/// One immutable Kubernetes object version captured before destructive work.
+#[derive(Debug, Clone)]
+pub(crate) struct CapturedSandbox {
+    handle: RuntimeHandle,
+    uid: String,
+    resource_version: String,
+}
+
 impl BatchSandboxReclaimer {
     /// Build from the in-cluster identity or active kubeconfig.
     pub async fn infer() -> Result<Self, SandboxError> {
@@ -72,6 +80,22 @@ impl BatchSandboxReclaimer {
         Self { api, namespace }
     }
 
+    /// Capture the provider object currently carrying this handle.
+    pub(crate) async fn capture_delete_target(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Result<Option<CapturedSandbox>, SandboxError> {
+        let Some(object) = self
+            .api
+            .get_opt(&handle.0)
+            .await
+            .map_err(|error| kube_error("read BatchSandbox before fenced deletion", error))?
+        else {
+            return Ok(None);
+        };
+        self.provider_version(&object, handle).map(Some)
+    }
+
     /// Delete only the exact runtime identity, and return only after that UID
     /// is confirmed absent.
     pub async fn delete_if_identity(&self, identity: &RuntimeIdentity) -> Result<(), SandboxError> {
@@ -84,16 +108,29 @@ impl BatchSandboxReclaimer {
             return Ok(());
         };
         let target = self.verify_delete_target(&object, identity)?;
+        self.delete_captured(target).await
+    }
+
+    /// Delete exactly a previously captured Kubernetes object version.
+    pub(crate) async fn delete_captured(
+        &self,
+        target: CapturedSandbox,
+    ) -> Result<(), SandboxError> {
+        let CapturedSandbox {
+            handle,
+            uid,
+            resource_version,
+        } = target;
         let params = DeleteParams {
             grace_period_seconds: Some(0),
             propagation_policy: Some(kube::api::PropagationPolicy::Foreground),
             preconditions: Some(Preconditions {
-                uid: Some(target.uid.clone()),
-                resource_version: Some(target.resource_version),
+                uid: Some(uid.clone()),
+                resource_version: Some(resource_version),
             }),
             ..DeleteParams::default()
         };
-        match self.api.delete(&identity.handle.0, &params).await {
+        match self.api.delete(&handle.0, &params).await {
             Ok(_) => {}
             Err(kube::Error::Api(response)) if response.is_not_found() => return Ok(()),
             Err(error) => {
@@ -104,8 +141,8 @@ impl BatchSandboxReclaimer {
             }
         }
 
-        let handle = identity.handle.0.clone();
-        let target_uid = target.uid;
+        let handle = handle.0;
+        let target_uid = uid;
         tokio::time::timeout(DELETE_CONFIRM_TIMEOUT, async {
             loop {
                 let current =
@@ -127,7 +164,7 @@ impl BatchSandboxReclaimer {
         .map_err(|_| {
             SandboxError::Unreachable(format!(
                 "BatchSandbox {} was not confirmed deleted within {} seconds",
-                identity.handle.0,
+                handle,
                 DELETE_CONFIRM_TIMEOUT.as_secs()
             ))
         })?
@@ -184,7 +221,7 @@ impl BatchSandboxReclaimer {
         &self,
         object: &DynamicObject,
         identity: &RuntimeIdentity,
-    ) -> Result<TargetVersion, SandboxError> {
+    ) -> Result<CapturedSandbox, SandboxError> {
         self.verify_object_envelope(object, &identity.handle)?;
         let labels = object.metadata.labels.as_ref().ok_or_else(|| {
             identity_mismatch(&identity.handle, "has no provider metadata labels")
@@ -210,13 +247,31 @@ impl BatchSandboxReclaimer {
             }
             None => {}
         }
-        let uid = required_metadata(object.metadata.uid.as_deref(), &identity.handle, "UID")?;
+        self.captured_version(object, &identity.handle)
+    }
+
+    fn provider_version(
+        &self,
+        object: &DynamicObject,
+        handle: &RuntimeHandle,
+    ) -> Result<CapturedSandbox, SandboxError> {
+        self.verify_object_envelope(object, handle)?;
+        self.captured_version(object, handle)
+    }
+
+    fn captured_version(
+        &self,
+        object: &DynamicObject,
+        handle: &RuntimeHandle,
+    ) -> Result<CapturedSandbox, SandboxError> {
+        let uid = required_metadata(object.metadata.uid.as_deref(), handle, "UID")?;
         let resource_version = required_metadata(
             object.metadata.resource_version.as_deref(),
-            &identity.handle,
+            handle,
             "resourceVersion",
         )?;
-        Ok(TargetVersion {
+        Ok(CapturedSandbox {
+            handle: handle.clone(),
             uid,
             resource_version,
         })
@@ -280,11 +335,6 @@ impl BatchSandboxReclaimer {
             .ok_or_else(|| identity_mismatch(handle, "has no provider metadata labels"))?;
         require_label(labels, SANDBOX_ID_LABEL, &handle.0, handle)
     }
-}
-
-struct TargetVersion {
-    uid: String,
-    resource_version: String,
 }
 
 fn require_label(
@@ -360,6 +410,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use super::*;
+    use crate::sandbox::SandboxClient;
 
     const TEST_NAMESPACE: &str = "chrono-bot";
 
@@ -613,6 +664,81 @@ mod tests {
         assert_eq!(delete["propagationPolicy"], "Foreground");
         assert_eq!(delete["preconditions"]["uid"], "uid-1");
         assert_eq!(delete["preconditions"]["resourceVersion"], "rv-7");
+    }
+
+    #[tokio::test]
+    async fn client_deletes_only_the_provider_version_captured_before_cleanup() {
+        let original = batch_sandbox("sbx-1", "sesn_1", None, None, "uid-old", "rv-old");
+        let successor = batch_sandbox("sbx-1", "sesn_2", None, None, "uid-new", "rv-new");
+        let fixture = serve(vec![
+            FixtureResponse::ok(original.to_string()),
+            FixtureResponse::ok(success_status()),
+            FixtureResponse::ok(successor.to_string()),
+        ])
+        .await;
+        let client =
+            SandboxClient::new(&fixture.base_url, "test-key").with_reclaimer(fixture.reclaimer());
+
+        let target = client
+            .capture_delete_target("sbx-1")
+            .await
+            .expect("provider identity is readable")
+            .expect("the original provider object exists");
+        client
+            .delete_captured(target)
+            .await
+            .expect("the captured provider object is deleted");
+
+        let requests = fixture.finish().await;
+        assert_eq!(requests.len(), 3);
+        assert!(request_line(&requests[0]).starts_with("GET "));
+        assert!(request_line(&requests[1]).starts_with("DELETE "));
+        assert!(request_line(&requests[2]).starts_with("GET "));
+        let delete = request_body(&requests[1]);
+        assert_eq!(delete["preconditions"]["uid"], "uid-old");
+        assert_eq!(delete["preconditions"]["resourceVersion"], "rv-old");
+    }
+
+    #[tokio::test]
+    async fn precondition_conflict_preserves_a_successor_that_reused_the_handle() {
+        let original = batch_sandbox("sbx-1", "sesn_1", None, None, "uid-old", "rv-old");
+        let successor = batch_sandbox("sbx-1", "sesn_2", None, None, "uid-new", "rv-new");
+        let fixture = serve(vec![
+            FixtureResponse::ok(original.to_string()),
+            FixtureResponse::rejected(409, "Conflict"),
+            FixtureResponse::ok(successor.to_string()),
+        ])
+        .await;
+        let reclaimer = fixture.reclaimer();
+        let handle = RuntimeHandle("sbx-1".into());
+
+        let captured = reclaimer
+            .capture_delete_target(&handle)
+            .await
+            .expect("the original identity is readable")
+            .expect("the original exists");
+        assert_eq!(captured.uid, "uid-old");
+        let error = reclaimer
+            .delete_captured(captured)
+            .await
+            .expect_err("a successor cannot satisfy the old preconditions");
+        assert!(matches!(error, SandboxError::Rejected { status: 409, .. }));
+
+        let survivor = reclaimer
+            .capture_delete_target(&handle)
+            .await
+            .expect("the successor identity is readable")
+            .expect("the successor survives");
+        assert_eq!(survivor.uid, "uid-new");
+
+        let requests = fixture.finish().await;
+        assert_eq!(requests.len(), 3);
+        assert!(request_line(&requests[0]).starts_with("GET "));
+        assert!(request_line(&requests[1]).starts_with("DELETE "));
+        assert!(request_line(&requests[2]).starts_with("GET "));
+        let delete = request_body(&requests[1]);
+        assert_eq!(delete["preconditions"]["uid"], "uid-old");
+        assert_eq!(delete["preconditions"]["resourceVersion"], "rv-old");
     }
 
     #[tokio::test]

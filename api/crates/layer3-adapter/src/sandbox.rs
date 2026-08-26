@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 pub use crate::sandbox_reclaimer::BatchSandboxReclaimer;
+use crate::sandbox_reclaimer::CapturedSandbox;
 use crate::{RuntimeHandle, RuntimeIdentity, RuntimeReservationIdentity};
 
 /// Header carrying the provider API key.
@@ -192,6 +193,19 @@ pub struct SandboxClient {
     reclaimer: Option<BatchSandboxReclaimer>,
 }
 
+/// Provider authority captured before a raw termination can pause on link
+/// retirement or any other fallible cleanup.
+pub(crate) enum SandboxDeleteTarget {
+    /// Immutable Kubernetes identity bound to the reclaimer that captured it.
+    Fenced {
+        reclaimer: BatchSandboxReclaimer,
+        target: CapturedSandbox,
+    },
+    /// Compatibility deployments without Kubernetes authority can only state
+    /// the provider's historical non-reuse assumption explicitly.
+    UnfencedHandle(String),
+}
+
 /// Strip any scheme and trailing slash from a provider endpoint.
 ///
 /// The provider returns a host and path on its own, which is not a URL until
@@ -254,6 +268,37 @@ impl SandboxClient {
             )
         })?;
         reclaimer.delete_if_identity(identity).await
+    }
+
+    /// Capture deletion authority before anything waits on runtime cleanup.
+    pub(crate) async fn capture_delete_target(
+        &self,
+        id: &str,
+    ) -> Result<Option<SandboxDeleteTarget>, SandboxError> {
+        let Some(reclaimer) = self.reclaimer.as_ref() else {
+            return Ok(Some(SandboxDeleteTarget::UnfencedHandle(id.to_string())));
+        };
+        let target = reclaimer
+            .capture_delete_target(&RuntimeHandle(id.to_string()))
+            .await?;
+        Ok(target.map(|target| SandboxDeleteTarget::Fenced {
+            reclaimer: reclaimer.clone(),
+            target,
+        }))
+    }
+
+    /// Exercise only the provider authority captured by
+    /// [`SandboxClient::capture_delete_target`].
+    pub(crate) async fn delete_captured(
+        &self,
+        target: SandboxDeleteTarget,
+    ) -> Result<(), SandboxError> {
+        match target {
+            SandboxDeleteTarget::Fenced { reclaimer, target } => {
+                reclaimer.delete_captured(target).await
+            }
+            SandboxDeleteTarget::UnfencedHandle(id) => self.delete_unfenced(&id).await,
+        }
     }
 
     /// Discover every provider create for an exact durable reservation.
@@ -484,8 +529,12 @@ impl SandboxClient {
         Self::decode(resp).await
     }
 
-    /// Delete a sandbox. A sandbox already gone is not an error.
-    pub async fn delete(&self, id: &str) -> Result<(), SandboxError> {
+    /// Delete a sandbox by handle. A sandbox already gone is not an error.
+    ///
+    /// This is the compatibility fallback for deployments without Kubernetes
+    /// object authority. Such deployments must guarantee that provider handles
+    /// are not reused while one lifecycle operation is in flight.
+    async fn delete_unfenced(&self, id: &str) -> Result<(), SandboxError> {
         let url = format!("{}/v1/sandboxes/{id}", self.base_url);
         let resp = self
             .http

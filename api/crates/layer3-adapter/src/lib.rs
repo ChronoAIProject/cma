@@ -259,7 +259,15 @@ pub trait KernelAdapter: Send + Sync {
         credential: &str,
     ) -> Result<(), AdapterError>;
 
-    /// Tear the runtime down.
+    /// Tear the runtime down using provider authority captured when this call
+    /// begins.
+    ///
+    /// This handle-only operation exists for compatibility stores. Coordinated
+    /// lifecycle paths must use [`KernelAdapter::terminate_if_identity`]. An
+    /// implementor must capture an immutable provider object identity before
+    /// waiting on local cleanup; where the provider exposes no such identity,
+    /// the deployment must guarantee that handles are not reused while one
+    /// lifecycle operation is in flight.
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError>;
 
     /// Tear down only the runtime carrying this exact session and generation.
