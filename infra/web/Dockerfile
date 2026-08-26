@@ -23,8 +23,12 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
 # Pull security fixes published after the base image was cut. Without this the
 # image ships known-fixed CVEs and the vulnerability gate fails, correctly.
+# CI and release builds change this value on every attempt so Docker cannot
+# reuse an OS refresh layer after the package repository publishes a fix.
+ARG OS_SECURITY_REFRESH=local
 USER root
-RUN apk upgrade --no-cache
+RUN test -n "${OS_SECURITY_REFRESH}" \
+    && apk upgrade --no-cache
 USER 101:101
 COPY --from=build /build/web/dist /usr/share/nginx/html
 # Same-origin proxy for the API and the terminal WebSocket, so the bundle needs
