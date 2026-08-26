@@ -223,6 +223,7 @@ pub struct EffectRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct LaunchOverrides {
     #[serde(default)]
     pub task_inputs: BTreeMap<String, Value>,
@@ -351,6 +352,10 @@ pub struct Launch {
     pub owner: SubjectId,
     pub revision: TriggerRevision,
     pub revision_digest: String,
+    /// Exact upstream commit used by every fork, workspace, and contribution
+    /// effect. Branch-head mode refreshes this at Start.
+    #[serde(default)]
+    pub source_sha: String,
     pub state: LaunchState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<LaunchBlockedReason>,
@@ -425,6 +430,12 @@ impl Launch {
             id: id.clone(),
             owner,
             revision_digest: revision.digest.clone(),
+            source_sha: revision
+                .content
+                .upstream
+                .observed_source_sha
+                .clone()
+                .unwrap_or_default(),
             revision,
             state: LaunchState::Draft,
             blocked_reason: None,
@@ -478,6 +489,42 @@ impl Launch {
         let now = now.into();
         self.updated_at = now.clone();
         self.push_event(now, correlation_id, LaunchEventKind::DraftUpdated)
+    }
+
+    /// Record the explicit warning accepted before replacing a current Launch.
+    ///
+    /// The immutable revision digest is the snapshot for this action: a New
+    /// Launch has no editable effective configuration until after it exists.
+    pub fn acknowledge_new_launch(
+        &mut self,
+        subject: SubjectId,
+        confirmed_at: impl Into<String>,
+        idempotency_key_hash: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        if self.state != LaunchState::Draft || subject != self.owner {
+            return Err(TriggerValidationError::field(
+                "confirmation",
+                "does not authorize a separate Launch for this subject",
+            ));
+        }
+        let confirmed_at = confirmed_at.into();
+        let confirmation = Confirmation {
+            action: ConfirmationAction::NewLaunch,
+            subject,
+            snapshot_digest: self.revision_digest.clone(),
+            confirmed_at: confirmed_at.clone(),
+            idempotency_key_hash: idempotency_key_hash.into(),
+        };
+        self.confirmations.push(confirmation);
+        self.updated_at = confirmed_at.clone();
+        self.push_event(
+            confirmed_at,
+            correlation_id,
+            LaunchEventKind::ConfirmationRecorded {
+                action: ConfirmationAction::NewLaunch,
+            },
+        )
     }
 
     pub fn select_connection(
@@ -540,6 +587,7 @@ impl Launch {
                 "the captured revision digest no longer matches its content",
             ));
         }
+        super::validate_sha("source_sha", &self.source_sha)?;
         let connection = self.connection.as_ref().ok_or_else(|| {
             TriggerValidationError::field("connection", "select an eligible connection")
         })?;
@@ -683,10 +731,13 @@ impl Launch {
         if self.state.is_terminal() {
             return Ok(());
         }
-        if confirmation.action != ConfirmationAction::Cancel || confirmation.subject != self.owner {
+        if confirmation.action != ConfirmationAction::Cancel
+            || confirmation.subject != self.owner
+            || confirmation.snapshot_digest != self.effective.digest
+        {
             return Err(TriggerValidationError::field(
                 "confirmation",
-                "does not authorize cancellation",
+                "does not authorize cancellation of this exact Launch snapshot",
             ));
         }
         let now = now.into();

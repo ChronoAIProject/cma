@@ -16,7 +16,7 @@ use axum::{
 use layer2_core::{
     Caller, CoreError, EnvironmentProfileService, OperationStore, PublicIdentity, Quote, Session,
     SessionCapabilities, SessionCapability, SessionId, SessionService, SessionSpec,
-    TerminalGeometry, UserDirectory,
+    TerminalGeometry, TriggerConnectionManager, TriggerService, UserDirectory,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -31,6 +31,7 @@ mod openapi_shapes;
 mod operate;
 mod problems;
 mod tickets;
+mod triggers;
 
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
@@ -722,6 +723,8 @@ pub enum RequestFailure {
     Refused(Problem),
     /// Durable state could not be read or written.
     Store(crate::auth::StoreUnavailable),
+    /// A Trigger, connection, or Launch command was refused.
+    Trigger(layer2_core::TriggerServiceError),
 }
 
 impl From<CoreError> for RequestFailure {
@@ -739,6 +742,12 @@ impl From<Problem> for RequestFailure {
 impl From<layer2_core::store::StoreError> for RequestFailure {
     fn from(_: layer2_core::store::StoreError) -> Self {
         Self::Store(crate::auth::StoreUnavailable)
+    }
+}
+
+impl From<layer2_core::TriggerServiceError> for RequestFailure {
+    fn from(error: layer2_core::TriggerServiceError) -> Self {
+        Self::Trigger(error)
     }
 }
 
@@ -767,6 +776,7 @@ impl IntoResponse for RequestFailure {
             Self::Query(e) => e.into_response(),
             Self::Refused(e) => e.into_response(),
             Self::Store(e) => e.into_response(),
+            Self::Trigger(e) => triggers::TriggerProblem(e).into_response(),
         }
     }
 }
@@ -967,6 +977,18 @@ mod pagination;
 /// route at a time.
 pub mod admin;
 
+/// Trigger resources share REST's operation claims while retaining their own
+/// domain and reusable-connection ports.
+#[derive(Clone)]
+pub struct TriggersState {
+    /// Provider-neutral Trigger and Launch commands.
+    pub triggers: Arc<TriggerService>,
+    /// Reusable contributor connection operations.
+    pub connections: Arc<dyn TriggerConnectionManager>,
+    /// The same durable operation claims used by the existing REST commands.
+    pub operations: Arc<dyn OperationStore>,
+}
+
 /// What the session routes are served from.
 ///
 /// The session service and collaborators used to render its public view.
@@ -990,6 +1012,8 @@ pub struct SessionsState {
     pub environments: Arc<EnvironmentProfileService>,
     /// Durable claims used by the operations that promise one execution.
     pub operations: Arc<dyn OperationStore>,
+    /// Trigger workflow surface, when composed by this deployment.
+    pub triggers: Option<TriggersState>,
 }
 
 impl FromRef<SessionsState> for Arc<SessionService> {
@@ -1030,11 +1054,14 @@ pub fn router(state: SessionsState) -> Router {
 /// Compose every REST resource and the generated anonymous contract route.
 pub fn complete_router(state: SessionsState, admin: Arc<admin::AdminState>) -> Router {
     let environments = Arc::clone(&state.environments);
-    openapi::finish(
-        documented_router(state)
-            .merge(environments::documented_router(environments))
-            .merge(admin::documented_router(admin)),
-    )
+    let triggers = state.triggers.clone();
+    let mut documented = documented_router(state)
+        .merge(environments::documented_router(environments))
+        .merge(admin::documented_router(admin));
+    if let Some(triggers) = triggers {
+        documented = documented.merge(triggers::documented_router(triggers));
+    }
+    openapi::finish(documented)
 }
 
 fn documented_router(state: SessionsState) -> OpenApiRouter {

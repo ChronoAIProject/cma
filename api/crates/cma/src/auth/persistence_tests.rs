@@ -89,6 +89,7 @@ async fn two_instances_share_browser_sessions_and_consume_login_once() {
         .put_login_attempt(LoginAttempt {
             id: login_id.clone(),
             verifier: SecretValue::new("verifier".into()),
+            return_to: None,
             expires_at: SystemTime::now() + Duration::from_secs(60),
         })
         .await

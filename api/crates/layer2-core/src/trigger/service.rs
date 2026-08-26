@@ -3,11 +3,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::{
-    AuthorityProvenance, Confirmation, ConnectionSnapshot, Launch, LaunchId, LaunchOverrides,
-    LaunchStore, PublicTriggerId, PublishedRevision, PublisherAuthority, TriggerAvailability,
-    TriggerDraft, TriggerId, TriggerPage, TriggerPageRequest, TriggerPreview, TriggerRevision,
-    TriggerRevisionContent, TriggerRevisionId, TriggerStore, TriggerStoreError,
-    TriggerValidationError, WorkerLease,
+    AuthorityProvenance, Confirmation, ConnectedAccount, ConnectionSnapshot, ConnectionState,
+    Launch, LaunchEvent, LaunchId, LaunchOverrides, LaunchQuery, LaunchStore, PublicTriggerId,
+    PublishedRevision, PublisherAuthority, TriggerAvailability, TriggerDraft, TriggerId,
+    TriggerPage, TriggerPageRequest, TriggerPreview, TriggerRevision, TriggerRevisionContent,
+    TriggerRevisionId, TriggerStore, TriggerStoreError, TriggerValidationError, WorkerLease,
 };
 use crate::SubjectId;
 
@@ -15,6 +15,8 @@ use crate::SubjectId;
 pub struct LaunchAuthority {
     pub connection: ConnectionSnapshot,
     pub provenance: AuthorityProvenance,
+    /// Exact commit selected at the Start boundary.
+    pub source_sha: String,
 }
 
 #[async_trait]
@@ -33,6 +35,72 @@ pub trait TriggerAuthorityVerifier: Send + Sync {
         selected_service_id: &str,
         previous: Option<&ConnectionSnapshot>,
     ) -> Result<LaunchAuthority, TriggerServiceError>;
+}
+
+/// Public-safe metadata for one reusable contributor connection.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TriggerConnection {
+    pub service_id: String,
+    pub state_version: i64,
+    pub state: ConnectionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<ConnectedAccount>,
+    #[serde(default)]
+    pub granted_scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consent_observed_at: Option<String>,
+}
+
+/// Browser authorization handoff returned by the credential broker.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TriggerConnectionAuthorization {
+    pub service_id: String,
+    pub authorization_url: String,
+    pub attempt_nonce: String,
+}
+
+/// Canonical repository and exact branch head resolved by the provider.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TriggerRepositorySelection {
+    pub repository: super::RepositoryIdentity,
+    pub source_sha: String,
+}
+
+/// Provider-neutral user-connection operations used by the public interface.
+#[async_trait]
+pub trait TriggerConnectionManager: Send + Sync {
+    async fn list_connections(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<Vec<TriggerConnection>, TriggerServiceError>;
+
+    /// Reconcile or create the placeholder named by a persisted client intent,
+    /// then begin its authorization flow.
+    async fn begin_connection(
+        &self,
+        subject: &SubjectId,
+        intent_id: &str,
+    ) -> Result<TriggerConnectionAuthorization, TriggerServiceError>;
+
+    async fn reconnect(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<TriggerConnectionAuthorization, TriggerServiceError>;
+
+    async fn preflight_connection(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<TriggerConnection, TriggerServiceError>;
+
+    async fn resolve_repository(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+        repository_id: u64,
+        selected_ref: &str,
+    ) -> Result<TriggerRepositorySelection, TriggerServiceError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -225,6 +293,14 @@ impl TriggerService {
         Ok(revision)
     }
 
+    pub async fn list_revisions(
+        &self,
+        owner: &SubjectId,
+        page: &TriggerPageRequest,
+    ) -> Result<TriggerPage<TriggerRevision>, TriggerServiceError> {
+        Ok(self.triggers.list_revisions_for(owner, page).await?)
+    }
+
     pub async fn retire(
         &self,
         owner: &SubjectId,
@@ -261,6 +337,7 @@ impl TriggerService {
         &self,
         owner: SubjectId,
         public_id: &PublicTriggerId,
+        idempotency_key_hash: impl Into<String>,
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<Launch, TriggerServiceError> {
@@ -272,7 +349,10 @@ impl TriggerService {
         if revision.availability != TriggerAvailability::Published {
             return Err(TriggerValidationError::new("this Trigger revision is retired").into());
         }
-        let launch = Launch::new(owner, revision, now, correlation_id)?;
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        let mut launch = Launch::new(owner.clone(), revision, now.clone(), correlation_id.clone())?;
+        launch.acknowledge_new_launch(owner, now, idempotency_key_hash, correlation_id)?;
         self.launches.insert_new(&launch).await?;
         Ok(launch)
     }
@@ -289,6 +369,38 @@ impl TriggerService {
             .ok_or(TriggerServiceError::NotFound)?;
         require_owner(owner, &launch.owner)?;
         Ok(launch)
+    }
+
+    pub async fn list_launches(
+        &self,
+        owner: &SubjectId,
+        page: TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
+        Ok(self
+            .launches
+            .list_launches(&LaunchQuery {
+                owner: Some(owner.clone()),
+                states: Vec::new(),
+                updated_before: None,
+                page,
+            })
+            .await?)
+    }
+
+    pub async fn progress(
+        &self,
+        owner: &SubjectId,
+        id: &LaunchId,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<LaunchEvent>, TriggerServiceError> {
+        let launch = self.get_launch(owner, id).await?;
+        Ok(launch
+            .events
+            .into_iter()
+            .filter(|event| event.sequence > after)
+            .take(limit.clamp(1, 500))
+            .collect())
     }
 
     pub async fn update_overrides(
@@ -355,6 +467,7 @@ impl TriggerService {
         }
         launch.connection = Some(verified.connection);
         launch.authority = Some(verified.provenance);
+        launch.source_sha = verified.source_sha;
         launch.start(confirmation, now, correlation_id)?;
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
     }

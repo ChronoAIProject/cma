@@ -14,7 +14,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use layer2_core::SubjectId;
+use layer2_core::{PublicTriggerId, SubjectId};
 use serde::Deserialize;
 
 use super::permissions::{introspect_permissions, permissions_claim};
@@ -36,10 +36,17 @@ pub struct CallbackParams {
     error: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoginParams {
+    #[serde(default)]
+    return_to: Option<String>,
+}
+
 /// Routes for the login flow.
 pub fn router(auth: Arc<AuthState>) -> Router {
     Router::new()
-        .route("/auth/login", get(login))
+        .route("/auth/login", get(login_route))
         .route("/auth/callback", get(callback))
         .route("/auth/session", get(session))
         .route("/auth/logout", get(logout))
@@ -47,8 +54,37 @@ pub fn router(auth: Arc<AuthState>) -> Router {
 }
 
 async fn login(State(auth): State<Arc<AuthState>>) -> Response {
+    begin_login(auth, None).await
+}
+
+async fn login_route(
+    State(auth): State<Arc<AuthState>>,
+    Query(params): Query<LoginParams>,
+) -> Response {
+    let return_to = match params.return_to {
+        Some(value) => match trigger_return_target(&value) {
+            Ok(value) => Some(value),
+            Err(()) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "title": "Invalid sign-in return target",
+                        "detail": "Only an opaque CMA Trigger preview path may be restored."
+                    })),
+                )
+                    .into_response()
+            }
+        },
+        None => None,
+    };
+    begin_login(auth, return_to).await
+}
+
+async fn begin_login(auth: Arc<AuthState>, return_to: Option<String>) -> Response {
     match &auth.mode {
-        AuthMode::Trusted { .. } => Redirect::to("/").into_response(),
+        AuthMode::Trusted { .. } => {
+            Redirect::to(return_to.as_deref().unwrap_or("/")).into_response()
+        }
         AuthMode::Provider {
             client_id,
             public_url,
@@ -66,6 +102,7 @@ async fn login(State(auth): State<Arc<AuthState>>) -> Response {
                     .put_login_attempt(LoginAttempt {
                         id: SecretDigest::identify(LOGIN_ATTEMPT_DOMAIN, &state),
                         verifier: SecretValue::new(verifier),
+                        return_to,
                         expires_at: SystemTime::now() + LOGIN_ATTEMPT_LIFETIME,
                     })
                     .await
@@ -114,11 +151,11 @@ async fn callback(
     };
 
     // A callback whose state we did not issue is not ours to complete.
-    let verifier = match params.state.as_ref() {
+    let attempt = match params.state.as_ref() {
         Some(state) => {
             let id = SecretDigest::identify(LOGIN_ATTEMPT_DOMAIN, state);
             match auth.store.take_login_attempt(&id).await {
-                Ok(Some(attempt)) if attempt.expires_at > SystemTime::now() => attempt.verifier,
+                Ok(Some(attempt)) if attempt.expires_at > SystemTime::now() => attempt,
                 Ok(Some(_)) | Ok(None) => {
                     tracing::warn!("callback carried an unknown state");
                     return (
@@ -141,6 +178,11 @@ async fn callback(
                 .into_response();
         }
     };
+    let LoginAttempt {
+        verifier,
+        return_to,
+        ..
+    } = attempt;
 
     // Every callback attempt consumes its state, including a provider refusal
     // or malformed response. Otherwise the same authorization attempt remains
@@ -298,11 +340,24 @@ async fn callback(
     // Production HTTPS also marks it Secure; explicit HTTP is retained for
     // local development where a Secure cookie would never be returned.
     let cookie = issued_session_cookie(&session, auth.secure_cookies());
+    let location = return_to.unwrap_or_else(|| "/".to_string());
     (
         StatusCode::SEE_OTHER,
-        [(header::SET_COOKIE, cookie), (header::LOCATION, "/".into())],
+        [(header::SET_COOKIE, cookie), (header::LOCATION, location)],
     )
         .into_response()
+}
+
+fn trigger_return_target(value: &str) -> Result<String, ()> {
+    if value.len() > 128 || value.contains(['?', '#', '\\']) {
+        return Err(());
+    }
+    let public_id = value.strip_prefix("/triggers/").ok_or(())?;
+    if public_id.contains('/') {
+        return Err(());
+    }
+    PublicTriggerId::parse(public_id.to_string()).map_err(|_| ())?;
+    Ok(value.to_string())
 }
 
 fn issued_session_cookie(session: &str, secure: bool) -> String {
@@ -551,6 +606,7 @@ mod tests {
             .put_login_attempt(LoginAttempt {
                 id: SecretDigest::identify(LOGIN_ATTEMPT_DOMAIN, state),
                 verifier: SecretValue::new("verifier".into()),
+                return_to: None,
                 expires_at: SystemTime::now() - Duration::from_secs(1),
             })
             .await
@@ -592,6 +648,7 @@ mod tests {
             .put_login_attempt(LoginAttempt {
                 id: id.clone(),
                 verifier: SecretValue::new("verifier".into()),
+                return_to: None,
                 expires_at: SystemTime::now() + Duration::from_secs(60),
             })
             .await
@@ -689,7 +746,8 @@ mod tests {
         *first.metadata.write().await = Some(metadata.clone());
         *second.metadata.write().await = Some(metadata);
 
-        let started = login(State(first)).await;
+        let return_to = "/triggers/123e4567-e89b-12d3-a456-426614174000";
+        let started = begin_login(first, Some(return_to.to_string())).await;
         assert_eq!(started.status(), StatusCode::SEE_OTHER);
         let location = started
             .headers()
@@ -712,6 +770,7 @@ mod tests {
         )
         .await;
         assert_eq!(completed.status(), StatusCode::SEE_OTHER);
+        assert_eq!(completed.headers()[header::LOCATION], return_to);
         let set_cookie = completed
             .headers()
             .get(header::SET_COOKIE)
@@ -764,6 +823,25 @@ mod tests {
     fn urlencoding_escapes_what_a_redirect_uri_needs() {
         assert_eq!(urlencode("http://a/b?c=d"), "http%3A%2F%2Fa%2Fb%3Fc%3Dd");
         assert_eq!(urlencode("plain-Value_1.0~"), "plain-Value_1.0~");
+    }
+
+    #[test]
+    fn login_return_targets_are_only_opaque_trigger_preview_paths() {
+        let valid = "/triggers/123e4567-e89b-12d3-a456-426614174000";
+        assert_eq!(trigger_return_target(valid).as_deref(), Ok(valid));
+        for invalid in [
+            "/",
+            "/sessions/123e4567-e89b-12d3-a456-426614174000",
+            "/triggers/not-a-uuid",
+            "/triggers/123e4567-e89b-12d3-a456-426614174000/extra",
+            "//example.com/triggers/123e4567-e89b-12d3-a456-426614174000",
+            "/triggers/123e4567-e89b-12d3-a456-426614174000?next=https://example.com",
+        ] {
+            assert!(
+                trigger_return_target(invalid).is_err(),
+                "accepted {invalid}"
+            );
+        }
     }
 
     #[test]

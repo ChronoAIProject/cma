@@ -188,6 +188,7 @@ pub enum InputFieldKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InputFieldDefinition {
     pub key: String,
     pub kind: InputFieldKind,
@@ -238,6 +239,7 @@ impl InputFieldDefinition {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TriggerTask {
     pub public_summary: String,
     pub prompt_template: String,
@@ -258,12 +260,14 @@ pub enum RequiredCapability {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourcePolicy {
     pub default: SessionSize,
     pub ceiling: SessionSize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TriggerSessionPolicy {
     #[serde(default)]
     pub required_capabilities: Vec<RequiredCapability>,
@@ -307,6 +311,7 @@ pub enum WorkflowChangePolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RepositoryAccessPolicy {
     pub credential_route: CredentialRoute,
     #[serde(default)]
@@ -323,6 +328,7 @@ pub enum ExecutorPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SetupPolicy {
     pub executor_policy: ExecutorPolicy,
     #[serde(default)]
@@ -336,12 +342,14 @@ pub enum CommitAttributionPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PullRequestDefaults {
     pub title_template: String,
     pub body_template: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ContributionPolicy {
     pub branch_prefix: String,
     pub commit_attribution: CommitAttributionPolicy,
@@ -357,6 +365,7 @@ pub enum BillingMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommercialPolicy {
     pub billing_mode: BillingMode,
     pub policy_reference: String,
@@ -373,6 +382,7 @@ pub enum EditableField {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OverridePolicy {
     #[serde(default)]
     pub editable_fields: Vec<EditableField>,
@@ -381,6 +391,7 @@ pub struct OverridePolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublicProjectionPolicy {
     pub version: u32,
 }

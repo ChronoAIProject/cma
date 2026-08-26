@@ -47,7 +47,8 @@ use layer1_public::{
 };
 use layer2_core::{
     ActivityService, Baseline, EnvironmentProfileService, PlatformSettingsService, ScreenModel,
-    SessionService, SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
+    SessionService, SkillId, SoftwarePackage, TerminalGeometry, TriggerAuthorityVerifier,
+    TriggerConnectionManager, TriggerService, UserDirectory,
 };
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -353,6 +354,7 @@ async fn main() {
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
     let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
     let operation_store = Arc::new(stores.operations) as Arc<dyn layer2_core::OperationStore>;
+    let trigger_store = Arc::new(stores.triggers);
     let ticket_store =
         Arc::new(stores.tickets) as Arc<dyn layer1_public::tickets::TerminalTicketStore>;
     let auth_store = Arc::new(stores.auth) as Arc<dyn auth::persistence::AuthStore>;
@@ -419,6 +421,31 @@ async fn main() {
         }),
         auth_store,
     );
+    let (trigger_authority, trigger_connections): (
+        Arc<dyn TriggerAuthorityVerifier>,
+        Arc<dyn TriggerConnectionManager>,
+    ) = match &config.auth_mode {
+        auth::AuthMode::Provider { base_url, .. } => {
+            let broker = match trigger::github::GithubBroker::new(base_url, Arc::clone(&auth_state))
+            {
+                Ok(broker) => Arc::new(broker),
+                Err(error) => {
+                    tracing::error!(error = %error, "cannot construct the GitHub authority broker");
+                    std::process::exit(2);
+                }
+            };
+            (broker.clone(), broker)
+        }
+        auth::AuthMode::Trusted { .. } => {
+            let unavailable = Arc::new(trigger::UnavailableGithub);
+            (unavailable.clone(), unavailable)
+        }
+    };
+    let trigger_service = Arc::new(TriggerService::new(
+        trigger_store.clone() as Arc<dyn layer2_core::TriggerStore>,
+        trigger_store as Arc<dyn layer2_core::LaunchStore>,
+        trigger_authority,
+    ));
     if !auth_state.requires_credential() {
         tracing::warn!(
             "running with a trusted fixed subject; every request is attributed \
@@ -553,7 +580,12 @@ async fn main() {
         users: Arc::clone(&users),
         tickets: Arc::clone(&tickets),
         environments: Arc::clone(&environments),
-        operations: operation_store,
+        operations: Arc::clone(&operation_store),
+        triggers: Some(layer1_public::rest::TriggersState {
+            triggers: trigger_service,
+            connections: trigger_connections,
+            operations: operation_store,
+        }),
     };
     let rest = rest_api_router(
         public_state.clone(),

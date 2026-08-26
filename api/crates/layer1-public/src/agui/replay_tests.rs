@@ -681,6 +681,7 @@ mod route_resume {
             tickets: TerminalTickets::in_memory(),
             environments,
             operations: Arc::new(NoOperations),
+            triggers: None,
         };
 
         let app = agui::router(state)
