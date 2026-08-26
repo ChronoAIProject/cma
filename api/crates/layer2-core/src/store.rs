@@ -1322,7 +1322,7 @@ pub struct StoredSettings {
 }
 
 /// One skill, fetched and ready to be written.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillPack {
     /// The directory it occupies, which is the name the agent invokes.
     pub name: String,
@@ -1335,6 +1335,32 @@ pub struct SkillPack {
     pub version: Option<String>,
     /// Each file, relative to that directory, exactly as the registry names it.
     pub files: Vec<(String, Vec<u8>)>,
+}
+
+/// Durable custody for the exact skill packs a session was given.
+///
+/// Separate from [`SkillSource`]: the source resolves a caller-visible choice
+/// once, while this store replays those already-resolved opaque bytes when no
+/// caller is present. The port accepts no credential, so an implementation
+/// cannot accidentally persist the authority used to fetch a private pack.
+///
+/// Implementations must bound both writes and reads before materializing the
+/// stored representation. A missing value is a real legacy state and is
+/// distinct from a store failure: only the former permits the core to fall back
+/// to the source.
+#[async_trait::async_trait]
+pub trait SkillPackStore: Send + Sync {
+    /// Atomically replace the packs held for this session.
+    async fn put(&self, id: &SessionId, packs: &[SkillPack]) -> Result<(), StoreError>;
+
+    /// Read the exact packs held for this session, if any were ever stored.
+    async fn get(&self, id: &SessionId) -> Result<Option<Vec<SkillPack>>, StoreError>;
+
+    /// Remove the packs held for a session that has ended.
+    ///
+    /// Deleting an already-absent value must succeed so termination and repair
+    /// can safely replay cleanup.
+    async fn delete(&self, id: &SessionId) -> Result<(), StoreError>;
 }
 
 /// Where a session's skills come from.

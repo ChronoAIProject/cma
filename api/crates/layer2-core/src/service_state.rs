@@ -10,7 +10,7 @@ use crate::environment_service::EnvironmentProfileService;
 use crate::ids::{KernelId, SessionId};
 use crate::platform_service::PlatformSettingsService;
 use crate::session::Session;
-use crate::store::{ContextStore, CredentialSource, HandoverStore, SessionStore};
+use crate::store::{ContextStore, CredentialSource, HandoverStore, SessionStore, SkillPackStore};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How many output chunks a slow attached client may fall behind before it is
@@ -282,6 +282,8 @@ pub struct SessionService {
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
     /// Where this session's skills are fetched from, when anything can.
     pub(crate) skills: Option<Arc<dyn crate::store::SkillSource>>,
+    /// Where the exact skill packs fetched for a session are kept.
+    pub(crate) skill_packs: Option<Arc<dyn SkillPackStore>>,
     /// Sessions whose runtime has said it cannot be carried onto a newer one.
     ///
     /// Held in memory rather than recorded, deliberately: it is a fact about a
@@ -366,6 +368,8 @@ pub struct SessionPorts {
     pub credentials: Option<Arc<dyn CredentialSource>>,
     /// Where a session's skills are fetched from.
     pub skills: Option<Arc<dyn crate::store::SkillSource>>,
+    /// Where a session's already-resolved skill packs are kept.
+    pub skill_packs: Option<Arc<dyn SkillPackStore>>,
     /// The deployment's own settings, when this process has a store for them.
     ///
     /// `None` becomes `unconfigured()`, so sessions still use shipped bounds.

@@ -367,9 +367,9 @@ async fn main() {
         "every request is recorded, and entries older than this are removed"
     );
 
-    // Blob storage is optional: without it a session still works, but it cannot
-    // persist either its transcript or the snapshot needed for a runtime
-    // handover to survive a control-plane restart.
+    // Object storage is optional: without it a session still works, but it
+    // cannot persist its transcript, its claim-bound handover snapshot, or the
+    // exact skill bytes installed in a runtime.
     //
     // It needs both an address and an identity, and switches off unless both
     // are present. Half a configuration would build a store that authenticates
@@ -387,32 +387,43 @@ async fn main() {
     // The bucket is as load-bearing as the identity: this service writes only
     // into the one it is given and creates none, so an unnamed bucket is not a
     // default to fall back on.
-    let storage: Option<Arc<crate::store::ChronoStorageContextStore>> =
-        match identity.filter(|_| !config.context_bucket.trim().is_empty()) {
-            Some(tokens) => Some(Arc::new(crate::store::ChronoStorageContextStore::new(
-                format!(
-                    "{}/api/v1/proxy/s/chrono-storage-service",
-                    config.platform_base_url.trim_end_matches('/')
-                ),
+    let storage_base = format!(
+        "{}/api/v1/proxy/s/chrono-storage-service",
+        config.platform_base_url.trim_end_matches('/')
+    );
+    let storage = match identity.filter(|_| !config.context_bucket.trim().is_empty()) {
+        Some(tokens) => Some((
+            Arc::new(crate::store::ChronoStorageContextStore::new(
+                storage_base.clone(),
+                config.context_bucket.clone(),
+                Arc::clone(&tokens),
+            )),
+            Arc::new(crate::store::ChronoStorageSkillPackStore::new(
+                storage_base,
                 config.context_bucket.clone(),
                 tokens,
-            ))),
-            None => {
-                tracing::warn!(
-                    "session context and durable handover snapshots will not be stored. \
+            )),
+        )),
+        None => {
+            tracing::warn!(
+                "session context, durable handover snapshots, and skill packs will not be stored. \
                  CHRONO_PLATFORM_BASE_URL, \
                  CHRONO_STORAGE_CLIENT_ID, CHRONO_STORAGE_CLIENT_SECRET and \
                  CHRONO_CONTEXT_BUCKET are all required. The bucket must already \
                  exist and be owned by this identity — nothing here creates one. \
                  No other service's credential is valid here."
-                );
-                None
-            }
-        };
+            );
+            None
+        }
+    };
     let context = storage
         .as_ref()
-        .map(|store| Arc::clone(store) as Arc<dyn layer2_core::ContextStore>);
-    let handovers = storage.map(|store| store as Arc<dyn layer2_core::store::HandoverStore>);
+        .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::ContextStore>);
+    let handovers = storage.as_ref().map(|(store, _)| {
+        Arc::clone(store) as Arc<dyn layer2_core::store::HandoverStore>
+    });
+    let skill_packs = storage
+        .map(|(_, store)| store as Arc<dyn layer2_core::SkillPackStore>);
 
     // Built before the service because the service asks it for an owner's
     // credential whenever it has to put a runtime back under a session that
@@ -507,6 +518,7 @@ async fn main() {
             skills: catalog
                 .clone()
                 .map(|c| c as Arc<dyn layer2_core::SkillSource>),
+            skill_packs,
             settings: Some(Arc::clone(&settings)),
         },
         Arc::clone(&environments),

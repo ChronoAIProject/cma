@@ -15,6 +15,7 @@ mod event_doc;
 pub mod mongo;
 pub mod operation;
 pub mod settings;
+pub mod skill_packs;
 pub mod tickets;
 pub mod token;
 
@@ -31,6 +32,7 @@ pub use environment::MongoEnvironmentProfileStore;
 pub use mongo::MongoSessionStore;
 pub use operation::MongoOperationStore;
 pub use settings::MongoPlatformSettingsStore;
+pub use skill_packs::ChronoStorageSkillPackStore;
 pub use tickets::MongoTerminalTicketStore;
 
 pub(crate) use encryption::AuthEncryptionKey;
