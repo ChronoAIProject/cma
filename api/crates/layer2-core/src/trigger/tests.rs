@@ -122,6 +122,40 @@ fn authentication_recovery_returns_to_the_recorded_durable_step() {
 }
 
 #[test]
+fn workflow_paths_require_an_explicit_reviewed_confirmation_before_start() {
+    let owner = SubjectId("contributor".into());
+    let mut launch = Launch::new(owner.clone(), revision(owner.clone()), NOW, "create").unwrap();
+    launch
+        .select_connection(connection(), NOW, "connection")
+        .unwrap();
+    launch.workflow_paths = vec![".github/workflows/checks.yml".into()];
+    let start = confirmation(ConfirmationAction::Start, &owner, &launch.effective.digest);
+
+    assert!(launch
+        .start(start.clone(), NOW, "start-without-risk")
+        .is_err());
+    assert_eq!(launch.state, LaunchState::Draft);
+
+    launch
+        .acknowledge_workflow_risk(
+            confirmation(
+                ConfirmationAction::WorkflowRisk,
+                &owner,
+                &launch.effective.digest,
+            ),
+            "workflow-risk",
+        )
+        .unwrap();
+    launch.start(start, NOW, "start").unwrap();
+    assert_eq!(launch.state, LaunchState::Preflight);
+    assert!(launch.workflow_risk_acknowledged);
+    assert!(launch
+        .confirmations
+        .iter()
+        .any(|confirmation| { confirmation.action == ConfirmationAction::WorkflowRisk }));
+}
+
+#[test]
 fn cancellation_is_idempotent_but_never_skips_ambiguous_pr_reconciliation() {
     let owner = SubjectId("contributor".into());
     let mut launch = Launch::new(owner.clone(), revision(owner.clone()), NOW, "create").unwrap();
@@ -131,8 +165,10 @@ fn cancellation_is_idempotent_but_never_skips_ambiguous_pr_reconciliation() {
         state: EffectState::Reconciling,
         intent_key: "pr-intent".into(),
         attempt: 1,
+        reconciliation_attempt: 1,
         fence: 1,
         provider_request_id: None,
+        external_resource_ids: Default::default(),
         next_attempt_at: None,
         last_failure: None,
         updated_at: NOW.into(),
@@ -311,6 +347,207 @@ async fn expired_worker_takeover_fences_the_old_worker() {
         error,
         TriggerServiceError::Store(TriggerStoreError::StaleFence { .. })
     ));
+}
+
+#[test]
+fn effect_claims_persist_one_intent_and_reconcile_after_a_crash() {
+    let (mut launch, lease) = leased_started_launch();
+    let first = launch
+        .claim_next_effect(&lease, NOW, "claim")
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.kind, LaunchEffectKind::Preflight);
+    assert_eq!(first.mode, EffectClaimMode::Execute);
+    assert_eq!(first.attempt, 1);
+    assert_eq!(first.reconciliation_attempt, 0);
+    assert_eq!(launch.effects.len(), 1);
+    assert_eq!(launch.effects[0].state, EffectState::Claimed);
+    let step = launch
+        .steps
+        .iter()
+        .find(|step| step.key == LaunchStepKey::Preflight)
+        .unwrap();
+    assert_eq!(step.status, LaunchStepStatus::Running);
+    assert_eq!(step.worker_fencing_token, lease.fencing_token);
+
+    let replay = launch
+        .claim_next_effect(&lease, LATER, "reconcile")
+        .unwrap()
+        .unwrap();
+    assert_eq!(replay.mode, EffectClaimMode::Reconcile);
+    assert_eq!(replay.intent_key, first.intent_key);
+    assert_eq!(replay.attempt, first.attempt);
+    assert_eq!(replay.reconciliation_attempt, 1);
+    assert_eq!(launch.effects.len(), 1);
+
+    launch
+        .complete_effect(
+            &lease,
+            &replay,
+            LaunchEffectResult::Preflight {
+                connection: connection(),
+                authority: launch.authority.clone().unwrap(),
+                source_sha: "a".repeat(40),
+                workflow_paths: Vec::new(),
+            },
+            "Authority is current.",
+            Default::default(),
+            LATER,
+            "complete",
+        )
+        .unwrap();
+    assert_eq!(launch.effects[0].state, EffectState::Succeeded);
+    assert_eq!(launch.state, LaunchState::ForkPending);
+    assert_eq!(
+        launch
+            .steps
+            .iter()
+            .find(|step| step.key == LaunchStepKey::Preflight)
+            .unwrap()
+            .status,
+        LaunchStepStatus::Completed
+    );
+}
+
+#[test]
+fn replacement_worker_reconciles_the_same_intent_and_fences_the_old_claim() {
+    let (mut launch, first_lease) = leased_started_launch();
+    let first = launch
+        .claim_next_effect(&first_lease, NOW, "first")
+        .unwrap()
+        .unwrap();
+    let second_lease = WorkerLease {
+        holder: "worker-b".into(),
+        fencing_token: 2,
+        acquired_at: LATER.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = 2;
+    launch.lease = Some(second_lease.clone());
+
+    assert!(launch
+        .complete_effect(
+            &first_lease,
+            &first,
+            LaunchEffectResult::Preflight {
+                connection: connection(),
+                authority: launch.authority.clone().unwrap(),
+                source_sha: "a".repeat(40),
+                workflow_paths: Vec::new(),
+            },
+            "must not commit",
+            Default::default(),
+            LATER,
+            "stale",
+        )
+        .is_err());
+    let takeover = launch
+        .claim_next_effect(&second_lease, LATER, "takeover")
+        .unwrap()
+        .unwrap();
+    assert_eq!(takeover.mode, EffectClaimMode::Reconcile);
+    assert_eq!(takeover.intent_key, first.intent_key);
+    assert_eq!(takeover.fence, 2);
+    assert_eq!(takeover.attempt, 1);
+    assert_eq!(takeover.reconciliation_attempt, 1);
+}
+
+#[test]
+fn retry_deadlines_and_budgets_are_durable_and_do_not_spend_early() {
+    let (mut launch, lease) = leased_started_launch();
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "claim")
+        .unwrap()
+        .unwrap();
+    launch
+        .fail_effect(
+            &lease,
+            &claim,
+            retryable_failure(NOW),
+            Some("2026-08-26T12:02:00Z".into()),
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(launch.state, LaunchState::FailedRetryable);
+    assert_eq!(launch.effects[0].attempt, 1);
+
+    assert_eq!(
+        launch
+            .claim_next_effect(&lease, LATER, "too-early")
+            .unwrap(),
+        None
+    );
+    assert_eq!(launch.state, LaunchState::FailedRetryable);
+    assert_eq!(launch.effects[0].attempt, 1);
+
+    let retry = launch
+        .claim_next_effect(&lease, "2026-08-26T12:02:00Z", "retry")
+        .unwrap()
+        .unwrap();
+    assert_eq!(retry.mode, EffectClaimMode::Execute);
+    assert_eq!(retry.attempt, 2);
+    assert_eq!(launch.state, LaunchState::Preflight);
+
+    launch.effects[0].state = EffectState::FailedRetryable;
+    launch.effects[0].attempt = MAX_LAUNCH_EFFECT_ATTEMPTS;
+    launch.effects[0].next_attempt_at = Some("2026-08-26T12:03:00Z".into());
+    launch.state = LaunchState::FailedRetryable;
+    launch.resume_state = Some(LaunchState::Preflight);
+    launch.failure = Some(retryable_failure("2026-08-26T12:02:01Z"));
+    assert_eq!(
+        launch
+            .claim_next_effect(&lease, "2026-08-26T12:03:00Z", "exhausted")
+            .unwrap(),
+        None
+    );
+    assert_eq!(launch.state, LaunchState::FailedRetryable);
+    assert_eq!(launch.effects[0].attempt, MAX_LAUNCH_EFFECT_ATTEMPTS);
+}
+
+fn leased_started_launch() -> (Launch, WorkerLease) {
+    let owner = SubjectId("contributor".into());
+    let mut launch = Launch::new(owner.clone(), revision(owner.clone()), NOW, "create").unwrap();
+    launch
+        .select_connection(connection(), NOW, "connection")
+        .unwrap();
+    launch.authority = Some(AuthorityProvenance {
+        subject: owner.clone(),
+        subject_token_generation: 1,
+        service_id: "service-1".into(),
+        service_state_version: 2,
+        backing_key_id: "key-1".into(),
+        session_credential_generation: None,
+        state: DelegationState::Available,
+        observed_at: NOW.into(),
+    });
+    launch
+        .start(
+            confirmation(ConfirmationAction::Start, &owner, &launch.effective.digest),
+            NOW,
+            "start",
+        )
+        .unwrap();
+    let lease = WorkerLease {
+        holder: "worker-a".into(),
+        fencing_token: 1,
+        acquired_at: NOW.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = 1;
+    launch.lease = Some(lease.clone());
+    (launch, lease)
+}
+
+fn retryable_failure(observed_at: &str) -> LaunchFailure {
+    LaunchFailure {
+        class: FailureClass::RetryableTransient,
+        code: "provider_temporarily_unavailable".into(),
+        detail: "The provider is temporarily unavailable.".into(),
+        remediation: "CMA will retry this step after the shown deadline.".into(),
+        correlation_id: "retry-test".into(),
+        retry_at: None,
+        observed_at: observed_at.into(),
+    }
 }
 
 fn content(owner: SubjectId) -> TriggerRevisionContent {
@@ -541,9 +778,7 @@ impl TriggerAuthorityVerifier for TestAuthority {
         connection.service_id = selected_service_id.to_string();
         connection.validate_for(&[ScopeClass::PublicRepository])?;
         if previous.is_some_and(|old| old.account.account_id != connection.account.account_id) {
-            return Err(TriggerServiceError::Authority(
-                "connection identity changed".into(),
-            ));
+            return Err(TriggerAuthorityError::AuthorityDrift.into());
         }
         Ok(LaunchAuthority {
             provenance: AuthorityProvenance {
@@ -558,6 +793,7 @@ impl TriggerAuthorityVerifier for TestAuthority {
             },
             connection,
             source_sha: "a".repeat(40),
+            workflow_paths: Vec::new(),
         })
     }
 }
