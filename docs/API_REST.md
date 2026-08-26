@@ -24,7 +24,11 @@ Authorization: Bearer <access token>
 
 This is the form that CMA (ChronoAI Managed Agent) clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
 
-The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so revocation takes effect within that window rather than immediately.
+The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so bearer-token revocation takes effect within that window rather than immediately.
+
+The capabilities behind a browser cookie are also rechecked on every 60-second authentication sweep, independently of access-token expiry or refresh. When the provider is healthy, a complete answer that withdraws a capability is therefore enforced by the next cookie request after that sweep. A provider transport failure, HTTP refusal (including userinfo `403`), or malformed/incomplete answer is not proof of revocation: CMA preserves the last complete capability set and retries on the next sweep, so no finite revocation bound applies while the provider cannot supply an authoritative answer.
+
+Browser sign-in does not require the provider to issue a refresh token. An access-token-only delegation remains usable through its access-token lifetime; once that nonrenewable token expires and CMA can no longer check it authoritatively, its cookie capabilities fail closed.
 
 Capabilities are the same either way: they come from the subject's roles as the provider reports them, so a client is never more privileged for having arrived over one route than the other.
 

@@ -272,10 +272,12 @@ async fn callback(
         );
     }
 
-    // Capabilities are resolved once, at sign-in, from the permissions the
-    // provider reported. A caller with none authenticates successfully and is
-    // then refused every operation, which is the correct outcome for someone
-    // who has a platform account but no access here.
+    // Capabilities are resolved initially at sign-in from the permissions the
+    // provider reported. The recurring authorization sweep replaces this
+    // complete answer while the delegation remains stored. A caller with none
+    // authenticates successfully and is then refused every operation, which is
+    // the correct outcome for someone who has a platform account but no access
+    // here.
     // Written down before the sign-in completes, because this is the only
     // moment the provider's account details are in hand: a person not recorded
     // here is a person the service can never name afterwards.
@@ -353,8 +355,8 @@ pub(crate) async fn resolve_subject(
             permissions_claim(&body)
         }
     };
-    // Captured at sign-in because this is the only moment the provider's own
-    // account details are in hand; nothing later has a token to ask with.
+    // Capture display material at sign-in. Recurring authorization checks also
+    // call userinfo, but deliberately update only the security-sensitive grant.
     let profile = crate::auth::profile::Profile::from_userinfo(&body);
     Ok((subject, permissions, profile))
 }
