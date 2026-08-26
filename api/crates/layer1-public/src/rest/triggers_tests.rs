@@ -6,22 +6,28 @@ use async_trait::async_trait;
 use axum::body::{to_bytes, Body};
 use axum::http::{header, Method, Request, StatusCode};
 use layer2_core::{
-    AuthorityProvenance, Authorization, BillingMode, Capability, CommercialPolicy,
-    CommitAttributionPolicy, ConnectedAccount, ConnectionSnapshot, ConnectionState,
-    ContributionPolicy, CredentialRoute, DelegationState, EditableField, ExecutorPolicy,
-    InputFieldDefinition, InputFieldKind, Launch, LaunchAuthority, LaunchId, LaunchQuery,
-    LaunchStore, OperationClaim, OperationReservation, OperationStore, OverridePolicy,
-    PermissionMode, PublicProjectionPolicy, PublicTriggerId, PublishedRevision, PublisherAuthority,
-    PublisherRepositoryRole, PullRequestDefaults, RepositoryAccessPolicy, RepositoryIdentity,
-    RepositoryOperationClass, RepositoryVisibility, RequiredCapability, ResourcePolicy, ScopeClass,
-    SessionSize, SetupPolicy, SourceMode, StoreError, SubjectId, TriggerAuthorityVerifier,
-    TriggerConnection, TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft,
-    TriggerId, TriggerPage, TriggerPageRequest, TriggerRepositorySelection, TriggerRevision,
-    TriggerRevisionContent, TriggerRevisionId, TriggerService, TriggerServiceError,
-    TriggerSessionPolicy, TriggerStore, TriggerStoreError, TriggerTask, UpstreamRevision,
-    WorkerLease, WorkflowChangePolicy, TRIGGER_SCHEMA_VERSION,
+    AuthorityProvenance, Authorization, BillingMode, BranchRecord, Capability,
+    CapabilityRevocationState, CheckpointId, CheckpointIntegrity, CommercialPolicy,
+    CommitAttributionPolicy, CommitIdentity, ConnectedAccount, ConnectionSnapshot, ConnectionState,
+    ContributionPolicy, CredentialRoute, DelegationState, DiffArtifact, DiffArtifactId,
+    DiffArtifactObjectStore, DiffChangeKind, DiffFile, DiffValidationOutcome, EditableField,
+    ExecutorPolicy, ForkRecord, InputFieldDefinition, InputFieldKind, Launch, LaunchAuthority,
+    LaunchId, LaunchQuery, LaunchState, LaunchStore, OperationClaim, OperationReservation,
+    OperationStore, OverridePolicy, PermissionMode, PromptDelivery, PromptDeliveryState,
+    PublicProjectionPolicy, PublicTriggerId, PublishedRevision, PublisherAuthority,
+    PublisherRepositoryRole, PullRequestDefaults, ReachStatus, RepositoryAccessPolicy,
+    RepositoryIdentity, RepositoryOperationClass, RepositoryVisibility, RequiredCapability,
+    ResourcePolicy, ScopeClass, SessionId, SessionLink, SessionSize, SetupPolicy, SourceMode,
+    StoreError, SubjectId, TriggerAuthorityVerifier, TriggerConnection,
+    TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft, TriggerId, TriggerPage,
+    TriggerPageRequest, TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent,
+    TriggerRevisionId, TriggerService, TriggerServiceError, TriggerSessionPolicy, TriggerStore,
+    TriggerStoreError, TriggerTask, UpstreamRevision, WorkerLease, WorkflowChangePolicy,
+    WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord,
+    TRIGGER_SCHEMA_VERSION,
 };
 use serde_json::{json, Value};
+use sha2::{Digest as _, Sha256};
 use tower::ServiceExt;
 
 use super::*;
@@ -123,6 +129,153 @@ async fn repeated_start_replays_the_exact_response_and_advances_once() {
     );
 }
 
+#[tokio::test]
+async fn repeated_diff_review_is_idempotent_and_only_records_read_only_work() {
+    let mut fixture = Fixture::new();
+    fixture.make_ready();
+    let launch_id = fixture.launch.id.0.clone();
+    let body = json!({
+        "expected_revision": fixture.launch.revision_number,
+        "snapshot_digest": fixture.launch.effective.digest,
+    });
+    let first = send(
+        &fixture.router(),
+        Method::POST,
+        &format!("/api/v1/launches/{launch_id}/contributions/review"),
+        body.clone(),
+        "one-diff-review",
+    )
+    .await;
+    let replay = send(
+        &fixture.router(),
+        Method::POST,
+        &format!("/api/v1/launches/{launch_id}/contributions/review"),
+        body,
+        "one-diff-review",
+    )
+    .await;
+
+    assert_eq!(first.0, StatusCode::ACCEPTED);
+    assert_eq!(replay.0, StatusCode::ACCEPTED);
+    assert_eq!(first.1, replay.1);
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.artifacts.reads.load(Ordering::SeqCst), 0);
+    let retained = fixture.store.launch.lock().unwrap().clone().unwrap();
+    assert_eq!(retained.state, LaunchState::Contributing);
+    assert_eq!(retained.contribution_checkpoint_version, Some(1));
+    assert!(retained.diff.is_none());
+    assert!(retained.confirmations.iter().any(|confirmation| {
+        confirmation.action == ConfirmationAction::ReviewDiff
+            && confirmation.subject == retained.owner
+    }));
+}
+
+#[tokio::test]
+async fn diff_download_is_tenant_isolated_integrity_checked_and_hardened() {
+    let mut fixture = Fixture::new();
+    let bytes = br#"{"cma_trigger_diff":1,"safe":"review"}"#.to_vec();
+    let artifact = fixture.install_diff(bytes.clone());
+    let uri = format!(
+        "/api/v1/launches/{}/diff-artifacts/{}/download",
+        fixture.launch.id.0, artifact.id.0
+    );
+
+    let response = fixture
+        .router()
+        .oneshot(authenticated_request(Method::GET, &uri, OWNER))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/octet-stream"
+    );
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(
+        response.headers()["content-security-policy"],
+        "sandbox; default-src 'none'"
+    );
+    assert_eq!(
+        response.headers()[header::CACHE_CONTROL],
+        "private, no-store"
+    );
+    assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+    let disposition = response.headers()[header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap();
+    assert_eq!(
+        disposition,
+        format!(
+            "attachment; filename=\"cma-trigger-diff-{}.json\"",
+            artifact.id.0
+        )
+    );
+    assert!(!disposition.contains("project"));
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+        bytes
+    );
+    assert_eq!(fixture.artifacts.reads.load(Ordering::SeqCst), 1);
+
+    let projection = serde_json::to_value(LaunchView::from(fixture.launch.clone())).unwrap();
+    assert_eq!(
+        projection["diff"]["download_url"],
+        format!(
+            "/api/v1/launches/{}/diff-artifacts/{}/download",
+            fixture.launch.id.0, artifact.id.0
+        )
+    );
+    assert!(projection["diff"].get("object_reference").is_none());
+
+    let other = fixture
+        .router()
+        .oneshot(authenticated_request(Method::GET, &uri, "other-subject"))
+        .await
+        .unwrap();
+    assert_eq!(other.status(), StatusCode::NOT_FOUND);
+    assert_eq!(fixture.artifacts.reads.load(Ordering::SeqCst), 1);
+
+    let wrong = format!(
+        "/api/v1/launches/{}/diff-artifacts/{}/download",
+        fixture.launch.id.0,
+        DiffArtifactId::new().0
+    );
+    let wrong = fixture
+        .router()
+        .oneshot(authenticated_request(Method::GET, &wrong, OWNER))
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), StatusCode::NOT_FOUND);
+    assert_eq!(fixture.artifacts.reads.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn diff_download_refuses_bytes_that_do_not_match_the_launch_digest() {
+    let mut fixture = Fixture::new();
+    let artifact = fixture.install_diff(b"expected artifact".to_vec());
+    fixture
+        .artifacts
+        .replace_bytes(b"tampered artifact".to_vec());
+    let uri = format!(
+        "/api/v1/launches/{}/diff-artifacts/{}/download",
+        fixture.launch.id.0, artifact.id.0
+    );
+
+    let response = fixture
+        .router()
+        .oneshot(authenticated_request(Method::GET, &uri, OWNER))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(!body
+        .windows("tampered artifact".len())
+        .any(|window| { window == b"tampered artifact" }));
+}
+
 #[test]
 fn unknown_fields_in_nested_trigger_policy_are_refused() {
     let mut body = serde_json::to_value(content(SubjectId(OWNER.into()))).unwrap();
@@ -138,6 +291,10 @@ fn trigger_openapi_paths_exist_and_only_preview_is_declared_anonymous() {
     let paths = &documented.get_openapi().paths.paths;
     assert!(paths.contains_key("/api/v1/triggers/public/{public_id}"));
     assert!(paths.contains_key("/api/v1/launches/{launch_id}/start"));
+    assert!(paths.contains_key("/api/v1/launches/{launch_id}/contributions/review"));
+    assert!(
+        paths.contains_key("/api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download")
+    );
 
     for path in paths.keys() {
         assert_eq!(
@@ -254,11 +411,29 @@ async fn send(
     (status, body)
 }
 
+fn authenticated_request(method: Method, uri: &str, subject: &str) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(SubjectId(subject.into())));
+    request
+        .extensions_mut()
+        .insert(Authorization::from_capabilities([
+            Capability::CreateSession,
+        ]));
+    request
+}
+
 struct Fixture {
     revision: TriggerRevision,
     launch: Launch,
     store: Arc<FixtureStore>,
     operations: Arc<MemoryOperations>,
+    artifacts: Arc<MemoryDiffArtifacts>,
 }
 
 impl Fixture {
@@ -280,7 +455,193 @@ impl Fixture {
             launch,
             store,
             operations: Arc::new(MemoryOperations::default()),
+            artifacts: Arc::new(MemoryDiffArtifacts::default()),
         }
+    }
+
+    fn make_ready(&mut self) {
+        let source_sha = self.launch.source_sha.clone();
+        let upstream_id = self
+            .launch
+            .revision
+            .content
+            .upstream
+            .repository
+            .repository_id;
+        let account = self.launch.connection.as_ref().unwrap().account.clone();
+        let mut fork_repository = self.launch.revision.content.upstream.repository.clone();
+        fork_repository.repository_id = 11;
+        fork_repository.repository_node_id = "R_contributor_fork".into();
+        fork_repository.owner_id = account.account_id;
+        fork_repository.owner_node_id = account.account_node_id;
+        fork_repository.canonical_owner = account.login;
+        fork_repository.fork_parent_id = Some(upstream_id);
+        fork_repository.fork_source_id = Some(upstream_id);
+        self.launch.fork = Some(ForkRecord {
+            repository: fork_repository,
+            reused: false,
+            source_revision: source_sha.clone(),
+            canonical_url: "https://github.com/contributor/project".into(),
+            ready_at: NOW.into(),
+        });
+        self.launch.branch = Some(BranchRecord {
+            name: format!("cma/{}", self.launch.id.0),
+            expected_head: source_sha.clone(),
+            current_head: source_sha.clone(),
+            canonical_url: "https://github.com/contributor/project/tree/cma/test".into(),
+            created_at: NOW.into(),
+        });
+        self.launch.workspace = Some(WorkspaceRecord {
+            baseline: WorkspaceManifest::seal(source_sha, Vec::new()).unwrap(),
+            baseline_object_reference: "internal/baseline.pack".into(),
+            baseline_archive_sha256: "a".repeat(64),
+            latest_checkpoint: None,
+            previous_checkpoint: None,
+            workspace_epoch: 1,
+            retention_policy_id: "test-retention-v1".into(),
+            delete_after: "2026-09-26T12:00:00Z".into(),
+        });
+        self.launch.session = Some(SessionLink {
+            session_id: SessionId("sesn_rest_ready".into()),
+            environment_profile_id: "envp_cma_trigger".into(),
+            runtime_generation: 1,
+            created_at: NOW.into(),
+        });
+        self.launch.reach = Some(ReachStatus {
+            service_id: "service-1".into(),
+            state: CapabilityRevocationState::Active,
+            policy_generation: 1,
+            policy_fence: 1,
+            runtime_audience: "runtime-rest-ready".into(),
+            expires_at_epoch_seconds: 4_000_000_000,
+            numeric_binding_observed_at: NOW.into(),
+            refreshed_at: NOW.into(),
+            revocation_requested_at: None,
+            revocation_effective_at: None,
+            last_refusal: None,
+            tombstone_acknowledged: false,
+            agent_key_revocation_confirmed: false,
+        });
+        self.launch.delivery = Some(PromptDelivery {
+            launch_id: self.launch.id.clone(),
+            session_id: self.launch.session.as_ref().unwrap().session_id.clone(),
+            revision_digest: self.launch.revision_digest.clone(),
+            origin_key: format!("cma-trigger:{}:initial", self.launch.id.0),
+            payload_hash: "c".repeat(64),
+            state: PromptDeliveryState::Completed,
+            attempt: 1,
+            dispatch_fence_sequence: Some(1),
+            queued_at: NOW.into(),
+            updated_at: NOW.into(),
+        });
+        self.launch.state = LaunchState::Ready;
+        *self.store.launch.lock().unwrap() = Some(self.launch.clone());
+    }
+
+    fn install_diff(&mut self, bytes: Vec<u8>) -> DiffArtifact {
+        let source_sha = self.launch.source_sha.clone();
+        let content = b"reviewed change\n";
+        let content_sha256 = format!("{:x}", Sha256::digest(content));
+        let baseline = WorkspaceManifest::seal(source_sha.clone(), Vec::new()).unwrap();
+        let checkpoint_manifest = WorkspaceManifest::seal(
+            source_sha.clone(),
+            vec![WorkspaceEntry {
+                path: "README.md".into(),
+                kind: WorkspaceEntryKind::Regular,
+                mode: 0o100644,
+                size: content.len() as u64,
+                content_sha256: content_sha256.clone(),
+                provider_object_id: None,
+                symlink_target: None,
+            }],
+        )
+        .unwrap();
+        let checkpoint = WorkspaceCheckpoint {
+            id: CheckpointId::new(),
+            launch_id: self.launch.id.clone(),
+            version: 1,
+            workspace_epoch: 1,
+            session_id: SessionId("sesn_rest_diff".into()),
+            runtime_generation: 1,
+            object_reference: "internal/checkpoint.pack".into(),
+            archive_sha256: "b".repeat(64),
+            manifest: checkpoint_manifest,
+            integrity: CheckpointIntegrity::Complete,
+            created_at: NOW.into(),
+            delete_after: Some("2026-09-26T12:00:00Z".into()),
+        };
+        self.launch.branch = Some(BranchRecord {
+            name: format!("cma/{}", self.launch.id.0),
+            expected_head: source_sha.clone(),
+            current_head: source_sha.clone(),
+            canonical_url: "https://github.com/contributor/project/tree/cma/test".into(),
+            created_at: NOW.into(),
+        });
+        self.launch.workspace = Some(WorkspaceRecord {
+            baseline: baseline.clone(),
+            baseline_object_reference: "internal/project-baseline.pack".into(),
+            baseline_archive_sha256: "a".repeat(64),
+            latest_checkpoint: Some(checkpoint.clone()),
+            previous_checkpoint: None,
+            workspace_epoch: 1,
+            retention_policy_id: "test-retention-v1".into(),
+            delete_after: "2026-09-26T12:00:00Z".into(),
+        });
+        self.launch.contribution_checkpoint_version = Some(1);
+        self.launch.state = LaunchState::Contributing;
+        let object_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let artifact = DiffArtifact {
+            id: DiffArtifactId::new(),
+            launch_id: self.launch.id.clone(),
+            checkpoint_id: checkpoint.id,
+            baseline_digest: baseline.digest,
+            checkpoint_digest: checkpoint.manifest.digest,
+            expected_branch_head: source_sha.clone(),
+            observed_branch_head: source_sha,
+            changed_file_limit: 1_000,
+            total_changed_files: 1,
+            files: vec![DiffFile {
+                path: "README.md".into(),
+                change: DiffChangeKind::Added,
+                binary: false,
+                old_mode: None,
+                new_mode: Some(0o100644),
+                old_sha256: None,
+                new_sha256: Some(content_sha256),
+                old_provider_object_id: None,
+                new_provider_object_id: None,
+                old_bytes: 0,
+                new_bytes: content.len() as u64,
+                patch: Some(
+                    "--- baseline\n+++ checkpoint\n@@ -0,0 +1 @@\n+reviewed change\n".into(),
+                ),
+                patch_complete: true,
+            }],
+            changed_bytes: content.len() as u64,
+            digest: object_sha256.clone(),
+            object_reference: "internal/project-diff.json".into(),
+            object_sha256,
+            object_bytes: bytes.len() as u64,
+            author: CommitIdentity {
+                name: "contributor".into(),
+                email: "21+contributor@users.noreply.github.com".into(),
+            },
+            committer: CommitIdentity {
+                name: "CMA".into(),
+                email: "cma@chrono.ai".into(),
+            },
+            workflow_paths: Vec::new(),
+            validation: DiffValidationOutcome::Valid,
+            checks: Vec::new(),
+            created_at: NOW.into(),
+            delete_after: "2026-09-26T12:00:00Z".into(),
+        };
+        artifact.validate_for_review(&self.launch).unwrap();
+        self.launch.diff = Some(artifact.clone());
+        *self.store.launch.lock().unwrap() = Some(self.launch.clone());
+        self.artifacts
+            .install(self.launch.owner.clone(), artifact.clone(), bytes);
+        artifact
     }
 
     fn state(&self) -> TriggersState {
@@ -292,11 +653,70 @@ impl Fixture {
             )),
             connections: Arc::new(StaticConnections),
             operations: self.operations.clone(),
+            diff_artifacts: Some(self.artifacts.clone()),
         }
     }
 
     fn router(&self) -> axum::Router {
         documented_router(self.state()).into()
+    }
+}
+
+#[derive(Default)]
+struct MemoryDiffArtifacts {
+    retained: Mutex<Option<(SubjectId, DiffArtifact, Vec<u8>)>>,
+    reads: AtomicUsize,
+}
+
+impl MemoryDiffArtifacts {
+    fn install(&self, owner: SubjectId, artifact: DiffArtifact, bytes: Vec<u8>) {
+        *self.retained.lock().unwrap() = Some((owner, artifact, bytes));
+    }
+
+    fn replace_bytes(&self, bytes: Vec<u8>) {
+        let mut retained = self.retained.lock().unwrap();
+        retained.as_mut().unwrap().2 = bytes;
+    }
+}
+
+#[async_trait]
+impl DiffArtifactObjectStore for MemoryDiffArtifacts {
+    async fn put_diff_artifact(
+        &self,
+        _owner: &SubjectId,
+        _launch: &LaunchId,
+        _artifact: &DiffArtifactId,
+        _sha256: &str,
+        _bytes: &[u8],
+    ) -> Result<String, TriggerStoreError> {
+        Err(TriggerStoreError::Unavailable(
+            "test artifact writes are not configured".into(),
+        ))
+    }
+
+    async fn get_diff_artifact(
+        &self,
+        owner: &SubjectId,
+        artifact: &DiffArtifact,
+    ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        Ok(self
+            .retained
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|(retained_owner, retained_artifact, _)| {
+                retained_owner == owner && retained_artifact == artifact
+            })
+            .map(|(_, _, bytes)| bytes.clone()))
+    }
+
+    async fn delete_diff_artifact(
+        &self,
+        _owner: &SubjectId,
+        _artifact: &DiffArtifact,
+    ) -> Result<(), TriggerStoreError> {
+        Ok(())
     }
 }
 

@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 
 use super::{
-    Launch, LaunchId, LaunchState, PublicTriggerId, TriggerDraft, TriggerId, TriggerRevision,
-    TriggerRevisionId, WorkerLease, WorkspaceCheckpoint, WorkspaceManifest,
+    DiffArtifact, DiffArtifactId, Launch, LaunchId, LaunchState, PublicTriggerId, TriggerDraft,
+    TriggerId, TriggerRevision, TriggerRevisionId, WorkerLease, WorkspaceCheckpoint,
+    WorkspaceManifest,
 };
 use crate::SubjectId;
 
@@ -210,5 +211,34 @@ pub trait BaselineObjectStore: Send + Sync {
         owner: &SubjectId,
         launch: &LaunchId,
         reference: &str,
+    ) -> Result<(), TriggerStoreError>;
+}
+
+/// Tenant-isolated storage for the complete, immutable review artifact.
+///
+/// The Launch aggregate retains only a bounded summary. This port keeps the
+/// downloadable artifact out of MongoDB's document-size boundary and requires
+/// every read/delete to re-establish subject, Launch, artifact, and digest.
+#[async_trait]
+pub trait DiffArtifactObjectStore: Send + Sync {
+    async fn put_diff_artifact(
+        &self,
+        owner: &SubjectId,
+        launch: &LaunchId,
+        artifact: &DiffArtifactId,
+        sha256: &str,
+        bytes: &[u8],
+    ) -> Result<String, TriggerStoreError>;
+
+    async fn get_diff_artifact(
+        &self,
+        owner: &SubjectId,
+        artifact: &DiffArtifact,
+    ) -> Result<Option<Vec<u8>>, TriggerStoreError>;
+
+    async fn delete_diff_artifact(
+        &self,
+        owner: &SubjectId,
+        artifact: &DiffArtifact,
     ) -> Result<(), TriggerStoreError>;
 }

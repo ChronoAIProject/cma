@@ -18,9 +18,14 @@ pub(super) fn required_effect(launch: &Launch) -> Option<LaunchEffectKind> {
         LaunchState::Contributing
             if launch.diff.is_none()
                 && launch
-                    .workspace
-                    .as_ref()
-                    .is_some_and(|workspace| workspace.latest_checkpoint.is_none()) =>
+                    .contribution_checkpoint_version
+                    .is_some_and(|requested| {
+                        launch
+                            .workspace
+                            .as_ref()
+                            .and_then(|workspace| workspace.latest_checkpoint.as_ref())
+                            .is_none_or(|checkpoint| checkpoint.version < requested)
+                    }) =>
         {
             Some(LaunchEffectKind::Checkpoint)
         }
@@ -898,10 +903,19 @@ impl Launch {
                 }
             }
             LaunchEffectKind::Diff => {
-                if self.diff.is_none() {
+                let diff = self.diff.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field("diff", "the captured diff is missing")
+                })?;
+                if self.contribution_checkpoint_version.is_none()
+                    || self
+                        .workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.latest_checkpoint.as_ref())
+                        .is_none_or(|checkpoint| checkpoint.id != diff.checkpoint_id)
+                {
                     return Err(TriggerValidationError::field(
                         "diff",
-                        "the captured diff is missing",
+                        "does not match the explicitly requested checkpoint",
                     ));
                 }
             }
