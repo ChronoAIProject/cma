@@ -68,20 +68,24 @@ event stream for progress and `readSession` for the latest full projection.
 
 ## Lifecycle and recovery
 
-| Lifecycle      | Meaning for a caller                                              |
-| -------------- | ----------------------------------------------------------------- |
-| `provisioning` | CMA is creating and attaching the runtime                         |
-| `ready`        | The runtime is usable and no turn is active                       |
-| `running`      | Work is in flight                                                 |
-| `rotating`     | CMA is carrying the session to another runtime; do not send input |
-| `idle`         | The runtime was released; the session can be revived              |
-| `terminated`   | No further work can occur under this identifier                   |
-| `unknown`      | A newer server reported a lifecycle this SDK does not yet name    |
+| Lifecycle      | Meaning for a caller                                            |
+| -------------- | --------------------------------------------------------------- |
+| `provisioning` | CMA is creating and attaching the runtime                       |
+| `ready`        | The runtime is usable and no turn is active                     |
+| `running`      | Work is in flight                                               |
+| `rotating`     | CMA carries the session; the server returns a retryable refusal |
+| `idle`         | The runtime was released; the session can be revived            |
+| `terminated`   | No further work can occur under this identifier                 |
+| `unknown`      | A newer server reported a lifecycle this SDK does not yet name  |
 
 When lifecycle is `unknown`, `reportedStatus` preserves the server's raw word. It
 is neither treated as failure nor made interactive. `recoveryState` is separate
 operational health; `stopReason: 'requires_action'` means the runtime is waiting
 for an approval or tool result and is not terminal.
+
+During `rotating`, the server returns the retryable `409 session_rotating` error
+for new input. Disable input controls for experience and keep reading events until
+the replacement is usable; the client guard is not the correctness boundary.
 
 ## Capabilities
 

@@ -127,7 +127,7 @@ impl Harness {
             session: rejoin.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
             folder: Arc::new(Mutex::new(Folder::default())),
         });
-        let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
+        let control = crate::hosted::control_lane(Arc::clone(&harness.sink), Some(link.clone()));
         let mut abort_on_drop = crate::hosted::AbortLinkOnDrop::new(control.clone());
 
         let writer = Arc::clone(&harness);
@@ -140,6 +140,8 @@ impl Harness {
         // this loop, so it has to be running to receive it.
         let reader = Arc::clone(&harness);
         let updates = updates_tx.clone();
+        let control_for_reader = control.downgrade();
+        let link_for_reader = link.clone();
         let reader_task = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
@@ -156,6 +158,17 @@ impl Harness {
                         }
                         _ => {}
                     },
+                    Ok(Message::Text(text)) => {
+                        if let Some((operation_id, installed)) =
+                            crate::hosted::credential_answer(&text)
+                        {
+                            if let Some(control) = control_for_reader.upgrade() {
+                                link_for_reader
+                                    .settle_credential(&control, &operation_id, installed)
+                                    .await;
+                            }
+                        }
+                    }
                     Ok(Message::Close(_)) => break,
                     Ok(_) => {}
                     Err(e) => {

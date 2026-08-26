@@ -460,7 +460,7 @@ async fn only_outstanding_approvals_are_answerable_after_a_restart() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_request_arriving_between_history_read_and_install_is_answerable() {
+async fn a_request_arriving_during_readoption_survives_a_hidden_replay_lease_advance() {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter {
         capabilities: conversing(),
@@ -474,10 +474,20 @@ async fn a_request_arriving_between_history_read_and_install_is_answerable() {
     drop(first);
     *adapter.permission_on_open.lock().await =
         Some(asking("arrived-during-readoption", "run after reconnect"));
+    store.lose_runtime_advance_responses(1);
     let replacement = replacement_service(Arc::clone(&store), Arc::clone(&adapter));
     let recovered = replacement.reconcile().await;
     assert_eq!(recovered.readopted_sessions, 1);
     assert_readoption_lease_released(&replacement, &store, &created.id).await;
+    assert!(
+        replacement
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .is_some_and(|entry| entry.publication_complete),
+        "the confirmed replay boundary is published before readoption completes"
+    );
 
     let events = replacement
         .events_since(&alice, &created.id, None)

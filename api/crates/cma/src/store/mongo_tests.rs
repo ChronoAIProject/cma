@@ -1,9 +1,10 @@
 use super::*;
 use layer2_core::{
+    store::{PendingHandover, PendingHandoverTarget},
     AgentOptions, Event, EventKind, KernelId, PageCursor, PageRequest, Rate, RateCardId,
-    RecoveryState, RuntimeCleanupReason, Session, SessionBoundary, SessionId, SessionLeaseRequest,
-    SessionListQuery, SessionOperation, SessionPricing, SessionRecord, SessionStatus, StopReason,
-    SubjectId, TerminalGeometry,
+    RecoveryState, RuntimeCleanupReason, Session, SessionBoundary, SessionCapabilities, SessionId,
+    SessionLeaseRequest, SessionListQuery, SessionMode, SessionOperation, SessionPricing,
+    SessionRecord, SessionStatus, StopReason, SubjectId, TerminalGeometry,
 };
 use std::io::Write;
 use std::sync::{
@@ -192,6 +193,185 @@ fn a_document_without_a_rotation_claim_reads_as_unclaimed() {
         from_doc(legacy)
             .expect("legacy record decodes")
             .rotation_claim,
+        None
+    );
+}
+
+#[test]
+fn pending_handovers_round_trip_with_their_exact_target_shape() {
+    let targets = [
+        PendingHandoverTarget::RuntimeVersion {
+            from_runtime_version: None,
+            runtime_version: "runtime:v2".into(),
+        },
+        PendingHandoverTarget::Plane {
+            from_mode: SessionMode::Terminal,
+            mode: SessionMode::Conversation,
+            capabilities: SessionCapabilities {
+                conversation: true,
+                snapshot: true,
+                steer: true,
+                resources: Some(false),
+                ..Default::default()
+            },
+        },
+    ];
+
+    for target in targets {
+        let mut expected = record_with(None);
+        expected.pending_handover = Some(PendingHandover {
+            claim: "rotn_recoverable".into(),
+            snapshot_ref: "sessions/sesn_priced/handover.snapshot".into(),
+            snapshot_at: "2026-08-27T01:02:03Z".into(),
+            rotations_from: 4,
+            rotations_to: 5,
+            target,
+        });
+
+        let stored = to_doc(&expected).expect("pending handover can be stored");
+        let read = from_doc(stored).expect("pending handover can be read");
+
+        assert_eq!(read.pending_handover, expected.pending_handover);
+    }
+}
+
+#[test]
+fn pending_handover_bson_uses_the_versioned_nested_field_names() {
+    let capabilities = SessionCapabilities {
+        conversation: true,
+        snapshot: true,
+        steer: true,
+        resources: Some(false),
+        ..Default::default()
+    };
+    let cases = [
+        (
+            PendingHandoverTarget::RuntimeVersion {
+                from_runtime_version: Some("runtime:v2".into()),
+                runtime_version: "runtime:v3".into(),
+            },
+            mongodb::bson::doc! {
+                "kind": "runtime_version",
+                "from_runtime_version": "runtime:v2",
+                "runtime_version": "runtime:v3",
+            },
+        ),
+        (
+            PendingHandoverTarget::Plane {
+                from_mode: SessionMode::Terminal,
+                mode: SessionMode::Conversation,
+                capabilities,
+            },
+            mongodb::bson::doc! {
+                "kind": "plane",
+                "from_mode": "terminal",
+                "mode": "conversation",
+                "capabilities": mongodb::bson::serialize_to_bson(&capabilities)
+                    .expect("capabilities serialize"),
+            },
+        ),
+    ];
+
+    for (pending_target, expected_target) in cases {
+        let mut expected = record_with(None);
+        expected.pending_handover = Some(PendingHandover {
+            claim: "rotn_wire".into(),
+            snapshot_ref: "sessions/sesn_priced/handover.snapshot".into(),
+            snapshot_at: "2026-08-27T01:02:03Z".into(),
+            rotations_from: 7,
+            rotations_to: 8,
+            target: pending_target,
+        });
+
+        let stored = to_doc(&expected).expect("pending handover can be stored");
+        let document = mongodb::bson::serialize_to_document(&stored).expect("doc serializes");
+        let handover = document
+            .get_document("pending_handover")
+            .expect("pending handover is nested");
+        assert_eq!(handover.len(), 6, "handover wire fields changed");
+        assert_eq!(
+            handover.get_str("claim").expect("claim is a string"),
+            "rotn_wire"
+        );
+        assert_eq!(
+            handover
+                .get_str("snapshot_ref")
+                .expect("snapshot reference is a string"),
+            "sessions/sesn_priced/handover.snapshot"
+        );
+        assert_eq!(
+            handover
+                .get_str("snapshot_at")
+                .expect("snapshot time is a string"),
+            "2026-08-27T01:02:03Z"
+        );
+        assert_eq!(
+            handover
+                .get_i64("rotations_from")
+                .expect("source rotation count is an integer"),
+            7
+        );
+        assert_eq!(
+            handover
+                .get_i64("rotations_to")
+                .expect("target rotation count is an integer"),
+            8
+        );
+        assert_eq!(
+            handover.get_document("target").expect("target is nested"),
+            &expected_target,
+            "tagged handover target shape changed"
+        );
+    }
+}
+
+#[test]
+fn a_pending_handover_can_survive_after_its_live_rotation_claim_is_cleared() {
+    let mut expected = record_with(None);
+    expected.rotation_claim = None;
+    expected.pending_handover = Some(PendingHandover {
+        claim: "rotn_revive_later".into(),
+        snapshot_ref: "sessions/sesn_priced/handover.snapshot".into(),
+        snapshot_at: "2026-08-27T01:02:03Z".into(),
+        rotations_from: 8,
+        rotations_to: 9,
+        target: PendingHandoverTarget::RuntimeVersion {
+            from_runtime_version: Some("runtime:v1".into()),
+            runtime_version: "runtime:v2".into(),
+        },
+    });
+
+    let stored = to_doc(&expected).expect("pending handover can be stored without a live claim");
+    let read = from_doc(stored).expect("pending handover can be recovered without a live claim");
+
+    assert_eq!(read.rotation_claim, None);
+    assert_eq!(read.pending_handover, expected.pending_handover);
+}
+
+#[test]
+fn a_document_without_pending_handover_reads_as_having_no_recovery_snapshot() {
+    let mut current = record_with(None);
+    current.pending_handover = Some(PendingHandover {
+        claim: "rotn_not_present_in_legacy".into(),
+        snapshot_ref: "sessions/sesn_priced/handover.snapshot".into(),
+        snapshot_at: "2026-08-27T01:02:03Z".into(),
+        rotations_from: 2,
+        rotations_to: 3,
+        target: PendingHandoverTarget::RuntimeVersion {
+            from_runtime_version: Some("runtime:v1".into()),
+            runtime_version: "runtime:v2".into(),
+        },
+    });
+    let stored = to_doc(&current).expect("record can be stored");
+    let mut document = mongodb::bson::serialize_to_document(&stored).expect("doc serializes");
+    assert!(document.remove("pending_handover").is_some());
+    let legacy: SessionDoc =
+        mongodb::bson::deserialize_from_bson(document.into()).expect("legacy doc reads");
+
+    assert_eq!(
+        from_doc(legacy)
+            .expect("legacy record decodes")
+            .pending_handover,
         None
     );
 }
@@ -2542,7 +2722,7 @@ async fn run_legacy_delete_transaction(
                         .session(&mut *session)
                         .await?;
                     receipts
-                        .delete_many(all_session_receipts_filter(&id))
+                        .delete_many(all_session_receipts_filter(id))
                         .session(&mut *session)
                         .await?;
                     Ok(())
@@ -3767,7 +3947,7 @@ async fn a_real_legacy_document_passes_its_first_revision_zero_cas() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn a_real_legacy_document_can_acquire_its_first_durable_lease() {
+async fn a_real_legacy_document_can_acquire_its_first_durable_handover_lease() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
     let client = Client::with_uri_str(&uri)
@@ -3826,7 +4006,7 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_lease() {
         holder: "legacy-coordination-test".into(),
         token: "lease-legacy-first-touch".into(),
         boundary: SessionBoundary::for_record(&record, authority.generation),
-        operation: SessionOperation::Lifecycle,
+        operation: SessionOperation::Handover,
         ttl: Duration::from_secs(30),
     };
     let mut lease = store
@@ -3834,6 +4014,7 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_lease() {
         .await
         .expect("the first coordination write promotes every required field");
     assert_eq!(lease.boundary.authority.generation, 0);
+    assert_eq!(lease.operation, SessionOperation::Handover);
     assert_eq!(
         lease.boundary.authority.runtime_id.as_deref(),
         Some("runtime-generation-zero")

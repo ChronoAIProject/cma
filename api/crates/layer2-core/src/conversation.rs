@@ -109,19 +109,30 @@ impl ApprovalResolution {
     }
 }
 
+struct ReceivedHistoryTarget {
+    runtime_generation: u64,
+    conversation_link: Option<ConversationLinkId>,
+    conversation_authority: Option<ConversationLink>,
+    runtime_id: Option<String>,
+    running_from: Option<SessionStatus>,
+}
+
 impl SessionService {
     /// Publish the durable result of receipt history, then propose its optional
     /// running transition against that exact record and runtime authority.
     async fn finish_received_history(
         self: &Arc<Self>,
         id: &SessionId,
-        runtime_generation: u64,
-        conversation_link: Option<ConversationLinkId>,
-        conversation_authority: Option<ConversationLink>,
-        runtime_id: Option<String>,
+        target: ReceivedHistoryTarget,
         committed: SessionRecord,
-        running_from: Option<SessionStatus>,
     ) {
+        let ReceivedHistoryTarget {
+            runtime_generation,
+            conversation_link,
+            conversation_authority,
+            runtime_id,
+            running_from,
+        } = target;
         let live_matches = self
             .install_received_history(
                 id,
@@ -289,28 +300,14 @@ impl SessionService {
         id: &SessionId,
         bound: Duration,
     ) -> Result<(), ConversationReadinessError> {
-        // Refuse before observing the session or its provisioning timing.
-        caller
-            .authorization
-            .require(AuthorizationCapability::UseOwnSessions)?;
-
         let wait_for_conversation = async {
             loop {
-                let record = self.record(id).await?;
-                if !record.session.is_owned_by(&caller.subject) {
-                    return Err(CoreError::Forbidden);
-                }
-                if record.session.status.is_terminal() {
-                    return Err(CoreError::SessionTerminated);
-                }
-                if !record.session.capabilities.unrecorded() {
-                    record
-                        .session
-                        .capabilities
-                        .require(Capability::Conversation)?;
+                let session = self.session_for_interaction(caller, id).await?;
+                if !session.capabilities.unrecorded() {
+                    session.capabilities.require(Capability::Conversation)?;
                 }
 
-                match record.session.status {
+                match session.status {
                     SessionStatus::Provisioning => {}
                     SessionStatus::Ready | SessionStatus::Running => {
                         let conversation_is_live = self
@@ -333,7 +330,9 @@ impl SessionService {
                             .await?;
                         return Ok(());
                     }
-                    SessionStatus::Rotating => return Err(CoreError::SessionRotating),
+                    SessionStatus::Rotating => {
+                        unreachable!("interaction preflight refuses rotation")
+                    }
                     SessionStatus::Idle => return Err(CoreError::InvalidState),
                     SessionStatus::Terminated => unreachable!("terminal status handled above"),
                 }
@@ -377,6 +376,9 @@ impl SessionService {
         }
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
+        }
+        if record.is_effectively_rotating() {
+            return Err(CoreError::SessionRotating);
         }
         if record.session.status == SessionStatus::Running
             && !record.session.capabilities.unrecorded()
@@ -447,12 +449,11 @@ impl SessionService {
                 if !entry.pending_approvals.is_empty() {
                     return Err(CoreError::InvalidState);
                 }
-                let boundary = authority.ensure_delivery_allowed()?;
-                if entry.runtime_generation != boundary.authority.generation {
-                    return Err(CoreError::RuntimeUnavailable(
-                        "the live conversation belongs to another runtime generation".into(),
-                    ));
-                }
+                let runtime_id = entry.runtime.as_ref().map(|runtime| runtime.0.clone());
+                authority.ensure_runtime_delivery_allowed(
+                    runtime_id.as_deref(),
+                    entry.runtime_generation,
+                )?;
                 let input = entry.conversation.clone().ok_or_else(|| {
                     CoreError::RuntimeUnavailable("this session holds no conversation".into())
                 })?;
@@ -466,7 +467,7 @@ impl SessionService {
                     entry.runtime_generation,
                     entry.conversation_link,
                     entry.conversation_authority.clone(),
-                    boundary.authority.runtime_id.clone(),
+                    runtime_id,
                     running_from,
                 )
             };
@@ -485,7 +486,11 @@ impl SessionService {
                 let mut entries = service.entries.write().await;
                 let entry = entries
                     .get_mut(&id)
-                    .filter(|entry| entry.runtime_generation == runtime_generation)
+                    .filter(|entry| {
+                        entry.runtime_generation == runtime_generation
+                            && entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                                == runtime_id.as_deref()
+                    })
                     .ok_or_else(|| {
                         CoreError::RuntimeUnavailable(
                             "the delivered prompt's runtime generation is no longer live".into(),
@@ -529,12 +534,14 @@ impl SessionService {
             service
                 .finish_received_history(
                     &id,
-                    runtime_generation,
-                    conversation_link,
-                    conversation_authority,
-                    runtime_id,
+                    ReceivedHistoryTarget {
+                        runtime_generation,
+                        conversation_link,
+                        conversation_authority,
+                        runtime_id,
+                        running_from,
+                    },
                     record,
-                    running_from,
                 )
                 .await;
             drop(ordered_turn);
@@ -569,7 +576,7 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
-        if record.session.status.is_rotating() {
+        if record.is_effectively_rotating() {
             return Err(CoreError::SessionRotating);
         }
         record.session.capabilities.require(Capability::Interrupt)?;
@@ -584,7 +591,7 @@ impl SessionService {
                 Some(service.lock_lifecycle(&id).await)
             };
             let _input_fence = service.input_gates.gate(&id).read_owned().await;
-            let (runtime_generation, input) = {
+            let (runtime_id, runtime_generation, input) = {
                 let entries = service.entries.read().await;
                 let entry = entries.get(&id).ok_or_else(|| {
                     CoreError::RuntimeUnavailable(
@@ -606,15 +613,14 @@ impl SessionService {
                         "this session holds no conversation input sender".into(),
                     )
                 })?;
-                (entry.runtime_generation, input)
+                (
+                    entry.runtime.as_ref().map(|runtime| runtime.0.clone()),
+                    entry.runtime_generation,
+                    input,
+                )
             };
 
-            if !authority.fences_runtime_generation(runtime_generation) {
-                return Err(CoreError::RuntimeUnavailable(
-                    "the live conversation belongs to another runtime generation".into(),
-                ));
-            }
-            authority.ensure_delivery_allowed()?;
+            authority.ensure_runtime_delivery_allowed(runtime_id.as_deref(), runtime_generation)?;
             service
                 .toward_runtime(&id, &input, ConversationInput::Cancel)
                 .await
@@ -673,7 +679,14 @@ impl SessionService {
             let input_fence = service.input_gates.gate(&id).read_owned().await;
             let ordering = service.conversation_order_gates.gate(&id);
             let ordered_resolution = ordering.lock().await;
-            let (input, locators, runtime_generation, conversation_link, conversation_authority) = {
+            let (
+                input,
+                locators,
+                runtime_id,
+                runtime_generation,
+                conversation_link,
+                conversation_authority,
+            ) = {
                 let entries = service.entries.read().await;
                 let entry = entries.get(&id).ok_or(CoreError::SessionNotFound)?;
                 if !entry.session.is_owned_by(&owner) {
@@ -713,6 +726,7 @@ impl SessionService {
                 (
                     input,
                     locators,
+                    entry.runtime.as_ref().map(|runtime| runtime.0.clone()),
                     entry.runtime_generation,
                     entry.conversation_link,
                     entry.conversation_authority.clone(),
@@ -723,15 +737,9 @@ impl SessionService {
             let mut delivered_runtime_id = None;
             let mut delivery_error = None;
             for (resolution, locator) in resolutions.iter().zip(locators.iter().cloned()) {
-                let allowed = authority.ensure_delivery_allowed().and_then(|boundary| {
-                    if boundary.authority.generation == runtime_generation {
-                        Ok(boundary.authority.runtime_id.clone())
-                    } else {
-                        Err(CoreError::RuntimeUnavailable(
-                            "the live conversation belongs to another runtime generation".into(),
-                        ))
-                    }
-                });
+                let allowed = authority
+                    .ensure_runtime_delivery_allowed(runtime_id.as_deref(), runtime_generation)
+                    .map(|boundary| boundary.authority.runtime_id.clone());
                 let runtime_id = match allowed {
                     Ok(runtime_id) => runtime_id,
                     Err(error) => {
@@ -773,7 +781,11 @@ impl SessionService {
                 let mut entries = service.entries.write().await;
                 let entry = entries
                     .get_mut(&id)
-                    .filter(|entry| entry.runtime_generation == runtime_generation)
+                    .filter(|entry| {
+                        entry.runtime_generation == runtime_generation
+                            && entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                                == runtime_id.as_deref()
+                    })
                     .ok_or_else(|| {
                         CoreError::RuntimeUnavailable(
                             "the delivered approvals' runtime generation is no longer live".into(),
@@ -827,12 +839,14 @@ impl SessionService {
                 service
                     .finish_received_history(
                         &id,
-                        runtime_generation,
-                        conversation_link,
-                        conversation_authority,
-                        delivered_runtime_id,
+                        ReceivedHistoryTarget {
+                            runtime_generation,
+                            conversation_link,
+                            conversation_authority,
+                            runtime_id: delivered_runtime_id,
+                            running_from,
+                        },
                         record,
-                        running_from,
                     )
                     .await;
             }
@@ -919,7 +933,7 @@ impl SessionService {
         // `is_interactive` names the wider UI state contract, but only a
         // rotation changes this operation's existing answer: provisioning and
         // idle sessions still fall through to their established runtime error.
-        if record.session.status.is_rotating() {
+        if record.is_effectively_rotating() {
             return Err(CoreError::SessionRotating);
         }
         let missing_live_entry = !self.entries.read().await.contains_key(id);

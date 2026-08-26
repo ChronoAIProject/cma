@@ -343,6 +343,796 @@ async fn a_session_is_carried_onto_a_newer_runtime() {
 }
 
 #[tokio::test]
+async fn failed_compatibility_h1_teardown_never_starts_or_publishes_h2() {
+    let store = Arc::new(RotationStore::default());
+    let adapter = ambidextrous();
+    let alice = user("compatibility-h1-teardown-owner");
+    let svc = crate::test_support::service_over(store.clone(), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    let h1 = before.runtime_id.clone().expect("H1 is durable");
+    let provisions_before = adapter.provision_calls.load(Ordering::SeqCst);
+
+    adapter.fail_terminations(1);
+    assert!(matches!(
+        svc.change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await,
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_rotation_lane(&svc, &created.id).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Rotating);
+    assert_eq!(durable.runtime_id.as_deref(), Some(h1.as_str()));
+    assert!(durable.rotation_claim.is_some());
+    assert_eq!(durable.session.options, before.session.options);
+    assert_eq!(durable.session.capabilities, before.session.capabilities);
+    assert_eq!(
+        durable.session.runtime_version,
+        before.session.runtime_version
+    );
+    assert_eq!(durable.session.rotations, before.session.rotations);
+    assert_eq!(durable.session.rotated_at, before.session.rotated_at);
+    assert!(adapter.running.lock().await.contains_key(&h1));
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert_eq!(adapter.running_count().await, 1);
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provisions_before,
+        "H2 is not requested before H1 teardown and durable clear succeed"
+    );
+    assert!(
+        !svc.entries.read().await.contains_key(&created.id),
+        "no successor entry is published after the failed teardown"
+    );
+    assert!(!svc.starting.read().await.contains(&created.id));
+
+    let recovered = svc.reconcile().await;
+    assert_eq!(recovered.readopted_sessions, 1);
+    let readopted = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(readopted.session.status, SessionStatus::Ready);
+    assert_eq!(readopted.rotation_claim, None);
+    assert_eq!(readopted.runtime_id.as_deref(), Some(h1.as_str()));
+    assert_eq!(readopted.session.options, before.session.options);
+    assert_eq!(readopted.session.capabilities, before.session.capabilities);
+    assert_eq!(
+        readopted.session.runtime_version,
+        before.session.runtime_version
+    );
+    assert_eq!(readopted.session.rotations, before.session.rotations);
+
+    svc.change_plane(
+        &alice,
+        &created.id,
+        crate::options::SessionMode::Conversation,
+    )
+    .await
+    .expect("the reconciled H1 can retry its handover");
+    await_usable(&svc, &alice, &created.id).await;
+    let final_record = store.inner.get(&created.id).await.unwrap().unwrap();
+    let h2 = final_record
+        .runtime_id
+        .clone()
+        .expect("the successful retry publishes H2");
+    assert_ne!(h2, h1);
+    assert_eq!(final_record.session.status, SessionStatus::Ready);
+    assert_eq!(
+        final_record.session.options.mode,
+        crate::options::SessionMode::Conversation
+    );
+    assert_eq!(
+        final_record.session.capabilities,
+        crate::capabilities::SessionCapabilities::granted(
+            crate::options::SessionMode::Conversation,
+            adapter.capabilities,
+        )
+        .expect("the test adapter supports the target plane")
+    );
+    assert_eq!(
+        final_record.session.runtime_version,
+        before.session.runtime_version
+    );
+    assert_eq!(final_record.session.rotations, before.session.rotations + 1);
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provisions_before + 1
+    );
+    assert_eq!(adapter.running_count().await, 1);
+    assert!(adapter.running.lock().await.contains_key(&h2));
+    assert_eq!(adapter.terminated.lock().await.as_slice(), &[h1]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_handover_upload_drains_admitted_input_and_leaves_h1_usable() {
+    let store = Arc::new(RotationStore::default());
+    let adapter = ambidextrous();
+    let alice = user("compatibility-upload-failure-owner");
+    let svc = crate::test_support::service_over(store.clone(), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    let h1 = before.runtime_id.clone().expect("H1 is durable");
+    let provisions_before = adapter.provision_calls.load(Ordering::SeqCst);
+    let input_gate = svc.input_gates.gate(&created.id);
+
+    adapter.pause_next_terminal_input();
+    let admitted = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.send_input(&alice, &id, b"admitted before upload".to_vec())
+                .await
+        }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+
+    adapter.fail_handover_puts(1);
+    let moving = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.change_plane(&alice, &id, crate::options::SessionMode::Conversation)
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            assert_eq!(
+                adapter.snapshot_calls.load(Ordering::SeqCst),
+                0,
+                "the snapshot must wait for already admitted input"
+            );
+            if input_gate.try_read().is_err() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the handover queues behind admitted input");
+
+    adapter.resume_terminal_input();
+    admitted
+        .await
+        .expect("the admitted input task completes")
+        .expect("the admitted input reaches H1");
+    assert!(matches!(
+        moving.await.expect("the handover task completes"),
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_rotation_lane(&svc, &created.id).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.revision, before.revision);
+    assert_eq!(durable.session.status, before.session.status);
+    assert_eq!(durable.runtime_id.as_deref(), Some(h1.as_str()));
+    assert_eq!(durable.rotation_claim, None);
+    assert_eq!(durable.pending_handover, None);
+    assert_eq!(durable.session.options, before.session.options);
+    assert_eq!(durable.session.capabilities, before.session.capabilities);
+    assert!(adapter.running.lock().await.contains_key(&h1));
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(adapter.stored_handovers.lock().await.is_empty());
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provisions_before,
+        "a failed upload cannot request H2"
+    );
+    assert!(adapter
+        .terminal_inputs
+        .lock()
+        .await
+        .iter()
+        .any(|(runtime, input)| matches!(input,
+            TerminalInput::Bytes(bytes)
+                if runtime == &h1 && bytes == b"admitted before upload")));
+
+    svc.send_input(&alice, &created.id, b"continue on H1".to_vec())
+        .await
+        .expect("H1 remains locally usable after upload failure");
+    assert!(adapter
+        .terminal_inputs
+        .lock()
+        .await
+        .iter()
+        .any(|(runtime, input)| matches!(input,
+            TerminalInput::Bytes(bytes) if runtime == &h1 && bytes == b"continue on H1")));
+}
+
+#[tokio::test]
+async fn failed_handover_readback_rolls_back_the_claim_and_never_starts_h2() {
+    let store = Arc::new(RotationStore::default());
+    let adapter = ambidextrous();
+    let alice = user("compatibility-readback-failure-owner");
+    let svc = crate::test_support::service_over(store.clone(), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    let h1 = before.runtime_id.clone().expect("H1 is durable");
+    let provisions_before = adapter.provision_calls.load(Ordering::SeqCst);
+
+    adapter.fail_handover_gets(1);
+    assert!(matches!(
+        svc.change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await,
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_rotation_lane(&svc, &created.id).await;
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, before.session.status);
+    assert_eq!(durable.runtime_id.as_deref(), Some(h1.as_str()));
+    assert_eq!(durable.rotation_claim, None);
+    assert_eq!(durable.pending_handover, None);
+    assert_eq!(durable.session.options, before.session.options);
+    assert_eq!(durable.session.capabilities, before.session.capabilities);
+    assert_eq!(durable.session.rotations, before.session.rotations);
+    assert_eq!(durable.session.rotated_at, before.session.rotated_at);
+    assert!(adapter.running.lock().await.contains_key(&h1));
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert_eq!(adapter.stored_handovers.lock().await.len(), 1);
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provisions_before,
+        "an unverified object cannot request H2"
+    );
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("H1 remains published");
+        assert_eq!(entry.session.status, before.session.status);
+        assert_eq!(
+            entry.runtime.as_ref().map(|runtime| runtime.0.as_str()),
+            Some(h1.as_str())
+        );
+    }
+
+    svc.send_input(
+        &alice,
+        &created.id,
+        b"continue after readback failure".to_vec(),
+    )
+    .await
+    .expect("the rolled-back H1 channel remains usable");
+    assert!(adapter
+        .terminal_inputs
+        .lock()
+        .await
+        .iter()
+        .any(|(runtime, input)| matches!(input,
+            TerminalInput::Bytes(bytes)
+                if runtime == &h1 && bytes == b"continue after readback failure")));
+}
+
+#[tokio::test]
+async fn retryable_h2_exhaustion_stays_rotating_and_reconciles_from_the_stored_snapshot() {
+    let store = Arc::new(RotationStore::default());
+    let adapter = ambidextrous();
+    let alice = user("compatibility-h2-retry-owner");
+    let svc = crate::test_support::service_over(store.clone(), Arc::clone(&adapter));
+    svc.retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = store.inner.get(&created.id).await.unwrap().unwrap();
+    let h1 = before.runtime_id.clone().expect("H1 is durable");
+    let exact_snapshot = b"exact snapshot retained across H2 exhaustion".to_vec();
+    adapter.set_conversation(&h1, &exact_snapshot).await;
+    let provisions_before = adapter.provision_calls.load(Ordering::SeqCst);
+
+    adapter.fail_first.store(
+        crate::provision::PROVISION_ATTEMPTS as usize,
+        Ordering::SeqCst,
+    );
+    svc.change_plane(
+        &alice,
+        &created.id,
+        crate::options::SessionMode::Conversation,
+    )
+    .await
+    .expect("the durable handover reaches H2 provisioning");
+    let failed = await_settled(&svc, &alice, &created.id).await;
+    assert_eq!(failed.status, SessionStatus::Rotating);
+
+    let fenced = store.inner.get(&created.id).await.unwrap().unwrap();
+    let claim = fenced
+        .rotation_claim
+        .clone()
+        .expect("retryable H2 failure retains the active claim");
+    let pending = fenced
+        .pending_handover
+        .clone()
+        .expect("retryable H2 failure retains its recovery descriptor");
+    assert_eq!(pending.claim, claim);
+    assert_eq!(fenced.runtime_id, None);
+    assert_eq!(fenced.session.stop_reason, None);
+    assert_eq!(
+        fenced.session.options.mode,
+        crate::options::SessionMode::Conversation
+    );
+    assert_eq!(fenced.session.rotations, before.session.rotations + 1);
+    assert_eq!(
+        fenced.session.rotated_at.as_deref(),
+        Some(pending.snapshot_at.as_str())
+    );
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provisions_before + crate::provision::PROVISION_ATTEMPTS as usize
+    );
+    assert!(adapter.handovers.lock().await.is_empty());
+    assert_eq!(adapter.running_count().await, 0);
+    assert!(adapter
+        .stored_handovers
+        .lock()
+        .await
+        .contains_key(&pending.snapshot_ref));
+
+    let recovered = svc.reconcile().await;
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    let settled = await_settled(&svc, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert_eq!(
+        settled.options.mode,
+        crate::options::SessionMode::Conversation
+    );
+    assert_eq!(settled.rotations, before.session.rotations + 1);
+    assert_eq!(
+        adapter.handovers.lock().await.as_slice(),
+        std::slice::from_ref(&exact_snapshot),
+        "automatic reconciliation must reuse the exact stored bytes"
+    );
+
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.rotation_claim, None);
+    assert_eq!(durable.pending_handover, None);
+    assert!(durable.runtime_id.is_some());
+    assert!(adapter
+        .stored_handovers
+        .lock()
+        .await
+        .contains_key(&pending.snapshot_ref));
+    let plane_changes = store
+        .inner
+        .events_since(&created.id, before.session.last_seq)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                crate::event::StoredEventKind::Known(EventKind::PlaneChanged { .. })
+            )
+        })
+        .count();
+    assert_eq!(
+        plane_changes, 1,
+        "target publication is replayed exactly once"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_after_h1_clear_restores_the_exact_snapshot_under_target_semantics() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_plane_changed));
+    let adapter = switch_capable();
+    let (svc, alice, created, before) =
+        started_with_commit_fault(store.clone(), adapter.clone()).await;
+    let h1 = before.runtime_id.clone().expect("H1 is durable");
+    let exact_snapshot = b"conversation captured before H1 clear".to_vec();
+    adapter.set_conversation(&h1, &exact_snapshot).await;
+    let provisions_before = adapter.provision_calls.load(Ordering::SeqCst);
+
+    store.pause_next();
+    let moving = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.change_plane(&alice, &id, crate::options::SessionMode::Conversation)
+                .await
+        }
+    });
+    store.wait_until_held().await;
+
+    let cleared = inner.get(&created.id).await.unwrap().unwrap();
+    let claim = cleared
+        .rotation_claim
+        .clone()
+        .expect("the post-clear boundary retains its rotation claim");
+    assert_eq!(cleared.session.status, SessionStatus::Rotating);
+    assert_eq!(cleared.runtime_id, None);
+    assert_eq!(cleared.session.options, before.session.options);
+    assert_eq!(cleared.session.capabilities, before.session.capabilities);
+    assert_eq!(
+        cleared.session.runtime_version,
+        before.session.runtime_version
+    );
+    assert_eq!(cleared.session.rotations, before.session.rotations);
+    assert_eq!(cleared.session.rotated_at, before.session.rotated_at);
+    assert_eq!(
+        cleared
+            .pending_handover
+            .as_ref()
+            .map(|pending| pending.claim.as_str()),
+        Some(claim.as_str())
+    );
+    assert!(!adapter.running.lock().await.contains_key(&h1));
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&h1)
+    );
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provisions_before,
+        "target publication is the last boundary before H2 is requested"
+    );
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+    assert!(
+        inner
+            .events_since(&created.id, before.session.last_seq)
+            .await
+            .unwrap()
+            .iter()
+            .all(|event| !matches!(
+                event.kind,
+                crate::event::StoredEventKind::Known(EventKind::PlaneChanged { .. })
+            )),
+        "the target plane is not visible before its exact post-clear commit"
+    );
+
+    let restarted = crate::test_support::service_over(store.clone(), adapter.clone());
+    let recovered = restarted.reconcile().await;
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    let settled = await_settled(&restarted, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert_eq!(
+        settled.options.mode,
+        crate::options::SessionMode::Conversation
+    );
+    assert_eq!(
+        settled.capabilities,
+        crate::capabilities::SessionCapabilities::granted(
+            crate::options::SessionMode::Conversation,
+            adapter.capabilities,
+        )
+        .unwrap()
+    );
+    assert_eq!(settled.runtime_version, before.session.runtime_version);
+    assert_eq!(settled.rotations, before.session.rotations + 1);
+    assert_eq!(
+        adapter.handovers.lock().await.last(),
+        Some(&exact_snapshot),
+        "fresh-service H2 receives the exact durably staged adapter bytes"
+    );
+    let recovered_record = inner.get(&created.id).await.unwrap().unwrap();
+    let recovered_runtime = recovered_record
+        .runtime_id
+        .clone()
+        .expect("restart publishes a replacement from the cleared boundary");
+    assert_ne!(recovered_runtime, h1);
+    assert_eq!(recovered_record.rotation_claim, None);
+    assert_eq!(recovered_record.pending_handover, None);
+    assert_ne!(
+        recovered_record.rotation_claim.as_deref(),
+        Some(claim.as_str())
+    );
+
+    store.release();
+    assert!(matches!(
+        moving.await.expect("the stale handover task completes"),
+        Err(crate::error::CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_rotation_lane(&svc, &created.id).await;
+
+    let final_record = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(
+        final_record.runtime_id.as_deref(),
+        Some(recovered_runtime.as_str())
+    );
+    assert_eq!(
+        final_record.session.options.mode,
+        crate::options::SessionMode::Conversation
+    );
+    assert_eq!(final_record.session.capabilities, settled.capabilities);
+    assert_eq!(
+        final_record.session.runtime_version,
+        before.session.runtime_version
+    );
+    assert_eq!(final_record.session.rotations, before.session.rotations + 1);
+    assert_eq!(
+        inner
+            .events_since(&created.id, before.session.last_seq)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(
+                event.kind,
+                crate::event::StoredEventKind::Known(EventKind::PlaneChanged { .. })
+            ))
+            .count(),
+        1,
+        "lost-response replay neither charges nor emits PlaneChanged twice"
+    );
+    assert_eq!(adapter.running_count().await, 1);
+    assert!(adapter
+        .running
+        .lock()
+        .await
+        .contains_key(&recovered_runtime));
+}
+
+#[tokio::test]
+async fn a_stale_replica_readopts_the_successor_after_the_rotation_claim_clears() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = switch_capable();
+    let alice = user("post-claim-readoption-owner");
+    let rotating = crate::test_support::service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = rotating
+        .create_session(&alice, spec())
+        .await
+        .expect("created");
+    await_settled(&rotating, &alice, &created.id).await;
+    let h1 = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("H1 is durable");
+    let h1_generation = store
+        .runtime_authority(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .generation;
+
+    let stale = crate::test_support::service(Arc::clone(&store), Arc::clone(&adapter));
+    assert_eq!(stale.reconcile().await.readopted_sessions, 1);
+    {
+        let entries = stale.entries.read().await;
+        let entry = entries
+            .get(&created.id)
+            .expect("the second replica readopts H1");
+        assert_eq!(
+            entry.runtime.as_ref().map(|runtime| runtime.0.as_str()),
+            Some(h1.as_str())
+        );
+        assert_eq!(entry.runtime_generation, h1_generation);
+    }
+
+    rotating
+        .change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await
+        .expect("the first replica starts the handover");
+    await_usable(&rotating, &alice, &created.id).await;
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    let h2 = durable.runtime_id.clone().expect("H2 is durable");
+    let h2_generation = store
+        .runtime_authority(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .generation;
+    assert_ne!(h2, h1);
+    assert!(h2_generation > h1_generation);
+    assert_eq!(
+        durable.rotation_claim, None,
+        "the stale replica does not reconcile while the handover claim is active"
+    );
+    assert_eq!(
+        stale
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .and_then(|entry| entry.runtime.as_ref())
+            .map(|runtime| runtime.0.as_str()),
+        Some(h1.as_str()),
+        "the second replica still holds H1 after the other replica publishes H2"
+    );
+
+    let converged = stale.reconcile().await;
+    assert_eq!(converged.readopted_sessions, 1);
+    {
+        let entries = stale.entries.read().await;
+        let entry = entries
+            .get(&created.id)
+            .expect("the stale replica readopts H2");
+        assert_eq!(
+            entry.runtime.as_ref().map(|runtime| runtime.0.as_str()),
+            Some(h2.as_str())
+        );
+        assert_eq!(entry.runtime_generation, h2_generation);
+        assert!(entry.conversation.is_some());
+    }
+
+    stale
+        .send_prompt(&alice, &created.id, "continue on H2".into())
+        .await
+        .expect("the converged replica can interact with H2");
+    let sent = crate::conversation_support::until_sent(&adapter, |input| match input {
+        ConversationInput::Prompt(content) => content.iter().any(|block| match block {
+            layer3_adapter::ContentBlock::Text(text) => text.text == "continue on H2",
+            _ => false,
+        }),
+        _ => false,
+    })
+    .await;
+    assert!(sent
+        .iter()
+        .any(|input| matches!(input, ConversationInput::Prompt(_))));
+}
+
+#[tokio::test]
+async fn a_compatibility_replica_discards_h1_before_readopting_h2() {
+    let store = Arc::new(RotationStore::default());
+    let adapter = switch_capable();
+    let alice = user("compatibility-post-rotation-owner");
+    let rotating = crate::test_support::service_over(
+        Arc::clone(&store) as Arc<dyn SessionStore>,
+        Arc::clone(&adapter),
+    );
+    let created = rotating
+        .create_session(&alice, spec())
+        .await
+        .expect("created");
+    await_settled(&rotating, &alice, &created.id).await;
+    let h1 = store
+        .inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("H1 is durable");
+
+    let stale = crate::test_support::service_over(
+        Arc::clone(&store) as Arc<dyn SessionStore>,
+        Arc::clone(&adapter),
+    );
+    assert_eq!(stale.reconcile().await.readopted_sessions, 1);
+    rotating
+        .change_plane(
+            &alice,
+            &created.id,
+            crate::options::SessionMode::Conversation,
+        )
+        .await
+        .expect("the first replica starts the compatibility handover");
+    await_usable(&rotating, &alice, &created.id).await;
+    let durable = store.inner.get(&created.id).await.unwrap().unwrap();
+    let h2 = durable.runtime_id.clone().expect("H2 is durable");
+    assert_ne!(h2, h1);
+    assert_eq!(durable.rotation_claim, None);
+    assert_eq!(
+        stale
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .and_then(|entry| entry.runtime.as_ref())
+            .map(|runtime| runtime.0.as_str()),
+        Some(h1.as_str()),
+        "the second replica still holds compatibility H1"
+    );
+
+    let discarded = stale.reconcile().await;
+    assert_eq!(discarded.deferred_sessions, 1);
+    assert!(
+        !stale.entries.read().await.contains_key(&created.id),
+        "the stale local channel is removed before readoption"
+    );
+    let converged = stale.reconcile().await;
+    assert_eq!(converged.readopted_sessions, 1);
+    assert_eq!(
+        stale
+            .entries
+            .read()
+            .await
+            .get(&created.id)
+            .and_then(|entry| entry.runtime.as_ref())
+            .map(|runtime| runtime.0.as_str()),
+        Some(h2.as_str())
+    );
+
+    stale
+        .send_prompt(&alice, &created.id, "continue on compatibility H2".into())
+        .await
+        .expect("the converged replica can interact with compatibility H2");
+    let sent = crate::conversation_support::until_sent(&adapter, |input| match input {
+        ConversationInput::Prompt(content) => content.iter().any(|block| match block {
+            layer3_adapter::ContentBlock::Text(text) => text.text == "continue on compatibility H2",
+            _ => false,
+        }),
+        _ => false,
+    })
+    .await;
+    assert!(sent
+        .iter()
+        .any(|input| matches!(input, ConversationInput::Prompt(_))));
+}
+
+#[tokio::test]
+async fn an_abandoned_matching_runtime_claim_is_readopted_instead_of_deferred_forever() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("abandoned-matching-runtime-claim-owner");
+    let svc = crate::test_support::service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    svc.flush(&created.id).await;
+
+    // Model a process dying after it made the handover claim and marked its
+    // local entry, but before it created or switched to a candidate runtime.
+    // No handover lease remains, and H1 is still the exact durable authority.
+    let mut abandoned = store.get(&created.id).await.unwrap().unwrap();
+    let h1 = abandoned.runtime_id.clone().expect("H1 is durable");
+    let generation = store
+        .runtime_authority(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .generation;
+    abandoned.session.status = SessionStatus::Rotating;
+    abandoned.rotation_claim = Some("rotn_abandoned_matching_h1".into());
+    abandoned.revision = store
+        .commit_session_idempotent("abandoned-matching-h1-claim", &abandoned, &[])
+        .await
+        .expect("the interrupted claim is durable");
+    {
+        let mut entries = svc.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("H1 remains local");
+        entry.session.status = SessionStatus::Rotating;
+    }
+
+    let recovered = svc.reconcile().await;
+    assert_eq!(
+        recovered.readopted_sessions, 1,
+        "a fresh Reclaim lease discards the abandoned rotating entry before H1 is readopted"
+    );
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Ready);
+    assert_eq!(durable.rotation_claim, None);
+    assert_eq!(durable.runtime_id.as_deref(), Some(h1.as_str()));
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries
+            .get(&created.id)
+            .expect("the surviving exact authority is readopted");
+        assert_eq!(
+            entry.runtime.as_ref().map(|runtime| runtime.0.as_str()),
+            Some(h1.as_str())
+        );
+        assert_eq!(entry.runtime_generation, generation);
+        assert_eq!(entry.session.status, SessionStatus::Ready);
+    }
+
+    adapter.terminal_inputs.lock().await.clear();
+    svc.send_input(&alice, &created.id, b"continue on surviving H1".to_vec())
+        .await
+        .expect("the recovered H1 channel accepts input");
+    assert!(matches!(
+        adapter.terminal_inputs.lock().await.as_slice(),
+        [(runtime, TerminalInput::Bytes(bytes))]
+            if runtime == &h1 && bytes == b"continue on surviving H1"
+    ));
+}
+
+#[tokio::test]
 async fn the_conversation_travels_to_the_new_runtime() {
     // Without this the session survives as an identifier and the work does
     // not, which is the same as losing it.
@@ -1027,6 +1817,169 @@ async fn a_session_moves_between_planes_and_stays_the_same_session() {
     assert!(entry.conversation.is_none());
 }
 
+#[tokio::test]
+async fn a_plane_handover_confirms_a_hidden_rotating_lease_advance() {
+    let adapter = switch_capable();
+    let (svc, store, alice, created) = started(Arc::clone(&adapter)).await;
+    let before = store
+        .get(&created.id)
+        .await
+        .expect("the original session is readable")
+        .expect("the original session remains durable");
+    let old_runtime = before
+        .runtime_id
+        .clone()
+        .expect("the original runtime is durable");
+    let old_generation = store
+        .runtime_authority(&created.id)
+        .await
+        .expect("the original authority is readable")
+        .expect("the original authority is durable")
+        .generation;
+
+    store.lose_runtime_advance_responses(1);
+    svc.change_plane(
+        &alice,
+        &created.id,
+        crate::options::SessionMode::Conversation,
+    )
+    .await
+    .expect("the committed rotating boundary survives its lost response");
+
+    let settled = await_usable(&svc, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    let durable = store
+        .get(&created.id)
+        .await
+        .expect("the replacement session is readable")
+        .expect("the replacement session remains durable");
+    let replacement = durable
+        .runtime_id
+        .clone()
+        .expect("the replacement runtime is durable");
+    let authority = store
+        .runtime_authority(&created.id)
+        .await
+        .expect("the replacement authority is readable")
+        .expect("the replacement authority is durable");
+    assert_ne!(replacement, old_runtime);
+    assert!(authority.generation > old_generation);
+    assert_eq!(
+        durable.session.options.mode,
+        crate::options::SessionMode::Conversation
+    );
+    assert!(
+        store.active_session_lease(&created.id).await.is_none(),
+        "the confirmed handover boundary must be released after publication"
+    );
+    svc.reconcile().await;
+    assert_eq!(adapter.running_count().await, 1);
+    assert!(!adapter.running.lock().await.contains_key(&old_runtime));
+    assert!(adapter.running.lock().await.contains_key(&replacement));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn coordinated_rotation_drains_admitted_input_before_its_only_snapshot() {
+    let adapter = ambidextrous();
+    let (svc, store, alice, created) = started(Arc::clone(&adapter)).await;
+    let before = store.get(&created.id).await.unwrap().unwrap();
+    let h1 = before.runtime_id.clone().expect("H1 is durable");
+    let exact_snapshot = b"coordinated snapshot after admitted input".to_vec();
+    adapter.set_conversation(&h1, &exact_snapshot).await;
+    let snapshots_before = adapter.snapshot_calls.load(Ordering::SeqCst);
+    adapter.pause_snapshot_on_call(snapshots_before + 1);
+    adapter.pause_next_terminal_input();
+    let input_gate = svc.input_gates.gate(&created.id);
+
+    let admitted = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.send_input(
+                &alice,
+                &id,
+                b"admitted before coordinated rotation".to_vec(),
+            )
+            .await
+        }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+    store.expire_active_interaction_lease(&created.id).await;
+
+    let moving = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.change_plane(&alice, &id, crate::options::SessionMode::Conversation)
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            assert_eq!(
+                adapter.snapshot_calls.load(Ordering::SeqCst),
+                snapshots_before,
+                "coordinated capture cannot overtake admitted H1 input"
+            );
+            if input_gate.try_read().is_err() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the coordinated handover queues on the input fence");
+
+    adapter.resume_terminal_input();
+    admitted
+        .await
+        .expect("the admitted input task completes")
+        .expect("the already authorized H1 delivery completes");
+    adapter.wait_until_snapshot_paused().await;
+    assert_eq!(
+        adapter.snapshot_calls.load(Ordering::SeqCst),
+        snapshots_before + 1
+    );
+    assert!(adapter
+        .terminal_inputs
+        .lock()
+        .await
+        .iter()
+        .any(|(runtime, input)| matches!(input,
+            TerminalInput::Bytes(bytes)
+                if runtime == &h1 && bytes == b"admitted before coordinated rotation")));
+    let capturing = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(capturing.session.status, before.session.status);
+    assert_eq!(capturing.runtime_id.as_deref(), Some(h1.as_str()));
+    assert_eq!(capturing.rotation_claim, None);
+    assert_eq!(capturing.pending_handover, None);
+
+    adapter.resume_snapshot();
+    moving
+        .await
+        .expect("the coordinated handover task completes")
+        .expect("the coordinated handover succeeds");
+    let settled = await_usable(&svc, &alice, &created.id).await;
+    assert_eq!(
+        settled.options.mode,
+        crate::options::SessionMode::Conversation
+    );
+    assert_eq!(
+        adapter.snapshot_calls.load(Ordering::SeqCst),
+        snapshots_before + 1,
+        "one post-drain snapshot is authoritative"
+    );
+    assert_eq!(
+        adapter.handovers.lock().await.as_slice(),
+        std::slice::from_ref(&exact_snapshot)
+    );
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.pending_handover, None);
+    assert_eq!(durable.rotation_claim, None);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
     let store = Arc::new(RotationStore::default());
@@ -1065,8 +2018,8 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
     .await
     .expect("the accepted input waits inside the outgoing send");
 
-    // Rotation may rehearse while accepted input is in flight, but it must not
-    // publish Rotating until that input has reached the outgoing runtime.
+    // Rotation must drain accepted input before taking the one snapshot that
+    // can authorize H1 teardown.
     store.arm_on_call(1);
     let moving = tokio::spawn({
         let svc = Arc::clone(&svc);
@@ -1077,13 +2030,6 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
                 .await
         }
     });
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while adapter.snapshot_calls.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("rotation rehearses the handover");
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             assert_eq!(
@@ -1099,6 +2045,11 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
     })
     .await
     .expect("rotation queues behind the accepted input");
+    assert_eq!(
+        adapter.snapshot_calls.load(Ordering::SeqCst),
+        0,
+        "the authoritative snapshot cannot precede admitted H1 input"
+    );
 
     assert!(matches!(
         outgoing_runtime.recv().await,
@@ -1124,8 +2075,8 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
         SessionStatus::Ready
     );
 
-    // Hold the second write after Rotating has been published but before the
-    // old runtime and channel are removed. Nothing new may cross this window.
+    // Hold the exact clear after Rotating has been published and H1's local
+    // channels and provider runtime are gone. Nothing new may cross this gap.
     store.arm_on_call(2);
     store.release.notify_one();
     store.wait_until_held().await;
@@ -1148,7 +2099,7 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
     );
     assert!(matches!(
         outgoing_runtime.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
     ));
 
     store.release.notify_one();
@@ -1248,7 +2199,7 @@ async fn cancelling_the_plane_change_caller_does_not_abandon_its_handover() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn outgoing_conversation_updates_rebase_across_the_final_handover_commit() {
+async fn outgoing_conversation_updates_wait_for_snapshot_then_rebase_before_publication() {
     let adapter = switch_capable();
     let (svc, store, alice, created) = started(Arc::clone(&adapter)).await;
 
@@ -1278,7 +2229,15 @@ async fn outgoing_conversation_updates_rebase_across_the_final_handover_commit()
         .expect("the outgoing conversation is open")
         .updates
         .clone();
-    let snapshot_call = adapter.snapshot_calls.load(Ordering::SeqCst) + 2;
+    let events_before = svc
+        .events_since(&alice, &created.id, None)
+        .await
+        .expect("history is readable before the handover");
+    let completed_before = events_before
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::TurnCompleted))
+        .count();
+    let snapshot_call = adapter.snapshot_calls.load(Ordering::SeqCst) + 1;
     adapter.pause_snapshot_on_call(snapshot_call);
 
     let moving = tokio::spawn({
@@ -1312,12 +2271,46 @@ async fn outgoing_conversation_updates_rebase_across_the_final_handover_commit()
         .await
         .expect("the outgoing conversation still reports failure");
 
+    // The sole authoritative snapshot holds the input writer before Rotating
+    // is published. Updates emitted after that boundary may queue on the old
+    // runtime link, but they cannot acquire the read side and become durable.
+    tokio::task::yield_now().await;
+    let while_capturing = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(while_capturing.session.status, SessionStatus::Ready);
+    assert_eq!(
+        while_capturing.runtime_id.as_deref(),
+        Some(outgoing_runtime.as_str())
+    );
+    assert_eq!(while_capturing.rotation_claim, None);
+    assert_eq!(while_capturing.pending_handover, None);
+    let blocked_history = svc
+        .events_since(&alice, &created.id, None)
+        .await
+        .expect("history remains readable while capture is fenced");
+    assert!(!blocked_history.iter().any(|event| {
+        matches!(
+            &event.kind,
+            EventKind::ApprovalRequested { request_id, .. }
+                if request_id == "req-during-rotation"
+        )
+    }));
+    assert_eq!(
+        blocked_history
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::TurnCompleted))
+            .count(),
+        completed_before
+    );
+
+    adapter.pause_next_provision();
+    adapter.resume_snapshot();
+    adapter.wait_until_provision_paused().await;
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let events = svc
                 .events_since(&alice, &created.id, None)
                 .await
-                .expect("history remains readable");
+                .expect("delayed outgoing history remains readable");
             let request = events.iter().any(|event| {
                 matches!(
                     &event.kind,
@@ -1325,41 +2318,41 @@ async fn outgoing_conversation_updates_rebase_across_the_final_handover_commit()
                         if request_id == "req-during-rotation"
                 )
             });
-            let completions = events
+            let completion = events
                 .iter()
                 .filter(|event| matches!(event.kind, EventKind::TurnCompleted))
-                .count();
-            if request && completions >= 2 {
+                .count()
+                > completed_before;
+            if request && completion {
                 break;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("all outgoing updates become durable before the move completes");
-
-    let while_moving = store.get(&created.id).await.unwrap().unwrap();
-    assert_eq!(while_moving.session.status, SessionStatus::Rotating);
-    assert!(while_moving.rotation_claim.is_some());
-    assert_eq!(
-        svc.get_session(&alice, &created.id)
-            .await
-            .expect("the live session remains readable")
-            .status,
-        SessionStatus::Rotating,
-        "late completion and failure reports must not reopen the outgoing runtime"
-    );
-
-    adapter.resume_snapshot();
+    .expect("queued H1 updates rebase before H2 publication");
+    let while_provisioning = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(while_provisioning.session.status, SessionStatus::Rotating);
+    assert!(while_provisioning.rotation_claim.is_some());
+    assert_eq!(while_provisioning.pending_handover, None);
+    adapter.resume_provision();
     moving
         .await
         .expect("plane-change task completes")
-        .expect("the final commit rebases over outgoing history");
+        .expect("the fenced handover completes");
     let settled = await_usable(&svc, &alice, &created.id).await;
     assert_eq!(settled.options.mode, crate::options::SessionMode::Terminal);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while svc.starting.read().await.contains(&created.id) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the replacement publication clears its local start claim");
 
     let durable = store.get(&created.id).await.unwrap().unwrap();
     assert_eq!(durable.rotation_claim, None);
+    assert_eq!(durable.pending_handover, None);
     assert_ne!(
         durable.runtime_id.as_deref(),
         Some(outgoing_runtime.as_str())
@@ -1380,7 +2373,8 @@ async fn outgoing_conversation_updates_rebase_across_the_final_handover_commit()
             .iter()
             .filter(|event| matches!(event.kind, EventKind::TurnCompleted))
             .count()
-            >= 2
+            > completed_before,
+        "the delayed H1 completion rebases after the snapshot boundary"
     );
     assert!(events.iter().any(|event| matches!(
         event.kind,
@@ -1533,7 +2527,7 @@ async fn a_plane_change_ends_after_four_store_failures_without_runtime_side_effe
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_final_plane_change_conflict_preserves_the_newer_record_and_old_runtime() {
+async fn a_final_plane_change_conflict_preserves_newer_post_clear_authority() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_plane_changed));
     let adapter = switch_capable();
@@ -1552,33 +2546,31 @@ async fn a_final_plane_change_conflict_preserves_the_newer_record_and_old_runtim
         }
     });
     store.wait_until_held().await;
-    assert_eq!(
-        inner
-            .get(&created.id)
-            .await
-            .unwrap()
-            .unwrap()
-            .session
-            .status,
-        SessionStatus::Rotating,
-        "the selected fault is the second durable stage"
-    );
-    assert_eq!(
-        svc.entries
-            .read()
-            .await
-            .get(&created.id)
-            .expect("old entry remains")
-            .session
-            .status,
-        SessionStatus::Rotating
-    );
-    assert!(adapter.running.lock().await.contains_key(&old_runtime));
-    assert!(adapter.terminated.lock().await.is_empty());
-
     let mut rival = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(rival.session.status, SessionStatus::Rotating);
+    assert_eq!(rival.runtime_id, None);
+    assert!(rival.rotation_claim.is_some());
+    assert_eq!(rival.session.options, before.session.options);
+    assert!(
+        !svc.entries.read().await.contains_key(&created.id),
+        "H1's local channels are fenced before target publication"
+    );
+    assert!(!adapter.running.lock().await.contains_key(&old_runtime));
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&old_runtime)
+    );
+
+    let successor = "runtime-newer-after-h1-clear".to_string();
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(successor.clone(), Some(created.id.0.clone()));
     let rival_seq = rival.session.last_seq + 1;
     rival.session.status = SessionStatus::Ready;
+    rival.rotation_claim = None;
+    rival.runtime_id = Some(successor.clone());
     rival.session.last_seq = rival_seq;
     rival.context_ref = Some("rival-between-rotation-stages".into());
     inner
@@ -1598,24 +2590,11 @@ async fn a_final_plane_change_conflict_preserves_the_newer_record_and_old_runtim
             }],
         )
         .await
-        .expect("the outgoing runtime settles before PlaneChanged");
-    let (newer_input, mut outgoing_runtime) = terminal_input_channel(1);
-    {
-        let mut entries = svc.entries.write().await;
-        let entry = entries
-            .get_mut(&created.id)
-            .expect("old entry remains live");
-        entry.session.status = SessionStatus::Ready;
-        entry.session.last_seq = rival_seq;
-        entry.input = Some(newer_input);
-    }
-    svc.send_input(&alice, &created.id, b"accepted by newer state".to_vec())
-        .await
-        .expect("the newer Ready state accepts input while the stale final CAS waits");
-    assert!(matches!(
-        outgoing_runtime.recv().await,
-        Some(TerminalInput::Bytes(bytes)) if bytes == b"accepted by newer state"
-    ));
+        .expect("a successor publishes before the stale target semantics");
+    assert!(
+        svc.lifecycle_gates.gate(&created.id).try_lock().is_err(),
+        "the unresolved compatibility handover owns lifecycle authority"
+    );
     store.release();
 
     assert!(matches!(
@@ -1629,7 +2608,7 @@ async fn a_final_plane_change_conflict_preserves_the_newer_record_and_old_runtim
     assert_eq!(durable.session.options, before.session.options);
     assert_eq!(durable.session.capabilities, before.session.capabilities);
     assert_eq!(durable.session.rotations, before.session.rotations);
-    assert_eq!(durable.runtime_id.as_deref(), Some(old_runtime.as_str()));
+    assert_eq!(durable.runtime_id.as_deref(), Some(successor.as_str()));
     assert_eq!(
         durable.context_ref.as_deref(),
         Some("rival-between-rotation-stages")
@@ -1643,35 +2622,17 @@ async fn a_final_plane_change_conflict_preserves_the_newer_record_and_old_runtim
             event.kind,
             crate::event::StoredEventKind::Known(EventKind::PlaneChanged { .. })
         )));
-    {
-        let entries = svc.entries.read().await;
-        let entry = entries
-            .get(&created.id)
-            .expect("old entry remains installed");
-        assert_eq!(entry.session.status, SessionStatus::Ready);
-        assert_eq!(entry.session.options, before.session.options);
-        assert_eq!(
-            entry.runtime.as_ref().map(|handle| handle.0.as_str()),
-            Some(old_runtime.as_str())
-        );
-        assert!(entry.input.is_some());
-        assert!(entry.conversation.is_none());
-    }
-    assert!(adapter.running.lock().await.contains_key(&old_runtime));
-    assert!(adapter.terminated.lock().await.is_empty());
-    assert!(
-        adapter
-            .senders
-            .lock()
-            .await
-            .last()
-            .is_some_and(|sender| !sender.is_closed()),
-        "the old output relay remains connected"
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+    assert!(adapter.running.lock().await.contains_key(&successor));
+    assert!(!adapter.running.lock().await.contains_key(&old_runtime));
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&old_runtime)
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_older_final_cas_cannot_steal_a_newer_rotation_of_the_same_runtime() {
+async fn an_older_final_cas_cannot_steal_a_newer_post_clear_rotation() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_plane_changed));
     let adapter = switch_capable();
@@ -1693,6 +2654,7 @@ async fn an_older_final_cas_cannot_steal_a_newer_rotation_of_the_same_runtime() 
 
     let mut readopted = inner.get(&created.id).await.unwrap().unwrap();
     assert_eq!(readopted.session.status, SessionStatus::Rotating);
+    assert_eq!(readopted.runtime_id, None);
     readopted.session.status = SessionStatus::Ready;
     readopted.rotation_claim = None;
     readopted.context_ref = Some("readopted-between-rotation-claims".into());
@@ -1708,7 +2670,7 @@ async fn an_older_final_cas_cannot_steal_a_newer_rotation_of_the_same_runtime() 
     let newer_revision = inner
         .commit_session_idempotent("newer-rotation-claim", &newer_rotation, &[])
         .await
-        .expect("a newer rotation claims the same still-running runtime");
+        .expect("a newer rotation claims the cleared runtime boundary");
 
     store.release();
     assert!(matches!(
@@ -1725,21 +2687,25 @@ async fn an_older_final_cas_cannot_steal_a_newer_rotation_of_the_same_runtime() 
         Some("rotn_newer_rotation_claim")
     );
     assert_eq!(durable.context_ref.as_deref(), Some("newer-rotation-claim"));
-    assert_eq!(durable.runtime_id.as_deref(), Some(old_runtime.as_str()));
+    assert_eq!(durable.runtime_id, None);
     assert_eq!(durable.session.options, before.session.options);
     assert_eq!(durable.session.rotations, before.session.rotations);
-    assert!(adapter.terminated.lock().await.is_empty());
-    assert!(adapter.running.lock().await.contains_key(&old_runtime));
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&old_runtime)
+    );
+    assert!(!adapter.running.lock().await.contains_key(&old_runtime));
 }
 
 #[tokio::test]
-async fn four_final_plane_change_outages_restore_without_a_false_change() {
+async fn four_final_plane_change_outages_retain_the_post_clear_boundary() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_plane_changed));
     let adapter = switch_capable();
     let (svc, alice, created, before) =
         started_with_commit_fault(store.clone(), adapter.clone()).await;
     let old_runtime = before.runtime_id.clone().expect("old runtime is durable");
+    let provisions_before = adapter.provision_calls.load(Ordering::SeqCst);
 
     store.fail_next(4);
     assert!(matches!(
@@ -1755,11 +2721,17 @@ async fn four_final_plane_change_outages_restore_without_a_false_change() {
     assert_eq!(store.matched_calls(), 4);
 
     let durable = inner.get(&created.id).await.unwrap().unwrap();
-    assert_eq!(durable.session.status, before.session.status);
+    assert_eq!(durable.session.status, SessionStatus::Rotating);
+    assert!(durable.rotation_claim.is_some());
     assert_eq!(durable.session.options, before.session.options);
     assert_eq!(durable.session.capabilities, before.session.capabilities);
+    assert_eq!(
+        durable.session.runtime_version,
+        before.session.runtime_version
+    );
     assert_eq!(durable.session.rotations, before.session.rotations);
-    assert_eq!(durable.runtime_id.as_deref(), Some(old_runtime.as_str()));
+    assert_eq!(durable.session.rotated_at, before.session.rotated_at);
+    assert_eq!(durable.runtime_id, None);
     assert!(inner
         .events_since(&created.id, before.session.last_seq)
         .await
@@ -1769,19 +2741,18 @@ async fn four_final_plane_change_outages_restore_without_a_false_change() {
             event.kind,
             crate::event::StoredEventKind::Known(EventKind::PlaneChanged { .. })
         )));
-    let entries = svc.entries.read().await;
-    let entry = entries.get(&created.id).expect("old entry remains usable");
-    assert_eq!(entry.session.status, before.session.status);
-    assert_eq!(entry.session.options, before.session.options);
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+    assert!(!svc.starting.read().await.contains(&created.id));
+    assert!(!adapter.running.lock().await.contains_key(&old_runtime));
     assert_eq!(
-        entry.runtime.as_ref().map(|handle| handle.0.as_str()),
-        Some(old_runtime.as_str())
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&old_runtime)
     );
-    assert!(entry.input.is_some());
-    assert!(entry.conversation.is_none());
-    drop(entries);
-    assert!(adapter.running.lock().await.contains_key(&old_runtime));
-    assert!(adapter.terminated.lock().await.is_empty());
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provisions_before,
+        "H2 is never requested while target semantics remain unpublished"
+    );
 }
 
 #[tokio::test]
@@ -2145,6 +3116,68 @@ async fn a_permanently_refused_replacement_preserves_the_old_authority() {
         "a permanently failed attempt terminated the session instead of restoring it: \
          {failed_attempt:?}"
     );
+}
+
+#[tokio::test]
+async fn rollback_confirms_hidden_rotating_and_restored_lease_advances() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("hidden-rollback-advance-owner");
+
+    let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
+    let created = old.create_session(&alice, spec()).await.expect("created");
+    await_settled(&old, &alice, &created.id).await;
+    let old_runtime = store
+        .get(&created.id)
+        .await
+        .expect("the original session is readable")
+        .expect("the original session remains durable")
+        .runtime_id
+        .expect("the original runtime is durable");
+    drop(old);
+
+    let lesser = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities::default(),
+        ..FakeAdapter::default()
+    });
+    lesser
+        .running
+        .lock()
+        .await
+        .insert(old_runtime.clone(), Some(created.id.0.clone()));
+    let replacement = service_on_version(Arc::clone(&store), Arc::clone(&lesser), "runtime:2");
+
+    // One receipt is lost after Ready -> Rotating and the next after the
+    // compensating Rotating -> Ready write. Both hidden commits must be
+    // adopted locally before the same lease can continue and then release.
+    store.lose_runtime_advance_responses(2);
+    replacement.reconcile().await;
+
+    let settled = await_settled(&replacement, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    let durable = store
+        .get(&created.id)
+        .await
+        .expect("the restored session is readable")
+        .expect("the restored session remains durable");
+    assert_eq!(durable.runtime_id.as_deref(), Some(old_runtime.as_str()));
+    assert_eq!(durable.rotation_claim, None);
+    assert_eq!(lesser.running_count().await, 1);
+    assert!(lesser.running.lock().await.contains_key(&old_runtime));
+    assert!(
+        store.active_session_lease(&created.id).await.is_none(),
+        "the restored boundary must be released without waiting for its TTL"
+    );
+
+    let follow_up = replacement
+        .acquire_runtime_lease_at(&durable, crate::coordination::SessionOperation::Interact)
+        .await
+        .expect("the restored boundary accepts another operation")
+        .expect("the fake store has coordination enabled");
+    store
+        .release_session_lease(&follow_up)
+        .await
+        .expect("the follow-up operation releases its lease");
 }
 
 /// A source that refuses, the way the registry refuses this service's own

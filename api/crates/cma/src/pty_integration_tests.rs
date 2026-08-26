@@ -10,11 +10,12 @@ use layer2_core::{
     AgentConfiguration, AgentOptions, AttachmentClaim, Authorization, Baseline, Caller, Capability,
     ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
     ConversationWriteAuthority, Deployment, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event, KernelId,
-    Page, PageCursor, PageRequest, PlatformSettingsService, Reserved, ScreenFactory, ScreenModel,
-    ScreenSnapshot, SessionId, SessionLease, SessionListQuery, SessionMode, SessionPorts,
-    SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore, StoreError,
-    StoredEvent, SubjectId, TerminalGeometry,
+    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event,
+    HandoverSnapshot, HandoverStore, KernelId, Page, PageCursor, PageRequest,
+    PlatformSettingsService, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceId,
+    SessionId, SessionLease, SessionListQuery, SessionMode, SessionPorts, SessionRecord,
+    SessionService, SessionSpec, SessionStatus, SessionStore, StoreError, StoredEvent, SubjectId,
+    TerminalGeometry,
 };
 use layer3_adapter::{
     AdapterError, ConversationChannel, ConversationInputSender, ConversationUpdate, KernelAdapter,
@@ -468,11 +469,12 @@ struct WireAdapter {
     terminal_input_arrived: Arc<Notify>,
     conversations: Mutex<Vec<mpsc::Sender<ConversationUpdate>>>,
     runtimes: Mutex<HashMap<String, String>>,
+    credentials: Mutex<Vec<(String, String)>>,
+    handovers: Mutex<HashMap<String, HandoverSnapshot>>,
     next_runtime: AtomicUsize,
-    snapshot_calls: AtomicUsize,
-    pause_second_snapshot: AtomicBool,
-    second_snapshot_started: Notify,
-    resume_second_snapshot: Notify,
+    pause_handover_readback: AtomicBool,
+    handover_readback_started: Notify,
+    resume_handover_readback: Notify,
     pause_terminate: AtomicBool,
     terminate_started: Notify,
     resume_terminate: Notify,
@@ -508,21 +510,21 @@ impl WireAdapter {
         .expect("the signal reaches the runtime while output is blocked");
     }
 
-    fn pause_next_rotation_snapshot(&self) {
-        assert!(!self.pause_second_snapshot.swap(true, Ordering::SeqCst));
+    fn pause_next_handover_readback(&self) {
+        assert!(!self.pause_handover_readback.swap(true, Ordering::SeqCst));
     }
 
     async fn wait_until_rotation_paused(&self) {
         tokio::time::timeout(
             Duration::from_secs(2),
-            self.second_snapshot_started.notified(),
+            self.handover_readback_started.notified(),
         )
         .await
-        .expect("the rotation reaches its second snapshot");
+        .expect("the rotation reaches its handover readback");
     }
 
     fn resume_rotation(&self) {
-        self.resume_second_snapshot.notify_one();
+        self.resume_handover_readback.notify_one();
     }
 
     fn pause_next_termination(&self) {
@@ -537,6 +539,45 @@ impl WireAdapter {
 
     fn resume_termination(&self) {
         self.resume_terminate.notify_one();
+    }
+}
+
+#[async_trait::async_trait]
+impl HandoverStore for WireAdapter {
+    async fn put(&self, id: &SessionId, snapshot: HandoverSnapshot) -> Result<String, StoreError> {
+        let reference = format!("sessions/{}/handover.snapshot", id.0);
+        self.handovers
+            .lock()
+            .await
+            .insert(reference.clone(), snapshot);
+        Ok(reference)
+    }
+
+    async fn get_for(
+        &self,
+        id: &SessionId,
+        reference: &str,
+    ) -> Result<Option<HandoverSnapshot>, StoreError> {
+        let expected = format!("sessions/{}/handover.snapshot", id.0);
+        if reference != expected {
+            return Err(StoreError::Malformed(
+                "handover reference belongs to another session".into(),
+            ));
+        }
+        if self.pause_handover_readback.swap(false, Ordering::SeqCst) {
+            // The descriptor is now durable and the input fence is open, but
+            // H1 has not yet been superseded. Hold that refusal window open
+            // while the established public socket is exercised.
+            self.handover_readback_started.notify_one();
+            self.resume_handover_readback.notified().await;
+        }
+        Ok(self.handovers.lock().await.get(reference).cloned())
+    }
+
+    async fn delete_for(&self, id: &SessionId) -> Result<(), StoreError> {
+        let reference = format!("sessions/{}/handover.snapshot", id.0);
+        self.handovers.lock().await.remove(&reference);
+        Ok(())
     }
 }
 
@@ -602,23 +643,18 @@ impl KernelAdapter for WireAdapter {
     }
 
     async fn snapshot(&self, _handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
-        if self.snapshot_calls.fetch_add(1, Ordering::SeqCst) == 1
-            && self.pause_second_snapshot.swap(false, Ordering::SeqCst)
-        {
-            // Rotation publishes its durable and live `Rotating` state before
-            // this second capture. Hold that exact refusal window open while
-            // the already-established public socket is exercised.
-            self.second_snapshot_started.notify_one();
-            self.resume_second_snapshot.notified().await;
-        }
         Ok(Some(b"pty-wire-snapshot".to_vec()))
     }
 
     async fn refresh_credential(
         &self,
-        _handle: &RuntimeHandle,
-        _credential: &str,
+        handle: &RuntimeHandle,
+        credential: &str,
     ) -> Result<(), AdapterError> {
+        self.credentials
+            .lock()
+            .await
+            .push((handle.0.clone(), credential.to_string()));
         Ok(())
     }
 
@@ -665,6 +701,10 @@ impl Fixture {
     }
 
     fn with_runtime_version(runtime_version: Option<&str>) -> Self {
+        Self::with_baseline(runtime_version, Baseline::default())
+    }
+
+    fn with_baseline(runtime_version: Option<&str>, baseline: Baseline) -> Self {
         let adapter = Arc::new(WireAdapter::default());
         let store = Arc::new(MemorySessions::default());
         let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
@@ -672,7 +712,7 @@ impl Fixture {
 
         let profiles = EnvironmentProfileService::new(
             Arc::new(EmptyProfiles),
-            Baseline::default(),
+            baseline,
             None,
             None,
             AgentConfiguration {
@@ -691,7 +731,10 @@ impl Fixture {
             adapters,
             screens,
             store.clone(),
-            SessionPorts::default(),
+            SessionPorts {
+                handovers: Some(adapter.clone()),
+                ..SessionPorts::default()
+            },
             profiles,
             Deployment {
                 runtime_version: runtime_version.map(str::to_string),
@@ -765,6 +808,30 @@ impl Fixture {
         })
         .await
         .expect("the disconnected socket releases its attachment");
+    }
+}
+
+pub(crate) struct CredentialSweepFixture {
+    pub(crate) service: Arc<SessionService>,
+    pub(crate) session: SessionId,
+    pub(crate) owner: SubjectId,
+    adapter: Arc<WireAdapter>,
+}
+
+impl CredentialSweepFixture {
+    pub(crate) async fn delivered_credentials(&self) -> Vec<(String, String)> {
+        self.adapter.credentials.lock().await.clone()
+    }
+}
+
+pub(crate) async fn credential_sweep_fixture() -> CredentialSweepFixture {
+    let fixture = Fixture::with_baseline(None, Baseline::new([], [], [ServiceId::new("model")]));
+    let session = fixture.create_ready_session().await;
+    CredentialSweepFixture {
+        service: fixture.service,
+        session,
+        owner: fixture.caller.subject,
+        adapter: fixture.adapter,
     }
 }
 
@@ -893,7 +960,7 @@ async fn established_socket_names_every_operation_refused_during_rotation() {
     let fixture = Fixture::new();
     let id = fixture.create_ready_session().await;
     let (mut socket, _server) = public_socket(&fixture, &id).await;
-    fixture.adapter.pause_next_rotation_snapshot();
+    fixture.adapter.pause_next_handover_readback();
 
     let mut rotating = tokio::spawn({
         let service = Arc::clone(&fixture.service);

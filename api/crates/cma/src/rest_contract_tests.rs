@@ -24,12 +24,13 @@ use layer2_core::{
     ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
     ConversationWriteAuthority, EnvironmentProfile, EnvironmentProfileId,
     EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind,
-    KernelId, OperationClaim, OperationReservation, OperationStore, Page, PageCursor, PageRequest,
-    PlatformSettingsService, RecoveryState, RegisteredUser, Reserved, ScreenFactory, ScreenModel,
-    ScreenSnapshot, ServiceCatalog, ServiceId, Session, SessionId, SessionLease, SessionListQuery,
-    SessionMode, SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus,
-    SessionStore, SkillCatalog, SkillId, SkillPack, SkillSource, StoreError, StoredEvent,
-    SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
+    HandoverSnapshot, HandoverStore, KernelId, OperationClaim, OperationReservation,
+    OperationStore, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
+    RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
+    ServiceId, Session, SessionId, SessionLease, SessionListQuery, SessionMode, SessionPorts,
+    SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore, SkillCatalog, SkillId,
+    SkillPack, SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
+    UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -1062,6 +1063,7 @@ impl ScreenModel for EmptyScreen {
 struct TestKernel {
     conversation_updates: Mutex<Option<mpsc::Sender<layer3_adapter::ConversationUpdate>>>,
     resource_samples: Mutex<Option<mpsc::Sender<layer3_adapter::ResourceSample>>>,
+    stored_handovers: Mutex<HashMap<String, HandoverSnapshot>>,
     provision_pause: Mutex<Option<Arc<StorePause>>>,
     provisions: AtomicUsize,
     conversation_inputs: Arc<AtomicUsize>,
@@ -1174,6 +1176,38 @@ impl TestKernel {
             .send(sample)
             .await
             .expect("the resource fixture is listening");
+    }
+}
+
+#[async_trait::async_trait]
+impl HandoverStore for TestKernel {
+    async fn put(&self, id: &SessionId, snapshot: HandoverSnapshot) -> Result<String, StoreError> {
+        let reference = format!("sessions/{}/handover.snapshot", id.0);
+        self.stored_handovers
+            .lock()
+            .await
+            .insert(reference.clone(), snapshot);
+        Ok(reference)
+    }
+
+    async fn get_for(
+        &self,
+        id: &SessionId,
+        reference: &str,
+    ) -> Result<Option<HandoverSnapshot>, StoreError> {
+        let expected = format!("sessions/{}/handover.snapshot", id.0);
+        if reference != expected {
+            return Err(StoreError::Malformed(
+                "handover reference belongs to another session".into(),
+            ));
+        }
+        Ok(self.stored_handovers.lock().await.get(reference).cloned())
+    }
+
+    async fn delete_for(&self, id: &SessionId) -> Result<(), StoreError> {
+        let reference = format!("sessions/{}/handover.snapshot", id.0);
+        self.stored_handovers.lock().await.remove(&reference);
+        Ok(())
     }
 }
 
@@ -1310,6 +1344,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     );
     let kernel = Arc::new(TestKernel::default());
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&kernel) as Arc<dyn HandoverStore>;
     adapters.insert(
         KernelId::new("test"),
         Arc::clone(&kernel) as Arc<dyn KernelAdapter>,
@@ -1322,6 +1357,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         factory,
         Arc::clone(&store) as Arc<dyn SessionStore>,
         SessionPorts {
+            handovers: Some(handovers),
             skills: Some(Arc::new(TestSkills)),
             settings: Some(Arc::clone(&settings)),
             ..Default::default()
@@ -2299,7 +2335,9 @@ async fn a_resume_run_starts_unnumbered_and_still_finishes() {
         "the synthetic continuation boundary must not advance the durable cursor: {wire:?}"
     );
 
-    loop {
+    let mut approval_cleared = false;
+    let mut running_published = false;
+    while !approval_cleared || !running_published {
         let (frame, wire) = next_agui_frame_and_wire(&mut body).await;
         assert_agui_ids(&frame, "run_resume_contract", &id);
         assert!(
@@ -2310,15 +2348,19 @@ async fn a_resume_run_starts_unnumbered_and_still_finishes() {
             frame["type"], "RUN_FINISHED",
             "the continuation must clear the answered approval before it finishes"
         );
-        if frame["type"] == "STATE_DELTA"
+        approval_cleared |= frame["type"] == "STATE_DELTA"
             && frame["delta"]
                 == serde_json::json!([{
                     "op": "remove",
                     "path": "/pendingApprovals/approval-contract"
-                }])
-        {
-            break;
-        }
+                }]);
+        running_published |= frame["type"] == "STATE_DELTA"
+            && frame["delta"]
+                == serde_json::json!([{
+                    "op": "replace",
+                    "path": "/status",
+                    "value": "running"
+                }]);
     }
 
     kernel.emit_turn_ended().await;
@@ -2437,6 +2479,102 @@ async fn a_capability_refusal_is_a_problem_without_a_started_run() {
     assert_eq!(
         after, before,
         "a capability refusal must not open a durable turn"
+    );
+}
+
+#[tokio::test]
+async fn a_terminal_run_records_lifecycle_before_its_missing_conversation_grant() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let session = sessions
+        .create_session(
+            &caller,
+            SessionSpec {
+                options: Default::default(),
+                geometry: None,
+                environment_profile: None,
+                caller_credential: Some(TEST_DELEGATED_CREDENTIAL.into()),
+                runtime_credential: None,
+                requested_mode: Some(SessionMode::Terminal),
+                quoted_rate_card: None,
+            },
+        )
+        .await
+        .expect("the terminal session is accepted");
+    wait_until_ready(&sessions, &caller, &session.id).await;
+    assert!(session.capabilities.terminal);
+    assert!(!session.capabilities.conversation);
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+
+    let before = sessions
+        .events_since(&caller, &session.id, None)
+        .await
+        .expect("history is readable before the refusals")
+        .last()
+        .map(|event| event.seq);
+    let request = |run_id: &str| {
+        json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": session.id.0.clone(),
+                "runId": run_id,
+                "messages": [{ "role": "user", "content": "cannot cross lifecycle" }]
+            })
+            .to_string(),
+        )
+    };
+
+    for (status, code, run_id) in [
+        (
+            SessionStatus::Rotating,
+            "session_rotating",
+            "run_rotating_terminal",
+        ),
+        (
+            SessionStatus::Terminated,
+            "session_terminated",
+            "run_terminated_terminal",
+        ),
+    ] {
+        set_recorded_session_status(&store, &session.id, status).await;
+        let first = app
+            .clone()
+            .oneshot(request(run_id))
+            .await
+            .expect("the lifecycle-refused run route answers");
+        let first_problem = assert_problem(first, StatusCode::CONFLICT).await;
+        assert_eq!(first_problem["code"], code);
+
+        set_recorded_session_status(&store, &session.id, SessionStatus::Ready).await;
+        let replay = app
+            .clone()
+            .oneshot(request(run_id))
+            .await
+            .expect("the completed lifecycle refusal replays");
+        let replayed_problem = assert_problem(replay, StatusCode::CONFLICT).await;
+        assert_eq!(
+            replayed_problem, first_problem,
+            "a ready terminal would otherwise refuse the missing conversation grant"
+        );
+    }
+
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 0);
+    let after = sessions
+        .events_since(&caller, &session.id, None)
+        .await
+        .expect("history is readable after the refusals")
+        .last()
+        .map(|event| event.seq);
+    assert_eq!(
+        after, before,
+        "lifecycle refusals must not open a durable turn"
     );
 }
 
@@ -2719,7 +2857,7 @@ async fn dropping_the_request_during_creation_does_not_cancel_prompt_admission()
     assert_eq!(kernel.provisions.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn a_deferred_prompt_suppresses_its_durable_turn_started_projection() {
     let TestSurface {
         app,

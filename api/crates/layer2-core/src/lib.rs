@@ -149,6 +149,7 @@ pub use coordination::{
     RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
     SessionLeaseRequest, SessionOperation,
 };
+pub use credentials::CredentialDeliveryTarget;
 pub use deployment_capacity::{DeploymentCapacity, Reserved};
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
@@ -192,10 +193,11 @@ pub use session::{
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
 pub use store::{
-    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, OperationClaim,
-    OperationReservation, OperationStore, Page, PageCursor, PageRequest, SessionListQuery,
-    SessionRecord, SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
-    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, HandoverSnapshot,
+    HandoverStore, OperationClaim, OperationReservation, OperationStore, Page, PageCursor,
+    PageRequest, PendingHandover, PendingHandoverTarget, SessionListQuery, SessionRecord,
+    SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

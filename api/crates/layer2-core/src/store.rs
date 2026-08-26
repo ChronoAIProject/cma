@@ -15,6 +15,7 @@
 use std::{collections::HashSet, time::SystemTime};
 
 use crate::activity::{ActivityQuery, ActivityRecord};
+use crate::capabilities::SessionCapabilities;
 use crate::coordination::{
     ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
     ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
@@ -25,6 +26,7 @@ use crate::directory::{DirectoryQuery, RegisteredUser};
 use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
 use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
+use crate::options::SessionMode;
 use crate::session::{Session, SessionStatus};
 use crate::Reserved;
 
@@ -59,9 +61,24 @@ pub struct SessionRecord {
     /// a compare token, not user-visible lifecycle state. History may advance a
     /// record's revision while a runtime is being captured; this claim lets the
     /// handover rebase over that history without mistaking a later rotation of
-    /// the same runtime for its own work.
+    /// the same runtime for its own work. It remains present after the public
+    /// status advances from `Rotating` until the replacement runtime has been
+    /// published locally, so every control-plane replica observes the same
+    /// non-interactive boundary during recovery and readoption.
     #[doc(hidden)]
     pub rotation_claim: Option<String>,
+    /// Durable recovery instructions for a compatibility handover.
+    ///
+    /// Compatibility stores cannot keep H1 authoritative while provisioning
+    /// H2. This descriptor therefore names the separately stored snapshot and
+    /// the exact target that must be published after H1 is cleared. Its claim
+    /// must equal [`Self::rotation_claim`] while the handover is active; an
+    /// explicit owner stop may clear the active claim and retain the descriptor
+    /// on an `Idle` session for verified revive. Every other mismatch is fenced
+    /// rather than interpreted. It is cleared atomically with the claim only
+    /// after H2 is published.
+    #[doc(hidden)]
+    pub pending_handover: Option<PendingHandover>,
     /// Store-owned optimistic revision.
     ///
     /// Zero means the record has not been created yet. Stores increment this
@@ -80,9 +97,68 @@ impl SessionRecord {
             runtime_id: None,
             context_ref: None,
             rotation_claim: None,
+            pending_handover: None,
             revision: 0,
         }
     }
+
+    /// Whether this durable record is still inside a runtime handover.
+    ///
+    /// The public status describes the current provisioning stage. The claim
+    /// spans the later `Provisioning` and `Ready` publication gaps that status
+    /// alone cannot identify across control-plane replicas.
+    pub(crate) fn is_effectively_rotating(&self) -> bool {
+        self.session.status.is_rotating() || self.rotation_claim.is_some()
+    }
+}
+
+/// Durable instructions for completing one compatibility runtime handover.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingHandover {
+    /// Exact rotation owner. Must equal the record's rotation claim.
+    pub claim: String,
+    /// Stable object-store reference returned for this session's handover blob.
+    pub snapshot_ref: String,
+    /// Conservative time at which the first usable snapshot was captured.
+    pub snapshot_at: String,
+    /// Rotation count at the exact source boundary.
+    pub rotations_from: u32,
+    /// Rotation count to publish with the target semantics.
+    pub rotations_to: u32,
+    /// Session semantics to publish after H1 is durably gone.
+    pub target: PendingHandoverTarget,
+}
+
+/// The semantic change a pending compatibility handover must publish.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PendingHandoverTarget {
+    /// Move onto this exact recorded runtime version.
+    RuntimeVersion {
+        from_runtime_version: Option<String>,
+        runtime_version: String,
+    },
+    /// Move onto this plane with the capabilities derived before teardown.
+    Plane {
+        from_mode: SessionMode,
+        mode: SessionMode,
+        capabilities: SessionCapabilities,
+    },
+}
+
+/// Claim-bound opaque bytes stored outside the session document.
+///
+/// `None` is distinct from an empty snapshot on the storage wire. Rotation
+/// writes `Some`, while retaining the distinction makes malformed or future
+/// envelope versions fail closed instead of silently becoming blank restores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoverSnapshot {
+    /// Claim whose descriptor is allowed to consume these bytes.
+    pub claim: String,
+    /// Capture time for these exact bytes.
+    pub snapshot_at: String,
+    /// Opaque adapter state, when the envelope contains a captured snapshot.
+    pub restore: Option<Vec<u8>>,
 }
 
 /// The stable position after which a newest-first listing continues.
@@ -1030,6 +1106,45 @@ pub trait CredentialSource: Send + Sync {
         caller_credential: Option<&crate::session::CallerCredential>,
     ) -> Result<Option<String>, StoreError>;
 
+    /// Select the credential for one exact runtime delivery target.
+    ///
+    /// Called only after the receiving runtime generation exists and while the
+    /// core owns the runtime's durable interaction or lifecycle authority. A
+    /// source with pending custody must use this as its ordering point: select
+    /// the pending value when one exists and bind it to `target` atomically
+    /// before returning it. If a prior target's acknowledgement wins first, the
+    /// retry must instead return the newly current value.
+    ///
+    /// The default re-reads ordinary selection at this late boundary. Sources
+    /// that maintain current/pending custody must override it.
+    async fn prepare_credential_delivery(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        caller_credential: Option<&crate::session::CallerCredential>,
+        _target: &crate::CredentialDeliveryTarget,
+    ) -> Result<Option<String>, StoreError> {
+        self.credential_for(session, subject, services, caller_credential)
+            .await
+    }
+
+    /// Confirm a correlated acknowledgement for an exact runtime target.
+    ///
+    /// Sources with pending custody promote only when both the delivered value
+    /// and `target` still match their durable binding. Returning `false` leaves
+    /// the runtime without local delivery evidence so a later pass retries.
+    async fn confirm_credential_delivery(
+        &self,
+        _session: &SessionId,
+        _subject: &SubjectId,
+        _services: &[ServiceId],
+        _delivered_value: &str,
+        _target: &crate::CredentialDeliveryTarget,
+    ) -> Result<bool, StoreError> {
+        Ok(true)
+    }
+
     /// Whether this session should receive later subject-token renewals.
     ///
     /// Sources that mint per-session credentials or pin an initiating bearer
@@ -1048,6 +1163,10 @@ pub trait CredentialSource: Send + Sync {
     ///
     /// A store failure leaves the recorded credential discoverable for a later
     /// reconciliation pass and is returned to the caller.
+    ///
+    /// Implementations must be idempotent for one exact session. Lifecycle and
+    /// reconciliation deliberately retry this call when a process can fail
+    /// after durable runtime cleanup but before observing custody retirement.
     async fn release(&self, session: &SessionId) -> Result<(), StoreError>;
 }
 
@@ -1066,6 +1185,28 @@ pub trait ContextStore: Send + Sync {
 
     /// Remove a session's context.
     async fn delete(&self, reference: &str) -> Result<(), StoreError>;
+}
+
+/// Stable object storage for compatibility runtime handovers.
+///
+/// Separate from [`ContextStore`]: terminal context is a whole transcript at a
+/// fixed key, while this is opaque adapter state with a claim-bound envelope.
+/// Implementations keep one stable object per session, overwrite it on `put`,
+/// retain it after successful publication, and remove it with the session.
+#[async_trait::async_trait]
+pub trait HandoverStore: Send + Sync {
+    /// Store one claim-bound envelope and return its stable reference.
+    async fn put(&self, id: &SessionId, snapshot: HandoverSnapshot) -> Result<String, StoreError>;
+
+    /// Load a stored envelope after binding its reference to this session.
+    async fn get_for(
+        &self,
+        id: &SessionId,
+        reference: &str,
+    ) -> Result<Option<HandoverSnapshot>, StoreError>;
+
+    /// Remove the stable handover object derived for this session.
+    async fn delete_for(&self, id: &SessionId) -> Result<(), StoreError>;
 }
 
 #[cfg(test)]

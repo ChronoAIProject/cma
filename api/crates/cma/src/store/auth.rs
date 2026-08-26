@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use futures_util::TryStreamExt;
 use layer2_core::store::StoreError;
-use layer2_core::{Authorization, Capability, SessionId, SubjectId};
+use layer2_core::{Authorization, Capability, CredentialDeliveryTarget, SessionId, SubjectId};
 use mongodb::bson::{doc, spec::BinarySubtype, Binary, Bson, DateTime, Document};
 use mongodb::error::{Error, ErrorKind, WriteFailure};
 use mongodb::options::{Hint, IndexOptions, ReplaceOptions, ReturnDocument};
@@ -12,11 +12,11 @@ use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::persistence::{
-    AuthStore, AuthSweepItem, BrowserSession, CredentialLease, CredentialLeaseCursor,
-    CredentialMutationCursor, CredentialReconciliationCursor, CredentialReissueCursor,
-    DurableCredential, DurableSubjectTokens, LoginAttempt, RevokeDebt, RevokeDebtCursor,
-    RevokeDebtWork, SecretDigest, SecretValue, SessionCredentialState, SubjectAuthState,
-    SubjectAuthorizationCursor, SubjectAuthorizationLease, SubjectOwnerCursor,
+    AuthStore, AuthSweepItem, BrowserSession, CredentialExpiryCursor, CredentialLease,
+    CredentialLeaseCursor, CredentialMutationCursor, CredentialReconciliationCursor,
+    CredentialReissueCursor, DurableCredential, DurableSubjectTokens, LoginAttempt, RevokeDebt,
+    RevokeDebtCursor, RevokeDebtWork, SecretDigest, SecretValue, SessionCredentialState,
+    SubjectAuthState, SubjectAuthorizationCursor, SubjectAuthorizationLease, SubjectOwnerCursor,
     SubjectRefreshCursor, SubjectRefreshLease,
 };
 use crate::auth::profile::Profile;
@@ -39,6 +39,7 @@ const SUBJECT_EXPIRED_REFRESH_LEASE_INDEX: &str = "auth_subject_expired_refresh_
 const SUBJECT_AUTHORIZATION_INDEX: &str = "auth_subject_authorization_due";
 const SUBJECT_OWNER_INDEX: &str = "auth_subject_token_owners";
 const CREDENTIAL_CURRENT_INDEX: &str = "auth_credential_current_due";
+const CREDENTIAL_CURRENT_EXPIRY_INDEX: &str = "auth_credential_current_expiry_due";
 const CREDENTIAL_PENDING_INDEX: &str = "auth_credential_pending_due";
 const CREDENTIAL_EXPIRED_LEASE_INDEX: &str = "auth_credential_expired_mint_lease";
 const CREDENTIAL_DEBT_INDEX: &str = "auth_credential_revoke_debt";
@@ -53,13 +54,13 @@ const CREDENTIAL_MIGRATION_INDEX: &str = "auth_credential_schema_migration";
 const DUPLICATE_KEY: i32 = 11000;
 /// Persisted shape written by this binary.
 ///
-/// Version 4 adds a durable authorization-check lease and quarantinable access
-/// tokens. The deployment's
+/// Version 5 binds a pending credential to the exact runtime generation selected
+/// for delivery. The deployment's
 /// `Recreate` strategy is a hard writer boundary: an older binary uses
 /// whole-document replacement and cannot preserve newer fields if both write at
 /// once. Migration fences operations that predate the cutover, but does not
 /// claim arbitrary mixed-version rolling-writer compatibility.
-const AUTH_SCHEMA_VERSION: i64 = 4;
+const AUTH_SCHEMA_VERSION: i64 = 5;
 const AUTH_MIGRATION_LANE_BATCH_SIZE: usize = 50;
 const AUTH_SCHEMA_OPEN_BUDGET: usize = 2 * (AUTH_MIGRATION_LANE_BATCH_SIZE + 2) + 2;
 
@@ -203,6 +204,12 @@ struct CredentialLeaseDoc {
 }
 
 #[derive(Serialize, Deserialize)]
+struct CredentialDeliveryTargetDoc {
+    runtime_generation: i64,
+    runtime_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct SessionCredentialDoc {
     #[serde(rename = "_id")]
     id: String,
@@ -213,6 +220,8 @@ struct SessionCredentialDoc {
     sweep_sequence: i64,
     current: Option<CredentialDoc>,
     pending: Option<CredentialDoc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_target: Option<CredentialDeliveryTargetDoc>,
     revoke_debt: Vec<RevokeDebtDoc>,
     #[serde(default)]
     revoke_debt_ordered: bool,
@@ -389,6 +398,20 @@ impl MongoAuthStore {
             ))
             .await
             .map_err(|_| unavailable("current credential query index"))?;
+        self.credentials
+            .create_index(query_index(
+                doc! { "current.expires_at": 1, "sweep_sequence": 1, "_id": 1 },
+                CREDENTIAL_CURRENT_EXPIRY_INDEX,
+                doc! {
+                    "retired": false,
+                    "lease": Bson::Null,
+                    "pending": Bson::Null,
+                    "current.expires_at": { "$type": "date" },
+                    "sweep_sequence": { "$type": "long" },
+                },
+            ))
+            .await
+            .map_err(|_| unavailable("expiring current credential query index"))?;
         self.credentials
             .create_index(query_index(
                 doc! { "sweep_sequence": 1, "_id": 1 },
@@ -944,6 +967,41 @@ impl AuthStore for MongoAuthStore {
         Ok(states)
     }
 
+    async fn current_credentials_expiring_before(
+        &self,
+        expires_before: SystemTime,
+        after: Option<&CredentialExpiryCursor>,
+        through_sequence: u64,
+        limit: usize,
+    ) -> Result<Vec<AuthSweepItem<CredentialExpiryCursor, SessionCredentialState>>, StoreError>
+    {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let credentials = self.credentials.clone_with_type::<Document>();
+        let mut cursor = credentials
+            .find(current_credential_expiry_filter(
+                expires_before,
+                after,
+                through_sequence,
+            ))
+            .sort(doc! { "current.expires_at": 1, "sweep_sequence": 1, "_id": 1 })
+            .hint(Hint::Name(CREDENTIAL_CURRENT_EXPIRY_INDEX.to_string()))
+            .limit(mongo_limit(limit))
+            .await
+            .map_err(|error| read_failure("list current credentials nearing expiry", &error))?;
+        let mut states = Vec::new();
+        while let Some(stored) = cursor.try_next().await.map_err(|error| {
+            read_failure("list current credentials nearing expiry cursor", &error)
+        })? {
+            states.push(AuthSweepItem {
+                cursor: credential_expiry_cursor_from_document(&stored)?,
+                state: decode_credential_document(stored, &self.cipher),
+            });
+        }
+        Ok(states)
+    }
+
     async fn pending_credentials_due_for_reissue(
         &self,
         after: Option<&CredentialMutationCursor>,
@@ -1155,7 +1213,7 @@ fn legacy_schema_filter() -> Document {
     doc! {
         "$or": [
             { "auth_schema_version": { "$exists": false } },
-            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64] } },
+            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64] } },
         ]
     }
 }
@@ -1164,7 +1222,7 @@ fn supported_schema_filter() -> Document {
     doc! {
         "$or": [
             { "auth_schema_version": { "$exists": false } },
-            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, AUTH_SCHEMA_VERSION] } },
+            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, AUTH_SCHEMA_VERSION] } },
         ]
     }
 }
@@ -1226,9 +1284,8 @@ fn subject_migration_update(
                     "$$NOW",
                 ]
             },
-            // A v3 writer cannot understand or preserve an authorization lease.
             // The revision/incarnation fence above prevents any overlapping
-            // pre-cutover check from publishing after this reset.
+            // pre-cutover check from publishing after this conservative reset.
             "authorization_lease": Bson::Null,
             "sweep_sequence": sweep_sequence,
             "auth_schema_version": AUTH_SCHEMA_VERSION,
@@ -1528,6 +1585,47 @@ fn current_credential_reissue_filter(
                 },
                 doc! {
                     "current.issued_at": issued_at,
+                    "sweep_sequence": sequence,
+                    "_id": { "$gt": after.session.as_str() },
+                },
+            ],
+        );
+    }
+    filter
+}
+
+fn current_credential_expiry_filter(
+    expires_before: SystemTime,
+    after: Option<&CredentialExpiryCursor>,
+    through_sequence: u64,
+) -> Document {
+    let mut filter = doc! {
+        "_id": { "$type": "string" },
+        "retired": false,
+        "lease": Bson::Null,
+        "pending": Bson::Null,
+        "current.expires_at": {
+            "$type": "date",
+            "$lte": DateTime::from_system_time(expires_before),
+        },
+        "sweep_sequence": {
+            "$type": "long",
+            "$lte": mongo_sweep_sequence(through_sequence),
+        },
+    };
+    if let Some(after) = after {
+        let expires_at = DateTime::from_system_time(after.expires_at);
+        let sequence = mongo_sweep_sequence(after.sweep_sequence);
+        filter.insert(
+            "$or",
+            vec![
+                doc! { "current.expires_at": { "$gt": expires_at } },
+                doc! {
+                    "current.expires_at": expires_at,
+                    "sweep_sequence": { "$gt": sequence },
+                },
+                doc! {
+                    "current.expires_at": expires_at,
                     "sweep_sequence": sequence,
                     "_id": { "$gt": after.session.as_str() },
                 },
@@ -1903,6 +2001,16 @@ fn credential_reissue_cursor_from_document(
     })
 }
 
+fn credential_expiry_cursor_from_document(
+    stored: &Document,
+) -> Result<CredentialExpiryCursor, StoreError> {
+    Ok(CredentialExpiryCursor {
+        expires_at: nested_document_time(stored, "current", "expires_at", "session credential")?,
+        sweep_sequence: document_sequence(stored, "session credential")?,
+        session: SessionId(document_string(stored, "_id", "session credential")?),
+    })
+}
+
 fn credential_lease_cursor_from_document(
     stored: &Document,
 ) -> Result<CredentialLeaseCursor, StoreError> {
@@ -2232,6 +2340,7 @@ fn credential_state_to_doc(
     state: SessionCredentialState,
     cipher: &AuthCipher,
 ) -> Result<SessionCredentialDoc, StoreError> {
+    state.validate()?;
     let delete_after = state
         .is_settled_retired()
         .then(|| DateTime::from_system_time(SystemTime::now() + SETTLED_CREDENTIAL_RETENTION));
@@ -2241,6 +2350,7 @@ fn credential_state_to_doc(
         request_bound_credential,
         current,
         pending,
+        pending_target,
         mut revoke_debt,
         lease,
         retired,
@@ -2278,6 +2388,17 @@ fn credential_state_to_doc(
                     PENDING_VALUE_FIELD,
                     PENDING_REVOCATION_FIELD,
                 )
+            })
+            .transpose()?,
+        pending_target: pending_target
+            .map(|target| {
+                Ok(CredentialDeliveryTargetDoc {
+                    runtime_generation: stored_counter(
+                        target.runtime_generation,
+                        "credential delivery target runtime generation",
+                    )?,
+                    runtime_id: target.runtime_id,
+                })
             })
             .transpose()?,
         revoke_debt: revoke_debt
@@ -2365,6 +2486,11 @@ fn credential_state_from_doc(
 ) -> Result<SessionCredentialState, StoreError> {
     let _retention_deadline = stored.delete_after;
     validate_schema_version(stored.auth_schema_version, "session credential")?;
+    if stored.pending.is_none() && stored.pending_target.is_some() {
+        return Err(StoreError::Malformed(
+            "stored credential delivery target exists without a pending credential".into(),
+        ));
+    }
     let id = stored.id;
     let mut revoke_debt = stored
         .revoke_debt
@@ -2425,6 +2551,23 @@ fn credential_state_from_doc(
                     PENDING_VALUE_FIELD,
                     PENDING_REVOCATION_FIELD,
                 )
+            })
+            .transpose()?,
+        pending_target: stored
+            .pending_target
+            .map(|target| {
+                if target.runtime_id.is_empty() {
+                    return Err(StoreError::Malformed(
+                        "stored credential delivery target runtime id must not be empty".into(),
+                    ));
+                }
+                Ok(CredentialDeliveryTarget {
+                    runtime_generation: read_counter(
+                        target.runtime_generation,
+                        "credential delivery target runtime generation",
+                    )?,
+                    runtime_id: target.runtime_id,
+                })
             })
             .transpose()?,
         revoke_debt,
