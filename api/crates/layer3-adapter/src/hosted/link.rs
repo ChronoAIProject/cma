@@ -46,9 +46,18 @@ pub(crate) const DIALECT_DEADLINE: std::time::Duration = std::time::Duration::fr
 /// that carries such a session correctly.
 const SWITCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How long a runtime has to confirm an atomic credential installation.
+#[cfg(not(test))]
+const CREDENTIAL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(test)]
+const CREDENTIAL_DEADLINE: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// The tag a supervisor answers a plane switch with, matching the runtime's
 /// own constant. One word, agreed at both ends.
 pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
+
+/// The tag a supervisor answers a credential installation with.
+pub(crate) const CREDENTIAL_RESULT: &str = "credential_result";
 
 /// Decode a process ending reported by the supervisor.
 ///
@@ -79,6 +88,18 @@ pub(crate) fn switch_answer(text: &str) -> Option<bool> {
         return None;
     }
     value.get("accepted")?.as_bool()
+}
+
+/// Read a credential result without accepting a malformed or uncorrelated frame.
+pub(crate) fn credential_answer(text: &str) -> Option<(String, bool)> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if value.get("t")?.as_str()? != CREDENTIAL_RESULT {
+        return None;
+    }
+    Some((
+        value.get("operation_id")?.as_str()?.to_string(),
+        value.get("installed")?.as_bool()?,
+    ))
 }
 
 /// A socket to a runtime's link.
@@ -217,7 +238,11 @@ impl HostedKernel {
                         }
                     }
                     Ok(Message::Text(text)) => {
-                        if let Some(accepted) = switch_answer(&text) {
+                        if let Some((operation_id, installed)) = credential_answer(&text) {
+                            lifecycle_for_reader
+                                .settle_credential(&link_for_cleanup, &operation_id, installed)
+                                .await;
+                        } else if let Some(accepted) = switch_answer(&text) {
                             lifecycle_for_reader
                                 .settle(&link_for_cleanup, accepted)
                                 .await;
@@ -244,11 +269,19 @@ impl HostedKernel {
         });
 
         let sandbox = handle.0.clone();
+        let lifecycle_for_writer = lifecycle.clone();
         tokio::spawn(async move {
             while let Some(input) = in_rx.recv().await {
+                let credential_operation = match &input {
+                    TerminalInput::Credential { operation_id, .. } => Some(operation_id.clone()),
+                    _ => None,
+                };
                 let message = Self::encode(input, framed);
                 if let Err(e) = sink.send(message).await {
                     tracing::warn!(%sandbox, error = %e, "sandbox terminal write failed");
+                    if let Some(operation_id) = credential_operation {
+                        lifecycle_for_writer.fail_credential(&operation_id).await;
+                    }
                     break;
                 }
             }
@@ -272,8 +305,25 @@ impl HostedKernel {
         handle: &RuntimeHandle,
         credential: &str,
     ) -> Result<(), AdapterError> {
-        let link = self.link_to(&handle.0).await;
-        let Some(link) = link else {
+        let operation_id = uuid::Uuid::new_v4().simple().to_string();
+        // Choose the socket generation and register its exact operation before
+        // enqueueing. A replacement is therefore wholly before or after this
+        // point, and even an immediate result cannot outrun its waiter.
+        let link_and_answer = {
+            let links = self.links.lock().await;
+            match links.get(&handle.0) {
+                Some(link) => {
+                    let link = link.clone();
+                    let answer = self
+                        .credential_waiters
+                        .expect(&handle.0, &operation_id, &link)
+                        .await;
+                    Some((link, answer))
+                }
+                None => None,
+            }
+        };
+        let Some((link, answer)) = link_and_answer else {
             return Err(AdapterError::Unavailable(format!(
                 "runtime {} has no open link to carry a credential",
                 handle.0
@@ -281,7 +331,10 @@ impl HostedKernel {
         };
         // Never logged with its value, here or anywhere below this line.
         if link
-            .send(TerminalInput::Credential(credential.to_string()))
+            .send(TerminalInput::Credential {
+                operation_id: operation_id.clone(),
+                value: credential.to_string(),
+            })
             .await
             .is_err()
         {
@@ -294,8 +347,29 @@ impl HostedKernel {
                 handle.0
             )));
         }
-        tracing::info!(sandbox = %handle.0, "credential delivered to the runtime");
-        Ok(())
+        match tokio::time::timeout(CREDENTIAL_DEADLINE, answer).await {
+            Ok(Ok(true)) => {
+                tracing::info!(sandbox = %handle.0, "credential installed by the runtime");
+                Ok(())
+            }
+            Ok(Ok(false)) => Err(AdapterError::Unavailable(format!(
+                "runtime {} did not install the credential",
+                handle.0
+            ))),
+            Ok(Err(_)) => Err(AdapterError::Unavailable(format!(
+                "runtime {}'s link ended before it acknowledged the credential",
+                handle.0
+            ))),
+            Err(_) => {
+                self.credential_waiters
+                    .forget_operation(&handle.0, &operation_id, &link)
+                    .await;
+                Err(AdapterError::Unavailable(format!(
+                    "runtime {} did not acknowledge the credential",
+                    handle.0
+                )))
+            }
+        }
     }
 
     /// Restart the supervised program under a different front-end command.
@@ -432,9 +506,17 @@ impl HostedKernel {
             TerminalInput::Signal(sig) => {
                 Message::Text(format!(r#"{{"t":"signal","sig":"{sig}"}}"#))
             }
-            TerminalInput::Credential(value) => {
-                Message::Text(serde_json::json!({ "t": "credential", "value": value }).to_string())
-            }
+            TerminalInput::Credential {
+                operation_id,
+                value,
+            } => Message::Text(
+                serde_json::json!({
+                    "t": "credential",
+                    "operation_id": operation_id,
+                    "value": value,
+                })
+                .to_string(),
+            ),
             TerminalInput::SwitchPlane { command } => Message::Text(
                 serde_json::json!({ "t": "switch_plane", "command": command }).to_string(),
             ),

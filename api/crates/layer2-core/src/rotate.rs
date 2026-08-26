@@ -321,6 +321,12 @@ impl SessionService {
         } else {
             Vec::new()
         };
+
+        // Credential delivery uses this same gate from exact-runtime selection
+        // through durable promotion and entry evidence. Whichever operation
+        // arrives first therefore completes against H1 before the other can
+        // remove it or choose what H2 will receive.
+        let lifecycle = self.lock_lifecycle(&id).await;
         if let Err(e) = self.persist_durably(&mut moved, events).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the move");
             self.restore_after_failed_move(&record, &old).await;
@@ -339,7 +345,12 @@ impl SessionService {
          * This happens only after the move is durable. Until that transaction
          * succeeds, the old entry and runtime are the complete rollback path.
          */
-        if let Some(entry) = self.entries.write().await.remove(&id) {
+        let old_entry = {
+            let mut entries = self.entries.write().await;
+            let exact_old = entries.get(&id).and_then(|entry| entry.runtime.as_ref()) == Some(&old);
+            exact_old.then(|| entries.remove(&id)).flatten()
+        };
+        if let Some(entry) = old_entry {
             if let Some(attached) = entry.attached.as_ref() {
                 let _ = attached.supersede.send(match &change {
                     Handover::Version(_) => crate::lease::Detached::RuntimeReplaced,
@@ -347,6 +358,7 @@ impl SessionService {
                 });
             }
         }
+        drop(lifecycle);
         if let Err(e) = adapter.terminate(&old).await {
             tracing::warn!(session_id = %id, error = %e, "could not release the old runtime");
         }

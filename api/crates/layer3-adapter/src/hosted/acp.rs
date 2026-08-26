@@ -209,7 +209,7 @@ impl Bridge {
         // This sender's channel identity is the generation of this socket.
         // Keep it beside the reader so a late answer from this socket cannot
         // settle a waiter installed by a replacement connection.
-        let control = super::control_lane(Arc::clone(&bridge.sink));
+        let control = super::control_lane(Arc::clone(&bridge.sink), link.clone());
         let control_for_reader = control.clone();
         if let Some(lifecycle) = link.as_ref() {
             // Registered before the reader can observe a close. Registering in
@@ -250,13 +250,22 @@ impl Bridge {
                         _ => {}
                     },
                     Ok(Message::Text(text)) => {
-                        // A runtime's answer to a plane switch, and nothing
-                        // else: the conversation itself travels framed on its
-                        // own lane.
-                        if let (Some(accepted), Some(lifecycle)) =
-                            (super::link::switch_answer(&text), link_for_reader.as_ref())
-                        {
-                            lifecycle.settle(&control_for_reader, accepted).await;
+                        // Runtime control answers; the conversation itself
+                        // travels framed on its own lane.
+                        if let Some(lifecycle) = link_for_reader.as_ref() {
+                            if let Some((operation_id, installed)) =
+                                super::link::credential_answer(&text)
+                            {
+                                lifecycle
+                                    .settle_credential(
+                                        &control_for_reader,
+                                        &operation_id,
+                                        installed,
+                                    )
+                                    .await;
+                            } else if let Some(accepted) = super::link::switch_answer(&text) {
+                                lifecycle.settle(&control_for_reader, accepted).await;
+                            }
                         }
                     }
                     Ok(Message::Close(_)) => break,
