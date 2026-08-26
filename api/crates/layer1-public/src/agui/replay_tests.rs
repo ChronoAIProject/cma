@@ -191,6 +191,39 @@ fn replay_after(events: &[Event], cursor: u64) -> Vec<crate::agui::project::Agui
 }
 
 #[test]
+fn a_legacy_owner_message_before_its_turn_boundary_still_replays() {
+    // Control planes before #496 wrote the owner's message first. Reordering
+    // new writes must not reinterpret or reject those durable sessions: replay
+    // preserves exactly the history they already hold.
+    let legacy = vec![
+        logged(
+            6,
+            EventKind::OwnerMessage {
+                content: "written by an older control plane".into(),
+            },
+        ),
+        logged(7, EventKind::TurnStarted),
+    ];
+
+    let replayed = replay_after(&legacy, 0);
+    assert_eq!(
+        replayed.iter().map(|frame| frame.kind).collect::<Vec<_>>(),
+        [
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
+            "RUN_STARTED",
+        ],
+        "legacy history is replayed in its original durable order"
+    );
+    assert_eq!(
+        replayed.iter().map(|frame| frame.seq).collect::<Vec<_>>(),
+        [None, None, Some(6), Some(7)],
+        "legacy replay retains the original cursor positions"
+    );
+}
+
+#[test]
 fn a_drop_mid_projection_resumes_the_event_whole() {
     let log = vec![
         logged(6, EventKind::TurnStarted),

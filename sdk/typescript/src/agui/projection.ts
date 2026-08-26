@@ -1,4 +1,5 @@
 import { ProtocolError } from '../errors.js';
+import { isCursorlessInterfaceBoundary } from './cursor.js';
 import type { AguiEvent, UnknownEvent } from './events.js';
 
 /**
@@ -6,7 +7,9 @@ import type { AguiEvent, UnknownEvent } from './events.js';
  *
  * A durable prefix has sequence zero until its numbered final frame arrives.
  * Keeping that group intact is what makes occurrence identities possible for
- * unknown siblings that otherwise have no stable semantic key.
+ * unknown siblings that otherwise have no stable semantic key. Cursorless
+ * interface boundaries and liveness are complete frames and pass through
+ * immediately instead of joining that buffer.
  */
 export class ProjectionAssembler {
   readonly #prefixes: AguiEvent[] = [];
@@ -17,6 +20,15 @@ export class ProjectionAssembler {
   /** Accept one normalized event and return only a complete unit for delivery. */
   accept(event: AguiEvent): readonly AguiEvent[] {
     this.#acceptThread(event.threadId);
+    const kind = event.type === 'UNKNOWN' ? event.kind : event.type;
+    if (isCursorlessInterfaceBoundary(kind, event.seq, event.ephemeral)) {
+      if (this.#prefixes.length > 0) {
+        throw new ProtocolError(
+          'AG-UI cursorless interface boundary appeared inside a durable projection',
+        );
+      }
+      return [event];
+    }
     if (event.ephemeral === true) {
       return [event];
     }
