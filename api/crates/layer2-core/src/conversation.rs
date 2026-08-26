@@ -28,13 +28,13 @@
 //! not fail because a kernel invented a category.
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use layer3_adapter::{
     AdapterError, ContentBlock, ConversationInput, ConversationInputSender, PermissionDecision,
 };
 
-use crate::authz::Caller;
+use crate::authz::{Caller, Capability as AuthorizationCapability};
 use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
@@ -72,6 +72,21 @@ pub enum ApprovalDecision {
     Abort,
 }
 
+/// Why waiting for a session's conversation did not reach a usable state.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ConversationReadinessError {
+    /// The session could not become conversable for a reason already named by
+    /// the core, such as ownership, termination, or a missing capability.
+    #[error(transparent)]
+    Refused(#[from] CoreError),
+    /// Provisioning did not publish a usable conversation before the caller's
+    /// deadline.
+    #[error("session provisioning timed out before its conversation became ready")]
+    ProvisioningTimedOut,
+}
+
+const CONVERSATION_READINESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 /// One answer in an atomic approval-resolution request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovalResolution {
@@ -92,6 +107,81 @@ impl ApprovalResolution {
 }
 
 impl SessionService {
+    /// Wait for a provisioning session to accept conversation input.
+    ///
+    /// Readiness means more than a durable `Ready` status: the runtime's live
+    /// entry and conversation sender must also have been published. The local
+    /// bring-up claim spans that gap, so waiting on it avoids opening a second
+    /// conversation beside one that is still being installed. A ready session
+    /// with no local entry is readopted, preserving operation after a control
+    /// plane restart. The supplied bound covers both publication and that
+    /// readoption wait.
+    pub async fn await_conversable(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+        bound: Duration,
+    ) -> Result<(), ConversationReadinessError> {
+        // Refuse before observing the session or its provisioning timing.
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
+
+        let wait_for_conversation = async {
+            loop {
+                let record = self.record(id).await?;
+                if !record.session.is_owned_by(&caller.subject) {
+                    return Err(CoreError::Forbidden);
+                }
+                if record.session.status.is_terminal() {
+                    return Err(CoreError::SessionTerminated);
+                }
+                if !record.session.capabilities.unrecorded() {
+                    record
+                        .session
+                        .capabilities
+                        .require(Capability::Conversation)?;
+                }
+
+                match record.session.status {
+                    SessionStatus::Provisioning => {}
+                    SessionStatus::Ready | SessionStatus::Running => {
+                        let conversation_is_live = self
+                            .entries
+                            .read()
+                            .await
+                            .get(id)
+                            .and_then(|entry| entry.conversation.as_ref())
+                            .is_some();
+                        if conversation_is_live {
+                            self.conversation_input(caller, id, Capability::Conversation)
+                                .await?;
+                            return Ok(());
+                        }
+                        if self.starting.read().await.contains(id) {
+                            tokio::time::sleep(CONVERSATION_READINESS_POLL_INTERVAL).await;
+                            continue;
+                        }
+                        self.conversation_input(caller, id, Capability::Conversation)
+                            .await?;
+                        return Ok(());
+                    }
+                    SessionStatus::Rotating | SessionStatus::Idle => {
+                        return Err(CoreError::InvalidState)
+                    }
+                    SessionStatus::Terminated => unreachable!("terminal status handled above"),
+                }
+
+                tokio::time::sleep(CONVERSATION_READINESS_POLL_INTERVAL).await;
+            }
+        };
+
+        tokio::time::timeout(bound, wait_for_conversation)
+            .await
+            .map_err(|_| ConversationReadinessError::ProvisioningTimedOut)??;
+        Ok(())
+    }
+
     /// Open a prompt turn on a session's conversation.
     ///
     /// The turn is recorded as beginning here rather than waited for, because
@@ -415,6 +505,9 @@ impl SessionService {
         id: &SessionId,
         capability: Capability,
     ) -> Result<ConversationInputSender, CoreError> {
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
         // Read from the record rather than from what this process happens to
         // hold, because after a restart it holds nothing — and a session it has
         // never seen is not a session that does not exist.
