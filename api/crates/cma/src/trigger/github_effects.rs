@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use layer2_core::{
-    rfc3339_at, seconds_from_rfc3339, AuthorityProvenance, BaselineObjectStore,
+    rfc3339_at, seconds_from_rfc3339, AuthorityProvenance, BaselineObjectStore, BranchRecord,
     CapabilityOperation, CapabilityRevocationState, ConnectionSnapshot, CoreError, DelegationState,
     EffectClaim, FailureClass, Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind,
     LaunchEffectResult, LaunchFailure, RepositoryIdentity, Session, SessionId, SessionLink,
@@ -15,7 +15,9 @@ use layer2_core::{
     CAPABILITY_POLICY_VERSION,
 };
 
-use super::capability_signing::{CapabilitySigner, POLICY_AUDIENCE};
+use super::capability_signing::{
+    CapabilitySigner, RuntimePolicyTombstone, POLICY_AUDIENCE, POLICY_VERSION,
+};
 use super::github::{
     BranchContext, BranchReconciliation, ForkContext, ForkReconciliation, GithubBroker,
     GithubBrokerError, ImportedWorkspace, WorkspaceContext, WorkspaceUnsupported,
@@ -32,6 +34,7 @@ struct CapabilityAuthorityEvidence {
     authority: AuthorityProvenance,
     upstream: RepositoryIdentity,
     fork: RepositoryIdentity,
+    branch: BranchRecord,
 }
 
 #[async_trait]
@@ -85,6 +88,22 @@ trait TriggerSessionEffectPort: Send + Sync {
         capability: LaunchCapability,
         signer: Arc<CapabilitySigner>,
     ) -> Result<(String, layer3_adapter::RuntimePolicyReceipt), CoreError>;
+
+    async fn runtime_policy_audience(&self, session_id: &SessionId) -> Result<String, CoreError>;
+
+    async fn install_runtime_tombstone(
+        &self,
+        session_id: &SessionId,
+        tombstone: RuntimePolicyTombstone,
+        signer: Arc<CapabilitySigner>,
+    ) -> Result<(String, layer3_adapter::RuntimePolicyReceipt), CoreError>;
+
+    async fn retire_runtime_credential(&self, session_id: &SessionId) -> Result<(), CoreError>;
+
+    async fn runtime_credential_retirement_settled(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<bool, CoreError>;
 }
 
 struct SessionServiceEffectPort(Arc<SessionService>);
@@ -113,6 +132,39 @@ impl TriggerSessionEffectPort for SessionServiceEffectPort {
                     .sign_policy(&capability)
                     .map_err(CoreError::InvalidRequest)
             })
+            .await
+    }
+
+    async fn runtime_policy_audience(&self, session_id: &SessionId) -> Result<String, CoreError> {
+        self.0.runtime_policy_audience(session_id).await
+    }
+
+    async fn install_runtime_tombstone(
+        &self,
+        session_id: &SessionId,
+        mut tombstone: RuntimePolicyTombstone,
+        signer: Arc<CapabilitySigner>,
+    ) -> Result<(String, layer3_adapter::RuntimePolicyReceipt), CoreError> {
+        self.0
+            .install_runtime_policy(session_id, move |runtime_audience| {
+                tombstone.runtime_audience = runtime_audience.to_string();
+                signer
+                    .sign_tombstone(tombstone)
+                    .map_err(CoreError::InvalidRequest)
+            })
+            .await
+    }
+
+    async fn retire_runtime_credential(&self, session_id: &SessionId) -> Result<(), CoreError> {
+        self.0.retire_runtime_credential(session_id).await
+    }
+
+    async fn runtime_credential_retirement_settled(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<bool, CoreError> {
+        self.0
+            .runtime_credential_retirement_settled(session_id)
             .await
     }
 }
@@ -213,20 +265,17 @@ impl GithubEffectPort for GithubBroker {
         }
 
         let branch_context = BranchContext::try_from(launch)?;
-        let observed_branch = match self.reconcile_branch(&branch_context).await? {
-            BranchReconciliation::Ready(branch) => branch,
-            BranchReconciliation::Absent => return Err(GithubBrokerError::AuthorityDrift),
-        };
+        let mut observed_branch = self.observe_branch(&branch_context).await?;
         let expected_branch = launch.branch.as_ref().ok_or_else(|| {
             GithubBrokerError::Malformed("the Launch has no fenced branch".into())
         })?;
         if observed_branch.name != expected_branch.name
             || observed_branch.expected_head != expected_branch.expected_head
-            || observed_branch.current_head != expected_branch.current_head
             || observed_branch.canonical_url != expected_branch.canonical_url
         {
             return Err(GithubBrokerError::AuthorityDrift);
         }
+        observed_branch.created_at = expected_branch.created_at.clone();
 
         // Last provider read before policy issue: this proves the exact
         // UserService, account, backing key and scope still match the Launch.
@@ -254,6 +303,7 @@ impl GithubEffectPort for GithubBroker {
             },
             upstream: upstream.identity,
             fork: fork.identity,
+            branch: observed_branch,
         })
     }
 }
@@ -278,6 +328,23 @@ pub(crate) struct GithubEffectExecutor {
     sessions: Option<Arc<dyn TriggerSessionEffectPort>>,
     capability_signer: Option<Arc<CapabilitySigner>>,
     fork_readiness_timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CapabilityRenewal {
+    pub(crate) reach: layer2_core::ReachStatus,
+    pub(crate) connection: ConnectionSnapshot,
+    pub(crate) authority: AuthorityProvenance,
+    pub(crate) branch: BranchRecord,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CapabilityRevocation {
+    pub(crate) generation: u64,
+    pub(crate) fence: u64,
+    pub(crate) runtime_audience: String,
+    pub(crate) tombstone_acknowledged: bool,
+    pub(crate) agent_key_revocation_confirmed: bool,
 }
 
 impl GithubEffectExecutor {
@@ -344,6 +411,195 @@ impl GithubEffectExecutor {
             capability_signer: Some(capability_signer),
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         }
+    }
+
+    pub(crate) async fn capability_runtime_audience(
+        &self,
+        launch: &Launch,
+        fence: u64,
+    ) -> Result<String, LaunchFailure> {
+        let claim = capability_claim(launch, fence);
+        let session = launch.session.as_ref().ok_or_else(|| {
+            failure(
+                FailureClass::TerminalSecurity,
+                "trigger_reach_session_missing",
+                "The Launch has no deterministic session for delegated access.",
+                "Contact support; CMA will not infer a runtime audience.",
+                &claim,
+                None,
+            )
+        })?;
+        let sessions = self
+            .sessions
+            .as_ref()
+            .ok_or_else(|| execution_failure(unsupported_effect(&claim)))?;
+        sessions
+            .runtime_policy_audience(&session.session_id)
+            .await
+            .map_err(|error| execution_failure(session_failure(error, &claim)))
+    }
+
+    pub(crate) async fn renew_capability(
+        &self,
+        launch: &Launch,
+        fence: u64,
+    ) -> Result<CapabilityRenewal, LaunchFailure> {
+        let claim = capability_claim(launch, fence);
+        match self.run_reach(launch, &claim).await {
+            EffectExecution::Completed {
+                result:
+                    LaunchEffectResult::Reach {
+                        reach,
+                        connection,
+                        authority,
+                        branch,
+                    },
+                ..
+            } => Ok(CapabilityRenewal {
+                reach,
+                connection,
+                authority,
+                branch,
+            }),
+            EffectExecution::Completed { .. } => Err(failure(
+                FailureClass::TerminalSecurity,
+                "trigger_reach_result_mismatch",
+                "The capability adapter returned a different effect result.",
+                "Contact support; delegated access remains fail-closed.",
+                &claim,
+                None,
+            )),
+            execution => Err(execution_failure(execution)),
+        }
+    }
+
+    pub(crate) async fn revoke_capability(
+        &self,
+        launch: &Launch,
+        fence: u64,
+    ) -> Result<CapabilityRevocation, LaunchFailure> {
+        let claim = capability_claim(launch, fence);
+        let session = launch.session.as_ref().ok_or_else(|| {
+            failure(
+                FailureClass::TerminalSecurity,
+                "trigger_reach_session_missing",
+                "The Launch has no deterministic session whose reach can be revoked.",
+                "Contact support; CMA cannot report revocation without positive enforcement.",
+                &claim,
+                None,
+            )
+        })?;
+        let reach = launch.reach.as_ref().ok_or_else(|| {
+            failure(
+                FailureClass::TerminalSecurity,
+                "trigger_reach_missing",
+                "The Launch has no admitted capability record to revoke.",
+                "Contact support; CMA cannot infer prior delegated access.",
+                &claim,
+                None,
+            )
+        })?;
+        let generation = reach.policy_generation.checked_add(1).ok_or_else(|| {
+            failure(
+                FailureClass::TerminalSecurity,
+                "trigger_reach_generation_exhausted",
+                "The delegated-access generation cannot advance safely.",
+                "Contact support; the session remains fail-closed at policy expiry.",
+                &claim,
+                None,
+            )
+        })?;
+        let sessions = self
+            .sessions
+            .as_ref()
+            .ok_or_else(|| execution_failure(unsupported_effect(&claim)))?;
+        let signer = self
+            .capability_signer
+            .as_ref()
+            .ok_or_else(|| execution_failure(unsupported_effect(&claim)))?;
+        let tombstone = RuntimePolicyTombstone {
+            version: POLICY_VERSION,
+            launch_id: launch.id.0.clone(),
+            session_id: session.session_id.0.clone(),
+            runtime_audience: String::new(),
+            generation,
+            fence,
+            issued_at_epoch_seconds: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            issuer: "cma-trigger".into(),
+            audience: POLICY_AUDIENCE.into(),
+            signature_key_id: signer.key_id().into(),
+        };
+
+        let mut first_failure = None;
+        let mut runtime_audience = reach.runtime_audience.clone();
+        let mut tombstone_acknowledged = false;
+        match sessions
+            .install_runtime_tombstone(&session.session_id, tombstone, Arc::clone(signer))
+            .await
+        {
+            Ok((audience, receipt))
+                if receipt.generation == generation
+                    && receipt.fence == fence
+                    && receipt.revoked =>
+            {
+                runtime_audience = audience;
+                tombstone_acknowledged = true;
+            }
+            Ok(_) => {
+                first_failure = Some(failure(
+                    FailureClass::TerminalSecurity,
+                    "trigger_revoke_acknowledgement_mismatch",
+                    "The runtime acknowledged different revocation data than CMA issued.",
+                    "Contact support; provider credential revocation remains the backstop.",
+                    &claim,
+                    None,
+                ));
+            }
+            Err(error) => {
+                first_failure = Some(execution_failure(session_failure(error, &claim)));
+            }
+        }
+
+        if let Err(error) = sessions
+            .retire_runtime_credential(&session.session_id)
+            .await
+        {
+            first_failure.get_or_insert_with(|| execution_failure(session_failure(error, &claim)));
+        }
+        let agent_key_revocation_confirmed = match sessions
+            .runtime_credential_retirement_settled(&session.session_id)
+            .await
+        {
+            Ok(settled) => settled,
+            Err(error) => {
+                first_failure
+                    .get_or_insert_with(|| execution_failure(session_failure(error, &claim)));
+                false
+            }
+        };
+
+        if !tombstone_acknowledged && !agent_key_revocation_confirmed {
+            return Err(first_failure.unwrap_or_else(|| {
+                failure(
+                    FailureClass::RetryableTransient,
+                    "trigger_revocation_pending",
+                    "Neither runtime nor provider has acknowledged revocation yet.",
+                    "CMA will retry both enforcement boundaries within the policy TTL.",
+                    &claim,
+                    None,
+                )
+            }));
+        }
+        Ok(CapabilityRevocation {
+            generation,
+            fence,
+            runtime_audience,
+            tombstone_acknowledged,
+            agent_key_revocation_confirmed,
+        })
     }
 
     async fn run_preflight(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
@@ -803,7 +1059,7 @@ impl GithubEffectExecutor {
         resources.insert("service_id".into(), authority.connection.service_id.clone());
         resources.insert("policy_generation".into(), generation.to_string());
         resources.insert("policy_fence".into(), claim.fence.to_string());
-        resources.insert("runtime_audience".into(), runtime_audience);
+        resources.insert("runtime_audience".into(), runtime_audience.clone());
         resources.insert("policy_expires_at".into(), expires_at.to_string());
         EffectExecution::Completed {
             result: LaunchEffectResult::Reach {
@@ -811,13 +1067,20 @@ impl GithubEffectExecutor {
                     service_id: authority.connection.service_id.clone(),
                     state: CapabilityRevocationState::Active,
                     policy_generation: generation,
+                    policy_fence: claim.fence,
+                    runtime_audience: runtime_audience.clone(),
                     expires_at_epoch_seconds: expires_at,
+                    numeric_binding_observed_at: authority.authority.observed_at.clone(),
+                    refreshed_at: authority.authority.observed_at.clone(),
+                    revocation_requested_at: None,
+                    revocation_effective_at: None,
                     last_refusal: None,
                     tombstone_acknowledged: false,
                     agent_key_revocation_confirmed: false,
                 },
                 connection: authority.connection,
                 authority: authority.authority,
+                branch: authority.branch,
             },
             safe_detail: "The runtime acknowledged its launch-scoped GitHub policy.".into(),
             external_resource_ids: resources,
@@ -867,6 +1130,42 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Reach => self.run_reach(launch, claim).await,
             _ => unsupported_effect(claim),
         }
+    }
+}
+
+fn capability_claim(launch: &Launch, fence: u64) -> EffectClaim {
+    EffectClaim {
+        kind: LaunchEffectKind::Reach,
+        mode: layer2_core::EffectClaimMode::Reconcile,
+        intent_key: format!(
+            "launch:{}:capability:{}:{}",
+            launch.id,
+            launch
+                .reach
+                .as_ref()
+                .map_or(1, |reach| reach.policy_generation.saturating_add(1)),
+            fence
+        ),
+        attempt: 1,
+        reconciliation_attempt: 0,
+        fence,
+    }
+}
+
+fn execution_failure(execution: EffectExecution) -> LaunchFailure {
+    match execution {
+        EffectExecution::RetryLater { failure, .. }
+        | EffectExecution::ReconcileLater { failure, .. }
+        | EffectExecution::Failed { failure } => failure,
+        EffectExecution::Completed { .. } => LaunchFailure {
+            class: FailureClass::TerminalSecurity,
+            code: "trigger_capability_result_mismatch".into(),
+            detail: "The capability adapter returned an unexpected result.".into(),
+            remediation: "Contact support; delegated access remains fail-closed.".into(),
+            correlation_id: "trigger-capability-result".into(),
+            retry_at: None,
+            observed_at: rfc3339_at(SystemTime::now()),
+        },
     }
 }
 
@@ -1460,6 +1759,45 @@ mod tests {
             self.installed_policies.lock().unwrap().push(capability);
             Ok(("sandbox-runtime-1".into(), receipt))
         }
+
+        async fn runtime_policy_audience(
+            &self,
+            _session_id: &SessionId,
+        ) -> Result<String, CoreError> {
+            Ok("sandbox-runtime-1".into())
+        }
+
+        async fn install_runtime_tombstone(
+            &self,
+            _session_id: &SessionId,
+            mut tombstone: RuntimePolicyTombstone,
+            signer: Arc<CapabilitySigner>,
+        ) -> Result<(String, layer3_adapter::RuntimePolicyReceipt), CoreError> {
+            let Some(receipt) = self.policy_receipt.lock().unwrap().clone() else {
+                return Err(CoreError::CapabilityUnsupported(
+                    "authenticated_runtime_policy".into(),
+                ));
+            };
+            tombstone.runtime_audience = "sandbox-runtime-1".into();
+            signer
+                .sign_tombstone(tombstone)
+                .map_err(CoreError::InvalidRequest)?;
+            Ok(("sandbox-runtime-1".into(), receipt))
+        }
+
+        async fn retire_runtime_credential(
+            &self,
+            _session_id: &SessionId,
+        ) -> Result<(), CoreError> {
+            Ok(())
+        }
+
+        async fn runtime_credential_retirement_settled(
+            &self,
+            _session_id: &SessionId,
+        ) -> Result<bool, CoreError> {
+            Ok(true)
+        }
     }
 
     struct FakeGithub {
@@ -1551,6 +1889,7 @@ mod tests {
                 authority: launch.authority.clone().unwrap(),
                 upstream: launch.revision.content.upstream.repository.clone(),
                 fork: launch.fork.as_ref().unwrap().repository.clone(),
+                branch: launch.branch.clone().unwrap(),
             })
         }
     }

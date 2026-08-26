@@ -473,6 +473,34 @@ impl TriggerService {
             .await?)
     }
 
+    /// Bounded inventory for short-lived capability renewal and terminal
+    /// revocation. Callers still acquire the shared Launch lease before acting.
+    pub async fn capability_candidates(
+        &self,
+        page: TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
+        Ok(self
+            .launches
+            .list_launches(&LaunchQuery {
+                owner: None,
+                states: vec![
+                    super::LaunchState::PromptPending,
+                    super::LaunchState::Ready,
+                    super::LaunchState::Contributing,
+                    super::LaunchState::PrPending,
+                    super::LaunchState::PrOpen,
+                    super::LaunchState::Completed,
+                    super::LaunchState::AuthRequired,
+                    super::LaunchState::FailedRetryable,
+                    super::LaunchState::FailedTerminal,
+                    super::LaunchState::Cancelled,
+                ],
+                updated_before: None,
+                page,
+            })
+            .await?)
+    }
+
     pub async fn update_overrides(
         &self,
         owner: &SubjectId,

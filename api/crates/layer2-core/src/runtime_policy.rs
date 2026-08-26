@@ -3,6 +3,25 @@
 use crate::{CoreError, SessionId, SessionService};
 
 impl SessionService {
+    /// Opaque identity of the exact runtime currently serving this session.
+    pub async fn runtime_policy_audience(&self, id: &SessionId) -> Result<String, CoreError> {
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let entries = self.entries.read().await;
+        let entry = entries.get(id).ok_or_else(|| {
+            CoreError::RuntimeUnavailable("the session has no live runtime entry".into())
+        })?;
+        if entry.trigger_origin.is_none() {
+            return Err(CoreError::InvalidState);
+        }
+        entry
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.0.clone())
+            .ok_or_else(|| {
+                CoreError::RuntimeUnavailable("the session has no current runtime".into())
+            })
+    }
+
     /// Build policy against the current runtime audience, deliver it while
     /// lifecycle replacement is fenced, and return the exact acknowledgement.
     ///
@@ -51,5 +70,31 @@ impl SessionService {
                 }
             })?;
         Ok((runtime.0, receipt))
+    }
+
+    /// Permanently retire the credential assigned to one Trigger session.
+    /// This leaves the runtime and conversation alive.
+    pub async fn retire_runtime_credential(&self, id: &SessionId) -> Result<(), CoreError> {
+        let source = self.credentials.as_ref().ok_or_else(|| {
+            CoreError::RuntimeUnavailable("session credential custody is unavailable".into())
+        })?;
+        source
+            .release(id)
+            .await
+            .map_err(|error| CoreError::RuntimeUnavailable(error.to_string()))
+    }
+
+    /// Positive proof that credential custody settled provider revocation.
+    pub async fn runtime_credential_retirement_settled(
+        &self,
+        id: &SessionId,
+    ) -> Result<bool, CoreError> {
+        let source = self.credentials.as_ref().ok_or_else(|| {
+            CoreError::RuntimeUnavailable("session credential custody is unavailable".into())
+        })?;
+        source
+            .release_settled(id)
+            .await
+            .map_err(|error| CoreError::RuntimeUnavailable(error.to_string()))
     }
 }

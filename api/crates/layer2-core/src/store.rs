@@ -740,6 +740,16 @@ pub trait CredentialSource: Send + Sync {
     /// A store failure leaves the recorded credential discoverable for a later
     /// reconciliation pass and is returned to the caller.
     async fn release(&self, session: &SessionId) -> Result<(), StoreError>;
+
+    /// Whether retirement has durably settled every credential this session
+    /// could still present.
+    ///
+    /// The conservative default is false: a source that cannot prove provider
+    /// revocation must never let a caller report it as effective. Sources with
+    /// durable revoke custody may override this after their debt is empty.
+    async fn release_settled(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
 }
 
 /// The agent's accumulated context, stored whole.

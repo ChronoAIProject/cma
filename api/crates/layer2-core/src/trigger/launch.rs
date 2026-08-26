@@ -11,6 +11,7 @@ use super::{
 };
 use crate::{PermissionMode, SessionId, SessionSize, SubjectId};
 
+mod capability;
 mod effect;
 
 pub const LAUNCH_SCHEMA_VERSION: u32 = 1;
@@ -158,6 +159,7 @@ pub enum LaunchEventKind {
     Failure { failure: LaunchFailure },
     EffectReconciled { effect: LaunchEffectKind },
     DeliveryChanged { state: PromptDeliveryState },
+    ReachChanged { reach: super::ReachStatus },
     ConfirmationRecorded { action: ConfirmationAction },
     Cancelled,
 }
@@ -280,6 +282,7 @@ pub enum LaunchEffectResult {
         reach: super::ReachStatus,
         connection: ConnectionSnapshot,
         authority: AuthorityProvenance,
+        branch: BranchRecord,
     },
     InitialDispatch {
         delivery: PromptDelivery,
@@ -757,6 +760,7 @@ impl Launch {
             )));
         }
         validate_prerequisites(self, to)?;
+        let correlation_id = correlation_id.into();
         self.state = to;
         self.updated_at = now.into();
         self.blocked_reason = None;
@@ -765,8 +769,14 @@ impl Launch {
         }
         self.push_event(
             self.updated_at.clone(),
-            correlation_id,
+            correlation_id.clone(),
             LaunchEventKind::StateChanged { from, to },
+        )?;
+        capability::request_after_terminal_transition(
+            self,
+            to,
+            &self.updated_at.clone(),
+            &correlation_id,
         )
     }
 

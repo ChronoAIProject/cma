@@ -1410,6 +1410,14 @@ impl layer2_core::CredentialSource for AuthState {
             StoreError::Unavailable(format!("credential retirement task failed: {error}"))
         })?
     }
+
+    async fn release_settled(&self, session: &SessionId) -> Result<bool, StoreError> {
+        Ok(self
+            .store
+            .credential(session)
+            .await?
+            .is_some_and(|state| state.is_settled_retired()))
+    }
 }
 
 #[cfg(test)]
