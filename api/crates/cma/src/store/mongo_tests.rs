@@ -4,8 +4,8 @@ use layer2_core::{
     AgentOptions, ConversationLink, ConversationWriteAuthority, Event, EventKind, KernelId,
     PageCursor, PageRequest, Rate, RateCardId, RecoveryState, RuntimeCleanupReason, Session,
     SessionBoundary, SessionCapabilities, SessionId, SessionLeaseRequest, SessionListQuery,
-    SessionMode, SessionOperation, SessionPricing, SessionRecord, SessionStatus, StopReason,
-    StoredEventKind, SubjectId, TerminalGeometry,
+    SessionMode, SessionOperation, SessionPricing, SessionRecord, SessionStatus, SkillPack,
+    SkillPackState, StopReason, StoredEventKind, SubjectId, TerminalGeometry,
 };
 use std::io::Write;
 use std::sync::{
@@ -419,6 +419,85 @@ fn a_document_without_coordination_reads_as_exact_legacy_authority() {
             runtime_id: Some("runtime-legacy".into()),
         }
     );
+}
+
+#[test]
+fn staged_skill_bytes_round_trip_as_bson_binary() {
+    let mut record = record_with(None);
+    record.skill_packs = SkillPackState::Staged(vec![SkillPack {
+        name: "private-review".into(),
+        version: Some("3.2".into()),
+        files: vec![("SKILL.md".into(), b"private-body-marker".to_vec())],
+    }]);
+
+    let stored = to_doc(&record).expect("staged record encodes");
+    let document = mongodb::bson::serialize_to_document(&stored).expect("document encodes");
+    let body = document
+        .get_document("skill_packs")
+        .expect("custody is a subdocument")
+        .get_array("packs")
+        .expect("staged packs are present")[0]
+        .as_document()
+        .expect("pack is a document")
+        .get_array("files")
+        .expect("files are present")[0]
+        .as_document()
+        .expect("file is a document")
+        .get_binary_generic("body")
+        .expect("body is BSON binary");
+    assert_eq!(body, b"private-body-marker");
+
+    let read = from_doc(stored).expect("staged record decodes");
+    assert_eq!(read.skill_packs, record.skill_packs);
+}
+
+#[test]
+fn staged_skill_bytes_are_redacted_from_session_doc_debug_output() {
+    let mut record = record_with(None);
+    record.skill_packs = SkillPackState::Staged(vec![SkillPack {
+        name: "private-review".into(),
+        version: None,
+        files: vec![("SKILL.md".into(), b"private-body-marker".to_vec())],
+    }]);
+
+    let debug = format!("{:?}", to_doc(&record).expect("record encodes"));
+    assert!(debug.contains("bytes: 19"), "got {debug}");
+    assert!(!debug.contains("112, 114, 105, 118, 97, 116, 101"));
+}
+
+#[test]
+fn a_document_without_skill_custody_reads_as_legacy() {
+    let mut record = record_with(None);
+    record.skill_packs = SkillPackState::Stored;
+    let stored = to_doc(&record).expect("record encodes");
+    let mut document = mongodb::bson::serialize_to_document(&stored).expect("document encodes");
+    assert!(document.remove("skill_packs").is_some());
+    let legacy: SessionDoc =
+        mongodb::bson::deserialize_from_bson(document.into()).expect("legacy document reads");
+
+    assert_eq!(
+        from_doc(legacy).expect("legacy record decodes").skill_packs,
+        SkillPackState::Legacy
+    );
+}
+
+#[test]
+fn staged_skills_cannot_push_the_actual_bson_document_over_its_bound() {
+    let mut record = record_with(None);
+    record.skill_packs = SkillPackState::Staged(vec![SkillPack {
+        name: "too-large".into(),
+        version: None,
+        files: vec![(
+            "SKILL.md".into(),
+            vec![0; MAX_STAGED_SESSION_DOCUMENT_BYTES],
+        )],
+    }]);
+
+    let error = to_doc(&record).expect_err("oversized staged BSON is refused");
+    assert!(matches!(error, StoreError::Malformed(_)));
+    assert!(error
+        .to_string()
+        .contains("session BSON with staged skills"));
 }
 
 #[test]

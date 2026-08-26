@@ -774,6 +774,7 @@ impl SessionService {
             attached: None,
             attachments_issued: 0,
             context_ref,
+            skill_packs: durable.skill_packs,
             captured_len,
         };
         let replaced = self.entries.write().await.insert(id.clone(), entry);
