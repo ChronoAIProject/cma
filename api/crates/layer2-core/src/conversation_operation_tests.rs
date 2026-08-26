@@ -454,7 +454,10 @@ async fn every_conversation_input_is_refused_while_rotating_and_reusable_afterwa
         .expect("readable")
         .expect("present");
     record.session.status = SessionStatus::Rotating;
-    store.seed(&record).await.expect("rotation is durable");
+    record.revision = store
+        .commit_session_idempotent("conversation-test-mark-rotating", &record, &[])
+        .await
+        .expect("rotation is durable");
     {
         let mut entries = svc.entries.write().await;
         let entry = entries.get_mut(&created.id).expect("live entry");
@@ -495,7 +498,10 @@ async fn every_conversation_input_is_refused_while_rotating_and_reusable_afterwa
     );
 
     record.session.status = SessionStatus::Ready;
-    store.seed(&record).await.expect("handover completed");
+    record.revision = store
+        .commit_session_idempotent("conversation-test-finish-rotation", &record, &[])
+        .await
+        .expect("handover completed");
     {
         let mut entries = svc.entries.write().await;
         let entry = entries.get_mut(&created.id).expect("replacement entry");
