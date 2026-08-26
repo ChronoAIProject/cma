@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MockSession } from '../../src/testing/mock.js';
 import { AguiConnection } from '../../src/agui/connection.js';
 import { AguiOperations } from '../../src/agui/operations.js';
+import { parseEventStream } from '../../src/agui/wire.js';
 import { fold } from '../../src/conversation/fold.js';
 import { TRANSCRIPTS, transcriptNamed } from '../../src/testing/transcripts.js';
 import type { AguiEvent } from '../../src/agui/events.js';
@@ -57,6 +58,11 @@ function projectionTranscript(
   };
 }
 
+function asSse(event: Readonly<Record<string, unknown>>): string {
+  const { seq, ...payload } = event;
+  return `${typeof seq === 'number' && seq > 0 ? `id: ${String(seq)}\n` : ''}data: ${JSON.stringify(payload)}\n\n`;
+}
+
 describe('every fixture', () => {
   it('states whether it was recorded or authored', () => {
     // #117: "Replacing an authored fixture with a recorded one is a change
@@ -89,15 +95,31 @@ describe('every fixture', () => {
   it('replays through the real client', async () => {
     for (const transcript of TRANSCRIPTS) {
       const { seen } = await replay(new MockSession(transcript));
-      expect(seen.length, transcript.name).toBe(transcript.frames.length);
+      const getFrames = transcript.frames.filter(
+        ({ event }) => !(event.type === 'RUN_STARTED' && event.seq === 0),
+      );
+      expect(seen.length, transcript.name).toBe(getFrames.length);
       // Sequence order, exactly once each — which is the connection's work,
       // not the mock's, and is the point.
       expect(
         seen.map((e) => e.seq),
         transcript.name,
-      ).toEqual(transcript.frames.map((f) => f.event.seq));
+      ).toEqual(getFrames.map((f) => f.event.seq));
     }
   });
+
+  it.each(['approval-granted', 'approval-denied'] as const)(
+    'parses the authored %s continuation boundary on its POST-body surface',
+    (name) => {
+      const boundary = transcriptNamed(name).frames.find(
+        ({ event }) => event.type === 'RUN_STARTED' && event.seq === 0,
+      )?.event;
+      expect(boundary).toBeDefined();
+      expect(parseEventStream(asSse(boundary ?? {}))).toEqual([
+        expect.objectContaining({ type: 'RUN_STARTED', seq: 0, ephemeral: false }),
+      ]);
+    },
+  );
 });
 
 describe('the cases the milestone needs', () => {
@@ -365,7 +387,7 @@ describe('the mock drives the real client', () => {
     expect(history).toEqual([transcript.frames[0]?.event]);
   });
 
-  it('delivers a cursorless interface boundary without retaining it in history', async () => {
+  it('omits a POST-only interface boundary from delivery and history', async () => {
     const transcript = projectionTranscript('continuation-boundary', [
       { type: 'RUN_STARTED', runId: 'run_resume', seq: 0 },
       {
@@ -382,12 +404,8 @@ describe('the mock drives the real client', () => {
     const { cursor, seen } = await replay(session);
     const history = await session.transport.history(session.id, 0);
 
-    expect(seen.map((event) => event.type)).toEqual([
-      'RUN_STARTED',
-      'REASONING_MESSAGE_CONTENT',
-      'RUN_FINISHED',
-    ]);
-    expect(seen.map((event) => event.ephemeral === true)).toEqual([false, true, false]);
+    expect(seen.map((event) => event.type)).toEqual(['REASONING_MESSAGE_CONTENT', 'RUN_FINISHED']);
+    expect(seen.map((event) => event.ephemeral === true)).toEqual([true, false]);
     expect(cursor).toBe(1);
     expect(history).toEqual([transcript.frames[2]?.event]);
   });
@@ -396,28 +414,24 @@ describe('the mock drives the real client', () => {
     ['approval-granted', 'run_5'],
     ['approval-denied', 'run_7'],
   ] as const)(
-    'keeps the authored %s continuation boundary ordered and outside replay state',
+    'keeps the authored %s POST boundary outside GET delivery and replay state',
     async (name, runId) => {
       const session = new MockSession(transcriptNamed(name));
-      let cursorAtBoundary: number | undefined;
-      const { cursor, seen } = await replay(session, (event, currentCursor) => {
-        if (event.type === 'RUN_STARTED' && event.runId === runId) {
-          cursorAtBoundary = currentCursor;
-        }
-      });
+      const { cursor, seen } = await replay(session);
       const history = await session.transport.history(session.id, 0);
 
       expect(
         seen.filter((event) => event.runId === runId).map((event) => [event.type, event.seq]),
       ).toEqual([
-        ['RUN_STARTED', 0],
         ['TEXT_MESSAGE_START', 0],
         ['TEXT_MESSAGE_CONTENT', 0],
         ['TEXT_MESSAGE_END', 4],
         ['RUN_FINISHED', 5],
       ]);
-      expect(cursorAtBoundary).toBe(2);
       expect(cursor).toBe(5);
+      expect(seen).not.toContainEqual(
+        expect.objectContaining({ type: 'RUN_STARTED', runId, seq: 0 }),
+      );
       expect(history).not.toContainEqual(
         expect.objectContaining({ type: 'RUN_STARTED', runId, seq: 0 }),
       );

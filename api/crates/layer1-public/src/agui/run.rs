@@ -38,7 +38,8 @@ use axum::{
 };
 use futures_util::stream::{self, Stream};
 use layer2_core::{
-    ApprovalDecision, CoreError, SessionCapability, SessionId, SessionService, SessionSpec,
+    ApprovalDecision, ApprovalResolution, CoreError, Event, SessionCapability, SessionId,
+    SessionService, SessionSpec,
 };
 use serde::Deserialize;
 
@@ -222,11 +223,14 @@ pub(super) async fn run(
             .last()
             .map(|event| event.seq)
             .unwrap_or(0);
-        for item in &body.resume {
-            service
-                .resolve_approval(&caller, &id, item.interrupt_id.clone(), decision_of(item))
-                .await?;
-        }
+        let resolutions = body
+            .resume
+            .iter()
+            .map(|item| ApprovalResolution::new(item.interrupt_id.clone(), decision_of(item)))
+            .collect::<Vec<_>>();
+        service
+            .resolve_approvals(&caller, &id, &resolutions)
+            .await?;
         from
     } else {
         let prompt = body
@@ -302,6 +306,32 @@ fn continuation_started(run_id: &str, thread_id: &str) -> super::project::AguiEv
         seq: None,
         live: false,
     }
+}
+
+/// Queue one store read, stopping after the first event that ends this run.
+///
+/// Every frame belonging to the ending event remains part of the response. In
+/// particular, an approval request projects to an unnumbered `RUN_FINISHED`
+/// followed by its numbered pending-state delta. Events later in the same store
+/// result belong to a subsequent run and must not cross that complete boundary.
+fn queue_durable_batch(
+    events: impl IntoIterator<Item = Event>,
+    pending: &mut std::collections::VecDeque<super::project::AguiEvent>,
+    seq: &mut u64,
+    run_id: &str,
+    thread_id: &str,
+) -> bool {
+    for event in events {
+        *seq = event.seq;
+        let projected = project(&event, run_id, thread_id);
+        let ending = projected.ending;
+        pending.extend(projected.events);
+        if let Some(ending) = ending {
+            tracing::debug!(session_id = %event.session_id, ?ending, "run ended");
+            return true;
+        }
+    }
+    false
 }
 
 struct RunBoundary {
@@ -408,15 +438,13 @@ fn events(
                     // caller may no longer be entitled to.
                     return None;
                 };
-                for event in events {
-                    open.seq = event.seq;
-                    let projected = project(&event, &open.run_id, &open.id.0);
-                    open.pending.extend(projected.events);
-                    if let Some(ending) = projected.ending {
-                        tracing::debug!(session_id = %open.id, ?ending, "run ended");
-                        open.ended = true;
-                    }
-                }
+                open.ended = queue_durable_batch(
+                    events,
+                    &mut open.pending,
+                    &mut open.seq,
+                    &open.run_id,
+                    &open.id.0,
+                );
                 // RUN_FINISHED/RUN_ERROR must remain the last frame. A
                 // cursorless reading that happened alongside the durable ending
                 // belongs before it in time but cannot safely be reordered past

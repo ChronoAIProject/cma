@@ -208,6 +208,15 @@ export class MockSession {
             if (stopped) {
               return;
             }
+            const normalized = toEvent(frame.event);
+            const kind = normalized.type === 'UNKNOWN' ? normalized.kind : normalized.type;
+            if (isCursorlessInterfaceBoundary(kind, normalized.seq, normalized.ephemeral)) {
+              // Authored transcripts may include the boundary captured from a
+              // POST run response. This transport models only the GET history
+              // and followed-tail route, where that interface frame cannot
+              // occur, so it is neither delivered nor added to replay state.
+              continue;
+            }
             if (this.#dropsRemaining > 0 && index > (this.options.dropAfter ?? 0)) {
               // The disconnect. What has been delivered stays in history, so
               // the reconnect finds it there rather than losing it.
@@ -268,16 +277,17 @@ export class MockSession {
     };
   }
 
-  /** Emit liveness, an interface boundary, or one numbered durable frame. */
+  /** Emit liveness or one numbered durable frame on the GET-like transport. */
   emit(event: Readonly<Record<string, unknown>>, onFrame: (raw: unknown) => void): void {
     const normalized = toEvent(event);
     const kind = normalized.type === 'UNKNOWN' ? normalized.kind : normalized.type;
-    if (
-      normalized.ephemeral === true ||
-      isCursorlessInterfaceBoundary(kind, normalized.seq, normalized.ephemeral)
-    ) {
+    if (isCursorlessInterfaceBoundary(kind, normalized.seq, normalized.ephemeral)) {
       new ProjectionAssembler(this.id).accept(normalized);
-      if (normalized.ephemeral === true && normalized.seq !== 0) {
+      return;
+    }
+    if (normalized.ephemeral === true) {
+      new ProjectionAssembler(this.id).accept(normalized);
+      if (normalized.seq !== 0) {
         throw new TypeError('mock liveness must have sequence zero');
       }
       onFrame(event);
