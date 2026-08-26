@@ -9,17 +9,24 @@ use std::sync::Arc;
 use layer3_adapter::{ConversationInput, PermissionDecision};
 
 use crate::conversation::ApprovalDecision;
-use crate::conversation_support::{asking, chunk, conversation, said, until_logged, until_sent};
+use crate::conversation_support::{
+    asking, chunk, conversation, conversation_with, conversing, said, until_logged, until_sent,
+};
+use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::session::{SessionStatus, StopReason};
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
 
 #[tokio::test]
-async fn a_prompt_reaches_the_runtime() {
+async fn an_idle_prompt_needs_no_steer_grant() {
     let (svc, alice, id, adapter) = conversation().await;
+    let idle = svc.get_session(&alice, &id).await.expect("readable");
+    assert_eq!(idle.status, SessionStatus::Ready);
+    assert!(!idle.capabilities.steer);
+
     svc.send_prompt(&alice, &id, "what is in this repository?".into())
         .await
-        .expect("the owner may prompt their own session");
+        .expect("an idle conversation needs no mid-turn input grant");
 
     let sent = until_sent(&adapter, |input| {
         matches!(input, ConversationInput::Prompt(_))
@@ -29,6 +36,90 @@ async fn a_prompt_reaches_the_runtime() {
         sent.iter()
             .any(|input| matches!(input, ConversationInput::Prompt(_))),
         "a prompt must reach the runtime: {sent:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_mid_turn_prompt_without_steer_reaches_neither_runtime_nor_log() {
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "begin the turn".into())
+        .await
+        .expect("the idle prompt starts the turn");
+
+    let sent_before = until_sent(&adapter, |input| {
+        matches!(input, ConversationInput::Prompt(_))
+    })
+    .await;
+    let events_before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
+    let cursor = events_before.last().expect("the turn was recorded").seq;
+
+    assert_eq!(
+        svc.send_prompt(&alice, &id, "redirect the running turn".into())
+            .await,
+        Err(CoreError::CapabilityUnsupported("steer".into()))
+    );
+
+    tokio::task::yield_now().await;
+    let sent_after = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains open")
+        .sent()
+        .await;
+    assert_eq!(
+        sent_after.len(),
+        sent_before.len(),
+        "the refused prompt must send no input to the runtime: {sent_after:?}"
+    );
+
+    let appended = svc
+        .events_since(&alice, &id, Some(cursor))
+        .await
+        .expect("history readable");
+    assert!(
+        !appended.iter().any(|event| matches!(
+            event.kind,
+            EventKind::OwnerMessage { .. } | EventKind::TurnStarted
+        )),
+        "the refused prompt must append neither owner input nor a turn boundary: {appended:?}"
+    );
+    assert!(
+        appended.is_empty(),
+        "a capability refusal must not change the log at all: {appended:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_mid_turn_prompt_with_steer_reaches_the_test_runtime() {
+    let mut capabilities = conversing();
+    capabilities.steer = true;
+    let (svc, alice, id, adapter) = conversation_with(capabilities).await;
+    svc.send_prompt(&alice, &id, "begin the turn".into())
+        .await
+        .expect("the idle prompt starts the turn");
+    svc.send_prompt(&alice, &id, "redirect the running turn".into())
+        .await
+        .expect("the advertised mid-turn input grant is honoured");
+
+    let sent = until_sent(&adapter, |input| match input {
+        ConversationInput::Prompt(content) => content.iter().any(|block| match block {
+            layer3_adapter::ContentBlock::Text(text) => text.text == "redirect the running turn",
+            _ => false,
+        }),
+        _ => false,
+    })
+    .await;
+    assert_eq!(
+        sent.iter()
+            .filter(|input| matches!(input, ConversationInput::Prompt(_)))
+            .count(),
+        2,
+        "both prompts must reach a stub that advertises mid-turn input: {sent:?}"
     );
 }
 
