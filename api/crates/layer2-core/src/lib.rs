@@ -124,6 +124,7 @@ mod transcript;
 #[cfg(test)]
 #[path = "transcript_tests.rs"]
 mod transcript_tests;
+pub mod trigger;
 
 pub use activity::{
     ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityTarget,
@@ -183,3 +184,4 @@ pub use store::{
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
+pub use trigger::*;
