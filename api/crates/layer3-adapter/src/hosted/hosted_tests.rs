@@ -869,8 +869,7 @@ async fn chained_registration_does_not_wait_for_a_superseded_predecessors_predec
         .expect("A starts retiring R0 but R0 cleanup is paused");
     assert!(!a_registration.is_finished());
 
-    let (b, b_retired, b_registration, b_supervisor) =
-        start_mock_registration(lifecycle, None);
+    let (b, b_retired, b_registration, b_supervisor) = start_mock_registration(lifecycle, None);
     let b_is_current = tokio::time::timeout(std::time::Duration::from_secs(1), b_registration)
         .await
         .expect("B does not wait behind R0 cleanup")
@@ -913,8 +912,7 @@ async fn canceling_registration_while_it_retires_a_predecessor_rolls_it_back() {
     );
     assert!(r0_registration.await.expect("R0 registration runs"));
 
-    let (_a, a_retired, a_registration, a_supervisor) =
-        start_mock_registration(lifecycle, None);
+    let (_a, a_retired, a_registration, a_supervisor) = start_mock_registration(lifecycle, None);
     r0_cleanup_started_rx
         .await
         .expect("A is installed and waiting for R0 cleanup");

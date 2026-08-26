@@ -17,8 +17,8 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::{AbortLinkOnDrop, HostedKernel, SUPERVISOR_PORT};
-use crate::task_retirement::TaskRetirement;
 use crate::supervisor;
+use crate::task_retirement::TaskRetirement;
 use crate::{
     AdapterError, RuntimeHandle, TerminalChannel, TerminalInput, TerminalInputSender,
     TerminalOutput,
