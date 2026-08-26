@@ -229,6 +229,7 @@ async fn main() {
         &config.mongodb_database,
         config.activity_retention,
         config.mongodb_legacy_cutover,
+        config.mongodb_coordination_cutover,
     )
     .await
     {
