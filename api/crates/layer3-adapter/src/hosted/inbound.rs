@@ -153,8 +153,7 @@ impl Bridge {
         let Some(call) = frame.get("id").cloned() else {
             return;
         };
-        let locator =
-            permission_locator(&request.session_id.0.to_string(), &call, &request.options);
+        let locator = permission_locator(request.session_id.0.as_ref(), &call, &request.options);
         // Stable across delivery of the same blocked call on a replacement
         // socket. The locator carries only the conversation scope, call id and
         // normalized offered choices; hashing it avoids exposing them in the

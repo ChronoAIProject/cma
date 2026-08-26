@@ -124,16 +124,11 @@ impl Bridge {
                         },
                         Err(error) => Err(error),
                     },
-                    None => self
-                        .blocked
-                        .lock()
-                        .await
-                        .remove(&id)
-                        .ok_or_else(|| {
-                            crate::AdapterError::Rejected(
-                                "nothing is waiting for this permission answer".to_string(),
-                            )
-                        }),
+                    None => self.blocked.lock().await.remove(&id).ok_or_else(|| {
+                        crate::AdapterError::Rejected(
+                            "nothing is waiting for this permission answer".to_string(),
+                        )
+                    }),
                 };
                 let held = match held {
                     Ok(held) => held,
