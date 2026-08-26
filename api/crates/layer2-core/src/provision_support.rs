@@ -1,7 +1,8 @@
 //! Coordination and record helpers for bringing a session runtime up.
 
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use layer3_adapter::{
@@ -17,6 +18,7 @@ use crate::coordination::{
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
+use crate::log::{CleanupAttempt, DeferredCleanup};
 use crate::options::{AgentOptions, PermissionMode};
 use crate::service::{store_failed, SessionService};
 use crate::session::{ProvisioningStage, Session, SessionSpec};
@@ -67,6 +69,249 @@ pub(crate) struct RuntimeInteractionAuthority {
 struct RuntimeInteractionValidity {
     deadline: Option<tokio::time::Instant>,
     invalid_reason: Option<String>,
+}
+
+/// Why a completed interaction result could not be observed by its caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeInteractionDeliveryLoss {
+    /// The caller was gone before the service-owned task could publish its result.
+    SendFailed,
+    /// Publication succeeded, but the caller dropped the result before polling it.
+    Unread,
+}
+
+/// Exact interaction authority that can move into restartable continuation work.
+///
+/// Every clone is an ownership responsibility. Dropping the final clone enters
+/// exact lease release into service-owned cleanup synchronously, including when
+/// no Tokio runtime exists on the dropping thread.
+pub(crate) struct RetainedRuntimeInteraction {
+    state: Arc<RetainedRuntimeInteractionState>,
+}
+
+struct RetainedRuntimeInteractionState {
+    service: Weak<SessionService>,
+    session_id: SessionId,
+    lease: Option<SessionLease>,
+    authority: RuntimeInteractionAuthority,
+    owners: AtomicUsize,
+    release_retained: AtomicBool,
+}
+
+struct DeferredRuntimeInteractionRelease {
+    state: Arc<RetainedRuntimeInteractionState>,
+}
+
+impl RetainedRuntimeInteraction {
+    fn new(
+        service: &Arc<SessionService>,
+        session_id: SessionId,
+        lease: Option<SessionLease>,
+        authority: RuntimeInteractionAuthority,
+    ) -> Self {
+        Self {
+            state: Arc::new(RetainedRuntimeInteractionState {
+                service: Arc::downgrade(service),
+                session_id,
+                lease,
+                authority,
+                owners: AtomicUsize::new(1),
+                release_retained: AtomicBool::new(false),
+            }),
+        }
+    }
+
+    /// A clone of the exact runtime boundary and shared delivery validity.
+    pub(crate) fn authority(&self) -> RuntimeInteractionAuthority {
+        self.state.authority.clone()
+    }
+
+    /// Renew the exact retained lease before a restarted continuation delivers.
+    pub(crate) async fn resume_before_delivery(
+        &self,
+    ) -> Result<RuntimeInteractionAuthority, CoreError> {
+        let authority = self.authority();
+        let Some(lease) = self.state.lease.as_ref() else {
+            authority.ensure_delivery_allowed()?;
+            return Ok(authority);
+        };
+        let service = self.state.service.upgrade().ok_or_else(|| {
+            CoreError::RuntimeUnavailable(
+                "the interaction service stopped before delivery could resume".into(),
+            )
+        })?;
+
+        loop {
+            let renewal_started = tokio::time::Instant::now();
+            let deadline = authority
+                .deadline()
+                .expect("a retained durable interaction has a deadline");
+            if renewal_started >= deadline {
+                authority.invalidate(
+                    "the interaction lease expired before retained delivery resumed".into(),
+                );
+                authority.ensure_delivery_allowed()?;
+                return Ok(authority);
+            }
+            match service
+                .store
+                .renew_interaction_lease(lease, INTERACTION_LEASE_TTL)
+                .await
+            {
+                Ok(()) => {
+                    authority.extend(renewal_started + INTERACTION_LEASE_TTL);
+                    authority.ensure_delivery_allowed()?;
+                    return Ok(authority);
+                }
+                Err(StoreError::Unavailable(error)) => {
+                    tracing::debug!(
+                        session_id = %lease.session_id,
+                        %error,
+                        "retained interaction lease renewal is temporarily unavailable"
+                    );
+                    let retry_at = (tokio::time::Instant::now() + INTERACTION_LEASE_RETRY_INTERVAL)
+                        .min(deadline);
+                    tokio::time::sleep_until(retry_at).await;
+                }
+                Err(error) => {
+                    authority.invalidate(format!(
+                        "the interaction lease ended before retained delivery: {error}"
+                    ));
+                    authority.ensure_delivery_allowed()?;
+                    return Ok(authority);
+                }
+            }
+        }
+    }
+}
+
+impl Clone for RetainedRuntimeInteraction {
+    fn clone(&self) -> Self {
+        self.state
+            .owners
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |owners| {
+                owners.checked_add(1)
+            })
+            .expect("retained interaction ownership count overflowed");
+        Self {
+            state: Arc::clone(&self.state),
+        }
+    }
+}
+
+impl Drop for RetainedRuntimeInteraction {
+    fn drop(&mut self) {
+        let owners = self.state.owners.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(owners > 0, "retained interaction ownership underflowed");
+        if owners == 1 {
+            self.state.retain_release();
+        }
+    }
+}
+
+impl RetainedRuntimeInteractionState {
+    fn retain_release(self: &Arc<Self>) {
+        if self.lease.is_none() || self.release_retained.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Some(service) = self.service.upgrade() else {
+            return;
+        };
+        service
+            .event_logs
+            .retain_cleanup(DeferredRuntimeInteractionRelease {
+                state: Arc::clone(self),
+            });
+    }
+}
+
+impl DeferredCleanup for DeferredRuntimeInteractionRelease {
+    fn session_id(&self) -> &SessionId {
+        &self.state.session_id
+    }
+
+    fn attempt(&mut self) -> CleanupAttempt<'_> {
+        Box::pin(async move {
+            let Some(service) = self.state.service.upgrade() else {
+                return;
+            };
+            let Some(lease) = self.state.lease.as_ref() else {
+                return;
+            };
+            if let Err(first_error) = service.store.release_session_lease(lease).await {
+                if let Err(retry_error) = service.store.release_session_lease(lease).await {
+                    tracing::warn!(
+                        session_id = %lease.session_id,
+                        error = %retry_error,
+                        first_error = %first_error,
+                        "interaction lease release remained unresolved after exact retry"
+                    );
+                }
+            }
+        })
+    }
+}
+
+type RuntimeInteractionUndelivered<T> = Box<
+    dyn FnOnce(RuntimeInteractionDeliveryLoss, Result<T, CoreError>, RetainedRuntimeInteraction)
+        + Send,
+>;
+
+/// A published interaction result that retains cleanup until caller observation.
+struct RetainedRuntimeInteractionDelivery<T> {
+    output: Option<Result<T, CoreError>>,
+    interaction: Option<RetainedRuntimeInteraction>,
+    on_undelivered: Option<RuntimeInteractionUndelivered<T>>,
+}
+
+impl<T> RetainedRuntimeInteractionDelivery<T> {
+    fn new<U>(
+        output: Result<T, CoreError>,
+        interaction: RetainedRuntimeInteraction,
+        on_undelivered: U,
+    ) -> Self
+    where
+        U: FnOnce(RuntimeInteractionDeliveryLoss, Result<T, CoreError>, RetainedRuntimeInteraction)
+            + Send
+            + 'static,
+    {
+        Self {
+            output: Some(output),
+            interaction: Some(interaction),
+            on_undelivered: Some(Box::new(on_undelivered)),
+        }
+    }
+
+    fn observed(mut self) -> Result<T, CoreError> {
+        let output = self
+            .output
+            .take()
+            .expect("an interaction result is observed at most once");
+        drop(self.interaction.take());
+        drop(self.on_undelivered.take());
+        output
+    }
+
+    fn report_undelivered(&mut self, reason: RuntimeInteractionDeliveryLoss) {
+        let (Some(output), Some(interaction), Some(on_undelivered)) = (
+            self.output.take(),
+            self.interaction.take(),
+            self.on_undelivered.take(),
+        ) else {
+            return;
+        };
+        interaction
+            .state
+            .authority
+            .invalidate("the interaction caller stopped before delivery could begin".into());
+        on_undelivered(reason, output, interaction);
+    }
+}
+
+impl<T> Drop for RetainedRuntimeInteractionDelivery<T> {
+    fn drop(&mut self) {
+        self.report_undelivered(RuntimeInteractionDeliveryLoss::Unread);
+    }
 }
 
 /// Invalidates work that has not begun delivery when its caller stops waiting.
@@ -171,7 +416,11 @@ impl RuntimeInteractionAuthority {
         // cancellation forbids the next send without ending the owned action,
         // which still needs renewed exclusion while it reaches that check or
         // settles mandatory post-receipt finalization.
-        validity.deadline = Some(deadline);
+        validity.deadline = Some(
+            validity
+                .deadline
+                .map_or(deadline, |held| held.max(deadline)),
+        );
     }
 
     fn invalidate(&self, reason: String) {
@@ -575,40 +824,35 @@ impl SessionService {
         A: FnOnce(RuntimeInteractionAuthority) -> F + Send + 'static,
         F: Future<Output = Result<T, CoreError>> + Send + 'static,
     {
-        // The request start is a conservative lower bound for the store's
-        // authoritative acquisition time. If even this local window elapsed,
-        // delivery must not begin against an already-expired exclusion.
-        let acquisition_started = tokio::time::Instant::now();
-        let lease = match self
-            .acquire_runtime_lease_at(record, SessionOperation::Interact)
-            .await
-        {
-            Ok(lease) => lease,
-            Err(StoreError::SessionInteractionBlocked {
-                operation: SessionOperation::Handover,
-                ..
-            }) => return Err(CoreError::SessionRotating),
-            Err(StoreError::SessionAuthorityChanged { .. }) => {
-                let current = self
-                    .store
-                    .get(&record.session.id)
-                    .await
-                    .map_err(store_failed)?;
-                return match current {
-                    None => Err(CoreError::SessionNotFound),
-                    Some(current) if current.session.status.is_terminal() => {
-                        Err(CoreError::SessionTerminated)
-                    }
-                    Some(current) if current.session.status.is_rotating() => {
-                        Err(CoreError::SessionRotating)
-                    }
-                    Some(_) => Err(CoreError::RuntimeUnavailable(
-                        "the session runtime changed before interaction delivery".into(),
-                    )),
-                };
-            }
-            Err(error) => return Err(store_failed(error)),
-        };
+        self.run_retained_runtime_interaction_at(
+            record,
+            move |authority, _interaction| action(authority),
+            |_reason, _result, _interaction| {},
+        )
+        .await
+    }
+
+    /// Run an interaction whose authority can move into retained continuation work.
+    ///
+    /// The action may clone `interaction` into durable continuations, rejection
+    /// work, or another service-owned cleanup. Its final owner queues exact
+    /// release synchronously. `on_undelivered` receives ownership when the
+    /// service cannot publish the result or the caller drops it before polling.
+    pub(crate) async fn run_retained_runtime_interaction_at<T, A, F, U>(
+        self: &Arc<Self>,
+        record: &crate::store::SessionRecord,
+        action: A,
+        on_undelivered: U,
+    ) -> Result<T, CoreError>
+    where
+        T: Send + 'static,
+        A: FnOnce(RuntimeInteractionAuthority, RetainedRuntimeInteraction) -> F + Send + 'static,
+        F: Future<Output = Result<T, CoreError>> + Send + 'static,
+        U: FnOnce(RuntimeInteractionDeliveryLoss, Result<T, CoreError>, RetainedRuntimeInteraction)
+            + Send
+            + 'static,
+    {
+        let (lease, acquisition_started) = self.acquire_interaction_for(record).await?;
 
         let boundary = lease.as_ref().map_or_else(
             || SessionBoundary::for_record(record, 0),
@@ -618,37 +862,89 @@ impl SessionService {
             .as_ref()
             .map(|_| acquisition_started + INTERACTION_LEASE_TTL);
         let authority = RuntimeInteractionAuthority::new(boundary, lease_deadline);
+        let interaction = RetainedRuntimeInteraction::new(
+            self,
+            record.session.id.clone(),
+            lease,
+            authority.clone(),
+        );
         let mut caller = RuntimeInteractionCallerGuard::new(authority.clone());
         let (finished, result) = tokio::sync::oneshot::channel();
         let service = Arc::clone(self);
         tokio::spawn(async move {
+            let action_interaction = interaction.clone();
             let action_result = service
-                .run_owned_runtime_interaction(lease.as_ref(), authority, action)
+                .run_owned_runtime_interaction(
+                    interaction.state.lease.as_ref(),
+                    authority,
+                    move |authority| action(authority, action_interaction),
+                )
                 .await;
-            // A release can commit and still lose or indefinitely delay its
-            // response. Publish the known action result before starting it so
-            // cleanup cannot invite a duplicate non-idempotent delivery.
-            let _ = finished.send(action_result);
-
-            let Some(lease) = lease else {
-                return;
-            };
-            if let Err(first_error) = service.store.release_session_lease(&lease).await {
-                if let Err(retry_error) = service.store.release_session_lease(&lease).await {
-                    tracing::warn!(
-                        session_id = %lease.session_id,
-                        error = %retry_error,
-                        first_error = %first_error,
-                        "interaction lease release remained unresolved after exact retry"
-                    );
-                }
+            let delivery =
+                RetainedRuntimeInteractionDelivery::new(action_result, interaction, on_undelivered);
+            if let Err(mut undelivered) = finished.send(delivery) {
+                undelivered.report_undelivered(RuntimeInteractionDeliveryLoss::SendFailed);
             }
         });
-        let action_result = result.await.map_err(|_| {
-            CoreError::RuntimeUnavailable("this session's interaction task stopped".into())
-        });
+        let delivery = result.await;
         caller.complete();
-        action_result?
+        delivery
+            .map_err(|_| {
+                CoreError::RuntimeUnavailable("this session's interaction task stopped".into())
+            })?
+            .observed()
+    }
+
+    /// Acquire after giving an orphaned exact release one chance to resume.
+    async fn acquire_interaction_for(
+        self: &Arc<Self>,
+        record: &crate::store::SessionRecord,
+    ) -> Result<(Option<SessionLease>, tokio::time::Instant), CoreError> {
+        let mut resumed_local_cleanup = false;
+        loop {
+            // This is a conservative lower bound for the store's authoritative
+            // acquisition time and is reset if cleanup makes a retry necessary.
+            let acquisition_started = tokio::time::Instant::now();
+            match self
+                .acquire_runtime_lease_at(record, SessionOperation::Interact)
+                .await
+            {
+                Ok(lease) => return Ok((lease, acquisition_started)),
+                Err(StoreError::SessionInteractionBlocked {
+                    operation: SessionOperation::Interact,
+                    ..
+                }) if !resumed_local_cleanup => {
+                    resumed_local_cleanup = true;
+                    self.event_logs
+                        .drain_retained_cleanups(&record.session.id)
+                        .await;
+                }
+                Err(StoreError::SessionInteractionBlocked {
+                    operation: SessionOperation::Handover,
+                    ..
+                }) => return Err(CoreError::SessionRotating),
+                Err(StoreError::SessionAuthorityChanged { .. }) => {
+                    let current = self
+                        .store
+                        .get(&record.session.id)
+                        .await
+                        .map_err(store_failed)?;
+                    return match current {
+                        None => Err(CoreError::SessionNotFound),
+                        Some(current) if current.session.status.is_terminal() => {
+                            Err(CoreError::SessionTerminated)
+                        }
+                        Some(current) if current.session.status.is_rotating() => {
+                            Err(CoreError::SessionRotating)
+                        }
+                        Some(_) => Err(CoreError::RuntimeUnavailable(
+                            "the session runtime changed before interaction delivery".into(),
+                        )),
+                    };
+                }
+                Err(error) => return Err(store_failed(error)),
+            }
+        }
     }
 
     /// Drive one action independently of its caller while maintaining its lease.
