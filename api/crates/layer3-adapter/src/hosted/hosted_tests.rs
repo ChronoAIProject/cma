@@ -97,8 +97,11 @@ fn start_mock_registration(
     (link, whole_retirement, registered, supervisor)
 }
 
-/// Serve one provider listing response and then stop.
-async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
+/// Serve one HTTP response and then stop.
+async fn one_response_server(
+    status: u16,
+    body: serde_json::Value,
+) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("the provider fixture binds");
@@ -113,8 +116,13 @@ async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::Join
             assert!(read > 0, "the client sent complete request headers");
             request.extend_from_slice(&chunk[..read]);
         }
+        let reason = match status {
+            200 => "OK",
+            404 => "Not Found",
+            status => panic!("the fixture does not name HTTP status {status}"),
+        };
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(),
             body
         );
@@ -125,6 +133,11 @@ async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::Join
         stream.shutdown().await.expect("the fixture closes");
     });
     (format!("http://{address}"), server)
+}
+
+/// Serve one provider listing response and then stop.
+async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
+    one_response_server(200, body).await
 }
 
 /// A provisioning request for a session with nothing carried into it.
@@ -462,23 +475,94 @@ async fn a_link_that_closed_is_forgotten_rather_than_retried_forever() {
 }
 
 #[tokio::test]
-async fn tearing_a_runtime_down_forgets_its_link() {
-    // Otherwise this map grows with the remains of every session the process
-    // has ever served.
-    let k = hosted("http://127.0.0.1:1");
+async fn successful_raw_delete_retires_the_captured_link() {
+    let (base, server) = one_response_server(200, serde_json::json!({})).await;
+    let kernel = hosted(&base);
     let handle = RuntimeHandle("sbx-1".into());
-    let (tx, _rx) = input_link(1);
-    k.remember_link(&handle.0, tx.clone()).await;
+    let (link, _received) = input_link(1);
+    kernel.remember_link(&handle.0, link.clone()).await;
 
-    // Against a dead provider the delete fails; the link is dropped first, on
-    // purpose, because the sandbox is going either way.
-    let _ = k.terminate(&handle).await;
-    assert!(k.link_to(&handle.0).await.is_none());
-    tx.wait_retired().await;
-    assert!(tx
+    kernel
+        .terminate(&handle)
+        .await
+        .expect("the compatibility provider accepts deletion");
+    server.await.expect("the provider fixture completes");
+
+    assert!(kernel.link_to(&handle.0).await.is_none());
+    link.wait_retired().await;
+    assert!(link
         .send(TerminalInput::Bytes(b"late".to_vec()))
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn an_absent_fenced_provider_object_retires_its_stale_link() {
+    let (base, server) = one_response_server(
+        404,
+        serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Status",
+            "metadata": {},
+            "status": "Failure",
+            "message": "the BatchSandbox is absent",
+            "reason": "NotFound",
+            "code": 404,
+        }),
+    )
+    .await;
+    let mut config = kube::Config::new(base.parse().expect("the fixture URL parses"));
+    config.default_namespace = "chrono-bot".into();
+    config.default_retry = false;
+    let reclaimer = crate::sandbox::BatchSandboxReclaimer::namespaced(
+        kube::Client::try_from(config).expect("the fixture client builds"),
+        "chrono-bot",
+    );
+    let kernel = HostedKernel::new(
+        SandboxClient::new("http://127.0.0.1:1", "test-key").with_reclaimer(reclaimer),
+        SandboxShape::default(),
+        "test-kernel",
+        ".codex/skills",
+        "AGENTS.md",
+    );
+    let handle = RuntimeHandle("sbx-absent".into());
+    let (link, _received) = input_link(1);
+    kernel.remember_link(&handle.0, link.clone()).await;
+
+    kernel
+        .terminate(&handle)
+        .await
+        .expect("an already absent provider object is terminated");
+    server.await.expect("the Kubernetes fixture completes");
+
+    assert!(kernel.link_to(&handle.0).await.is_none());
+    link.wait_retired().await;
+    assert!(link
+        .send(TerminalInput::Bytes(b"late".to_vec()))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn failed_raw_delete_keeps_the_captured_link_live() {
+    let k = hosted("http://127.0.0.1:1");
+    let handle = RuntimeHandle("sbx-1".into());
+    let (tx, mut rx) = input_link(1);
+    k.remember_link(&handle.0, tx.clone()).await;
+
+    assert!(k.terminate(&handle).await.is_err());
+    let current = k
+        .link_to(&handle.0)
+        .await
+        .expect("provider failure says nothing about the captured link");
+    assert!(current.same_channel(&tx));
+    tx.send(TerminalInput::Bytes(b"still-live".to_vec()))
+        .await
+        .expect("the captured link was not retired before deletion succeeded");
+    assert!(matches!(
+        rx.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == b"still-live"
+    ));
 }
 
 #[tokio::test]
