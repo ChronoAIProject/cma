@@ -15,9 +15,9 @@ use std::time::Duration;
 use layer2_core::SessionService;
 
 use crate::auth::{
-    AuthOperationBudget, AuthPassBudget, AuthState, AUTH_REFRESH_ATTEMPT_BUDGET,
-    AUTH_REISSUE_ATTEMPT_BUDGET, AUTH_RENEWAL_PASS_BUDGET, AUTH_SWEEP_BATCH_SIZE,
-    AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+    AuthOperationBudget, AuthPassBudget, AuthState, AUTHORIZATION_CHECK_LANE_BUDGET,
+    AUTH_REFRESH_ATTEMPT_BUDGET, AUTH_REISSUE_ATTEMPT_BUDGET, AUTH_RENEWAL_PASS_BUDGET,
+    AUTH_SWEEP_BATCH_SIZE, AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
 };
 
 /// How often to look for credentials approaching expiry.
@@ -55,7 +55,7 @@ pub fn spawn(auth: Arc<AuthState>, service: Arc<SessionService>) {
 const CREDENTIAL_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// One pass: renew what is close to expiry, then push it into live sessions.
-async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usize {
+pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usize {
     let pass = AuthPassBudget::new(AUTH_RENEWAL_PASS_BUDGET);
     let schema_budget = pass.lane(AUTH_SWEEP_BATCH_SIZE);
     let active_reconciliation_budget = pass.lane(AUTH_SWEEP_TWO_LANE_BATCH_SIZE);
@@ -63,6 +63,7 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usi
     let revoke_debt_budget = pass.lane(AUTH_SWEEP_BATCH_SIZE);
     let reissue_budget = pass.lane(AUTH_SWEEP_BATCH_SIZE);
     let refresh_budget = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+    let authorization_page_budget = pass.lane(AUTHORIZATION_CHECK_LANE_BUDGET);
 
     if let Err(error) = auth.maintain_schema(&schema_budget).await {
         tracing::error!(error = %error, "could not maintain durable authentication schema");
@@ -239,16 +240,15 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usi
             }
             Err(error) => {
                 tracing::error!(error = %error, "could not list subjects needing credential renewal");
-                return pass.used();
+                Vec::new()
             }
         }
     } else {
         Vec::new()
     };
-    if due.is_empty() {
-        return pass.used();
+    if !due.is_empty() {
+        tracing::debug!(subjects = due.len(), "renewing delegated credentials");
     }
-    tracing::debug!(subjects = due.len(), "renewing delegated credentials");
 
     /*
      * What a renewed owner token is for depends on what sessions run on.
@@ -308,6 +308,9 @@ async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usi
             }
         }
     }
+    let authorization_due_at = std::time::SystemTime::now();
+    auth.reconcile_due_authorizations(authorization_due_at, &authorization_page_budget)
+        .await;
     pass.used()
 }
 
@@ -973,6 +976,7 @@ mod tests {
             let debt = pass.lane(AUTH_SWEEP_BATCH_SIZE);
             let reissue = pass.lane(AUTH_SWEEP_BATCH_SIZE);
             let refresh = pass.lane(AUTH_SWEEP_BATCH_SIZE);
+            let authorization = pass.lane(AUTHORIZATION_CHECK_LANE_BUDGET);
             assert!(schema.take(AUTH_SWEEP_BATCH_SIZE));
             assert!(active.take(AUTH_SWEEP_TWO_LANE_BATCH_SIZE));
             assert!(provider.take(AUTH_SWEEP_TWO_LANE_BATCH_SIZE));
@@ -1002,8 +1006,10 @@ mod tests {
 
             let reissue_remaining = reissue.remaining();
             let refresh_remaining = refresh.remaining();
+            let authorization_remaining = authorization.remaining();
             assert!(reissue.take(reissue_remaining));
             assert!(refresh.take(refresh_remaining));
+            assert!(authorization.take(authorization_remaining));
             assert_eq!(
                 pass.used(),
                 AUTH_RENEWAL_PASS_BUDGET,

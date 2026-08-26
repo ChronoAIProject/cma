@@ -2,7 +2,8 @@
 //!
 //! Separated from token custody so each file is about one thing: this answers
 //! "what may they do", `super` answers "who are they and can we still act for
-//! them". They are resolved once at sign-in and looked up per request.
+//! them". Provider mode resolves them at sign-in, replaces them on recurring
+//! authorization checks, and looks up the durable answer per request.
 
 use layer2_core::{store::StoreError, Authorization, SubjectId};
 
@@ -25,7 +26,7 @@ impl AuthState {
         }
     }
 
-    /// Record what a subject may do, as resolved at sign-in.
+    /// Record one complete provider answer for what a subject may do.
     pub async fn store_authorization(
         &self,
         subject: &SubjectId,

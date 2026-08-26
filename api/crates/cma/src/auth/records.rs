@@ -1,9 +1,9 @@
 //! Writing down that somebody signed in.
 //!
-//! Kept beside the flow rather than inside it because it is the one moment the
-//! provider's own account details are in hand: nothing later holds a token to
-//! ask with, so a person who is not recorded here is a person the service can
-//! never name afterwards.
+//! Kept beside the flow rather than inside it because sign-in is the moment the
+//! provider's account details are deliberately recorded. Later authorization
+//! checks use userinfo only to reconcile the security-sensitive grant; they do
+//! not create another sign-in event or rewrite this directory entry.
 //!
 //! Two records, deliberately. The directory answers "who uses this", which is
 //! a question about people and has one entry each. The account of actions
