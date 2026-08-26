@@ -94,6 +94,13 @@ The same-origin cookie clients that can use native `EventSource` do not receive 
 
 **The sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The sequence is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
 
+Every accepted run stream begins with `RUN_STARTED`. For an ordinary prompt it
+projects the durable `turn_started` boundary and carries that event's SSE `id`.
+For a continuation opened by `resume`, it is an interface-only boundary with no
+SSE `id`: it starts the new run around the turn already in progress and does not
+record or imply a second turn. A request refused before a stream opens returns
+an `application/problem+json` response and emits no `RUN_STARTED`.
+
 ### Running a turn
 
 ```http
@@ -149,6 +156,12 @@ but a particular session emits them only when its environment profile has
 document says what this interface can emit for some session; the session's
 environment decides whether these optional bodies are recorded for that
 session.
+
+`RUN_STARTED` is the first event on every run response. The owner's projected
+`TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END` echo follows
+it on a prompt run. On a continuation the opening event is synthetic and
+unnumbered, because the durable log already contains the turn boundary; it
+brackets the run without advancing a replay cursor.
 
 ### Canonical initial state
 
@@ -499,8 +512,23 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
      "resume": [{ "interruptId": "apr_7Q2", "status": "resolved",
                   "payload": { "decision": "allow" } }] }
 
-5. The session resumes and streams the continuation
+5. The session resumes and streams the continuation. Its first frame is the
+   run boundary, not another durable turn boundary:
+
+   RUN_STARTED { "threadId": "sesn_01JD8Z3K7",
+                 "runId": "run_01JD9A3" }   # no SSE id
+   ...numbered durable continuation state may appear here...
+   STATE_DELTA {
+     delta: [{ "op": "remove",
+               "path": "/pendingApprovals/apr_7Q2" }]
+   }                                           # carries ApprovalResolved SSE id
+   ...continuation events...
+   RUN_FINISHED { ... }
 ```
+
+The approval removal must precede the continuation's terminal frame, but it is
+not required to be adjacent to `RUN_STARTED`. Other numbered durable projection
+frames may describe the session resuming before the removal arrives.
 
 `reason` is `confirmation` where the runtime offered no description of what it wants, and `cma:<what the runtime called it>` where it did — `cma:command_execution`, `cma:file_write`, `cma:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
 
@@ -542,6 +570,8 @@ problem type `https://spec.chrono-ai.fun/cma/1.0/problems/invalid-state` and cod
   Interrupting requires the `interrupt` capability. Not every kernel has one — a wire can offer a prompt with no way to withdraw it — and a session whose kernel cannot is refused by name rather than left waiting for something that will not happen.
 
 - **Steer** — POST a new run on the same `threadId` while one is in flight. What happens is governed by the session's `concurrent_input` policy (`reject` · `enqueue` · `interrupt` · `rollback`), fixed at session creation and reported in the capability document. On `reject`, the second run returns `409` before opening a stream.
+
+  A prompt run against a session whose turn is in flight and whose granted set does not include `steer` is refused `capability_unsupported: steer` before the stream opens.
 
 ---
 
@@ -605,12 +635,14 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 - **Native `EventSource` automatic reconnect replays from its original query cursor.** This endpoint deliberately ignores the browser's `Last-Event-ID` request header, so the retry does not advance `starting_after`. Deduplication of complete durable projections by their SSE `id` is therefore mandatory for this client class, even when the client also closes and reconstructs the source as described below.
 - **An SSE `id` acknowledges a whole durable projection.** Only its final frame carries the event sequence. If the connection drops after an earlier frame, the last id still names the preceding durable event, so replay sends the interrupted projection again from its first frame. Group the prefixes with their next numbered final and deduplicate that complete projection by the final id. Do not deduplicate prefixes only by `messageId`, `toolCallId`, or kind: one tool call can have several distinct durable updates, and future unknown kinds may also be prefixes. Advance the stored cursor only after the complete group was accepted.
 
+  One cursorless interface boundary belongs to the run response rather than this reconnect path. Only an accepted continuation response from `POST /api/v1/agui/run` begins with an unnumbered, non-live `RUN_STARTED`; deliver it immediately without changing the cursor. `GET /api/v1/agui/events` never emits that boundary, whether serving bounded history, a followed stream, or reconnect replay.
+
   A fetch-SSE reader can observe the current frame's actual `id` field and uses this procedure:
 
   1. Keep one acknowledged cursor for replay and deduplication. Put it in the `starting_after` query whenever constructing the followed stream; the query is authoritative even when the SDK also sends `Last-Event-ID`.
   2. Open that followed stream before requesting bounded history with the same cursor and `follow=false`. Queue followed frames until history has been accepted, then drain the queue. This closes the gap in which an event could otherwise be committed after the history read but before the live connection opened.
   3. Deliver a `cma:live` frame without putting it in the durable projection buffer and without changing the cursor. It has no durable position to acknowledge.
-  4. For any other frame with no `id`, buffer it as a projection prefix. An explicit id must be a positive safe integer and marks the projection's final frame. Combine that final with the buffered prefixes, deduplicate the complete group by the final id, and clear the buffer.
+  4. For any other frame with no `id`, buffer it as a projection prefix. This includes the `RUN_FINISHED` interrupt that precedes a pending-approval `STATE_DELTA`. An explicit id must be a positive safe integer and marks the projection's final frame. Combine that final with the buffered prefixes, deduplicate the complete group by the final id, and clear the buffer.
   5. Advance the cursor only after the application accepts every frame in the complete group, and never move it backwards. On a drop, discard any incomplete prefix buffer, retain completed-projection deduplication state, and construct a new fetch from the latest acknowledged cursor. Never retry the POSTed run.
 
   Parsing the raw fields removes the inherited-`lastEventId` ambiguity native `EventSource` creates. The SDK's fetch transport reconstructs each request with its current cursor, while `AguiConnection` performs the open-stream-before-history ordering, projection grouping, acknowledgement, deduplication, and retry policy.
