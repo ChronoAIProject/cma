@@ -854,7 +854,9 @@ impl SessionStore for FakeStore {
         record.revision = revision;
         record.runtime_id = None;
         state.authority.runtime_id = None;
-        state.cleanups.insert(cleanup.token.clone(), cleanup.clone());
+        state
+            .cleanups
+            .insert(cleanup.token.clone(), cleanup.clone());
         let boundary = SessionBoundary {
             status: record.session.status,
             authority: state.authority.clone(),
@@ -927,8 +929,7 @@ impl SessionStore for FakeStore {
         if !matches!(
             lease.operation,
             SessionOperation::Reclaim | SessionOperation::Recover | SessionOperation::Lifecycle
-        )
-            || cleanup.session_id != lease.session_id
+        ) || cleanup.session_id != lease.session_id
             || state.lease.as_ref().map(|held| &held.lease) != Some(lease)
             || current != lease.boundary
         {

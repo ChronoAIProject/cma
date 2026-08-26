@@ -14,6 +14,15 @@ use super::*;
 use crate::agui::project::project;
 use layer2_core::{Event, EventKind, SessionId};
 
+#[test]
+fn keepalive_interval_matches_the_documented_contract() {
+    // `API_AGUI.md` §2 promises clients a comment at least every 15 seconds.
+    assert_eq!(
+        super::super::KEEPALIVE_INTERVAL,
+        std::time::Duration::from_secs(15)
+    );
+}
+
 fn logged(seq: u64, kind: EventKind) -> Event {
     Event {
         session_id: SessionId("sesn_1".into()),
@@ -182,6 +191,39 @@ fn replay_after(events: &[Event], cursor: u64) -> Vec<crate::agui::project::Agui
 }
 
 #[test]
+fn a_legacy_owner_message_before_its_turn_boundary_still_replays() {
+    // Control planes before #496 wrote the owner's message first. Reordering
+    // new writes must not reinterpret or reject those durable sessions: replay
+    // preserves exactly the history they already hold.
+    let legacy = vec![
+        logged(
+            6,
+            EventKind::OwnerMessage {
+                content: "written by an older control plane".into(),
+            },
+        ),
+        logged(7, EventKind::TurnStarted),
+    ];
+
+    let replayed = replay_after(&legacy, 0);
+    assert_eq!(
+        replayed.iter().map(|frame| frame.kind).collect::<Vec<_>>(),
+        [
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
+            "RUN_STARTED",
+        ],
+        "legacy history is replayed in its original durable order"
+    );
+    assert_eq!(
+        replayed.iter().map(|frame| frame.seq).collect::<Vec<_>>(),
+        [None, None, Some(6), Some(7)],
+        "legacy replay retains the original cursor positions"
+    );
+}
+
+#[test]
 fn a_drop_mid_projection_resumes_the_event_whole() {
     let log = vec![
         logged(6, EventKind::TurnStarted),
@@ -231,30 +273,87 @@ fn a_drop_mid_projection_resumes_the_event_whole() {
 }
 
 mod route_resume {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use axum::{
-        body::{to_bytes, Body},
+        body::{to_bytes, Body, BodyDataStream},
         http::{header, Request, StatusCode},
         Extension, Router,
     };
+    use futures_util::StreamExt;
     use layer2_core::{
-        AgentConfiguration, Authorization, Baseline, Capability, Deployment, DirectoryQuery,
-        EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-        EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind, KernelId, Page,
+        session::ProvisioningStage, AgentConfiguration, Authorization, Baseline, Capability,
+        Deployment, DirectoryQuery, EnvironmentProfile, EnvironmentProfileId,
+        EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event,
+        EventKind, KernelId, OperationClaim, OperationReservation, OperationStore, Page,
         PageRequest, PlatformSettingsService, RecoveryState, RegisteredUser, Reserved,
-        ScreenFactory, Session, SessionCapabilities, SessionId, SessionListQuery, SessionPorts,
-        SessionRecord, SessionService, SessionStatus, SessionStore, StoreError, StoredEvent,
-        SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
+        ScreenFactory, Session, SessionCapabilities, SessionId, SessionListQuery, SessionMode,
+        SessionPorts, SessionRecord, SessionService, SessionStatus, SessionStore, StopReason,
+        StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
     };
-    use serde_json::Value;
+    use serde::Deserialize;
+    use serde_json::{json, Value};
     use tower::ServiceExt;
 
     use crate::{agui, auth::AuthenticatedSubject, rest::SessionsState, tickets::TerminalTickets};
 
-    struct ReplayStore {
+    struct ReplayState {
         record: SessionRecord,
         events: Vec<Event>,
+    }
+
+    struct ReplayStore {
+        state: tokio::sync::RwLock<ReplayState>,
+    }
+
+    struct NoOperations;
+
+    #[async_trait::async_trait]
+    impl OperationStore for NoOperations {
+        async fn reserve(
+            &self,
+            _claim: &OperationClaim,
+        ) -> Result<OperationReservation, StoreError> {
+            Err(StoreError::Unavailable(
+                "the replay fixture has no operation routes".into(),
+            ))
+        }
+
+        async fn complete(
+            &self,
+            _claim: &OperationClaim,
+            _outcome: Vec<u8>,
+        ) -> Result<(), StoreError> {
+            Err(StoreError::Unavailable(
+                "the replay fixture has no operation routes".into(),
+            ))
+        }
+    }
+
+    impl ReplayStore {
+        fn new(record: SessionRecord, events: Vec<Event>) -> Self {
+            Self {
+                state: tokio::sync::RwLock::new(ReplayState { record, events }),
+            }
+        }
+
+        async fn append(&self, event: Event) {
+            let mut state = self.state.write().await;
+            assert_eq!(event.session_id, state.record.session.id);
+            assert!(event.seq > state.record.session.last_seq);
+            state.record.session.last_seq = event.seq;
+            state.events.push(event);
+        }
+
+        async fn append_physical_only(&self, event: Event) {
+            let mut state = self.state.write().await;
+            assert_eq!(event.session_id, state.record.session.id);
+            state.events.push(event);
+        }
+
+        async fn advertise_head(&self, head: u64) {
+            self.state.write().await.record.session.last_seq = head;
+        }
     }
 
     #[async_trait::async_trait]
@@ -264,7 +363,8 @@ mod route_resume {
         }
 
         async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-            Ok((self.record.session.id == *id).then(|| self.record.clone()))
+            let state = self.state.read().await;
+            Ok((state.record.session.id == *id).then(|| state.record.clone()))
         }
 
         async fn list_for(
@@ -272,9 +372,10 @@ mod route_resume {
             owner: &SubjectId,
             _query: &SessionListQuery,
         ) -> Result<Page<SessionRecord>, StoreError> {
+            let state = self.state.read().await;
             Ok(Page {
-                items: (&self.record.session.owner == owner)
-                    .then(|| self.record.clone())
+                items: (&state.record.session.owner == owner)
+                    .then(|| state.record.clone())
                     .into_iter()
                     .collect(),
                 next: None,
@@ -289,8 +390,9 @@ mod route_resume {
             &self,
             _query: &SessionListQuery,
         ) -> Result<Page<SessionRecord>, StoreError> {
+            let state = self.state.read().await;
             Ok(Page {
-                items: vec![self.record.clone()],
+                items: vec![state.record.clone()],
                 next: None,
             })
         }
@@ -326,7 +428,8 @@ mod route_resume {
             id: &SessionId,
             after: u64,
         ) -> Result<Vec<StoredEvent>, StoreError> {
-            let mut events = self
+            let state = self.state.read().await;
+            let mut events = state
                 .events
                 .iter()
                 .filter(|event| event.session_id == *id && event.seq > after)
@@ -469,6 +572,26 @@ mod route_resume {
         parse_sse(std::str::from_utf8(&body).expect("SSE is UTF-8"))
     }
 
+    async fn next_followed_frame(body: &mut BodyDataStream) -> WireFrame {
+        loop {
+            let chunk = tokio::time::timeout(Duration::from_secs(2), body.next())
+                .await
+                .expect("the followed stream observes the next durable poll")
+                .expect("the followed stream stays open")
+                .expect("the followed event body is readable");
+            let frames = parse_sse(std::str::from_utf8(&chunk).expect("SSE is UTF-8"));
+            if frames.is_empty() {
+                continue;
+            }
+            assert_eq!(
+                frames.len(),
+                1,
+                "the test appends one durable event before each followed read"
+            );
+            return frames.into_iter().next().expect("one frame was asserted");
+        }
+    }
+
     fn durable(seq: u64, kind: EventKind) -> Event {
         Event {
             session_id: SessionId("sesn_route_resume".into()),
@@ -478,7 +601,16 @@ mod route_resume {
         }
     }
 
-    fn app() -> Router {
+    fn owner() -> SubjectId {
+        SubjectId("subject-route-resume".into())
+    }
+
+    struct Fixture {
+        app: Router,
+        store: Arc<ReplayStore>,
+    }
+
+    fn fixture(subject: SubjectId, authorization: Authorization) -> Fixture {
         let events = vec![
             durable(6, EventKind::TurnStarted),
             durable(
@@ -489,7 +621,16 @@ mod route_resume {
             ),
             durable(8, EventKind::TurnCompleted),
         ];
-        let owner = SubjectId("subject-route-resume".into());
+        fixture_with(events, subject, authorization)
+    }
+
+    fn fixture_with(
+        events: Vec<Event>,
+        subject: SubjectId,
+        authorization: Authorization,
+    ) -> Fixture {
+        let owner = owner();
+        let last_seq = events.last().map_or(0, |event| event.seq);
         let record = SessionRecord::new(Session {
             options: Default::default(),
             id: SessionId("sesn_route_resume".into()),
@@ -499,7 +640,7 @@ mod route_resume {
             recovery_state: RecoveryState::Idle,
             stop_reason: None,
             geometry: TerminalGeometry::default(),
-            last_seq: 8,
+            last_seq,
             environment_profile: None,
             runtime_version: None,
             rotations: 0,
@@ -513,7 +654,8 @@ mod route_resume {
             pricing: None,
             created_at: "2026-08-25T08:00:00Z".into(),
         });
-        let store: Arc<dyn SessionStore> = Arc::new(ReplayStore { record, events });
+        let store = Arc::new(ReplayStore::new(record, events));
+        let session_store: Arc<dyn SessionStore> = store.clone();
         let settings = Arc::new(PlatformSettingsService::unconfigured());
         let environments = EnvironmentProfileService::new(
             Arc::new(NoProfiles),
@@ -528,7 +670,7 @@ mod route_resume {
         let sessions = SessionService::new(
             Default::default(),
             screen_factory,
-            store,
+            session_store,
             SessionPorts::default(),
             Arc::clone(&environments),
             Deployment::default(),
@@ -536,14 +678,43 @@ mod route_resume {
         let state = SessionsState {
             sessions,
             users: UserDirectory::new(Arc::new(NoDirectory)),
-            tickets: TerminalTickets::new(),
+            tickets: TerminalTickets::in_memory(),
             environments,
+            operations: Arc::new(NoOperations),
         };
-        let authorization = Authorization::from_capabilities([Capability::UseOwnSessions]);
 
-        agui::router(state)
+        let app = agui::router(state)
             .layer(Extension(authorization))
-            .layer(Extension(AuthenticatedSubject(owner)))
+            .layer(Extension(AuthenticatedSubject(subject)));
+        Fixture { app, store }
+    }
+
+    fn app_with(events: Vec<Event>) -> Router {
+        fixture_with(
+            events,
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        )
+        .app
+    }
+
+    fn app() -> Router {
+        fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        )
+        .app
+    }
+
+    fn fold_state(mut state: Value, frames: &[WireFrame]) -> Value {
+        for frame in frames {
+            assert_eq!(frame.body["type"], "STATE_DELTA", "{}", frame.body);
+            let patch: json_patch::Patch = serde_json::from_value(frame.body["delta"].clone())
+                .unwrap_or_else(|error| panic!("{} carried an invalid patch: {error}", frame.body));
+            json_patch::patch(&mut state, &patch)
+                .unwrap_or_else(|error| panic!("{} did not apply: {error}", frame.body));
+        }
+        state
     }
 
     #[tokio::test]
@@ -588,10 +759,478 @@ mod route_resume {
             ]
         );
         assert_eq!(resumed[1].body["delta"], "nothing after the drop is lost");
+        assert_eq!(
+            resumed.iter().filter(|frame| frame.id == Some(7)).count(),
+            1,
+            "the event immediately after the cursor is delivered exactly once"
+        );
 
         let after_message = replay(&app, 7).await;
         assert_eq!(after_message.len(), 1);
         assert_eq!(after_message[0].id, Some(8));
         assert_eq!(after_message[0].body["type"], "RUN_FINISHED");
+    }
+
+    #[derive(Debug, serde::Serialize, Deserialize, PartialEq, Eq)]
+    struct CursorProblem {
+        #[serde(rename = "type")]
+        problem_type: String,
+        status: u16,
+        detail: String,
+        code: String,
+        head: u64,
+    }
+
+    #[tokio::test]
+    async fn cursors_beyond_the_head_are_typed_problems_not_sse_streams() {
+        for cursor in [9, u64::MAX] {
+            let response = app()
+                .oneshot(
+                    Request::get(format!(
+                        "/api/v1/agui/events?thread_id=sesn_route_resume&starting_after={cursor}"
+                    ))
+                    .body(Body::empty())
+                    .expect("request builds"),
+                )
+                .await
+                .expect("router answers");
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response.headers().get(header::CONTENT_TYPE),
+                Some(&header::HeaderValue::from_static(
+                    "application/problem+json"
+                )),
+                "the refusal happens before an SSE response opens"
+            );
+            let body = to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("the problem is small");
+            let problem: CursorProblem =
+                serde_json::from_slice(&body).expect("the problem is machine-readable");
+            assert_eq!(
+                problem.problem_type,
+                "https://spec.chrono-ai.fun/cma/1.0/problems/cursor-beyond-end"
+            );
+            assert_eq!(problem.status, StatusCode::BAD_REQUEST.as_u16());
+            assert_eq!(problem.code, "cursor_beyond_end");
+            assert_eq!(problem.head, 8);
+            assert!(problem.detail.contains(&cursor.to_string()), "{problem:?}");
+            assert!(problem.detail.contains("head 8"), "{problem:?}");
+
+            let round_tripped: CursorProblem = serde_json::from_value(
+                serde_json::to_value(&problem).expect("the client problem serializes"),
+            )
+            .expect("the client problem round-trips");
+            assert_eq!(round_tripped, problem);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cursor_at_the_head_follows_the_next_appended_event() {
+        let fixture = fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        let response = fixture
+            .app
+            .oneshot(
+                Request::get("/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static("text/event-stream"))
+        );
+
+        let mut body = response.into_body().into_data_stream();
+        fixture
+            .store
+            .append(durable(9, EventKind::TurnStarted))
+            .await;
+        let chunk = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .expect("the followed stream observes the next poll")
+            .expect("the followed stream stays open")
+            .expect("the event body is readable");
+        let frames = parse_sse(std::str::from_utf8(&chunk).expect("SSE is UTF-8"));
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].id, Some(9));
+        assert_eq!(frames[0].body["type"], "RUN_STARTED");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(750), body.next())
+                .await
+                .is_err(),
+            "the appended event is not delivered a second time"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_followed_stream_announces_a_rotation_until_the_session_is_ready() {
+        let fixture = fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        let response = fixture
+            .app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+
+        fixture
+            .store
+            .append(durable(
+                9,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Rotating,
+                    stop_reason: None,
+                    detail: Some("moving this session to a replacement runtime".into()),
+                    capability: None,
+                },
+            ))
+            .await;
+        let returning = next_followed_frame(&mut body).await;
+        assert_eq!(returning.id, Some(9));
+        assert_eq!(returning.body["type"], "RUN_ERROR");
+        assert_eq!(returning.body["cma:returns"], true);
+
+        fixture
+            .store
+            .append(durable(
+                10,
+                EventKind::Progress {
+                    stage: ProvisioningStage::RuntimeRequested,
+                },
+            ))
+            .await;
+        let progress = next_followed_frame(&mut body).await;
+        assert_eq!(progress.id, Some(10));
+        assert_eq!(progress.body["type"], "STATE_DELTA");
+        assert_eq!(
+            progress.body["delta"][0],
+            json!({
+                "op": "replace",
+                "path": "/progress",
+                "value": "runtime_requested",
+            })
+        );
+
+        fixture
+            .store
+            .append(durable(
+                11,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Ready,
+                    stop_reason: None,
+                    detail: None,
+                    capability: None,
+                },
+            ))
+            .await;
+        let ready = next_followed_frame(&mut body).await;
+        assert_eq!(ready.id, Some(11));
+        assert_eq!(ready.body["type"], "STATE_DELTA");
+        assert_eq!(
+            ready.body["delta"][0],
+            json!({ "op": "replace", "path": "/status", "value": "ready" })
+        );
+
+        for frame in [&returning, &progress, &ready] {
+            assert_eq!(frame.body["threadId"], "sesn_route_resume");
+            assert_eq!(frame.body["runId"], "sesn_route_resume");
+        }
+        let state = fold_state(agui::initial_state(), &[progress, ready]);
+        assert_eq!(state["progress"], "runtime_requested");
+        assert_eq!(state["status"], "ready");
+    }
+
+    #[tokio::test]
+    async fn a_bounded_failed_rotation_stream_never_fabricates_ready() {
+        let fixture = fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        let response = fixture
+            .app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+
+        fixture
+            .store
+            .append(durable(
+                9,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Rotating,
+                    stop_reason: None,
+                    detail: Some("moving this session to a replacement runtime".into()),
+                    capability: None,
+                },
+            ))
+            .await;
+        let returning = next_followed_frame(&mut body).await;
+        assert_eq!(returning.id, Some(9));
+        assert_eq!(returning.body["cma:returns"], true);
+
+        fixture
+            .store
+            .append(durable(
+                10,
+                EventKind::Progress {
+                    stage: ProvisioningStage::RuntimeRequested,
+                },
+            ))
+            .await;
+        let progress = next_followed_frame(&mut body).await;
+        assert_eq!(progress.id, Some(10));
+
+        fixture
+            .store
+            .append(durable(
+                11,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Terminated,
+                    stop_reason: Some(StopReason::Error),
+                    detail: Some("the replacement cannot serve this session".into()),
+                    capability: Some("conversation".into()),
+                },
+            ))
+            .await;
+        let failed = next_followed_frame(&mut body).await;
+        assert_eq!(failed.id, Some(11));
+        assert_eq!(failed.body["type"], "RUN_ERROR");
+        assert_eq!(failed.body["cma:returns"], false);
+
+        let bounded_attempt = [returning, progress, failed];
+        assert!(
+            bounded_attempt.iter().all(|frame| {
+                frame.body["delta"].as_array().is_none_or(|operations| {
+                    operations.iter().all(|operation| {
+                        operation["path"] != "/status" || operation["value"] != "ready"
+                    })
+                })
+            }),
+            "the failed attempt emitted ready inside cursor 8..=11: {bounded_attempt:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unauthorised_cursor_is_concealed_before_validation() {
+        let response = fixture(
+            SubjectId("somebody-else".into()),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        )
+        .app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/agui/events?thread_id=sesn_route_resume&starting_after={}",
+                u64::MAX
+            ))
+            .body(Body::empty())
+            .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static(
+                "application/problem+json"
+            ))
+        );
+        let body: Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("the problem is small"),
+        )
+        .expect("the auth problem is JSON");
+        assert_eq!(body["code"], "session_not_found");
+        assert!(
+            body.get("head").is_none(),
+            "cursor validation must not disclose the session's durable head: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_event_log_grant_alone_can_validate_a_cross_owner_cursor() {
+        let app = fixture(
+            SubjectId("event-log-reader".into()),
+            Authorization::from_capabilities([Capability::ReadEventLog]),
+        )
+        .app;
+
+        let frames = replay(&app, 7).await;
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].id, Some(8));
+    }
+
+    #[tokio::test]
+    async fn validation_honours_both_physical_and_advertised_durable_tails() {
+        let fixture = fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        fixture
+            .store
+            .append_physical_only(durable(9, EventKind::TurnStarted))
+            .await;
+
+        let physical_tail = replay(&fixture.app, 9).await;
+        assert!(
+            physical_tail.is_empty(),
+            "a cursor at a physical tail that leads the session record is caught up, not invalid"
+        );
+
+        fixture.store.advertise_head(10).await;
+        let advertised_tail = replay(&fixture.app, 10).await;
+        assert!(
+            advertised_tail.is_empty(),
+            "an advertised legacy position remains reserved even when no event occupies it"
+        );
+    }
+
+    #[tokio::test]
+    async fn state_fold_converges_across_a_production_route_cursor_resume() {
+        let app = app_with(vec![
+            durable(3, EventKind::ConversationGap { frames: 4 }),
+            durable(
+                7,
+                EventKind::PlaneChanged {
+                    from: SessionMode::Terminal,
+                    to: SessionMode::Conversation,
+                    snapshot_at: "2026-08-25T08:59:57Z".into(),
+                },
+            ),
+            durable(
+                9,
+                EventKind::UsageReported {
+                    input_tokens: 31,
+                    output_tokens: 12,
+                    context_used: 1_500,
+                    context_window: Some(2_000),
+                },
+            ),
+            durable(
+                10,
+                EventKind::UsageReported {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    context_used: 0,
+                    context_window: None,
+                },
+            ),
+            durable(
+                11,
+                EventKind::ContextCompacted {
+                    was: 1_800,
+                    now: 420,
+                    window: Some(2_000),
+                },
+            ),
+            durable(
+                15,
+                EventKind::RuntimeLost {
+                    runtime_id: "runtime_first".into(),
+                    cause: Some(layer2_core::RuntimeLossCause::Displaced),
+                },
+            ),
+        ]);
+
+        let full = replay(&app, 0).await;
+        assert_eq!(
+            full.iter().map(|frame| frame.id).collect::<Vec<_>>(),
+            vec![Some(3), Some(7), Some(9), Some(10), Some(11), Some(15)]
+        );
+        let full_state = fold_state(agui::initial_state(), &full);
+
+        let retained = fold_state(agui::initial_state(), &full[..3]);
+        let resumed = replay(&app, 9).await;
+        let resumed_state = fold_state(retained, &resumed);
+
+        assert_eq!(resumed_state, full_state);
+        assert_eq!(
+            full_state["usage"],
+            json!({
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "contextUsed": 1_500,
+                "contextWindow": 2_000,
+            })
+        );
+        assert_eq!(full_state["gaps"], json!([{ "frames": 4 }]));
+        assert_eq!(
+            full_state["planeChanges"],
+            json!([{
+                "from": "terminal",
+                "to": "conversation",
+                "snapshotAt": "2026-08-25T08:59:57Z",
+            }])
+        );
+        assert_eq!(
+            full_state["contextCompactions"],
+            json!([{ "was": 1_800, "now": 420, "window": 2_000 }])
+        );
+        assert_eq!(
+            full_state["runtimeLosses"],
+            json!([{
+                "runtime": "runtime_first",
+                "cause": "displaced",
+                "noticedAt": "2026-08-25T09:00:15Z",
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn an_idle_route_stream_sends_an_unnamed_uncursored_keepalive() {
+        let response = app()
+            .oneshot(
+                Request::get("/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let mut body = response.into_body().into_data_stream();
+        let chunk = tokio::time::timeout(
+            super::super::super::KEEPALIVE_INTERVAL + Duration::from_secs(1),
+            body.next(),
+        )
+        .await
+        .expect("an idle stream sends a keepalive within the documented interval plus margin")
+        .expect("the followed stream stays open")
+        .expect("the keepalive body chunk is readable");
+        let keepalive = std::str::from_utf8(&chunk).expect("SSE is UTF-8");
+
+        assert!(
+            keepalive.starts_with(':'),
+            "a transport keepalive is an SSE comment: {keepalive:?}"
+        );
+        assert!(
+            keepalive
+                .lines()
+                .all(|line| !line.starts_with("id:") && !line.starts_with("event:")),
+            "a transport keepalive is neither cursor-bearing nor an application event: {keepalive:?}"
+        );
     }
 }

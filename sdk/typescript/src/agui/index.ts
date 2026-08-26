@@ -32,6 +32,7 @@ export {
   type ToolCallStart,
   type UnknownEvent,
 } from './events.js';
+export { applyStateDelta } from './state.js';
 export {
   AguiOperations,
   NO_CAPABILITIES,

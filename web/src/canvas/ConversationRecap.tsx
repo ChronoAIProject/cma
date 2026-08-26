@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { EMPTY, reduce, type Conversation } from '@chronoai/cma-sdk';
+import { initialConversation, reduce, type Conversation } from '@chronoai/cma-sdk';
 import { AguiConnection, wireTransport, type AguiTransport } from '@chronoai/cma-sdk';
 import type { Session } from '../sessions/types';
 import './ConversationRecap.css';
@@ -32,7 +32,7 @@ export function ConversationRecap({
   onOpenToReply,
   transport = wireTransport,
 }: ConversationRecapProps) {
-  const [conversation, setConversation] = useState<Conversation>(EMPTY);
+  const [conversation, setConversation] = useState<Conversation>(initialConversation);
 
   useEffect(() => {
     const connection = new AguiConnection(transport, session.id);

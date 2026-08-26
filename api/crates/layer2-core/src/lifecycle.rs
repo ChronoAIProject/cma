@@ -172,7 +172,13 @@ impl SessionService {
                         }
                     }
                     if let Some(source) = service.credentials.as_ref() {
-                        source.release(&session_id).await;
+                        if let Err(error) = source.release(&session_id).await {
+                            tracing::error!(
+                                session_id = %session_id,
+                                error = %error,
+                                "could not retire this session's credential custody"
+                            );
+                        }
                     }
                     tracing::info!(session_id = %session_id, "session terminated");
                     (
@@ -226,7 +232,13 @@ impl SessionService {
                     }
                 }
                 if let Some(source) = service.credentials.as_ref() {
-                    source.release(&session_id).await;
+                    if let Err(error) = source.release(&session_id).await {
+                        tracing::error!(
+                            session_id = %session_id,
+                            error = %error,
+                            "could not retire this session's credential custody"
+                        );
+                    }
                 }
                 tracing::info!(session_id = %session_id, "session terminated");
                 (owner, lifecycle)

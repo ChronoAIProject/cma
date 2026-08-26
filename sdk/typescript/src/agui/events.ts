@@ -13,7 +13,7 @@
 
 import { KNOWN_EVENTS, STATE_DELTA_PATCHES } from '../wire.js';
 import { ProtocolError } from '../errors.js';
-import { canBeDurableProjectionPrefix } from './cursor.js';
+import { canBeDurableProjectionPrefix, isCursorlessInterfaceBoundary } from './cursor.js';
 
 /** Every kind this build renders. The set grows; the handling does not break. */
 export type KnownEventType = (typeof KNOWN_EVENTS)[number];
@@ -34,9 +34,10 @@ interface EventBase {
    * global one**. A client that treated it as global would lose events in
    * exactly the window nobody tests.
    *
-   * Zero means this is a leading durable projection frame with no SSE id. It
-   * does not advance the cursor; the projection's final frame carries the
-   * positive sequence. Liveness also uses zero, distinguished by `ephemeral`.
+   * Zero has three explicit meanings, none of which advances the cursor: a
+   * leading durable projection frame whose final carries the positive
+   * sequence, liveness distinguished by `ephemeral`, or the non-live
+   * `RUN_STARTED` boundary that opens a continuation interface.
    */
   readonly seq: number;
   /**
@@ -136,8 +137,8 @@ export interface Interrupt {
   readonly id: string;
   /** `confirmation`, or `cma:<the runtime's own word>`. */
   readonly reason: string;
-  /** The kernel's own wording of what it wants. Rendered verbatim. */
-  readonly message: string;
+  /** The kernel's own wording, or `null` when it supplied none. */
+  readonly message: string | null;
   readonly responseSchema?: unknown;
   readonly expiresAt?: string;
   /**
@@ -240,6 +241,7 @@ export interface StateDelta extends EventBase {
 export interface JsonPatch {
   readonly op: string;
   readonly path: string;
+  readonly from?: string;
   readonly value?: unknown;
 }
 
@@ -301,7 +303,12 @@ export function toEvent(raw: unknown): AguiEvent {
   }
   const kind = nonEmptyString(frame.type, 'AG-UI type');
   const seq = sequence(frame.seq);
-  if (!ephemeral && seq === 0 && !canBeDurableProjectionPrefix(kind)) {
+  if (
+    !ephemeral &&
+    seq === 0 &&
+    !canBeDurableProjectionPrefix(kind) &&
+    !isCursorlessInterfaceBoundary(kind, seq, ephemeral)
+  ) {
     throw new ProtocolError(`AG-UI durable ${kind} frame cannot have sequence zero`);
   }
   const base = {
@@ -448,7 +455,7 @@ function interrupt(raw: unknown): Interrupt {
   return {
     id: nonEmptyString(value.id, 'interrupt id'),
     reason: nonEmptyString(value.reason, 'interrupt reason'),
-    message: requiredString(value.message, 'interrupt message'),
+    message: requiredNullableString(value.message, 'interrupt message'),
     responseSchema: value.responseSchema,
     expiresAt: optionalString(value.expiresAt, 'interrupt expiresAt'),
     options: options?.map(option),
@@ -470,14 +477,46 @@ function patches(raw: unknown): readonly JsonPatch[] {
   if (!Array.isArray(raw)) {
     throw new ProtocolError(`STATE_DELTA ${STATE_DELTA_PATCHES} was not a list`);
   }
-  return raw.map((entry): JsonPatch => {
-    const value = objectOf(entry, 'STATE_DELTA patch');
-    return {
-      op: nonEmptyString(value.op, 'STATE_DELTA patch op'),
-      path: nonEmptyString(value.path, 'STATE_DELTA patch path'),
-      value: value.value,
-    };
-  });
+  return raw.map(patch);
+}
+
+function patch(raw: unknown): JsonPatch {
+  const value = objectOf(raw, 'STATE_DELTA patch');
+  const op = nonEmptyString(requiredPatchMember(value, 'op'), 'STATE_DELTA patch op');
+  // The empty string is RFC 6902's pointer to the document root.
+  const path = requiredString(requiredPatchMember(value, 'path'), 'STATE_DELTA patch path');
+
+  switch (op) {
+    case 'add':
+    case 'replace':
+    case 'test':
+      return { op, path, value: requiredPatchValue(value) };
+    case 'copy':
+    case 'move':
+      return {
+        op,
+        path,
+        from: requiredString(requiredPatchMember(value, 'from'), 'STATE_DELTA patch from'),
+      };
+    case 'remove':
+      return { op, path };
+    default:
+      throw new ProtocolError(`STATE_DELTA patch used unsupported operation '${op}'`);
+  }
+}
+
+function requiredPatchMember(patch: Record<string, unknown>, member: string): unknown {
+  if (!Object.prototype.hasOwnProperty.call(patch, member)) {
+    throw new ProtocolError(`STATE_DELTA patch ${member} was missing`);
+  }
+  return patch[member];
+}
+
+function requiredPatchValue(patch: Record<string, unknown>): unknown {
+  if (!Object.prototype.hasOwnProperty.call(patch, 'value') || patch.value === undefined) {
+    throw new ProtocolError('STATE_DELTA patch value was missing');
+  }
+  return patch.value;
 }
 
 function objectOf(raw: unknown, name: string): Record<string, unknown> {
@@ -492,6 +531,13 @@ function requiredString(raw: unknown, name: string): string {
     throw new ProtocolError(`${name} was not a string`);
   }
   return raw;
+}
+
+function requiredNullableString(raw: unknown, name: string): string | null {
+  if (raw === null) {
+    return null;
+  }
+  return requiredString(raw, name);
 }
 
 function nonEmptyString(raw: unknown, name: string): string {

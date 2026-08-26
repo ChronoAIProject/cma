@@ -96,6 +96,13 @@ AG-UI is a separate, run-shaped projection for conversation frontends. Use
 [AG-UI contract](../../../docs/API_AGUI.md) and
 [REST replay contract](../../../docs/API_REST.md#5-events).
 
+`createAguiTransport` is a fetch-SSE transport, not a native `EventSource`
+wrapper. That distinction is required for a cross-origin browser: `fetch` can
+send the configured `Authorization: Bearer` header and expose the response body
+reader, while `EventSource` can do neither. Native `EventSource` therefore works
+only with CMA's same-origin session cookie. Configure the deployment's origin
+allowlist as described in [Authentication](authentication.md#browser-sessions).
+
 `parseEventStream` handles a complete captured AG-UI SSE body. It returns
 normalized `AguiEvent` values, groups durable prefixes with their numbered final,
 and assigns occurrence identities to unknown siblings. Pass that result directly
@@ -103,6 +110,25 @@ to `fold`; do not map `toEvent` over it again. `toEvent` converts one raw frame 
 cannot discover a prefix's occurrence identity without the rest of its projection.
 An incomplete captured body that stops before the numbered final is a protocol
 error.
+
+AG-UI also has one cursorless interface boundary: an unnumbered, non-live
+`RUN_STARTED` opens a continuation response that did not create a new durable
+turn. Only an accepted `POST /api/v1/agui/run` continuation response emits it;
+`GET /api/v1/agui/events` never does, whether serving bounded history, a
+followed stream, or reconnect replay. When parsing the complete captured body of
+an accepted continuation response, `parseEventStream` accepts this cursorless
+boundary and returns it immediately in wire order, but does not mark it
+ephemeral, deduplicate it, or advance the reconnect cursor. `AguiConnection`, by
+contrast, consumes only GET history and followed-tail traffic. Receiving a
+cursorless `RUN_STARTED` there violates route provenance and terminates the
+connection with a `ProtocolError`.
+
+An unnumbered `RUN_FINISHED` is different: it is the durable prefix of an
+approval request and stays buffered until the following numbered `STATE_DELTA`
+completes that projection. Every other known durable singleton or final requires
+a positive SSE id. Numbered durable continuation projections may follow the
+cursorless `RUN_STARTED` before the answered approval is removed; consumers must
+not assume those two frames are adjacent.
 
 ## Why the SDK owns the patches
 

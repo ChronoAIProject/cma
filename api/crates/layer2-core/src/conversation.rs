@@ -27,19 +27,20 @@
 //! sets differ between runtimes and grow without warning, and a session must
 //! not fail because a kernel invented a category.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::{sync::Arc, time::Duration};
 
 use layer3_adapter::{
     AdapterError, ContentBlock, ConversationInput, ConversationInputSender, PermissionDecision,
 };
 
-use crate::authz::Caller;
+use crate::authz::{Caller, Capability as AuthorizationCapability};
 use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
-use crate::log::append;
-use crate::service::SessionService;
+use crate::log::append_batch;
+use crate::service::{store_failed, SessionService};
 use crate::session::SessionStatus;
 
 /// What a session has used, as its runtime reports it.
@@ -71,26 +72,194 @@ pub enum ApprovalDecision {
     Abort,
 }
 
+/// Why waiting for a session's conversation did not reach a usable state.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ConversationReadinessError {
+    /// The session could not become conversable for a reason already named by
+    /// the core, such as ownership, termination, or a missing capability.
+    #[error(transparent)]
+    Refused(#[from] CoreError),
+    /// Provisioning did not publish a usable conversation before the caller's
+    /// deadline.
+    #[error("session provisioning timed out before its conversation became ready")]
+    ProvisioningTimedOut,
+}
+
+const CONVERSATION_READINESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// One answer in an atomic approval-resolution request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalResolution {
+    /// The runtime request being answered.
+    pub request_id: String,
+    /// What the owner decided.
+    pub decision: ApprovalDecision,
+}
+
+impl ApprovalResolution {
+    /// Name one request and the decision to deliver for it.
+    pub fn new(request_id: impl Into<String>, decision: ApprovalDecision) -> Self {
+        Self {
+            request_id: request_id.into(),
+            decision,
+        }
+    }
+}
+
 impl SessionService {
+    /// Wait for a provisioning session to accept conversation input.
+    ///
+    /// Readiness means more than a durable `Ready` status: the runtime's live
+    /// entry and conversation sender must also have been published. The local
+    /// bring-up claim spans that gap, so waiting on it avoids opening a second
+    /// conversation beside one that is still being installed. A ready session
+    /// with no local entry is readopted, preserving operation after a control
+    /// plane restart. The supplied bound covers both publication and that
+    /// readoption wait.
+    pub async fn await_conversable(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+        bound: Duration,
+    ) -> Result<(), ConversationReadinessError> {
+        // Refuse before observing the session or its provisioning timing.
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
+
+        let wait_for_conversation = async {
+            loop {
+                let record = self.record(id).await?;
+                if !record.session.is_owned_by(&caller.subject) {
+                    return Err(CoreError::Forbidden);
+                }
+                if record.session.status.is_terminal() {
+                    return Err(CoreError::SessionTerminated);
+                }
+                if !record.session.capabilities.unrecorded() {
+                    record
+                        .session
+                        .capabilities
+                        .require(Capability::Conversation)?;
+                }
+
+                match record.session.status {
+                    SessionStatus::Provisioning => {}
+                    SessionStatus::Ready | SessionStatus::Running => {
+                        let conversation_is_live = self
+                            .entries
+                            .read()
+                            .await
+                            .get(id)
+                            .and_then(|entry| entry.conversation.as_ref())
+                            .is_some();
+                        if conversation_is_live {
+                            self.conversation_input(caller, id, Capability::Conversation)
+                                .await?;
+                            return Ok(());
+                        }
+                        if self.starting.read().await.contains(id) {
+                            tokio::time::sleep(CONVERSATION_READINESS_POLL_INTERVAL).await;
+                            continue;
+                        }
+                        self.conversation_input(caller, id, Capability::Conversation)
+                            .await?;
+                        return Ok(());
+                    }
+                    SessionStatus::Rotating => return Err(CoreError::SessionRotating),
+                    SessionStatus::Idle => return Err(CoreError::InvalidState),
+                    SessionStatus::Terminated => unreachable!("terminal status handled above"),
+                }
+
+                tokio::time::sleep(CONVERSATION_READINESS_POLL_INTERVAL).await;
+            }
+        };
+
+        tokio::time::timeout(bound, wait_for_conversation)
+            .await
+            .map_err(|_| ConversationReadinessError::ProvisioningTimedOut)??;
+        Ok(())
+    }
+
     /// Open a prompt turn on a session's conversation.
     ///
     /// The turn is recorded as beginning here rather than waited for, because
     /// this is where it begins: a runtime has nothing to announce until the
     /// model answers, and a client that prompted and saw nothing recorded
     /// cannot tell a slow agent from a lost prompt.
+    ///
+    /// Returns the exact durable sequence committed for this prompt's
+    /// [`EventKind::TurnStarted`] boundary.
     pub async fn send_prompt(
         self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
         text: String,
-    ) -> Result<(), CoreError> {
-        let _input_fence = self.input_gates.gate(id).read_owned().await;
-        let input = self
-            .conversation_input(caller, id, Capability::Conversation)
+    ) -> Result<u64, CoreError> {
+        // One prompt must publish its Running transition before the next one
+        // decides whether it is steering. This gate is deliberately separate
+        // from the lifecycle gate `conversation_input` may acquire in readoption.
+        let _admission = self.prompt_gates.gate(id).lock_owned().await;
+        // A recorded running conversation can be refused before recovery is
+        // attempted, so unsupported mid-turn input reaches neither a runtime
+        // nor the log. An older record may still carry an unrecorded grant;
+        // `conversation_input` settles that record, and the live check below
+        // applies the same rule after it has done so.
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if record.session.status == SessionStatus::Running
+            && !record.session.capabilities.unrecorded()
+        {
+            record
+                .session
+                .capabilities
+                .require(Capability::Conversation)?;
+            record.session.capabilities.require(Capability::Steer)?;
+        }
+
+        // Readopt before taking the update-ordering gate. Opening a conversation
+        // can itself report sign-in and command updates, and those must remain
+        // foldable while lifecycle recovery runs.
+        self.conversation_input(caller, id, Capability::Conversation)
             .await?;
-        // Recorded before the turn begins: the owner's message is what the
-        // conversation replays as the owner's side of it, and its time is what
-        // §18.1 labels that turn with.
+        let input_fence = self.input_gates.gate(id).read_owned().await;
+        let ordering = self.conversation_order_gates.gate(id);
+        let ordered_turn = ordering.lock().await;
+        // The live entry may have changed during readoption. Recheck both prompt
+        // capabilities and drive the sender that is current under the same gate
+        // its folder takes before recording delivery effects.
+        let input = {
+            let entries = self.entries.read().await;
+            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+            if !entry.session.is_owned_by(&caller.subject) {
+                return Err(CoreError::Forbidden);
+            }
+            if entry.session.status.is_terminal() {
+                return Err(CoreError::SessionTerminated);
+            }
+            if entry.session.status.is_rotating() {
+                return Err(CoreError::SessionRotating);
+            }
+            entry
+                .session
+                .capabilities
+                .require(Capability::Conversation)?;
+            if entry.session.status == SessionStatus::Running {
+                entry.session.capabilities.require(Capability::Steer)?;
+            }
+            entry.conversation.clone().ok_or_else(|| {
+                CoreError::RuntimeUnavailable("this session holds no conversation".into())
+            })?
+        };
+        // The boundary comes first so every projection can establish the turn
+        // before it receives the message that opened it. The owner's message
+        // still carries its own durable time, which is what §18.1 labels that
+        // side of the conversation with.
         let owner_text = text.clone();
         self.toward_runtime(
             id,
@@ -98,32 +267,40 @@ impl SessionService {
             ConversationInput::Prompt(vec![ContentBlock::from(text)]),
         )
         .await?;
-        {
+        let committed = {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
                 return Err(CoreError::SessionNotFound);
             };
             entry.session.status = SessionStatus::Running;
             entry.session.stop_reason = None;
-            append(
+            append_batch(
                 entry,
-                EventKind::OwnerMessage {
-                    content: owner_text,
-                },
-            );
-            append(entry, EventKind::TurnStarted);
-            append(
-                entry,
-                EventKind::StatusChanged {
-                    status: SessionStatus::Running,
-                    stop_reason: None,
-                    detail: None,
-                    capability: None,
-                },
-            );
-        }
-        self.flush(id).await;
-        Ok(())
+                [
+                    EventKind::TurnStarted,
+                    EventKind::OwnerMessage {
+                        content: owner_text,
+                    },
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Running,
+                        stop_reason: None,
+                        detail: None,
+                        capability: None,
+                    },
+                ],
+            )
+        };
+        // The lane owns the complete prompt unit in its required order. Let the
+        // folder enqueue immediate runtime effects behind it while persistence
+        // settles; the completion below still cannot pass those earlier events.
+        drop(ordered_turn);
+        drop(input_fence);
+        let record = committed.committed().await.map_err(store_failed)?;
+        record.session.last_seq.checked_sub(2).ok_or_else(|| {
+            CoreError::RuntimeUnavailable(
+                "session store: committed prompt boundary had no valid sequence".into(),
+            )
+        })
     }
 
     /// Abandon the turn in flight, leaving the conversation open.
@@ -137,12 +314,31 @@ impl SessionService {
         caller: &Caller,
         id: &SessionId,
     ) -> Result<(), CoreError> {
-        let _input_fence = self.input_gates.gate(id).read_owned().await;
-        let input = self
-            .conversation_input(caller, id, Capability::Interrupt)
+        self.conversation_input(caller, id, Capability::Interrupt)
             .await?;
-        self.toward_runtime(id, &input, ConversationInput::Cancel)
-            .await
+        let input_fence = self.input_gates.gate(id).read_owned().await;
+        let input = {
+            let entries = self.entries.read().await;
+            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+            if !entry.session.is_owned_by(&caller.subject) {
+                return Err(CoreError::Forbidden);
+            }
+            if entry.session.status.is_terminal() {
+                return Err(CoreError::SessionTerminated);
+            }
+            if entry.session.status.is_rotating() {
+                return Err(CoreError::SessionRotating);
+            }
+            entry.session.capabilities.require(Capability::Interrupt)?;
+            entry.conversation.clone().ok_or_else(|| {
+                CoreError::RuntimeUnavailable("this session holds no conversation".into())
+            })?
+        };
+        let delivered = self
+            .toward_runtime(id, &input, ConversationInput::Cancel)
+            .await;
+        drop(input_fence);
+        delivered
     }
 
     /// Answer something the runtime is blocked on.
@@ -158,64 +354,133 @@ impl SessionService {
         request_id: String,
         decision: ApprovalDecision,
     ) -> Result<(), CoreError> {
-        let _input_fence = self.input_gates.gate(id).read_owned().await;
-        let input = self
-            .conversation_input(caller, id, Capability::Conversation)
-            .await?;
-        let outstanding = {
-            let entries = self.entries.read().await;
-            entries
-                .get(id)
-                .is_some_and(|e| e.pending_approvals.contains(&request_id))
-        };
-        if !outstanding {
-            // Refused rather than forwarded. A runtime handed an answer to
-            // something it is not waiting for will either ignore it or act on
-            // the wrong thing, and neither is visible to whoever answered.
+        self.resolve_approvals(caller, id, &[ApprovalResolution::new(request_id, decision)])
+            .await
+    }
+
+    /// Answer one atomic batch of outstanding runtime approval requests.
+    ///
+    /// Every identifier is validated before the first answer is sent. If the
+    /// adapter accepts a prefix and then refuses a later item, that accepted
+    /// prefix is recorded durably before the adapter error is returned.
+    pub async fn resolve_approvals(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+        resolutions: &[ApprovalResolution],
+    ) -> Result<(), CoreError> {
+        if resolutions.is_empty() {
             return Err(CoreError::InvalidState);
         }
 
-        self.toward_runtime(
-            id,
-            &input,
-            ConversationInput::PermissionAnswer {
-                id: request_id.clone(),
-                decision: intent_for(decision),
-            },
-        )
-        .await?;
+        // Readoption may itself open a runtime update stream. Complete it before
+        // taking the folder's order gate, then re-read every live authority
+        // under that gate rather than using the sender snapshot returned here.
+        self.conversation_input(caller, id, Capability::Conversation)
+            .await?;
+        let input_fence = self.input_gates.gate(id).read_owned().await;
+        let ordering = self.conversation_order_gates.gate(id);
+        let ordered_resolution = ordering.lock().await;
+        let input = {
+            let entries = self.entries.read().await;
+            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
+            if !entry.session.is_owned_by(&caller.subject) {
+                return Err(CoreError::Forbidden);
+            }
+            if entry.session.status.is_terminal() {
+                return Err(CoreError::SessionTerminated);
+            }
+            if entry.session.status.is_rotating() {
+                return Err(CoreError::SessionRotating);
+            }
+            entry
+                .session
+                .capabilities
+                .require(Capability::Conversation)?;
 
-        {
+            let mut unique = HashSet::with_capacity(resolutions.len());
+            if resolutions.iter().any(|resolution| {
+                !unique.insert(resolution.request_id.as_str())
+                    || !entry.pending_approvals.contains(&resolution.request_id)
+            }) {
+                // Refused before delivery. A runtime handed an answer to
+                // something it is not waiting for may ignore it or act on the
+                // wrong request, and a partially validated batch cannot retry.
+                return Err(CoreError::InvalidState);
+            }
+            entry.conversation.clone().ok_or_else(|| {
+                CoreError::RuntimeUnavailable("this session holds no conversation".into())
+            })?
+        };
+
+        let mut delivered: usize = 0;
+        let mut delivery_error = None;
+        for resolution in resolutions {
+            match self
+                .toward_runtime(
+                    id,
+                    &input,
+                    ConversationInput::PermissionAnswer {
+                        id: resolution.request_id.clone(),
+                        decision: intent_for(resolution.decision),
+                    },
+                )
+                .await
+            {
+                Ok(()) => delivered += 1,
+                Err(error) => {
+                    delivery_error = Some(error);
+                    break;
+                }
+            }
+        }
+
+        let commit = if delivered == 0 {
+            None
+        } else {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
                 return Err(CoreError::SessionNotFound);
             };
-            entry.pending_approvals.remove(&request_id);
-            // Answered, so the session is no longer waiting on a person. It
-            // goes back to running rather than to ready: the turn that stopped
-            // to ask is still in flight.
-            if entry.pending_approvals.is_empty() && entry.session.status == SessionStatus::Idle {
-                entry.session.status = SessionStatus::Running;
-                entry.session.stop_reason = None;
-                append(
-                    entry,
-                    EventKind::StatusChanged {
+            let mut events = Vec::with_capacity(delivered.saturating_add(1));
+            for resolution in &resolutions[..delivered] {
+                let removed = entry.pending_approvals.remove(&resolution.request_id);
+                debug_assert!(removed, "a prevalidated approval remains outstanding");
+                // Answered, so the session is no longer waiting on a person. It
+                // goes back to running rather than ready: the interrupted turn
+                // is still in flight. Preserve the singular operation's order
+                // by placing this transition immediately before the final
+                // resolution that empties the outstanding set.
+                if entry.pending_approvals.is_empty() && entry.session.status == SessionStatus::Idle
+                {
+                    entry.session.status = SessionStatus::Running;
+                    entry.session.stop_reason = None;
+                    events.push(EventKind::StatusChanged {
                         status: SessionStatus::Running,
                         stop_reason: None,
                         detail: None,
                         capability: None,
-                    },
-                );
+                    });
+                }
+                events.push(EventKind::ApprovalResolved {
+                    request_id: resolution.request_id.clone(),
+                    allowed: matches!(resolution.decision, ApprovalDecision::Allow),
+                });
             }
-            append(
-                entry,
-                EventKind::ApprovalResolved {
-                    request_id,
-                    allowed: matches!(decision, ApprovalDecision::Allow),
-                },
-            );
+            Some(append_batch(entry, events))
+        };
+
+        // Immediate TurnEnded updates emitted by a permission sender may now be
+        // folded, but their commits enter the same lane behind the accepted
+        // prefix above. Storage waiting must never retain the folder's gate.
+        drop(ordered_resolution);
+        drop(input_fence);
+        if let Some(commit) = commit {
+            commit.committed().await.map_err(store_failed)?;
         }
-        self.flush(id).await;
+        if let Some(error) = delivery_error {
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -275,6 +540,9 @@ impl SessionService {
         id: &SessionId,
         capability: Capability,
     ) -> Result<ConversationInputSender, CoreError> {
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
         // Read from the record rather than from what this process happens to
         // hold, because after a restart it holds nothing — and a session it has
         // never seen is not a session that does not exist.
@@ -291,21 +559,18 @@ impl SessionService {
         if record.session.status.is_rotating() {
             return Err(CoreError::SessionRotating);
         }
-        let entries = self.entries.read().await;
-        if !entries.contains_key(id) {
+        let missing_live_entry = !self.entries.read().await.contains_key(id);
+        if missing_live_entry {
             let rotation_in_progress = self.rotation_in_progress(id).await;
-            drop(entries);
             if rotation_in_progress {
                 return Err(CoreError::SessionRotating);
             }
             self.readopt(&record).await?;
-        } else {
-            drop(entries);
         }
         let entries = self.entries.read().await;
         let Some(entry) = entries.get(id) else {
-            let rotation_in_progress = self.rotation_in_progress(id).await;
             drop(entries);
+            let rotation_in_progress = self.rotation_in_progress(id).await;
             return Err(self
                 .missing_live_session_error(caller, id, rotation_in_progress)
                 .await);

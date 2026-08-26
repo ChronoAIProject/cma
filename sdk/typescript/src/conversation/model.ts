@@ -1,4 +1,5 @@
 import type { Interrupt } from '../agui/index.js';
+import { initialState, type AguiState } from '../wire.js';
 
 /**
  * What a conversation *is* — `Web_Style.md` §18.1.
@@ -209,9 +210,22 @@ export interface MemoryPressure {
 
 /** Everything a surface needs to draw the conversation. */
 export interface Conversation {
+  /** The canonical public AG-UI state after every applied `STATE_DELTA`. */
+  readonly aguiState: AguiState;
+  /** Highest durable state delta folded, so reconnect overlap is idempotent. */
+  readonly stateDeltaSeq: number;
   readonly entries: readonly Entry[];
   /** True between `RUN_STARTED` and the `RUN_FINISHED` that closes it. */
   readonly turnInFlight: boolean;
+  /**
+   * Whether the session lifecycle currently accepts input.
+   *
+   * This is deliberately fail-closed until `/status` reports `ready` or
+   * `running`, and is cleared as soon as a run ends. A `running` session still
+   * admits mid-turn input only when `steer` was granted and its
+   * `concurrent_input` policy accepts the second run.
+   */
+  readonly sessionInteractive: boolean;
   /**
    * The approval the session is parked on, when it is parked on one.
    *
@@ -352,8 +366,17 @@ export interface AvailableCommand {
   readonly description: string;
 }
 
-export const EMPTY: Conversation = {
-  entries: [],
-  turnInFlight: false,
-  runtimeLoss: undefined,
-};
+/** Return an isolated starting point for one conversation session. */
+export function initialConversation(): Conversation {
+  return {
+    aguiState: initialState(),
+    stateDeltaSeq: 0,
+    entries: [],
+    turnInFlight: false,
+    sessionInteractive: false,
+    runtimeLoss: undefined,
+  };
+}
+
+/** Compatibility template. New sessions should call `initialConversation()`. */
+export const EMPTY: Conversation = initialConversation();

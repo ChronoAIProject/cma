@@ -133,8 +133,8 @@ impl SessionService {
         let commit = {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
-                let rotation_in_progress = self.rotation_in_progress(id).await;
                 drop(entries);
+                let rotation_in_progress = self.rotation_in_progress(id).await;
                 return Err(self
                     .missing_live_session_error(caller, id, rotation_in_progress)
                     .await);
@@ -215,8 +215,8 @@ impl SessionService {
         self.authorize(caller, id).await?;
         let entries = self.entries.read().await;
         let Some(entry) = entries.get(id) else {
-            let rotation_in_progress = self.rotation_in_progress(id).await;
             drop(entries);
+            let rotation_in_progress = self.rotation_in_progress(id).await;
             return Err(self
                 .missing_live_session_error(caller, id, rotation_in_progress)
                 .await);
@@ -242,8 +242,8 @@ impl SessionService {
         self.authorize(caller, id).await?;
         let entries = self.entries.read().await;
         let Some(entry) = entries.get(id) else {
-            let rotation_in_progress = self.rotation_in_progress(id).await;
             drop(entries);
+            let rotation_in_progress = self.rotation_in_progress(id).await;
             return Err(self
                 .missing_live_session_error(caller, id, rotation_in_progress)
                 .await);
