@@ -18,7 +18,7 @@ use crate::auth::persistence::{
     AuthStore, AuthSweepItem, BrowserSession, CredentialLeaseCursor, CredentialMutationCursor,
     CredentialReconciliationCursor, CredentialReissueCursor, LoginAttempt, MemoryAuthStore,
     RevokeDebtCursor, RevokeDebtWork, SecretDigest, SecretValue, SubjectAuthState,
-    SubjectOwnerCursor, SubjectRefreshCursor,
+    SubjectAuthorizationCursor, SubjectOwnerCursor, SubjectRefreshCursor,
 };
 use crate::auth::{AuthMode, SubjectTokens};
 
@@ -182,6 +182,15 @@ impl AuthStore for TerminalInsertRaceStore {
         _through_sequence: u64,
         _limit: usize,
     ) -> Result<Vec<AuthSweepItem<SubjectRefreshCursor, SubjectAuthState>>, StoreError> {
+        unreachable!("terminal insert race does not use subject state")
+    }
+
+    async fn subjects_due_for_authorization_check(
+        &self,
+        _now: SystemTime,
+        _after: Option<&SubjectAuthorizationCursor>,
+        _limit: usize,
+    ) -> Result<Vec<AuthSweepItem<SubjectAuthorizationCursor, SubjectAuthState>>, StoreError> {
         unreachable!("terminal insert race does not use subject state")
     }
 

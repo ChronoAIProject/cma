@@ -739,7 +739,15 @@ impl AuthState {
                 }
                 continue;
             };
-            let token = tokens.access_token.into_inner();
+            let Some(access_token) = tokens.access_token else {
+                proposed.owners = current.owners_after_completion;
+                proposed.current_owner = None;
+                if proposed.owners.is_none() {
+                    break;
+                }
+                continue;
+            };
+            let token = access_token.into_inner();
             if current.remaining_credentials.is_none() {
                 if !budget.take(1) {
                     proposed.current_owner = Some(current);
