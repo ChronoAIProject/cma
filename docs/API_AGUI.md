@@ -94,12 +94,26 @@ The same-origin cookie clients that can use native `EventSource` do not receive 
 
 **The sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The sequence is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
 
-Every accepted run stream begins with `RUN_STARTED`. For an ordinary prompt it
-projects the durable `turn_started` boundary and carries that event's SSE `id`.
-For a continuation opened by `resume`, it is an interface-only boundary with no
-SSE `id`: it starts the new run around the turn already in progress and does not
-record or imply a second turn. A request refused before a stream opens returns
-an `application/problem+json` response and emits no `RUN_STARTED`.
+Every accepted run stream begins with `RUN_STARTED`. For an ordinary prompt on
+an existing ready session it projects the durable `turn_started` boundary and
+carries that event's SSE `id`.
+
+For a prompt whose effective session is still provisioning, including every
+fresh thread, the response instead opens promptly with a synthetic
+`RUN_STARTED`. It carries the core-minted effective `threadId`, carries no SSE
+`id`, and does not claim that a durable turn exists yet. An owned admission task
+waits for the conversation runtime to become ready and then sends the prompt;
+dropping the request or response body does not cancel that task. Once the prompt
+is accepted, durable projection begins *after* its `TurnStarted`, because the
+synthetic boundary already opened the run. If readiness does not arrive within
+ten minutes, the next and final application frame is a cursorless `RUN_ERROR`
+with code `provisioning_timeout`.
+
+For a continuation opened by `resume`, `RUN_STARTED` is also an interface-only
+boundary with no SSE `id`: it starts the new run around the turn already in
+progress and does not record or imply a second turn. A request refused before a
+stream opens returns an `application/problem+json` response and emits no
+`RUN_STARTED`.
 
 ### Running a turn
 
@@ -123,12 +137,26 @@ Content-Type: application/json
 | Field | Meaning in CMA |
 |---|---|
 | `threadId` | **The session id.** A `threadId` that does not exist creates a session — this is how `create_session` is projected. The new session gets an identifier chosen by the service, not the one you sent, and every event on the run carries it: read `threadId` off the first event and use that from then on |
-| `runId` | Client-generated id for this turn; echoed on every event of the run stream. It may be omitted or `null`, in which case CMA generates `run_` followed by 32 lowercase hexadecimal characters and echoes that value. An explicit value must contain a non-whitespace character and differ from the effective `threadId`; otherwise CMA returns HTTP 422 with code `invalid_request`. Frames read over `GET /api/v1/agui/events` carry the session's own id here — see §7 |
+| `runId` | Client-generated id for this turn; echoed on every event of the run stream. An explicit value names one subject- and effective-session-scoped admission for 24 hours. Reusing it with the same final prompt or normalized approval resolutions replays that finite admission rather than delivering another action; changing that semantic action returns HTTP 422 with code `agui_operation_reused`. It must contain a non-whitespace character and differ from the effective `threadId`, or CMA returns HTTP 422 with code `invalid_request`. Frames read over `GET /api/v1/agui/events` carry the session's own id here — see §7 |
 | `messages` | The conversation. The final user message is the turn's input |
 | `forwardedProps` | Session creation parameters, honoured only when the thread is new and ignored thereafter. `kernel` is accepted and ignored in every case — which kernel a session runs on comes from the profile it names or from what the deployment configured, and no interface chooses one |
 | `resume` | Present only when answering an interrupt — see §4 |
 
 `forwardedProps` is ignored on an existing thread because what it sets is frozen at session creation. Changing it requires a new thread.
+
+When `runId` is omitted or `null`, CMA still generates `run_` followed by 32
+lowercase hexadecimal characters and echoes it for wire validity. That value
+was not supplied by the caller, so a later POST cannot identify the earlier
+admission: each retry without an explicit id is a new turn. The owned task still
+survives cancellation of its request and SSE body, but this shape cannot provide
+cross-request deduplication.
+
+A requested fresh `threadId` is itself a subject-scoped creation alias retained
+for 24 hours. Retrying it with the same creation-affecting properties resolves
+to the same core-minted session, and using the minted id directly reaches that
+same session. Reusing the requested alias with a different
+`environmentProfile` returns `agui_operation_reused`; it never provisions a
+second session under the ambiguous alias.
 
 `environmentProfile` is the one property in it this service reads. `kernel` is accepted and ignored, as the table above says; `llmSource` was named here as though it were honoured and frozen, and has never existed anywhere in the service — the same phantom `docs/API_REST.md` carried as `llm_source`. Both are gone from the example above, so it now shows only what sending actually does something.
 
@@ -160,8 +188,12 @@ session.
 `RUN_STARTED` is the first event on every run response. The owner's projected
 `TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END` echo follows
 it on a prompt run. On a continuation the opening event is synthetic and
-unnumbered, because the durable log already contains the turn boundary; it
-brackets the run without advancing a replay cursor.
+unnumbered because the durable log already contains the turn boundary. On a
+provisioning prompt it is synthetic and unnumbered because prompt admission has
+not recorded the turn boundary yet. In both cases it brackets the interface run
+without advancing a replay cursor; after deferred prompt admission succeeds,
+the durable `TurnStarted` projection is skipped so a second `RUN_STARTED` is not
+emitted.
 
 ### Canonical initial state
 
@@ -434,9 +466,12 @@ A stretch of conversation the runtime had to drop also arrives as a state patch,
 
 **The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Keep following the session stream: optional `/progress` deltas describe the replacement starting, and `/status=ready` says the same session can accept a new run with the same conversation resumed.
 
-### `RUN_ERROR` covers two different things, and says which
+### `RUN_ERROR` covers three different things, and says which
 
-The protocol has one event for a run ending badly, and two things end one: the agent's work failed, and the session is being carried onto another runtime. **Do not draw them the same way.**
+The protocol has one event for a run ending badly, and three things end one: the
+agent's work failed, the session is being carried onto another runtime, or a
+synthetically opened provisioning run could not admit its prompt. **Do not draw
+them the same way.**
 
 ```json
 {
@@ -451,11 +486,17 @@ The protocol has one event for a run ending badly, and two things end one: the a
 | Field | |
 |---|---|
 | `message` | what happened, in the kernel's own words. Always present. |
-| `code` | the stop reason as this API spells it. Absent where the session did not stop for a reason it names. |
+| `code` | the stop reason as this API spells it for a durable lifecycle ending, or a typed problem code for delayed admission. A readiness deadline is `provisioning_timeout`. |
 | `capability` | **the ability the session lacked**, present only when the failure was a refusal. Named rather than described: rule 4 of `API_Overview.md` asks errors to name what is missing, and a sentence that happens to contain the word does not satisfy that, because nothing downstream can read a sentence. Most failures lack nothing and carry no `capability` — a provider that was unreachable is not a session missing an ability. |
 | `cma:returns` | **`true` when the session is coming back.** This is a handover, not a fault: the run ended because the runtime behind it is being torn down, and a new run starts on the same session once it is usable. Draw it as a boundary, not as a failure. |
 
 A client that ignores `cma:returns` draws every rotation as a fault, and under §5 of `CLAUDE.md` a rotation is a routine consequence of a deployment. Treat its absence as `false`: that is the safer of the two to be wrong about, because a failure drawn as a handover tells somebody their session is returning when it is not.
+
+A delayed admission failure follows the synthetic `RUN_STARTED`, carries no SSE
+`id`, and is the stream's final frame. It has `message` and `code`, may have
+`capability` when readiness was refused for a missing ability, and omits
+`cma:returns`. There is no durable turn to recover from that run: the prompt was
+not accepted.
 
 The complete handover is visible on one followed session stream, without a REST
 status poll:
@@ -630,12 +671,14 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 - **Tolerate unknown events.** The emitted set grows additively; a client that throws on an unrecognised type will break on a routine release.
 - **Do not treat `RUN_FINISHED` as "session over."** Check `outcome`. An interrupt outcome means the session is alive and waiting for you.
 - **A dropped stream is not a cancellation.** The turn keeps running. Recover by reading the log, not by re-posting the run — and if you meant to stop it, say so with the interrupt route (§5).
-- **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`, not by POSTing the run again — which would start a second turn. Read the cursor off the last SSE `id`; it is not in the body.
+- **Reconnect by reading, not by retrying the run.** A dropped stream is recovered with `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>`. Read the cursor off the last SSE `id`; it is not in the body. Reposting an explicit `runId` is an admission retry, not a stream reconnect: it recovers the finite decision and boundary, while the events route recovers everything the turn emitted afterwards. Reposting without an explicit id starts a new admission.
+- **An explicit `runId` is a 24-hour admission key.** Within one authenticated subject and effective session, reposting the same semantic action replays its recorded acceptance or refusal and never sends the prompt or approval resolutions twice. The same id with a changed final prompt or changed normalized approval resolutions is refused as HTTP 422 `agui_operation_reused`.
+- **Pending operation claims are bounded for callers, not automatically taken over.** A duplicate waits for the current owner for up to two seconds, then returns HTTP 409 `agui_operation_in_flight`. Claims have no renewal, abandonment, or takeover protocol. If a CMA process crashes after acquiring one, it can remain pending until its 24-hour expiry. There is also an unavoidable crash window between a runtime side effect and recording its finite outcome; the durable claim prevents ordinary retries and request cancellation from duplicating work, but the current store contract cannot prove cross-process exactly-once execution through that crash window.
 - **A cursor beyond the log's head is refused before an SSE stream opens.** The response is HTTP 400 `application/problem+json`, with type `https://spec.chrono-ai.fun/cma/1.0/problems/cursor-beyond-end` and code `cursor_beyond_end`. Its detail names both the offered cursor and the current durable head, and its numeric `head` field is the position a client can resynchronise from. A cursor at or below the head remains valid; one exactly at the head opens a followed stream and waits for the next durable event.
 - **Native `EventSource` automatic reconnect replays from its original query cursor.** This endpoint deliberately ignores the browser's `Last-Event-ID` request header, so the retry does not advance `starting_after`. Deduplication of complete durable projections by their SSE `id` is therefore mandatory for this client class, even when the client also closes and reconstructs the source as described below.
 - **An SSE `id` acknowledges a whole durable projection.** Only its final frame carries the event sequence. If the connection drops after an earlier frame, the last id still names the preceding durable event, so replay sends the interrupted projection again from its first frame. Group the prefixes with their next numbered final and deduplicate that complete projection by the final id. Do not deduplicate prefixes only by `messageId`, `toolCallId`, or kind: one tool call can have several distinct durable updates, and future unknown kinds may also be prefixes. Advance the stored cursor only after the complete group was accepted.
 
-  One cursorless interface boundary belongs to the run response rather than this reconnect path. Only an accepted continuation response from `POST /api/v1/agui/run` begins with an unnumbered, non-live `RUN_STARTED`; deliver it immediately without changing the cursor. `GET /api/v1/agui/events` never emits that boundary, whether serving bounded history, a followed stream, or reconnect replay.
+  One cursorless interface boundary belongs to the run response rather than this reconnect path. An accepted continuation or provisioning-prompt response from `POST /api/v1/agui/run` begins with an unnumbered, non-live `RUN_STARTED`; deliver it immediately without changing the cursor. `GET /api/v1/agui/events` never emits that boundary, whether serving bounded history, a followed stream, or reconnect replay.
 
   A fetch-SSE reader can observe the current frame's actual `id` field and uses this procedure:
 
@@ -643,7 +686,7 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
   2. Open that followed stream before requesting bounded history with the same cursor and `follow=false`. Queue followed frames until history has been accepted, then drain the queue. This closes the gap in which an event could otherwise be committed after the history read but before the live connection opened.
   3. Deliver a `cma:live` frame without putting it in the durable projection buffer and without changing the cursor. It has no durable position to acknowledge.
   4. For any other frame with no `id`, buffer it as a projection prefix. This includes the `RUN_FINISHED` interrupt that precedes a pending-approval `STATE_DELTA`. An explicit id must be a positive safe integer and marks the projection's final frame. Combine that final with the buffered prefixes, deduplicate the complete group by the final id, and clear the buffer.
-  5. Advance the cursor only after the application accepts every frame in the complete group, and never move it backwards. On a drop, discard any incomplete prefix buffer, retain completed-projection deduplication state, and construct a new fetch from the latest acknowledged cursor. Never retry the POSTed run.
+  5. Advance the cursor only after the application accepts every frame in the complete group, and never move it backwards. On a drop, discard any incomplete prefix buffer, retain completed-projection deduplication state, and construct a new fetch from the latest acknowledged cursor. Use the events route for stream recovery; reserve a repost with the same explicit `runId` for the separate case where admission itself is uncertain.
 
   Parsing the raw fields removes the inherited-`lastEventId` ambiguity native `EventSource` creates. The SDK's fetch transport reconstructs each request with its current cursor, while `AguiConnection` performs the open-stream-before-history ordering, projection grouping, acknowledgement, deduplication, and retry policy.
 - **The events route identifies replay, not a run.** Route provenance is authoritative: every AG-UI event frame in both its initial history and followed tail carries the effective `threadId` as `runId`, because no one run owns the whole session history. The run route rejects explicit blank identifiers and `runId == threadId`, and its generated identifiers are also kept distinct, so equality is an exclusive replay-envelope signature on accepted responses. Do not derive conversation or per-run rendering state from it. The repository TypeScript SDK follows this rule: `AguiConnection` assembles each complete durable projection around its numbered final frame, preserves an unacknowledged projection for exact retry, and advances the cursor only after every callback accepts it; the conversation fold ignores `runId`, so run-stream and replay envelopes render the same conversation.
