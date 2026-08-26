@@ -10,14 +10,15 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use layer2_core::{
     BillingMode, CommercialPolicy, Confirmation, ConfirmationAction, ContributionPolicy,
-    CredentialRoute, DiffArtifact, DiffArtifactId, EditableField, ExecutorPolicy,
-    InputFieldDefinition, Launch, LaunchId, LaunchOverrides, LaunchStep, OperationStore,
-    OverridePolicy, PublicProjectionPolicy, PublicTriggerId, RepositoryAccessPolicy,
-    RequiredCapability, ResourcePolicy, ScopeClass, SetupPolicy, SourceMode, TriggerAvailability,
-    TriggerConnection, TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft,
-    TriggerId, TriggerPageRequest, TriggerPreview, TriggerRepositorySelection, TriggerRevision,
-    TriggerRevisionContent, TriggerRevisionId, TriggerServiceError, TriggerSessionPolicy,
-    TriggerStoreError, TriggerTask, UpstreamRevision, WorkflowChangePolicy,
+    ContributionRecord, CredentialRoute, DiffArtifact, DiffArtifactId, EditableField,
+    ExecutorPolicy, InputFieldDefinition, Launch, LaunchId, LaunchOverrides, LaunchStep,
+    OperationStore, OverridePolicy, PublicProjectionPolicy, PublicTriggerId,
+    RepositoryAccessPolicy, RequiredCapability, ResourcePolicy, ScopeClass, SetupPolicy,
+    SourceMode, TriggerAvailability, TriggerConnection, TriggerConnectionAuthorization,
+    TriggerConnectionManager, TriggerDraft, TriggerId, TriggerPageRequest, TriggerPreview,
+    TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent, TriggerRevisionId,
+    TriggerServiceError, TriggerSessionPolicy, TriggerStoreError, TriggerTask, UpstreamRevision,
+    WorkflowChangePolicy, WorkspaceCheckpoint, WorkspaceRecord,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -52,6 +53,7 @@ pub(super) fn documented_router(state: TriggersState) -> OpenApiRouter {
         .routes(routes!(select_launch_connection))
         .routes(routes!(start_launch))
         .routes(routes!(review_launch_diff))
+        .routes(routes!(publish_launch_branch))
         .routes(routes!(download_diff_artifact))
         .routes(routes!(cancel_launch))
         .routes(routes!(launch_progress))
@@ -496,8 +498,7 @@ struct LaunchView {
     fork: Option<Value>,
     #[schema(value_type = Object)]
     branch: Option<Value>,
-    #[schema(value_type = Object)]
-    workspace: Option<Value>,
+    workspace: Option<WorkspaceRecordView>,
     #[schema(value_type = Object)]
     session: Option<Value>,
     #[schema(value_type = Object)]
@@ -506,8 +507,7 @@ struct LaunchView {
     delivery: Option<Value>,
     contribution_checkpoint_version: Option<u64>,
     diff: Option<DiffArtifactView>,
-    #[schema(value_type = Object)]
-    contribution: Option<Value>,
+    contribution: Option<ContributionRecordView>,
     #[schema(value_type = Object)]
     pull_request: Option<Value>,
     created_at: String,
@@ -542,6 +542,117 @@ struct DiffArtifactView {
     created_at: String,
     delete_after: String,
     download_url: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct WorkspaceRecordView {
+    #[schema(value_type = Object)]
+    baseline: Value,
+    baseline_archive_sha256: String,
+    latest_checkpoint: Option<WorkspaceCheckpointView>,
+    previous_checkpoint: Option<WorkspaceCheckpointView>,
+    workspace_epoch: u64,
+    retention_policy_id: String,
+    delete_after: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct WorkspaceCheckpointView {
+    id: String,
+    version: u64,
+    workspace_epoch: u64,
+    session_id: String,
+    runtime_generation: u64,
+    archive_sha256: String,
+    #[schema(value_type = Object)]
+    manifest: Value,
+    integrity: String,
+    created_at: String,
+    delete_after: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct ContributionRecordView {
+    id: String,
+    diff_artifact_id: String,
+    revision_digest: String,
+    baseline_digest: String,
+    checkpoint_digest: String,
+    diff_digest: String,
+    branch_name: String,
+    state: String,
+    expected_head: String,
+    base_tree_id: Option<String>,
+    tree_id: Option<String>,
+    commit_id: Option<String>,
+    resulting_head: Option<String>,
+    object_ids: Vec<String>,
+    #[schema(value_type = Object)]
+    author: Value,
+    #[schema(value_type = Object)]
+    committer: Value,
+    confirmation_snapshot_digest: String,
+    confirmed_at: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<ContributionRecord> for ContributionRecordView {
+    fn from(value: ContributionRecord) -> Self {
+        Self {
+            id: value.id.0,
+            diff_artifact_id: value.diff_artifact_id.0,
+            revision_digest: value.revision_digest,
+            baseline_digest: value.baseline_digest,
+            checkpoint_digest: value.checkpoint_digest,
+            diff_digest: value.diff_digest,
+            branch_name: value.branch_name,
+            state: enum_name(value.state),
+            expected_head: value.expected_head,
+            base_tree_id: value.base_tree_id,
+            tree_id: value.tree_id,
+            commit_id: value.commit_id,
+            resulting_head: value.resulting_head,
+            object_ids: value.object_ids,
+            author: json_value(value.author),
+            committer: json_value(value.committer),
+            confirmation_snapshot_digest: value.confirmation.snapshot_digest,
+            confirmed_at: value.confirmation.confirmed_at,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<WorkspaceCheckpoint> for WorkspaceCheckpointView {
+    fn from(value: WorkspaceCheckpoint) -> Self {
+        Self {
+            id: value.id.0,
+            version: value.version,
+            workspace_epoch: value.workspace_epoch,
+            session_id: value.session_id.0,
+            runtime_generation: value.runtime_generation,
+            archive_sha256: value.archive_sha256,
+            manifest: json_value(value.manifest),
+            integrity: enum_name(value.integrity),
+            created_at: value.created_at,
+            delete_after: value.delete_after,
+        }
+    }
+}
+
+impl From<WorkspaceRecord> for WorkspaceRecordView {
+    fn from(value: WorkspaceRecord) -> Self {
+        Self {
+            baseline: json_value(value.baseline),
+            baseline_archive_sha256: value.baseline_archive_sha256,
+            latest_checkpoint: value.latest_checkpoint.map(Into::into),
+            previous_checkpoint: value.previous_checkpoint.map(Into::into),
+            workspace_epoch: value.workspace_epoch,
+            retention_policy_id: value.retention_policy_id,
+            delete_after: value.delete_after,
+        }
+    }
 }
 
 impl DiffArtifactView {
@@ -640,13 +751,13 @@ impl From<Launch> for LaunchView {
             steps: value.steps.into_iter().map(Into::into).collect(),
             fork: value.fork.map(json_value),
             branch: value.branch.map(json_value),
-            workspace: value.workspace.map(json_value),
+            workspace: value.workspace.map(Into::into),
             session: value.session.map(json_value),
             reach: value.reach.map(json_value),
             delivery: value.delivery.map(json_value),
             contribution_checkpoint_version: value.contribution_checkpoint_version,
             diff,
-            contribution: value.contribution.map(json_value),
+            contribution: value.contribution.map(Into::into),
             pull_request: value.pull_request.map(json_value),
             created_at: value.created_at,
             updated_at: value.updated_at,
@@ -1455,6 +1566,54 @@ async fn review_launch_diff(
                 body.expected_revision,
                 Confirmation {
                     action: ConfirmationAction::ReviewDiff,
+                    subject: caller.subject.clone(),
+                    snapshot_digest: body.snapshot_digest,
+                    confirmed_at: timestamp.clone(),
+                    idempotency_key_hash: confirmation_hash,
+                },
+                timestamp,
+                correlation_id(&headers),
+            )
+            .await?;
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+    }
+    .await;
+    guard.finish(result).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/launches/{launch_id}/contributions/publish",
+    tag = "launches",
+    params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = ConfirmLaunchRequest,
+    responses((status = 202, description = "Explicit guarded branch publication accepted", body = LaunchView))
+)]
+async fn publish_launch_branch(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<ConfirmLaunchRequest>, BodyProblem>,
+) -> Response {
+    let operation = format!("trigger-launch-branch-publication:{launch_id}");
+    let (guard, body, confirmation_hash) =
+        match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
+            Ok(parts) => parts,
+            Err(response) => return response,
+        };
+    let result: Result<Response, RequestFailure> = async {
+        let body = body.map_err(RequestFailure::from)?;
+        let timestamp = now();
+        let launch = state
+            .triggers
+            .confirm_branch_publication(
+                &caller.subject,
+                &parse_launch_id(launch_id)?,
+                body.expected_revision,
+                Confirmation {
+                    action: ConfirmationAction::PublishBranch,
                     subject: caller.subject.clone(),
                     snapshot_digest: body.snapshot_digest,
                     confirmed_at: timestamp.clone(),

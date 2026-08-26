@@ -32,6 +32,11 @@ pub(crate) enum EffectExecution {
         safe_detail: String,
         external_resource_ids: BTreeMap<String, String>,
     },
+    /// A closed intermediate state was durably proven, but a later worker
+    /// lease must perform the next external boundary for the same intent.
+    Progressed {
+        result: LaunchEffectResult,
+    },
     RetryLater {
         failure: LaunchFailure,
         retry_at: String,
@@ -199,6 +204,16 @@ impl EffectWorker {
                     correlation_id,
                 )?;
                 EffectRunOutcome::Completed
+            }
+            EffectExecution::Progressed { result } => {
+                launch.observe_effect_progress(
+                    &lease,
+                    &claim,
+                    result,
+                    &settled_at,
+                    correlation_id,
+                )?;
+                EffectRunOutcome::Deferred
             }
             EffectExecution::RetryLater { failure, retry_at } => {
                 launch.fail_effect(&lease, &claim, failure, Some(retry_at), &settled_at)?;

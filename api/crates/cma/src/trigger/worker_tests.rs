@@ -354,6 +354,51 @@ async fn initial_prompt_progress_is_committed_before_the_worker_defers_or_fails(
     }
 }
 
+#[tokio::test]
+async fn a_closed_progress_phase_is_committed_and_released_for_reconciliation() {
+    let launch = prompt_pending_launch();
+    let store = Arc::new(TestStore::new(launch.clone()));
+    let service = Arc::new(TriggerService::new(
+        store.clone(),
+        store.clone(),
+        Arc::new(NeverAuthority),
+    ));
+    let executor = Arc::new(ClosedProgressExecutor);
+    let worker = test_worker(service, executor, "progress-worker", &[NOW, LATER]);
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, 0, "closed-progress")
+            .await
+            .unwrap(),
+        EffectRunOutcome::Deferred
+    );
+    let stored = store.current();
+    assert_eq!(
+        stored.delivery.as_ref().unwrap().state,
+        layer2_core::PromptDeliveryState::Queued
+    );
+    assert_eq!(stored.effects[0].state, layer2_core::EffectState::Claimed);
+    assert!(stored.lease.is_none());
+}
+
+struct ClosedProgressExecutor;
+
+#[async_trait]
+impl EffectExecutor for ClosedProgressExecutor {
+    async fn execute(&self, launch: &Launch, _claim: &EffectClaim) -> EffectExecution {
+        EffectExecution::Progressed {
+            result: LaunchEffectResult::InitialDispatch {
+                delivery: prompt_delivery(launch, layer2_core::PromptDeliveryState::Queued),
+            },
+        }
+    }
+
+    async fn reconcile(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        self.execute(launch, claim).await
+    }
+}
+
 struct PromptProgressExecutor {
     state: layer2_core::PromptDeliveryState,
 }
