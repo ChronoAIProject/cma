@@ -192,29 +192,25 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
                 tracing::warn!(session_id = %session, "replacement remains pending because this pass exhausted its operation allowance");
                 continue;
             }
-            if service.push_session_credential(&session, value).await {
-                match auth
-                    .confirm_reissue_with_budget(&session, &item_budget)
-                    .await
-                {
-                    Ok(true) => {
-                        tracing::info!(session_id = %session, "session credential replaced");
-                    }
-                    Ok(false) => {
-                        // Release may have won the race after delivery. Its
-                        // durable retirement owns both values in that case.
-                        tracing::warn!(session_id = %session, "delivered replacement was retired concurrently");
-                    }
-                    Err(error) => {
-                        tracing::error!(
-                            session_id = %session,
-                            error = %error,
-                            "could not confirm durable credential replacement"
-                        );
-                    }
+            match service
+                .push_session_credential_with(&session, &value, || {
+                    auth.confirm_reissue_delivery_with_budget(&session, &value, &item_budget)
+                })
+                .await
+            {
+                Ok(true) => {
+                    tracing::info!(session_id = %session, "session credential replaced");
                 }
-            } else {
-                tracing::warn!(session_id = %session, "replacement remains pending because nothing received it");
+                Ok(false) => {
+                    tracing::warn!(session_id = %session, "credential replacement did not complete delivery and durable promotion");
+                }
+                Err(error) => {
+                    tracing::error!(
+                        session_id = %session,
+                        error = %error,
+                        "replacement was delivered but durable promotion failed"
+                    );
+                }
             }
         }
     }
