@@ -204,7 +204,13 @@ impl LaunchCapability {
         self.upstream.validate_public_upstream()?;
         if self.fork.repository_id == 0
             || self.fork.owner_id == 0
-            || self.fork.fork_source_id != Some(self.upstream.repository_id)
+            || self.fork.fork_parent_id != Some(self.upstream.repository_id)
+            || self.fork.fork_source_id
+                != Some(
+                    self.upstream
+                        .fork_source_id
+                        .unwrap_or(self.upstream.repository_id),
+                )
         {
             return Err(TriggerValidationError::field(
                 "capability.fork",

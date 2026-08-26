@@ -108,6 +108,7 @@ impl KernelAdapter for DshAdapter {
         self.spec
             .deployment
             .refuse_undeliverable(&spec.environment)?;
+        self.spec.deployment.refuse_missing_policy_verifier(spec)?;
 
         // Refused rather than started empty: this kernel has no terminal plane,
         // so a sandbox brought up for a terminal session would be a pod nobody
@@ -175,6 +176,14 @@ impl KernelAdapter for DshAdapter {
         credential: &str,
     ) -> Result<(), AdapterError> {
         self.hosted.refresh_credential(handle, credential).await
+    }
+
+    async fn install_runtime_policy(
+        &self,
+        handle: &RuntimeHandle,
+        envelope: &str,
+    ) -> Result<crate::RuntimePolicyReceipt, AdapterError> {
+        self.hosted.install_runtime_policy(handle, envelope).await
     }
 
     async fn list_runtimes(&self) -> Result<Vec<RuntimeListing>, AdapterError> {

@@ -1488,10 +1488,12 @@ name = "layer4-runtime"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "futures-util",
  "libc",
  "portable-pty",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.10.9",

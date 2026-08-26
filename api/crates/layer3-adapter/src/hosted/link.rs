@@ -18,7 +18,10 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::{HostedKernel, SUPERVISOR_PORT};
 use crate::supervisor;
-use crate::{AdapterError, RuntimeHandle, TerminalChannel, TerminalInput, TerminalOutput};
+use crate::{
+    AdapterError, RuntimeHandle, RuntimePolicyReceipt, TerminalChannel, TerminalInput,
+    TerminalOutput,
+};
 
 /// How many output chunks may queue before the relay applies backpressure.
 ///
@@ -52,12 +55,31 @@ const CREDENTIAL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(
 #[cfg(test)]
 const CREDENTIAL_DEADLINE: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// A runtime policy install is another atomic in-memory control operation and
+/// receives the same bounded acknowledgement window as credential delivery.
+#[cfg(not(test))]
+const POLICY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(test)]
+const POLICY_DEADLINE: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// The tag a supervisor answers a plane switch with, matching the runtime's
 /// own constant. One word, agreed at both ends.
 pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
 
 /// The tag a supervisor answers a credential installation with.
 pub(crate) const CREDENTIAL_RESULT: &str = "credential_result";
+
+/// The tag a supervisor answers an opaque runtime-policy installation with.
+pub(crate) const RUNTIME_POLICY_RESULT: &str = "github_capability_result";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RuntimePolicyAnswer {
+    pub accepted: bool,
+    pub generation: Option<u64>,
+    pub fence: Option<u64>,
+    pub revoked: Option<bool>,
+    pub refusal: Option<String>,
+}
 
 /// Decode a process ending reported by the supervisor.
 ///
@@ -100,6 +122,34 @@ pub(crate) fn credential_answer(text: &str) -> Option<(String, bool)> {
         value.get("operation_id")?.as_str()?.to_string(),
         value.get("installed")?.as_bool()?,
     ))
+}
+
+/// Read a runtime-policy result without accepting partial success metadata.
+pub(crate) fn runtime_policy_answer(text: &str) -> Option<(String, RuntimePolicyAnswer)> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if value.get("t")?.as_str()? != RUNTIME_POLICY_RESULT {
+        return None;
+    }
+    let operation_id = value.get("operation_id")?.as_str()?.to_string();
+    let accepted = value.get("accepted")?.as_bool()?;
+    let answer = if accepted {
+        RuntimePolicyAnswer {
+            accepted,
+            generation: Some(value.get("generation")?.as_u64()?),
+            fence: Some(value.get("fence")?.as_u64()?),
+            revoked: Some(value.get("revoked")?.as_bool()?),
+            refusal: None,
+        }
+    } else {
+        RuntimePolicyAnswer {
+            accepted,
+            generation: None,
+            fence: None,
+            revoked: None,
+            refusal: Some(value.get("refusal")?.as_str()?.to_string()),
+        }
+    };
+    Some((operation_id, answer))
 }
 
 /// A socket to a runtime's link.
@@ -242,6 +292,10 @@ impl HostedKernel {
                             lifecycle_for_reader
                                 .settle_credential(&link_for_cleanup, &operation_id, installed)
                                 .await;
+                        } else if let Some((operation_id, answer)) = runtime_policy_answer(&text) {
+                            lifecycle_for_reader
+                                .settle_runtime_policy(&link_for_cleanup, &operation_id, answer)
+                                .await;
                         } else if let Some(accepted) = switch_answer(&text) {
                             lifecycle_for_reader
                                 .settle(&link_for_cleanup, accepted)
@@ -276,11 +330,20 @@ impl HostedKernel {
                     TerminalInput::Credential { operation_id, .. } => Some(operation_id.clone()),
                     _ => None,
                 };
+                let policy_operation = match &input {
+                    TerminalInput::RuntimePolicy { operation_id, .. } => Some(operation_id.clone()),
+                    _ => None,
+                };
                 let message = Self::encode(input, framed);
                 if let Err(e) = sink.send(message).await {
                     tracing::warn!(%sandbox, error = %e, "sandbox terminal write failed");
                     if let Some(operation_id) = credential_operation {
                         lifecycle_for_writer.fail_credential(&operation_id).await;
+                    }
+                    if let Some(operation_id) = policy_operation {
+                        lifecycle_for_writer
+                            .fail_runtime_policy(&operation_id)
+                            .await;
                     }
                     break;
                 }
@@ -366,6 +429,81 @@ impl HostedKernel {
                     .await;
                 Err(AdapterError::Unavailable(format!(
                     "runtime {} did not acknowledge the credential",
+                    handle.0
+                )))
+            }
+        }
+    }
+
+    /// Install one signed policy/tombstone over the current control link and
+    /// return only after this exact runtime generation acknowledges it.
+    pub(crate) async fn install_runtime_policy(
+        &self,
+        handle: &RuntimeHandle,
+        envelope: &str,
+    ) -> Result<RuntimePolicyReceipt, AdapterError> {
+        let operation_id = uuid::Uuid::new_v4().simple().to_string();
+        let link_and_answer = {
+            let links = self.links.lock().await;
+            match links.get(&handle.0) {
+                Some(link) => {
+                    let link = link.clone();
+                    let answer = self
+                        .runtime_policy_waiters
+                        .expect(&handle.0, &operation_id, &link)
+                        .await;
+                    Some((link, answer))
+                }
+                None => None,
+            }
+        };
+        let Some((link, answer)) = link_and_answer else {
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {} has no open link to carry policy data",
+                handle.0
+            )));
+        };
+        if link
+            .send(TerminalInput::RuntimePolicy {
+                operation_id: operation_id.clone(),
+                envelope: envelope.to_string(),
+            })
+            .await
+            .is_err()
+        {
+            self.link_lifecycle(&handle.0).forget(&link).await;
+            return Err(AdapterError::Unavailable(format!(
+                "runtime {}'s link closed before policy data reached it",
+                handle.0
+            )));
+        }
+        match tokio::time::timeout(POLICY_DEADLINE, answer).await {
+            Ok(Ok(answer)) if answer.accepted => Ok(RuntimePolicyReceipt {
+                generation: answer
+                    .generation
+                    .expect("an accepted policy answer carries generation"),
+                fence: answer
+                    .fence
+                    .expect("an accepted policy answer carries fence"),
+                revoked: answer
+                    .revoked
+                    .expect("an accepted policy answer carries revocation state"),
+            }),
+            Ok(Ok(answer)) => Err(AdapterError::Rejected(format!(
+                "runtime {} refused policy data: {}",
+                handle.0,
+                answer.refusal.as_deref().unwrap_or("unspecified_refusal")
+            ))),
+            Ok(Err(_)) => Err(AdapterError::Unavailable(format!(
+                "runtime {}'s link ended before it acknowledged policy data",
+                handle.0
+            ))),
+            Err(_) => {
+                self.runtime_policy_waiters
+                    .forget_operation(&handle.0, &operation_id, &link)
+                    .await;
+                Err(AdapterError::Unavailable(format!(
+                    "runtime {} did not acknowledge policy data",
                     handle.0
                 )))
             }
@@ -514,6 +652,17 @@ impl HostedKernel {
                     "t": "credential",
                     "operation_id": operation_id,
                     "value": value,
+                })
+                .to_string(),
+            ),
+            TerminalInput::RuntimePolicy {
+                operation_id,
+                envelope,
+            } => Message::Text(
+                serde_json::json!({
+                    "t": "github_capability",
+                    "operation_id": operation_id,
+                    "envelope": envelope,
                 })
                 .to_string(),
             ),

@@ -10,6 +10,7 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
         workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment,
@@ -194,4 +195,40 @@ fn what_a_session_reaches_carries_names_and_never_a_credential() {
         env.get("CHRONO_SESSION_REACHES").map(String::as_str),
         Some("api-github")
     );
+}
+
+#[test]
+fn trigger_policy_environment_contains_only_identity_requirement_and_public_keys() {
+    let mut spec = spec_with(Default::default());
+    spec.session_id = "sesn_trigger".into();
+    spec.runtime_policy_required = true;
+    let deployment = Deployment {
+        runtime_policy_verification_keys: r#"{"key-current":"public-key-material"}"#.into(),
+        ..deployed()
+    };
+
+    let env = deployment.base_environment(&spec);
+
+    assert_eq!(env["CHRONO_SESSION_ID"], "sesn_trigger");
+    assert_eq!(env["CHRONO_GITHUB_CAPABILITY_REQUIRED"], "true");
+    assert_eq!(
+        env["CHRONO_GITHUB_CAPABILITY_VERIFY_KEYS"],
+        r#"{"key-current":"public-key-material"}"#
+    );
+    assert!(env.keys().all(|name| !name.contains("SIGNING_KEY")));
+}
+
+#[test]
+fn a_policy_required_session_is_refused_before_provision_without_a_verifier() {
+    let mut spec = spec_with(Default::default());
+    spec.runtime_policy_required = true;
+
+    let error = deployed()
+        .refuse_missing_policy_verifier(&spec)
+        .expect_err("a Trigger runtime must fail closed without public verification keys");
+
+    assert!(matches!(error, AdapterError::Unsupported(_)));
+    assert!(Deployment::default()
+        .refuse_missing_policy_verifier(&spec_with(Default::default()))
+        .is_ok());
 }
