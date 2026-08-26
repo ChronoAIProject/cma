@@ -1472,6 +1472,13 @@ async fn a_rotation_refused_for_good_still_ends_the_session() {
     let created = old.create_session(&alice, spec()).await.expect("created");
     let ready = await_settled(&old, &alice, &created.id).await;
     let before_attempt = ready.last_seq;
+    let old_runtime = store
+        .get(&created.id)
+        .await
+        .expect("the old session is readable")
+        .expect("the old session is present")
+        .runtime_id
+        .expect("the old session still names its runtime");
     drop(old);
 
     // The same kernel, rebuilt without the ability this session was granted.
@@ -1479,6 +1486,11 @@ async fn a_rotation_refused_for_good_still_ends_the_session() {
         capabilities: layer3_adapter::KernelCapabilities::default(),
         ..FakeAdapter::default()
     });
+    lesser
+        .running
+        .lock()
+        .await
+        .insert(old_runtime, Some(created.id.0.clone()));
     let new = service_on_version(Arc::clone(&store), Arc::clone(&lesser), "runtime:2");
     new.reconcile().await;
     let settled = await_settled(&new, &alice, &created.id).await;
