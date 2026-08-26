@@ -798,6 +798,27 @@ pub trait SessionWorkspaceSource: Send + Sync {
         owner: &SubjectId,
         origin: &TriggerSessionOrigin,
     ) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Resolve the latest Launch-authorized recovery point for a Trigger
+    /// session. Sources that only know the immutable baseline retain the old
+    /// behavior; CMA's Launch-aware source overrides this to select the latest
+    /// complete checkpoint after its aggregate commit.
+    async fn resolve_workspace(
+        &self,
+        owner: &SubjectId,
+        origin: &TriggerSessionOrigin,
+    ) -> Result<Option<layer3_adapter::WorkspacePackage>, StoreError> {
+        Ok(self.load_workspace(owner, origin).await?.map(|archive| {
+            layer3_adapter::WorkspacePackage {
+                epoch: origin.workspace_epoch,
+                source_revision: origin.source_revision.clone(),
+                baseline_manifest_digest: origin.manifest_digest.clone(),
+                manifest_digest: origin.manifest_digest.clone(),
+                archive_sha256: origin.archive_sha256.clone(),
+                archive,
+            }
+        }))
+    }
 }
 
 #[cfg(test)]

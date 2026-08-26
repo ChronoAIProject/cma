@@ -558,6 +558,16 @@ impl Launch {
             ) => self.delivery = Some(delivery),
             (LaunchEffectKind::Checkpoint, LaunchEffectResult::Checkpoint { checkpoint }) => {
                 checkpoint.validate_complete(&self.id)?;
+                let (session_id, minimum_runtime_generation) = self
+                    .session
+                    .as_ref()
+                    .map(|session| (session.session_id.clone(), session.runtime_generation))
+                    .ok_or_else(|| {
+                        TriggerValidationError::field(
+                            "checkpoint.session_id",
+                            "cannot attach a checkpoint before the deterministic session",
+                        )
+                    })?;
                 let workspace = self.workspace.as_mut().ok_or_else(|| {
                     TriggerValidationError::field(
                         "workspace",
@@ -570,8 +580,33 @@ impl Launch {
                         "does not match the current Launch workspace epoch",
                     ));
                 }
+                let expected_version = match workspace.latest_checkpoint.as_ref() {
+                    None => 1,
+                    Some(latest) => latest.version.checked_add(1).ok_or_else(|| {
+                        TriggerValidationError::field(
+                            "checkpoint.version",
+                            "cannot advance beyond the retained checkpoint version",
+                        )
+                    })?,
+                };
+                if checkpoint.version != expected_version
+                    || checkpoint.session_id != session_id
+                    || checkpoint.runtime_generation < minimum_runtime_generation
+                    || checkpoint.manifest.source_revision != self.source_sha
+                    || checkpoint.delete_after.as_deref() != Some(workspace.delete_after.as_str())
+                {
+                    return Err(TriggerValidationError::field(
+                        "checkpoint",
+                        "does not match the Launch session, source, retention, and next version",
+                    ));
+                }
+                let runtime_generation = checkpoint.runtime_generation;
                 workspace.previous_checkpoint = workspace.latest_checkpoint.take();
                 workspace.latest_checkpoint = Some(checkpoint);
+                self.session
+                    .as_mut()
+                    .expect("validated above")
+                    .runtime_generation = runtime_generation;
             }
             (LaunchEffectKind::Diff, LaunchEffectResult::Diff { diff }) => self.diff = Some(diff),
             (
@@ -843,6 +878,24 @@ impl Launch {
                         )
                     })?;
                 checkpoint.validate_complete(&self.id)?;
+                let workspace = self.workspace.as_ref().expect("selected above");
+                let session = self.session.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "checkpoint.session_id",
+                        "the complete checkpoint has no deterministic session",
+                    )
+                })?;
+                if checkpoint.workspace_epoch != workspace.workspace_epoch
+                    || checkpoint.session_id != session.session_id
+                    || checkpoint.runtime_generation != session.runtime_generation
+                    || checkpoint.manifest.source_revision != self.source_sha
+                    || checkpoint.delete_after.as_deref() != Some(workspace.delete_after.as_str())
+                {
+                    return Err(TriggerValidationError::field(
+                        "checkpoint",
+                        "does not match the current Launch workspace and runtime",
+                    ));
+                }
             }
             LaunchEffectKind::Diff => {
                 if self.diff.is_none() {

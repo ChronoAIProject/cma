@@ -19,6 +19,7 @@ use crate::ConversationUpdate;
 use crate::{
     AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, ResourceSample,
     RuntimeHandle, RuntimeListing, RuntimeMode, RuntimeOptions, RuntimeSpec, TerminalChannel,
+    WorkspaceCheckpointPackage, WorkspaceCheckpointRequest,
 };
 use tokio::sync::mpsc;
 
@@ -95,6 +96,14 @@ impl KernelAdapter for CodexAdapter {
 
     async fn snapshot(&self, handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
         self.hosted.snapshot(handle).await
+    }
+
+    async fn checkpoint_workspace(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceCheckpointRequest,
+    ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+        self.hosted.checkpoint_workspace(handle, request).await
     }
 
     async fn attach_terminal(

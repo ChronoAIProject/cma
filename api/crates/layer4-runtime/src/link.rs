@@ -390,6 +390,7 @@ async fn relay_terminal(
                     } else {
                         bytes.to_vec()
                     };
+                    let _admission = state_in.startup_gate.read().await;
                     if let Err(e) = session_in.write_input(&typed) {
                         tracing::warn!(runtime = %runtime, error = %e, "pty write failed");
                         return TerminalInputEnd::PtyWriteFailed;

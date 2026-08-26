@@ -7,13 +7,15 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use layer2_core::{
     rfc3339_at, seconds_from_rfc3339, AuthorityProvenance, BaselineObjectStore, BranchRecord,
-    CapabilityOperation, CapabilityRevocationState, ConnectionSnapshot, CoreError, DelegationState,
-    EffectClaim, FailureClass, Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind,
-    LaunchEffectResult, LaunchFailure, RepositoryIdentity, Session, SessionId, SessionLink,
-    SessionService, SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier,
-    TriggerServiceError, TriggerStoreError, WorkspaceRecord, CAPABILITY_MAX_LIFETIME_SECONDS,
-    CAPABILITY_POLICY_VERSION,
+    CapabilityOperation, CapabilityRevocationState, CheckpointId, CheckpointIntegrity,
+    CheckpointObjectStore, ConnectionSnapshot, CoreError, DelegationState, EffectClaim,
+    FailureClass, Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind, LaunchEffectResult,
+    LaunchFailure, RepositoryIdentity, Session, SessionId, SessionLink, SessionService,
+    SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier, TriggerServiceError,
+    TriggerStoreError, WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest,
+    WorkspaceRecord, CAPABILITY_MAX_LIFETIME_SECONDS, CAPABILITY_POLICY_VERSION,
 };
+use sha2::{Digest as _, Sha256};
 
 use super::capability_signing::{
     CapabilitySigner, RuntimePolicyTombstone, POLICY_AUDIENCE, POLICY_VERSION,
@@ -110,6 +112,17 @@ trait TriggerSessionEffectPort: Send + Sync {
         launch: &Launch,
         claim: &EffectClaim,
     ) -> Result<layer2_core::PromptDelivery, CoreError>;
+
+    async fn checkpoint_workspace(
+        &self,
+        launch: &Launch,
+        request: &layer3_adapter::WorkspaceCheckpointRequest,
+    ) -> Result<(layer3_adapter::WorkspaceCheckpointPackage, u64), CoreError> {
+        let _ = (launch, request);
+        Err(CoreError::CapabilityUnsupported(
+            "workspace_checkpoint_v2".into(),
+        ))
+    }
 }
 
 struct SessionServiceEffectPort(Arc<SessionService>);
@@ -180,6 +193,23 @@ impl TriggerSessionEffectPort for SessionServiceEffectPort {
         claim: &EffectClaim,
     ) -> Result<layer2_core::PromptDelivery, CoreError> {
         self.0.dispatch_trigger_prompt(launch, claim).await
+    }
+
+    async fn checkpoint_workspace(
+        &self,
+        launch: &Launch,
+        request: &layer3_adapter::WorkspaceCheckpointRequest,
+    ) -> Result<(layer3_adapter::WorkspaceCheckpointPackage, u64), CoreError> {
+        let session = launch.session.as_ref().ok_or(CoreError::InvalidState)?;
+        self.0
+            .checkpoint_trigger_workspace(
+                &session.session_id,
+                &launch.id,
+                &launch.owner,
+                session.runtime_generation,
+                request,
+            )
+            .await
     }
 }
 
@@ -339,6 +369,7 @@ fn same_connection_authority(expected: &ConnectionSnapshot, current: &Connection
 pub(crate) struct GithubEffectExecutor {
     github: Arc<dyn GithubEffectPort>,
     workspace_store: Option<Arc<dyn BaselineObjectStore>>,
+    checkpoint_store: Option<Arc<dyn CheckpointObjectStore>>,
     sessions: Option<Arc<dyn TriggerSessionEffectPort>>,
     capability_signer: Option<Arc<CapabilitySigner>>,
     fork_readiness_timeout: Duration,
@@ -366,6 +397,7 @@ impl GithubEffectExecutor {
         Self {
             github,
             workspace_store: None,
+            checkpoint_store: None,
             sessions: None,
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
@@ -375,12 +407,14 @@ impl GithubEffectExecutor {
     pub(crate) fn with_runtime(
         github: Arc<GithubBroker>,
         workspace_store: Arc<dyn BaselineObjectStore>,
+        checkpoint_store: Arc<dyn CheckpointObjectStore>,
         sessions: Arc<SessionService>,
         capability_signer: Arc<CapabilitySigner>,
     ) -> Self {
         Self {
             github,
             workspace_store: Some(workspace_store),
+            checkpoint_store: Some(checkpoint_store),
             sessions: Some(Arc::new(SessionServiceEffectPort(sessions))),
             capability_signer: Some(capability_signer),
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
@@ -392,6 +426,7 @@ impl GithubEffectExecutor {
         Self {
             github,
             workspace_store: None,
+            checkpoint_store: None,
             sessions: None,
             capability_signer: None,
             fork_readiness_timeout,
@@ -406,6 +441,7 @@ impl GithubEffectExecutor {
         Self {
             github,
             workspace_store: None,
+            checkpoint_store: None,
             sessions: Some(sessions),
             capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
@@ -421,8 +457,25 @@ impl GithubEffectExecutor {
         Self {
             github,
             workspace_store: None,
+            checkpoint_store: None,
             sessions: Some(sessions),
             capability_signer: Some(capability_signer),
+            fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_checkpoint_ports(
+        github: Arc<dyn GithubEffectPort>,
+        sessions: Arc<dyn TriggerSessionEffectPort>,
+        checkpoint_store: Arc<dyn CheckpointObjectStore>,
+    ) -> Self {
+        Self {
+            github,
+            workspace_store: None,
+            checkpoint_store: Some(checkpoint_store),
+            sessions: Some(sessions),
+            capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         }
     }
@@ -1204,6 +1257,169 @@ impl GithubEffectExecutor {
             },
         }
     }
+
+    async fn run_checkpoint(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let Some(sessions) = self.sessions.as_ref() else {
+            return unsupported_effect(claim);
+        };
+        let Some(store) = self.checkpoint_store.as_ref() else {
+            return unsupported_effect(claim);
+        };
+        let Some(workspace) = launch.workspace.as_ref() else {
+            return checkpoint_failure(
+                claim,
+                FailureClass::TerminalSecurity,
+                "checkpoint_workspace_missing",
+                "The Launch has no imported workspace authority.",
+                "Contact support; CMA will not infer checkpoint ownership.",
+            );
+        };
+        let Some(session) = launch.session.as_ref() else {
+            return checkpoint_failure(
+                claim,
+                FailureClass::RecoveryRequired,
+                "checkpoint_session_missing",
+                "The Launch has no runtime generation to checkpoint.",
+                "Recover the retained Trigger session before contributing.",
+            );
+        };
+        let version = match workspace.latest_checkpoint.as_ref() {
+            None => 1,
+            Some(checkpoint) => match checkpoint.version.checked_add(1) {
+                Some(version) => version,
+                None => {
+                    return checkpoint_failure(
+                        claim,
+                        FailureClass::RecoveryRequired,
+                        "checkpoint_version_exhausted",
+                        "The workspace checkpoint version cannot advance safely.",
+                        "Contact support; the previous complete checkpoint remains retained.",
+                    )
+                }
+            },
+        };
+        let request = layer3_adapter::WorkspaceCheckpointRequest {
+            epoch: workspace.workspace_epoch,
+            version,
+            source_revision: launch.source_sha.clone(),
+            baseline_manifest_digest: workspace.baseline.digest.clone(),
+        };
+        let (captured, runtime_generation) =
+            match sessions.checkpoint_workspace(launch, &request).await {
+                Ok(captured) => captured,
+                Err(error) => return checkpoint_runtime_failure(error, claim),
+            };
+        let entries = captured
+            .entries
+            .into_iter()
+            .map(|entry| WorkspaceEntry {
+                path: entry.path,
+                kind: match entry.kind {
+                    layer3_adapter::WorkspaceEntryKind::Regular => WorkspaceEntryKind::Regular,
+                    layer3_adapter::WorkspaceEntryKind::Symlink => WorkspaceEntryKind::Symlink,
+                },
+                mode: entry.mode,
+                size: entry.size,
+                content_sha256: entry.content_sha256,
+                provider_object_id: entry.provider_object_id,
+                symlink_target: entry.symlink_target,
+            })
+            .collect::<Vec<_>>();
+        let manifest = match WorkspaceManifest::seal(captured.source_revision.clone(), entries) {
+            Ok(manifest)
+                if manifest.digest == captured.manifest_digest
+                    && manifest.total_bytes == captured.total_bytes =>
+            {
+                manifest
+            }
+            _ => {
+                return checkpoint_failure(
+                    claim,
+                    FailureClass::RecoveryRequired,
+                    "checkpoint_manifest_mismatch",
+                    "The captured workspace manifest did not match the sealed archive.",
+                    "The previous complete checkpoint remains authoritative; inspect the runtime before recovery.",
+                )
+            }
+        };
+        let created_at = rfc3339_at(SystemTime::now());
+        let mut checkpoint = WorkspaceCheckpoint {
+            id: deterministic_checkpoint_id(&claim.intent_key, version),
+            launch_id: launch.id.clone(),
+            version,
+            workspace_epoch: workspace.workspace_epoch,
+            session_id: session.session_id.clone(),
+            runtime_generation,
+            object_reference: String::new(),
+            archive_sha256: captured.archive_sha256,
+            manifest,
+            integrity: CheckpointIntegrity::Complete,
+            created_at: created_at.clone(),
+            delete_after: Some(workspace.delete_after.clone()),
+        };
+        let reference = match store
+            .put_checkpoint(&launch.owner, &checkpoint, &captured.archive)
+            .await
+        {
+            Ok(reference) => reference,
+            Err(TriggerStoreError::Unavailable(_)) => {
+                let retry_at = rfc3339_at(SystemTime::now() + retry_delay(claim, None));
+                return EffectExecution::RetryLater {
+                    failure: failure(
+                        FailureClass::RetryableTransient,
+                        "checkpoint_storage_unavailable",
+                        "The sealed checkpoint could not yet be proven in durable storage.",
+                        "CMA will request the same checkpoint version and destination object again.",
+                        claim,
+                        Some(retry_at.clone()),
+                    ),
+                    retry_at,
+                };
+            }
+            Err(_) => {
+                return checkpoint_failure(
+                    claim,
+                    FailureClass::RecoveryRequired,
+                    "checkpoint_storage_integrity_failed",
+                    "Durable storage did not prove the complete checkpoint object.",
+                    "The previous complete checkpoint remains authoritative; inspect storage evidence before recovery.",
+                )
+            }
+        };
+        checkpoint.object_reference = reference.clone();
+        if checkpoint.validate_complete(&launch.id).is_err() {
+            return checkpoint_failure(
+                claim,
+                FailureClass::RecoveryRequired,
+                "checkpoint_commit_invalid",
+                "The destination-proven checkpoint record failed its final validation.",
+                "The previous complete checkpoint remains authoritative; contact support.",
+            );
+        }
+        let mut resources = retained_resources(launch, claim);
+        resources.insert("checkpoint_id".into(), checkpoint.id.0.clone());
+        resources.insert("checkpoint_version".into(), version.to_string());
+        resources.insert("checkpoint_object".into(), reference);
+        resources.insert(
+            "checkpoint_manifest_digest".into(),
+            checkpoint.manifest.digest.clone(),
+        );
+        resources.insert(
+            "checkpoint_archive_sha256".into(),
+            checkpoint.archive_sha256.clone(),
+        );
+        resources.insert(
+            "checkpoint_quiesced_writers".into(),
+            captured.quiesced_writers.to_string(),
+        );
+        EffectExecution::Completed {
+            result: LaunchEffectResult::Checkpoint { checkpoint },
+            safe_detail:
+                "The complete workspace was quiesced, sealed, and verified in durable storage."
+                    .into(),
+            external_resource_ids: resources,
+        }
+    }
 }
 
 #[async_trait]
@@ -1218,6 +1434,7 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Session => self.run_session(launch, claim).await,
             LaunchEffectKind::Reach => self.run_reach(launch, claim).await,
             LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
+            LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -1234,9 +1451,62 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Session => self.run_session(launch, claim).await,
             LaunchEffectKind::Reach => self.run_reach(launch, claim).await,
             LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
+            LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
+}
+
+fn deterministic_checkpoint_id(intent_key: &str, version: u64) -> CheckpointId {
+    let digest = Sha256::digest(format!("cma-checkpoint-v1\0{intent_key}\0{version}").as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    // RFC 9562 name-based shape over CMA's SHA-256-derived namespace.
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    CheckpointId(uuid::Uuid::from_bytes(bytes).to_string())
+}
+
+fn checkpoint_failure(
+    claim: &EffectClaim,
+    class: FailureClass,
+    code: &'static str,
+    detail: &'static str,
+    remediation: &'static str,
+) -> EffectExecution {
+    EffectExecution::Failed {
+        failure: failure(class, code, detail, remediation, claim, None),
+    }
+}
+
+fn checkpoint_runtime_failure(error: CoreError, claim: &EffectClaim) -> EffectExecution {
+    let (class, code, detail, remediation) = match error {
+        CoreError::CapabilityUnsupported(_) | CoreError::SizeOutOfBounds(_) => (
+            FailureClass::TerminalValidation,
+            "checkpoint_runtime_unsupported",
+            "The current runtime image cannot prove coherent workspace checkpoints.",
+            "Move the session to an eligible runtime image before contributing.",
+        ),
+        CoreError::RuntimeUnavailable(_) => (
+            FailureClass::RecoveryRequired,
+            "checkpoint_runtime_lost",
+            "The runtime disappeared before checkpoint quiescence and capture were proven.",
+            "Recover from the previous complete checkpoint; CMA will not treat an ambiguous capture as current.",
+        ),
+        CoreError::RuntimeRefused(_) => (
+            FailureClass::RecoveryRequired,
+            "checkpoint_quiescence_unproven",
+            "The runtime could not prove writer quiescence, sealing, and resume.",
+            "Keep the previous complete checkpoint and inspect the still-retained runtime before recovery.",
+        ),
+        _ => (
+            FailureClass::TerminalSecurity,
+            "checkpoint_authority_mismatch",
+            "The runtime checkpoint request no longer matches the Launch authority.",
+            "Contact support; CMA will not capture or mount a workspace under mismatched authority.",
+        ),
+    };
+    checkpoint_failure(claim, class, code, detail, remediation)
 }
 
 fn capability_claim(launch: &Launch, fence: u64) -> EffectClaim {
@@ -1777,7 +2047,7 @@ mod tests {
     use base64::Engine as _;
     use layer2_core::{
         BranchRecord, EffectClaimMode, ForkRecord, LaunchState, RepositoryIdentity,
-        RepositoryVisibility,
+        RepositoryVisibility, SubjectId,
     };
     use ring::rand::SystemRandom;
     use ring::signature::Ed25519KeyPair;
@@ -1804,10 +2074,14 @@ mod tests {
     struct FakeSessions {
         answers: Mutex<VecDeque<SessionAnswer>>,
         prompt_answers: Mutex<VecDeque<Result<layer2_core::PromptDelivery, CoreError>>>,
+        checkpoint_answers:
+            Mutex<VecDeque<Result<(layer3_adapter::WorkspaceCheckpointPackage, u64), CoreError>>>,
+        checkpoint_requests: Mutex<Vec<layer3_adapter::WorkspaceCheckpointRequest>>,
         policy_receipt: Mutex<Option<layer3_adapter::RuntimePolicyReceipt>>,
         installed_policies: Mutex<Vec<LaunchCapability>>,
         calls: AtomicUsize,
         prompt_calls: AtomicUsize,
+        checkpoint_calls: AtomicUsize,
     }
 
     impl FakeSessions {
@@ -1815,10 +2089,13 @@ mod tests {
             Self {
                 answers: Mutex::new(answers.into_iter().collect()),
                 prompt_answers: Mutex::new(VecDeque::new()),
+                checkpoint_answers: Mutex::new(VecDeque::new()),
+                checkpoint_requests: Mutex::new(Vec::new()),
                 policy_receipt: Mutex::new(None),
                 installed_policies: Mutex::new(Vec::new()),
                 calls: AtomicUsize::new(0),
                 prompt_calls: AtomicUsize::new(0),
+                checkpoint_calls: AtomicUsize::new(0),
             }
         }
 
@@ -1828,10 +2105,13 @@ mod tests {
             Self {
                 answers: Mutex::new(VecDeque::new()),
                 prompt_answers: Mutex::new(answers.into_iter().collect()),
+                checkpoint_answers: Mutex::new(VecDeque::new()),
+                checkpoint_requests: Mutex::new(Vec::new()),
                 policy_receipt: Mutex::new(None),
                 installed_policies: Mutex::new(Vec::new()),
                 calls: AtomicUsize::new(0),
                 prompt_calls: AtomicUsize::new(0),
+                checkpoint_calls: AtomicUsize::new(0),
             }
         }
 
@@ -1839,10 +2119,31 @@ mod tests {
             Self {
                 answers: Mutex::new(VecDeque::new()),
                 prompt_answers: Mutex::new(VecDeque::new()),
+                checkpoint_answers: Mutex::new(VecDeque::new()),
+                checkpoint_requests: Mutex::new(Vec::new()),
                 policy_receipt: Mutex::new(Some(receipt)),
                 installed_policies: Mutex::new(Vec::new()),
                 calls: AtomicUsize::new(0),
                 prompt_calls: AtomicUsize::new(0),
+                checkpoint_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn with_checkpoint_answers(
+            answers: impl IntoIterator<
+                Item = Result<(layer3_adapter::WorkspaceCheckpointPackage, u64), CoreError>,
+            >,
+        ) -> Self {
+            Self {
+                answers: Mutex::new(VecDeque::new()),
+                prompt_answers: Mutex::new(VecDeque::new()),
+                checkpoint_answers: Mutex::new(answers.into_iter().collect()),
+                checkpoint_requests: Mutex::new(Vec::new()),
+                policy_receipt: Mutex::new(None),
+                installed_policies: Mutex::new(Vec::new()),
+                calls: AtomicUsize::new(0),
+                prompt_calls: AtomicUsize::new(0),
+                checkpoint_calls: AtomicUsize::new(0),
             }
         }
     }
@@ -1934,6 +2235,73 @@ mod tests {
         ) -> Result<layer2_core::PromptDelivery, CoreError> {
             self.prompt_calls.fetch_add(1, Ordering::SeqCst);
             self.prompt_answers.lock().unwrap().pop_front().unwrap()
+        }
+
+        async fn checkpoint_workspace(
+            &self,
+            _launch: &Launch,
+            request: &layer3_adapter::WorkspaceCheckpointRequest,
+        ) -> Result<(layer3_adapter::WorkspaceCheckpointPackage, u64), CoreError> {
+            self.checkpoint_calls.fetch_add(1, Ordering::SeqCst);
+            self.checkpoint_requests
+                .lock()
+                .unwrap()
+                .push(request.clone());
+            self.checkpoint_answers
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a checkpoint answer was configured")
+        }
+    }
+
+    struct FakeCheckpointStore {
+        answers: Mutex<VecDeque<Result<String, TriggerStoreError>>>,
+        writes: Mutex<Vec<(SubjectId, WorkspaceCheckpoint, Vec<u8>)>>,
+    }
+
+    impl FakeCheckpointStore {
+        fn new(answers: impl IntoIterator<Item = Result<String, TriggerStoreError>>) -> Self {
+            Self {
+                answers: Mutex::new(answers.into_iter().collect()),
+                writes: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CheckpointObjectStore for FakeCheckpointStore {
+        async fn put_checkpoint(
+            &self,
+            owner: &SubjectId,
+            checkpoint: &WorkspaceCheckpoint,
+            archive: &[u8],
+        ) -> Result<String, TriggerStoreError> {
+            self.writes
+                .lock()
+                .unwrap()
+                .push((owner.clone(), checkpoint.clone(), archive.to_vec()));
+            self.answers
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a checkpoint storage answer was configured")
+        }
+
+        async fn get_checkpoint(
+            &self,
+            _owner: &SubjectId,
+            _checkpoint: &WorkspaceCheckpoint,
+        ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+            Ok(None)
+        }
+
+        async fn delete_checkpoint(
+            &self,
+            _owner: &SubjectId,
+            _checkpoint: &WorkspaceCheckpoint,
+        ) -> Result<(), TriggerStoreError> {
+            Ok(())
         }
     }
 
@@ -2447,6 +2815,178 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn checkpoint_completion_requires_runtime_manifest_and_destination_proof() {
+        let launch = checkpoint_launch();
+        let package = checkpoint_package(&launch);
+        let sessions = Arc::new(FakeSessions::with_checkpoint_answers([Ok((
+            package.clone(),
+            2,
+        ))]));
+        let store = Arc::new(FakeCheckpointStore::new([Ok(
+            "trigger-test/checkpoint-v1.pack".into(),
+        )]));
+        let executor = GithubEffectExecutor::with_checkpoint_ports(
+            Arc::new(FakeGithub::new([])),
+            sessions.clone(),
+            store.clone(),
+        );
+
+        let result = executor
+            .execute(
+                &launch,
+                &claim_for(LaunchEffectKind::Checkpoint, EffectClaimMode::Execute),
+            )
+            .await;
+        let EffectExecution::Completed {
+            result: LaunchEffectResult::Checkpoint { checkpoint },
+            ..
+        } = result
+        else {
+            panic!("a destination-proven checkpoint should complete");
+        };
+        assert_eq!(checkpoint.version, 1);
+        assert_eq!(checkpoint.workspace_epoch, 1);
+        assert_eq!(checkpoint.runtime_generation, 2);
+        assert_eq!(
+            checkpoint.object_reference,
+            "trigger-test/checkpoint-v1.pack"
+        );
+        assert_eq!(checkpoint.manifest.digest, package.manifest_digest);
+        assert_eq!(checkpoint.archive_sha256, package.archive_sha256);
+        assert_eq!(sessions.checkpoint_calls.load(Ordering::SeqCst), 1);
+        let requests = sessions.checkpoint_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].epoch, 1);
+        assert_eq!(
+            requests[0].baseline_manifest_digest,
+            launch.workspace.as_ref().unwrap().baseline.digest
+        );
+        drop(requests);
+        let writes = store.writes.lock().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, launch.owner);
+        assert_eq!(writes[0].2, package.archive);
+        assert!(writes[0].1.object_reference.is_empty());
+    }
+
+    #[tokio::test]
+    async fn checkpoint_storage_retry_reuses_the_same_runtime_version_and_object_identity() {
+        let launch = checkpoint_launch();
+        let package = checkpoint_package(&launch);
+        let sessions = Arc::new(FakeSessions::with_checkpoint_answers([
+            Ok((package.clone(), 1)),
+            Ok((package.clone(), 1)),
+        ]));
+        let store = Arc::new(FakeCheckpointStore::new([
+            Err(TriggerStoreError::Unavailable("storage timeout".into())),
+            Ok("trigger-test/checkpoint-v1.pack".into()),
+        ]));
+        let executor = GithubEffectExecutor::with_checkpoint_ports(
+            Arc::new(FakeGithub::new([])),
+            sessions.clone(),
+            store.clone(),
+        );
+        let claim = claim_for(LaunchEffectKind::Checkpoint, EffectClaimMode::Execute);
+
+        assert!(matches!(
+            executor.execute(&launch, &claim).await,
+            EffectExecution::RetryLater {
+                failure: LaunchFailure {
+                    class: FailureClass::RetryableTransient,
+                    ref code,
+                    ..
+                },
+                ..
+            } if code == "checkpoint_storage_unavailable"
+        ));
+        assert!(matches!(
+            executor.reconcile(&launch, &claim).await,
+            EffectExecution::Completed {
+                result: LaunchEffectResult::Checkpoint { .. },
+                ..
+            }
+        ));
+
+        let requests = sessions.checkpoint_requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0], requests[1]);
+        drop(requests);
+        let writes = store.writes.lock().unwrap();
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0].1.id, writes[1].1.id);
+        assert_eq!(writes[0].1.version, writes[1].1.version);
+        assert_eq!(writes[0].2, writes[1].2);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_failures_keep_storage_and_recovery_classification_explicit() {
+        let launch = checkpoint_launch();
+        let claim = claim_for(LaunchEffectKind::Checkpoint, EffectClaimMode::Execute);
+        for (error, class, code) in [
+            (
+                CoreError::CapabilityUnsupported("workspace_checkpoint_v2".into()),
+                FailureClass::TerminalValidation,
+                "checkpoint_runtime_unsupported",
+            ),
+            (
+                CoreError::RuntimeUnavailable("runtime lost".into()),
+                FailureClass::RecoveryRequired,
+                "checkpoint_runtime_lost",
+            ),
+            (
+                CoreError::RuntimeRefused("writers not quiescent".into()),
+                FailureClass::RecoveryRequired,
+                "checkpoint_quiescence_unproven",
+            ),
+            (
+                CoreError::InvalidRequest("wrong authority".into()),
+                FailureClass::TerminalSecurity,
+                "checkpoint_authority_mismatch",
+            ),
+        ] {
+            let sessions = Arc::new(FakeSessions::with_checkpoint_answers([Err(error)]));
+            let store = Arc::new(FakeCheckpointStore::new([]));
+            let executor = GithubEffectExecutor::with_checkpoint_ports(
+                Arc::new(FakeGithub::new([])),
+                sessions,
+                store.clone(),
+            );
+            assert!(matches!(
+                executor.execute(&launch, &claim).await,
+                EffectExecution::Failed {
+                    failure: LaunchFailure {
+                        class: observed,
+                        code: observed_code,
+                        ..
+                    }
+                } if observed == class && observed_code == code
+            ));
+            assert!(store.writes.lock().unwrap().is_empty());
+        }
+
+        let mut mismatched = checkpoint_package(&launch);
+        mismatched.manifest_digest = "0".repeat(64);
+        let sessions = Arc::new(FakeSessions::with_checkpoint_answers([Ok((mismatched, 1))]));
+        let store = Arc::new(FakeCheckpointStore::new([]));
+        let executor = GithubEffectExecutor::with_checkpoint_ports(
+            Arc::new(FakeGithub::new([])),
+            sessions,
+            store.clone(),
+        );
+        assert!(matches!(
+            executor.execute(&launch, &claim).await,
+            EffectExecution::Failed {
+                failure: LaunchFailure {
+                    class: FailureClass::RecoveryRequired,
+                    ref code,
+                    ..
+                }
+            } if code == "checkpoint_manifest_mismatch"
+        ));
+        assert!(store.writes.lock().unwrap().is_empty());
+    }
+
     fn fork_launch() -> Launch {
         let mut launch = super::super::worker::tests::launch_fixture();
         launch.state = LaunchState::ForkPending;
@@ -2475,6 +3015,57 @@ mod tests {
         });
         launch.state = LaunchState::PromptPending;
         launch
+    }
+
+    fn checkpoint_launch() -> Launch {
+        let mut launch = reach_launch();
+        launch.workspace = Some(WorkspaceRecord {
+            baseline: WorkspaceManifest::seal(launch.source_sha.clone(), Vec::new()).unwrap(),
+            baseline_object_reference: "trigger-test/baseline.pack".into(),
+            baseline_archive_sha256: "a".repeat(64),
+            latest_checkpoint: None,
+            previous_checkpoint: None,
+            workspace_epoch: 1,
+            retention_policy_id: "trigger-test-retention".into(),
+            delete_after: "2026-09-27T00:00:00Z".into(),
+        });
+        launch.state = LaunchState::Contributing;
+        launch
+    }
+
+    fn checkpoint_package(launch: &Launch) -> layer3_adapter::WorkspaceCheckpointPackage {
+        let bytes = b"edited\n";
+        let content_sha256 = format!("{:x}", Sha256::digest(bytes));
+        let entry = WorkspaceEntry {
+            path: "README.md".into(),
+            kind: WorkspaceEntryKind::Regular,
+            mode: 0o100644,
+            size: bytes.len() as u64,
+            content_sha256: content_sha256.clone(),
+            provider_object_id: Some("b".repeat(40)),
+            symlink_target: None,
+        };
+        let manifest = WorkspaceManifest::seal(launch.source_sha.clone(), vec![entry]).unwrap();
+        let archive = b"sealed checkpoint archive".to_vec();
+        layer3_adapter::WorkspaceCheckpointPackage {
+            epoch: launch.workspace.as_ref().unwrap().workspace_epoch,
+            version: 1,
+            source_revision: launch.source_sha.clone(),
+            manifest_digest: manifest.digest,
+            archive_sha256: format!("{:x}", Sha256::digest(&archive)),
+            entries: vec![layer3_adapter::WorkspaceEntryPackage {
+                path: "README.md".into(),
+                kind: layer3_adapter::WorkspaceEntryKind::Regular,
+                mode: 0o100644,
+                size: bytes.len() as u64,
+                content_sha256,
+                provider_object_id: Some("b".repeat(40)),
+                symlink_target: None,
+            }],
+            total_bytes: bytes.len() as u64,
+            quiesced_writers: 1,
+            archive,
+        }
     }
 
     fn test_signer() -> Arc<CapabilitySigner> {

@@ -29,7 +29,8 @@ pub use runtime::{
     ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeHandle, RuntimeListing,
     RuntimeLossReason, RuntimeMode, RuntimeOptions, RuntimePermission, RuntimePolicyReceipt,
     RuntimeSpec, SkillPackage, TermSize, TerminalChannel, TerminalInput, TerminalOutput,
-    WorkspacePackage,
+    WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
+    WorkspaceEntryPackage, WorkspacePackage,
 };
 
 use tokio::sync::mpsc;
@@ -298,6 +299,21 @@ pub trait KernelAdapter: Send + Sync {
     async fn snapshot(&self, _handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
         Err(AdapterError::Unsupported(
             "this runtime cannot capture its agent's conversation".to_string(),
+        ))
+    }
+
+    /// Quiesce every supported workspace writer, seal one complete checkpoint,
+    /// resume the same writers, and return the exact retained artifact.
+    ///
+    /// Defaults to a stated absence so runtimes predating the versioned Layer 4
+    /// capability cannot accidentally enter a Trigger contribution flow.
+    async fn checkpoint_workspace(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &WorkspaceCheckpointRequest,
+    ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot coherently checkpoint its workspace".to_string(),
         ))
     }
 
