@@ -243,19 +243,20 @@ mod route_resume {
     use std::{sync::Arc, time::Duration};
 
     use axum::{
-        body::{to_bytes, Body},
+        body::{to_bytes, Body, BodyDataStream},
         http::{header, Request, StatusCode},
         Extension, Router,
     };
     use futures_util::StreamExt;
     use layer2_core::{
-        AgentConfiguration, Authorization, Baseline, Capability, Deployment, DirectoryQuery,
-        EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
-        EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind, KernelId, Page,
-        PageRequest, PlatformSettingsService, RecoveryState, RegisteredUser, Reserved,
-        ScreenFactory, Session, SessionCapabilities, SessionId, SessionListQuery, SessionMode,
-        SessionPorts, SessionRecord, SessionService, SessionStatus, SessionStore, StoreError,
-        StoredEvent, SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore,
+        session::ProvisioningStage, AgentConfiguration, Authorization, Baseline, Capability,
+        Deployment, DirectoryQuery, EnvironmentProfile, EnvironmentProfileId,
+        EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event,
+        EventKind, KernelId, Page, PageRequest, PlatformSettingsService, RecoveryState,
+        RegisteredUser, Reserved, ScreenFactory, Session, SessionCapabilities, SessionId,
+        SessionListQuery, SessionMode, SessionPorts, SessionRecord, SessionService, SessionStatus,
+        SessionStore, StopReason, StoreError, StoredEvent, SubjectId, TerminalGeometry,
+        UserDirectory, UserDirectoryStore,
     };
     use serde::Deserialize;
     use serde_json::{json, Value};
@@ -512,6 +513,26 @@ mod route_resume {
             .await
             .expect("the bounded replay is small");
         parse_sse(std::str::from_utf8(&body).expect("SSE is UTF-8"))
+    }
+
+    async fn next_followed_frame(body: &mut BodyDataStream) -> WireFrame {
+        loop {
+            let chunk = tokio::time::timeout(Duration::from_secs(2), body.next())
+                .await
+                .expect("the followed stream observes the next durable poll")
+                .expect("the followed stream stays open")
+                .expect("the followed event body is readable");
+            let frames = parse_sse(std::str::from_utf8(&chunk).expect("SSE is UTF-8"));
+            if frames.is_empty() {
+                continue;
+            }
+            assert_eq!(
+                frames.len(),
+                1,
+                "the test appends one durable event before each followed read"
+            );
+            return frames.into_iter().next().expect("one frame was asserted");
+        }
     }
 
     fn durable(seq: u64, kind: EventKind) -> Event {
@@ -787,6 +808,169 @@ mod route_resume {
                 .await
                 .is_err(),
             "the appended event is not delivered a second time"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_followed_stream_announces_a_rotation_until_the_session_is_ready() {
+        let fixture = fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        let response = fixture
+            .app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+
+        fixture
+            .store
+            .append(durable(
+                9,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Rotating,
+                    stop_reason: None,
+                    detail: Some("moving this session to a replacement runtime".into()),
+                    capability: None,
+                },
+            ))
+            .await;
+        let returning = next_followed_frame(&mut body).await;
+        assert_eq!(returning.id, Some(9));
+        assert_eq!(returning.body["type"], "RUN_ERROR");
+        assert_eq!(returning.body["cma:returns"], true);
+
+        fixture
+            .store
+            .append(durable(
+                10,
+                EventKind::Progress {
+                    stage: ProvisioningStage::RuntimeRequested,
+                },
+            ))
+            .await;
+        let progress = next_followed_frame(&mut body).await;
+        assert_eq!(progress.id, Some(10));
+        assert_eq!(progress.body["type"], "STATE_DELTA");
+        assert_eq!(
+            progress.body["delta"][0],
+            json!({
+                "op": "replace",
+                "path": "/progress",
+                "value": "runtime_requested",
+            })
+        );
+
+        fixture
+            .store
+            .append(durable(
+                11,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Ready,
+                    stop_reason: None,
+                    detail: None,
+                    capability: None,
+                },
+            ))
+            .await;
+        let ready = next_followed_frame(&mut body).await;
+        assert_eq!(ready.id, Some(11));
+        assert_eq!(ready.body["type"], "STATE_DELTA");
+        assert_eq!(
+            ready.body["delta"][0],
+            json!({ "op": "replace", "path": "/status", "value": "ready" })
+        );
+
+        for frame in [&returning, &progress, &ready] {
+            assert_eq!(frame.body["threadId"], "sesn_route_resume");
+            assert_eq!(frame.body["runId"], "sesn_route_resume");
+        }
+        let state = fold_state(agui::initial_state(), &[progress, ready]);
+        assert_eq!(state["progress"], "runtime_requested");
+        assert_eq!(state["status"], "ready");
+    }
+
+    #[tokio::test]
+    async fn a_bounded_failed_rotation_stream_never_fabricates_ready() {
+        let fixture = fixture(
+            owner(),
+            Authorization::from_capabilities([Capability::UseOwnSessions]),
+        );
+        let response = fixture
+            .app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/agui/events?thread_id=sesn_route_resume&starting_after=8")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+
+        fixture
+            .store
+            .append(durable(
+                9,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Rotating,
+                    stop_reason: None,
+                    detail: Some("moving this session to a replacement runtime".into()),
+                    capability: None,
+                },
+            ))
+            .await;
+        let returning = next_followed_frame(&mut body).await;
+        assert_eq!(returning.id, Some(9));
+        assert_eq!(returning.body["cma:returns"], true);
+
+        fixture
+            .store
+            .append(durable(
+                10,
+                EventKind::Progress {
+                    stage: ProvisioningStage::RuntimeRequested,
+                },
+            ))
+            .await;
+        let progress = next_followed_frame(&mut body).await;
+        assert_eq!(progress.id, Some(10));
+
+        fixture
+            .store
+            .append(durable(
+                11,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Terminated,
+                    stop_reason: Some(StopReason::Error),
+                    detail: Some("the replacement cannot serve this session".into()),
+                    capability: Some("conversation".into()),
+                },
+            ))
+            .await;
+        let failed = next_followed_frame(&mut body).await;
+        assert_eq!(failed.id, Some(11));
+        assert_eq!(failed.body["type"], "RUN_ERROR");
+        assert_eq!(failed.body["cma:returns"], false);
+
+        let bounded_attempt = [returning, progress, failed];
+        assert!(
+            bounded_attempt.iter().all(|frame| {
+                frame.body["delta"].as_array().is_none_or(|operations| {
+                    operations.iter().all(|operation| {
+                        operation["path"] != "/status" || operation["value"] != "ready"
+                    })
+                })
+            }),
+            "the failed attempt emitted ready inside cursor 8..=11: {bounded_attempt:?}"
         );
     }
 
