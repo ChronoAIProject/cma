@@ -11,7 +11,10 @@ use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
 use crate::options::SessionMode;
 use crate::session::{RecoveryState, Session, SessionStatus, StopReason};
-use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
+use crate::store::{
+    Page, PendingHandover, PendingHandoverTarget, SessionListQuery, SessionRecord, SessionStore,
+    StoreError,
+};
 use crate::test_support::{
     await_settled, service_over, spec, terminal_input_channel, user, FakeAdapter, FakeStore,
 };
@@ -42,6 +45,21 @@ fn record() -> SessionRecord {
         pricing: None,
         created_at: "2026-08-24T00:00:00Z".into(),
     })
+}
+
+fn pending_plane_handover(claim: &str) -> PendingHandover {
+    PendingHandover {
+        claim: claim.into(),
+        snapshot_ref: format!("sessions/{}/handover.snapshot", id().0),
+        snapshot_at: "2026-08-24T01:00:00Z".into(),
+        rotations_from: 0,
+        rotations_to: 1,
+        target: PendingHandoverTarget::Plane {
+            from_mode: SessionMode::Terminal,
+            mode: SessionMode::Conversation,
+            capabilities: Default::default(),
+        },
+    }
 }
 
 fn said(seq: u64, content: &str) -> Event {
@@ -1015,11 +1033,13 @@ fn a_pre_enqueue_retained_rejection_survives_runtime_loss_and_precedes_its_succe
         let mut malformed = said(0, "retained-malformed-before-enqueue");
         malformed.session_id = SessionId("sesn_wrong_lane".into());
         lane.enqueue_retained_commit(
-            super::CommitMode::UpdateExact,
-            seeded.clone(),
-            vec![malformed],
-            None,
-            None,
+            super::CommitRequest {
+                mode: super::CommitMode::UpdateExact,
+                record: seeded.clone(),
+                events: vec![malformed],
+                semantics: super::CommitSemantics::default(),
+                conversation_authority: None,
+            },
             retained,
             |_| {},
         );
@@ -2839,6 +2859,532 @@ async fn stale_plane_change_cannot_erase_a_newer_runtime_decision() {
     );
     assert_eq!(durable.session.rotations, 0);
     assert!(events.is_empty());
+}
+
+#[tokio::test]
+async fn fresh_lane_rotation_finalizers_refuse_a_successor_claim() {
+    #[derive(Clone, Copy)]
+    enum Finalizer {
+        Complete,
+        ClearClaim,
+        RollBack,
+    }
+
+    for (case, finalizer) in [
+        ("completion", Finalizer::Complete),
+        ("claim clear", Finalizer::ClearClaim),
+        ("rollback", Finalizer::RollBack),
+    ] {
+        let store = Arc::new(FakeStore::default());
+        let mut claimed = record();
+        claimed.session.status = match finalizer {
+            Finalizer::ClearClaim => SessionStatus::Ready,
+            Finalizer::Complete | Finalizer::RollBack => SessionStatus::Rotating,
+        };
+        claimed.runtime_id = Some("runtime-observed".into());
+        claimed.rotation_claim = Some("rotation-observed".into());
+        store.seed(&claimed).await.expect("seed claimed handover");
+
+        let mut successor = claimed.clone();
+        successor.rotation_claim = Some("rotation-successor".into());
+        successor.context_ref = Some(format!("successor-context-{case}"));
+        store
+            .commit_session_idempotent(
+                &format!("rotation-finalizer-successor-{case}"),
+                &successor,
+                &[],
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{case} successor commits: {error}"));
+
+        // Construct the service only after the successor commits. Its lane has
+        // no predecessor until the finalizer seeds the stale claimed boundary.
+        let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+        let mut intended = claimed.clone();
+        let result = match finalizer {
+            Finalizer::Complete => {
+                intended.session.status = SessionStatus::Ready;
+                service
+                    .complete_handover_durably(
+                        &mut intended,
+                        &claimed,
+                        vec![Event {
+                            session_id: id(),
+                            seq: 0,
+                            kind: EventKind::StatusChanged {
+                                status: SessionStatus::Ready,
+                                stop_reason: None,
+                                detail: None,
+                                capability: None,
+                            },
+                            appended_at: String::new(),
+                        }],
+                    )
+                    .await
+            }
+            Finalizer::ClearClaim => {
+                intended.rotation_claim = None;
+                service
+                    .clear_rotation_claim_durably(&mut intended, &claimed)
+                    .await
+            }
+            Finalizer::RollBack => {
+                intended.session.status = SessionStatus::Ready;
+                intended.rotation_claim = None;
+                service
+                    .roll_back_handover_durably(
+                        &mut intended,
+                        &claimed,
+                        vec![Event {
+                            session_id: id(),
+                            seq: 0,
+                            kind: EventKind::StatusChanged {
+                                status: SessionStatus::Ready,
+                                stop_reason: None,
+                                detail: Some("rollback".into()),
+                                capability: None,
+                            },
+                            appended_at: String::new(),
+                        }],
+                    )
+                    .await
+            }
+        };
+        let error = result.expect_err("the stale finalizer cannot inherit a successor claim");
+        assert!(
+            matches!(error, StoreError::RevisionConflict { .. }),
+            "{case} returned {error:?}"
+        );
+
+        let durable = store.get(&id()).await.unwrap().unwrap();
+        assert_eq!(durable.revision, successor.revision + 1, "{case} revision");
+        assert_eq!(
+            durable.session.status, successor.session.status,
+            "{case} status"
+        );
+        assert_eq!(
+            durable.rotation_claim, successor.rotation_claim,
+            "{case} claim"
+        );
+        assert_eq!(durable.runtime_id, successor.runtime_id, "{case} runtime");
+        assert_eq!(durable.context_ref, successor.context_ref, "{case} context");
+        assert!(
+            store.events_since(&id(), 0).await.unwrap().is_empty(),
+            "{case} appends no stale event"
+        );
+    }
+}
+
+#[tokio::test]
+async fn fresh_lane_compatibility_handover_inherits_unrelated_history() {
+    let store = Arc::new(FakeStore::default());
+    let mut claimed = record();
+    claimed.session.status = SessionStatus::Rotating;
+    claimed.session.options.mode = SessionMode::Terminal;
+    claimed.runtime_id = None;
+    claimed.rotation_claim = Some("rotation-cleared-h1".into());
+    claimed.pending_handover = Some(pending_plane_handover("rotation-cleared-h1"));
+    store.seed(&claimed).await.expect("seed cleared handover");
+
+    let mut rival = claimed.clone();
+    rival.context_ref = Some("rival-after-h1-clear".into());
+    rival.session.last_seq = 1;
+    store
+        .commit_session_idempotent(
+            "rival-after-h1-clear",
+            &rival,
+            &[said(1, "history-after-h1-clear")],
+        )
+        .await
+        .expect("rival history commits");
+
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let mut intended = claimed.clone();
+    intended.session.options.mode = SessionMode::Conversation;
+    intended.session.rotations = 1;
+    service
+        .complete_compatibility_handover_durably(
+            &mut intended,
+            &claimed,
+            vec![Event {
+                session_id: id(),
+                seq: 0,
+                kind: EventKind::PlaneChanged {
+                    from: SessionMode::Terminal,
+                    to: SessionMode::Conversation,
+                    snapshot_at: "2026-08-24T01:00:00Z".into(),
+                },
+                appended_at: String::new(),
+            }],
+        )
+        .await
+        .expect("the target semantics rebase over unrelated history");
+
+    assert_eq!(intended.session.status, SessionStatus::Rotating);
+    assert_eq!(intended.session.options.mode, SessionMode::Conversation);
+    assert_eq!(intended.session.rotations, 1);
+    assert_eq!(intended.runtime_id, None);
+    assert_eq!(
+        intended.rotation_claim.as_deref(),
+        Some("rotation-cleared-h1")
+    );
+    assert_eq!(intended.pending_handover, claimed.pending_handover);
+    assert_eq!(
+        intended.context_ref.as_deref(),
+        Some("rival-after-h1-clear")
+    );
+    assert_eq!(intended.session.last_seq, 2);
+
+    let events = store.events_since(&id(), 0).await.unwrap();
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert!(format!("{:?}", events[0].kind).contains("history-after-h1-clear"));
+    assert!(matches!(
+        events[1].kind,
+        crate::event::StoredEventKind::Known(EventKind::PlaneChanged {
+            from: SessionMode::Terminal,
+            to: SessionMode::Conversation,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn fresh_lane_compatibility_handover_refuses_successor_authority() {
+    enum SuccessorChange {
+        Status,
+        RotationClaim,
+        Runtime,
+        PendingHandover,
+    }
+
+    for (case, change) in [
+        ("status", SuccessorChange::Status),
+        ("rotation claim", SuccessorChange::RotationClaim),
+        ("runtime", SuccessorChange::Runtime),
+        ("pending handover", SuccessorChange::PendingHandover),
+    ] {
+        let store = Arc::new(FakeStore::default());
+        let mut claimed = record();
+        claimed.session.status = SessionStatus::Rotating;
+        claimed.session.options.mode = SessionMode::Terminal;
+        claimed.runtime_id = None;
+        claimed.rotation_claim = Some("rotation-cleared-observed".into());
+        claimed.pending_handover = Some(pending_plane_handover("rotation-cleared-observed"));
+        store.seed(&claimed).await.expect("seed cleared handover");
+
+        let mut successor = claimed.clone();
+        successor.context_ref = Some(format!("successor-context-{case}"));
+        match change {
+            SuccessorChange::Status => successor.session.status = SessionStatus::Ready,
+            SuccessorChange::RotationClaim => {
+                successor.rotation_claim = Some("rotation-cleared-successor".into())
+            }
+            SuccessorChange::Runtime => successor.runtime_id = Some("runtime-successor".into()),
+            SuccessorChange::PendingHandover => {
+                successor
+                    .pending_handover
+                    .as_mut()
+                    .expect("the observed handover has a descriptor")
+                    .snapshot_ref = format!("sessions/{}/successor.snapshot", id().0);
+            }
+        }
+        store
+            .commit_session_idempotent(
+                &format!("cleared-handover-successor-{case}"),
+                &successor,
+                &[],
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{case} successor commits: {error}"));
+
+        let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+        let mut intended = claimed.clone();
+        intended.session.options.mode = SessionMode::Conversation;
+        intended.session.rotations = 1;
+        let error = service
+            .complete_compatibility_handover_durably(
+                &mut intended,
+                &claimed,
+                vec![Event {
+                    session_id: id(),
+                    seq: 0,
+                    kind: EventKind::PlaneChanged {
+                        from: SessionMode::Terminal,
+                        to: SessionMode::Conversation,
+                        snapshot_at: "2026-08-24T01:00:00Z".into(),
+                    },
+                    appended_at: String::new(),
+                }],
+            )
+            .await
+            .expect_err("successor authority rejects stale target publication");
+        assert!(
+            matches!(error, StoreError::RevisionConflict { .. }),
+            "{case} successor returned {error:?}"
+        );
+
+        let durable = store.get(&id()).await.unwrap().unwrap();
+        assert_eq!(
+            durable.session.status, successor.session.status,
+            "{case} status"
+        );
+        assert_eq!(
+            durable.rotation_claim, successor.rotation_claim,
+            "{case} claim"
+        );
+        assert_eq!(durable.runtime_id, successor.runtime_id, "{case} runtime");
+        assert_eq!(
+            durable.pending_handover, successor.pending_handover,
+            "{case} descriptor"
+        );
+        assert_eq!(durable.context_ref, successor.context_ref, "{case} context");
+        assert_eq!(
+            durable.session.options.mode,
+            SessionMode::Terminal,
+            "{case} target semantics remain unpublished"
+        );
+        assert!(
+            store.events_since(&id(), 0).await.unwrap().is_empty(),
+            "{case} appends no target event"
+        );
+    }
+}
+
+#[tokio::test]
+async fn compatibility_handover_observation_preserves_queued_history_order() {
+    let store = Arc::new(FaultStore::default());
+    let mut claimed = record();
+    claimed.session.status = SessionStatus::Rotating;
+    claimed.session.options.mode = SessionMode::Terminal;
+    claimed.runtime_id = None;
+    claimed.rotation_claim = Some("rotation-queued-history".into());
+    claimed.pending_handover = Some(pending_plane_handover("rotation-queued-history"));
+    store
+        .inner
+        .seed(&claimed)
+        .await
+        .expect("seed cleared handover");
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    lane.observe_record(&claimed);
+    wait_for_lane_idle(&lane).await;
+
+    store.pause_next_write.store(true, Ordering::SeqCst);
+    let mut before_record = claimed.clone();
+    before_record.context_ref = Some("context-from-earlier-history".into());
+    let before = lane.enqueue_commit(
+        super::CommitMode::UpdateInheriting,
+        before_record,
+        vec![said(0, "history-before-target-publication")],
+    );
+    store.write_started.notified().await;
+
+    let mut intended = claimed.clone();
+    intended.session.options.mode = SessionMode::Conversation;
+    intended.session.rotations = 1;
+    let expected_pending_handover = claimed.pending_handover.clone();
+    let target_record = intended.clone();
+    let target = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move {
+            service
+                .complete_compatibility_handover_durably(
+                    &mut intended,
+                    &claimed,
+                    vec![Event {
+                        session_id: id(),
+                        seq: 0,
+                        kind: EventKind::PlaneChanged {
+                            from: SessionMode::Terminal,
+                            to: SessionMode::Conversation,
+                            snapshot_at: "2026-08-24T01:00:00Z".into(),
+                        },
+                        appended_at: String::new(),
+                    }],
+                )
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lane.queued() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the observation and target publication queue behind earlier history");
+    let after = lane.enqueue_commit(
+        super::CommitMode::UpdateInheriting,
+        target_record,
+        vec![said(0, "history-after-target-publication")],
+    );
+
+    store.release_write.notify_one();
+    before
+        .complete
+        .committed()
+        .await
+        .expect("earlier history commits");
+    target
+        .await
+        .expect("target publication task completes")
+        .expect("target semantics commit");
+    after
+        .complete
+        .committed()
+        .await
+        .expect("later history commits");
+    wait_for_lane_idle(&lane).await;
+
+    let durable = store.inner.get(&id()).await.unwrap().unwrap();
+    assert_eq!(durable.session.options.mode, SessionMode::Conversation);
+    assert_eq!(durable.session.rotations, 1);
+    assert_eq!(durable.runtime_id, None);
+    assert_eq!(
+        durable.rotation_claim.as_deref(),
+        Some("rotation-queued-history")
+    );
+    assert_eq!(durable.pending_handover, expected_pending_handover);
+    assert_eq!(
+        durable.context_ref.as_deref(),
+        Some("context-from-earlier-history")
+    );
+    assert_eq!(durable.session.last_seq, 3);
+    let events = store.inner.events_since(&id(), 0).await.unwrap();
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+    assert!(format!("{:?}", events[0].kind).contains("history-before-target-publication"));
+    assert!(matches!(
+        events[1].kind,
+        crate::event::StoredEventKind::Known(EventKind::PlaneChanged { .. })
+    ));
+    assert!(format!("{:?}", events[2].kind).contains("history-after-target-publication"));
+}
+
+#[tokio::test]
+async fn compatibility_runtime_clear_inherits_unrelated_context_and_history() {
+    let store = Arc::new(FakeStore::default());
+    let mut claimed = record();
+    claimed.session.status = SessionStatus::Idle;
+    claimed.session.recovery_state = RecoveryState::Idle;
+    claimed.runtime_id = Some("runtime-compatibility".into());
+    claimed.rotation_claim = Some("rotation-stable".into());
+    store.seed(&claimed).await.expect("seed claimed runtime");
+
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let mut rival = claimed.clone();
+    rival.context_ref = Some("rival-context".into());
+    rival.session.last_seq = 1;
+    store
+        .commit_session_idempotent(
+            "compatibility-runtime-rival",
+            &rival,
+            &[said(1, "rival-history")],
+        )
+        .await
+        .expect("rival context and history commit");
+
+    let mut intended = claimed.clone();
+    intended.runtime_id = None;
+    service
+        .clear_compatibility_runtime_durably(&mut intended, &claimed)
+        .await
+        .expect("the runtime clear inherits unrelated durable work");
+
+    assert_eq!(intended.runtime_id, None);
+    assert_eq!(intended.context_ref.as_deref(), Some("rival-context"));
+    assert_eq!(intended.session.last_seq, 1);
+    assert_eq!(intended.session.status, SessionStatus::Idle);
+    assert_eq!(intended.rotation_claim.as_deref(), Some("rotation-stable"));
+    let events = store.events_since(&id(), 0).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(format!("{:?}", events[0].kind).contains("rival-history"));
+
+    let durable = store.get(&id()).await.unwrap().unwrap();
+    assert_eq!(durable.runtime_id, None);
+    assert_eq!(durable.context_ref.as_deref(), Some("rival-context"));
+    assert_eq!(durable.session.last_seq, 1);
+    assert_eq!(durable.session.status, SessionStatus::Idle);
+    assert_eq!(durable.rotation_claim.as_deref(), Some("rotation-stable"));
+}
+
+#[tokio::test]
+async fn compatibility_runtime_clear_refuses_successor_authority() {
+    enum SuccessorChange {
+        Status,
+        RotationClaim,
+        Runtime,
+    }
+
+    for (case, change) in [
+        ("status", SuccessorChange::Status),
+        ("rotation claim", SuccessorChange::RotationClaim),
+        ("runtime", SuccessorChange::Runtime),
+    ] {
+        let store = Arc::new(FakeStore::default());
+        let mut claimed = record();
+        claimed.session.status = SessionStatus::Idle;
+        claimed.session.recovery_state = RecoveryState::Idle;
+        claimed.runtime_id = Some("runtime-observed".into());
+        claimed.rotation_claim = Some("rotation-observed".into());
+        store.seed(&claimed).await.expect("seed claimed runtime");
+
+        let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+        let mut successor = claimed.clone();
+        successor.context_ref = Some(format!("successor-context-{case}"));
+        match change {
+            SuccessorChange::Status => successor.session.status = SessionStatus::Ready,
+            SuccessorChange::RotationClaim => {
+                successor.rotation_claim = Some("rotation-successor".into())
+            }
+            SuccessorChange::Runtime => successor.runtime_id = Some("runtime-successor".into()),
+        }
+        store
+            .commit_session_idempotent(
+                &format!("compatibility-runtime-successor-{case}"),
+                &successor,
+                &[],
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{case} successor commits: {error}"));
+
+        let mut intended = claimed.clone();
+        intended.runtime_id = None;
+        let error = service
+            .clear_compatibility_runtime_durably(&mut intended, &claimed)
+            .await
+            .expect_err("successor authority rejects the stale runtime clear");
+        assert!(
+            matches!(error, StoreError::RevisionConflict { .. }),
+            "{case} successor returned {error:?}"
+        );
+
+        let durable = store.get(&id()).await.unwrap().unwrap();
+        assert_eq!(
+            durable.session.status, successor.session.status,
+            "{case} successor status"
+        );
+        assert_eq!(
+            durable.rotation_claim, successor.rotation_claim,
+            "{case} successor claim"
+        );
+        assert_eq!(
+            durable.runtime_id, successor.runtime_id,
+            "{case} successor runtime"
+        );
+        assert_eq!(
+            durable.context_ref, successor.context_ref,
+            "{case} unrelated state"
+        );
+        assert!(
+            store.events_since(&id(), 0).await.unwrap().is_empty(),
+            "{case} appends no lifecycle event"
+        );
+    }
 }
 
 #[tokio::test]

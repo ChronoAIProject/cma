@@ -229,7 +229,7 @@ async fn a_stale_resize_generation_reaches_neither_store_screen_nor_sender() {
             )
             .await,
         Err(CoreError::RuntimeUnavailable(
-            "the live terminal belongs to another runtime generation".into(),
+            "the live channel belongs to another runtime authority".into(),
         ))
     );
     wait_for_interaction_release(&store, &created.id).await;
@@ -394,16 +394,13 @@ async fn a_stalled_resize_sender_does_not_hold_the_service_entry_map() {
     });
     adapter.wait_until_terminal_input_paused().await;
 
-    assert_eq!(
-        tokio::time::timeout(
-            Duration::from_millis(250),
-            service.terminal_is_held(&owner, &independent.id),
-        )
-        .await
-        .expect("another session can still read the service entry map")
-        .expect("the independent session remains readable"),
-        false
-    );
+    assert!(!tokio::time::timeout(
+        Duration::from_millis(250),
+        service.terminal_is_held(&owner, &independent.id),
+    )
+    .await
+    .expect("another session can still read the service entry map")
+    .expect("the independent session remains readable"));
 
     adapter.resume_terminal_input();
     resize

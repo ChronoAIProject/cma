@@ -198,7 +198,7 @@ pub struct SandboxClient {
 pub(crate) enum SandboxDeleteTarget {
     /// Immutable Kubernetes identity bound to the reclaimer that captured it.
     Fenced {
-        reclaimer: BatchSandboxReclaimer,
+        reclaimer: Box<BatchSandboxReclaimer>,
         target: CapturedSandbox,
     },
     /// Compatibility deployments without Kubernetes authority can only state
@@ -282,7 +282,7 @@ impl SandboxClient {
             .capture_delete_target(&RuntimeHandle(id.to_string()))
             .await?;
         Ok(target.map(|target| SandboxDeleteTarget::Fenced {
-            reclaimer: reclaimer.clone(),
+            reclaimer: Box::new(reclaimer.clone()),
             target,
         }))
     }

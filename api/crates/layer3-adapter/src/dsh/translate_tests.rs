@@ -189,6 +189,108 @@ async fn canceling_open_during_a_held_handshake_retires_the_whole_generation() {
     .expect("the canceled generation is promptly removed");
 }
 
+#[tokio::test]
+async fn a_dsh_conversation_link_acknowledges_credential_installation() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let served = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("a client connects");
+        let mut socket = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket opens");
+        socket
+            .send(Message::Text(
+                serde_json::json!({
+                    "t": "ready",
+                    "wireVersion": supervisor::WIRE_VERSION,
+                    "lanes": ["ctl", "conv"],
+                })
+                .to_string(),
+            ))
+            .await
+            .expect("the harness declares its wire");
+
+        let initialize = socket
+            .next()
+            .await
+            .expect("the initialize call arrives")
+            .expect("the initialize frame is readable");
+        let Message::Binary(bytes) = initialize else {
+            panic!("the initialize call travels on the conversation lane");
+        };
+        let (lane, payload) = supervisor::unframe(&bytes).expect("the call is framed");
+        assert_eq!(lane, supervisor::LANE_CONVERSATION);
+        let call: serde_json::Value = serde_json::from_slice(payload).expect("the call is JSON");
+        socket
+            .send(Message::Binary(supervisor::frame(
+                supervisor::LANE_CONVERSATION,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": call["id"],
+                    "result": {},
+                })
+                .to_string()
+                .as_bytes(),
+            )))
+            .await
+            .expect("the initialize answer reaches the adapter");
+
+        let credential = socket
+            .next()
+            .await
+            .expect("the credential arrives")
+            .expect("the credential frame is readable");
+        let Message::Text(text) = credential else {
+            panic!("the credential travels on the control lane");
+        };
+        let frame: serde_json::Value = serde_json::from_str(&text).expect("control JSON");
+        assert_eq!(frame["t"], "credential");
+        assert_eq!(frame["value"], "dsh-session-credential");
+        socket
+            .send(Message::Text(
+                serde_json::json!({
+                    "t": "credential_result",
+                    "operation_id": frame["operation_id"],
+                    "installed": true,
+                })
+                .to_string(),
+            ))
+            .await
+            .expect("the credential acknowledgement reaches the adapter");
+    });
+
+    let hosted = crate::hosted::HostedKernel::new(
+        crate::sandbox::SandboxClient::new("http://127.0.0.1:1", "test-key"),
+        crate::hosted::SandboxShape::default(),
+        "dsh",
+        ".codex/skills",
+        "AGENTS.md",
+    );
+    let handle = crate::RuntimeHandle("sbx_dsh_credential_ack".into());
+    let (stream, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("the adapter connects");
+    let (updates, _received) = mpsc::channel(8);
+    let (_conversation, _control) = Harness::open(
+        stream,
+        "/home/chrono".into(),
+        &DshSandboxSpec::default(),
+        None,
+        hosted.link_lifecycle(&handle.0),
+        updates,
+    )
+    .await
+    .expect("the DSH conversation opens");
+
+    hosted
+        .refresh_credential(&handle, "dsh-session-credential")
+        .await
+        .expect("the DSH reader settles the credential acknowledgement");
+    served.await.expect("the fixture does not panic");
+}
+
 /// One session-log record, as `session.event` delivers it.
 fn record(kind: &str, data: serde_json::Value) -> serde_json::Value {
     serde_json::json!({ "seq": 1, "time": "2026-08-17T00:00:00Z", "type": kind, "data": data })

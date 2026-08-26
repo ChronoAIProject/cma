@@ -15,15 +15,18 @@ use std::time::Duration;
 
 use layer3_adapter::RuntimeLossReason;
 
+use crate::attach::AttachmentClaim;
 use crate::commit_fault_support::CommitFaultStore;
 use crate::coordination::{
     RuntimeCandidate, SessionBoundary, SessionLeaseRequest, SessionOperation,
 };
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
+use crate::lease::Detached;
 use crate::service::Deployment;
 use crate::session::{RecoveryState, RuntimeLossCause, SessionStatus, StopReason};
 use crate::store::{SessionRecord, SessionStore};
+use crate::terminal::TerminalGeometry;
 use crate::test_support::{
     await_settled, service, service_over, spec, user, FakeAdapter, FakeStore,
 };
@@ -92,6 +95,62 @@ async fn switch_to_test_candidate(
         .unwrap();
     store.release_session_lease(&lease).await.unwrap();
     candidate
+}
+
+#[tokio::test]
+async fn a_stale_attachment_is_superseded_before_reclaim_lease_release_completes() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("stale-attachment-release-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let mut attachment = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::default(),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .expect("the original runtime is attached");
+    svc.event_logs.drain_retained_cleanups(&created.id).await;
+
+    switch_to_test_candidate(
+        store.as_ref(),
+        adapter.as_ref(),
+        &created.id,
+        "stale-attachment-successor",
+    )
+    .await;
+    store.pause_next_session_lease_release();
+    let mut reconciliation = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        async move { svc.reconcile().await }
+    });
+    store.wait_for_paused_session_lease_release().await;
+
+    assert!(
+        !svc.entries.read().await.contains_key(&created.id),
+        "the stale local entry is removed before its reclaim lease is released"
+    );
+    assert!(matches!(
+        attachment.superseded.try_recv(),
+        Ok(Detached::RuntimeReplaced)
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut reconciliation)
+            .await
+            .is_err(),
+        "the notification must arrive while durable lease release is still blocked"
+    );
+
+    store.resume_session_lease_release();
+    let reclaimed = tokio::time::timeout(Duration::from_secs(2), reconciliation)
+        .await
+        .expect("reconciliation resumes after lease release")
+        .expect("the reconciliation task completes");
+    assert_eq!(reclaimed.readopted_sessions, 1);
 }
 
 async fn retire_for_interrupted_recovery(
@@ -226,6 +285,67 @@ async fn a_session_whose_sandbox_stopped_serving_is_given_another() {
 }
 
 #[tokio::test]
+async fn non_serving_compatibility_runtime_teardown_failure_defers_loss_and_replacement() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("non-serving-cleanup-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let h1 = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("H1 is durable");
+    drop(first);
+
+    adapter.stop_serving(&h1).await;
+    adapter.fail_terminations(1);
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let deferred = restarted.reconcile().await;
+
+    assert_eq!(deferred.deferred_sessions, 1);
+    assert_eq!(deferred.lost_runtimes, 0);
+    assert_eq!(deferred.reprovisioned_sessions, 0);
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .runtime_id
+            .as_deref(),
+        Some(h1.as_str()),
+        "H1 remains durable while its provider teardown can be retried"
+    );
+    assert!(adapter.running.lock().await.contains_key(&h1));
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(runtime_losses(&store, &created.id).await.is_empty());
+
+    let recovered = restarted.reconcile().await;
+    assert_eq!(recovered.lost_runtimes, 1);
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    let settled = await_settled(&restarted, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    let h2 = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("H2 is durable");
+    assert_ne!(h2, h1);
+    assert!(!adapter.running.lock().await.contains_key(&h1));
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&h1)
+    );
+}
+
+#[tokio::test]
 async fn a_runtime_lost_while_no_process_was_serving_is_still_recorded() {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
@@ -284,6 +404,112 @@ async fn a_runtime_lost_under_the_process_serving_it_is_recorded_too() {
     assert_eq!(losses.len(), 1);
     assert_eq!(losses[0].1, dead);
     assert_eq!(losses[0].2, Some(RuntimeLossCause::Failed));
+}
+
+#[tokio::test]
+async fn ambiguous_lost_runtime_retirement_removes_the_local_input_channel() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("ambiguous-recovery-owner");
+    let running = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = running
+        .create_session(&alice, spec())
+        .await
+        .expect("created");
+    await_settled(&running, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the session has a runtime");
+    adapter.terminal_inputs.lock().await.clear();
+    adapter.stop_serving(&dead).await;
+    store.lose_runtime_retirement_responses(2);
+
+    let sweep = running.reconcile().await;
+    assert_eq!(sweep.reprovisioned_sessions, 0);
+    assert_eq!(sweep.deferred_sessions, 1);
+    assert_eq!(
+        store.get(&created.id).await.unwrap().unwrap().runtime_id,
+        None,
+        "retirement committed even though both responses were lost"
+    );
+    assert!(!running.entries.read().await.contains_key(&created.id));
+
+    assert!(running
+        .send_input(
+            &alice,
+            &created.id,
+            b"never reach the retired runtime".to_vec()
+        )
+        .await
+        .is_err());
+    assert!(adapter.terminal_inputs.lock().await.is_empty());
+
+    let resumed = running.reconcile().await;
+    assert_eq!(resumed.lost_runtimes, 1);
+    assert_eq!(resumed.reprovisioned_sessions, 1);
+    let settled = await_settled(&running, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert_ne!(
+        store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .runtime_id
+            .as_deref(),
+        Some(dead.as_str()),
+        "the next sweep resumes from exact debt and installs a replacement"
+    );
+}
+
+#[tokio::test]
+async fn recovery_confirms_a_hidden_provisioning_lease_advance() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("hidden-recovery-advance-owner");
+    let running = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = running
+        .create_session(&alice, spec())
+        .await
+        .expect("created");
+    await_settled(&running, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the session has a runtime");
+    adapter.lose(&dead).await;
+    store.lose_runtime_advance_responses(1);
+
+    let recovered = running.reconcile().await;
+    assert_eq!(recovered.lost_runtimes, 1);
+    assert_eq!(
+        recovered.reprovisioned_sessions, 1,
+        "the committed recovery boundary must continue despite its lost response"
+    );
+
+    let settled = await_settled(&running, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert!(
+        store.active_session_lease(&created.id).await.is_none(),
+        "the confirmed target boundary must be released after replacement"
+    );
+    assert_ne!(
+        store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .runtime_id
+            .as_deref(),
+        Some(dead.as_str())
+    );
 }
 
 #[tokio::test]
@@ -1146,6 +1372,91 @@ async fn stopping_keeps_the_session_and_releases_the_sandbox() {
 }
 
 #[tokio::test]
+async fn failed_compatibility_stop_cleanup_is_retried_after_restart() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("failed-stop-cleanup-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let h1 = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("H1 is durable");
+
+    adapter.fail_terminations(1);
+    let _ = first.stop_session(&alice, &created.id).await;
+    let pending = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(pending.session.status, SessionStatus::Idle);
+    assert_eq!(pending.runtime_id.as_deref(), Some(h1.as_str()));
+    assert!(adapter.running.lock().await.contains_key(&h1));
+    drop(first);
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let cleaned = restarted.reconcile().await;
+    assert_eq!(cleaned.deferred_sessions, 0);
+    assert_eq!(cleaned.reprovisioned_sessions, 0);
+    assert_eq!(cleaned.readopted_sessions, 0);
+    let idle = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(idle.session.status, SessionStatus::Idle);
+    assert_eq!(idle.runtime_id, None);
+    assert!(!adapter.running.lock().await.contains_key(&h1));
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&h1)
+    );
+}
+
+#[tokio::test]
+async fn revive_refuses_h2_while_compatibility_h1_cleanup_is_pending() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("pending-cleanup-revive-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let h1 = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("H1 is durable");
+
+    adapter.fail_terminations(1);
+    let _ = svc.stop_session(&alice, &created.id).await;
+    let pending = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(pending.session.status, SessionStatus::Idle);
+    assert_eq!(pending.runtime_id.as_deref(), Some(h1.as_str()));
+
+    let error = svc
+        .revive_session(&alice, &created.id)
+        .await
+        .expect_err("revive must wait for H1 cleanup");
+    assert!(matches!(
+        error,
+        crate::error::CoreError::RuntimeUnavailable(_)
+    ));
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "revive must not provision H2 while H1 remains durable"
+    );
+    assert_eq!(adapter.running_count().await, 1);
+    assert!(adapter.running.lock().await.contains_key(&h1));
+    let still_pending = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(still_pending.session.status, SessionStatus::Idle);
+    assert_eq!(still_pending.runtime_id.as_deref(), Some(h1.as_str()));
+}
+
+#[tokio::test]
 async fn a_stopped_session_is_not_given_a_sandbox_behind_the_owners_back() {
     // The controller starts anything the record says should be running. A
     // stopped session says the opposite, and a controller that could not tell
@@ -1219,6 +1530,50 @@ async fn reviving_returns_the_same_session_to_use() {
         "the history must continue rather than restart"
     );
     assert_eq!(adapter.running_count().await, 1);
+}
+
+#[tokio::test]
+async fn reviving_confirms_a_hidden_provisioning_lease_advance() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("hidden-revive-advance-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let old_runtime = store
+        .get(&created.id)
+        .await
+        .expect("the session is readable")
+        .expect("the session remains durable")
+        .runtime_id
+        .expect("the original runtime is durable");
+    svc.stop_session(&alice, &created.id)
+        .await
+        .expect("stopped");
+
+    store.lose_runtime_advance_responses(1);
+    svc.revive_session(&alice, &created.id)
+        .await
+        .expect("the committed revive boundary survives its lost response");
+
+    let settled = await_settled(&svc, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert_eq!(adapter.running_count().await, 1);
+    assert_ne!(
+        store
+            .get(&created.id)
+            .await
+            .expect("the revived session is readable")
+            .expect("the revived session remains durable")
+            .runtime_id
+            .as_deref(),
+        Some(old_runtime.as_str())
+    );
+    assert!(
+        store.active_session_lease(&created.id).await.is_none(),
+        "the confirmed revive boundary must be released after publication"
+    );
 }
 
 #[tokio::test]
@@ -1324,6 +1679,76 @@ async fn a_conversation_session_is_taken_back_over_as_one() {
         .send_prompt(&alice, &id, "still there?".to_string())
         .await
         .expect("a live runtime is taken back over, and the session prompted");
+}
+
+#[tokio::test]
+async fn a_cross_replica_stop_fences_and_discards_the_retired_conversation() {
+    let (store, adapter, profiles) = conversing_deployment();
+    let alice = user("cross-replica-conversation-stop-owner");
+    let stopping = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&profiles),
+    );
+    let created = stopping
+        .create_session(&alice, spec())
+        .await
+        .expect("created");
+    await_settled(&stopping, &alice, &created.id).await;
+    let stale = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        profiles,
+    );
+    assert_eq!(stale.reconcile().await.readopted_sessions, 1);
+
+    let runtime = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the session has a runtime");
+    let generation = store
+        .runtime_authority(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .generation;
+    adapter.generations.lock().await.insert(
+        runtime.clone(),
+        std::num::NonZeroU64::new(generation + 1).unwrap(),
+    );
+
+    stopping
+        .stop_session(&alice, &created.id)
+        .await
+        .expect("the first replica stops the session");
+    assert!(stale.entries.read().await.contains_key(&created.id));
+    assert!(adapter.running.lock().await.contains_key(&runtime));
+
+    assert!(stale
+        .send_prompt(&alice, &created.id, "never deliver".into())
+        .await
+        .is_err());
+    let sent = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the stale conversation channel remains observable")
+        .sent()
+        .await;
+    assert!(
+        sent.is_empty(),
+        "the retired channel received input: {sent:?}"
+    );
+
+    stale.reconcile().await;
+    assert!(
+        !stale.entries.read().await.contains_key(&created.id),
+        "reconciliation removes stale entries even for stopped sessions"
+    );
 }
 
 #[tokio::test]
@@ -1521,6 +1946,127 @@ async fn a_provider_that_answers_nothing_defers_rather_than_replaces() {
     assert!(
         silent.terminated.lock().await.is_empty(),
         "and nothing may be torn down on the same non-evidence"
+    );
+}
+
+#[tokio::test]
+async fn stale_compatibility_h1_teardown_failure_retains_its_local_cleanup_identity() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("stale-h1-cleanup-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let h1 = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("H1 is durable and installed");
+    let h2 = format!("{h1}-successor");
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(h2.clone(), Some(created.id.0.clone()));
+    let mut successor = store.get(&created.id).await.unwrap().unwrap();
+    successor.runtime_id = Some(h2.clone());
+    store
+        .commit_session_idempotent("test-publish-compatibility-h2", &successor, &[])
+        .await
+        .expect("H2 becomes the durable runtime");
+
+    adapter.fail_terminations(1);
+    let deferred = svc.reconcile().await;
+    assert_eq!(deferred.deferred_sessions, 1);
+    assert_eq!(deferred.readopted_sessions, 0);
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .and_then(|entry| entry.runtime.as_ref())
+            .map(|runtime| runtime.0.as_str()),
+        Some(h1.as_str()),
+        "failed teardown retains the only local H1 cleanup identity"
+    );
+    assert!(adapter.running.lock().await.contains_key(&h1));
+    assert!(adapter.running.lock().await.contains_key(&h2));
+    assert!(adapter.terminated.lock().await.is_empty());
+
+    let discarded = svc.reconcile().await;
+    assert_eq!(discarded.deferred_sessions, 1);
+    assert!(!svc.entries.read().await.contains_key(&created.id));
+    assert!(!adapter.running.lock().await.contains_key(&h1));
+    assert!(adapter.running.lock().await.contains_key(&h2));
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&h1)
+    );
+
+    let converged = svc.reconcile().await;
+    assert_eq!(converged.readopted_sessions, 1);
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .and_then(|entry| entry.runtime.as_ref())
+            .map(|runtime| runtime.0.as_str()),
+        Some(h2.as_str())
+    );
+}
+
+#[tokio::test]
+async fn failed_compatibility_readoption_retires_h1_before_provisioning_h2() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("failed-readoption-cleanup-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let h1 = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("H1 is durable");
+    drop(first);
+
+    adapter.fail_terminal_attaches(1);
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+    assert_eq!(recovered.readopted_sessions, 0);
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    assert_eq!(recovered.deferred_sessions, 0);
+
+    let settled = await_settled(&restarted, &alice, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    let h2 = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("H2 is durable");
+    assert_ne!(h2, h1);
+    assert!(!adapter.running.lock().await.contains_key(&h1));
+    assert!(adapter.running.lock().await.contains_key(&h2));
+    assert_eq!(adapter.running_count().await, 1);
+    assert_eq!(
+        adapter.terminated.lock().await.as_slice(),
+        std::slice::from_ref(&h1),
+        "H1 is terminated before replacement publication"
+    );
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
     );
 }
 

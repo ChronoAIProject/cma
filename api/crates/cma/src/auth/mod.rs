@@ -8,6 +8,7 @@
 //! Endpoints are discovered from the provider's metadata document rather than
 //! hard-coded, so a provider that moves a route does not break this service.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -17,13 +18,14 @@ pub mod persistence;
 pub mod profile;
 
 use layer2_core::store::StoreError;
-use layer2_core::{Authorization, SessionId, SubjectId};
+use layer2_core::{Authorization, CredentialDeliveryTarget, SessionId, SubjectId};
 use tokio::sync::{Mutex, RwLock};
 
 use persistence::{
-    AuthStore, AuthSweepItem, BrowserSession, CredentialLeaseCursor, CredentialMutationCursor,
-    CredentialReissueCursor, DurableSubjectTokens, RevokeDebtCursor, SecretDigest,
-    SubjectAuthState, SubjectAuthorizationCursor, SubjectOwnerCursor, SubjectRefreshCursor,
+    AuthStore, AuthSweepItem, BrowserSession, CredentialExpiryCursor, CredentialLeaseCursor,
+    CredentialMutationCursor, CredentialReissueCursor, DurableSubjectTokens, RevokeDebtCursor,
+    SecretDigest, SubjectAuthState, SubjectAuthorizationCursor, SubjectOwnerCursor,
+    SubjectRefreshCursor,
 };
 #[cfg(test)]
 use persistence::{MemoryAuthStore, SecretValue};
@@ -43,16 +45,37 @@ pub(super) const AUTH_SWEEP_BATCH_SIZE: usize = 100;
 pub(super) const AUTH_RENEWAL_PASS_BUDGET: usize =
     5 * AUTH_SWEEP_BATCH_SIZE + AUTHORIZATION_CHECK_LANE_BUDGET;
 pub(super) const AUTH_SWEEP_TWO_LANE_BATCH_SIZE: usize = AUTH_SWEEP_BATCH_SIZE / 2;
-const AUTH_SWEEP_THREE_LANE_BATCH_SIZE: usize = AUTH_SWEEP_BATCH_SIZE / 3;
-#[cfg(test)]
-const AUTH_SWEEP_LEASE_LANE_BATCH_SIZE: usize =
-    AUTH_SWEEP_BATCH_SIZE - (2 * AUTH_SWEEP_THREE_LANE_BATCH_SIZE);
+const AUTH_SWEEP_FOUR_LANE_BATCH_SIZE: usize = AUTH_SWEEP_BATCH_SIZE / 4;
 /// Maximum external operations available to one selected recurring reissue.
 ///
 /// The service-scope lookup can read both the session and its legacy
-/// environment profile. The remaining thirteen units cover custody, provider
-/// resolution and minting, runtime delivery, and pending promotion.
-pub(super) const AUTH_REISSUE_ATTEMPT_BUDGET: usize = 15;
+/// environment profile. The remaining nineteen units cover custody,
+/// stale-pending retirement, provider resolution and minting, target binding,
+/// runtime delivery, and pending promotion.
+pub(super) const AUTH_REISSUE_ATTEMPT_BUDGET: usize = 21;
+/// Routine age and provider-expiry runway for recurring session-key replacement.
+pub(super) const CREDENTIAL_ROTATION_AGE: Duration = Duration::from_secs(12 * 60 * 60);
+/// How far ahead the expiry-ordered selector admits a credential into retry work.
+///
+/// This deliberately matches routine rotation age. It gives a bounded expiry
+/// lane hours of retries for provider keys with shorter-than-normal lifetimes;
+/// it is not the much narrower eligibility boundary used immediately before a
+/// value crosses into a runtime.
+const CREDENTIAL_EXPIRY_SWEEP_HORIZON: Duration = CREDENTIAL_ROTATION_AGE;
+/// Minimum remaining provider lifetime selected for one credential delivery attempt.
+///
+/// Distinct from OAuth renewal policy: this covers the hosted adapter's
+/// five-second acknowledgement deadline plus durable custody settlement.
+pub(crate) const CREDENTIAL_EXPIRY_MARGIN: Duration = Duration::from_secs(5 * 60);
+
+pub(crate) fn credential_replace_before() -> SystemTime {
+    SystemTime::now() + CREDENTIAL_EXPIRY_MARGIN
+}
+
+fn credential_expiry_sweep_before(now: SystemTime) -> SystemTime {
+    now.checked_add(CREDENTIAL_EXPIRY_SWEEP_HORIZON)
+        .unwrap_or(now)
+}
 /// Maximum external operations available to one selected recurring refresh.
 pub(super) const AUTH_REFRESH_ATTEMPT_BUDGET: usize = 10;
 /// Maximum age of a complete cookie-session authorization answer.
@@ -212,6 +235,7 @@ struct RefreshSweepEpochs {
 struct ReissueSweepEpochs {
     pending: Option<SweepEpoch<CredentialMutationCursor>>,
     current: Option<SweepEpoch<CredentialReissueCursor>>,
+    expiring_current: Option<SweepEpoch<CredentialExpiryCursor>>,
     expired_lease: Option<SweepEpoch<CredentialLeaseCursor>>,
 }
 
@@ -280,6 +304,23 @@ fn remember_sweep_item_error(slot: &mut Option<StoreError>, error: StoreError, o
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CredentialDeliveryAttempt {
+    session: SessionId,
+    runtime_generation: u64,
+    runtime_id: String,
+}
+
+impl CredentialDeliveryAttempt {
+    fn new(session: &SessionId, target: &CredentialDeliveryTarget) -> Self {
+        Self {
+            session: session.clone(),
+            runtime_generation: target.runtime_generation,
+            runtime_id: target.runtime_id.clone(),
+        }
+    }
+}
+
 /// Auth state shared across handlers.
 pub struct AuthState {
     mode: AuthMode,
@@ -294,6 +335,13 @@ pub struct AuthState {
     /// credentials were scoped, and it is what a deployment that has not
     /// configured a platform root still gets.
     issuer: RwLock<Option<Arc<keys::KeyIssuer>>>,
+    /// Frozen expiry threshold between one runtime send and its acknowledgement.
+    ///
+    /// Durable value/target custody remains authoritative. This process-local
+    /// entry only prevents elapsed wall time from making an acknowledged value
+    /// stale between preparation and promotion. Losing it rechecks eligibility
+    /// at confirmation time and therefore fails a now-stale value closed.
+    credential_delivery_cutoffs: Mutex<HashMap<CredentialDeliveryAttempt, SystemTime>>,
     /// Avoid duplicate provider deletes within one replica. Durable debt and
     /// generation CAS remain the authority across replicas.
     credential_sweep: Mutex<()>,
@@ -375,6 +423,7 @@ impl AuthState {
                 .expect("http client builds"),
             metadata: RwLock::new(None),
             issuer: RwLock::new(None),
+            credential_delivery_cutoffs: Mutex::new(HashMap::new()),
             credential_sweep: Mutex::new(()),
             refresh_sweep_epochs: Mutex::new(RefreshSweepEpochs::default()),
             active_credential_sweep_epoch: Mutex::new(None),
@@ -592,11 +641,11 @@ impl AuthState {
         }
     }
 
-    /// Sessions whose credential has been held longer than `lifetime`.
+    /// Sessions whose credential is old or inside the provider-expiry sweep horizon.
     ///
-    /// Age rather than a stated expiry, because the platform does not return
-    /// or request one when it mints. The caller chooses a local rotation
-    /// cadence independently of how long the provider accepts the key.
+    /// Age keeps routine rotation independent of provider lifetime. A separate
+    /// expiry-ordered lane gives shorter-lived durable values the same twelve
+    /// hours of retry runway, while legacy values remain age-driven.
     #[cfg(test)]
     pub async fn sessions_due_for_reissue(
         &self,
@@ -604,10 +653,12 @@ impl AuthState {
     ) -> Result<SweepBatch<layer2_core::SessionId>, StoreError> {
         let now = SystemTime::now();
         let issued_before = now.checked_sub(lifetime).unwrap_or(SystemTime::UNIX_EPOCH);
+        let expires_before = credential_expiry_sweep_before(now);
         let mut epochs = self.reissue_sweep_epochs.lock().await;
         let mut proposed = epochs.clone();
         if proposed.pending.is_none()
             || proposed.current.is_none()
+            || proposed.expiring_current.is_none()
             || proposed.expired_lease.is_none()
         {
             let through_sequence = self.store.auth_sweep_high_water().await?;
@@ -618,6 +669,11 @@ impl AuthState {
             });
             proposed.current.get_or_insert(SweepEpoch {
                 cutoff: Some(issued_before),
+                through_sequence,
+                after: None,
+            });
+            proposed.expiring_current.get_or_insert(SweepEpoch {
+                cutoff: Some(expires_before),
                 through_sequence,
                 after: None,
             });
@@ -634,12 +690,12 @@ impl AuthState {
                 .pending_credentials_due_for_reissue(
                     epoch.after.as_ref(),
                     epoch.through_sequence,
-                    AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                    AUTH_SWEEP_FOUR_LANE_BATCH_SIZE,
                 )
                 .await?;
             proposed.pending = finish_sweep_page(
                 &states,
-                AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                AUTH_SWEEP_FOUR_LANE_BATCH_SIZE,
                 &epoch,
                 pending_reissue_position,
             );
@@ -647,7 +703,7 @@ impl AuthState {
         } else {
             Vec::new()
         };
-        let pending_lane_full = pending.len() == AUTH_SWEEP_THREE_LANE_BATCH_SIZE;
+        let pending_lane_full = pending.len() == AUTH_SWEEP_FOUR_LANE_BATCH_SIZE;
 
         let mut current = if let Some(epoch) = proposed.current.clone() {
             let cutoff = epoch.cutoff.expect("current reissue epoch has a cutoff");
@@ -657,12 +713,12 @@ impl AuthState {
                     cutoff,
                     epoch.after.as_ref(),
                     epoch.through_sequence,
-                    AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                    AUTH_SWEEP_FOUR_LANE_BATCH_SIZE,
                 )
                 .await?;
             proposed.current = finish_sweep_page(
                 &states,
-                AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                AUTH_SWEEP_FOUR_LANE_BATCH_SIZE,
                 &epoch,
                 current_reissue_position,
             );
@@ -670,7 +726,32 @@ impl AuthState {
         } else {
             Vec::new()
         };
-        let current_lane_full = current.len() == AUTH_SWEEP_THREE_LANE_BATCH_SIZE;
+        let current_lane_full = current.len() == AUTH_SWEEP_FOUR_LANE_BATCH_SIZE;
+
+        let mut expiring_current = if let Some(epoch) = proposed.expiring_current.clone() {
+            let cutoff = epoch
+                .cutoff
+                .expect("expiring current credential epoch has a cutoff");
+            let states = self
+                .store
+                .current_credentials_expiring_before(
+                    cutoff,
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_FOUR_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.expiring_current = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_FOUR_LANE_BATCH_SIZE,
+                &epoch,
+                expiring_current_reissue_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let expiring_current_lane_full = expiring_current.len() == AUTH_SWEEP_FOUR_LANE_BATCH_SIZE;
 
         let mut expired_leases = if let Some(epoch) = proposed.expired_lease.clone() {
             let cutoff = epoch
@@ -682,12 +763,12 @@ impl AuthState {
                     cutoff,
                     epoch.after.as_ref(),
                     epoch.through_sequence,
-                    AUTH_SWEEP_LEASE_LANE_BATCH_SIZE,
+                    AUTH_SWEEP_FOUR_LANE_BATCH_SIZE,
                 )
                 .await?;
             proposed.expired_lease = finish_sweep_page(
                 &states,
-                AUTH_SWEEP_LEASE_LANE_BATCH_SIZE,
+                AUTH_SWEEP_FOUR_LANE_BATCH_SIZE,
                 &epoch,
                 expired_credential_lease_position,
             );
@@ -695,10 +776,13 @@ impl AuthState {
         } else {
             Vec::new()
         };
-        let expired_lane_full = expired_leases.len() == AUTH_SWEEP_LEASE_LANE_BATCH_SIZE;
+        let expired_lane_full = expired_leases.len() == AUTH_SWEEP_FOUR_LANE_BATCH_SIZE;
 
-        let mut remaining =
-            AUTH_SWEEP_BATCH_SIZE - pending.len() - current.len() - expired_leases.len();
+        let mut remaining = AUTH_SWEEP_BATCH_SIZE
+            - pending.len()
+            - current.len()
+            - expiring_current.len()
+            - expired_leases.len();
         if remaining > 0 && expired_lane_full {
             if let Some(epoch) = proposed.expired_lease.clone() {
                 let cutoff = epoch
@@ -749,7 +833,27 @@ impl AuthState {
                     .await?;
                 proposed.current =
                     finish_sweep_page(&extra, remaining, &epoch, current_reissue_position);
+                remaining -= extra.len();
                 current.append(&mut extra);
+            }
+        }
+        if remaining > 0 && expiring_current_lane_full {
+            if let Some(epoch) = proposed.expiring_current.clone() {
+                let cutoff = epoch
+                    .cutoff
+                    .expect("expiring current credential epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .current_credentials_expiring_before(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.expiring_current =
+                    finish_sweep_page(&extra, remaining, &epoch, expiring_current_reissue_position);
+                expiring_current.append(&mut extra);
             }
         }
 
@@ -759,7 +863,12 @@ impl AuthState {
         *epochs = proposed;
         drop(epochs);
 
-        Ok(credential_reissue_batch(expired_leases, pending, current))
+        Ok(credential_reissue_batch(
+            expired_leases,
+            pending,
+            current,
+            expiring_current,
+        ))
     }
 
     /// Select recurring reissue work while prepaying a bounded attempt for
@@ -770,16 +879,18 @@ impl AuthState {
         budget: &AuthOperationBudget,
     ) -> Result<SweepBatch<SessionId>, StoreError> {
         const ROW_OPERATIONS: usize = 1 + AUTH_REISSUE_ATTEMPT_BUDGET;
-        const PAGE_LIMIT: usize = (AUTH_SWEEP_THREE_LANE_BATCH_SIZE - 1) / ROW_OPERATIONS;
+        const PAGE_LIMIT: usize = (AUTH_SWEEP_FOUR_LANE_BATCH_SIZE - 1) / ROW_OPERATIONS;
 
         let now = SystemTime::now();
         let issued_before = now.checked_sub(lifetime).unwrap_or(SystemTime::UNIX_EPOCH);
+        let expires_before = credential_expiry_sweep_before(now);
         let mut epochs = self.reissue_sweep_epochs.lock().await;
         let mut proposed = epochs.clone();
         let needs_high_water = proposed.pending.is_none()
             || proposed.current.is_none()
+            || proposed.expiring_current.is_none()
             || proposed.expired_lease.is_none();
-        let reserved = usize::from(needs_high_water) + 3 + 3 * PAGE_LIMIT * ROW_OPERATIONS;
+        let reserved = usize::from(needs_high_water) + 4 + 4 * PAGE_LIMIT * ROW_OPERATIONS;
         if PAGE_LIMIT == 0 || !budget.take(reserved) {
             return Ok(SweepBatch {
                 work: Vec::new(),
@@ -799,6 +910,11 @@ impl AuthState {
                 through_sequence,
                 after: None,
             });
+            proposed.expiring_current.get_or_insert(SweepEpoch {
+                cutoff: Some(expires_before),
+                through_sequence,
+                after: None,
+            });
             proposed.expired_lease.get_or_insert(SweepEpoch {
                 cutoff: Some(now),
                 through_sequence,
@@ -810,7 +926,7 @@ impl AuthState {
             .pending
             .clone()
             .expect("pending reissue epoch was initialized above");
-        let pending = self
+        let mut pending = self
             .store
             .pending_credentials_due_for_reissue(
                 pending_epoch.after.as_ref(),
@@ -829,6 +945,7 @@ impl AuthState {
             &pending_epoch,
             pending_reissue_position,
         );
+        let pending_lane_full = pending.len() == PAGE_LIMIT;
 
         let current_epoch = proposed
             .current
@@ -837,7 +954,7 @@ impl AuthState {
         let current_cutoff = current_epoch
             .cutoff
             .expect("current reissue epoch has a cutoff");
-        let current = self
+        let mut current = self
             .store
             .current_credentials_due_for_reissue(
                 current_cutoff,
@@ -857,6 +974,36 @@ impl AuthState {
             &current_epoch,
             current_reissue_position,
         );
+        let current_lane_full = current.len() == PAGE_LIMIT;
+
+        let expiring_current_epoch = proposed
+            .expiring_current
+            .clone()
+            .expect("expiring current credential epoch was initialized above");
+        let expiring_current_cutoff = expiring_current_epoch
+            .cutoff
+            .expect("expiring current credential epoch has a cutoff");
+        let mut expiring_current = self
+            .store
+            .current_credentials_expiring_before(
+                expiring_current_cutoff,
+                expiring_current_epoch.after.as_ref(),
+                expiring_current_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if expiring_current.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "expiring current credential store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.expiring_current = finish_sweep_page(
+            &expiring_current,
+            PAGE_LIMIT,
+            &expiring_current_epoch,
+            expiring_current_reissue_position,
+        );
+        let expiring_current_lane_full = expiring_current.len() == PAGE_LIMIT;
 
         let lease_epoch = proposed
             .expired_lease
@@ -865,7 +1012,7 @@ impl AuthState {
         let lease_cutoff = lease_epoch
             .cutoff
             .expect("expired credential lease epoch has a cutoff");
-        let expired_leases = self
+        let mut expired_leases = self
             .store
             .credentials_with_expired_mint_leases(
                 lease_cutoff,
@@ -885,20 +1032,143 @@ impl AuthState {
             &lease_epoch,
             expired_credential_lease_position,
         );
+        let expired_lease_lane_full = expired_leases.len() == PAGE_LIMIT;
 
-        let returned = pending.len() + current.len() + expired_leases.len();
-        let used = usize::from(needs_high_water) + 3 + returned * ROW_OPERATIONS;
+        let mut prepaid_sessions = HashSet::new();
+        let used = usize::from(needs_high_water)
+            + 4
+            + credential_reissue_row_usage(&expired_leases, &mut prepaid_sessions)
+            + credential_reissue_row_usage(&pending, &mut prepaid_sessions)
+            + credential_reissue_row_usage(&current, &mut prepaid_sessions)
+            + credential_reissue_row_usage(&expiring_current, &mut prepaid_sessions);
         budget.refund(reserved - used);
+
+        // Every lane gets its independently fair first row. Empty lanes then
+        // return their prepaid attempt allowance so a full lane can spend the
+        // remainder on one bounded continuation page. Expiry goes first: its
+        // ordering is a hard provider deadline, while age rotation is routine.
+        if expiring_current_lane_full {
+            if let (Some(epoch), Some((limit, spill_reserved))) = (
+                proposed.expiring_current.clone(),
+                reserve_reissue_spill(budget, ROW_OPERATIONS),
+            ) {
+                let cutoff = epoch
+                    .cutoff
+                    .expect("expiring current credential epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .current_credentials_expiring_before(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        limit,
+                    )
+                    .await?;
+                if extra.len() > limit {
+                    return Err(StoreError::Malformed(
+                        "expiring current credential store exceeded its spill page limit".into(),
+                    ));
+                }
+                proposed.expiring_current =
+                    finish_sweep_page(&extra, limit, &epoch, expiring_current_reissue_position);
+                let spill_used = 1 + credential_reissue_row_usage(&extra, &mut prepaid_sessions);
+                budget.refund(spill_reserved - spill_used);
+                expiring_current.append(&mut extra);
+            }
+        }
+        if pending_lane_full {
+            if let (Some(epoch), Some((limit, spill_reserved))) = (
+                proposed.pending.clone(),
+                reserve_reissue_spill(budget, ROW_OPERATIONS),
+            ) {
+                let mut extra = self
+                    .store
+                    .pending_credentials_due_for_reissue(
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        limit,
+                    )
+                    .await?;
+                if extra.len() > limit {
+                    return Err(StoreError::Malformed(
+                        "pending credential store exceeded its spill page limit".into(),
+                    ));
+                }
+                proposed.pending =
+                    finish_sweep_page(&extra, limit, &epoch, pending_reissue_position);
+                let spill_used = 1 + credential_reissue_row_usage(&extra, &mut prepaid_sessions);
+                budget.refund(spill_reserved - spill_used);
+                pending.append(&mut extra);
+            }
+        }
+        if current_lane_full {
+            if let (Some(epoch), Some((limit, spill_reserved))) = (
+                proposed.current.clone(),
+                reserve_reissue_spill(budget, ROW_OPERATIONS),
+            ) {
+                let cutoff = epoch.cutoff.expect("current reissue epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .current_credentials_due_for_reissue(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        limit,
+                    )
+                    .await?;
+                if extra.len() > limit {
+                    return Err(StoreError::Malformed(
+                        "current credential store exceeded its spill page limit".into(),
+                    ));
+                }
+                proposed.current =
+                    finish_sweep_page(&extra, limit, &epoch, current_reissue_position);
+                let spill_used = 1 + credential_reissue_row_usage(&extra, &mut prepaid_sessions);
+                budget.refund(spill_reserved - spill_used);
+                current.append(&mut extra);
+            }
+        }
+        if expired_lease_lane_full {
+            if let (Some(epoch), Some((limit, spill_reserved))) = (
+                proposed.expired_lease.clone(),
+                reserve_reissue_spill(budget, ROW_OPERATIONS),
+            ) {
+                let cutoff = epoch
+                    .cutoff
+                    .expect("expired credential lease epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .credentials_with_expired_mint_leases(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        limit,
+                    )
+                    .await?;
+                if extra.len() > limit {
+                    return Err(StoreError::Malformed(
+                        "expired credential lease store exceeded its spill page limit".into(),
+                    ));
+                }
+                proposed.expired_lease =
+                    finish_sweep_page(&extra, limit, &epoch, expired_credential_lease_position);
+                let spill_used = 1 + credential_reissue_row_usage(&extra, &mut prepaid_sessions);
+                budget.refund(spill_reserved - spill_used);
+                expired_leases.append(&mut extra);
+            }
+        }
+
+        let batch = credential_reissue_batch(expired_leases, pending, current, expiring_current);
         *epochs = proposed;
         drop(epochs);
-        Ok(credential_reissue_batch(expired_leases, pending, current))
+        Ok(batch)
     }
 
     /// Mint, or resume delivering, a fresh credential for one session.
     ///
     /// The provider request belongs to a detached task. Cancelling the caller
     /// only stops it waiting: a successful mint is still recorded in `pending`
-    /// for the next sweep, rather than becoming an unowned no-expiry key. The
+    /// for the next sweep, rather than becoming an unowned key until expiry. The
     /// current credential remains issued until [`Self::confirm_reissue`] says
     /// the runtime accepted this value.
     #[cfg(test)]
@@ -917,10 +1187,18 @@ impl AuthState {
         session: &SessionId,
         subject: &SubjectId,
         services: &[layer2_core::ServiceId],
+        replace_before: SystemTime,
         budget: AuthOperationBudget,
     ) -> Result<Option<String>, StoreError> {
-        self.mint_session_credential_with_budget(session, subject, services, true, budget)
-            .await
+        self.mint_session_credential_with_budget(
+            session,
+            subject,
+            services,
+            true,
+            replace_before,
+            budget,
+        )
+        .await
     }
 
     /// Promote a pending replacement after its runtime accepted the new value.
@@ -935,13 +1213,40 @@ impl AuthState {
         self.promote_pending_credential(session).await
     }
 
-    pub(super) async fn confirm_reissue_with_budget(
+    pub(super) async fn prepare_reissue_delivery_with_budget(
         &self,
         session: &SessionId,
+        delivered_value: &str,
+        target: &CredentialDeliveryTarget,
+        replace_before: SystemTime,
         budget: &AuthOperationBudget,
     ) -> Result<bool, StoreError> {
-        self.promote_pending_credential_with_budget(session, budget)
-            .await
+        self.bind_pending_credential_delivery_with_budget(
+            session,
+            delivered_value,
+            target,
+            replace_before,
+            budget,
+        )
+        .await
+    }
+
+    pub(super) async fn confirm_reissue_delivery_with_budget(
+        &self,
+        session: &SessionId,
+        delivered_value: &str,
+        target: &CredentialDeliveryTarget,
+        replace_before: SystemTime,
+        budget: &AuthOperationBudget,
+    ) -> Result<bool, StoreError> {
+        self.promote_delivered_credential_with_budget(
+            session,
+            delivered_value,
+            target,
+            replace_before,
+            budget,
+        )
+        .await
     }
 
     /// Take back credentials queued on an earlier pass or release.
@@ -1347,14 +1652,19 @@ fn credential_reissue_batch(
     expired_leases: Vec<AuthSweepItem<CredentialLeaseCursor, persistence::SessionCredentialState>>,
     pending: Vec<AuthSweepItem<CredentialMutationCursor, persistence::SessionCredentialState>>,
     current: Vec<AuthSweepItem<CredentialReissueCursor, persistence::SessionCredentialState>>,
+    expiring_current: Vec<
+        AuthSweepItem<CredentialExpiryCursor, persistence::SessionCredentialState>,
+    >,
 ) -> SweepBatch<SessionId> {
     let mut first_error = None;
     let mut work = Vec::new();
+    let mut seen = HashSet::new();
     for state in expired_leases
         .into_iter()
         .map(|item| item.state)
         .chain(pending.into_iter().map(|item| item.state))
         .chain(current.into_iter().map(|item| item.state))
+        .chain(expiring_current.into_iter().map(|item| item.state))
     {
         let state = match state {
             Ok(state) => state,
@@ -1363,11 +1673,43 @@ fn credential_reissue_batch(
                 continue;
             }
         };
-        if state.pending.is_some() || state.current.is_some() {
+        if (state.pending.is_some() || state.current.is_some())
+            && seen.insert(state.session.clone())
+        {
             work.push(state.session);
         }
     }
     SweepBatch { work, first_error }
+}
+
+fn credential_reissue_row_usage<C>(
+    rows: &[AuthSweepItem<C, persistence::SessionCredentialState>],
+    seen: &mut HashSet<SessionId>,
+) -> usize {
+    let mut newly_actionable = 0;
+    for row in rows {
+        let Ok(state) = &row.state else {
+            continue;
+        };
+        if (state.pending.is_some() || state.current.is_some())
+            && seen.insert(state.session.clone())
+        {
+            newly_actionable += 1;
+        }
+    }
+    rows.len() + newly_actionable * AUTH_REISSUE_ATTEMPT_BUDGET
+}
+
+fn reserve_reissue_spill(
+    budget: &AuthOperationBudget,
+    row_operations: usize,
+) -> Option<(usize, usize)> {
+    let limit = budget.remaining().saturating_sub(1) / row_operations;
+    if limit == 0 {
+        return None;
+    }
+    let reserved = 1 + limit * row_operations;
+    budget.take(reserved).then_some((limit, reserved))
 }
 
 fn finish_sweep_page<T, C: Clone>(
@@ -1394,6 +1736,12 @@ fn pending_reissue_position(
 fn current_reissue_position(
     item: &AuthSweepItem<CredentialReissueCursor, persistence::SessionCredentialState>,
 ) -> Option<CredentialReissueCursor> {
+    Some(item.cursor.clone())
+}
+
+fn expiring_current_reissue_position(
+    item: &AuthSweepItem<CredentialExpiryCursor, persistence::SessionCredentialState>,
+) -> Option<CredentialExpiryCursor> {
     Some(item.cursor.clone())
 }
 

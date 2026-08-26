@@ -10,7 +10,7 @@ use crate::environment_service::EnvironmentProfileService;
 use crate::ids::{KernelId, SessionId};
 use crate::platform_service::PlatformSettingsService;
 use crate::session::Session;
-use crate::store::{ContextStore, CredentialSource, SessionStore};
+use crate::store::{ContextStore, CredentialSource, HandoverStore, SessionStore};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How many output chunks a slow attached client may fall behind before it is
@@ -58,6 +58,17 @@ pub(crate) struct SessionEntry {
     pub(crate) runtime: Option<RuntimeHandle>,
     /// Durable authority generation to which the live runtime channels belong.
     pub(crate) runtime_generation: u64,
+    /// Never-reused process-local identity of the attempt that installed this
+    /// entry. A cancelled attempt can remove only its own incomplete entry even
+    /// when a compatibility store has no durable runtime generation.
+    pub(crate) publication_token: String,
+    /// Whether every process-local consumer for this entry has been installed.
+    ///
+    /// An entry becomes visible before buffered conversation updates can be
+    /// folded, but a cancelled or failed publication must never prove that a
+    /// durable rotation is complete. Reconciliation may discard an incomplete
+    /// entry; only a complete one may settle its durable rotation claim.
+    pub(crate) publication_complete: bool,
     /// Process-local identity of the exact conversation link installed here.
     ///
     /// Durable generation zero is shared by every compatibility runtime, and a
@@ -265,6 +276,8 @@ pub struct SessionService {
     pub(crate) store: Arc<dyn SessionStore>,
     /// Where an agent's accumulated context is kept, when a deployment has one.
     pub(crate) context: Option<Arc<dyn ContextStore>>,
+    /// Where claim-bound compatibility handover snapshots are kept.
+    pub(crate) handovers: Option<Arc<dyn HandoverStore>>,
     /// Where to get an owner's credential when the owner is not here to give one.
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
     /// Where this session's skills are fetched from, when anything can.
@@ -347,6 +360,8 @@ pub struct SessionService {
 pub struct SessionPorts {
     /// Where a session's conversation is stored between runtimes.
     pub context: Option<Arc<dyn ContextStore>>,
+    /// Where compatibility handover snapshots are durably staged.
+    pub handovers: Option<Arc<dyn HandoverStore>>,
     /// Where a session's own credential is minted.
     pub credentials: Option<Arc<dyn CredentialSource>>,
     /// Where a session's skills are fetched from.
