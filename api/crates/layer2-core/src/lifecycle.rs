@@ -170,6 +170,7 @@ impl SessionService {
             && record.runtime_id.is_none()
         {
             let credentials = self.credentials.clone();
+            let service = Arc::clone(self);
             let session_id = id.clone();
             let task = tokio::spawn(async move {
                 let _lifecycle = lifecycle;
@@ -182,6 +183,7 @@ impl SessionService {
                         );
                     }
                 }
+                service.remove_skill_packs(&session_id).await;
                 Ok(owner)
             });
             return Self::await_compatibility_lifecycle_task(task, "session termination").await;
@@ -263,6 +265,7 @@ impl SessionService {
                                 );
                             }
                         }
+                        service.remove_skill_packs(&session_id).await;
                         tracing::info!(session_id = %session_id, "session terminated");
                     }
                     cleanup.and_then(|_| {
@@ -365,6 +368,7 @@ impl SessionService {
                                     );
                                 }
                             }
+                            service.remove_skill_packs(&session_id).await;
                             tracing::info!(session_id = %session_id, "session terminated");
                         }
                         result
@@ -542,6 +546,7 @@ impl SessionService {
                 );
             }
         }
+        self.remove_skill_packs(&id).await;
         if let Err(error) = self.store.release_session_lease(&lease).await {
             tracing::debug!(
                 session_id = %id,
@@ -1051,6 +1056,9 @@ impl SessionService {
                 tracing::error!(session_id = %id, %error, "cannot remove stored handover snapshot");
             }
         }
+        // Termination normally removed these already. Repeating it catches a
+        // prior cleanup outage and is harmless for an absent deterministic key.
+        self.remove_skill_packs(id).await;
         tracing::info!(session_id = %id, "session deleted");
         Ok(record.context_ref)
     }
