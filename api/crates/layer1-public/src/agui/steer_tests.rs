@@ -10,11 +10,11 @@ use axum::{
 use layer2_core::{
     AgentConfiguration, Authorization, Baseline, Capability, Deployment, DirectoryQuery,
     EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
-    EnvironmentProfileStore, Event, KernelId, Page, PageRequest, PlatformSettingsService,
-    RecoveryState, RegisteredUser, Reserved, ScreenFactory, Session, SessionCapabilities,
-    SessionId, SessionListQuery, SessionPorts, SessionRecord, SessionService, SessionStatus,
-    SessionStore, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
-    UserDirectoryStore,
+    EnvironmentProfileStore, Event, KernelId, OperationClaim, OperationReservation, OperationStore,
+    Page, PageRequest, PlatformSettingsService, RecoveryState, RegisteredUser, Reserved,
+    ScreenFactory, Session, SessionCapabilities, SessionId, SessionListQuery, SessionPorts,
+    SessionRecord, SessionService, SessionStatus, SessionStore, StoreError, StoredEvent, SubjectId,
+    TerminalGeometry, UserDirectory, UserDirectoryStore,
 };
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -176,6 +176,19 @@ impl UserDirectoryStore for NoDirectory {
     }
 }
 
+struct NoOperations;
+
+#[async_trait::async_trait]
+impl OperationStore for NoOperations {
+    async fn reserve(&self, _claim: &OperationClaim) -> Result<OperationReservation, StoreError> {
+        panic!("the steer fixture must refuse before reserving an operation")
+    }
+
+    async fn complete(&self, _claim: &OperationClaim, _outcome: Vec<u8>) -> Result<(), StoreError> {
+        panic!("the steer fixture must refuse before completing an operation")
+    }
+}
+
 fn owner() -> SubjectId {
     SubjectId("subject-steer-boundary".into())
 }
@@ -230,6 +243,7 @@ fn app() -> Router {
         users: UserDirectory::new(Arc::new(NoDirectory)),
         tickets: TerminalTickets::in_memory(),
         environments,
+        operations: Arc::new(NoOperations),
     };
     let authorization = Authorization::from_capabilities([Capability::UseOwnSessions]);
 
