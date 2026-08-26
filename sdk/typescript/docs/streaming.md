@@ -114,8 +114,11 @@ error.
 AG-UI also has one cursorless interface boundary: an unnumbered, non-live
 `RUN_STARTED` opens a continuation response that did not create a new durable
 turn. The SDK delivers it immediately and in order, but does not mark it
-ephemeral, deduplicate it, or advance the reconnect cursor. Every other durable
-singleton or final still requires a positive SSE id.
+ephemeral, deduplicate it, or advance the reconnect cursor. An unnumbered
+`RUN_FINISHED` is different: it is the durable prefix of an approval request and
+stays buffered until the following numbered pending-state delta completes that
+projection. Every other known durable singleton or final requires a positive
+SSE id.
 
 ## Why the SDK owns the patches
 

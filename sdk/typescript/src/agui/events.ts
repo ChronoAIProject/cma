@@ -137,8 +137,8 @@ export interface Interrupt {
   readonly id: string;
   /** `confirmation`, or `cma:<the runtime's own word>`. */
   readonly reason: string;
-  /** The kernel's own wording of what it wants. Rendered verbatim. */
-  readonly message: string;
+  /** The kernel's own wording, or `null` when it supplied none. */
+  readonly message: string | null;
   readonly responseSchema?: unknown;
   readonly expiresAt?: string;
   /**
@@ -455,7 +455,7 @@ function interrupt(raw: unknown): Interrupt {
   return {
     id: nonEmptyString(value.id, 'interrupt id'),
     reason: nonEmptyString(value.reason, 'interrupt reason'),
-    message: requiredString(value.message, 'interrupt message'),
+    message: requiredNullableString(value.message, 'interrupt message'),
     responseSchema: value.responseSchema,
     expiresAt: optionalString(value.expiresAt, 'interrupt expiresAt'),
     options: options?.map(option),
@@ -531,6 +531,13 @@ function requiredString(raw: unknown, name: string): string {
     throw new ProtocolError(`${name} was not a string`);
   }
   return raw;
+}
+
+function requiredNullableString(raw: unknown, name: string): string | null {
+  if (raw === null) {
+    return null;
+  }
+  return requiredString(raw, name);
 }
 
 function nonEmptyString(raw: unknown, name: string): string {

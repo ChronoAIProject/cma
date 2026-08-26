@@ -156,6 +156,14 @@ function projectScalarState(
     };
   }
 
+  const pendingApprovals = recordOf(fieldOf(current, 'pendingApprovals'));
+  if (
+    next.pending !== undefined &&
+    (pendingApprovals === undefined || !Object.hasOwn(pendingApprovals, next.pending.id))
+  ) {
+    next = { ...next, pending: undefined };
+  }
+
   return next;
 }
 
