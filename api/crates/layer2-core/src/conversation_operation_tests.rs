@@ -42,7 +42,8 @@ async fn an_idle_prompt_needs_no_steer_grant() {
 #[tokio::test]
 async fn a_prompt_records_the_turn_boundary_before_its_owner_message() {
     let (svc, alice, id, _adapter) = conversation().await;
-    svc.send_prompt(&alice, &id, "open the turn".into())
+    let turn_seq = svc
+        .send_prompt(&alice, &id, "open the turn".into())
         .await
         .expect("the owner may prompt their own session");
 
@@ -50,6 +51,15 @@ async fn a_prompt_records_the_turn_boundary_before_its_owner_message() {
         .events_since(&alice, &id, None)
         .await
         .expect("the prompt history is readable");
+    assert_eq!(
+        events
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::TurnStarted))
+            .expect("the prompt records a turn boundary")
+            .seq,
+        turn_seq,
+        "prompt admission returns the exact boundary allocated to this request"
+    );
     let prompt_events = events
         .iter()
         .filter_map(|event| match &event.kind {
@@ -336,10 +346,12 @@ async fn a_mid_turn_prompt_with_steer_reaches_the_test_runtime() {
     let mut capabilities = conversing();
     capabilities.steer = true;
     let (svc, alice, id, adapter) = conversation_with(capabilities).await;
-    svc.send_prompt(&alice, &id, "begin the turn".into())
+    let first_boundary = svc
+        .send_prompt(&alice, &id, "begin the turn".into())
         .await
         .expect("the idle prompt starts the turn");
-    svc.send_prompt(&alice, &id, "redirect the running turn".into())
+    let steered_boundary = svc
+        .send_prompt(&alice, &id, "redirect the running turn".into())
         .await
         .expect("the advertised mid-turn input grant is honoured");
 
@@ -357,6 +369,19 @@ async fn a_mid_turn_prompt_with_steer_reaches_the_test_runtime() {
             .count(),
         2,
         "both prompts must reach a stub that advertises mid-turn input: {sent:?}"
+    );
+    let boundaries = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("prompt history is readable")
+        .into_iter()
+        .filter(|event| matches!(event.kind, EventKind::TurnStarted))
+        .map(|event| event.seq)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        boundaries,
+        [first_boundary, steered_boundary],
+        "each accepted prompt returns its own durable boundary"
     );
 }
 

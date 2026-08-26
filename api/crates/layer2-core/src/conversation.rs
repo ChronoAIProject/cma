@@ -78,12 +78,15 @@ impl SessionService {
     /// this is where it begins: a runtime has nothing to announce until the
     /// model answers, and a client that prompted and saw nothing recorded
     /// cannot tell a slow agent from a lost prompt.
+    ///
+    /// Returns the exact durable sequence allocated to this prompt's
+    /// [`EventKind::TurnStarted`] boundary.
     pub async fn send_prompt(
         self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
         text: String,
-    ) -> Result<(), CoreError> {
+    ) -> Result<u64, CoreError> {
         // One prompt must publish its Running transition before the next one
         // decides whether it is steering. This gate is deliberately separate
         // from the lifecycle gate `conversation_input` may acquire in readoption.
@@ -145,7 +148,7 @@ impl SessionService {
             ConversationInput::Prompt(vec![ContentBlock::from(text)]),
         )
         .await?;
-        {
+        let turn_seq = {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
                 return Err(CoreError::SessionNotFound);
@@ -153,6 +156,7 @@ impl SessionService {
             entry.session.status = SessionStatus::Running;
             entry.session.stop_reason = None;
             append(entry, EventKind::TurnStarted);
+            let turn_seq = entry.session.last_seq;
             append(
                 entry,
                 EventKind::OwnerMessage {
@@ -168,12 +172,13 @@ impl SessionService {
                     capability: None,
                 },
             );
-        }
+            turn_seq
+        };
         // The lane already owns the prompt events in their required order. Do
         // not make unrelated runtime folding wait for their store round trip.
         drop(ordered_turn);
         self.flush(id).await;
-        Ok(())
+        Ok(turn_seq)
     }
 
     /// Abandon the turn in flight, leaving the conversation open.
