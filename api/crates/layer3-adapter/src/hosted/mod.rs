@@ -444,9 +444,7 @@ impl LinkLifecycle {
             let can_forget = links.get(&self.runtime).is_some_and(|current| {
                 current.sender.same_channel(link) && current.retired.is_retired()
             });
-            can_forget
-                .then(|| links.remove(&self.runtime))
-                .flatten()
+            can_forget.then(|| links.remove(&self.runtime)).flatten()
         };
         if removed.is_some() {
             self.switch_waiters.forget(&self.runtime, link).await;

@@ -308,8 +308,7 @@ impl Bridge {
             }
             // Dropping every waiter makes a dead link an immediate answer.
             cleanup_bridge.pending.lock().await.clear();
-            if let (Some(lifecycle), Some(installation)) =
-                (link_for_cleanup.as_ref(), installation)
+            if let (Some(lifecycle), Some(installation)) = (link_for_cleanup.as_ref(), installation)
             {
                 if installation.await.is_ok() {
                     if let Some(control) = control_for_cleanup.upgrade() {
