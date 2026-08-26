@@ -14,6 +14,10 @@ use std::{
 
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
+    coordination::{
+        RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
+        RuntimeCleanup, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
+    },
     store::{Page, PageCursor, SessionListQuery, SessionRecord, SessionStore, StoreError},
     Event, Rate, RateCardId, Reserved, SessionId, SessionPricing, SessionStatus, StoredEvent,
     SubjectId,
@@ -29,6 +33,14 @@ use serde::{Deserialize, Serialize};
 
 use super::event_doc;
 
+mod coordination;
+
+use coordination::{
+    active_cleanup_filter, all_session_receipts_filter, has_session_lease,
+    runtime_authority_from_doc, validate_coordination_state, CoordinationCommand, CoordinationDoc,
+    CoordinationOutcome, CoordinationReceiptDoc, COORDINATION_RECEIPTS,
+};
+
 const LEGACY_SESSIONS: &str = "sessions";
 const LEGACY_EVENTS: &str = "session_events";
 const SESSIONS: &str = "sessions_v2";
@@ -38,13 +50,22 @@ const STORE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 const HISTORY_AUDIT_INTERVAL: Duration = Duration::from_secs(30);
 const WRITES: &str = "session_writes";
 const TOMBSTONES: &str = "session_tombstones";
+const AUTHORITATIVE_COLLECTIONS: [&str; 5] =
+    [SESSIONS, EVENTS, WRITES, TOMBSTONES, COORDINATION_RECEIPTS];
 const TRANSACTION_PROBE: &str = "_cma_transaction_probe";
 const NAMESPACE_CUTOVERS: &str = "_cma_session_namespace_cutovers";
 const NAMESPACE_CUTOVER_ID: &str = "sessions-v2";
 const NAMESPACE_CUTOVER_PROTOCOL: i32 = 1;
 const NAMESPACE_CUTOVER_OBSERVED_ORIGIN: &str = "observed-complete";
+const COORDINATION_RECEIPTS_PROVENANCE_ID: &str = "session-coordination-receipts-v1";
+const COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL: i32 = 1;
 pub(super) const WRITE_PROTOCOL: i32 = 1;
 const WRITE_PROTOCOL_FIELD: &str = "_cma_write_protocol";
+// This marker fences stale document writers after collMod, but Mongo validators
+// cannot fence deletes or provider calls. Enabling coordination still requires
+// an offline drain of every pre-coordination writer and its in-flight work.
+pub(super) const COORDINATION_PROTOCOL: i32 = 1;
+const COORDINATION_PROTOCOL_FIELD: &str = "_cma_coordination_protocol";
 
 /// A granted skill as it is stored.
 ///
@@ -127,6 +148,9 @@ struct SessionDoc {
     /// Absent on documents from before the versioned writer fence.
     #[serde(rename = "_cma_write_protocol", default)]
     write_protocol: i32,
+    /// Absent until durable runtime coordination writers were fenced in.
+    #[serde(rename = "_cma_coordination_protocol", default)]
+    coordination_protocol: i32,
     owner: String,
     kernel: String,
     status: String,
@@ -193,6 +217,11 @@ struct SessionDoc {
     /// Optimistic store revision. Documents from before revisions read as zero.
     #[serde(default)]
     revision: i64,
+    /// Runtime authority and the one active provider-mutation lease.
+    ///
+    /// Absent records predate durable coordination and begin at generation zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    coordination: Option<CoordinationDoc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +256,7 @@ pub struct MongoSessionStore {
     events: Collection<Document>,
     writes: Collection<SessionWriteDoc>,
     tombstones: Collection<SessionTombstoneDoc>,
+    receipts: Collection<CoordinationReceiptDoc>,
     collection_ids: Arc<BTreeMap<String, Binary>>,
     integrity: Arc<tokio::sync::Mutex<IntegrityAudit>>,
     readiness_probe: Arc<tokio::sync::Semaphore>,
@@ -304,6 +334,15 @@ enum NamespaceCutoverMarker {
         origin: String,
         collection_ids: BTreeMap<String, Binary>,
     },
+}
+
+// The receipt UUID is anchored in NAMESPACE_CUTOVERS. Administrative deletion
+// of both that provenance namespace and the receipt collection is outside the
+// recoverable fault model, just as it is for the existing session cutover proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CoordinationReceiptsProvenance {
+    InProgress,
+    Complete { collection_id: Binary },
 }
 
 struct EventTransaction {
@@ -392,6 +431,7 @@ impl MongoSessionStore {
             events: db.collection(EVENTS),
             writes: db.collection(WRITES),
             tombstones: db.collection(TOMBSTONES),
+            receipts: db.collection(COORDINATION_RECEIPTS),
             database: db,
             collection_ids: Arc::new(BTreeMap::new()),
             integrity: Arc::new(tokio::sync::Mutex::new(IntegrityAudit::default())),
@@ -433,14 +473,20 @@ impl MongoSessionStore {
         // delete can cross that boundary, so this closes the last such race.
         store.reconcile_cutover_deletes().await?;
         let cutover_collection_ids = store.finalize_namespace_cutover_marker().await?;
+        let coordination_receipts_id = store.prepare_coordination_receipts_provenance().await?;
         store.ensure_indexes().await?;
         store.install_protocol_validators().await?;
+        store
+            .complete_coordination_receipts_provenance(&coordination_receipts_id)
+            .await?;
         let collection_ids = store.authoritative_collection_ids().await?;
         validate_completed_namespace_ids(&cutover_collection_ids, &collection_ids)?;
+        validate_coordination_receipts_id(&coordination_receipts_id, &collection_ids)?;
         store
             .verify_collection_contracts(Some(&collection_ids))
             .await?;
         store.verify_required_indexes().await?;
+        store.validate_coordination_receipts().await?;
         let snapshot = store.validate_post_fence_state().await?;
         {
             let mut integrity = store.integrity.lock().await;
@@ -492,6 +538,7 @@ impl MongoSessionStore {
             .map_err(|error| StoreError::Unavailable(format!("ping: {error}")))?;
         self.validate_transaction_topology_unbounded().await?;
         self.verify_versioned_namespaces().await?;
+        self.verify_coordination_receipts_provenance().await?;
         self.verify_collection_contracts(Some(self.collection_ids.as_ref()))
             .await?;
         self.verify_required_indexes().await?;
@@ -590,6 +637,196 @@ impl MongoSessionStore {
                 ))
             })?;
         marker.map(validate_namespace_cutover_marker).transpose()
+    }
+
+    async fn coordination_receipts_provenance(
+        &self,
+    ) -> Result<Option<CoordinationReceiptsProvenance>, StoreError> {
+        let marker = self
+            .database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .find_one(doc! { "_id": COORDINATION_RECEIPTS_PROVENANCE_ID })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "read MongoDB coordination-receipt provenance: {error}"
+                ))
+            })?;
+        marker
+            .map(validate_coordination_receipts_provenance)
+            .transpose()
+    }
+
+    async fn current_coordination_receipts_id(&self) -> Result<Option<Binary>, StoreError> {
+        let contracts = self.collection_contracts().await?;
+        let Some(contract) = contracts.get(COORDINATION_RECEIPTS) else {
+            return Ok(None);
+        };
+        if contract.kind != NamespaceKind::Collection {
+            return Err(StoreError::Unavailable(format!(
+                "MongoDB coordination-receipt namespace {COORDINATION_RECEIPTS} is not a collection"
+            )));
+        }
+        let id = contract.uuid.clone().ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "MongoDB coordination-receipt collection {COORDINATION_RECEIPTS} has no stable UUID"
+            ))
+        })?;
+        validate_cutover_uuid(COORDINATION_RECEIPTS, &id)?;
+        Ok(Some(id))
+    }
+
+    async fn prepare_coordination_receipts_provenance(&self) -> Result<Binary, StoreError> {
+        for _ in 0..8 {
+            let marker = self.coordination_receipts_provenance().await?;
+            let actual = self.current_coordination_receipts_id().await?;
+            match (marker, actual) {
+                (
+                    Some(CoordinationReceiptsProvenance::Complete { collection_id }),
+                    Some(actual),
+                ) if collection_id == actual => return Ok(actual),
+                (
+                    Some(CoordinationReceiptsProvenance::Complete { collection_id }),
+                    Some(_),
+                ) => {
+                    return Err(StoreError::Unavailable(format!(
+                        "MongoDB coordination-receipt collection {COORDINATION_RECEIPTS} UUID no longer matches its durable provenance; refusing replacement data (expected {collection_id:?})"
+                    )))
+                }
+                (Some(CoordinationReceiptsProvenance::Complete { .. }), None) => {
+                    return Err(StoreError::Unavailable(format!(
+                        "MongoDB coordination-receipt collection {COORDINATION_RECEIPTS} is missing; refusing to recreate lost coordination state"
+                    )))
+                }
+                (Some(CoordinationReceiptsProvenance::InProgress), Some(actual)) => {
+                    return Ok(actual)
+                }
+                (Some(CoordinationReceiptsProvenance::InProgress), None) => {
+                    let created = self
+                        .database
+                        .create_collection(COORDINATION_RECEIPTS)
+                        .await;
+                    if let Err(error) = created {
+                        if self.current_coordination_receipts_id().await?.is_none() {
+                            return Err(StoreError::Unavailable(format!(
+                                "create MongoDB coordination-receipt collection after recording provenance intent: {error}"
+                            )));
+                        }
+                    }
+                }
+                (None, Some(_)) => {
+                    if self.coordination_receipts_provenance().await?.is_some() {
+                        continue;
+                    }
+                    return Err(StoreError::Unavailable(format!(
+                        "MongoDB coordination-receipt collection {COORDINATION_RECEIPTS} exists without durable provenance; refusing to adopt unknown coordination state"
+                    )));
+                }
+                (None, None) => {
+                    let marker = coordination_receipts_provenance_document(
+                        &CoordinationReceiptsProvenance::InProgress,
+                    )?;
+                    let inserted = self
+                        .database
+                        .collection::<Document>(NAMESPACE_CUTOVERS)
+                        .insert_one(marker)
+                        .with_options(
+                            InsertOneOptions::builder()
+                                .write_concern(WriteConcern::majority())
+                                .build(),
+                        )
+                        .await;
+                    if let Err(error) = inserted {
+                        if self.coordination_receipts_provenance().await?.is_none() {
+                            return Err(StoreError::Unavailable(format!(
+                                "record MongoDB coordination-receipt provenance before creating its collection: {error}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB coordination-receipt provenance did not reach a stable prepared state".into(),
+        ))
+    }
+
+    async fn complete_coordination_receipts_provenance(
+        &self,
+        expected: &Binary,
+    ) -> Result<(), StoreError> {
+        let contracts = self.collection_contracts().await?;
+        let contract = contracts.get(COORDINATION_RECEIPTS).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "MongoDB coordination-receipt collection {COORDINATION_RECEIPTS} disappeared before provenance completion"
+            ))
+        })?;
+        validate_collection_contract(COORDINATION_RECEIPTS, contract, Some(expected))?;
+
+        for _ in 0..4 {
+            match self.coordination_receipts_provenance().await? {
+                Some(CoordinationReceiptsProvenance::Complete { collection_id }) => {
+                    return validate_exact_coordination_receipts_id(expected, &collection_id)
+                }
+                Some(CoordinationReceiptsProvenance::InProgress) => {
+                    let completed = coordination_receipts_provenance_document(
+                        &CoordinationReceiptsProvenance::Complete {
+                            collection_id: expected.clone(),
+                        },
+                    )?;
+                    let replaced = self
+                        .database
+                        .collection::<Document>(NAMESPACE_CUTOVERS)
+                        .replace_one(
+                            doc! {
+                                "_id": COORDINATION_RECEIPTS_PROVENANCE_ID,
+                                "protocol": COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL,
+                                "phase": "in-progress",
+                            },
+                            completed,
+                        )
+                        .with_options(
+                            ReplaceOptions::builder()
+                                .upsert(false)
+                                .write_concern(WriteConcern::majority())
+                                .build(),
+                        )
+                        .await;
+                    match replaced {
+                        Ok(result) if result.matched_count == 1 => continue,
+                        Ok(_) | Err(_) => continue,
+                    }
+                }
+                None => {
+                    return Err(StoreError::Unavailable(
+                        "MongoDB coordination-receipt provenance disappeared before completion"
+                            .into(),
+                    ))
+                }
+            }
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB coordination-receipt provenance did not reach a stable completed state".into(),
+        ))
+    }
+
+    async fn verify_coordination_receipts_provenance(&self) -> Result<(), StoreError> {
+        let expected = self
+            .collection_ids
+            .get(COORDINATION_RECEIPTS)
+            .ok_or_else(|| {
+                StoreError::Unavailable(
+                    "MongoDB readiness has no coordination-receipt collection UUID".into(),
+                )
+            })?;
+        let Some(CoordinationReceiptsProvenance::Complete { collection_id }) =
+            self.coordination_receipts_provenance().await?
+        else {
+            return Err(StoreError::Unavailable(
+                "MongoDB coordination-receipt provenance is not complete".into(),
+            ));
+        };
+        validate_exact_coordination_receipts_id(expected, &collection_id)
     }
 
     async fn record_namespace_cutover_marker(&self, origin: &str) -> Result<(), StoreError> {
@@ -1362,6 +1599,10 @@ impl MongoSessionStore {
             (EVENTS, event_protocol_validator()),
             (WRITES, write_protocol_validator()),
             (TOMBSTONES, tombstone_protocol_validator()),
+            (
+                COORDINATION_RECEIPTS,
+                coordination_receipt_protocol_validator(),
+            ),
         ] {
             self.database
                 .run_command(doc! {
@@ -1387,7 +1628,7 @@ impl MongoSessionStore {
             .database
             .list_collections()
             .filter(doc! {
-                "name": { "$in": [SESSIONS, EVENTS, WRITES, TOMBSTONES] }
+                "name": { "$in": AUTHORITATIVE_COLLECTIONS.to_vec() }
             })
             .await
             .map_err(|error| {
@@ -1412,7 +1653,7 @@ impl MongoSessionStore {
     async fn authoritative_collection_ids(&self) -> Result<BTreeMap<String, Binary>, StoreError> {
         let contracts = self.collection_contracts().await?;
         let mut ids = BTreeMap::new();
-        for collection in [SESSIONS, EVENTS, WRITES, TOMBSTONES] {
+        for collection in AUTHORITATIVE_COLLECTIONS {
             let contract = contracts.get(collection).ok_or_else(|| {
                 StoreError::Unavailable(format!(
                     "authoritative MongoDB collection {collection} is missing"
@@ -1433,7 +1674,7 @@ impl MongoSessionStore {
         expected_ids: Option<&BTreeMap<String, Binary>>,
     ) -> Result<(), StoreError> {
         let contracts = self.collection_contracts().await?;
-        for collection in [SESSIONS, EVENTS, WRITES, TOMBSTONES] {
+        for collection in AUTHORITATIVE_COLLECTIONS {
             let contract = contracts.get(collection).ok_or_else(|| {
                 StoreError::Unavailable(format!(
                     "authoritative MongoDB collection {collection} is missing"
@@ -1450,7 +1691,7 @@ impl MongoSessionStore {
 
     async fn verify_required_indexes(&self) -> Result<(), StoreError> {
         let required = required_indexes();
-        for collection in [EVENTS, WRITES, SESSIONS] {
+        for collection in [EVENTS, WRITES, SESSIONS, COORDINATION_RECEIPTS] {
             let mut cursor = self
                 .database
                 .collection::<Document>(collection)
@@ -1758,6 +1999,7 @@ fn expected_validator(collection: &str) -> Option<Document> {
         EVENTS => Some(event_protocol_validator()),
         WRITES => Some(write_protocol_validator()),
         TOMBSTONES => Some(tombstone_protocol_validator()),
+        COORDINATION_RECEIPTS => Some(coordination_receipt_protocol_validator()),
         _ => None,
     }
 }
@@ -1832,8 +2074,8 @@ fn bson_values_equivalent(left: &Bson, right: &Bson) -> bool {
     }
 }
 
-fn required_indexes() -> [RequiredIndex; 7] {
-    [
+fn required_indexes() -> Vec<RequiredIndex> {
+    vec![
         RequiredIndex {
             collection: EVENTS,
             name: "session_id_1_seq_1",
@@ -1874,6 +2116,16 @@ fn required_indexes() -> [RequiredIndex; 7] {
             collection: SESSIONS,
             name: "status_1",
             keys: doc! { "status": 1 },
+            unique: false,
+        },
+        RequiredIndex {
+            collection: COORDINATION_RECEIPTS,
+            name: "_id.session_id_1__id.kind_1_payload.type_1",
+            keys: doc! {
+                "_id.session_id": 1,
+                "_id.kind": 1,
+                "payload.type": 1,
+            },
             unique: false,
         },
     ]
@@ -2151,6 +2403,68 @@ fn namespace_cutover_marker_document(
     Ok(document)
 }
 
+fn coordination_receipts_provenance_document(
+    marker: &CoordinationReceiptsProvenance,
+) -> Result<Document, StoreError> {
+    let mut document = doc! {
+        "_id": COORDINATION_RECEIPTS_PROVENANCE_ID,
+        "protocol": COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL,
+        "phase": match marker {
+            CoordinationReceiptsProvenance::InProgress => "in-progress",
+            CoordinationReceiptsProvenance::Complete { .. } => "complete",
+        },
+    };
+    if let CoordinationReceiptsProvenance::Complete { collection_id } = marker {
+        validate_cutover_uuid(COORDINATION_RECEIPTS, collection_id)?;
+        document.insert("collection_uuid", collection_id.clone());
+    }
+    Ok(document)
+}
+
+fn validate_coordination_receipts_provenance(
+    document: Document,
+) -> Result<CoordinationReceiptsProvenance, StoreError> {
+    let id = document.get_str("_id").map_err(|_| {
+        StoreError::Malformed("MongoDB coordination-receipt provenance _id must be a string".into())
+    })?;
+    let protocol = document.get_i32("protocol").map_err(|_| {
+        StoreError::Malformed(
+            "MongoDB coordination-receipt provenance protocol must be an int".into(),
+        )
+    })?;
+    let phase = document.get_str("phase").map_err(|_| {
+        StoreError::Malformed(
+            "MongoDB coordination-receipt provenance phase must be a string".into(),
+        )
+    })?;
+    if id != COORDINATION_RECEIPTS_PROVENANCE_ID
+        || protocol != COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL
+    {
+        return Err(StoreError::Malformed(format!(
+            "MongoDB coordination-receipt provenance is not the supported {COORDINATION_RECEIPTS_PROVENANCE_ID} protocol {COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL} proof"
+        )));
+    }
+    match phase {
+        "in-progress" if document.len() == 3 => Ok(CoordinationReceiptsProvenance::InProgress),
+        "complete" if document.len() == 4 => {
+            let collection_id = match document.get("collection_uuid") {
+                Some(Bson::Binary(id)) => id.clone(),
+                _ => {
+                    return Err(StoreError::Malformed(
+                        "completed MongoDB coordination-receipt provenance must carry a binary collection_uuid"
+                            .into(),
+                    ))
+                }
+            };
+            validate_cutover_uuid(COORDINATION_RECEIPTS, &collection_id)?;
+            Ok(CoordinationReceiptsProvenance::Complete { collection_id })
+        }
+        _ => Err(StoreError::Malformed(
+            "MongoDB coordination-receipt provenance has an unsupported phase or field set".into(),
+        )),
+    }
+}
+
 fn validate_namespace_cutover_marker(
     document: Document,
 ) -> Result<NamespaceCutoverMarker, StoreError> {
@@ -2302,6 +2616,30 @@ fn validate_completed_namespace_ids(
         }
     }
     Ok(())
+}
+
+fn validate_exact_coordination_receipts_id(
+    expected: &Binary,
+    actual: &Binary,
+) -> Result<(), StoreError> {
+    if expected == actual {
+        return Ok(());
+    }
+    Err(StoreError::Unavailable(format!(
+        "MongoDB coordination-receipt collection {COORDINATION_RECEIPTS} UUID no longer matches its durable provenance; refusing replacement data"
+    )))
+}
+
+fn validate_coordination_receipts_id(
+    expected: &Binary,
+    actual: &BTreeMap<String, Binary>,
+) -> Result<(), StoreError> {
+    let actual = actual.get(COORDINATION_RECEIPTS).ok_or_else(|| {
+        StoreError::Unavailable(format!(
+            "MongoDB coordination-receipt collection {COORDINATION_RECEIPTS} disappeared during startup"
+        ))
+    })?;
+    validate_exact_coordination_receipts_id(expected, actual)
 }
 
 fn namespace_cutover_authorization(
@@ -2524,7 +2862,10 @@ fn protocol_validator(mut required: Vec<&str>, long_fields: &[&str]) -> Document
 }
 
 fn session_protocol_validator() -> Document {
-    protocol_validator(vec!["revision"], &["revision"])
+    coordination_protocol_validator(protocol_validator(
+        vec!["revision", COORDINATION_PROTOCOL_FIELD],
+        &["revision"],
+    ))
 }
 
 fn event_protocol_validator() -> Document {
@@ -2539,9 +2880,30 @@ fn tombstone_protocol_validator() -> Document {
     protocol_validator(Vec::new(), &[])
 }
 
+fn coordination_receipt_protocol_validator() -> Document {
+    coordination_protocol_validator(protocol_validator(vec![COORDINATION_PROTOCOL_FIELD], &[]))
+}
+
+fn coordination_protocol_validator(mut validator: Document) -> Document {
+    validator
+        .get_document_mut("$jsonSchema")
+        .expect("the protocol validator has a JSON schema")
+        .get_document_mut("properties")
+        .expect("the protocol validator has properties")
+        .insert(
+            COORDINATION_PROTOCOL_FIELD,
+            Bson::Document(doc! {
+                "bsonType": "int",
+                "enum": [COORDINATION_PROTOCOL],
+            }),
+        );
+    validator
+}
+
 fn appended_event_session_update(record: &Document, tail: i64) -> Document {
     let mut set = Document::new();
     set.insert(WRITE_PROTOCOL_FIELD, WRITE_PROTOCOL);
+    set.insert(COORDINATION_PROTOCOL_FIELD, COORDINATION_PROTOCOL);
     if !record.contains_key("revision") {
         // The first write touching a pre-revision record gives its absent
         // revision the same explicit zero used by the legacy CAS filter.
@@ -2846,6 +3208,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
     Ok(SessionDoc {
         id: s.id.0.clone(),
         write_protocol: WRITE_PROTOCOL,
+        coordination_protocol: COORDINATION_PROTOCOL,
         owner: s.owner.0.clone(),
         kernel: s.kernel.0.clone(),
         status: serde_plain_string(&s.status)?,
@@ -2895,6 +3258,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         revision: i64::try_from(r.revision).map_err(|_| {
             StoreError::Malformed(format!("session revision {} cannot be stored", r.revision))
         })?,
+        coordination: Some(CoordinationDoc::default()),
     })
 }
 
@@ -3071,6 +3435,7 @@ fn reserved_from_optional_doc(doc: Option<ReservedCapacityDoc>) -> Result<Reserv
 
 fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
     use layer2_core::{Session, TerminalGeometry};
+    validate_coordination_state(&d)?;
     let geometry = TerminalGeometry::new(d.columns as u16, d.rows as u16)
         .map_err(|e| StoreError::Malformed(e.to_string()))?;
     Ok(SessionRecord {
@@ -3136,6 +3501,186 @@ impl SessionStore for MongoSessionStore {
             .items
             .into_iter()
             .next())
+    }
+
+    async fn runtime_authority(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<RuntimeAuthority>, StoreError> {
+        let stored = self
+            .sessions
+            .find_one(doc! { "_id": &id.0 })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("read MongoDB runtime authority: {error}"))
+            })?;
+        stored.as_ref().map(runtime_authority_from_doc).transpose()
+    }
+
+    async fn acquire_session_lease(
+        &self,
+        request: &SessionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::Acquire(request.clone()))
+            .await?
+        {
+            CoordinationOutcome::Lease(lease) => Ok(lease),
+            _ => unreachable!("acquire command returns a lease"),
+        }
+    }
+
+    async fn renew_session_lease(
+        &self,
+        lease: &SessionLease,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::Renew {
+                lease: lease.clone(),
+                ttl,
+            })
+            .await?
+        {
+            CoordinationOutcome::Unit => Ok(()),
+            _ => unreachable!("renew command returns no value"),
+        }
+    }
+
+    async fn advance_session_lease(
+        &self,
+        lease: &mut SessionLease,
+        boundary: &SessionBoundary,
+    ) -> Result<(), StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::Advance {
+                lease: lease.clone(),
+                boundary: boundary.clone(),
+            })
+            .await?
+        {
+            CoordinationOutcome::Unit => {
+                lease.boundary = boundary.clone();
+                Ok(())
+            }
+            _ => unreachable!("advance command returns no value"),
+        }
+    }
+
+    async fn release_session_lease(&self, lease: &SessionLease) -> Result<(), StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::Release(lease.clone()))
+            .await?
+        {
+            CoordinationOutcome::Unit => Ok(()),
+            _ => unreachable!("release command returns no value"),
+        }
+    }
+
+    async fn reserve_runtime_generation(
+        &self,
+        lease: &SessionLease,
+        reservation_token: &str,
+    ) -> Result<RuntimeReservation, StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::Reserve {
+                lease: lease.clone(),
+                token: reservation_token.into(),
+            })
+            .await?
+        {
+            CoordinationOutcome::Reservation(reservation) => Ok(reservation),
+            _ => unreachable!("reserve command returns a reservation"),
+        }
+    }
+
+    async fn register_runtime_candidate(
+        &self,
+        lease: &SessionLease,
+        reservation: &RuntimeReservation,
+        runtime_id: &str,
+    ) -> Result<RuntimeCandidate, StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::Register {
+                lease: lease.clone(),
+                reservation: reservation.clone(),
+                runtime_id: runtime_id.into(),
+            })
+            .await?
+        {
+            CoordinationOutcome::Candidate(candidate) => Ok(candidate),
+            _ => unreachable!("register command returns a candidate"),
+        }
+    }
+
+    async fn switch_runtime_authority(
+        &self,
+        lease: &mut SessionLease,
+        candidate: &RuntimeCandidate,
+    ) -> Result<RuntimeAuthoritySwitch, StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::Switch {
+                lease: lease.clone(),
+                candidate: candidate.clone(),
+            })
+            .await?
+        {
+            CoordinationOutcome::Switch(switched) => {
+                lease.boundary = switched.boundary.clone();
+                Ok(switched)
+            }
+            _ => unreachable!("switch command returns an authority switch"),
+        }
+    }
+
+    async fn retire_runtime_authority(
+        &self,
+        lease: &mut SessionLease,
+        retirement_token: &str,
+    ) -> Result<RuntimeAuthorityRetirement, StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::Retire {
+                lease: lease.clone(),
+                token: retirement_token.into(),
+            })
+            .await?
+        {
+            CoordinationOutcome::Retirement(retired) => {
+                lease.boundary = retired.boundary.clone();
+                Ok(retired)
+            }
+            _ => unreachable!("retire command returns an authority retirement"),
+        }
+    }
+
+    async fn runtime_cleanup_debts(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<RuntimeCleanup>, StoreError> {
+        self.mongo_runtime_cleanup_debts(id).await
+    }
+
+    async fn legacy_runtime_cleanup_authorized(&self) -> Result<bool, StoreError> {
+        // Namespace cutover fences record writers, but it is not yet the
+        // irreversible provider-writer drain proof required for generation zero.
+        Ok(false)
+    }
+
+    async fn acknowledge_runtime_cleanup(
+        &self,
+        lease: &SessionLease,
+        cleanup: &RuntimeCleanup,
+    ) -> Result<(), StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::Acknowledge {
+                lease: lease.clone(),
+                cleanup: cleanup.clone(),
+            })
+            .await?
+        {
+            CoordinationOutcome::Unit => Ok(()),
+            _ => unreachable!("cleanup acknowledgement returns no value"),
+        }
     }
 
     async fn list_for(
@@ -3398,6 +3943,23 @@ impl MongoSessionStore {
                     let (revision, revision_i64) =
                         next_stored_revision(actual).map_err(mongodb::error::Error::custom)?;
                     let mut durable = transaction.record.clone();
+                    if let Some(existing) = existing.as_ref() {
+                        validate_coordination_state(existing)
+                            .map_err(mongodb::error::Error::custom)?;
+                        if existing.runtime_id != durable.runtime_id {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::SessionAuthorityChanged {
+                                    id: transaction.id.clone(),
+                                },
+                            ));
+                        }
+                        durable.coordination = Some(
+                            existing
+                                .coordination
+                                .clone()
+                                .unwrap_or_else(CoordinationDoc::default),
+                        );
+                    }
                     durable.revision = revision_i64;
                     durable.last_seq = i64::try_from(durable_tail).map_err(|_| {
                         mongodb::error::Error::custom(StoreError::Malformed(format!(
@@ -3621,6 +4183,7 @@ impl MongoSessionStore {
             self.events.clone(),
             self.writes.clone(),
             self.tombstones.clone(),
+            self.receipts.clone(),
             id.clone(),
         );
         let mut session = self.client.start_session().await.map_err(|error| {
@@ -3632,8 +4195,44 @@ impl MongoSessionStore {
             .write_concern(WriteConcern::majority())
             .and_run(
                 context,
-                |session, (sessions, events, writes, tombstones, id)| {
+                |session, (sessions, events, writes, tombstones, receipts, id)| {
                     async move {
+                        let stored = sessions
+                            .find_one(doc! { "_id": &id.0 })
+                            .session(&mut *session)
+                            .await?;
+                        let cleanup_debts = receipts
+                            .count_documents(active_cleanup_filter(&id))
+                            .session(&mut *session)
+                            .await?;
+                        if let Some(stored) = stored.as_ref() {
+                            if has_session_lease(stored).map_err(mongodb::error::Error::custom)? {
+                                return Err(mongodb::error::Error::custom(
+                                    StoreError::SessionLeaseHeld { id: id.clone() },
+                                ));
+                            }
+                            let authority = runtime_authority_from_doc(stored)
+                                .map_err(mongodb::error::Error::custom)?;
+                            if authority.runtime_id.is_some() || cleanup_debts != 0 {
+                                return Err(mongodb::error::Error::custom(
+                                    StoreError::SessionCleanupPending {
+                                        id: id.clone(),
+                                        runtime_id: authority.runtime_id,
+                                        cleanup_debts: usize::try_from(cleanup_debts)
+                                            .unwrap_or(usize::MAX),
+                                    },
+                                ));
+                            }
+                        } else if cleanup_debts != 0 {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::SessionCleanupPending {
+                                    id: id.clone(),
+                                    runtime_id: None,
+                                    cleanup_debts: usize::try_from(cleanup_debts)
+                                        .unwrap_or(usize::MAX),
+                                },
+                            ));
+                        }
                         tombstones
                             .replace_one(
                                 doc! { "_id": &id.0 },
@@ -3657,6 +4256,10 @@ impl MongoSessionStore {
                             .delete_many(doc! { "session_id": &id.0 })
                             .session(&mut *session)
                             .await?;
+                        receipts
+                            .delete_many(all_session_receipts_filter(&id))
+                            .session(&mut *session)
+                            .await?;
                         Ok(())
                     }
                     .boxed()
@@ -3664,7 +4267,12 @@ impl MongoSessionStore {
             )
             .await
             .map_err(|error| {
-                StoreError::Unavailable(format!("delete session transaction: {error}"))
+                error
+                    .get_custom::<StoreError>()
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        StoreError::Unavailable(format!("delete session transaction: {error}"))
+                    })
             })
     }
 
