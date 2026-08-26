@@ -473,6 +473,7 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
 
    RUN_STARTED { "threadId": "sesn_01JD8Z3K7",
                  "runId": "run_01JD9A3" }   # no SSE id
+   ...numbered durable continuation state may appear here...
    STATE_DELTA {
      delta: [{ "op": "remove",
                "path": "/pendingApprovals/apr_7Q2" }]
@@ -480,6 +481,10 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
    ...continuation events...
    RUN_FINISHED { ... }
 ```
+
+The approval removal must precede the continuation's terminal frame, but it is
+not required to be adjacent to `RUN_STARTED`. Other numbered durable projection
+frames may describe the session resuming before the removal arrives.
 
 `reason` is `confirmation` where the runtime offered no description of what it wants, and `cma:<what the runtime called it>` where it did — `cma:command_execution`, `cma:file_write`, `cma:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
 
