@@ -302,13 +302,20 @@ fn an_approval_ends_the_run_to_ask() {
         action: Some("command_execution".into()),
         detail: Some("Run `rm -rf build/`?".into()),
     });
-    assert_eq!(kinds(&p), vec!["RUN_FINISHED"]);
+    assert_eq!(kinds(&p), vec!["RUN_FINISHED", "STATE_DELTA"]);
     assert_eq!(p.ending, Some(Ending::Interrupted));
     let outcome = &p.events[0].body["outcome"];
     assert_eq!(outcome["type"], "interrupt");
     assert_eq!(outcome["interrupts"][0]["id"], "apr_7Q2");
     assert_eq!(outcome["interrupts"][0]["reason"], "cma:command_execution");
     assert_eq!(outcome["interrupts"][0]["message"], "Run `rm -rf build/`?");
+    let patch = &p.events[1].body["delta"][0];
+    assert_eq!(patch["op"], "add");
+    assert_eq!(patch["path"], "/pendingApprovals/apr_7Q2");
+    assert_eq!(patch["value"]["id"], "apr_7Q2");
+    assert_eq!(patch["value"]["reason"], "cma:command_execution");
+    assert_eq!(patch["value"]["message"], "Run `rm -rf build/`?");
+    assert_only_final_carries_cursor(&p);
 }
 
 #[test]
@@ -325,6 +332,36 @@ fn an_approval_with_nothing_to_say_still_asks() {
         p.events[0].body["outcome"]["interrupts"][0]["reason"],
         "confirmation"
     );
+    assert!(p.events[1].body["delta"][0]["value"]["message"].is_null());
+}
+
+#[test]
+fn an_approval_id_is_one_escaped_json_pointer_token() {
+    let p = projected(EventKind::ApprovalRequested {
+        request_id: "approval/~one".into(),
+        action: Some("file_write".into()),
+        detail: None,
+    });
+
+    assert_eq!(
+        p.events[1].body["delta"][0]["path"],
+        "/pendingApprovals/approval~1~0one"
+    );
+}
+
+#[test]
+fn resolving_an_approval_removes_its_pending_state_member() {
+    let p = projected(EventKind::ApprovalResolved {
+        request_id: "approval/~one".into(),
+        allowed: true,
+    });
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    assert!(p.ending.is_none());
+    let patch = &p.events[0].body["delta"][0];
+    assert_eq!(patch["op"], "remove");
+    assert_eq!(patch["path"], "/pendingApprovals/approval~1~0one");
+    assert_eq!(p.events[0].seq, Some(7));
 }
 
 #[test]
@@ -584,10 +621,6 @@ fn what_this_interface_cannot_carry_becomes_nothing() {
         EventKind::TerminalResized {
             columns: 120,
             rows: 40,
-        },
-        EventKind::ApprovalResolved {
-            request_id: "apr_1".into(),
-            allowed: true,
         },
     ] {
         let p = project(&logged(7, kind.clone()), "run_1", "sesn_1");

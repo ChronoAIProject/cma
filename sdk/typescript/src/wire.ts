@@ -16,6 +16,13 @@
 /** Where an AG-UI event's RFC 6902 patches live — `docs/API_AGUI.md` §3. */
 export const STATE_DELTA_PATCHES = 'delta';
 
+/** The durable state value for one approval the session is waiting on. */
+export interface PendingApprovalState {
+  readonly id: string;
+  readonly reason: string;
+  readonly message: string | null;
+}
+
 /** The public document an AG-UI session's first `STATE_DELTA` patches. */
 export interface AguiState {
   /** Additive protocol fields a newer control plane may introduce. */
@@ -32,6 +39,7 @@ export interface AguiState {
   plan: unknown;
   configOptions: unknown;
   availableCommands: unknown[] | null;
+  pendingApprovals: Record<string, PendingApprovalState>;
   signIn: unknown;
   gaps: unknown[];
   planeChanges: unknown[];
@@ -59,6 +67,7 @@ export function initialState(): AguiState {
     plan: null,
     configOptions: null,
     availableCommands: null,
+    pendingApprovals: {},
     signIn: null,
     gaps: [],
     planeChanges: [],
@@ -102,12 +111,11 @@ export const PRICING_WIRE = {
 } as const;
 
 /**
- * The JSON-Pointer paths a `STATE_DELTA` writes, as the service writes them.
+ * The JSON-Pointer paths this SDK recognizes in `STATE_DELTA` operations.
  *
- * `docs/API_AGUI.md`: token counts arrive as patches against `/usage`, a
- * dropped stretch of conversation is appended to `/gaps`, and a plane change
- * is appended to `/planeChanges`; a runtime loss is appended to
- * `/runtimeLosses`.
+ * `docs/API_AGUI.md` §3, "STATE_DELTA paths", is the complete emitted path,
+ * operation, value-shape, and trigger contract. `/usage/cost` is the one
+ * explicitly unwritten local placeholder, recorded at its declaration below.
  */
 export const PATHS = {
   /** A session's live resource readings. Replaced whole; never accumulated. */
@@ -134,6 +142,8 @@ export const PATHS = {
   cost: '/usage/cost',
   /** The permission mode the agent is running under. */
   mode: '/mode',
+  /** One pending approval, keyed by its RFC 6901-escaped request id. */
+  pendingApproval: '/pendingApprovals/{requestId}',
   /** What the agent intends to do, as steps. */
   plan: '/plan',
   /** The settings this session may change, in the kernel's own words. */
@@ -150,8 +160,8 @@ export const PATHS = {
   /**
    * The actions the owner may invoke right now.
    *
-   * Liveness rather than history: a stale list replayed from the log would
-   * offer actions that no longer exist.
+   * Written by both the durable projection and cursorless live lane. Each
+   * announcement replaces the list whole, so both lanes converge on one path.
    */
   availableCommands: '/availableCommands',
   /** Where a plane change is appended. */

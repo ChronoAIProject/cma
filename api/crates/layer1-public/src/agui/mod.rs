@@ -33,6 +33,9 @@ use crate::rest::{Problem, SessionsState};
 use crate::{InterfaceProfile, Operation};
 
 mod capabilities;
+#[cfg(test)]
+#[path = "contract_tests.rs"]
+mod contract_tests;
 mod frame;
 mod live;
 mod project;
@@ -41,6 +44,9 @@ mod resources;
 mod run;
 mod run_ending;
 mod state;
+#[cfg(test)]
+#[path = "steer_tests.rs"]
+mod steer_tests;
 
 pub use state::initial_state;
 
