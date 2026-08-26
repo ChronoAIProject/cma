@@ -168,11 +168,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Built and scanned before anything is pushed. The same content passed
-      # this scan on the pull request minutes ago, so a failure here means a
-      # vulnerability was published in between — which is exactly when it
-      # matters, since this image is about to become a release artifact rather
-      # than a discarded build.
+      # Built and scanned before anything is pushed. The runtime's final OS
+      # refresh deliberately runs again for this workflow attempt, so a fix or
+      # vulnerability published after the pull-request scan is evaluated here
+      # before the image becomes a release artifact.
       - name: Build the native image for scanning
         uses: docker/build-push-action@v6
         with:
@@ -185,6 +184,7 @@ jobs:
           build-args: |
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
+            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           # Populated by ci.yml. A run on main can restore caches from main and
           # from the default branch, and develop is the default branch, so the
           # layers the merged pull request built are still warm here.
@@ -226,6 +226,7 @@ jobs:
           build-args: |
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
+            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           tags: |
             ${{ steps.image.outputs.repository }}:${{ needs.plan.outputs.version }}
             ${{ steps.image.outputs.repository }}:${{ steps.image.outputs.revision }}
