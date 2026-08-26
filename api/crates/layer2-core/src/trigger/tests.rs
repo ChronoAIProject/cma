@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::*;
-use crate::{PermissionMode, SessionSize, SubjectId};
+use crate::{seconds_from_rfc3339, PermissionMode, SessionId, SessionSize, SubjectId};
 
 const NOW: &str = "2026-08-26T12:00:00Z";
 const LATER: &str = "2026-08-26T12:01:00Z";
@@ -209,6 +209,79 @@ fn cancellation_is_idempotent_but_never_skips_ambiguous_pr_reconciliation() {
     assert_eq!(launch.state, LaunchState::Cancelled);
     launch.cancel(cancel, LATER, "cancel-again").unwrap();
     assert_eq!(launch.state, LaunchState::Cancelled);
+}
+
+#[test]
+fn cancellation_records_pending_capability_revocation_without_stopping_the_session() {
+    let owner = SubjectId("contributor".into());
+    let mut launch = Launch::new(owner.clone(), revision(owner.clone()), NOW, "create").unwrap();
+    launch.state = LaunchState::Ready;
+    launch.session = Some(SessionLink {
+        session_id: SessionId("sesn_trigger_cancelled".into()),
+        environment_profile_id: "trigger-profile".into(),
+        runtime_generation: 1,
+        created_at: NOW.into(),
+    });
+    launch.reach = Some(ReachStatus {
+        service_id: "service-1".into(),
+        state: CapabilityRevocationState::Active,
+        policy_generation: 1,
+        policy_fence: 1,
+        runtime_audience: "runtime-1".into(),
+        expires_at_epoch_seconds: seconds_from_rfc3339(LATER).unwrap(),
+        numeric_binding_observed_at: NOW.into(),
+        refreshed_at: NOW.into(),
+        revocation_requested_at: None,
+        revocation_effective_at: None,
+        last_refusal: None,
+        tombstone_acknowledged: false,
+        agent_key_revocation_confirmed: false,
+    });
+
+    launch
+        .cancel(
+            confirmation(ConfirmationAction::Cancel, &owner, &launch.effective.digest),
+            LATER,
+            "cancel-trigger",
+        )
+        .unwrap();
+
+    assert_eq!(launch.state, LaunchState::Cancelled);
+    assert_eq!(
+        launch.reach.as_ref().unwrap().state,
+        CapabilityRevocationState::RevocationPending
+    );
+    assert_eq!(
+        launch
+            .reach
+            .as_ref()
+            .unwrap()
+            .revocation_requested_at
+            .as_deref(),
+        Some(LATER)
+    );
+    assert!(launch.session.is_some());
+}
+
+#[test]
+fn revoked_status_requires_positive_enforcement_evidence() {
+    let reach = ReachStatus {
+        service_id: "service-1".into(),
+        state: CapabilityRevocationState::Revoked,
+        policy_generation: 2,
+        policy_fence: 2,
+        runtime_audience: "runtime-1".into(),
+        expires_at_epoch_seconds: seconds_from_rfc3339(LATER).unwrap(),
+        numeric_binding_observed_at: NOW.into(),
+        refreshed_at: LATER.into(),
+        revocation_requested_at: Some(NOW.into()),
+        revocation_effective_at: Some(LATER.into()),
+        last_refusal: None,
+        tombstone_acknowledged: false,
+        agent_key_revocation_confirmed: false,
+    };
+
+    assert!(reach.validate().is_err());
 }
 
 #[test]

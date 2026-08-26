@@ -774,24 +774,33 @@ impl GithubBroker {
         &self,
         context: &BranchContext,
     ) -> Result<BranchReconciliation, GithubBrokerError> {
+        match self.observe_branch(context).await {
+            Ok(branch) if branch.current_head == context.source_sha.to_ascii_lowercase() => {
+                Ok(BranchReconciliation::Ready(branch))
+            }
+            Ok(_) => Err(GithubBrokerError::BranchHeadConflict),
+            Err(GithubBrokerError::NotFound) => Ok(BranchReconciliation::Absent),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Observe the exact Launch ref while allowing a permitted session to have
+    /// advanced it beyond the original source commit.
+    pub(crate) async fn observe_branch(
+        &self,
+        context: &BranchContext,
+    ) -> Result<BranchRecord, GithubBrokerError> {
         let repository = self.current_branch_fork(context).await?;
         let branch = context.branch_name();
-        match self
+        let head = self
             .resolve_branch_sha(
                 &context.owner,
                 &context.connection.service_id,
                 &repository,
                 &branch,
             )
-            .await
-        {
-            Ok(head) if head == context.source_sha.to_ascii_lowercase() => Ok(
-                BranchReconciliation::Ready(branch_record(context, &repository, head)?),
-            ),
-            Ok(_) => Err(GithubBrokerError::BranchHeadConflict),
-            Err(GithubBrokerError::NotFound) => Ok(BranchReconciliation::Absent),
-            Err(error) => Err(error),
-        }
+            .await?;
+        branch_record(context, &repository, head)
     }
 
     /// Create the stable launch ref after a read-only absence proof.

@@ -249,9 +249,77 @@ pub struct ReachStatus {
     pub service_id: String,
     pub state: CapabilityRevocationState,
     pub policy_generation: u64,
+    #[serde(default)]
+    pub policy_fence: u64,
+    #[serde(default)]
+    pub runtime_audience: String,
     pub expires_at_epoch_seconds: u64,
+    #[serde(default)]
+    pub numeric_binding_observed_at: String,
+    #[serde(default)]
+    pub refreshed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revocation_requested_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revocation_effective_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_refusal: Option<CapabilityRefusal>,
     pub tombstone_acknowledged: bool,
     pub agent_key_revocation_confirmed: bool,
+}
+
+impl ReachStatus {
+    pub fn validate(&self) -> Result<(), TriggerValidationError> {
+        if self.service_id.trim().is_empty()
+            || self.service_id.len() > 512
+            || self.policy_generation == 0
+            || self.policy_fence == 0
+            || self.runtime_audience.trim().is_empty()
+            || self.runtime_audience.len() > 512
+            || self.expires_at_epoch_seconds == 0
+            || self.numeric_binding_observed_at.trim().is_empty()
+            || self.refreshed_at.trim().is_empty()
+        {
+            return Err(TriggerValidationError::field(
+                "reach",
+                "is missing its exact policy generation, fence, runtime, or observation",
+            ));
+        }
+        match self.state {
+            CapabilityRevocationState::Active | CapabilityRevocationState::Expired
+                if self.revocation_requested_at.is_some()
+                    || self.revocation_effective_at.is_some()
+                    || self.tombstone_acknowledged
+                    || self.agent_key_revocation_confirmed =>
+            {
+                return Err(TriggerValidationError::field(
+                    "reach.state",
+                    "cannot carry revocation evidence before revocation is requested",
+                ));
+            }
+            CapabilityRevocationState::RevocationPending
+                if self.revocation_requested_at.is_none()
+                    || self.revocation_effective_at.is_some()
+                    || self.tombstone_acknowledged
+                    || self.agent_key_revocation_confirmed =>
+            {
+                return Err(TriggerValidationError::field(
+                    "reach.state",
+                    "must remain pending without an effective acknowledgement",
+                ));
+            }
+            CapabilityRevocationState::Revoked
+                if self.revocation_requested_at.is_none()
+                    || self.revocation_effective_at.is_none()
+                    || (!self.tombstone_acknowledged && !self.agent_key_revocation_confirmed) =>
+            {
+                return Err(TriggerValidationError::field(
+                    "reach.state",
+                    "cannot report revoked without a positive enforcement acknowledgement",
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }
