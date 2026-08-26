@@ -384,19 +384,18 @@ impl SessionService {
             ));
         }
         if input.is_some() {
-            // Keep the live entry stable from its final identity check through
-            // admission by the exact runtime-link writer. The receipt then
-            // makes local publication mandatory, without another authority
-            // check that could discard an already delivered resize.
-            let entries = self.entries.read().await;
-            let entry = entries.get(id).ok_or_else(|| {
-                CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
-            })?;
-            Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
-            let sender = entry
-                .input
-                .as_ref()
-                .expect("a validated resize sender remains present");
+            // Validate the captured sender under the service map, then release
+            // that global lock before awaiting its receipt. The caller holds the
+            // per-session input fence across this whole continuation, so a
+            // rotation cannot replace the validated link before publication.
+            {
+                let entries = self.entries.read().await;
+                let entry = entries.get(id).ok_or_else(|| {
+                    CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
+                })?;
+                Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
+            }
+            let sender = input.expect("the resize path has a captured sender");
             authority.ensure_delivery_allowed()?;
             self.forward_input(
                 id,
@@ -407,8 +406,9 @@ impl SessionService {
                 }),
             )
             .await?;
-            drop(entries);
 
+            // A successful receipt makes publication mandatory. Revalidate
+            // identity, but do not recheck the expiring authority afterwards.
             let mut entries = self.entries.write().await;
             let entry = entries.get_mut(id).ok_or_else(|| {
                 CoreError::RuntimeUnavailable(
