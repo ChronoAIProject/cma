@@ -150,6 +150,9 @@ struct SessionDoc {
     /// Internal Trigger provenance. Absent for every ordinary/legacy session.
     #[serde(default)]
     trigger_origin: Option<layer2_core::TriggerSessionOrigin>,
+    /// Internal initial-prompt outbox. Absent on ordinary and legacy sessions.
+    #[serde(default)]
+    initial_prompt: Option<layer2_core::InitialPromptDispatch>,
     /// Runtime version, rotation count and snapshot time.
     ///
     /// All optional so documents written before rotation existed still load. A
@@ -2871,6 +2874,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         runtime_id: r.runtime_id.clone(),
         context_ref: r.context_ref.clone(),
         trigger_origin: r.trigger_origin.clone(),
+        initial_prompt: r.initial_prompt.clone(),
         runtime_version: s.runtime_version.clone(),
         rotations: Some(i64::from(s.rotations)),
         rotated_at: s.rotated_at.clone(),
@@ -3130,6 +3134,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
         runtime_id: d.runtime_id,
         context_ref: d.context_ref,
         trigger_origin: d.trigger_origin,
+        initial_prompt: d.initial_prompt,
         revision: u64::try_from(d.revision)
             .map_err(|_| StoreError::Malformed("session revision must not be negative".into()))?,
     })

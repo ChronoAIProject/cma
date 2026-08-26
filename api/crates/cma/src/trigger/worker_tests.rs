@@ -289,6 +289,176 @@ async fn retryable_and_terminal_failures_release_their_worker_lease() {
     assert!(terminal.lease.is_none());
 }
 
+#[tokio::test]
+async fn initial_prompt_progress_is_committed_before_the_worker_defers_or_fails() {
+    use layer2_core::PromptDeliveryState as State;
+
+    for (state, expected_outcome) in [
+        (State::Queued, EffectRunOutcome::Deferred),
+        (State::WriteConfirmed, EffectRunOutcome::Deferred),
+        (State::RecoveryRequired, EffectRunOutcome::Failed),
+    ] {
+        let launch = prompt_pending_launch();
+        let store = Arc::new(TestStore::new(launch.clone()));
+        let service = Arc::new(TriggerService::new(
+            store.clone(),
+            store.clone(),
+            Arc::new(NeverAuthority),
+        ));
+        let executor = Arc::new(PromptProgressExecutor { state });
+        let worker = test_worker(service, executor, "prompt-worker", &[NOW, LATER]);
+
+        assert_eq!(
+            worker
+                .run_once(&launch.id, 0, "prompt-progress")
+                .await
+                .unwrap(),
+            expected_outcome
+        );
+        let stored = store.current();
+        assert_eq!(stored.delivery.as_ref().unwrap().state, state);
+        assert!(stored.lease.is_none());
+        assert!(stored.events.iter().any(|event| matches!(
+            event.kind,
+            layer2_core::LaunchEventKind::DeliveryChanged { state: observed }
+                if observed == state
+        )));
+        match state {
+            State::Queued => {
+                assert_eq!(stored.state, LaunchState::FailedRetryable);
+                assert_eq!(
+                    stored.effects[0].state,
+                    layer2_core::EffectState::FailedRetryable
+                );
+            }
+            State::WriteConfirmed => {
+                assert_eq!(stored.state, LaunchState::PromptPending);
+                assert_eq!(
+                    stored.effects[0].state,
+                    layer2_core::EffectState::Reconciling
+                );
+            }
+            State::RecoveryRequired => {
+                assert_eq!(stored.state, LaunchState::FailedRetryable);
+                assert_eq!(
+                    stored.blocked_reason,
+                    Some(layer2_core::LaunchBlockedReason::RecoveryRequired)
+                );
+                assert_eq!(
+                    stored.effects[0].state,
+                    layer2_core::EffectState::RecoveryRequired
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+struct PromptProgressExecutor {
+    state: layer2_core::PromptDeliveryState,
+}
+
+#[async_trait]
+impl EffectExecutor for PromptProgressExecutor {
+    async fn execute(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        self.answer(launch, claim)
+    }
+
+    async fn reconcile(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        self.answer(launch, claim)
+    }
+}
+
+impl PromptProgressExecutor {
+    fn answer(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let delivery = prompt_delivery(launch, self.state);
+        let result = LaunchEffectResult::InitialDispatch { delivery };
+        let failure = LaunchFailure {
+            class: match self.state {
+                layer2_core::PromptDeliveryState::RecoveryRequired => {
+                    layer2_core::FailureClass::RecoveryRequired
+                }
+                _ => layer2_core::FailureClass::RetryableTransient,
+            },
+            code: "prompt_progress_test".into(),
+            detail: "The prompt remains in a durable intermediate state.".into(),
+            remediation: "Reconcile the same prompt identity.".into(),
+            correlation_id: claim.intent_key.clone(),
+            retry_at: None,
+            observed_at: LATER.into(),
+        };
+        match self.state {
+            layer2_core::PromptDeliveryState::Queued => EffectExecution::RetryWithProgress {
+                result,
+                failure,
+                retry_at: "2026-08-27T00:00:10Z".into(),
+            },
+            layer2_core::PromptDeliveryState::WriteConfirmed => {
+                EffectExecution::ReconcileWithProgress {
+                    result,
+                    failure,
+                    reconcile_at: "2026-08-27T00:00:10Z".into(),
+                    external_resource_ids: BTreeMap::new(),
+                }
+            }
+            layer2_core::PromptDeliveryState::RecoveryRequired => {
+                EffectExecution::FailedWithProgress { result, failure }
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn prompt_pending_launch() -> Launch {
+    let mut launch = launch_fixture();
+    launch.state = LaunchState::PromptPending;
+    launch.session = Some(layer2_core::SessionLink {
+        session_id: layer2_core::SessionId("sesn-prompt-worker".into()),
+        environment_profile_id: "envp-prompt-worker".into(),
+        runtime_generation: 1,
+        created_at: NOW.into(),
+    });
+    launch.reach = Some(layer2_core::ReachStatus {
+        service_id: "service-1".into(),
+        state: layer2_core::CapabilityRevocationState::Active,
+        policy_generation: 1,
+        policy_fence: 1,
+        runtime_audience: "runtime-prompt-worker".into(),
+        expires_at_epoch_seconds: seconds_from_rfc3339("2026-08-27T00:05:00Z").unwrap(),
+        numeric_binding_observed_at: NOW.into(),
+        refreshed_at: NOW.into(),
+        revocation_requested_at: None,
+        revocation_effective_at: None,
+        last_refusal: None,
+        tombstone_acknowledged: false,
+        agent_key_revocation_confirmed: false,
+    });
+    launch.effects.clear();
+    launch.delivery = None;
+    launch
+}
+
+fn prompt_delivery(
+    launch: &Launch,
+    state: layer2_core::PromptDeliveryState,
+) -> layer2_core::PromptDelivery {
+    layer2_core::PromptDelivery {
+        launch_id: launch.id.clone(),
+        session_id: launch.session.as_ref().unwrap().session_id.clone(),
+        revision_digest: launch.revision_digest.clone(),
+        origin_key: format!(
+            "cma-trigger:{}:{}:initial",
+            launch.id.0, launch.revision_digest
+        ),
+        payload_hash: "a".repeat(64),
+        state,
+        attempt: u32::from(state != layer2_core::PromptDeliveryState::Queued),
+        dispatch_fence_sequence: (state != layer2_core::PromptDeliveryState::Queued).then_some(42),
+        queued_at: NOW.into(),
+        updated_at: LATER.into(),
+    }
+}
+
 struct InspectingExecutor {
     store: Arc<TestStore>,
     authority: AuthorityProvenance,

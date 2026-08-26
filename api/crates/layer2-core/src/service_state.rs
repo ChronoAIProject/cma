@@ -46,6 +46,8 @@ pub(crate) struct SessionEntry {
     pub(crate) session: Session,
     /// Internal Trigger provenance retained across live-entry flushes.
     pub(crate) trigger_origin: Option<crate::session::TriggerSessionOrigin>,
+    /// Durable Trigger prompt outbox state mirrored into the live entry.
+    pub(crate) initial_prompt: Option<crate::store::InitialPromptDispatch>,
     /// This session's durable FIFO, kept alive while its runtime is live.
     pub(crate) event_log: Arc<crate::log::SessionLog>,
     /// Owner-delegated credential last handed to the runtime. Held so a refresh

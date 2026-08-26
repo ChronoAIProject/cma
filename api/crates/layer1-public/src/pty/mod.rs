@@ -409,6 +409,7 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::RuntimeUnavailable(_) => "runtime_unavailable",
         CoreError::RuntimeRefused(_) => "runtime_refused",
         CoreError::InvalidState => "invalid_state",
+        CoreError::InitialPromptReserved(_) => "initial_prompt_reserved",
         CoreError::CapabilityUnsupported(_) => "capability_unsupported",
         // This interface attaches to a session that already exists, so a
         // service refusal cannot arise here — a session that reached this far
