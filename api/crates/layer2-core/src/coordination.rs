@@ -542,7 +542,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn interaction_renewal_requires_its_boundary_but_release_allows_status_drift() {
+    async fn interaction_renewal_allows_status_drift_but_requires_runtime_authority() {
         let store = FakeStore::default();
         let mut changed = record();
         store.seed(&changed).await.unwrap();
@@ -554,16 +554,61 @@ mod tests {
             .commit_session_idempotent("interaction-status-drift", &changed, &[])
             .await
             .unwrap();
+        store
+            .renew_interaction_lease(&lease, Duration::from_secs(30))
+            .await
+            .expect("an interaction may retain work across its own status commit");
         assert!(matches!(
             store
                 .renew_session_lease(&lease, Duration::from_secs(30))
+                .await,
+            Err(StoreError::Malformed(message)) if message.contains("interaction renewal")
+        ));
+
+        store
+            .sessions
+            .lock()
+            .await
+            .get_mut(&changed.session.id.0)
+            .unwrap()
+            .runtime_id = Some("runtime-successor".into());
+        assert!(matches!(
+            store
+                .renew_interaction_lease(&lease, Duration::from_secs(30))
                 .await,
             Err(StoreError::SessionLeaseLost { .. })
         ));
         store
             .release_session_lease(&lease)
             .await
-            .expect("the exact interaction token clears after status drift");
+            .expect("the exact interaction token clears after boundary drift");
+    }
+
+    #[tokio::test]
+    async fn provider_renewal_still_requires_the_full_status_boundary() {
+        let store = FakeStore::default();
+        let mut changed = record();
+        store.seed(&changed).await.unwrap();
+        let request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Lifecycle,
+            Duration::from_secs(30),
+        )
+        .await;
+        let lease = store.acquire_session_lease(&request).await.unwrap();
+
+        changed.session.status = SessionStatus::Idle;
+        store
+            .commit_session_idempotent("provider-status-drift", &changed, &[])
+            .await
+            .unwrap();
+        assert!(matches!(
+            store
+                .renew_session_lease(&lease, Duration::from_secs(30))
+                .await,
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
     }
 
     #[tokio::test(start_paused = true)]
@@ -582,7 +627,7 @@ mod tests {
         ));
         assert!(matches!(
             store
-                .renew_session_lease(&old, Duration::from_secs(30))
+                .renew_interaction_lease(&old, Duration::from_secs(30))
                 .await,
             Err(StoreError::SessionLeaseLost { .. })
         ));
