@@ -33,6 +33,19 @@ impl Bridge {
                 let waiting = self.pending.lock().await.remove(&id);
                 if let Some(waiting) = waiting {
                     let _ = waiting.send(frame);
+                    return;
+                }
+                if self
+                    .orphaned_prompt_response
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
+                    // The old Bridge owned the prompt waiter and disappeared
+                    // with it. A restored permission answer is what allows this
+                    // response to exist, so carry its outcome through the new
+                    // update stream before releasing the turn-scoped cache.
+                    self.answered.lock().await.clear();
+                    let outcome = super::turn::turn_outcome(frame);
+                    let _ = updates.send(outcome.into_update()).await;
                 }
                 return;
             }
@@ -152,11 +165,21 @@ impl Bridge {
             let _ = self.send(&answer).await;
             return;
         }
+        // The prompt counter is raised before a local prompt is written, so a
+        // permission request caused by that prompt is distinguishable from one
+        // replayed onto a replacement socket. Store the distinction on the
+        // request: a different overlapping prompt may finish before its owner
+        // eventually answers this one.
+        let owns_prompt_waiter = self
+            .owned_prompt_waiters
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0;
         self.blocked.lock().await.insert(
             id.clone(),
             Blocked {
                 call,
                 options: request.options.clone(),
+                owns_prompt_waiter,
             },
         );
         let _ = updates
@@ -296,6 +319,7 @@ pub(super) fn blocked_from_locator(
                 )
             })
             .collect(),
+        owns_prompt_waiter: false,
     })
 }
 

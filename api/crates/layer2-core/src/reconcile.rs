@@ -330,8 +330,9 @@ impl SessionService {
             // and defer when persistence cannot supply the complete history:
             // replacing a runtime merely because its state could not be rebuilt
             // would abandon the conversation the provider still reports alive.
-            let history = match self.readoption_history(&record).await {
-                Ok(history) => history,
+            let readoption = match self.prepare_readoption(&record).await {
+                Ok(Some(readoption)) => readoption,
+                Ok(None) => return,
                 Err(error) => {
                     tracing::warn!(
                         session_id = %id,
@@ -342,7 +343,7 @@ impl SessionService {
                     return;
                 }
             };
-            match self.readopt_with_history(&record, history).await {
+            match self.readopt_prepared(&record, readoption).await {
                 Ok(()) => {
                     reclaimed.readopted_sessions += 1;
                     return;
