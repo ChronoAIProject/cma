@@ -19,8 +19,8 @@ use layer2_core::{
         RuntimeCleanup, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
     },
     store::{Page, PageCursor, SessionListQuery, SessionRecord, SessionStore, StoreError},
-    Event, Rate, RateCardId, Reserved, SessionId, SessionPricing, SessionStatus, StoredEvent,
-    SubjectId,
+    Event, Rate, RateCardId, Reserved, SessionId, SessionPricing, SessionStatus, StopReason,
+    StoredEvent, SubjectId,
 };
 use mongodb::bson::{doc, Binary, Bson, Document};
 use mongodb::options::{
@@ -4017,15 +4017,33 @@ fn visible_count_pipeline(filter: Document) -> Vec<Document> {
     ]
 }
 
-/// A bounded server-side sum of every durable promise that wants a runtime.
-fn reserved_capacity_pipeline() -> Result<Vec<Document>, StoreError> {
+/// Match every record whose complete lifecycle state entitles it to a runtime.
+///
+/// Most states are status-only. An approval wait deliberately shares `idle`
+/// with a stopped session, so its stop reason is part of the persisted
+/// predicate too.
+fn runtime_entitlement_filter() -> Result<Document, StoreError> {
     let statuses = SessionStatus::WANTING_RUNTIME
         .iter()
         .map(serde_plain_string)
         .collect::<Result<Vec<_>, _>>()?;
+    let idle = serde_plain_string(&SessionStatus::Idle)?;
+    let requires_action = serde_plain_string(&StopReason::RequiresAction)?;
+
+    Ok(doc! {
+        "$or": [
+            { "status": { "$in": statuses } },
+            { "status": idle, "stop_reason": requires_action },
+        ]
+    })
+}
+
+/// A bounded server-side sum of every durable promise that wants a runtime.
+fn reserved_capacity_pipeline() -> Result<Vec<Document>, StoreError> {
+    let entitlement = runtime_entitlement_filter()?;
 
     Ok(vec![
-        doc! { "$match": { "status": { "$in": statuses } } },
+        doc! { "$match": entitlement },
         tombstone_lookup_stage(),
         doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } },
         doc! {
@@ -4332,16 +4350,11 @@ impl SessionStore for MongoSessionStore {
     }
 
     async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
-        let statuses = SessionStatus::WANTING_RUNTIME
-            .iter()
-            .map(serde_plain_string)
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut entitlement = runtime_entitlement_filter()?;
+        entitlement.insert("owner", owner.0.clone());
         let mut cursor = self
             .sessions
-            .aggregate(visible_count_pipeline(doc! {
-                "owner": &owner.0,
-                "status": { "$in": statuses },
-            }))
+            .aggregate(visible_count_pipeline(entitlement))
             .await
             .map_err(|e| StoreError::Unavailable(format!("count live sessions: {e}")))?;
         let count = cursor

@@ -7,17 +7,270 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use layer3_adapter::KernelAdapter;
+use layer3_adapter::{KernelAdapter, PermissionLocator};
 
+use super::pending_approvals_from;
 use crate::authz::Caller;
 use crate::conversation_support::{
     asking, chunk, conversation, conversing, offering, said, until_logged,
 };
-use crate::event::EventKind;
+use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+
+fn logged(seq: u64, kind: EventKind) -> Event {
+    Event {
+        session_id: SessionId("sesn_pending_approvals".into()),
+        seq,
+        kind,
+        appended_at: "2026-08-26T05:00:00Z".into(),
+    }
+}
+
+#[test]
+fn an_unresolved_approval_request_folds_as_pending() {
+    let events = vec![logged(
+        1,
+        EventKind::ApprovalRequested {
+            request_id: "approval-1".into(),
+            action: Some("run a command".into()),
+            detail: None,
+            locator: None,
+        },
+    )];
+
+    assert_eq!(
+        pending_approvals_from(&events)
+            .expect("history is consistent")
+            .pending,
+        HashMap::from([("approval-1".to_string(), None)])
+    );
+}
+
+#[test]
+fn a_resolved_approval_request_does_not_fold_as_pending() {
+    let events = vec![
+        logged(
+            1,
+            EventKind::ApprovalRequested {
+                request_id: "approval-1".into(),
+                action: Some("run a command".into()),
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(
+            2,
+            EventKind::ApprovalResolved {
+                request_id: "approval-1".into(),
+                allowed: true,
+            },
+        ),
+    ];
+
+    assert!(pending_approvals_from(&events)
+        .expect("history is consistent")
+        .pending
+        .is_empty());
+}
+
+#[test]
+fn interleaved_approval_requests_fold_independently() {
+    let events = vec![
+        logged(
+            1,
+            EventKind::ApprovalRequested {
+                request_id: "approval-1".into(),
+                action: Some("first action".into()),
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(2, EventKind::TurnStarted),
+        logged(
+            3,
+            EventKind::ApprovalRequested {
+                request_id: "approval-2".into(),
+                action: Some("second action".into()),
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(
+            4,
+            EventKind::ApprovalResolved {
+                request_id: "approval-1".into(),
+                allowed: false,
+            },
+        ),
+        logged(
+            5,
+            EventKind::ApprovalRequested {
+                request_id: "approval-3".into(),
+                action: Some("third action".into()),
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(
+            6,
+            EventKind::ApprovalResolved {
+                request_id: "approval-3".into(),
+                allowed: true,
+            },
+        ),
+    ];
+
+    assert_eq!(
+        pending_approvals_from(&events)
+            .expect("history is consistent")
+            .pending,
+        HashMap::from([("approval-2".to_string(), None)])
+    );
+}
+
+#[test]
+fn duplicate_requests_are_idempotent_but_changed_locators_fail_closed() {
+    let first = PermissionLocator::new(r#"{"version":1,"call":7}"#);
+    let different = PermissionLocator::new(r#"{"version":1,"call":8}"#);
+    let request = |seq, locator| {
+        logged(
+            seq,
+            EventKind::ApprovalRequested {
+                request_id: "stable-id".into(),
+                action: Some("run a command".into()),
+                detail: None,
+                locator: Some(locator),
+            },
+        )
+    };
+
+    let replayed = vec![request(1, first.clone()), request(2, first)];
+    assert_eq!(
+        pending_approvals_from(&replayed)
+            .expect("an identical replay is one request")
+            .pending
+            .len(),
+        1
+    );
+
+    let resolved_then_replayed = vec![
+        request(1, PermissionLocator::new("resolved")),
+        logged(
+            2,
+            EventKind::ApprovalResolved {
+                request_id: "stable-id".into(),
+                allowed: true,
+            },
+        ),
+        request(3, PermissionLocator::new("resolved")),
+    ];
+    assert!(
+        pending_approvals_from(&resolved_then_replayed)
+            .expect("a late duplicate keeps its resolved identity")
+            .pending
+            .is_empty(),
+        "a delivered request must not reopen after its resolution"
+    );
+
+    let changed = vec![
+        request(1, PermissionLocator::new("first")),
+        request(2, different),
+    ];
+    let error = pending_approvals_from(&changed)
+        .expect_err("one public id cannot be redirected to a different call");
+    assert!(error.contains("different delivery locator"), "got {error}");
+}
+
+#[test]
+fn runtime_and_conversation_boundaries_expire_old_approvals() {
+    let boundaries = vec![
+        EventKind::TurnStarted,
+        EventKind::TurnCompleted,
+        EventKind::ConversationOpened {
+            conversation_id: "replacement-conversation".into(),
+        },
+        EventKind::PlaneChanged {
+            from: crate::options::SessionMode::Conversation,
+            to: crate::options::SessionMode::Terminal,
+            snapshot_at: "2026-08-26T06:00:00Z".into(),
+        },
+        EventKind::RuntimeLost {
+            runtime_id: "runtime-old".into(),
+            cause: Some(crate::session::RuntimeLossCause::Displaced),
+        },
+        EventKind::StatusChanged {
+            status: SessionStatus::Idle,
+            stop_reason: Some(StopReason::UserTerminated),
+            detail: None,
+            capability: None,
+        },
+        EventKind::StatusChanged {
+            status: SessionStatus::Terminated,
+            stop_reason: Some(StopReason::UserTerminated),
+            detail: None,
+            capability: None,
+        },
+        EventKind::StatusChanged {
+            status: SessionStatus::Rotating,
+            stop_reason: None,
+            detail: None,
+            capability: None,
+        },
+    ];
+
+    for boundary in boundaries {
+        let events = vec![
+            logged(
+                1,
+                EventKind::ApprovalRequested {
+                    request_id: "obsolete".into(),
+                    action: None,
+                    detail: None,
+                    locator: None,
+                },
+            ),
+            logged(2, boundary.clone()),
+        ];
+        assert!(
+            pending_approvals_from(&events)
+                .expect("the boundary is understood")
+                .pending
+                .is_empty(),
+            "{boundary:?} must expire the old runtime's request"
+        );
+    }
+}
+
+#[test]
+fn requires_action_status_preserves_the_request_it_parks() {
+    let events = vec![
+        logged(
+            1,
+            EventKind::ApprovalRequested {
+                request_id: "still-waiting".into(),
+                action: None,
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(
+            2,
+            EventKind::StatusChanged {
+                status: SessionStatus::Idle,
+                stop_reason: Some(StopReason::RequiresAction),
+                detail: None,
+                capability: None,
+            },
+        ),
+    ];
+    assert!(pending_approvals_from(&events)
+        .expect("the wait is valid")
+        .pending
+        .contains_key("still-waiting"));
+}
 
 async fn report_usage(adapter: &Arc<FakeAdapter>, used: u64, window: u64) {
     let held = adapter.conversation.lock().await;

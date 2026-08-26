@@ -74,6 +74,8 @@ mod test_support;
 #[cfg(test)]
 mod allowance_tests;
 #[cfg(test)]
+mod approval_recovery_tests;
+#[cfg(test)]
 mod capacity_bounds_service_tests;
 #[cfg(test)]
 mod deployment_capacity_tests;
@@ -159,6 +161,7 @@ pub use inventory::{
     ProviderInventory, ProviderRuntimeGeneration, ProviderView, RuntimeAuthorityComparison,
     RuntimeEntry, RuntimeInventory,
 };
+pub use layer3_adapter::PermissionLocator;
 pub use limits::SessionAllowance;
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use platform::{

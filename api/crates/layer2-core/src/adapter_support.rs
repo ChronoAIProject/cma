@@ -11,7 +11,7 @@ use layer3_adapter::{
     AdapterError, KernelAdapter, RuntimeGeneration, RuntimeHandle, RuntimeIdentity, RuntimeListing,
     RuntimeLossReason, RuntimeMode, RuntimeSpec, TerminalChannel, TerminalOutput,
 };
-use tokio::sync::{mpsc, Mutex, Notify};
+use tokio::sync::{mpsc, Mutex, Notify, Semaphore};
 
 /// An adapter that provisions nothing and records what it was asked to tear
 /// down, so teardown can be asserted without a sandbox.
@@ -115,6 +115,16 @@ pub(crate) struct FakeAdapter {
     /// case #351 was about. Raised before the channel is returned, so the
     /// core meets it at the moment it genuinely has nowhere to put it.
     pub(crate) sign_in_on_open: bool,
+    /// A permission request emitted before `open_conversation` returns.
+    ///
+    /// Used to model a blocked request replayed on the replacement link while
+    /// readoption is still between its first history read and entry install.
+    pub(crate) permission_on_open: Mutex<Option<layer3_adapter::PermissionRequest>>,
+    /// Hold a replacement conversation open at the point after its durable
+    /// history was selected but before its entry can be installed.
+    pub(crate) hold_conversation_open: std::sync::atomic::AtomicBool,
+    pub(crate) conversation_open_started: Semaphore,
+    pub(crate) continue_conversation_open: Semaphore,
     /// What this runtime says it can do.
     ///
     /// Defaults to the shape of the only kernel that exists today — a terminal
@@ -173,6 +183,10 @@ impl Default for FakeAdapter {
             rejoined: Mutex::default(),
             credentials: Mutex::default(),
             sign_in_on_open: false,
+            permission_on_open: Mutex::default(),
+            hold_conversation_open: std::sync::atomic::AtomicBool::new(false),
+            conversation_open_started: Semaphore::new(0),
+            continue_conversation_open: Semaphore::new(0),
             capabilities: layer3_adapter::KernelCapabilities {
                 conversation: false,
                 terminal: true,
@@ -393,6 +407,17 @@ impl KernelAdapter for FakeAdapter {
             .lock()
             .await
             .push(options.resume_conversation.clone());
+        if self
+            .hold_conversation_open
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            self.conversation_open_started.add_permits(1);
+            self.continue_conversation_open
+                .acquire()
+                .await
+                .expect("the test adapter remains alive")
+                .forget();
+        }
         if self.sign_in_on_open {
             // Before the channel is returned, because that is when a real
             // kernel raises it — and the core has not inserted the session's
@@ -413,6 +438,15 @@ impl KernelAdapter for FakeAdapter {
              * entry exist by the time the folder got to it, which is a session
              * that signs in instantly and tests nothing.
              */
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        if let Some(request) = self.permission_on_open.lock().await.take() {
+            updates
+                .send(layer3_adapter::ConversationUpdate::Asked(request))
+                .await
+                .expect("the core is listening before it opens");
+            // Let the folder reach its no-entry path before the channel is
+            // returned and readoption advances to installation.
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         let (channel, held) = crate::conversation_support::FakeConversation::open(updates);

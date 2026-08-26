@@ -588,7 +588,7 @@ pub trait SessionStore: Send + Sync {
             .scan_for(owner)
             .await?
             .into_iter()
-            .filter(|record| record.session.status.wants_runtime())
+            .filter(|record| record.session.wants_runtime())
             .count() as u32)
     }
 
