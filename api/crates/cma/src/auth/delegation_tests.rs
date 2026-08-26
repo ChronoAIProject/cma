@@ -330,13 +330,23 @@ async fn list_owner_services(headers: HeaderMap) -> Json<serde_json::Value> {
 async fn mint_key(
     State(platform): State<MintPlatform>,
     headers: HeaderMap,
-    Json(_body): Json<serde_json::Value>,
+    Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     assert_eq!(
         headers
             .get(AUTHORIZATION)
             .and_then(|value| value.to_str().ok()),
         Some("Bearer owner-access")
+    );
+    let expires_at = body
+        .get("expires_at")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| mongodb::bson::DateTime::parse_rfc3339_str(value).ok())
+        .expect("mint requests a valid absolute provider expiry")
+        .to_system_time();
+    assert!(
+        expires_at > SystemTime::now() + Duration::from_secs(29 * 24 * 60 * 60),
+        "the provider expiry leaves the documented replacement margin"
     );
     let mint = platform.mints.fetch_add(1, Ordering::SeqCst) + 1;
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1254,6 +1264,14 @@ async fn a_request_bearer_mints_session_custody_without_becoming_subject_state()
         .await
         .expect("store works")
         .expect("session custody persists");
+    assert!(
+        custody
+            .current
+            .as_ref()
+            .and_then(|held| held.expires_at)
+            .is_some_and(|expires_at| expires_at > SystemTime::now()),
+        "CMA retains the exact provider-enforced expiry with custody"
+    );
     assert_eq!(
         custody
             .current
