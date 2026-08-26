@@ -23,7 +23,10 @@ use crate::test_support::{
     await_settled, service_on_version, service_on_version_with_skills, spec,
     terminal_input_channel, user, FakeAdapter, FakeStore,
 };
-use crate::Reserved;
+use crate::{
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, Reserved, SessionLease,
+};
 
 #[derive(Default)]
 struct RotationStore {
@@ -113,6 +116,48 @@ impl SessionStore for RotationStore {
         self.inner.append_events(events).await
     }
 
+    async fn acquire_conversation_opening(
+        &self,
+        request: &ConversationOpeningLeaseRequest,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        self.inner
+            .acquire_conversation_opening(request, session_lease)
+            .await
+    }
+
+    async fn renew_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        self.inner
+            .renew_conversation_opening(opening, session_lease, ttl)
+            .await
+    }
+
+    async fn publish_conversation_link(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        self.inner
+            .publish_conversation_link(opening, session_lease)
+            .await
+    }
+
+    async fn release_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+    ) -> Result<(), StoreError> {
+        self.inner.release_conversation_opening(opening).await
+    }
+
+    async fn validate_conversation_link(&self, link: &ConversationLink) -> Result<(), StoreError> {
+        self.inner.validate_conversation_link(link).await
+    }
+
     async fn commit_session_idempotent(
         &self,
         write_id: &str,
@@ -122,6 +167,19 @@ impl SessionStore for RotationStore {
         self.before_commit().await?;
         self.inner
             .commit_session_idempotent(write_id, record, events)
+            .await
+    }
+
+    async fn commit_conversation_idempotent(
+        &self,
+        write_id: &str,
+        authority: &ConversationWriteAuthority,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.before_commit().await?;
+        self.inner
+            .commit_conversation_idempotent(write_id, authority, record, events)
             .await
     }
 

@@ -58,6 +58,19 @@ pub(crate) struct SessionEntry {
     pub(crate) runtime: Option<RuntimeHandle>,
     /// Durable authority generation to which the live runtime channels belong.
     pub(crate) runtime_generation: u64,
+    /// Process-local identity of the exact conversation link installed here.
+    ///
+    /// Durable generation zero is shared by every compatibility runtime, and a
+    /// readoption keeps the same durable runtime generation. Neither therefore
+    /// identifies one folder. This token does: an older folder can never match a
+    /// replacement entry, even when both point at the same durable generation.
+    pub(crate) conversation_link: Option<crate::conversation_opening::ConversationLinkId>,
+    /// Store-issued identity of the one link allowed to commit inbound work.
+    ///
+    /// Unlike `conversation_link`, this crosses replicas. Publication advances
+    /// its epoch atomically, and every conversation-originated store commit is
+    /// conditioned on the exact value installed here.
+    pub(crate) conversation_authority: Option<crate::coordination::ConversationLink>,
     pub(crate) input: Option<TerminalInputSender>,
     /// Where this session's stored context lives, once any has been captured.
     pub(crate) context_ref: Option<String>,

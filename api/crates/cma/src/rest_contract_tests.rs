@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use axum::{
@@ -21,14 +21,15 @@ use layer1_public::{auth::DelegatedCredential, tickets::TerminalTickets, Authent
 use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
-    EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
-    EnvironmentProfileStore, Event, EventKind, KernelId, OperationClaim, OperationReservation,
-    OperationStore, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
-    RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
-    ServiceId, Session, SessionId, SessionListQuery, SessionMode, SessionPorts, SessionRecord,
-    SessionService, SessionSpec, SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack,
-    SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
-    UserDirectoryStore, MAX_PAGE_SIZE,
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, EnvironmentProfile, EnvironmentProfileId,
+    EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Event, EventKind,
+    KernelId, OperationClaim, OperationReservation, OperationStore, Page, PageCursor, PageRequest,
+    PlatformSettingsService, RecoveryState, RegisteredUser, Reserved, ScreenFactory, ScreenModel,
+    ScreenSnapshot, ServiceCatalog, ServiceId, Session, SessionId, SessionLease, SessionListQuery,
+    SessionMode, SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus,
+    SessionStore, SkillCatalog, SkillId, SkillPack, SkillSource, StoreError, StoredEvent,
+    SubjectId, TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -231,9 +232,80 @@ struct MemorySessionState {
     records: HashMap<String, SessionRecord>,
     events: Vec<Event>,
     receipts: HashMap<String, (SessionId, u64)>,
+    conversations: HashMap<String, MemoryConversationState>,
+}
+
+#[derive(Default)]
+struct MemoryConversationState {
+    opening: Option<ConversationOpeningLease>,
+    link: Option<ConversationLink>,
+    epoch: u64,
 }
 
 impl MemorySessionState {
+    fn record(&self, id: &SessionId) -> Result<&SessionRecord, StoreError> {
+        self.records
+            .get(&id.0)
+            .ok_or_else(|| StoreError::SessionDeleted { id: id.clone() })
+    }
+
+    fn validate_opening_backing(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<(), StoreError> {
+        let record = self.record(&opening.session_id)?;
+        if opening.runtime_generation != 0
+            || opening.runtime_candidate_token.is_some()
+            || opening.session_lease_token.is_some()
+            || session_lease.is_some()
+            || record.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+        {
+            return Err(StoreError::ConversationOpeningLost {
+                id: opening.session_id.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_authority(&self, authority: &ConversationWriteAuthority) -> Result<(), StoreError> {
+        match authority {
+            ConversationWriteAuthority::Opening {
+                opening,
+                session_lease,
+            } => {
+                self.validate_opening_backing(opening, session_lease.as_ref())?;
+                if self
+                    .conversations
+                    .get(&opening.session_id.0)
+                    .and_then(|state| state.opening.as_ref())
+                    != Some(opening)
+                {
+                    return Err(StoreError::ConversationOpeningLost {
+                        id: opening.session_id.clone(),
+                    });
+                }
+            }
+            ConversationWriteAuthority::Active(link) => {
+                let record = self.record(&link.session_id)?;
+                if link.epoch == 0
+                    || link.runtime_generation != 0
+                    || record.runtime_id.as_deref() != Some(link.runtime_id.as_str())
+                    || self
+                        .conversations
+                        .get(&link.session_id.0)
+                        .and_then(|state| state.link.as_ref())
+                        != Some(link)
+                {
+                    return Err(StoreError::ConversationLinkChanged {
+                        id: link.session_id.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn event_tail(&self, id: &SessionId) -> u64 {
         self.events
             .iter()
@@ -422,6 +494,7 @@ impl SessionStore for MemorySessions {
         state.records.remove(&id.0);
         state.events.retain(|event| &event.session_id != id);
         state.receipts.retain(|_, (session_id, _)| session_id != id);
+        state.conversations.remove(&id.0);
         Ok(())
     }
 
@@ -437,6 +510,125 @@ impl SessionStore for MemorySessions {
         state.validate_append(&first.session_id, events, recorded_tail)?;
         state.events.extend_from_slice(events);
         Ok(())
+    }
+
+    async fn acquire_conversation_opening(
+        &self,
+        request: &ConversationOpeningLeaseRequest,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        let opening = ConversationOpeningLease {
+            session_id: request.session_id.clone(),
+            holder: request.holder.clone(),
+            token: request.token.clone(),
+            runtime_id: request.runtime_id.clone(),
+            runtime_generation: request.runtime_generation,
+            runtime_candidate_token: request.runtime_candidate_token.clone(),
+            session_lease_token: session_lease.map(|lease| lease.token.clone()),
+        };
+        let mut state = self.state.lock().await;
+        state.validate_opening_backing(&opening, session_lease)?;
+        let conversation = state
+            .conversations
+            .entry(request.session_id.0.clone())
+            .or_default();
+        if let Some(held) = conversation.opening.as_ref() {
+            return if held == &opening {
+                Ok(opening)
+            } else {
+                Err(StoreError::ConversationOpeningHeld {
+                    id: request.session_id.clone(),
+                })
+            };
+        }
+        conversation.opening = Some(opening.clone());
+        Ok(opening)
+    }
+
+    async fn renew_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+        _ttl: Duration,
+    ) -> Result<(), StoreError> {
+        let state = self.state.lock().await;
+        state.validate_opening_backing(opening, session_lease)?;
+        if state
+            .conversations
+            .get(&opening.session_id.0)
+            .and_then(|state| state.opening.as_ref())
+            != Some(opening)
+        {
+            return Err(StoreError::ConversationOpeningLost {
+                id: opening.session_id.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn publish_conversation_link(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        let mut state = self.state.lock().await;
+        state.validate_opening_backing(opening, session_lease)?;
+        let conversation = state
+            .conversations
+            .entry(opening.session_id.0.clone())
+            .or_default();
+        if let Some(link) = conversation
+            .link
+            .as_ref()
+            .filter(|link| link.token == opening.token)
+        {
+            return Ok(link.clone());
+        }
+        if conversation.opening.as_ref() != Some(opening) {
+            return Err(StoreError::ConversationOpeningLost {
+                id: opening.session_id.clone(),
+            });
+        }
+        conversation.epoch = conversation
+            .epoch
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("conversation link epoch overflow".into()))?;
+        let link = ConversationLink {
+            session_id: opening.session_id.clone(),
+            epoch: conversation.epoch,
+            token: opening.token.clone(),
+            runtime_generation: opening.runtime_generation,
+            runtime_id: opening.runtime_id.clone(),
+        };
+        conversation.opening = None;
+        conversation.link = Some(link.clone());
+        Ok(link)
+    }
+
+    async fn release_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+    ) -> Result<(), StoreError> {
+        let mut state = self.state.lock().await;
+        let Some(conversation) = state.conversations.get_mut(&opening.session_id.0) else {
+            return Ok(());
+        };
+        if conversation.opening.as_ref() == Some(opening) {
+            conversation.opening = None;
+        }
+        if conversation.link.as_ref().map(|link| link.token.as_str())
+            == Some(opening.token.as_str())
+        {
+            conversation.link = None;
+        }
+        Ok(())
+    }
+
+    async fn validate_conversation_link(&self, link: &ConversationLink) -> Result<(), StoreError> {
+        self.state
+            .lock()
+            .await
+            .validate_authority(&ConversationWriteAuthority::Active(link.clone()))
     }
 
     async fn commit_session_idempotent(
@@ -458,6 +650,33 @@ impl SessionStore for MemorySessions {
             .lock()
             .await
             .commit(write_id, record, events, false);
+        if matches!(&result, Err(StoreError::SequenceTaken { .. })) {
+            self.sequence_taken_errors.fetch_add(1, Ordering::SeqCst);
+        }
+        result
+    }
+
+    async fn commit_conversation_idempotent(
+        &self,
+        write_id: &str,
+        authority: &ConversationWriteAuthority,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        let pause = if events.is_empty() {
+            None
+        } else {
+            self.event_commit_pause.lock().await.take()
+        };
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
+        }
+        let result = {
+            let mut state = self.state.lock().await;
+            state
+                .validate_authority(authority)
+                .and_then(|()| state.commit(write_id, record, events, false))
+        };
         if matches!(&result, Err(StoreError::SequenceTaken { .. })) {
             self.sequence_taken_errors.fetch_add(1, Ordering::SeqCst);
         }

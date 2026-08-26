@@ -124,6 +124,13 @@ pub(crate) struct FakeAdapter {
     /// case #351 was about. Raised before the channel is returned, so the
     /// core meets it at the moment it genuinely has nowhere to put it.
     pub(crate) sign_in_on_open: bool,
+    /// Ordered updates emitted before `open_conversation` returns.
+    ///
+    /// Used to exercise the production opening receiver rather than calling a
+    /// fold helper directly. The vector is drained once, preserving its order.
+    pub(crate) opening_updates: Mutex<Vec<layer3_adapter::ConversationUpdate>>,
+    /// Refuse the conversation after emitting `opening_updates`.
+    pub(crate) refuse_conversation_open: std::sync::atomic::AtomicBool,
     /// A permission request emitted before `open_conversation` returns.
     ///
     /// Used to model a blocked request replayed on the replacement link while
@@ -196,6 +203,8 @@ impl Default for FakeAdapter {
             rejoined: Mutex::default(),
             credentials: Mutex::default(),
             sign_in_on_open: false,
+            opening_updates: Mutex::default(),
+            refuse_conversation_open: std::sync::atomic::AtomicBool::new(false),
             permission_on_open: Mutex::default(),
             hold_conversation_open: std::sync::atomic::AtomicBool::new(false),
             conversation_open_started: Semaphore::new(0),
@@ -492,6 +501,13 @@ impl KernelAdapter for FakeAdapter {
              */
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+        let opening_updates = std::mem::take(&mut *self.opening_updates.lock().await);
+        for update in opening_updates {
+            updates
+                .send(update)
+                .await
+                .expect("the core drains updates while the conversation opens");
+        }
         if let Some(request) = self.permission_on_open.lock().await.take() {
             updates
                 .send(layer3_adapter::ConversationUpdate::Asked(request))
@@ -500,6 +516,14 @@ impl KernelAdapter for FakeAdapter {
             // Let the folder reach its no-entry path before the channel is
             // returned and readoption advances to installation.
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        if self
+            .refuse_conversation_open
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(AdapterError::Rejected(
+                "the test conversation refused to open".into(),
+            ));
         }
         let (channel, held) = crate::conversation_support::FakeConversation::open(updates);
         *self.conversation.lock().await = Some(held);
