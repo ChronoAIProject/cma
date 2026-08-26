@@ -4030,6 +4030,88 @@ async fn byte_different_bodies_do_not_replay_even_when_the_json_value_matches() 
 }
 
 #[tokio::test]
+async fn malformed_bytes_cannot_bypass_a_completed_keys_fingerprint() {
+    let TestSurface { app, store, .. } = test_surface(true);
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-retry",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(first.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-retry",
+            "{",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "idempotency_key_reused");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+}
+
+#[tokio::test]
+async fn a_keyed_body_refusal_replays_and_retains_its_raw_fingerprint() {
+    let TestSurface {
+        app,
+        operations,
+        store,
+        ..
+    } = test_surface(true);
+
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-first",
+            "{",
+        ))
+        .await
+        .expect("router answers");
+    let first_status = first.status();
+    let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+
+    let replay = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-first",
+            "{",
+        ))
+        .await
+        .expect("router answers");
+    let replay_status = replay.status();
+    let replay_body = to_bytes(replay.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(first_status, StatusCode::BAD_REQUEST);
+    assert_eq!(replay_status, first_status);
+    assert_eq!(replay_body, first_body);
+
+    let mismatch = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-first",
+            "[",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(mismatch, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "idempotency_key_reused");
+    assert!(store.state.lock().await.records.is_empty());
+    assert_eq!(operations.state.lock().await.len(), 1);
+}
+
+#[tokio::test]
 async fn an_expired_key_is_reusable_and_a_stale_completion_cannot_replace_it() {
     use sha2::{Digest as _, Sha256};
 
