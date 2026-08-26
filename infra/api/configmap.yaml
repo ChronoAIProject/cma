@@ -217,6 +217,12 @@ data:
   # which fails partway through somebody's work rather than refusing to start.
   CHRONO_SANDBOX_CPU: "1"
   CHRONO_SANDBOX_MEMORY: "1Gi"
+  # Public verification keys retained while runtime-policy signing keys rotate.
+  # The current public key is derived from the private signer at startup and is
+  # added to this map before it is passed to a sandbox. Previous values are a
+  # JSON object from key ID to standard-base64 Ed25519 public key. Public keys
+  # are configuration, never signing authority.
+  CHRONO_GITHUB_CAPABILITY_PREVIOUS_VERIFY_KEYS: "{}"
   # Path to the mounted OpenSandbox API key. Read from a file rather than an
   # environment variable so the credential can be delivered by a secret volume
   # and rotated without rewriting this ConfigMap.

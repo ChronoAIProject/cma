@@ -28,6 +28,7 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
         workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment,

@@ -27,8 +27,9 @@ mod runtime;
 
 pub use runtime::{
     ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeHandle, RuntimeListing,
-    RuntimeLossReason, RuntimeMode, RuntimeOptions, RuntimePermission, RuntimeSpec, SkillPackage,
-    TermSize, TerminalChannel, TerminalInput, TerminalOutput, WorkspacePackage,
+    RuntimeLossReason, RuntimeMode, RuntimeOptions, RuntimePermission, RuntimePolicyReceipt,
+    RuntimeSpec, SkillPackage, TermSize, TerminalChannel, TerminalInput, TerminalOutput,
+    WorkspacePackage,
 };
 
 use tokio::sync::mpsc;
@@ -253,6 +254,22 @@ pub trait KernelAdapter: Send + Sync {
         handle: &RuntimeHandle,
         credential: &str,
     ) -> Result<(), AdapterError>;
+
+    /// Install one authenticated runtime policy and wait for the exact runtime
+    /// generation to acknowledge it.
+    ///
+    /// The envelope is opaque at this boundary. Its signer, semantics and
+    /// evaluator belong on opposite sides of Layer 3; this layer only carries
+    /// it and reports the monotonic receipt the runtime returned.
+    async fn install_runtime_policy(
+        &self,
+        _handle: &RuntimeHandle,
+        _envelope: &str,
+    ) -> Result<RuntimePolicyReceipt, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime does not accept authenticated policy data".to_string(),
+        ))
+    }
 
     /// Tear the runtime down.
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError>;

@@ -6,12 +6,16 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use layer2_core::{
-    rfc3339_at, seconds_from_rfc3339, BaselineObjectStore, CoreError, EffectClaim, FailureClass,
-    Launch, LaunchAuthority, LaunchEffectKind, LaunchEffectResult, LaunchFailure, Session,
-    SessionLink, SessionService, SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier,
-    TriggerServiceError, TriggerStoreError, WorkspaceRecord,
+    rfc3339_at, seconds_from_rfc3339, AuthorityProvenance, BaselineObjectStore,
+    CapabilityOperation, CapabilityRevocationState, ConnectionSnapshot, CoreError, DelegationState,
+    EffectClaim, FailureClass, Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind,
+    LaunchEffectResult, LaunchFailure, RepositoryIdentity, Session, SessionId, SessionLink,
+    SessionService, SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier,
+    TriggerServiceError, TriggerStoreError, WorkspaceRecord, CAPABILITY_MAX_LIFETIME_SECONDS,
+    CAPABILITY_POLICY_VERSION,
 };
 
+use super::capability_signing::{CapabilitySigner, POLICY_AUDIENCE};
 use super::github::{
     BranchContext, BranchReconciliation, ForkContext, ForkReconciliation, GithubBroker,
     GithubBrokerError, ImportedWorkspace, WorkspaceContext, WorkspaceUnsupported,
@@ -21,6 +25,14 @@ use super::worker::{EffectExecution, EffectExecutor};
 const DEFAULT_FORK_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_PROVIDER_RETRY: Duration = Duration::from_secs(300);
 const MAX_RETRY_AFTER: u64 = 3_600;
+
+#[derive(Debug, Clone)]
+struct CapabilityAuthorityEvidence {
+    connection: ConnectionSnapshot,
+    authority: AuthorityProvenance,
+    upstream: RepositoryIdentity,
+    fork: RepositoryIdentity,
+}
 
 #[async_trait]
 trait GithubEffectPort: Send + Sync {
@@ -50,6 +62,11 @@ trait GithubEffectPort: Send + Sync {
         &self,
         context: &WorkspaceContext,
     ) -> Result<ImportedWorkspace, GithubBrokerError>;
+
+    async fn preflight_capability(
+        &self,
+        launch: &Launch,
+    ) -> Result<CapabilityAuthorityEvidence, GithubBrokerError>;
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +78,13 @@ struct TriggerSessionEvidence {
 #[async_trait]
 trait TriggerSessionEffectPort: Send + Sync {
     async fn ensure_session(&self, launch: &Launch) -> Result<TriggerSessionEvidence, CoreError>;
+
+    async fn install_runtime_policy(
+        &self,
+        session_id: &SessionId,
+        capability: LaunchCapability,
+        signer: Arc<CapabilitySigner>,
+    ) -> Result<(String, layer3_adapter::RuntimePolicyReceipt), CoreError>;
 }
 
 struct SessionServiceEffectPort(Arc<SessionService>);
@@ -74,6 +98,22 @@ impl TriggerSessionEffectPort for SessionServiceEffectPort {
             session,
             credential_ready,
         })
+    }
+
+    async fn install_runtime_policy(
+        &self,
+        session_id: &SessionId,
+        mut capability: LaunchCapability,
+        signer: Arc<CapabilitySigner>,
+    ) -> Result<(String, layer3_adapter::RuntimePolicyReceipt), CoreError> {
+        self.0
+            .install_runtime_policy(session_id, move |runtime_audience| {
+                capability.runtime_audience = runtime_audience.to_string();
+                signer
+                    .sign_policy(&capability)
+                    .map_err(CoreError::InvalidRequest)
+            })
+            .await
     }
 }
 
@@ -129,6 +169,103 @@ impl GithubEffectPort for GithubBroker {
     ) -> Result<ImportedWorkspace, GithubBrokerError> {
         GithubBroker::import_workspace(self, context).await
     }
+
+    async fn preflight_capability(
+        &self,
+        launch: &Launch,
+    ) -> Result<CapabilityAuthorityEvidence, GithubBrokerError> {
+        let expected_connection = launch.connection.as_ref().ok_or_else(|| {
+            GithubBrokerError::Malformed("the Launch has no selected connection".into())
+        })?;
+        let expected_upstream = &launch.revision.content.upstream.repository;
+        let mut upstream = self
+            .repository_by_id(
+                &launch.owner,
+                &expected_connection.service_id,
+                expected_upstream.repository_id,
+            )
+            .await?;
+        upstream.identity.selected_ref = expected_upstream.selected_ref.clone();
+        if upstream.identity != *expected_upstream || upstream.archived || upstream.disabled {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+
+        let expected_fork = &launch
+            .fork
+            .as_ref()
+            .ok_or_else(|| GithubBrokerError::Malformed("the Launch has no fork".into()))?
+            .repository;
+        let mut fork = self
+            .repository_by_id(
+                &launch.owner,
+                &expected_connection.service_id,
+                expected_fork.repository_id,
+            )
+            .await?;
+        fork.identity.selected_ref = expected_fork.selected_ref.clone();
+        if fork.identity != *expected_fork
+            || fork.archived
+            || fork.disabled
+            || fork.identity.owner_id != expected_connection.account.account_id
+            || fork.identity.owner_node_id != expected_connection.account.account_node_id
+        {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+
+        let branch_context = BranchContext::try_from(launch)?;
+        let observed_branch = match self.reconcile_branch(&branch_context).await? {
+            BranchReconciliation::Ready(branch) => branch,
+            BranchReconciliation::Absent => return Err(GithubBrokerError::AuthorityDrift),
+        };
+        let expected_branch = launch.branch.as_ref().ok_or_else(|| {
+            GithubBrokerError::Malformed("the Launch has no fenced branch".into())
+        })?;
+        if observed_branch.name != expected_branch.name
+            || observed_branch.expected_head != expected_branch.expected_head
+            || observed_branch.current_head != expected_branch.current_head
+            || observed_branch.canonical_url != expected_branch.canonical_url
+        {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+
+        // Last provider read before policy issue: this proves the exact
+        // UserService, account, backing key and scope still match the Launch.
+        let current = self
+            .preflight_connection(&launch.owner, &expected_connection.service_id)
+            .await?;
+        if !same_connection_authority(expected_connection, &current.snapshot) {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        let observed_at = rfc3339_at(SystemTime::now());
+        Ok(CapabilityAuthorityEvidence {
+            connection: current.snapshot.clone(),
+            authority: AuthorityProvenance {
+                subject: launch.owner.clone(),
+                subject_token_generation: current.subject_token_generation,
+                service_id: current.snapshot.service_id.clone(),
+                service_state_version: current.snapshot.service_state_version,
+                backing_key_id: current.snapshot.backing_key_id.clone(),
+                session_credential_generation: launch
+                    .authority
+                    .as_ref()
+                    .and_then(|authority| authority.session_credential_generation),
+                state: DelegationState::Available,
+                observed_at: observed_at.clone(),
+            },
+            upstream: upstream.identity,
+            fork: fork.identity,
+        })
+    }
+}
+
+fn same_connection_authority(expected: &ConnectionSnapshot, current: &ConnectionSnapshot) -> bool {
+    expected.service_id == current.service_id
+        && expected.service_state_version == current.service_state_version
+        && expected.backing_key_id == current.backing_key_id
+        && expected.account == current.account
+        && expected.granted_scopes == current.granted_scopes
+        && expected.satisfied_scope_classes == current.satisfied_scope_classes
+        && current.state == layer2_core::ConnectionState::Active
 }
 
 /// GitHub-backed part of the closed Trigger effect vocabulary.
@@ -139,6 +276,7 @@ pub(crate) struct GithubEffectExecutor {
     github: Arc<dyn GithubEffectPort>,
     workspace_store: Option<Arc<dyn BaselineObjectStore>>,
     sessions: Option<Arc<dyn TriggerSessionEffectPort>>,
+    capability_signer: Option<Arc<CapabilitySigner>>,
     fork_readiness_timeout: Duration,
 }
 
@@ -148,6 +286,7 @@ impl GithubEffectExecutor {
             github,
             workspace_store: None,
             sessions: None,
+            capability_signer: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         }
     }
@@ -156,11 +295,13 @@ impl GithubEffectExecutor {
         github: Arc<GithubBroker>,
         workspace_store: Arc<dyn BaselineObjectStore>,
         sessions: Arc<SessionService>,
+        capability_signer: Arc<CapabilitySigner>,
     ) -> Self {
         Self {
             github,
             workspace_store: Some(workspace_store),
             sessions: Some(Arc::new(SessionServiceEffectPort(sessions))),
+            capability_signer: Some(capability_signer),
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         }
     }
@@ -171,6 +312,7 @@ impl GithubEffectExecutor {
             github,
             workspace_store: None,
             sessions: None,
+            capability_signer: None,
             fork_readiness_timeout,
         }
     }
@@ -184,6 +326,22 @@ impl GithubEffectExecutor {
             github,
             workspace_store: None,
             sessions: Some(sessions),
+            capability_signer: None,
+            fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_capability_ports(
+        github: Arc<dyn GithubEffectPort>,
+        sessions: Arc<dyn TriggerSessionEffectPort>,
+        capability_signer: Arc<CapabilitySigner>,
+    ) -> Self {
+        Self {
+            github,
+            workspace_store: None,
+            sessions: Some(sessions),
+            capability_signer: Some(capability_signer),
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         }
     }
@@ -548,6 +706,124 @@ impl GithubEffectExecutor {
         }
     }
 
+    async fn run_reach(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let Some(sessions) = self.sessions.as_ref() else {
+            return unsupported_effect(claim);
+        };
+        let Some(signer) = self.capability_signer.as_ref() else {
+            return unsupported_effect(claim);
+        };
+        let authority = match self.github.preflight_capability(launch).await {
+            Ok(authority) => authority,
+            Err(error) => return broker_failure(error, claim, false),
+        };
+        let Some(session) = launch.session.as_ref() else {
+            return EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::TerminalSecurity,
+                    "trigger_reach_session_missing",
+                    "The Launch has no deterministic session to receive delegated access.",
+                    "Contact support; CMA will not issue policy without an exact session binding.",
+                    claim,
+                    None,
+                ),
+            };
+        };
+        let Some(branch) = launch.branch.as_ref() else {
+            return EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::TerminalSecurity,
+                    "trigger_reach_branch_missing",
+                    "The Launch has no fenced branch for delegated GitHub access.",
+                    "Contact support; CMA will not issue an unbound repository policy.",
+                    claim,
+                    None,
+                ),
+            };
+        };
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let expires_at = now.saturating_add(CAPABILITY_MAX_LIFETIME_SECONDS);
+        let generation = launch
+            .reach
+            .as_ref()
+            .map_or(1, |reach| reach.policy_generation.saturating_add(1));
+        let capability = LaunchCapability {
+            version: CAPABILITY_POLICY_VERSION,
+            launch_id: launch.id.clone(),
+            session_id: session.session_id.clone(),
+            // Layer 2 fills this from the exact runtime handle while holding
+            // the session lifecycle fence.
+            runtime_audience: String::new(),
+            service_id: authority.connection.service_id.clone(),
+            upstream: authority.upstream.clone(),
+            fork: authority.fork.clone(),
+            allowed_ref: format!("refs/heads/{}", branch.name),
+            operations: launch
+                .revision
+                .content
+                .repository_access
+                .allowed_operation_classes
+                .iter()
+                .copied()
+                .map(CapabilityOperation::Repository)
+                .collect(),
+            generation,
+            fence: claim.fence,
+            not_before_epoch_seconds: now,
+            expires_at_epoch_seconds: expires_at,
+            issuer: "cma-trigger".into(),
+            audience: POLICY_AUDIENCE.into(),
+            signature_key_id: signer.key_id().to_string(),
+            numeric_binding_observed_at: authority.authority.observed_at.clone(),
+            revocation: CapabilityRevocationState::Active,
+        };
+        let (runtime_audience, receipt) = match sessions
+            .install_runtime_policy(&session.session_id, capability, Arc::clone(signer))
+            .await
+        {
+            Ok(installed) => installed,
+            Err(error) => return session_failure(error, claim),
+        };
+        if receipt.generation != generation || receipt.fence != claim.fence || receipt.revoked {
+            return EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::TerminalSecurity,
+                    "trigger_reach_acknowledgement_mismatch",
+                    "The runtime acknowledged different delegated access than CMA issued.",
+                    "Contact support; GitHub access remains fail-closed for this Launch.",
+                    claim,
+                    None,
+                ),
+            };
+        }
+        let mut resources = retained_resources(launch, claim);
+        resources.insert("service_id".into(), authority.connection.service_id.clone());
+        resources.insert("policy_generation".into(), generation.to_string());
+        resources.insert("policy_fence".into(), claim.fence.to_string());
+        resources.insert("runtime_audience".into(), runtime_audience);
+        resources.insert("policy_expires_at".into(), expires_at.to_string());
+        EffectExecution::Completed {
+            result: LaunchEffectResult::Reach {
+                reach: layer2_core::ReachStatus {
+                    service_id: authority.connection.service_id.clone(),
+                    state: CapabilityRevocationState::Active,
+                    policy_generation: generation,
+                    expires_at_epoch_seconds: expires_at,
+                    last_refusal: None,
+                    tombstone_acknowledged: false,
+                    agent_key_revocation_confirmed: false,
+                },
+                connection: authority.connection,
+                authority: authority.authority,
+            },
+            safe_detail: "The runtime acknowledged its launch-scoped GitHub policy.".into(),
+            external_resource_ids: resources,
+        }
+    }
+
     async fn ensure_trigger_session(
         &self,
         launch: &Launch,
@@ -573,6 +849,7 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
             LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
             LaunchEffectKind::Session => self.run_session(launch, claim).await,
+            LaunchEffectKind::Reach => self.run_reach(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -587,6 +864,7 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
             LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
             LaunchEffectKind::Session => self.run_session(launch, claim).await,
+            LaunchEffectKind::Reach => self.run_reach(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -1088,9 +1366,13 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
+    use base64::Engine as _;
     use layer2_core::{
-        EffectClaimMode, ForkRecord, LaunchState, RepositoryIdentity, RepositoryVisibility,
+        BranchRecord, EffectClaimMode, ForkRecord, LaunchState, RepositoryIdentity,
+        RepositoryVisibility,
     };
+    use ring::rand::SystemRandom;
+    use ring::signature::Ed25519KeyPair;
 
     use super::*;
 
@@ -1113,6 +1395,8 @@ mod tests {
 
     struct FakeSessions {
         answers: Mutex<VecDeque<SessionAnswer>>,
+        policy_receipt: Mutex<Option<layer3_adapter::RuntimePolicyReceipt>>,
+        installed_policies: Mutex<Vec<LaunchCapability>>,
         calls: AtomicUsize,
     }
 
@@ -1120,6 +1404,17 @@ mod tests {
         fn new(answers: impl IntoIterator<Item = SessionAnswer>) -> Self {
             Self {
                 answers: Mutex::new(answers.into_iter().collect()),
+                policy_receipt: Mutex::new(None),
+                installed_policies: Mutex::new(Vec::new()),
+                calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn with_policy_receipt(receipt: layer3_adapter::RuntimePolicyReceipt) -> Self {
+            Self {
+                answers: Mutex::new(VecDeque::new()),
+                policy_receipt: Mutex::new(Some(receipt)),
+                installed_policies: Mutex::new(Vec::new()),
                 calls: AtomicUsize::new(0),
             }
         }
@@ -1145,6 +1440,25 @@ mod tests {
                     "the deterministic session is occupied by different authority".into(),
                 )),
             }
+        }
+
+        async fn install_runtime_policy(
+            &self,
+            _session_id: &SessionId,
+            mut capability: LaunchCapability,
+            signer: Arc<CapabilitySigner>,
+        ) -> Result<(String, layer3_adapter::RuntimePolicyReceipt), CoreError> {
+            let Some(receipt) = self.policy_receipt.lock().unwrap().clone() else {
+                return Err(CoreError::CapabilityUnsupported(
+                    "authenticated_runtime_policy".into(),
+                ));
+            };
+            capability.runtime_audience = "sandbox-runtime-1".into();
+            signer
+                .sign_policy(&capability)
+                .map_err(CoreError::InvalidRequest)?;
+            self.installed_policies.lock().unwrap().push(capability);
+            Ok(("sandbox-runtime-1".into(), receipt))
         }
     }
 
@@ -1226,6 +1540,18 @@ mod tests {
             Err(GithubBrokerError::Malformed(
                 "workspace answer was not configured".into(),
             ))
+        }
+
+        async fn preflight_capability(
+            &self,
+            launch: &Launch,
+        ) -> Result<CapabilityAuthorityEvidence, GithubBrokerError> {
+            Ok(CapabilityAuthorityEvidence {
+                connection: launch.connection.clone().unwrap(),
+                authority: launch.authority.clone().unwrap(),
+                upstream: launch.revision.content.upstream.repository.clone(),
+                fork: launch.fork.as_ref().unwrap().repository.clone(),
+            })
         }
     }
 
@@ -1489,10 +1815,124 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn reach_completes_only_after_the_exact_policy_tuple_is_acknowledged() {
+        let sessions = Arc::new(FakeSessions::with_policy_receipt(
+            layer3_adapter::RuntimePolicyReceipt {
+                generation: 1,
+                fence: 7,
+                revoked: false,
+            },
+        ));
+        let signer = test_signer();
+        let executor = GithubEffectExecutor::with_capability_ports(
+            Arc::new(FakeGithub::new([])),
+            sessions.clone(),
+            signer,
+        );
+        let launch = reach_launch();
+        let mut reach_claim = claim_for(LaunchEffectKind::Reach, EffectClaimMode::Execute);
+        reach_claim.fence = 7;
+
+        let result = executor.execute(&launch, &reach_claim).await;
+
+        assert!(matches!(
+            result,
+            EffectExecution::Completed {
+                result: LaunchEffectResult::Reach {
+                    reach: layer2_core::ReachStatus {
+                        policy_generation: 1,
+                        state: CapabilityRevocationState::Active,
+                        ..
+                    },
+                    ..
+                },
+                ..
+            }
+        ));
+        let policies = sessions.installed_policies.lock().unwrap();
+        assert_eq!(policies.len(), 1);
+        assert_eq!(policies[0].runtime_audience, "sandbox-runtime-1");
+        assert_eq!(policies[0].fence, 7);
+        assert_eq!(
+            policies[0].allowed_ref,
+            format!("refs/heads/cma/{}", launch.id.0)
+        );
+    }
+
+    #[tokio::test]
+    async fn reach_refuses_a_runtime_acknowledgement_for_another_fence() {
+        let sessions = Arc::new(FakeSessions::with_policy_receipt(
+            layer3_adapter::RuntimePolicyReceipt {
+                generation: 1,
+                fence: 8,
+                revoked: false,
+            },
+        ));
+        let executor = GithubEffectExecutor::with_capability_ports(
+            Arc::new(FakeGithub::new([])),
+            sessions,
+            test_signer(),
+        );
+        let launch = reach_launch();
+        let mut reach_claim = claim_for(LaunchEffectKind::Reach, EffectClaimMode::Execute);
+        reach_claim.fence = 7;
+
+        let result = executor.execute(&launch, &reach_claim).await;
+
+        assert!(matches!(
+            result,
+            EffectExecution::Failed {
+                failure: LaunchFailure {
+                    class: FailureClass::TerminalSecurity,
+                    ref code,
+                    ..
+                }
+            } if code == "trigger_reach_acknowledgement_mismatch"
+        ));
+    }
+
     fn fork_launch() -> Launch {
         let mut launch = super::super::worker::tests::launch_fixture();
         launch.state = LaunchState::ForkPending;
         launch
+    }
+
+    fn reach_launch() -> Launch {
+        let mut launch = super::super::worker::tests::launch_fixture();
+        let fork_context = ForkContext::try_from(&launch).unwrap();
+        launch.fork = Some(fork(&fork_context));
+        launch.branch = Some(BranchRecord {
+            name: format!("cma/{}", launch.id.0),
+            expected_head: launch.source_sha.clone(),
+            current_head: launch.source_sha.clone(),
+            canonical_url: format!(
+                "https://github.com/contributor/project/tree/cma/{}",
+                launch.id.0
+            ),
+            created_at: "2026-08-27T00:00:00Z".into(),
+        });
+        launch.session = Some(SessionLink {
+            session_id: SessionId("sesn_trigger_effect".into()),
+            environment_profile_id: "envp_trigger_effect".into(),
+            runtime_generation: 1,
+            created_at: "2026-08-27T00:00:00Z".into(),
+        });
+        launch.state = LaunchState::PromptPending;
+        launch
+    }
+
+    fn test_signer() -> Arc<CapabilitySigner> {
+        let key = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
+        Arc::new(
+            CapabilitySigner::from_config(&crate::config::GithubCapabilitySigningConfig {
+                key_id: "test-key".into(),
+                private_key_pkcs8_base64: base64::engine::general_purpose::STANDARD
+                    .encode(key.as_ref()),
+                previous_verification_keys_json: "{}".into(),
+            })
+            .unwrap(),
+        )
     }
 
     fn claim(mode: EffectClaimMode) -> EffectClaim {

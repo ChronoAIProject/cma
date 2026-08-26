@@ -278,6 +278,8 @@ pub enum LaunchEffectResult {
     },
     Reach {
         reach: super::ReachStatus,
+        connection: ConnectionSnapshot,
+        authority: AuthorityProvenance,
     },
     InitialDispatch {
         delivery: PromptDelivery,
