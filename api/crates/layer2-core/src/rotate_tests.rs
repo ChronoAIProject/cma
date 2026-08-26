@@ -17,7 +17,7 @@ use tokio::sync::Notify;
 use crate::commit_fault_support::CommitFaultStore;
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
-use crate::session::SessionStatus;
+use crate::session::{ProvisioningStage, SessionStatus};
 use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
     await_settled, service_on_version, service_on_version_with_skills, spec, user, FakeAdapter,
@@ -179,13 +179,13 @@ async fn a_session_is_carried_onto_a_newer_runtime() {
     let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
     let created = old.create_session(&alice, spec()).await.expect("created");
     await_settled(&old, &alice, &created.id).await;
-    let first = store
+    let before = store
         .get(&created.id)
         .await
         .expect("readable")
-        .expect("present")
-        .runtime_id
-        .expect("has a runtime");
+        .expect("present");
+    let before_rotation = before.session.last_seq;
+    let first = before.runtime_id.expect("has a runtime");
     adapter
         .set_conversation(&first, b"turn one\nturn two\n")
         .await;
@@ -200,6 +200,7 @@ async fn a_session_is_carried_onto_a_newer_runtime() {
     );
 
     let settled = await_usable(&new, &alice, &created.id).await;
+    let durable_settled = await_settled(&new, &alice, &created.id).await;
     assert_eq!(settled.status, SessionStatus::Ready);
     assert_eq!(settled.id, created.id, "it must be the same session");
     assert_eq!(settled.runtime_version.as_deref(), Some("runtime:2"));
@@ -207,6 +208,79 @@ async fn a_session_is_carried_onto_a_newer_runtime() {
     assert!(
         settled.rotated_at.is_some(),
         "the owner must be told what moment their session was carried from"
+    );
+
+    let handover = new
+        .events_since(&alice, &created.id, Some(before_rotation))
+        .await
+        .expect("the bounded handover log is readable")
+        .into_iter()
+        .filter(|event| event.seq <= durable_settled.last_seq)
+        .collect::<Vec<_>>();
+    let position = |predicate: fn(&EventKind) -> bool| {
+        handover
+            .iter()
+            .position(|event| predicate(&event.kind))
+            .unwrap_or_else(|| panic!("the bounded handover omitted an event: {handover:?}"))
+    };
+    let rotating = position(|kind| {
+        matches!(
+            kind,
+            EventKind::StatusChanged {
+                status: SessionStatus::Rotating,
+                ..
+            }
+        )
+    });
+    let runtime_requested = position(|kind| {
+        matches!(
+            kind,
+            EventKind::Progress {
+                stage: ProvisioningStage::RuntimeRequested
+            }
+        )
+    });
+    let runtime_created = position(|kind| {
+        matches!(
+            kind,
+            EventKind::Progress {
+                stage: ProvisioningStage::RuntimeCreated
+            }
+        )
+    });
+    let attaching = position(|kind| {
+        matches!(
+            kind,
+            EventKind::Progress {
+                stage: ProvisioningStage::Attaching
+            }
+        )
+    });
+    let ready = position(|kind| {
+        matches!(
+            kind,
+            EventKind::StatusChanged {
+                status: SessionStatus::Ready,
+                ..
+            }
+        )
+    });
+    let progress_ready = position(|kind| {
+        matches!(
+            kind,
+            EventKind::Progress {
+                stage: ProvisioningStage::Ready
+            }
+        )
+    });
+
+    assert!(
+        rotating < runtime_requested
+            && runtime_requested < runtime_created
+            && runtime_created < attaching
+            && attaching < ready
+            && ready < progress_ready,
+        "the bounded handover was not announced in runtime order: {handover:?}"
     );
 }
 
@@ -1883,14 +1957,15 @@ async fn a_permanently_refused_replacement_preserves_the_old_authority() {
 
     let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
     let created = old.create_session(&alice, spec()).await.expect("created");
-    await_settled(&old, &alice, &created.id).await;
-    let original = store
+    let ready = await_settled(&old, &alice, &created.id).await;
+    let before_attempt = ready.last_seq;
+    let old_runtime = store
         .get(&created.id)
         .await
-        .unwrap()
-        .unwrap()
+        .expect("the old session is readable")
+        .expect("the old session is present")
         .runtime_id
-        .expect("the old runtime is authoritative");
+        .expect("the old session still names its runtime");
     drop(old);
 
     // The same kernel, rebuilt without the ability this session was granted.
@@ -1898,6 +1973,11 @@ async fn a_permanently_refused_replacement_preserves_the_old_authority() {
         capabilities: layer3_adapter::KernelCapabilities::default(),
         ..FakeAdapter::default()
     });
+    lesser
+        .running
+        .lock()
+        .await
+        .insert(old_runtime.clone(), Some(created.id.0.clone()));
     let new = service_on_version(Arc::clone(&store), Arc::clone(&lesser), "runtime:2");
     new.reconcile().await;
     let settled = await_settled(&new, &alice, &created.id).await;
@@ -1911,9 +1991,52 @@ async fn a_permanently_refused_replacement_preserves_the_old_authority() {
             .unwrap()
             .runtime_id
             .as_deref(),
-        Some(original.as_str())
+        Some(old_runtime.as_str())
     );
     assert_eq!(lesser.provision_calls.load(Ordering::SeqCst), 0);
+
+    let failed_attempt = new
+        .events_since(&alice, &created.id, Some(before_attempt))
+        .await
+        .expect("the bounded failed handover is readable")
+        .into_iter()
+        .filter(|event| event.seq <= settled.last_seq)
+        .collect::<Vec<_>>();
+    let rotating = failed_attempt.iter().position(|event| {
+        matches!(
+            &event.kind,
+            EventKind::StatusChanged {
+                status: SessionStatus::Rotating,
+                ..
+            }
+        )
+    });
+    let terminated = failed_attempt.iter().position(|event| {
+        matches!(
+            &event.kind,
+            EventKind::StatusChanged {
+                status: SessionStatus::Terminated,
+                ..
+            }
+        )
+    });
+    assert!(
+        rotating
+            .zip(terminated)
+            .is_some_and(|(start, end)| start < end),
+        "the bounded failed attempt did not end after it began: {failed_attempt:?}"
+    );
+    assert!(
+        failed_attempt.iter().all(|event| !matches!(
+            &event.kind,
+            EventKind::StatusChanged {
+                status: SessionStatus::Ready,
+                ..
+            }
+        )),
+        "a permanently failed attempt fabricated readiness inside its bounded cursor window: \
+         {failed_attempt:?}"
+    );
 }
 
 /// A source that refuses, the way the registry refuses this service's own

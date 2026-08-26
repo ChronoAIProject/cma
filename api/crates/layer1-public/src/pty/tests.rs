@@ -32,7 +32,7 @@ async fn a_cookie_client_attaches_as_itself_and_exclusively() {
     // The path our own dashboard takes, unchanged by any of this: the
     // browser sends its cookie, middleware has already resolved who that
     // is, and no ticket is involved.
-    let tickets = TerminalTickets::new();
+    let tickets = TerminalTickets::in_memory();
     let (admitted, claim) = admit(
         &tickets,
         &SessionId("sesn_1".into()),
@@ -40,6 +40,7 @@ async fn a_cookie_client_attaches_as_itself_and_exclusively() {
         Some(AuthenticatedCaller(caller("subject-a"))),
     )
     .await
+    .expect("ticket store answers")
     .expect("an authenticated caller is admitted");
     assert_eq!(admitted.subject, SubjectId("subject-a".into()));
     assert_eq!(claim, AttachmentClaim::Exclusive);
@@ -49,14 +50,16 @@ async fn a_cookie_client_attaches_as_itself_and_exclusively() {
 async fn a_bearer_client_attaches_by_redeeming_its_ticket() {
     // The path a product frontend takes, because its browser cannot put a
     // credential on the upgrade at all.
-    let tickets = TerminalTickets::new();
+    let tickets = TerminalTickets::in_memory();
     let id = SessionId("sesn_1".into());
     let issued = tickets
         .issue(&caller("subject-a"), &id, AttachmentClaim::Takeover)
-        .await;
+        .await
+        .expect("ticket is stored");
 
     let (admitted, claim) = admit(&tickets, &id, Some(issued.value), None)
         .await
+        .expect("ticket store answers")
         .expect("a live ticket is admitted");
     assert_eq!(admitted.subject, SubjectId("subject-a".into()));
     assert_eq!(
@@ -68,9 +71,10 @@ async fn a_bearer_client_attaches_by_redeeming_its_ticket() {
 
 #[tokio::test]
 async fn an_upgrade_with_neither_a_ticket_nor_a_cookie_is_refused() {
-    let tickets = TerminalTickets::new();
+    let tickets = TerminalTickets::in_memory();
     assert!(admit(&tickets, &SessionId("sesn_1".into()), None, None)
         .await
+        .expect("ticket store answers")
         .is_none());
 }
 
@@ -78,13 +82,15 @@ async fn an_upgrade_with_neither_a_ticket_nor_a_cookie_is_refused() {
 async fn a_spent_ticket_does_not_fall_back_to_the_cookie() {
     // Otherwise single use would hold only for clients that had no cookie,
     // and a replayed ticket would succeed on a same-origin page.
-    let tickets = TerminalTickets::new();
+    let tickets = TerminalTickets::in_memory();
     let id = SessionId("sesn_1".into());
     let issued = tickets
         .issue(&caller("subject-a"), &id, AttachmentClaim::Exclusive)
-        .await;
+        .await
+        .expect("ticket is stored");
     admit(&tickets, &id, Some(issued.value.clone()), None)
         .await
+        .expect("ticket store answers")
         .expect("the first redemption works");
 
     assert!(admit(
@@ -94,6 +100,7 @@ async fn a_spent_ticket_does_not_fall_back_to_the_cookie() {
         Some(AuthenticatedCaller(caller("subject-a")))
     )
     .await
+    .expect("ticket store answers")
     .is_none());
 }
 

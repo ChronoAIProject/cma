@@ -47,6 +47,7 @@ impl Profile {
     }
 
     /// Whether the provider told us anything worth showing.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.display_name.is_none() && self.email.is_none() && self.avatar_url.is_none()
     }

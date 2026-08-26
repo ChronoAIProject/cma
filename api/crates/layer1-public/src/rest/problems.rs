@@ -120,8 +120,9 @@ impl IntoResponse for Problem {
             }
             CoreError::InvalidRequest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-request"),
             CoreError::SessionTerminated => (StatusCode::CONFLICT, "session-terminated"),
-            // The same operation can succeed after the handover finishes on
-            // its own, unlike the final session-terminated conflict.
+            // A fresh request can succeed after the handover finishes on its
+            // own, unlike the final session-terminated conflict. A completed
+            // idempotency key still replays the refusal it recorded.
             CoreError::SessionRotating => (StatusCode::CONFLICT, "session-rotating"),
             CoreError::AlreadyAttached => (StatusCode::CONFLICT, "already-attached"),
             CoreError::InvalidGeometry(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-geometry"),
@@ -471,6 +472,18 @@ mod tests {
         assert_eq!(body["code"], "price_changed");
         assert_eq!(body["quoted_rate_card"], "rate_old");
         assert_eq!(body["rate_card"], "rate_new");
+    }
+
+    #[tokio::test]
+    async fn an_invalid_state_is_a_typed_conflict() {
+        let (status, body) = rendered(CoreError::InvalidState).await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            body["type"],
+            "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-state"
+        );
+        assert_eq!(body["code"], "invalid_state");
     }
 
     #[tokio::test]

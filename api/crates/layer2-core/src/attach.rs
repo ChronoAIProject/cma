@@ -186,13 +186,13 @@ impl SessionService {
         }
         let entries = self.entries.read().await;
         let missing_live_entry = !entries.contains_key(id);
+        drop(entries);
         if missing_live_entry {
             let rotation_in_progress = self.rotation_in_progress(id).await;
             if rotation_in_progress {
                 return Err(CoreError::SessionRotating);
             }
         }
-        drop(entries);
         record.session.capabilities.require(Capability::Terminal)?;
         if missing_live_entry {
             // The sandbox outlives this process, so a restart loses the
@@ -223,8 +223,8 @@ impl SessionService {
         let commit = {
             let mut entries = self.entries.write().await;
             let Some(entry) = entries.get_mut(id) else {
-                let rotation_in_progress = self.rotation_in_progress(id).await;
                 drop(entries);
+                let rotation_in_progress = self.rotation_in_progress(id).await;
                 return Err(self
                     .missing_live_session_error(caller, id, rotation_in_progress)
                     .await);

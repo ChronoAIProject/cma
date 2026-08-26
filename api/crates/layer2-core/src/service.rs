@@ -64,6 +64,9 @@ impl SessionService {
             entries: RwLock::new(HashMap::new()),
             lifecycle_gates: Default::default(),
             input_gates: Default::default(),
+            readoption_gates: Default::default(),
+            conversation_order_gates: Default::default(),
+            prompt_gates: Default::default(),
             skills,
             sequences,
             event_logs,
@@ -609,8 +612,8 @@ impl SessionService {
             }
             return Ok(());
         }
-        let rotation_in_progress = self.rotation_in_progress(id).await;
         drop(entries);
+        let rotation_in_progress = self.rotation_in_progress(id).await;
         Err(self
             .missing_live_session_error(caller, id, rotation_in_progress)
             .await)

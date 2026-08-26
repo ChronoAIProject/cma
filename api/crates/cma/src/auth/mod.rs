@@ -8,15 +8,25 @@
 //! Endpoints are discovered from the provider's metadata document rather than
 //! hard-coded, so a provider that moves a route does not break this service.
 
-use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use axum::http::HeaderMap;
+pub mod persistence;
 pub mod profile;
 
+use layer2_core::store::StoreError;
 use layer2_core::{Authorization, SessionId, SubjectId};
 use tokio::sync::{Mutex, RwLock};
 
+use persistence::{
+    AuthStore, AuthSweepItem, BrowserSession, CredentialLeaseCursor, CredentialMutationCursor,
+    CredentialReissueCursor, DurableSubjectTokens, RevokeDebtCursor, SecretDigest,
+    SubjectAuthState, SubjectOwnerCursor, SubjectRefreshCursor,
+};
+#[cfg(test)]
+use persistence::{MemoryAuthStore, SecretValue};
 use token::random_token;
 
 /// Name of the session cookie this service issues.
@@ -24,6 +34,109 @@ pub const SESSION_COOKIE: &str = "cma_session";
 
 /// Name issued before the CMA migration, accepted during the compatibility window.
 pub(crate) const LEGACY_SESSION_COOKIE: &str = "chrono_bot_session";
+
+const BROWSER_SESSION_DOMAIN: &str = "browser-session";
+const BROWSER_SESSION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+/// Maximum actionable authentication records selected by one renewal lane.
+pub(super) const AUTH_SWEEP_BATCH_SIZE: usize = 100;
+/// Five independently fair lanes share this explicit top-level pass ceiling.
+pub(super) const AUTH_RENEWAL_PASS_BUDGET: usize = 5 * AUTH_SWEEP_BATCH_SIZE;
+pub(super) const AUTH_SWEEP_TWO_LANE_BATCH_SIZE: usize = AUTH_SWEEP_BATCH_SIZE / 2;
+const AUTH_SWEEP_THREE_LANE_BATCH_SIZE: usize = AUTH_SWEEP_BATCH_SIZE / 3;
+#[cfg(test)]
+const AUTH_SWEEP_LEASE_LANE_BATCH_SIZE: usize =
+    AUTH_SWEEP_BATCH_SIZE - (2 * AUTH_SWEEP_THREE_LANE_BATCH_SIZE);
+/// Maximum external operations available to one selected recurring reissue.
+///
+/// The service-scope lookup can read both the session and its legacy
+/// environment profile. The remaining thirteen units cover custody, provider
+/// resolution and minting, runtime delivery, and pending promotion.
+pub(super) const AUTH_REISSUE_ATTEMPT_BUDGET: usize = 15;
+/// Maximum external operations available to one selected recurring refresh.
+pub(super) const AUTH_REFRESH_ATTEMPT_BUDGET: usize = 10;
+
+struct AuthPassBudgetState {
+    remaining: AtomicUsize,
+    used: AtomicUsize,
+}
+
+/// One pass-wide operation counter shared by every independently fair lane.
+pub(super) struct AuthPassBudget {
+    state: Arc<AuthPassBudgetState>,
+}
+
+/// A bounded view of the shared pass counter carried into one lane or task.
+#[derive(Clone)]
+pub(super) struct AuthOperationBudget {
+    state: Arc<AuthPassBudgetState>,
+    remaining: Arc<AtomicUsize>,
+}
+
+impl AuthPassBudget {
+    pub(super) fn new(limit: usize) -> Self {
+        Self {
+            state: Arc::new(AuthPassBudgetState {
+                remaining: AtomicUsize::new(limit),
+                used: AtomicUsize::new(0),
+            }),
+        }
+    }
+
+    pub(super) fn lane(&self, limit: usize) -> AuthOperationBudget {
+        AuthOperationBudget {
+            state: Arc::clone(&self.state),
+            remaining: Arc::new(AtomicUsize::new(limit)),
+        }
+    }
+
+    pub(super) fn used(&self) -> usize {
+        self.state.used.load(Ordering::SeqCst)
+    }
+}
+
+impl AuthOperationBudget {
+    pub(super) fn standalone(limit: usize) -> Self {
+        AuthPassBudget::new(limit).lane(limit)
+    }
+
+    pub(super) fn remaining(&self) -> usize {
+        self.remaining
+            .load(Ordering::SeqCst)
+            .min(self.state.remaining.load(Ordering::SeqCst))
+    }
+
+    pub(super) fn take(&self, amount: usize) -> bool {
+        if amount == 0 {
+            return true;
+        }
+        if !subtract_atomic(&self.remaining, amount) {
+            return false;
+        }
+        if !subtract_atomic(&self.state.remaining, amount) {
+            self.remaining.fetch_add(amount, Ordering::SeqCst);
+            return false;
+        }
+        self.state.used.fetch_add(amount, Ordering::SeqCst);
+        true
+    }
+
+    pub(super) fn refund(&self, amount: usize) {
+        if amount == 0 {
+            return;
+        }
+        self.remaining.fetch_add(amount, Ordering::SeqCst);
+        self.state.remaining.fetch_add(amount, Ordering::SeqCst);
+        self.state.used.fetch_sub(amount, Ordering::SeqCst);
+    }
+}
+
+fn subtract_atomic(value: &AtomicUsize, amount: usize) -> bool {
+    value
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            current.checked_sub(amount)
+        })
+        .is_ok()
+}
 
 /// How the service establishes who is calling.
 #[derive(Debug, Clone)]
@@ -42,6 +155,8 @@ pub enum AuthMode {
         /// Client secret, held only by this process.
         client_secret: String,
         /// This service's public origin, used to build the redirect URI.
+        /// HTTPS origins also require the Secure attribute on browser cookies;
+        /// explicit HTTP remains available for local development.
         public_url: String,
     },
     /// Every request is attributed to one fixed subject.
@@ -54,20 +169,98 @@ pub enum AuthMode {
     },
 }
 
+#[derive(Clone)]
+struct SweepEpoch<C> {
+    cutoff: Option<SystemTime>,
+    through_sequence: u64,
+    after: Option<C>,
+}
+
+#[derive(Clone, Default)]
+struct RefreshSweepEpochs {
+    unleased: Option<SweepEpoch<SubjectRefreshCursor>>,
+    expired_lease: Option<SweepEpoch<SubjectRefreshCursor>>,
+}
+
+#[derive(Clone, Default)]
+struct ReissueSweepEpochs {
+    pending: Option<SweepEpoch<CredentialMutationCursor>>,
+    current: Option<SweepEpoch<CredentialReissueCursor>>,
+    expired_lease: Option<SweepEpoch<CredentialLeaseCursor>>,
+}
+
+#[derive(Clone, Default)]
+struct OrphanReconciliationSweep {
+    owners: Option<SweepEpoch<SubjectOwnerCursor>>,
+    current_owner: Option<OrphanOwnerSweep>,
+}
+
+#[derive(Clone)]
+struct OrphanOwnerSweep {
+    subject: SubjectId,
+    remaining_credentials: Option<std::collections::VecDeque<(String, SessionId)>>,
+    owners_after_completion: Option<SweepEpoch<SubjectOwnerCursor>>,
+}
+
+#[derive(Debug)]
+pub struct SweepBatch<T> {
+    pub(super) work: Vec<T>,
+    pub(super) first_error: Option<StoreError>,
+}
+
+#[cfg(test)]
+impl<T> SweepBatch<T> {
+    pub(super) fn len(&self) -> usize {
+        self.work.len()
+    }
+
+    pub(super) fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.work.iter()
+    }
+
+    pub(super) fn first(&self) -> Option<&T> {
+        self.work.first()
+    }
+
+    pub(super) fn last(&self) -> Option<&T> {
+        self.work.last()
+    }
+
+    pub(super) fn pop(&mut self) -> Option<T> {
+        self.work.pop()
+    }
+}
+
+impl<T> IntoIterator for SweepBatch<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.work.into_iter()
+    }
+}
+
+#[cfg(test)]
+impl<T: PartialEq> PartialEq<Vec<T>> for SweepBatch<T> {
+    fn eq(&self, other: &Vec<T>) -> bool {
+        self.work == *other
+    }
+}
+
+fn remember_sweep_item_error(slot: &mut Option<StoreError>, error: StoreError, operation: &str) {
+    tracing::warn!(error = %error, operation, "bounded authentication sweep item failed");
+    if slot.is_none() {
+        *slot = Some(error);
+    }
+}
+
 /// Auth state shared across handlers.
 pub struct AuthState {
     mode: AuthMode,
     http: reqwest::Client,
     metadata: RwLock<Option<ProviderMetadata>>,
-    /// Issued session cookies mapped to their subject.
-    sessions: RwLock<HashMap<String, SubjectId>>,
-    /// Provider tokens held per subject, for delegation and renewal.
-    tokens: RwLock<HashMap<SubjectId, SubjectTokens>>,
-    /// Capabilities resolved at sign-in, per subject.
-    authorizations: RwLock<HashMap<SubjectId, Authorization>>,
-    /// Display details captured at sign-in, so the interface can show a person
-    /// rather than an identifier.
-    pub profiles: RwLock<HashMap<SubjectId, profile::Profile>>,
+    /// Durable authority shared by every replica.
+    store: Arc<dyn AuthStore>,
     /// Mints and reclaims the credential each session presents.
     ///
     /// Optional: without it a session falls back to its owner's own token, and
@@ -75,43 +268,24 @@ pub struct AuthState {
     /// credentials were scoped, and it is what a deployment that has not
     /// configured a platform root still gets.
     issuer: RwLock<Option<Arc<keys::KeyIssuer>>>,
-    /// The credential minted for each live session.
-    ///
-    /// Held so a session keeps presenting one value rather than minting a
-    /// fresh one on every ask, and so the old one can be reclaimed once its
-    /// replacement is in place. The owner is kept alongside because reclaiming
-    /// a key needs their token, and by then the session may be gone.
-    issued: Arc<RwLock<HashMap<SessionId, Issued>>>,
-    /// Credentials no runtime will present, but which are not yet taken back.
-    ///
-    /// Usually a replaced credential: it is not safe to revoke the moment its
-    /// successor is minted because the session may still be presenting it.
-    /// Also carries an ended session's credential when its owner token is
-    /// momentarily absent. In both cases the sweep waits until revocation can
-    /// actually be attempted instead of forgetting a still-valid key.
-    superseded: Arc<RwLock<Vec<(String, SubjectId)>>>,
-    /// Replacement credentials whose provider mint completed but whose
-    /// runtime has not yet confirmed receiving the new value.
-    ///
-    /// Minting runs in a detached progress task. That task records its result
-    /// here even when the sweep awaiting it is cancelled, so the next sweep can
-    /// retry delivery without minting another no-expiry key. `retiring` routes
-    /// a mint that finishes after release directly onto revoke debt instead.
-    reissues: Arc<RwLock<ReissueProgress>>,
-    /// Serialises passes so cancellation keeps queued debt and overlapping
-    /// sweeps cannot attempt or account for the same key.
-    superseded_sweep: Mutex<()>,
+    /// Avoid duplicate provider deletes within one replica. Durable debt and
+    /// generation CAS remain the authority across replicas.
+    credential_sweep: Mutex<()>,
+    /// Fairness-only page positions. Durable facts, leases, and CAS remain the
+    /// authority; losing these hints merely restarts a bounded scan at the
+    /// beginning after a process restart.
+    refresh_sweep_epochs: Mutex<RefreshSweepEpochs>,
+    active_credential_sweep_epoch:
+        Mutex<Option<SweepEpoch<persistence::CredentialReconciliationCursor>>>,
+    orphan_reconciliation_sweep: Mutex<OrphanReconciliationSweep>,
+    reissue_sweep_epochs: Mutex<ReissueSweepEpochs>,
+    revoke_debt_sweep_epoch: Mutex<Option<SweepEpoch<RevokeDebtCursor>>>,
     /// What the provider has said about bearer tokens, briefly.
     ///
     /// Separate from `sessions` because the two are different credentials with
     /// different lifetimes: a cookie is minted here and lasts until sign-out, a
     /// token is minted elsewhere and stops being valid when its issuer says so.
     bearer: bearer::BearerCache,
-    /// In-flight authorization attempts: state to PKCE verifier.
-    ///
-    /// The state parameter is what binds a callback to the login that started
-    /// it. Without it a callback from an unrelated flow would be accepted.
-    pending: RwLock<HashMap<String, String>>,
     /// Where a sign-in is written down, when this deployment keeps a record.
     ///
     /// Optional because a control plane can be stood up with a fixed subject
@@ -121,24 +295,26 @@ pub struct AuthState {
     records: Option<records::SignInRecords>,
 }
 
-/// A credential this service minted for one session.
-#[derive(Clone)]
-pub struct Issued {
-    /// The platform's identifier, used to take it back.
-    pub id: String,
-    /// The value the session presents. Never logged.
-    pub value: String,
-    /// Whose account it was minted on.
-    pub owner: SubjectId,
-    /// When it was minted, which is what says when to replace it.
-    pub minted_at: std::time::Instant,
+/// Authentication facts established for exactly one incoming credential.
+///
+/// Bearer-token facts never pass through the durable browser-subject record:
+/// two tokens may name the same subject while carrying different grants and
+/// delegated authority. Keeping the complete result together is what lets the
+/// middleware attach one internally consistent caller to the request.
+pub(super) struct RequestAuth {
+    pub(super) subject: SubjectId,
+    pub(super) authorization: Authorization,
+    pub(super) profile: profile::Profile,
+    pub(super) delegated_credential: Option<String>,
+    pub(super) credential_is_request_bound: bool,
 }
 
-#[derive(Default)]
-struct ReissueProgress {
-    pending: HashMap<SessionId, Issued>,
-    minting: HashSet<SessionId>,
-    retiring: HashSet<SessionId>,
+/// A token generation observed by one renewal sweep.
+pub(super) struct DueSubjectRefresh {
+    pub(super) subject: SubjectId,
+    pub(super) refresh_token: String,
+    pub(super) incarnation: String,
+    pub(super) token_generation: u64,
 }
 
 /// Derive the PKCE challenge for a verifier, per S256.
@@ -151,32 +327,47 @@ fn code_challenge(verifier: &str) -> String {
 
 impl AuthState {
     /// Build auth state for a mode, and for wherever sign-ins are recorded.
+    #[cfg(test)]
     pub fn new(mode: AuthMode, records: Option<records::SignInRecords>) -> Arc<Self> {
+        Self::with_store(mode, records, Arc::new(MemoryAuthStore::default()))
+    }
+
+    /// Build auth state over the durable authority shared by this deployment.
+    pub fn with_store(
+        mode: AuthMode,
+        records: Option<records::SignInRecords>,
+        store: Arc<dyn AuthStore>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             mode,
             records,
+            store,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .expect("http client builds"),
             metadata: RwLock::new(None),
             issuer: RwLock::new(None),
-            issued: Arc::new(RwLock::new(HashMap::new())),
-            superseded: Arc::new(RwLock::new(Vec::new())),
-            reissues: Arc::new(RwLock::new(ReissueProgress::default())),
-            superseded_sweep: Mutex::new(()),
-            sessions: RwLock::new(HashMap::new()),
-            tokens: RwLock::new(HashMap::new()),
-            authorizations: RwLock::new(HashMap::new()),
-            profiles: RwLock::new(HashMap::new()),
+            credential_sweep: Mutex::new(()),
+            refresh_sweep_epochs: Mutex::new(RefreshSweepEpochs::default()),
+            active_credential_sweep_epoch: Mutex::new(None),
+            orphan_reconciliation_sweep: Mutex::new(OrphanReconciliationSweep::default()),
+            reissue_sweep_epochs: Mutex::new(ReissueSweepEpochs::default()),
+            revoke_debt_sweep_epoch: Mutex::new(None),
             bearer: bearer::BearerCache::default(),
-            pending: RwLock::new(HashMap::new()),
         })
     }
 
     /// Whether this service requires a real credential.
     pub fn requires_credential(&self) -> bool {
         matches!(self.mode, AuthMode::Provider { .. })
+    }
+
+    fn secure_cookies(&self) -> bool {
+        let AuthMode::Provider { public_url, .. } = &self.mode else {
+            return false;
+        };
+        reqwest::Url::parse(public_url).is_ok_and(|url| url.scheme() == "https")
     }
 
     /// Capabilities granted in trusted mode.
@@ -205,24 +396,76 @@ impl AuthState {
         ])
     }
 
-    /// Resolve the subject for a request, if any.
-    pub async fn resolve(&self, headers: &HeaderMap) -> Option<SubjectId> {
+    /// Resolve all authentication facts for one request, if it carries a credential.
+    pub(super) async fn resolve_request(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<Option<RequestAuth>, StoreError> {
         match &self.mode {
-            AuthMode::Trusted { subject } => Some(SubjectId(subject.clone())),
+            AuthMode::Trusted { subject } => Ok(Some(RequestAuth {
+                subject: SubjectId(subject.clone()),
+                authorization: Self::trusted_authorization(),
+                profile: profile::Profile::default(),
+                delegated_credential: None,
+                credential_is_request_bound: false,
+            })),
             AuthMode::Provider { .. } => {
                 for token in session_cookies(headers) {
-                    if let Some(subject) = self.sessions.read().await.get(&token).cloned() {
-                        return Some(subject);
+                    let id = SecretDigest::identify(BROWSER_SESSION_DOMAIN, &token);
+                    if let Some(session) = self.store.browser_session(&id).await? {
+                        if session.expires_at > SystemTime::now() {
+                            let subject = session.subject;
+                            let Some(fact) = self.store.subject(&subject).await? else {
+                                return Ok(Some(RequestAuth {
+                                    subject,
+                                    authorization: Authorization::none(),
+                                    profile: profile::Profile::default(),
+                                    delegated_credential: None,
+                                    credential_is_request_bound: false,
+                                }));
+                            };
+                            let delegated_credential = fact
+                                .tokens
+                                .filter(|tokens| tokens.expires_at > SystemTime::now())
+                                .map(|tokens| tokens.access_token.into_inner());
+                            return Ok(Some(RequestAuth {
+                                subject,
+                                authorization: fact.authorization,
+                                profile: fact.profile,
+                                delegated_credential,
+                                credential_is_request_bound: false,
+                            }));
+                        }
+                        // TTL deletion is eventual. An expired record is never
+                        // accepted, and best-effort cleanup does not change the
+                        // authentication answer.
+                        if let Err(error) = self.store.delete_browser_session(&id).await {
+                            tracing::warn!(
+                                error = %error,
+                                "could not remove an expired browser session"
+                            );
+                        }
                     }
                 }
                 // A server client has no cookie jar. Its token is checked with
                 // the provider rather than read here, so a token this service
                 // did not issue — and one that has since been withdrawn — is
                 // refused rather than believed.
-                let token = bearer::bearer_token(headers)?;
-                self.subject_for_bearer(&token).await
+                let Some(token) = bearer::bearer_token(headers) else {
+                    return Ok(None);
+                };
+                self.request_for_bearer(token).await
             }
         }
+    }
+
+    /// Resolve only identity for callers that do not consume request authority.
+    #[cfg(test)]
+    pub async fn resolve(&self, headers: &HeaderMap) -> Result<Option<SubjectId>, StoreError> {
+        Ok(self
+            .resolve_request(headers)
+            .await?
+            .map(|resolved| resolved.subject))
     }
 
     /// Fetch and cache the provider's metadata document.
@@ -298,35 +541,327 @@ impl AuthState {
         self.issuer.read().await.is_some()
     }
 
+    /// Advance one bounded lane of durable authentication schema maintenance.
+    pub(super) async fn maintain_schema(
+        &self,
+        budget: &AuthOperationBudget,
+    ) -> Result<usize, StoreError> {
+        let reserved = budget.remaining();
+        if reserved == 0 || !budget.take(reserved) {
+            return Ok(0);
+        }
+        match self.store.maintain_auth_schema(reserved).await {
+            Ok(used) if used <= reserved => {
+                budget.refund(reserved - used);
+                Ok(used)
+            }
+            Ok(_) => Err(StoreError::Malformed(
+                "authentication schema maintenance exceeded its operation allowance".into(),
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Sessions whose credential has been held longer than `lifetime`.
     ///
     /// Age rather than a stated expiry, because the platform does not return
     /// or request one when it mints. The caller chooses a local rotation
     /// cadence independently of how long the provider accepts the key.
+    #[cfg(test)]
     pub async fn sessions_due_for_reissue(
         &self,
         lifetime: std::time::Duration,
-    ) -> Vec<(SessionId, SubjectId)> {
-        let now = std::time::Instant::now();
-        let issued = self.issued.read().await;
-        let progress = self.reissues.read().await;
-        let mut due: Vec<(SessionId, SubjectId)> = progress
+    ) -> Result<SweepBatch<layer2_core::SessionId>, StoreError> {
+        let now = SystemTime::now();
+        let issued_before = now.checked_sub(lifetime).unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut epochs = self.reissue_sweep_epochs.lock().await;
+        let mut proposed = epochs.clone();
+        if proposed.pending.is_none()
+            || proposed.current.is_none()
+            || proposed.expired_lease.is_none()
+        {
+            let through_sequence = self.store.auth_sweep_high_water().await?;
+            proposed.pending.get_or_insert(SweepEpoch {
+                cutoff: None,
+                through_sequence,
+                after: None,
+            });
+            proposed.current.get_or_insert(SweepEpoch {
+                cutoff: Some(issued_before),
+                through_sequence,
+                after: None,
+            });
+            proposed.expired_lease.get_or_insert(SweepEpoch {
+                cutoff: Some(now),
+                through_sequence,
+                after: None,
+            });
+        }
+
+        let mut pending = if let Some(epoch) = proposed.pending.clone() {
+            let states = self
+                .store
+                .pending_credentials_due_for_reissue(
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.pending = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                &epoch,
+                pending_reissue_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let pending_lane_full = pending.len() == AUTH_SWEEP_THREE_LANE_BATCH_SIZE;
+
+        let mut current = if let Some(epoch) = proposed.current.clone() {
+            let cutoff = epoch.cutoff.expect("current reissue epoch has a cutoff");
+            let states = self
+                .store
+                .current_credentials_due_for_reissue(
+                    cutoff,
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.current = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_THREE_LANE_BATCH_SIZE,
+                &epoch,
+                current_reissue_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let current_lane_full = current.len() == AUTH_SWEEP_THREE_LANE_BATCH_SIZE;
+
+        let mut expired_leases = if let Some(epoch) = proposed.expired_lease.clone() {
+            let cutoff = epoch
+                .cutoff
+                .expect("expired credential lease epoch has a cutoff");
+            let states = self
+                .store
+                .credentials_with_expired_mint_leases(
+                    cutoff,
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_LEASE_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.expired_lease = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_LEASE_LANE_BATCH_SIZE,
+                &epoch,
+                expired_credential_lease_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let expired_lane_full = expired_leases.len() == AUTH_SWEEP_LEASE_LANE_BATCH_SIZE;
+
+        let mut remaining =
+            AUTH_SWEEP_BATCH_SIZE - pending.len() - current.len() - expired_leases.len();
+        if remaining > 0 && expired_lane_full {
+            if let Some(epoch) = proposed.expired_lease.clone() {
+                let cutoff = epoch
+                    .cutoff
+                    .expect("expired credential lease epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .credentials_with_expired_mint_leases(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.expired_lease =
+                    finish_sweep_page(&extra, remaining, &epoch, expired_credential_lease_position);
+                remaining -= extra.len();
+                expired_leases.append(&mut extra);
+            }
+        }
+        if remaining > 0 && pending_lane_full {
+            if let Some(epoch) = proposed.pending.clone() {
+                let mut extra = self
+                    .store
+                    .pending_credentials_due_for_reissue(
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.pending =
+                    finish_sweep_page(&extra, remaining, &epoch, pending_reissue_position);
+                remaining -= extra.len();
+                pending.append(&mut extra);
+            }
+        }
+        if remaining > 0 && current_lane_full {
+            if let Some(epoch) = proposed.current.clone() {
+                let cutoff = epoch.cutoff.expect("current reissue epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .current_credentials_due_for_reissue(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.current =
+                    finish_sweep_page(&extra, remaining, &epoch, current_reissue_position);
+                current.append(&mut extra);
+            }
+        }
+
+        // Publish the proposed epochs only after every lane read needed for
+        // this batch succeeds. A later read failure therefore returns no work
+        // and advances no earlier lane.
+        *epochs = proposed;
+        drop(epochs);
+
+        Ok(credential_reissue_batch(expired_leases, pending, current))
+    }
+
+    /// Select recurring reissue work while prepaying a bounded attempt for
+    /// every returned row before any epoch cursor is published.
+    pub(super) async fn sessions_due_for_reissue_with_budget(
+        &self,
+        lifetime: std::time::Duration,
+        budget: &AuthOperationBudget,
+    ) -> Result<SweepBatch<SessionId>, StoreError> {
+        const ROW_OPERATIONS: usize = 1 + AUTH_REISSUE_ATTEMPT_BUDGET;
+        const PAGE_LIMIT: usize = (AUTH_SWEEP_THREE_LANE_BATCH_SIZE - 1) / ROW_OPERATIONS;
+
+        let now = SystemTime::now();
+        let issued_before = now.checked_sub(lifetime).unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut epochs = self.reissue_sweep_epochs.lock().await;
+        let mut proposed = epochs.clone();
+        let needs_high_water = proposed.pending.is_none()
+            || proposed.current.is_none()
+            || proposed.expired_lease.is_none();
+        let reserved = usize::from(needs_high_water) + 3 + 3 * PAGE_LIMIT * ROW_OPERATIONS;
+        if PAGE_LIMIT == 0 || !budget.take(reserved) {
+            return Ok(SweepBatch {
+                work: Vec::new(),
+                first_error: None,
+            });
+        }
+
+        if needs_high_water {
+            let through_sequence = self.store.auth_sweep_high_water().await?;
+            proposed.pending.get_or_insert(SweepEpoch {
+                cutoff: None,
+                through_sequence,
+                after: None,
+            });
+            proposed.current.get_or_insert(SweepEpoch {
+                cutoff: Some(issued_before),
+                through_sequence,
+                after: None,
+            });
+            proposed.expired_lease.get_or_insert(SweepEpoch {
+                cutoff: Some(now),
+                through_sequence,
+                after: None,
+            });
+        }
+
+        let pending_epoch = proposed
             .pending
-            .iter()
-            .map(|(s, h)| (s.clone(), h.owner.clone()))
-            .collect();
-        due.extend(
-            issued
-                .iter()
-                .filter(|&(session, held)| {
-                    !progress.pending.contains_key(session)
-                        && !progress.minting.contains(session)
-                        && !progress.retiring.contains(session)
-                        && now.duration_since(held.minted_at) >= lifetime
-                })
-                .map(|(session, held)| (session.clone(), held.owner.clone())),
+            .clone()
+            .expect("pending reissue epoch was initialized above");
+        let pending = self
+            .store
+            .pending_credentials_due_for_reissue(
+                pending_epoch.after.as_ref(),
+                pending_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if pending.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "pending credential store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.pending = finish_sweep_page(
+            &pending,
+            PAGE_LIMIT,
+            &pending_epoch,
+            pending_reissue_position,
         );
-        due
+
+        let current_epoch = proposed
+            .current
+            .clone()
+            .expect("current reissue epoch was initialized above");
+        let current_cutoff = current_epoch
+            .cutoff
+            .expect("current reissue epoch has a cutoff");
+        let current = self
+            .store
+            .current_credentials_due_for_reissue(
+                current_cutoff,
+                current_epoch.after.as_ref(),
+                current_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if current.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "current credential store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.current = finish_sweep_page(
+            &current,
+            PAGE_LIMIT,
+            &current_epoch,
+            current_reissue_position,
+        );
+
+        let lease_epoch = proposed
+            .expired_lease
+            .clone()
+            .expect("expired credential lease epoch was initialized above");
+        let lease_cutoff = lease_epoch
+            .cutoff
+            .expect("expired credential lease epoch has a cutoff");
+        let expired_leases = self
+            .store
+            .credentials_with_expired_mint_leases(
+                lease_cutoff,
+                lease_epoch.after.as_ref(),
+                lease_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if expired_leases.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "expired credential lease store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.expired_lease = finish_sweep_page(
+            &expired_leases,
+            PAGE_LIMIT,
+            &lease_epoch,
+            expired_credential_lease_position,
+        );
+
+        let returned = pending.len() + current.len() + expired_leases.len();
+        let used = usize::from(needs_high_water) + 3 + returned * ROW_OPERATIONS;
+        budget.refund(reserved - used);
+        *epochs = proposed;
+        drop(epochs);
+        Ok(credential_reissue_batch(expired_leases, pending, current))
     }
 
     /// Mint, or resume delivering, a fresh credential for one session.
@@ -336,242 +871,507 @@ impl AuthState {
     /// for the next sweep, rather than becoming an unowned no-expiry key. The
     /// current credential remains issued until [`Self::confirm_reissue`] says
     /// the runtime accepted this value.
+    #[cfg(test)]
     pub async fn reissue(
+        &self,
+        session: &layer2_core::SessionId,
+        subject: &SubjectId,
+        services: &[layer2_core::ServiceId],
+    ) -> Result<Option<String>, StoreError> {
+        self.mint_session_credential(session, subject, services, true)
+            .await
+    }
+
+    pub(super) async fn reissue_with_budget(
         &self,
         session: &SessionId,
         subject: &SubjectId,
         services: &[layer2_core::ServiceId],
-    ) -> Option<String> {
-        if let Some(pending) = self.reissues.read().await.pending.get(session) {
-            return Some(pending.value.clone());
-        }
-
-        let issuer = { self.issuer.read().await.clone() }?;
-        let owner_token = self.access_token(subject).await?;
-
-        // Reserve while issued is still known to exist. Release and commit use
-        // the same issued -> superseded -> reissues order; the mint completion
-        // never waits for another lock while holding reissues.
-        {
-            let issued = self.issued.read().await;
-            let mut progress = self.reissues.write().await;
-            if let Some(pending) = progress.pending.get(session) {
-                return Some(pending.value.clone());
-            }
-            if !issued.contains_key(session)
-                || progress.retiring.contains(session)
-                || !progress.minting.insert(session.clone())
-            {
-                return None;
-            }
-        }
-
-        let reissues = Arc::clone(&self.reissues);
-        let superseded = Arc::clone(&self.superseded);
-        let minted_session = session.clone();
-        let minted_subject = subject.clone();
-        let minted_services = services.to_vec();
-        let mint = tokio::spawn(async move {
-            let minted = issuer
-                .mint(
-                    &minted_session,
-                    &minted_subject,
-                    &owner_token,
-                    &minted_services,
-                )
-                .await;
-            // Acquire in the global superseded -> reissues order. In
-            // particular, a mint completing after release must not clear its
-            // retiring marker before the replacement is visible as retry debt.
-            let mut superseded = superseded.write().await;
-            let mut progress = reissues.write().await;
-            progress.minting.remove(&minted_session);
-            let Some(minted) = minted else {
-                progress.retiring.remove(&minted_session);
-                return None;
-            };
-            let replacement = Issued {
-                id: minted.id,
-                value: minted.full_key,
-                owner: minted_subject,
-                minted_at: std::time::Instant::now(),
-            };
-            let value = replacement.value.clone();
-
-            if progress.retiring.remove(&minted_session) {
-                superseded.push((replacement.id, replacement.owner));
-                return None;
-            }
-
-            let displaced = progress.pending.insert(minted_session, replacement);
-            if let Some(displaced) = displaced {
-                superseded.push((displaced.id, displaced.owner));
-            }
-            Some(value)
-        });
-
-        match mint.await {
-            Ok(value) => value,
-            Err(error) => {
-                self.reissues.write().await.minting.remove(session);
-                tracing::error!(session_id = %session, %error, "credential replacement task failed");
-                None
-            }
-        }
+        budget: AuthOperationBudget,
+    ) -> Result<Option<String>, StoreError> {
+        self.mint_session_credential_with_budget(session, subject, services, true, budget)
+            .await
     }
 
     /// Promote a pending replacement after its runtime accepted the new value.
     ///
-    /// Every mutation happens after all three locks are held in the one global
-    /// order. Cancellation while acquiring them leaves the pending replacement
-    /// untouched for a later sweep; after acquisition there is no await in the
-    /// ownership transfer.
-    pub async fn confirm_reissue(&self, session: &SessionId) -> bool {
-        let mut issued = self.issued.write().await;
-        let mut superseded = self.superseded.write().await;
-        let mut progress = self.reissues.write().await;
-        let Some(replacement) = progress.pending.remove(session) else {
-            return false;
-        };
-        if progress.retiring.contains(session) || !issued.contains_key(session) {
-            superseded.push((replacement.id, replacement.owner));
-            return false;
-        }
-        let old = issued
-            .insert(session.clone(), replacement)
-            .expect("the issued credential was checked while its lock was held");
-        superseded.push((old.id, old.owner));
-        true
+    /// A generation compare-and-swap moves the old current value to durable
+    /// revoke debt in the same transition that promotes the replacement.
+    #[cfg(test)]
+    pub async fn confirm_reissue(
+        &self,
+        session: &layer2_core::SessionId,
+    ) -> Result<bool, StoreError> {
+        self.promote_pending_credential(session).await
+    }
+
+    pub(super) async fn confirm_reissue_with_budget(
+        &self,
+        session: &SessionId,
+        budget: &AuthOperationBudget,
+    ) -> Result<bool, StoreError> {
+        self.promote_pending_credential_with_budget(session, budget)
+            .await
     }
 
     /// Take back credentials queued on an earlier pass or release.
-    pub async fn take_back_superseded(&self) -> usize {
-        let _sweep = self.superseded_sweep.lock().await;
-        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
-            return 0;
-        };
-        let pending = self.superseded.read().await.clone();
-        let mut taken = 0;
-        for queued in pending {
-            let Some(token) = self.access_token(&queued.1).await else {
-                continue;
-            };
-            if issuer.revoke(&queued.0, &token).await {
-                let mut owed = self.superseded.write().await;
-                if let Some(index) = owed.iter().position(|owed| owed == &queued) {
-                    owed.remove(index);
-                    taken += 1;
-                }
-            }
-        }
-        taken
+    #[cfg(test)]
+    pub async fn revoke_retired_credentials(&self) -> Result<usize, StoreError> {
+        let budget = AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE);
+        self.revoke_credential_debt(&budget).await
     }
 
-    /// Take back credentials this deployment minted for sessions that are gone.
-    ///
-    /// Read from the platform rather than from memory, because the ones worth
-    /// finding are exactly those this process has forgotten. Only keys whose
-    /// name says this deployment minted them are touched — the account is
-    /// shared with other products and other control planes.
-    pub async fn reclaim_orphaned_credentials(
+    pub(super) async fn revoke_retired_credentials_with_budget(
+        &self,
+        budget: &AuthOperationBudget,
+    ) -> Result<usize, StoreError> {
+        self.revoke_credential_debt(budget).await
+    }
+
+    pub(super) async fn reclaim_orphaned_credentials_with_budgets(
         &self,
         service: &Arc<layer2_core::SessionService>,
-    ) -> usize {
-        let Some(issuer) = ({ self.issuer.read().await.clone() }) else {
-            return 0;
-        };
-        let owners: Vec<SubjectId> = { self.tokens.read().await.keys().cloned().collect() };
-        let mut reclaimed = 0;
-        for owner in owners {
-            let Some(token) = self.access_token(&owner).await else {
-                continue;
+        active_budget: &AuthOperationBudget,
+        provider_budget: &AuthOperationBudget,
+    ) -> Result<usize, StoreError> {
+        self.reclaim_unrecorded_credentials_with_budgets(service, active_budget, provider_budget)
+            .await
+    }
+
+    /// Replace a subject fact with revision-CAS, retrying a concurrent writer.
+    async fn replace_subject_fact<F>(
+        &self,
+        subject: &SubjectId,
+        mut update: F,
+    ) -> Result<(), StoreError>
+    where
+        F: FnMut(&mut SubjectAuthState) -> Result<(), StoreError>,
+    {
+        loop {
+            let current = self.store.subject(subject).await?;
+            let mut next = current.clone().unwrap_or_else(|| SubjectAuthState {
+                subject: subject.clone(),
+                incarnation: random_token(),
+                revision: 0,
+                token_generation: 0,
+                tokens: None,
+                refresh_lease: None,
+                authorization: Authorization::none(),
+                profile: profile::Profile::default(),
+            });
+            update(&mut next)?;
+            let written = match current {
+                Some(current) => {
+                    next.revision = current.revision.checked_add(1).ok_or_else(|| {
+                        StoreError::Malformed("subject auth revision exhausted".into())
+                    })?;
+                    self.store
+                        .replace_subject(&current.incarnation, current.revision, next)
+                        .await?
+                }
+                None => self.store.insert_subject(next).await?,
             };
-            let minted = match issuer.minted_here(&token).await {
-                Ok(minted) => minted,
-                Err(error) => {
-                    tracing::warn!(
-                        %owner,
-                        error = %error,
-                        "could not inspect this owner's keys for orphaned credentials"
-                    );
-                    continue;
-                }
-            };
-            for (id, session) in minted {
-                // Claimed, not merely running. A paused session is one its
-                // owner kept, and taking its key back leaves them to come
-                // back to a session whose credential was revoked underneath
-                // them — which is what happened to every stopped session as
-                // soon as this process restarted.
-                if service.session_claims_credential(&session).await {
-                    continue;
-                }
-                // Held, pending, or still being minted for a session this
-                // process is tracking? Then it is not orphaned. Acquire in the
-                // global issued -> reissues order so release cannot expose the
-                // interval between retiring an in-flight mint and queueing its
-                // eventual result.
-                let tracked = {
-                    let issued = self.issued.read().await;
-                    let progress = self.reissues.read().await;
-                    issued.contains_key(&session)
-                        || progress.pending.contains_key(&session)
-                        || progress.minting.contains(&session)
-                        || progress.retiring.contains(&session)
-                };
-                if tracked {
-                    continue;
-                }
-                // Explicit revocation debt has one owner. Letting this sweep
-                // delete it would leave its queue entry retrying a 404 forever.
-                if self.revoke_is_queued(&id).await {
-                    continue;
-                }
-                if issuer.revoke(&id, &token).await {
-                    reclaimed += 1;
-                }
+            if written {
+                return Ok(());
             }
         }
-        reclaimed
+    }
+
+    /// Persist a completed sign-in as one indivisible subject fact.
+    async fn store_sign_in(
+        &self,
+        subject: &SubjectId,
+        tokens: DurableSubjectTokens,
+        authorization: Authorization,
+        profile: profile::Profile,
+    ) -> Result<(), StoreError> {
+        self.replace_subject_fact(subject, |state| {
+            state.token_generation = next_token_generation(state.token_generation)?;
+            state.tokens = Some(tokens.clone());
+            state.refresh_lease = None;
+            state.authorization = authorization.clone();
+            state.profile = profile.clone();
+            Ok(())
+        })
+        .await
     }
 
     /// Store the tokens issued for a subject.
-    pub async fn store_tokens(&self, subject: &SubjectId, tokens: SubjectTokens) {
-        self.tokens.write().await.insert(subject.clone(), tokens);
+    #[cfg(test)]
+    pub async fn store_tokens(
+        &self,
+        subject: &SubjectId,
+        tokens: SubjectTokens,
+    ) -> Result<(), StoreError> {
+        let remaining = tokens
+            .expires_at
+            .saturating_duration_since(std::time::Instant::now());
+        let durable = DurableSubjectTokens {
+            access_token: SecretValue::new(tokens.access_token),
+            refresh_token: tokens.refresh_token.map(SecretValue::new),
+            expires_at: SystemTime::now() + remaining,
+        };
+        self.replace_subject_fact(subject, |state| {
+            state.token_generation = next_token_generation(state.token_generation)?;
+            state.tokens = Some(durable.clone());
+            state.refresh_lease = None;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Revoke one raw browser cookie without ever storing or logging it.
+    async fn revoke_session(&self, token: &str) -> Result<(), StoreError> {
+        self.store
+            .delete_browser_session(&SecretDigest::identify(BROWSER_SESSION_DOMAIN, token))
+            .await
     }
 
     /// The subject's current access token, if one is held.
-    pub async fn access_token(&self, subject: &SubjectId) -> Option<String> {
-        self.tokens
-            .read()
-            .await
-            .get(subject)
-            .map(|t| t.access_token.clone())
+    pub async fn access_token(&self, subject: &SubjectId) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .store
+            .subject(subject)
+            .await?
+            .and_then(|state| state.tokens)
+            .filter(|tokens| tokens.expires_at > SystemTime::now())
+            .map(|tokens| tokens.access_token.into_inner()))
     }
 
     /// Subjects whose access token is close enough to expiry to renew.
+    #[cfg(test)]
     pub async fn subjects_needing_refresh(
         &self,
         margin: std::time::Duration,
-    ) -> Vec<(SubjectId, String)> {
-        self.tokens
-            .read()
-            .await
-            .iter()
-            .filter(|(_, t)| t.needs_refresh(margin))
-            .filter_map(|(s, t)| t.refresh_token.clone().map(|r| (s.clone(), r)))
-            .collect()
+    ) -> Result<SweepBatch<DueSubjectRefresh>, StoreError> {
+        let now = SystemTime::now();
+        let refresh_at = now + margin;
+        let mut epochs = self.refresh_sweep_epochs.lock().await;
+        let mut proposed = epochs.clone();
+        if proposed.unleased.is_none() || proposed.expired_lease.is_none() {
+            let through_sequence = self.store.auth_sweep_high_water().await?;
+            proposed.unleased.get_or_insert(SweepEpoch {
+                cutoff: Some(refresh_at),
+                through_sequence,
+                after: None,
+            });
+            proposed.expired_lease.get_or_insert(SweepEpoch {
+                cutoff: Some(now),
+                through_sequence,
+                after: None,
+            });
+        }
+
+        let mut states = if let Some(epoch) = proposed.unleased.clone() {
+            let cutoff = epoch.cutoff.expect("unleased refresh epoch has a cutoff");
+            let states = self
+                .store
+                .unleased_subjects_due_for_refresh(
+                    cutoff,
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.unleased = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+                &epoch,
+                subject_refresh_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let unleased_lane_full = states.len() == AUTH_SWEEP_TWO_LANE_BATCH_SIZE;
+
+        let mut expired_leases = if let Some(epoch) = proposed.expired_lease.clone() {
+            let cutoff = epoch
+                .cutoff
+                .expect("expired refresh lease epoch has a cutoff");
+            let states = self
+                .store
+                .subjects_with_expired_refresh_leases(
+                    cutoff,
+                    epoch.after.as_ref(),
+                    epoch.through_sequence,
+                    AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+                )
+                .await?;
+            proposed.expired_lease = finish_sweep_page(
+                &states,
+                AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+                &epoch,
+                subject_refresh_position,
+            );
+            states
+        } else {
+            Vec::new()
+        };
+        let expired_lane_full = expired_leases.len() == AUTH_SWEEP_TWO_LANE_BATCH_SIZE;
+
+        let remaining = AUTH_SWEEP_BATCH_SIZE - states.len() - expired_leases.len();
+        if remaining > 0 && unleased_lane_full {
+            if let Some(epoch) = proposed.unleased.clone() {
+                let cutoff = epoch.cutoff.expect("unleased refresh epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .unleased_subjects_due_for_refresh(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.unleased =
+                    finish_sweep_page(&extra, remaining, &epoch, subject_refresh_position);
+                states.append(&mut extra);
+            }
+        } else if remaining > 0 && expired_lane_full {
+            if let Some(epoch) = proposed.expired_lease.clone() {
+                let cutoff = epoch
+                    .cutoff
+                    .expect("expired refresh lease epoch has a cutoff");
+                let mut extra = self
+                    .store
+                    .subjects_with_expired_refresh_leases(
+                        cutoff,
+                        epoch.after.as_ref(),
+                        epoch.through_sequence,
+                        remaining,
+                    )
+                    .await?;
+                proposed.expired_lease =
+                    finish_sweep_page(&extra, remaining, &epoch, subject_refresh_position);
+                expired_leases.append(&mut extra);
+            }
+        }
+
+        // Publish the proposed epochs only after every lane read needed for
+        // this batch succeeds. A later read failure therefore returns no work
+        // and advances no earlier lane.
+        *epochs = proposed;
+        drop(epochs);
+
+        states.append(&mut expired_leases);
+        Ok(subject_refresh_batch(states))
     }
 
-    async fn issue_session(&self, subject: SubjectId) -> String {
-        let token = random_token();
-        self.sessions
-            .write()
-            .await
-            .insert(token.clone(), subject.clone());
-        tracing::info!(subject = %subject, "session issued");
-        token
+    /// Select recurring refresh work while prepaying a bounded attempt for
+    /// every returned row before either lane cursor is published.
+    pub(super) async fn subjects_needing_refresh_with_budget(
+        &self,
+        margin: std::time::Duration,
+        budget: &AuthOperationBudget,
+    ) -> Result<SweepBatch<DueSubjectRefresh>, StoreError> {
+        const ROW_OPERATIONS: usize = 1 + AUTH_REFRESH_ATTEMPT_BUDGET;
+        const PAGE_LIMIT: usize = (AUTH_SWEEP_TWO_LANE_BATCH_SIZE - 1) / ROW_OPERATIONS;
+
+        let now = SystemTime::now();
+        let refresh_at = now + margin;
+        let mut epochs = self.refresh_sweep_epochs.lock().await;
+        let mut proposed = epochs.clone();
+        let needs_high_water = proposed.unleased.is_none() || proposed.expired_lease.is_none();
+        let reserved = usize::from(needs_high_water) + 2 + 2 * PAGE_LIMIT * ROW_OPERATIONS;
+        if PAGE_LIMIT == 0 || !budget.take(reserved) {
+            return Ok(SweepBatch {
+                work: Vec::new(),
+                first_error: None,
+            });
+        }
+
+        if needs_high_water {
+            let through_sequence = self.store.auth_sweep_high_water().await?;
+            proposed.unleased.get_or_insert(SweepEpoch {
+                cutoff: Some(refresh_at),
+                through_sequence,
+                after: None,
+            });
+            proposed.expired_lease.get_or_insert(SweepEpoch {
+                cutoff: Some(now),
+                through_sequence,
+                after: None,
+            });
+        }
+
+        let unleased_epoch = proposed
+            .unleased
+            .clone()
+            .expect("unleased refresh epoch was initialized above");
+        let unleased_cutoff = unleased_epoch
+            .cutoff
+            .expect("unleased refresh epoch has a cutoff");
+        let mut states = self
+            .store
+            .unleased_subjects_due_for_refresh(
+                unleased_cutoff,
+                unleased_epoch.after.as_ref(),
+                unleased_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if states.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "subject refresh store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.unleased = finish_sweep_page(
+            &states,
+            PAGE_LIMIT,
+            &unleased_epoch,
+            subject_refresh_position,
+        );
+
+        let lease_epoch = proposed
+            .expired_lease
+            .clone()
+            .expect("expired refresh lease epoch was initialized above");
+        let lease_cutoff = lease_epoch
+            .cutoff
+            .expect("expired refresh lease epoch has a cutoff");
+        let mut expired_leases = self
+            .store
+            .subjects_with_expired_refresh_leases(
+                lease_cutoff,
+                lease_epoch.after.as_ref(),
+                lease_epoch.through_sequence,
+                PAGE_LIMIT,
+            )
+            .await?;
+        if expired_leases.len() > PAGE_LIMIT {
+            return Err(StoreError::Malformed(
+                "expired subject refresh lease store exceeded its requested page limit".into(),
+            ));
+        }
+        proposed.expired_lease = finish_sweep_page(
+            &expired_leases,
+            PAGE_LIMIT,
+            &lease_epoch,
+            subject_refresh_position,
+        );
+
+        let returned = states.len() + expired_leases.len();
+        let used = usize::from(needs_high_water) + 2 + returned * ROW_OPERATIONS;
+        budget.refund(reserved - used);
+        *epochs = proposed;
+        drop(epochs);
+        states.append(&mut expired_leases);
+        Ok(subject_refresh_batch(states))
     }
+
+    async fn issue_session(&self, subject: SubjectId) -> Result<String, StoreError> {
+        let token = random_token();
+        self.store
+            .put_browser_session(BrowserSession {
+                id: SecretDigest::identify(BROWSER_SESSION_DOMAIN, &token),
+                subject: subject.clone(),
+                expires_at: SystemTime::now() + BROWSER_SESSION_LIFETIME,
+            })
+            .await?;
+        tracing::info!(subject = %subject, "session issued");
+        Ok(token)
+    }
+}
+
+fn subject_refresh_batch(
+    states: Vec<AuthSweepItem<SubjectRefreshCursor, SubjectAuthState>>,
+) -> SweepBatch<DueSubjectRefresh> {
+    let mut first_error = None;
+    let mut work = Vec::new();
+    for item in states {
+        let state = match item.state {
+            Ok(state) => state,
+            Err(error) => {
+                remember_sweep_item_error(&mut first_error, error, "read subject refresh item");
+                continue;
+            }
+        };
+        let Some(tokens) = state.tokens else {
+            continue;
+        };
+        let Some(refresh) = tokens.refresh_token else {
+            continue;
+        };
+        work.push(DueSubjectRefresh {
+            subject: state.subject,
+            refresh_token: refresh.into_inner(),
+            incarnation: state.incarnation,
+            token_generation: state.token_generation,
+        });
+    }
+    SweepBatch { work, first_error }
+}
+
+fn credential_reissue_batch(
+    expired_leases: Vec<AuthSweepItem<CredentialLeaseCursor, persistence::SessionCredentialState>>,
+    pending: Vec<AuthSweepItem<CredentialMutationCursor, persistence::SessionCredentialState>>,
+    current: Vec<AuthSweepItem<CredentialReissueCursor, persistence::SessionCredentialState>>,
+) -> SweepBatch<SessionId> {
+    let mut first_error = None;
+    let mut work = Vec::new();
+    for state in expired_leases
+        .into_iter()
+        .map(|item| item.state)
+        .chain(pending.into_iter().map(|item| item.state))
+        .chain(current.into_iter().map(|item| item.state))
+    {
+        let state = match state {
+            Ok(state) => state,
+            Err(error) => {
+                remember_sweep_item_error(&mut first_error, error, "read credential reissue item");
+                continue;
+            }
+        };
+        if state.pending.is_some() || state.current.is_some() {
+            work.push(state.session);
+        }
+    }
+    SweepBatch { work, first_error }
+}
+
+fn finish_sweep_page<T, C: Clone>(
+    states: &[T],
+    limit: usize,
+    epoch: &SweepEpoch<C>,
+    position: fn(&T) -> Option<C>,
+) -> Option<SweepEpoch<C>> {
+    if states.len() < limit {
+        return None;
+    }
+    let mut next = epoch.clone();
+    next.after = states.last().and_then(position);
+    next.after.as_ref()?;
+    Some(next)
+}
+
+fn pending_reissue_position(
+    item: &AuthSweepItem<CredentialMutationCursor, persistence::SessionCredentialState>,
+) -> Option<CredentialMutationCursor> {
+    Some(item.cursor.clone())
+}
+
+fn current_reissue_position(
+    item: &AuthSweepItem<CredentialReissueCursor, persistence::SessionCredentialState>,
+) -> Option<CredentialReissueCursor> {
+    Some(item.cursor.clone())
+}
+
+fn expired_credential_lease_position(
+    item: &AuthSweepItem<CredentialLeaseCursor, persistence::SessionCredentialState>,
+) -> Option<CredentialLeaseCursor> {
+    Some(item.cursor.clone())
+}
+
+fn subject_refresh_position(
+    item: &AuthSweepItem<SubjectRefreshCursor, SubjectAuthState>,
+) -> Option<SubjectRefreshCursor> {
+    Some(item.cursor.clone())
+}
+
+fn next_token_generation(current: u64) -> Result<u64, StoreError> {
+    current
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Malformed("subject token generation exhausted".into()))
 }
 
 /// Move a URL onto another origin, keeping its path and query.
@@ -593,16 +1393,20 @@ fn rebase(endpoint: &str, base: &str) -> String {
 
 pub mod bearer;
 mod delegation;
+#[cfg(test)]
+pub(crate) use delegation::empty_session_service;
 mod identity;
 mod middleware;
 mod tokens;
 
 pub use middleware::attach_subject;
+#[cfg(test)]
 pub use tokens::SubjectTokens;
 
 pub(crate) use middleware::session_cookies;
 pub(crate) use tokens::ProviderMetadata;
 
+#[cfg(test)]
 pub mod capabilities;
 pub mod entitlements;
 pub mod flow;

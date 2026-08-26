@@ -339,15 +339,15 @@ async fn admit(
     id: &SessionId,
     ticket: Option<String>,
     caller: Option<AuthenticatedCaller>,
-) -> Option<(Caller, AttachmentClaim)> {
+) -> Result<Option<(Caller, AttachmentClaim)>, layer2_core::store::StoreError> {
     match ticket {
         Some(ticket) => tickets
             .redeem(&ticket, id)
             .await
-            .map(|r| (r.caller, r.claim)),
+            .map(|redeemed| redeemed.map(|r| (r.caller, r.claim))),
         // The cookie path, unchanged: middleware verified the credential and
         // the caller attaches as themselves, exclusively.
-        None => caller.map(|AuthenticatedCaller(c)| (c, AttachmentClaim::Exclusive)),
+        None => Ok(caller.map(|AuthenticatedCaller(c)| (c, AttachmentClaim::Exclusive))),
     }
 }
 
@@ -367,7 +367,14 @@ async fn attach(
     caller: Option<AuthenticatedCaller>,
 ) -> impl IntoResponse {
     let id = SessionId(id);
-    let Some((caller, claim)) = admit(&tickets, &id, params.ticket, caller).await else {
+    let admitted = match admit(&tickets, &id, params.ticket, caller).await {
+        Ok(admitted) => admitted,
+        Err(error) => {
+            tracing::error!(session_id = %id, %error, "terminal ticket store failed");
+            return crate::auth::StoreUnavailable.into_response();
+        }
+    };
+    let Some((caller, claim)) = admitted else {
         // Refused before the upgrade, so the client gets an HTTP status it can
         // act on rather than a socket that opens and immediately closes.
         return crate::auth::NotAuthenticated.into_response();

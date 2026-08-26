@@ -12,7 +12,7 @@
 //! lease exist only while a runtime is running and are rebuilt on attach;
 //! persisting them would be persisting a snapshot of something already gone.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::SystemTime};
 
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::coordination::{
@@ -293,6 +293,116 @@ pub enum StoreError {
         /// Number of unacknowledged cleanup debts.
         cleanup_debts: usize,
     },
+}
+
+/// One subject-scoped attempt to perform a named operation once.
+///
+/// The name, key, and fingerprint are opaque to the core. The interface that
+/// accepts the request decides how to derive them; persistence only guarantees
+/// that one exact fingerprint can hold a key until the claim expires.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationClaim {
+    subject: SubjectId,
+    operation: String,
+    key: String,
+    fingerprint: [u8; 32],
+    expires_at: SystemTime,
+}
+
+impl OperationClaim {
+    /// Build a durable operation claim.
+    pub fn new(
+        subject: SubjectId,
+        operation: impl Into<String>,
+        key: impl Into<String>,
+        fingerprint: [u8; 32],
+        expires_at: SystemTime,
+    ) -> Self {
+        Self {
+            subject,
+            operation: operation.into(),
+            key: key.into(),
+            fingerprint,
+            expires_at,
+        }
+    }
+
+    /// The subject whose operation this is.
+    pub fn subject(&self) -> &SubjectId {
+        &self.subject
+    }
+
+    /// The interface-defined operation name.
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+
+    /// The caller-supplied operation key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// A stable digest of everything that distinguishes this request.
+    pub fn fingerprint(&self) -> &[u8; 32] {
+        &self.fingerprint
+    }
+
+    /// When persistence may forget this claim and permit the key again.
+    pub fn expires_at(&self) -> SystemTime {
+        self.expires_at
+    }
+}
+
+/// What an atomic attempt to reserve an operation key found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationReservation {
+    /// This caller acquired a new claim and may perform the operation.
+    Acquired,
+    /// The same operation is still being performed elsewhere.
+    Pending,
+    /// The operation finished and its opaque outcome can be replayed.
+    Complete(Vec<u8>),
+    /// This key already names a different request fingerprint.
+    FingerprintMismatch,
+}
+
+/// Durable, subject-scoped operation claims and their opaque outcomes.
+///
+/// The stored bytes belong to the interface that produced them. Keeping them
+/// opaque here lets any interface use this guarantee without placing its
+/// response vocabulary in the core.
+#[async_trait::async_trait]
+pub trait OperationStore: Send + Sync {
+    /// Atomically acquire a new claim or inspect the one already holding it.
+    async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError>;
+
+    /// Replace a held claim's pending marker with its replayable outcome.
+    async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError>;
+}
+
+#[cfg(test)]
+mod operation_claim_tests {
+    use std::time::{Duration, SystemTime};
+
+    use super::*;
+
+    #[test]
+    fn a_claim_preserves_every_part_of_its_durable_identity() {
+        let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+        let claim = OperationClaim::new(
+            SubjectId("subject-a".into()),
+            "create-resource",
+            "attempt-a",
+            [9; 32],
+            expires_at,
+        );
+
+        assert_eq!(claim.subject(), &SubjectId("subject-a".into()));
+        assert_eq!(claim.operation(), "create-resource");
+        assert_eq!(claim.key(), "attempt-a");
+        assert_eq!(claim.fingerprint(), &[9; 32]);
+        assert_eq!(claim.expires_at(), expires_at);
+    }
 }
 
 /// Durable session records and their event history.
@@ -774,12 +884,29 @@ pub trait CredentialSource: Send + Sync {
     /// `services` is the profile's selection, carried verbatim and never read
     /// here. The core does not know what a service is; it knows only that the
     /// answer depends on which ones were chosen.
+    ///
+    /// `caller_credential` is present only on the initiating request. A source
+    /// may use it to establish per-session custody, but recovery must work from
+    /// the custody record because no request credential exists after restart.
+    ///
+    /// Store failures are returned explicitly. `Ok(None)` means no credential
+    /// is available; it must never stand in for unknown durable custody.
     async fn credential_for(
         &self,
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
-    ) -> Option<String>;
+        caller_credential: Option<&crate::session::CallerCredential>,
+    ) -> Result<Option<String>, StoreError>;
+
+    /// Whether this session should receive later subject-token renewals.
+    ///
+    /// Sources that mint per-session credentials or pin an initiating bearer
+    /// return false. On failure callers must conservatively avoid replacing a
+    /// credential whose provenance is unknown.
+    async fn tracks_subject_credential(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(true)
+    }
 
     /// Give up whatever was issued for a session that has ended.
     ///
@@ -787,7 +914,10 @@ pub trait CredentialSource: Send + Sync {
     /// the second must happen even when nobody is asking for a credential. A
     /// credential nothing will ever present again is one nobody is watching,
     /// which is the kind worth taking back.
-    async fn release(&self, session: &SessionId);
+    ///
+    /// A store failure leaves the recorded credential discoverable for a later
+    /// reconciliation pass and is returned to the caller.
+    async fn release(&self, session: &SessionId) -> Result<(), StoreError>;
 }
 
 /// The agent's accumulated context, stored whole.
