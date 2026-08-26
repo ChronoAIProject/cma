@@ -275,9 +275,9 @@ async fn both_public_prompt_routes_refuse_ungranted_mid_turn_input_before_stream
     for (path, body) in [
         (
             "/api/v1/agui/run",
+            // An explicit runId is durably reserved so its refusal can replay.
             json!({
                 "threadId": SESSION_ID,
-                "runId": "run_second",
                 "messages": [{ "role": "user", "content": "redirect the turn" }]
             }),
         ),
