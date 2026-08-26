@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use super::*;
 use crate::{seconds_from_rfc3339, CapabilityRevocationState};
 
+const INITIAL_PROMPT_TERMINAL_EVIDENCE_GRACE_SECONDS: u64 = 300;
+
 pub(super) fn required_effect(launch: &Launch) -> Option<LaunchEffectKind> {
     match launch.state {
         LaunchState::Preflight => Some(LaunchEffectKind::Preflight),
@@ -242,6 +244,40 @@ impl Launch {
         Ok(())
     }
 
+    /// Attach a nonterminal typed result while the same effect remains claimed.
+    ///
+    /// Initial prompt delivery is session-authoritative and can span several
+    /// short worker leases. No other effect may publish partial result state.
+    pub fn observe_effect_progress(
+        &mut self,
+        lease: &WorkerLease,
+        claim: &EffectClaim,
+        result: LaunchEffectResult,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        let mut candidate = self.clone();
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        candidate.validate_worker_lease(lease, &now)?;
+        candidate.claimed_effect_index(claim)?;
+        if claim.kind != LaunchEffectKind::InitialDispatch {
+            return Err(TriggerValidationError::field(
+                "effect_progress",
+                "only initial prompt delivery has a partial result contract",
+            ));
+        }
+        let LaunchEffectResult::InitialDispatch { delivery } = result else {
+            return Err(TriggerValidationError::field(
+                "effect_progress",
+                "does not match initial prompt delivery",
+            ));
+        };
+        candidate.observe_prompt_delivery(delivery, now, correlation_id)?;
+        *self = candidate;
+        Ok(())
+    }
+
     /// Keep an unknown external outcome on its original intent and schedule a
     /// read-only reconciliation. This never authorizes repeating the write.
     pub fn defer_reconciliation(
@@ -269,12 +305,25 @@ impl Launch {
             ));
         }
         let index = candidate.claimed_effect_index(claim)?;
-        if candidate.effects[index].reconciliation_attempt >= MAX_LAUNCH_RECONCILIATION_ATTEMPTS {
+        let initial_prompt_deadline_reached = claim.kind == LaunchEffectKind::InitialDispatch
+            && initial_prompt_observation_deadline_reached(&candidate, &now)?;
+        let generic_budget_exhausted = claim.kind != LaunchEffectKind::InitialDispatch
+            && candidate.effects[index].reconciliation_attempt
+                >= MAX_LAUNCH_RECONCILIATION_ATTEMPTS;
+        if generic_budget_exhausted || initial_prompt_deadline_reached {
             failure.class = FailureClass::RecoveryRequired;
-            failure.code = "effect_reconciliation_budget_exhausted".into();
-            failure.detail = "The external outcome could not be determined safely.".into();
-            failure.remediation =
-                "Review provider evidence before authorizing any replacement effect.".into();
+            if initial_prompt_deadline_reached {
+                failure.code = "initial_prompt_observation_deadline_exceeded".into();
+                failure.detail =
+                    "The initial task produced no terminal evidence before its session deadline."
+                        .into();
+                failure.remediation = "Review the retained session evidence before explicitly authorizing any replacement dispatch; the original task may still have executed.".into();
+            } else {
+                failure.code = "effect_reconciliation_budget_exhausted".into();
+                failure.detail = "The external outcome could not be determined safely.".into();
+                failure.remediation =
+                    "Review provider evidence before authorizing any replacement effect.".into();
+            }
             failure.retry_at = None;
             let record = &mut candidate.effects[index];
             record.state = EffectState::RecoveryRequired;
@@ -323,7 +372,20 @@ impl Launch {
         correlation_id: String,
     ) -> Result<(), TriggerValidationError> {
         self.validate_worker_lease(lease, &now)?;
+        let delivery_before = self.delivery.clone();
         self.attach_effect_result(claim.kind, result)?;
+        if claim.kind == LaunchEffectKind::InitialDispatch && self.delivery != delivery_before {
+            let state = self
+                .delivery
+                .as_ref()
+                .expect("an initial-dispatch result carries delivery state")
+                .state;
+            self.push_event(
+                now.clone(),
+                correlation_id.clone(),
+                LaunchEventKind::DeliveryChanged { state },
+            )?;
+        }
         self.validate_effect_result(claim.kind, &external_resource_ids)?;
         let index = self.claimed_effect_index(claim)?;
         let record = &mut self.effects[index];
@@ -362,6 +424,38 @@ impl Launch {
             self.updated_at = now;
         }
         Ok(())
+    }
+
+    fn observe_prompt_delivery(
+        &mut self,
+        delivery: PromptDelivery,
+        now: String,
+        correlation_id: String,
+    ) -> Result<(), TriggerValidationError> {
+        validate_prompt_delivery(self, &delivery)?;
+        if let Some(previous) = self.delivery.as_ref() {
+            if !same_prompt_identity(previous, &delivery)
+                || delivery.attempt < previous.attempt
+                || !legal_prompt_delivery_transition(previous.state, delivery.state)
+            {
+                return Err(TriggerValidationError::field(
+                    "delivery",
+                    "does not continue the retained initial prompt state machine",
+                ));
+            }
+        }
+        if self.delivery.as_ref() == Some(&delivery) {
+            self.updated_at = now;
+            return Ok(());
+        }
+        let state = delivery.state;
+        self.delivery = Some(delivery);
+        self.updated_at = now.clone();
+        self.push_event(
+            now,
+            correlation_id,
+            LaunchEventKind::DeliveryChanged { state },
+        )
     }
 
     fn attach_effect_result(
@@ -875,6 +969,28 @@ impl Launch {
     }
 }
 
+fn initial_prompt_observation_deadline_reached(
+    launch: &Launch,
+    now: &str,
+) -> Result<bool, TriggerValidationError> {
+    let delivery = launch.delivery.as_ref().ok_or_else(|| {
+        TriggerValidationError::field(
+            "delivery",
+            "initial prompt reconciliation requires retained delivery progress",
+        )
+    })?;
+    let deadline = timestamp(&delivery.queued_at)?
+        .checked_add(u64::from(launch.effective.timeout_seconds))
+        .and_then(|value| value.checked_add(INITIAL_PROMPT_TERMINAL_EVIDENCE_GRACE_SECONDS))
+        .ok_or_else(|| {
+            TriggerValidationError::field(
+                "delivery.queued_at",
+                "initial prompt observation deadline overflows",
+            )
+        })?;
+    Ok(timestamp(now)? >= deadline)
+}
+
 fn step_key(kind: LaunchEffectKind) -> LaunchStepKey {
     match kind {
         LaunchEffectKind::Preflight => LaunchStepKey::Preflight,
@@ -909,6 +1025,89 @@ fn effect_kind_name(kind: LaunchEffectKind) -> &'static str {
         LaunchEffectKind::PullRequest => "pull_request",
         LaunchEffectKind::Cleanup => "cleanup",
     }
+}
+
+fn validate_prompt_delivery(
+    launch: &Launch,
+    delivery: &PromptDelivery,
+) -> Result<(), TriggerValidationError> {
+    if delivery.launch_id != launch.id
+        || launch
+            .session
+            .as_ref()
+            .is_none_or(|session| session.session_id != delivery.session_id)
+        || delivery.revision_digest != launch.revision_digest
+        || delivery.origin_key
+            != format!(
+                "cma-trigger:{}:{}:initial",
+                launch.id.0, launch.revision_digest
+            )
+        || delivery.payload_hash.len() != 64
+        || !delivery
+            .payload_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || crate::seconds_from_rfc3339(&delivery.queued_at).is_none()
+        || crate::seconds_from_rfc3339(&delivery.updated_at).is_none()
+        || crate::seconds_from_rfc3339(&delivery.updated_at)
+            < crate::seconds_from_rfc3339(&delivery.queued_at)
+        || (delivery.state != PromptDeliveryState::Queued && delivery.attempt == 0)
+    {
+        return Err(TriggerValidationError::field(
+            "delivery",
+            "does not identify a valid prompt for this Launch and session",
+        ));
+    }
+    let requires_fence = delivery.state != PromptDeliveryState::Queued;
+    if requires_fence
+        != delivery
+            .dispatch_fence_sequence
+            .is_some_and(|sequence| sequence > 0)
+    {
+        return Err(TriggerValidationError::field(
+            "delivery.dispatch_fence_sequence",
+            "must be present exactly after the dispatch fence is committed",
+        ));
+    }
+    Ok(())
+}
+
+fn same_prompt_identity(left: &PromptDelivery, right: &PromptDelivery) -> bool {
+    left.launch_id == right.launch_id
+        && left.session_id == right.session_id
+        && left.revision_digest == right.revision_digest
+        && left.origin_key == right.origin_key
+        && left.payload_hash == right.payload_hash
+        && left.queued_at == right.queued_at
+}
+
+fn legal_prompt_delivery_transition(from: PromptDeliveryState, to: PromptDeliveryState) -> bool {
+    use PromptDeliveryState as State;
+    from == to
+        || matches!(
+            (from, to),
+            (State::Queued, State::DispatchFenced)
+                | (State::Queued, State::WriteConfirmed)
+                | (State::Queued, State::ExecutionObserved)
+                | (State::Queued, State::Completed)
+                | (State::Queued, State::Failed)
+                | (State::Queued, State::RecoveryRequired)
+                | (State::DispatchFenced, State::Queued)
+                | (State::DispatchFenced, State::WriteConfirmed)
+                | (State::DispatchFenced, State::ExecutionObserved)
+                | (State::DispatchFenced, State::Completed)
+                | (State::DispatchFenced, State::Failed)
+                | (State::DispatchFenced, State::RecoveryRequired)
+                | (State::WriteConfirmed, State::ExecutionObserved)
+                | (State::WriteConfirmed, State::Completed)
+                | (State::WriteConfirmed, State::Failed)
+                | (State::WriteConfirmed, State::RecoveryRequired)
+                | (State::ExecutionObserved, State::Completed)
+                | (State::ExecutionObserved, State::Failed)
+                | (State::RecoveryRequired, State::ExecutionObserved)
+                | (State::RecoveryRequired, State::Completed)
+                | (State::RecoveryRequired, State::Failed)
+        )
 }
 
 fn deadline_reached(deadline: Option<&str>, now: &str) -> Result<bool, TriggerValidationError> {

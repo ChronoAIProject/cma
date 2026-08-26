@@ -127,6 +127,21 @@ struct PendingInput {
     delivered: oneshot::Sender<Result<(), AdapterError>>,
 }
 
+/// What CMA can honestly establish about one conversation-input attempt.
+///
+/// A queue refusal is the only outcome that proves the adapter never received
+/// the operation. Once the operation has crossed that boundary, a timeout,
+/// task loss, or handler error cannot exclude a partial runtime-link write.
+#[derive(Debug)]
+pub enum ConversationSendOutcome {
+    /// The adapter queue rejected the operation before any runtime write.
+    PreWriteFailure(AdapterError),
+    /// The adapter handler returned after writing the operation locally.
+    WriteConfirmed,
+    /// CMA cannot prove whether any bytes reached the runtime link.
+    Ambiguous(AdapterError),
+}
+
 /// The sending half of a runtime conversation.
 ///
 /// A Tokio sender confirms only that a queue slot accepted a value. It says
@@ -163,30 +178,38 @@ impl ConversationInputSender {
 
     /// Send one operation and wait until the adapter has delivered it.
     pub async fn send(&self, input: ConversationInput) -> Result<(), AdapterError> {
+        match self.send_classified(input).await {
+            ConversationSendOutcome::WriteConfirmed => Ok(()),
+            ConversationSendOutcome::PreWriteFailure(error)
+            | ConversationSendOutcome::Ambiguous(error) => Err(error),
+        }
+    }
+
+    /// Send one operation without collapsing the only safe retry boundary.
+    pub async fn send_classified(&self, input: ConversationInput) -> ConversationSendOutcome {
         let (delivered, receipt) = oneshot::channel();
-        self.inner
-            .try_send(PendingInput { input, delivered })
-            .map_err(|error| match error {
+        if let Err(error) = self.inner.try_send(PendingInput { input, delivered }) {
+            let error = match error {
                 mpsc::error::TrySendError::Full(_) => AdapterError::Unavailable(
                     "the conversation input queue is not being consumed".to_string(),
                 ),
                 mpsc::error::TrySendError::Closed(_) => {
                     AdapterError::Unavailable("the conversation input task has ended".to_string())
                 }
-            })?;
+            };
+            return ConversationSendOutcome::PreWriteFailure(error);
+        }
 
-        tokio::time::timeout(DELIVERY_DEADLINE, receipt)
-            .await
-            .map_err(|_| {
-                AdapterError::Unavailable(
-                    "the conversation input task did not deliver the operation".to_string(),
-                )
-            })?
-            .map_err(|_| {
-                AdapterError::Unavailable(
-                    "the conversation input task ended before delivery".to_string(),
-                )
-            })?
+        match tokio::time::timeout(DELIVERY_DEADLINE, receipt).await {
+            Err(_) => ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
+                "the conversation input task did not deliver the operation".to_string(),
+            )),
+            Ok(Err(_)) => ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
+                "the conversation input task ended before delivery".to_string(),
+            )),
+            Ok(Ok(Err(error))) => ConversationSendOutcome::Ambiguous(error),
+            Ok(Ok(Ok(()))) => ConversationSendOutcome::WriteConfirmed,
+        }
     }
 
     /// Hosted adapters stop this consumer when the socket's read half ends.
@@ -313,6 +336,96 @@ pub struct ConversationChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_closed_queue_is_a_proven_pre_write_failure() {
+        let (inner, pending) = mpsc::channel(1);
+        drop(pending);
+        let input = ConversationInputSender { inner };
+
+        assert!(matches!(
+            input.send_classified(ConversationInput::Cancel).await,
+            ConversationSendOutcome::PreWriteFailure(AdapterError::Unavailable(message))
+                if message.contains("task has ended")
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_full_queue_is_a_proven_pre_write_failure() {
+        let (inner, _held_open) = mpsc::channel(1);
+        let (delivered, _receipt) = oneshot::channel();
+        assert!(inner
+            .try_send(PendingInput {
+                input: ConversationInput::Cancel,
+                delivered,
+            })
+            .is_ok());
+        let input = ConversationInputSender { inner };
+
+        assert!(matches!(
+            input.send_classified(ConversationInput::Cancel).await,
+            ConversationSendOutcome::PreWriteFailure(AdapterError::Unavailable(message))
+                if message.contains("not being consumed")
+        ));
+    }
+
+    #[tokio::test]
+    async fn handler_success_is_a_confirmed_local_write() {
+        let input = ConversationInputSender::spawn(1, |_input| async { Ok(()) });
+
+        assert!(matches!(
+            input.send_classified(ConversationInput::Cancel).await,
+            ConversationSendOutcome::WriteConfirmed
+        ));
+        input
+            .send(ConversationInput::Cancel)
+            .await
+            .expect("the compatibility API still reports handler success");
+    }
+
+    #[tokio::test]
+    async fn handler_failure_is_ambiguous_and_the_compatibility_api_preserves_the_error() {
+        let input = ConversationInputSender::spawn(2, |_input| async {
+            Err(AdapterError::Rejected(
+                "runtime link refused the frame".into(),
+            ))
+        });
+
+        assert!(matches!(
+            input.send_classified(ConversationInput::Cancel).await,
+            ConversationSendOutcome::Ambiguous(AdapterError::Rejected(message))
+                if message.contains("refused the frame")
+        ));
+        assert!(matches!(
+            input.send(ConversationInput::Cancel).await,
+            Err(AdapterError::Rejected(message)) if message.contains("refused the frame")
+        ));
+    }
+
+    #[tokio::test]
+    async fn losing_the_consumer_after_queue_acceptance_is_ambiguous() {
+        let (entered, waiting) = oneshot::channel();
+        let mut entered = Some(entered);
+        let (input, abort) = ConversationInputSender::spawn_with_abort(1, move |_input| {
+            let entered = entered.take();
+            async move {
+                if let Some(entered) = entered {
+                    let _ = entered.send(());
+                }
+                std::future::pending::<Result<(), AdapterError>>().await
+            }
+        });
+        let attempt =
+            tokio::spawn(async move { input.send_classified(ConversationInput::Cancel).await });
+        waiting.await.expect("the consumer accepted the operation");
+        abort.abort();
+
+        assert!(matches!(
+            attempt.await.expect("the sender task survives consumer loss"),
+            ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(message))
+                if message.contains("ended before delivery")
+        ));
+    }
 
     #[tokio::test]
     async fn a_queue_slot_without_a_draining_consumer_is_not_delivery() {

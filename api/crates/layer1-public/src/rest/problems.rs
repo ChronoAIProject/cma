@@ -171,6 +171,9 @@ impl IntoResponse for Problem {
             // even though both are transient and therefore both use 503.
             CoreError::RuntimeRefused(_) => (StatusCode::SERVICE_UNAVAILABLE, "runtime-refused"),
             CoreError::InvalidState => (StatusCode::CONFLICT, "invalid-state"),
+            CoreError::InitialPromptReserved(_) => {
+                (StatusCode::CONFLICT, "initial-prompt-reserved")
+            }
             // The route exists and the request is well formed; this session
             // simply cannot honour it, so 404 would be actively misleading.
             CoreError::CapabilityUnsupported(_) => {
@@ -359,6 +362,7 @@ mod tests {
             CoreError::RuntimeUnavailable("x".into()),
             CoreError::RuntimeRefused("x".into()),
             CoreError::InvalidState,
+            CoreError::InitialPromptReserved(layer2_core::PromptDeliveryState::DispatchFenced),
             CoreError::CapabilityUnsupported("terminal".into()),
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("service".into()),
@@ -388,6 +392,7 @@ mod tests {
                 | CoreError::RuntimeUnavailable(_)
                 | CoreError::RuntimeRefused(_)
                 | CoreError::InvalidState
+                | CoreError::InitialPromptReserved(_)
                 | CoreError::CapabilityUnsupported(_)
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)

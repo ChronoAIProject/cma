@@ -213,6 +213,20 @@ impl SessionService {
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
         }
+        if record.trigger_origin.is_some() {
+            let state = record
+                .initial_prompt
+                .as_ref()
+                .map_or(crate::PromptDeliveryState::Queued, |prompt| {
+                    prompt.delivery.state
+                });
+            if !matches!(
+                state,
+                crate::PromptDeliveryState::Completed | crate::PromptDeliveryState::Failed
+            ) {
+                return Err(CoreError::InitialPromptReserved(state));
+            }
+        }
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }

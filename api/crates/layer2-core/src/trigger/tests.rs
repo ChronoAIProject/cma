@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use serde_json::json;
@@ -35,6 +36,88 @@ pub(crate) fn session_launch(archive_sha256: &str) -> Launch {
     });
     launch.state = LaunchState::SandboxPending;
     launch
+}
+
+pub(crate) fn prompt_launch(mut launch: Launch, session: &crate::Session) -> (Launch, EffectClaim) {
+    launch.fork = Some(ForkRecord {
+        repository: fork(),
+        reused: false,
+        source_revision: launch.source_sha.clone(),
+        canonical_url: "https://github.com/contributor/project".into(),
+        ready_at: crate::clock::now_rfc3339(),
+    });
+    launch.branch = Some(BranchRecord {
+        name: format!("cma/{}", launch.id.0),
+        expected_head: launch.source_sha.clone(),
+        current_head: launch.source_sha.clone(),
+        canonical_url: format!(
+            "https://github.com/contributor/project/tree/cma/{}",
+            launch.id.0
+        ),
+        created_at: crate::clock::now_rfc3339(),
+    });
+    launch.session = Some(SessionLink {
+        session_id: session.id.clone(),
+        environment_profile_id: session
+            .environment_profile
+            .as_ref()
+            .expect("a Trigger session has a managed profile")
+            .0
+            .clone(),
+        runtime_generation: u64::from(session.rotations) + 1,
+        created_at: session.created_at.clone(),
+    });
+    let now = SystemTime::now();
+    let expires = now + Duration::from_secs(300);
+    let now_text = crate::clock::rfc3339_at(now);
+    launch.reach = Some(ReachStatus {
+        service_id: "service-1".into(),
+        state: CapabilityRevocationState::Active,
+        policy_generation: 1,
+        policy_fence: 1,
+        runtime_audience: "runtime-generation-1".into(),
+        expires_at_epoch_seconds: expires
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        numeric_binding_observed_at: now_text.clone(),
+        refreshed_at: now_text.clone(),
+        revocation_requested_at: None,
+        revocation_effective_at: None,
+        last_refusal: None,
+        tombstone_acknowledged: false,
+        agent_key_revocation_confirmed: false,
+    });
+    launch.state = LaunchState::PromptPending;
+    launch.fencing_counter = 1;
+    launch.lease = Some(WorkerLease {
+        holder: "prompt-test-worker".into(),
+        fencing_token: 1,
+        acquired_at: now_text.clone(),
+        expires_at: crate::clock::rfc3339_at(expires),
+    });
+    let claim = EffectClaim {
+        kind: LaunchEffectKind::InitialDispatch,
+        mode: EffectClaimMode::Execute,
+        intent_key: format!("cma-trigger:{}:initial_dispatch:1", launch.id.0),
+        attempt: 1,
+        reconciliation_attempt: 0,
+        fence: 1,
+    };
+    launch.effects.push(EffectRecord {
+        kind: claim.kind,
+        state: EffectState::Claimed,
+        intent_key: claim.intent_key.clone(),
+        attempt: claim.attempt,
+        reconciliation_attempt: claim.reconciliation_attempt,
+        fence: claim.fence,
+        provider_request_id: None,
+        external_resource_ids: Default::default(),
+        next_attempt_at: None,
+        last_failure: None,
+        updated_at: now_text,
+    });
+    (launch, claim)
 }
 
 #[test]
@@ -73,6 +156,228 @@ fn delivery_wire_enum_is_closed_to_seven_values() {
     assert_eq!(encoded.len(), 7);
     assert_eq!(encoded[1], "\"dispatch_fenced\"");
     assert!(serde_json::from_str::<PromptDeliveryState>("\"retrying\"").is_err());
+}
+
+#[test]
+fn prompt_delivery_progress_is_identity_bound_monotonic_and_evented() {
+    let session_launch = session_launch(&"a".repeat(64));
+    let session_id = crate::service::trigger_session_origin(&session_launch)
+        .unwrap()
+        .session_id()
+        .unwrap();
+    let session = crate::Session {
+        options: Default::default(),
+        id: session_id,
+        owner: session_launch.owner.clone(),
+        kernel: crate::KernelId::new("codex"),
+        status: crate::SessionStatus::Ready,
+        recovery_state: crate::RecoveryState::Normal,
+        stop_reason: None,
+        geometry: Default::default(),
+        last_seq: 0,
+        environment_profile: Some(crate::EnvironmentProfileId("envp-trigger-test".into())),
+        runtime_version: Some("trigger-runtime-test".into()),
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: Some(Vec::new()),
+        granted_skills: Some(Vec::new()),
+        pricing: None,
+        created_at: crate::clock::now_rfc3339(),
+    };
+    let (mut launch, claim) = prompt_launch(session_launch, &session);
+    let lease = launch.lease.clone().unwrap();
+    let now = crate::clock::now_rfc3339();
+    let mut delivery = prompt_delivery(&launch, PromptDeliveryState::Queued, 0);
+
+    launch
+        .observe_effect_progress(
+            &lease,
+            &claim,
+            LaunchEffectResult::InitialDispatch {
+                delivery: delivery.clone(),
+            },
+            now.clone(),
+            "queued",
+        )
+        .unwrap();
+    for (state, correlation) in [
+        (PromptDeliveryState::DispatchFenced, "fenced"),
+        (PromptDeliveryState::WriteConfirmed, "written"),
+        (PromptDeliveryState::ExecutionObserved, "observed"),
+        (PromptDeliveryState::Completed, "completed"),
+    ] {
+        delivery.state = state;
+        delivery.attempt = 1;
+        delivery.dispatch_fence_sequence = Some(42);
+        delivery.updated_at = crate::clock::now_rfc3339();
+        launch
+            .observe_effect_progress(
+                &lease,
+                &claim,
+                LaunchEffectResult::InitialDispatch {
+                    delivery: delivery.clone(),
+                },
+                crate::clock::now_rfc3339(),
+                correlation,
+            )
+            .unwrap();
+    }
+    assert_eq!(launch.delivery, Some(delivery.clone()));
+    assert_eq!(
+        launch
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, LaunchEventKind::DeliveryChanged { .. }))
+            .count(),
+        5
+    );
+
+    for malformed in [
+        {
+            let mut value = delivery.clone();
+            value.origin_key = "another-origin".into();
+            value
+        },
+        {
+            let mut value = delivery.clone();
+            value.attempt = 0;
+            value
+        },
+        {
+            let mut value = delivery.clone();
+            value.state = PromptDeliveryState::Queued;
+            value.dispatch_fence_sequence = None;
+            value
+        },
+    ] {
+        let before = launch.clone();
+        assert!(launch
+            .observe_effect_progress(
+                &lease,
+                &claim,
+                LaunchEffectResult::InitialDispatch {
+                    delivery: malformed,
+                },
+                now.clone(),
+                "illegal-regression",
+            )
+            .is_err());
+        assert_eq!(launch, before, "a rejected observation is atomic");
+    }
+}
+
+#[test]
+fn a_long_initial_turn_uses_its_session_deadline_not_the_generic_poll_budget() {
+    let session_launch = session_launch(&"b".repeat(64));
+    let session_id = crate::service::trigger_session_origin(&session_launch)
+        .unwrap()
+        .session_id()
+        .unwrap();
+    let session = crate::Session {
+        options: Default::default(),
+        id: session_id,
+        owner: session_launch.owner.clone(),
+        kernel: crate::KernelId::new("codex"),
+        status: crate::SessionStatus::Running,
+        recovery_state: crate::RecoveryState::Normal,
+        stop_reason: None,
+        geometry: Default::default(),
+        last_seq: 0,
+        environment_profile: Some(crate::EnvironmentProfileId("envp-long-turn".into())),
+        runtime_version: Some("trigger-runtime-test".into()),
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: Some(Vec::new()),
+        granted_skills: Some(Vec::new()),
+        pricing: None,
+        created_at: crate::clock::now_rfc3339(),
+    };
+    let (mut launch, mut claim) = prompt_launch(session_launch, &session);
+    claim.mode = EffectClaimMode::Reconcile;
+    claim.reconciliation_attempt = MAX_LAUNCH_RECONCILIATION_ATTEMPTS;
+    let effect = launch.effects.last_mut().unwrap();
+    effect.state = EffectState::Reconciling;
+    effect.reconciliation_attempt = claim.reconciliation_attempt;
+    let lease = launch.lease.clone().unwrap();
+    let delivery = prompt_delivery(&launch, PromptDeliveryState::WriteConfirmed, 1);
+    let now_time = SystemTime::now();
+    let now = crate::clock::rfc3339_at(now_time);
+    launch
+        .observe_effect_progress(
+            &lease,
+            &claim,
+            LaunchEffectResult::InitialDispatch {
+                delivery: delivery.clone(),
+            },
+            now.clone(),
+            "observe-long-turn",
+        )
+        .unwrap();
+    let transient = LaunchFailure {
+        class: FailureClass::RetryableTransient,
+        code: "initial_prompt_turn_pending".into(),
+        detail: "The initial task is still running.".into(),
+        remediation: "Continue observing the same session turn.".into(),
+        correlation_id: "long-turn".into(),
+        retry_at: None,
+        observed_at: now.clone(),
+    };
+    launch
+        .defer_reconciliation(
+            &lease,
+            &claim,
+            transient.clone(),
+            crate::clock::rfc3339_at(now_time + Duration::from_secs(30)),
+            Default::default(),
+            now.clone(),
+        )
+        .expect("poll count alone never abandons a live initial turn");
+    assert_eq!(launch.state, LaunchState::PromptPending);
+    assert_eq!(
+        launch.effects.last().unwrap().state,
+        EffectState::Reconciling
+    );
+
+    launch.delivery.as_mut().unwrap().queued_at = "2020-01-01T00:00:00Z".into();
+    launch
+        .defer_reconciliation(
+            &lease,
+            &claim,
+            transient,
+            crate::clock::rfc3339_at(now_time + Duration::from_secs(30)),
+            Default::default(),
+            now,
+        )
+        .expect("the wall-clock deadline resolves to explicit recovery");
+    assert_eq!(launch.state, LaunchState::FailedRetryable);
+    assert_eq!(
+        launch.blocked_reason,
+        Some(LaunchBlockedReason::RecoveryRequired)
+    );
+    assert_eq!(
+        launch.effects.last().unwrap().state,
+        EffectState::RecoveryRequired
+    );
+}
+
+fn prompt_delivery(launch: &Launch, state: PromptDeliveryState, attempt: u32) -> PromptDelivery {
+    PromptDelivery {
+        launch_id: launch.id.clone(),
+        session_id: launch.session.as_ref().unwrap().session_id.clone(),
+        revision_digest: launch.revision_digest.clone(),
+        origin_key: format!(
+            "cma-trigger:{}:{}:initial",
+            launch.id.0, launch.revision_digest
+        ),
+        payload_hash: "a".repeat(64),
+        state,
+        attempt,
+        dispatch_fence_sequence: (state != PromptDeliveryState::Queued).then_some(42),
+        queued_at: crate::clock::now_rfc3339(),
+        updated_at: crate::clock::now_rfc3339(),
+    }
 }
 
 #[test]

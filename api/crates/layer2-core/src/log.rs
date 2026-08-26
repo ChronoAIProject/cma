@@ -127,6 +127,7 @@ struct RecordFields {
     runtime_loss: bool,
     runtime: bool,
     context: bool,
+    initial_prompt: bool,
 }
 
 struct EnqueuedCommit {
@@ -972,6 +973,7 @@ impl SessionLog {
                 record.session.last_seq = events
                     .last()
                     .map_or(record.session.last_seq, |event| event.seq);
+                stamp_initial_prompt_fence(&mut record, &events);
             }
             state.queued.push_back(PendingOperation::RestartableCommit {
                 write_id: format!("sesw_{}", uuid::Uuid::new_v4().simple()),
@@ -1117,6 +1119,7 @@ impl SessionLog {
                 record.session.last_seq = events
                     .last()
                     .map_or(record.session.last_seq, |event| event.seq);
+                stamp_initial_prompt_fence(&mut record, &events);
             }
             let last_seq = record.session.last_seq;
             after_allocation(last_seq);
@@ -1574,6 +1577,7 @@ impl SessionLog {
         renumber(&self.id, events, first)?;
         let mut tail = events.last().map_or(first - 1, |event| event.seq);
         record.session.last_seq = tail;
+        stamp_initial_prompt_fence(record, events);
         for operation in &mut state.queued {
             let (record, events) = match operation {
                 PendingOperation::Commit { record, events, .. }
@@ -1590,6 +1594,7 @@ impl SessionLog {
             renumber(&self.id, events, next)?;
             tail = events.last().map_or(tail, |event| event.seq);
             record.session.last_seq = tail;
+            stamp_initial_prompt_fence(record, events);
         }
         debug_assert_eq!(tail, final_tail);
         self.sequences.reconcile(&self.id, final_tail);
@@ -1737,6 +1742,24 @@ impl SessionLog {
         if durable.session.status.is_terminal() && !only_terminal_detach(events) {
             return Err(StoreError::SessionTerminated {
                 id: self.id.clone(),
+            });
+        }
+        // A dispatch fence authorizes a retained runtime write. Replaying it
+        // onto a revision another replica already advanced can let two
+        // byte-identical proposals both run their continuations. Its snapshot
+        // is therefore an exact CAS boundary, even when the resulting record
+        // happens to compare equal to the winning proposal.
+        if events.iter().any(|event| {
+            matches!(
+                event.kind,
+                EventKind::InitialPromptDeliveryChanged {
+                    state: crate::PromptDeliveryState::DispatchFenced
+                }
+            )
+        }) {
+            return Err(StoreError::RevisionConflict {
+                expected: record.revision,
+                actual: durable.revision,
             });
         }
         self.remember_durable(durable.clone());
@@ -2134,6 +2157,7 @@ fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
     record.runtime_id = entry.runtime.as_ref().map(|handle| handle.0.clone());
     record.context_ref = entry.context_ref.clone();
     record.trigger_origin = entry.trigger_origin.clone();
+    record.initial_prompt = entry.initial_prompt.clone();
     record.revision = entry.event_log.revision.load(Ordering::Acquire);
     record
 }
@@ -2194,6 +2218,7 @@ impl RecordFields {
                 }
                 EventKind::PlaneChanged { .. } => fields.plane = true,
                 EventKind::RuntimeLost { .. } => fields.runtime_loss = true,
+                EventKind::InitialPromptDeliveryChanged { .. } => fields.initial_prompt = true,
                 _ => {}
             }
         }
@@ -2349,6 +2374,12 @@ impl RecordChange {
             &before.context_ref,
             &intended.context_ref,
         );
+        compatible &= rebase_selected(
+            self.fields.initial_prompt,
+            &mut durable.initial_prompt,
+            &before.initial_prompt,
+            &intended.initial_prompt,
+        );
 
         if !compatible {
             return Err(StoreError::RevisionConflict { expected, actual });
@@ -2452,6 +2483,11 @@ impl RecordChange {
             &mut target.context_ref,
             &intended.context_ref,
         );
+        copy_selected(
+            self.fields.initial_prompt,
+            &mut target.initial_prompt,
+            &intended.initial_prompt,
+        );
     }
 }
 
@@ -2533,6 +2569,23 @@ fn renumber(id: &SessionId, events: &mut [Event], first: u64) -> Result<(), Stor
     Ok(())
 }
 
+fn stamp_initial_prompt_fence(record: &mut SessionRecord, events: &[Event]) {
+    let fence = events.iter().find_map(|event| {
+        matches!(
+            event.kind,
+            EventKind::InitialPromptDeliveryChanged {
+                state: crate::PromptDeliveryState::DispatchFenced
+            }
+        )
+        .then_some(event.seq)
+    });
+    if let (Some(fence), Some(initial)) = (fence, record.initial_prompt.as_mut()) {
+        if initial.delivery.state == crate::PromptDeliveryState::DispatchFenced {
+            initial.delivery.dispatch_fence_sequence = Some(fence);
+        }
+    }
+}
+
 async fn retry_delay(attempt: usize) {
     let shift = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
     let multiplier = 1_u32.checked_shl(shift).unwrap_or(u32::MAX);
@@ -2546,21 +2599,53 @@ async fn retry_delay(attempt: usize) {
 
 /// Record an event and immediately hand its exact state snapshot to the lane.
 pub(crate) fn append(entry: &mut SessionEntry, kind: EventKind) {
-    let event = Event {
-        session_id: entry.session.id.clone(),
-        seq: 0,
-        kind,
-        appended_at: String::new(),
-    };
-    let record = record_from_entry(entry);
-    let enqueued =
-        entry
-            .event_log
-            .enqueue_commit(CommitMode::UpdateInheriting, record, vec![event]);
-    // Fire-and-forget events describe state that is already live, so their
-    // allocated cursor is live immediately as well.
-    entry.session.last_seq = enqueued.last_seq;
-    drop(enqueued.complete);
+    let mut kinds = vec![kind];
+    if let Some(state) = observed_initial_prompt_state(entry, &kinds[0]) {
+        let initial = entry
+            .initial_prompt
+            .as_mut()
+            .expect("an observed initial prompt state has a durable outbox");
+        initial.delivery.state = state;
+        initial.delivery.updated_at = crate::clock::now_rfc3339();
+        kinds.push(EventKind::InitialPromptDeliveryChanged { state });
+    }
+    drop(append_batch(entry, kinds));
+}
+
+fn observed_initial_prompt_state(
+    entry: &SessionEntry,
+    kind: &EventKind,
+) -> Option<crate::PromptDeliveryState> {
+    use crate::PromptDeliveryState as State;
+
+    let current = entry.initial_prompt.as_ref()?.delivery.state;
+    let observing = matches!(
+        current,
+        State::DispatchFenced | State::WriteConfirmed | State::RecoveryRequired
+    );
+    if matches!(kind, EventKind::TurnCompleted)
+        && (observing || current == State::ExecutionObserved)
+    {
+        return Some(
+            if entry.session.stop_reason == Some(crate::StopReason::Error) {
+                State::Failed
+            } else {
+                State::Completed
+            },
+        );
+    }
+    if observing
+        && matches!(
+            kind,
+            EventKind::MessageCommitted { .. }
+                | EventKind::ToolCallStarted { .. }
+                | EventKind::ToolCallUpdated { .. }
+                | EventKind::ApprovalRequested { .. }
+        )
+    {
+        return Some(State::ExecutionObserved);
+    }
+    None
 }
 
 /// Record one indivisible event unit and return its durable completion.
@@ -2617,12 +2702,48 @@ where
     RFut: Future<Output = ()> + Send + 'static,
     U: FnOnce(T, H) + Send + 'static,
 {
-    let event = Event {
-        session_id: entry.session.id.clone(),
-        seq: 0,
-        kind,
-        appended_at: String::new(),
-    };
+    append_batch_with(
+        entry,
+        [kind],
+        change,
+        continuation,
+        on_rejected,
+        on_undelivered,
+    )
+}
+
+/// Queue an indivisible semantic event unit before its retained side effect.
+pub(crate) fn append_batch_with<T, H, F, Fut, R, RFut, U>(
+    entry: &mut SessionEntry,
+    kinds: impl IntoIterator<Item = EventKind>,
+    change: impl FnOnce(&mut SessionRecord),
+    continuation: F,
+    on_rejected: R,
+    on_undelivered: U,
+) -> CommitReceiver<T>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+    F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+    Fut: Future<Output = (T, H)> + Send + 'static,
+    R: FnOnce(StoreError) -> RFut + Send + 'static,
+    RFut: Future<Output = ()> + Send + 'static,
+    U: FnOnce(T, H) + Send + 'static,
+{
+    let events = kinds
+        .into_iter()
+        .map(|kind| Event {
+            session_id: entry.session.id.clone(),
+            seq: 0,
+            kind,
+            appended_at: String::new(),
+        })
+        .collect::<Vec<_>>();
+    debug_assert!(
+        !events.is_empty(),
+        "a semantic event unit must not be empty"
+    );
+    let event_count = u64::try_from(events.len()).unwrap_or(u64::MAX);
     let mut record = record_from_entry(entry);
     change(&mut record);
     let id = entry.session.id.clone();
@@ -2638,10 +2759,10 @@ where
     event_log.enqueue_retained_commit(
         CommitMode::UpdateInheriting,
         record,
-        vec![event],
+        events,
         None,
         retained,
-        |last_seq| live_tail = Some(last_seq.saturating_sub(1)),
+        |last_seq| live_tail = Some(last_seq.saturating_sub(event_count)),
     );
     // A proposal is not live until its continuation installs the committed
     // record. Publish only the lane tail that preceded its reservation.
