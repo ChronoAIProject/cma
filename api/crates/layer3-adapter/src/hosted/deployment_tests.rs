@@ -7,6 +7,7 @@ use crate::{RuntimeEnvironment, RuntimeSpec, TermSize};
 fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
         platform_briefing: String::new(),

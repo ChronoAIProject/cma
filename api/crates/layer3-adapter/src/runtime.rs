@@ -197,6 +197,12 @@ pub struct RuntimeSpec {
     /// Passed through the control plane rather than fetched by the runtime, so
     /// the sandbox needs no storage credential of its own.
     pub restore_from: Option<Vec<u8>>,
+    /// A complete, versioned workspace archive to verify and materialize
+    /// before the agent starts.
+    ///
+    /// Opaque to the kernel adapter. The shared hosted supervisor wire owns
+    /// the archive format and the bot pod independently verifies every field.
+    pub workspace: Option<WorkspacePackage>,
     /// Identity of the control plane asking, recorded on the runtime.
     ///
     /// So that a provider shared between control planes can be told apart, and
@@ -238,6 +244,15 @@ pub struct RuntimeSpec {
     /// not the same as the runtime never having been told, and the two are
     /// kept apart where this is rendered.
     pub reaches: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspacePackage {
+    pub epoch: u64,
+    pub source_revision: String,
+    pub manifest_digest: String,
+    pub archive_sha256: String,
+    pub archive: Vec<u8>,
 }
 
 /// What a runtime should be told about how to behave.

@@ -6,12 +6,15 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use layer2_core::{
-    rfc3339_at, seconds_from_rfc3339, EffectClaim, FailureClass, Launch, LaunchAuthority,
-    LaunchEffectKind, LaunchEffectResult, LaunchFailure, TriggerAuthorityError,
-    TriggerAuthorityVerifier, TriggerServiceError,
+    rfc3339_at, seconds_from_rfc3339, BaselineObjectStore, EffectClaim, FailureClass, Launch,
+    LaunchAuthority, LaunchEffectKind, LaunchEffectResult, LaunchFailure, TriggerAuthorityError,
+    TriggerAuthorityVerifier, TriggerServiceError, TriggerStoreError, WorkspaceRecord,
 };
 
-use super::github::{ForkContext, ForkReconciliation, GithubBroker, GithubBrokerError};
+use super::github::{
+    BranchContext, BranchReconciliation, ForkContext, ForkReconciliation, GithubBroker,
+    GithubBrokerError, ImportedWorkspace, WorkspaceContext, WorkspaceUnsupported,
+};
 use super::worker::{EffectExecution, EffectExecutor};
 
 const DEFAULT_FORK_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
@@ -31,6 +34,21 @@ trait GithubEffectPort: Send + Sync {
         &self,
         context: &ForkContext,
     ) -> Result<ForkReconciliation, GithubBrokerError>;
+
+    async fn create_branch(
+        &self,
+        context: &BranchContext,
+    ) -> Result<BranchReconciliation, GithubBrokerError>;
+
+    async fn reconcile_branch(
+        &self,
+        context: &BranchContext,
+    ) -> Result<BranchReconciliation, GithubBrokerError>;
+
+    async fn import_workspace(
+        &self,
+        context: &WorkspaceContext,
+    ) -> Result<ImportedWorkspace, GithubBrokerError>;
 }
 
 #[async_trait]
@@ -64,6 +82,27 @@ impl GithubEffectPort for GithubBroker {
     ) -> Result<ForkReconciliation, GithubBrokerError> {
         GithubBroker::reconcile_fork(self, context).await
     }
+
+    async fn create_branch(
+        &self,
+        context: &BranchContext,
+    ) -> Result<BranchReconciliation, GithubBrokerError> {
+        GithubBroker::create_branch(self, context).await
+    }
+
+    async fn reconcile_branch(
+        &self,
+        context: &BranchContext,
+    ) -> Result<BranchReconciliation, GithubBrokerError> {
+        GithubBroker::reconcile_branch(self, context).await
+    }
+
+    async fn import_workspace(
+        &self,
+        context: &WorkspaceContext,
+    ) -> Result<ImportedWorkspace, GithubBrokerError> {
+        GithubBroker::import_workspace(self, context).await
+    }
 }
 
 /// GitHub-backed part of the closed Trigger effect vocabulary.
@@ -72,6 +111,7 @@ impl GithubEffectPort for GithubBroker {
 /// kinds fail closed so a configuration mistake cannot silently skip a step.
 pub(crate) struct GithubEffectExecutor {
     github: Arc<dyn GithubEffectPort>,
+    workspace_store: Option<Arc<dyn BaselineObjectStore>>,
     fork_readiness_timeout: Duration,
 }
 
@@ -79,6 +119,18 @@ impl GithubEffectExecutor {
     pub(crate) fn new(github: Arc<GithubBroker>) -> Self {
         Self {
             github,
+            workspace_store: None,
+            fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+        }
+    }
+
+    pub(crate) fn with_workspace_store(
+        github: Arc<GithubBroker>,
+        workspace_store: Arc<dyn BaselineObjectStore>,
+    ) -> Self {
+        Self {
+            github,
+            workspace_store: Some(workspace_store),
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         }
     }
@@ -87,6 +139,7 @@ impl GithubEffectExecutor {
     fn with_port(github: Arc<dyn GithubEffectPort>, fork_readiness_timeout: Duration) -> Self {
         Self {
             github,
+            workspace_store: None,
             fork_readiness_timeout,
         }
     }
@@ -238,6 +291,137 @@ impl GithubEffectExecutor {
             external_resource_ids: resources,
         }
     }
+
+    async fn run_branch(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+        reconcile_only: bool,
+    ) -> EffectExecution {
+        let context = match BranchContext::try_from(launch) {
+            Ok(context) => context,
+            Err(error) => return broker_failure(error, claim, reconcile_only),
+        };
+        let result = if reconcile_only {
+            self.github.reconcile_branch(&context).await
+        } else {
+            self.github.create_branch(&context).await
+        };
+        match result {
+            Ok(BranchReconciliation::Ready(branch)) => {
+                let mut resources = retained_resources(launch, claim);
+                resources.insert("branch_ref".into(), format!("refs/heads/{}", branch.name));
+                resources.insert("branch_head".into(), branch.current_head.clone());
+                resources.insert(
+                    "fork_repository_id".into(),
+                    context.fork.repository.repository_id.to_string(),
+                );
+                EffectExecution::Completed {
+                    result: LaunchEffectResult::Branch { branch },
+                    safe_detail: "Your launch branch is pinned to the reviewed source.".into(),
+                    external_resource_ids: resources,
+                }
+            }
+            Ok(BranchReconciliation::Absent) if reconcile_only => {
+                let mut resources = retained_resources(launch, claim);
+                resources.insert(
+                    "branch_ref".into(),
+                    format!("refs/heads/{}", context.branch_name()),
+                );
+                reconcile_failure(
+                    claim,
+                    "branch_outcome_pending",
+                    "Checking whether GitHub accepted the earlier branch request.",
+                    resources,
+                )
+            }
+            Ok(BranchReconciliation::Absent) => EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::RecoveryRequired,
+                    "branch_write_not_observed",
+                    "GitHub did not expose the branch after the create request.",
+                    "Review the retained provider evidence before authorizing another branch request.",
+                    claim,
+                    None,
+                ),
+            },
+            Err(error) => broker_failure(error, claim, reconcile_only),
+        }
+    }
+
+    async fn run_workspace(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let Some(store) = self.workspace_store.as_ref() else {
+            return unsupported_effect(claim);
+        };
+        let context = match WorkspaceContext::try_from(launch) {
+            Ok(context) => context,
+            Err(error) => return broker_failure(error, claim, false),
+        };
+        let imported = match self.github.import_workspace(&context).await {
+            Ok(imported) => imported,
+            Err(error) => return broker_failure(error, claim, false),
+        };
+        let reference = match store
+            .put_baseline(
+                &launch.owner,
+                &launch.id,
+                &imported.manifest,
+                &imported.archive_sha256,
+                &imported.archive,
+            )
+            .await
+        {
+            Ok(reference) => reference,
+            Err(TriggerStoreError::Unavailable(_)) => {
+                return transient_failure(
+                    claim,
+                    false,
+                    "workspace_storage_temporarily_unavailable",
+                    "The repository baseline could not be confirmed in durable storage.",
+                    None,
+                )
+            }
+            Err(_) => {
+                return EffectExecution::Failed {
+                    failure: failure(
+                        FailureClass::TerminalSecurity,
+                        "workspace_storage_integrity_failed",
+                        "The durable repository baseline failed its integrity contract.",
+                        "Contact support with the Launch correlation ID; no partial baseline was accepted.",
+                        claim,
+                        None,
+                    ),
+                }
+            }
+        };
+        let now = SystemTime::now();
+        let mut resources = retained_resources(launch, claim);
+        resources.insert("workspace_object_reference".into(), reference.clone());
+        resources.insert(
+            "workspace_manifest_digest".into(),
+            imported.manifest.digest.clone(),
+        );
+        resources.insert(
+            "workspace_file_count".into(),
+            imported.manifest.entries.len().to_string(),
+        );
+        EffectExecution::Completed {
+            result: LaunchEffectResult::WorkspaceImport {
+                workspace: WorkspaceRecord {
+                    baseline: imported.manifest,
+                    baseline_object_reference: reference,
+                    baseline_archive_sha256: imported.archive_sha256,
+                    latest_checkpoint: None,
+                    previous_checkpoint: None,
+                    workspace_epoch: 1,
+                    retention_policy_id: "trigger-workspace-v1".into(),
+                    delete_after: rfc3339_at(now + Duration::from_secs(30 * 24 * 60 * 60)),
+                },
+            },
+            safe_detail: "The exact repository baseline is stored and verified.".into(),
+            external_resource_ids: resources,
+        }
+    }
 }
 
 #[async_trait]
@@ -246,6 +430,8 @@ impl EffectExecutor for GithubEffectExecutor {
         match claim.kind {
             LaunchEffectKind::Preflight => self.run_preflight(launch, claim).await,
             LaunchEffectKind::Fork => self.run_fork(launch, claim, false).await,
+            LaunchEffectKind::Branch => self.run_branch(launch, claim, false).await,
+            LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -254,6 +440,10 @@ impl EffectExecutor for GithubEffectExecutor {
         match claim.kind {
             LaunchEffectKind::Preflight => self.run_preflight(launch, claim).await,
             LaunchEffectKind::Fork => self.run_fork(launch, claim, true).await,
+            LaunchEffectKind::Branch => self.run_branch(launch, claim, true).await,
+            // Every provider call is a read or an idempotent write to the
+            // Launch's stable object key; repeating it reconciles the same bytes.
+            LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -370,6 +560,58 @@ fn broker_failure(
                 None,
             ),
         },
+        Error::BranchHeadConflict => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::ConflictStaleHead,
+                "conflict_stale_head",
+                "The launch branch already points at a different commit.",
+                "Start a New Launch; CMA will not reset or force-push the existing branch.",
+                claim,
+                None,
+            ),
+        },
+        Error::UnsupportedWorkspace(reason) => {
+            let (code, detail) = match reason {
+                WorkspaceUnsupported::TreeIncomplete => (
+                    "workspace_tree_incomplete",
+                    "GitHub could not provide a complete recursive repository tree.",
+                ),
+                WorkspaceUnsupported::FileCount => (
+                    "repository_file_limit_exceeded",
+                    "The repository contains more files than this Trigger flow supports.",
+                ),
+                WorkspaceUnsupported::RepositorySize => (
+                    "repository_size_limit_exceeded",
+                    "The repository is larger than this Trigger flow supports.",
+                ),
+                WorkspaceUnsupported::UnsafePath => (
+                    "unsafe_workspace_entry",
+                    "The repository contains a path or symlink that cannot be imported safely.",
+                ),
+                WorkspaceUnsupported::UnsupportedMode => (
+                    "unsupported_git_entry",
+                    "The repository contains a Git entry mode this Trigger flow cannot preserve.",
+                ),
+                WorkspaceUnsupported::Submodule => (
+                    "submodule_unsupported",
+                    "Git submodules are not dereferenced by the public Trigger flow.",
+                ),
+                WorkspaceUnsupported::LargeFileStorage => (
+                    "git_lfs_unsupported",
+                    "Git LFS content is not supported by the public Trigger flow.",
+                ),
+            };
+            EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::PolicyUserAction,
+                    code,
+                    detail,
+                    "Use a repository whose complete byte tree fits the documented public limits.",
+                    claim,
+                    None,
+                ),
+            }
+        }
         Error::ConnectionNotPersonal | Error::Forbidden | Error::Rejected { .. } => {
             EffectExecution::Failed {
                 failure: failure(
@@ -675,6 +917,33 @@ mod tests {
         ) -> Result<ForkReconciliation, GithubBrokerError> {
             self.reconcile_calls.fetch_add(1, Ordering::SeqCst);
             self.answer(context)
+        }
+
+        async fn create_branch(
+            &self,
+            _context: &BranchContext,
+        ) -> Result<BranchReconciliation, GithubBrokerError> {
+            Err(GithubBrokerError::Malformed(
+                "branch answer was not configured".into(),
+            ))
+        }
+
+        async fn reconcile_branch(
+            &self,
+            _context: &BranchContext,
+        ) -> Result<BranchReconciliation, GithubBrokerError> {
+            Err(GithubBrokerError::Malformed(
+                "branch answer was not configured".into(),
+            ))
+        }
+
+        async fn import_workspace(
+            &self,
+            _context: &WorkspaceContext,
+        ) -> Result<ImportedWorkspace, GithubBrokerError> {
+            Err(GithubBrokerError::Malformed(
+                "workspace answer was not configured".into(),
+            ))
         }
     }
 

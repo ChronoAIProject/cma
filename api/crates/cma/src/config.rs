@@ -229,6 +229,13 @@ pub struct Config {
     /// service ever addresses. It creates no bucket and holds no capability to
     /// create one; an absent name switches context storage off.
     pub context_bucket: String,
+    /// Bucket holding Trigger repository baselines and workspace checkpoints.
+    ///
+    /// Separate configuration from conversation context even when a deployment
+    /// deliberately selects the same owned bucket. Repository artifacts have
+    /// their own retention and deletion policy, and must never inherit the
+    /// transcript lifecycle merely because both use platform object storage.
+    pub trigger_workspace_bucket: String,
     /// This service's own machine identity on the identity platform, used to
     /// store session context.
     ///
@@ -375,6 +382,7 @@ impl Config {
         // platform, and every object this service writes lands in it, so
         // guessing a name would mean writing somewhere nobody chose.
         let context_bucket = var_or("CHRONO_CONTEXT_BUCKET", "");
+        let trigger_workspace_bucket = var_or("CHRONO_TRIGGER_WORKSPACE_BUCKET", "");
         let storage_client_id = var_or("CHRONO_STORAGE_CLIENT_ID", "");
         let storage_client_secret = var_or("CHRONO_STORAGE_CLIENT_SECRET", "");
         // The key is read from a file rather than an environment variable so it
@@ -457,6 +465,7 @@ impl Config {
             auth_encryption_key,
             activity_retention,
             context_bucket,
+            trigger_workspace_bucket,
             storage_client_id,
             storage_client_secret,
             auth_mode,
@@ -647,6 +656,7 @@ impl Config {
             .expect("test key has 32 decoded bytes"),
             activity_retention: std::time::Duration::from_secs(90 * 86_400),
             context_bucket: "bkt".into(),
+            trigger_workspace_bucket: "trigger-bkt".into(),
             storage_client_id: "sa-id".into(),
             storage_client_secret: "sa-secret".into(),
             auth_mode: AuthMode::Trusted {

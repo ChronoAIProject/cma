@@ -631,6 +631,12 @@ impl Launch {
                 workspace.baseline.validate()?;
                 if workspace.baseline.source_revision != self.source_sha
                     || workspace.workspace_epoch == 0
+                    || workspace.baseline_object_reference.trim().is_empty()
+                    || workspace.baseline_archive_sha256.len() != 64
+                    || !workspace
+                        .baseline_archive_sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit())
                 {
                     return Err(TriggerValidationError::field(
                         "workspace",

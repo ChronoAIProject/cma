@@ -207,6 +207,7 @@ impl SessionService {
                 subject_credential: spec.runtime_credential.clone(),
                 options: options.clone(),
                 restore_from: restore.cloned(),
+                workspace: None,
                 skills: skills
                     .iter()
                     .map(|pack| layer3_adapter::SkillPackage {

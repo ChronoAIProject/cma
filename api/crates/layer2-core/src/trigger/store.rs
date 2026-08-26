@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use super::{
     Launch, LaunchId, LaunchState, PublicTriggerId, TriggerDraft, TriggerId, TriggerRevision,
-    TriggerRevisionId, WorkerLease, WorkspaceCheckpoint,
+    TriggerRevisionId, WorkerLease, WorkspaceCheckpoint, WorkspaceManifest,
 };
 use crate::SubjectId;
 
@@ -177,5 +177,38 @@ pub trait CheckpointObjectStore: Send + Sync {
         &self,
         owner: &SubjectId,
         checkpoint: &WorkspaceCheckpoint,
+    ) -> Result<(), TriggerStoreError>;
+}
+
+/// Durable byte storage for the immutable repository baseline.
+///
+/// Every operation carries the authenticated owner and Launch identity even
+/// though the underlying bucket is reached by one CMA machine identity. An
+/// implementation must derive and verify its object key from both values; an
+/// opaque reference alone never authorizes a cross-subject read.
+#[async_trait]
+pub trait BaselineObjectStore: Send + Sync {
+    async fn put_baseline(
+        &self,
+        owner: &SubjectId,
+        launch: &LaunchId,
+        manifest: &WorkspaceManifest,
+        archive_sha256: &str,
+        archive: &[u8],
+    ) -> Result<String, TriggerStoreError>;
+
+    async fn get_baseline(
+        &self,
+        owner: &SubjectId,
+        launch: &LaunchId,
+        reference: &str,
+        archive_sha256: &str,
+    ) -> Result<Option<Vec<u8>>, TriggerStoreError>;
+
+    async fn delete_baseline(
+        &self,
+        owner: &SubjectId,
+        launch: &LaunchId,
+        reference: &str,
     ) -> Result<(), TriggerStoreError>;
 }
