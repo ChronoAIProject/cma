@@ -99,8 +99,8 @@ fn a_run_with_neither_a_message_nor_an_answer_has_nothing_to_do() {
 }
 
 #[test]
-fn a_continuation_boundary_is_unnumbered_and_is_not_a_new_turn() {
-    let boundary = continuation_started("run_resume", "sesn_1");
+fn a_synthetic_boundary_is_unnumbered_and_is_not_a_new_turn() {
+    let boundary = synthetic_started("run_resume", "sesn_1");
     let body = serde_json::to_value(&boundary).expect("the boundary serialises");
 
     assert_eq!(body["type"], "RUN_STARTED");
