@@ -194,6 +194,7 @@ export {
   frameKey,
   initialState,
   type AguiState,
+  type PendingApprovalState,
 } from './wire.js';
 
 /*

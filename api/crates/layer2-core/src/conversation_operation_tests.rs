@@ -9,17 +9,24 @@ use std::sync::Arc;
 use layer3_adapter::{ConversationInput, PermissionDecision};
 
 use crate::conversation::ApprovalDecision;
-use crate::conversation_support::{asking, chunk, conversation, said, until_logged, until_sent};
+use crate::conversation_support::{
+    asking, chunk, conversation, conversation_with, conversing, said, until_logged, until_sent,
+};
+use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::session::{SessionStatus, StopReason};
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
 
 #[tokio::test]
-async fn a_prompt_reaches_the_runtime() {
+async fn an_idle_prompt_needs_no_steer_grant() {
     let (svc, alice, id, adapter) = conversation().await;
+    let idle = svc.get_session(&alice, &id).await.expect("readable");
+    assert_eq!(idle.status, SessionStatus::Ready);
+    assert!(!idle.capabilities.steer);
+
     svc.send_prompt(&alice, &id, "what is in this repository?".into())
         .await
-        .expect("the owner may prompt their own session");
+        .expect("an idle conversation needs no mid-turn input grant");
 
     let sent = until_sent(&adapter, |input| {
         matches!(input, ConversationInput::Prompt(_))
@@ -29,6 +36,220 @@ async fn a_prompt_reaches_the_runtime() {
         sent.iter()
             .any(|input| matches!(input, ConversationInput::Prompt(_))),
         "a prompt must reach the runtime: {sent:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_mid_turn_prompt_without_steer_reaches_neither_runtime_nor_log() {
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "begin the turn".into())
+        .await
+        .expect("the idle prompt starts the turn");
+
+    let sent_before = until_sent(&adapter, |input| {
+        matches!(input, ConversationInput::Prompt(_))
+    })
+    .await;
+    let events_before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
+    let cursor = events_before.last().expect("the turn was recorded").seq;
+
+    assert_eq!(
+        svc.send_prompt(&alice, &id, "redirect the running turn".into())
+            .await,
+        Err(CoreError::CapabilityUnsupported("steer".into()))
+    );
+
+    tokio::task::yield_now().await;
+    let sent_after = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains open")
+        .sent()
+        .await;
+    assert_eq!(
+        sent_after.len(),
+        sent_before.len(),
+        "the refused prompt must send no input to the runtime: {sent_after:?}"
+    );
+
+    let appended = svc
+        .events_since(&alice, &id, Some(cursor))
+        .await
+        .expect("history readable");
+    assert!(
+        !appended.iter().any(|event| matches!(
+            event.kind,
+            EventKind::OwnerMessage { .. } | EventKind::TurnStarted
+        )),
+        "the refused prompt must append neither owner input nor a turn boundary: {appended:?}"
+    );
+    assert!(
+        appended.is_empty(),
+        "a capability refusal must not change the log at all: {appended:?}"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_idle_prompts_admit_one_before_the_other_can_decide_to_steer() {
+    let (svc, alice, id, _adapter) = conversation().await;
+    let before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
+    let cursor = before.last().expect("session readiness was recorded").seq;
+
+    let delivered = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (first_started, first_is_started) = tokio::sync::oneshot::channel();
+    let (release_first, first_may_finish) = tokio::sync::oneshot::channel();
+    let mut first_started = Some(first_started);
+    let mut first_may_finish = Some(first_may_finish);
+    let delivered_by_runtime = Arc::clone(&delivered);
+    let held_input = layer3_adapter::ConversationInputSender::spawn(2, move |input| {
+        let started = first_started.take();
+        let may_finish = first_may_finish.take();
+        let delivered = Arc::clone(&delivered_by_runtime);
+        async move {
+            delivered.lock().await.push(input);
+            if let Some(started) = started {
+                let _ = started.send(());
+            }
+            if let Some(may_finish) = may_finish {
+                let _ = may_finish.await;
+            }
+            Ok(())
+        }
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(held_input);
+
+    let first_service = Arc::clone(&svc);
+    let first_caller = alice.clone();
+    let first_id = id.clone();
+    let first = tokio::spawn(async move {
+        first_service
+            .send_prompt(&first_caller, &first_id, "first prompt".into())
+            .await
+    });
+    first_is_started
+        .await
+        .expect("the first prompt reached runtime delivery");
+
+    let second = svc.send_prompt(&alice, &id, "second prompt".into());
+    tokio::pin!(second);
+    tokio::select! {
+        biased;
+        result = &mut second => panic!("the second prompt did not wait: {result:?}"),
+        () = tokio::task::yield_now() => {}
+    }
+    assert_eq!(
+        delivered.lock().await.len(),
+        1,
+        "only the admitted prompt may reach runtime delivery"
+    );
+
+    release_first
+        .send(())
+        .expect("the first prompt is still awaiting release");
+    first
+        .await
+        .expect("the first prompt task completes")
+        .expect("the idle prompt is admitted");
+    assert_eq!(
+        second.await,
+        Err(CoreError::CapabilityUnsupported("steer".into()))
+    );
+
+    let delivered = delivered.lock().await;
+    assert_eq!(
+        delivered
+            .iter()
+            .filter(|input| matches!(input, ConversationInput::Prompt(_)))
+            .count(),
+        1,
+        "the refused concurrent prompt must never reach the runtime: {delivered:?}"
+    );
+    drop(delivered);
+
+    let appended = svc
+        .events_since(&alice, &id, Some(cursor))
+        .await
+        .expect("history readable");
+    assert_eq!(
+        appended.len(),
+        3,
+        "one prompt appends one owner message, turn boundary, and status: {appended:?}"
+    );
+    let owner_messages = appended
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::OwnerMessage { content } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        owner_messages,
+        vec!["first prompt"],
+        "only the admitted prompt may append owner input: {appended:?}"
+    );
+    assert_eq!(
+        appended
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::TurnStarted))
+            .count(),
+        1,
+        "only the admitted prompt may append a turn boundary: {appended:?}"
+    );
+    assert_eq!(
+        appended
+            .iter()
+            .filter(|event| matches!(
+                event.kind,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Running,
+                    ..
+                }
+            ))
+            .count(),
+        1,
+        "only the admitted prompt may append a running transition: {appended:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_mid_turn_prompt_with_steer_reaches_the_test_runtime() {
+    let mut capabilities = conversing();
+    capabilities.steer = true;
+    let (svc, alice, id, adapter) = conversation_with(capabilities).await;
+    svc.send_prompt(&alice, &id, "begin the turn".into())
+        .await
+        .expect("the idle prompt starts the turn");
+    svc.send_prompt(&alice, &id, "redirect the running turn".into())
+        .await
+        .expect("the advertised mid-turn input grant is honoured");
+
+    let sent = until_sent(&adapter, |input| match input {
+        ConversationInput::Prompt(content) => content.iter().any(|block| match block {
+            layer3_adapter::ContentBlock::Text(text) => text.text == "redirect the running turn",
+            _ => false,
+        }),
+        _ => false,
+    })
+    .await;
+    assert_eq!(
+        sent.iter()
+            .filter(|input| matches!(input, ConversationInput::Prompt(_)))
+            .count(),
+        2,
+        "both prompts must reach a stub that advertises mid-turn input: {sent:?}"
     );
 }
 
@@ -447,6 +668,14 @@ async fn answering_an_approval_reaches_the_runtime_and_the_record() {
         &e.kind,
         EventKind::ApprovalResolved { request_id, allowed } if request_id == "req-1" && *allowed
     )));
+
+    assert_eq!(
+        svc.resolve_approval(&alice, &id, "req-1".into(), ApprovalDecision::Allow)
+            .await
+            .err(),
+        Some(crate::error::CoreError::InvalidState),
+        "an answered approval cannot be resolved a second time"
+    );
 }
 
 #[tokio::test]
