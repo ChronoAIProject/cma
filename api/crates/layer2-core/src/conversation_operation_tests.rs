@@ -496,13 +496,12 @@ async fn every_conversation_input_is_refused_while_rotating_and_reusable_afterwa
 
     record.session.status = SessionStatus::Ready;
     store.seed(&record).await.expect("handover completed");
-    svc.entries
-        .write()
-        .await
-        .get_mut(&created.id)
-        .expect("replacement entry")
-        .session
-        .status = SessionStatus::Ready;
+    {
+        let mut entries = svc.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("replacement entry");
+        entry.session.status = SessionStatus::Ready;
+        entry.pending_approvals.clear();
+    }
 
     svc.send_prompt(&alice, &created.id, "retry now".into())
         .await
@@ -510,6 +509,13 @@ async fn every_conversation_input_is_refused_while_rotating_and_reusable_afterwa
     svc.interrupt_turn(&alice, &created.id)
         .await
         .expect("the same interrupt succeeds after rotation");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("replacement entry")
+        .pending_approvals
+        .insert("approval-1".into(), None);
     svc.resolve_approval(
         &alice,
         &created.id,
@@ -613,9 +619,16 @@ async fn conversation_input_crosses_a_real_rotation_only_after_replacement() {
         async move { svc.reconcile().await }
     });
     adapter.wait_until_provision_paused().await;
-    assert!(
-        !svc.entries.read().await.contains_key(&created.id),
-        "the outgoing conversation entry is gone during replacement provisioning"
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the authoritative outgoing entry remains installed")
+            .session
+            .status,
+        SessionStatus::Rotating,
+        "the outgoing entry remains present but cannot accept input"
     );
     assert_eq!(
         store
@@ -674,9 +687,16 @@ async fn conversation_input_crosses_a_real_rotation_only_after_replacement() {
 
     adapter.resume_provision();
     svc.wait_until_live_install_paused().await;
-    assert!(
-        !svc.entries.read().await.contains_key(&created.id),
-        "the replacement conversation is not live at the readiness boundary"
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the outgoing entry remains until replacement installation")
+            .session
+            .status,
+        SessionStatus::Rotating,
+        "durable readiness alone must not make the outgoing entry interactive"
     );
     assert_eq!(
         store
@@ -726,13 +746,6 @@ async fn conversation_input_crosses_a_real_rotation_only_after_replacement() {
         .await
         .take()
         .expect("the replacement conversation is open");
-    svc.entries
-        .write()
-        .await
-        .get_mut(&created.id)
-        .expect("replacement entry")
-        .pending_approvals
-        .insert(APPROVAL.into(), None);
 
     svc.send_prompt(&alice, &created.id, PROMPT.into())
         .await
@@ -740,6 +753,13 @@ async fn conversation_input_crosses_a_real_rotation_only_after_replacement() {
     svc.interrupt_turn(&alice, &created.id)
         .await
         .expect("the same interrupt succeeds after rotation");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("replacement entry")
+        .pending_approvals
+        .insert(APPROVAL.into(), None);
     svc.resolve_approval(
         &alice,
         &created.id,

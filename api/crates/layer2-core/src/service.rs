@@ -621,7 +621,7 @@ impl SessionService {
 
     /// Classify an operation whose live runtime entry disappeared.
     ///
-    /// Rotation deliberately removes the outgoing entry before provisioning its
+    /// Compatibility handover can lack a live entry while provisioning its
     /// replacement. The durable record identifies most of that interval; the
     /// in-process marker spans the final boundary where readiness is durable but
     /// the replacement entry is not installed yet. Both are consulted only after

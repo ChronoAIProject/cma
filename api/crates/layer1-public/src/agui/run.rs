@@ -32,7 +32,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{rejection::JsonRejection, State},
     response::sse::{Event as SseEvent, KeepAlive, Sse},
     Json,
 };
@@ -132,8 +132,10 @@ pub(super) async fn run(
     State(operations): State<Arc<dyn OperationStore>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<axum::Extension<DelegatedCredential>>,
-    Json(body): Json<RunRequest>,
+    body: Result<Json<RunRequest>, JsonRejection>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, std::convert::Infallible>>>, RunFailure> {
+    let Json(body) = body?;
+
     if body
         .run_id
         .as_ref()
