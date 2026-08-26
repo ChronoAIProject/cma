@@ -12,6 +12,7 @@ fn subject_state(revision: u64) -> SubjectAuthState {
         tokens: None,
         refresh_lease: None,
         authorization: Authorization::none(),
+        authorization_check_after: SystemTime::UNIX_EPOCH,
         profile: Profile::default(),
     }
 }
@@ -309,6 +310,53 @@ async fn due_subject_pages_follow_each_index_order_and_keep_lease_lanes_disjoint
         .any(|cursor| cursor.subject.as_str() == "subject-stranded"));
     assert!(store
         .subjects_with_tokens(None, through_sequence, 0)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn authorization_due_pages_order_by_deadline_then_subject() {
+    let store = MemoryAuthStore::default();
+    let now = SystemTime::now();
+    let first_deadline = now - Duration::from_secs(2);
+    for (id, deadline) in [
+        ("subject-b", first_deadline),
+        ("subject-a", first_deadline),
+        ("subject-c", now - Duration::from_secs(1)),
+        ("subject-future", now + Duration::from_secs(1)),
+    ] {
+        let mut state = subject_state(0);
+        state.subject = SubjectId(id.into());
+        state.tokens = Some(subject_tokens(now + Duration::from_secs(600), None));
+        state.authorization_check_after = deadline;
+        assert!(store.insert_subject(state).await.unwrap());
+    }
+    let mut tokenless = subject_state(0);
+    tokenless.subject = SubjectId("subject-tokenless".into());
+    tokenless.authorization_check_after = first_deadline;
+    assert!(store.insert_subject(tokenless).await.unwrap());
+
+    let first = store
+        .subjects_due_for_authorization_check(now, None, 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        first
+            .iter()
+            .map(|item| item.cursor.subject.as_str())
+            .collect::<Vec<_>>(),
+        ["subject-a", "subject-b"]
+    );
+    let second = store
+        .subjects_due_for_authorization_check(now, Some(&first[1].cursor), 2)
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].cursor.subject.as_str(), "subject-c");
+    assert_eq!(second[0].cursor.ready_at, Some(now - Duration::from_secs(1)));
+    assert!(store
+        .subjects_due_for_authorization_check(now, None, 0)
         .await
         .unwrap()
         .is_empty());
