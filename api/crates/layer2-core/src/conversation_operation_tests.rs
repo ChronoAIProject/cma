@@ -119,9 +119,9 @@ async fn a_runtime_completion_cannot_overtake_the_prompt_turn_boundary() {
     let turn = events
         .iter()
         .filter_map(|event| match &event.kind {
-            EventKind::TurnStarted
-            | EventKind::OwnerMessage { .. }
-            | EventKind::TurnCompleted => Some(&event.kind),
+            EventKind::TurnStarted | EventKind::OwnerMessage { .. } | EventKind::TurnCompleted => {
+                Some(&event.kind)
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
