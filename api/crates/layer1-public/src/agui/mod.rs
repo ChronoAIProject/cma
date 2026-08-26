@@ -44,6 +44,9 @@ mod resources;
 mod run;
 mod run_ending;
 mod state;
+#[cfg(test)]
+#[path = "steer_tests.rs"]
+mod steer_tests;
 
 pub use state::initial_state;
 
