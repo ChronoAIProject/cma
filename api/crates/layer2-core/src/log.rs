@@ -148,6 +148,7 @@ struct RecordFields {
     context: bool,
     rotation: bool,
     handover: bool,
+    skill_packs: bool,
 }
 
 #[derive(Default)]
@@ -2691,6 +2692,7 @@ fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
     let mut record = SessionRecord::new(session);
     record.runtime_id = entry.runtime.as_ref().map(|handle| handle.0.clone());
     record.context_ref = entry.context_ref.clone();
+    record.skill_packs = entry.skill_packs.clone();
     record.revision = entry.event_log.revision.load(Ordering::Acquire);
     record
 }
@@ -2742,6 +2744,7 @@ impl RecordFields {
         // handover; a mere difference from its local predecessor must never let
         // it resurrect that handle over newer durable authority.
         fields.context = before.context_ref != intended.context_ref;
+        fields.skill_packs = before.skill_packs != intended.skill_packs;
         fields
     }
 
@@ -2947,6 +2950,12 @@ impl RecordChange {
             &before.pending_handover,
             &intended.pending_handover,
         );
+        compatible &= rebase_selected(
+            self.fields.skill_packs,
+            &mut durable.skill_packs,
+            &before.skill_packs,
+            &intended.skill_packs,
+        );
 
         if !compatible {
             return Err(StoreError::RevisionConflict { expected, actual });
@@ -3059,6 +3068,11 @@ impl RecordChange {
             self.fields.handover,
             &mut target.pending_handover,
             &intended.pending_handover,
+        );
+        copy_selected(
+            self.fields.skill_packs,
+            &mut target.skill_packs,
+            &intended.skill_packs,
         );
     }
 }

@@ -792,6 +792,7 @@ impl SessionService {
             attached: None,
             attachments_issued: 0,
             context_ref: current.context_ref.clone(),
+            skill_packs: current.skill_packs.clone(),
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
