@@ -413,8 +413,34 @@ impl Launch {
             (LaunchEffectKind::Session, LaunchEffectResult::Session { session }) => {
                 self.session = Some(session)
             }
-            (LaunchEffectKind::Reach, LaunchEffectResult::Reach { reach }) => {
-                self.reach = Some(reach)
+            (
+                LaunchEffectKind::Reach,
+                LaunchEffectResult::Reach {
+                    reach,
+                    connection,
+                    authority,
+                },
+            ) => {
+                connection.validate_for(
+                    &self
+                        .revision
+                        .content
+                        .repository_access
+                        .required_scope_classes,
+                )?;
+                if authority.subject != self.owner
+                    || authority.service_id != connection.service_id
+                    || authority.detects_drift(&connection)
+                    || reach.service_id != connection.service_id
+                {
+                    return Err(TriggerValidationError::field(
+                        "reach",
+                        "does not match the current subject and connection",
+                    ));
+                }
+                self.connection = Some(connection);
+                self.authority = Some(authority);
+                self.reach = Some(reach);
             }
             (
                 LaunchEffectKind::InitialDispatch,

@@ -208,6 +208,25 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
         .expect("readiness body");
     let readiness: serde_json::Value = serde_json::from_slice(&readiness).unwrap();
     assert_eq!(readiness["workspaceCheckpoint"]["version"], VERSION);
+    assert_eq!(
+        readiness["githubCapability"]["name"],
+        "github_capability_v1"
+    );
+    assert_eq!(
+        readiness["githubCapability"]["version"],
+        crate::github_capability::POLICY_VERSION
+    );
+    assert_eq!(
+        readiness["githubCapability"]["operationClasses"],
+        serde_json::json!([
+            "repository_read",
+            "tree_read",
+            "object_create",
+            "launch_ref_create",
+            "launch_ref_update",
+            "status_read",
+        ])
+    );
 
     let params = crate::WorkspaceRestoreParams {
         epoch: 1,

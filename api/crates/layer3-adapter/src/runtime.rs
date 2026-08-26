@@ -244,6 +244,12 @@ pub struct RuntimeSpec {
     /// not the same as the runtime never having been told, and the two are
     /// kept apart where this is rendered.
     pub reaches: Vec<String>,
+    /// Whether this runtime must reject platform GitHub calls until it has an
+    /// authenticated, launch-scoped policy.
+    ///
+    /// Provider-neutral intent: Layer 3 transports an opaque runtime policy
+    /// and never interprets its provider-shaped contents.
+    pub runtime_policy_required: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -321,6 +327,14 @@ pub enum RuntimePermission {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeHandle(pub String);
 
+/// What a runtime acknowledged after installing one opaque policy envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimePolicyReceipt {
+    pub generation: u64,
+    pub fence: u64,
+    pub revoked: bool,
+}
+
 /// Something sent toward the runtime's terminal.
 #[derive(Debug, Clone)]
 pub enum TerminalInput {
@@ -341,6 +355,11 @@ pub enum TerminalInput {
         operation_id: String,
         /// Secret value to install. Never render this variant with its value.
         value: String,
+    },
+    /// Install one opaque authenticated policy envelope or tombstone.
+    RuntimePolicy {
+        operation_id: String,
+        envelope: String,
     },
     /// Restart the supervised program under a different front-end.
     ///

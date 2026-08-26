@@ -28,8 +28,13 @@ use axum::{
     extract::{Request, State},
     http::{HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
+    Json,
 };
 use tokio::sync::RwLock;
+
+use crate::github_capability::{
+    CapabilityRefusal, GithubCapabilityGate, MAX_BODY_BYTES as MAX_GITHUB_BODY_BYTES,
+};
 
 /// The current credential, replaceable while requests are in flight.
 #[derive(Clone, Default)]
@@ -69,6 +74,9 @@ pub struct UpstreamState {
     /// The credential to present.
     pub credential: CredentialHolder,
     http: reqwest::Client,
+    /// Launch-scoped filter for the identity-platform proxy, absent on the
+    /// model endpoint and on runtimes not provisioned for this flow.
+    github_capability: Option<GithubCapabilityGate>,
     /// The last refusal the model endpoint gave, if it has given one.
     ///
     /// Recorded because an agent's own account of a failed call is unreliable
@@ -117,6 +125,7 @@ impl UpstreamState {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             credential,
+            github_capability: None,
             fault: UpstreamFault::default(),
             http: reqwest::Client::builder()
                 // Model responses stream for a long time; a short timeout here
@@ -127,16 +136,58 @@ impl UpstreamState {
         }
     }
 
+    /// Add the runtime's GitHub policy gate to the platform proxy.
+    pub fn with_github_capability(mut self, gate: GithubCapabilityGate) -> Self {
+        self.github_capability = Some(gate);
+        self
+    }
+
     /// Join the upstream base to an incoming path and query.
     pub fn target(&self, uri: &Uri) -> String {
         let path = uri.path();
         let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
         format!("{}{}{}", self.base_url, path, query)
     }
+
+    fn target_path(&self, path_and_query: &str) -> String {
+        format!("{}{}", self.base_url, path_and_query)
+    }
 }
 
 /// Forward one request upstream with the credential attached.
 pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response {
+    let (parts, body) = req.into_parts();
+    let body_limit = state
+        .github_capability
+        .as_ref()
+        .filter(|gate| gate.required())
+        .map(|_| MAX_GITHUB_BODY_BYTES)
+        .unwrap_or(usize::MAX);
+    let bytes = match axum::body::to_bytes(body, body_limit).await {
+        Ok(b) => b,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("unreadable body: {e}")).into_response()
+        }
+    };
+
+    // Policy runs before credential lookup. A missing credential must not mask
+    // a missing/revoked policy, and no rejected request may acquire a bearer.
+    let canonical = match state.github_capability.as_ref() {
+        Some(gate) => match gate
+            .evaluate(
+                &parts.method,
+                &parts.uri,
+                &bytes,
+                epoch_seconds(std::time::SystemTime::now()),
+            )
+            .await
+        {
+            Ok(request) => request,
+            Err(refusal) => return capability_refusal(refusal, &parts.method),
+        },
+        None => None,
+    };
+
     let Some(credential) = state.credential.get().await else {
         // Failing loudly beats forwarding an unauthenticated call and letting
         // the agent misread the upstream's 401 as a model error.
@@ -147,14 +198,14 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
             .into_response();
     };
 
-    let target = state.target(req.uri());
-    let (parts, body) = req.into_parts();
-    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
-        Ok(b) => b,
-        Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("unreadable body: {e}")).into_response()
-        }
-    };
+    let target = canonical
+        .as_ref()
+        .map(|request| state.target_path(&request.path_and_query))
+        .unwrap_or_else(|| state.target(&parts.uri));
+    let canonical_github = canonical.is_some();
+    let outbound_body = canonical
+        .map(|request| request.body)
+        .unwrap_or_else(|| bytes.to_vec());
 
     let mut outbound = reqwest::Request::new(
         parts.method.clone(),
@@ -169,6 +220,14 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
     for (name, value) in parts.headers.iter() {
         let n = name.as_str().to_ascii_lowercase();
         if n == "authorization" || n == "host" || n == "content-length" {
+            continue;
+        }
+        if canonical_github
+            && !matches!(
+                n.as_str(),
+                "accept" | "content-type" | "user-agent" | "x-github-api-version"
+            )
+        {
             continue;
         }
         outbound.headers_mut().insert(name.clone(), value.clone());
@@ -187,7 +246,7 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
                 .into_response()
         }
     }
-    *outbound.body_mut() = Some(bytes.to_vec().into());
+    *outbound.body_mut() = Some(outbound_body.into());
 
     match state.http.execute(outbound).await {
         Ok(resp) => {
@@ -232,6 +291,30 @@ pub async fn proxy(State(state): State<UpstreamState>, req: Request) -> Response
             (StatusCode::BAD_GATEWAY, format!("upstream failed: {e}")).into_response()
         }
     }
+}
+
+fn capability_refusal(refusal: CapabilityRefusal, method: &axum::http::Method) -> Response {
+    tracing::warn!(
+        operation = %method,
+        refusal = refusal.wire_name(),
+        "GitHub request refused by the runtime capability"
+    );
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "type": "https://cma.chrono.ai/problems/github-capability-refused",
+            "title": "GitHub capability refused",
+            "status": 403,
+            "code": refusal.wire_name(),
+        })),
+    )
+        .into_response()
+}
+
+fn epoch_seconds(now: std::time::SystemTime) -> u64 {
+    now.duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[cfg(test)]

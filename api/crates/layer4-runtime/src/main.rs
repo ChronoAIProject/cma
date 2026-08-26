@@ -8,6 +8,7 @@ mod bridge;
 mod carry;
 mod conversation;
 mod conversation_link;
+mod github_capability;
 mod lanes;
 mod link;
 mod prelude;
@@ -28,6 +29,7 @@ use axum::{
 use tokio::sync::{Mutex, RwLock};
 
 use crate::bridge::Bridge;
+use crate::github_capability::GithubCapabilityGate;
 use crate::pty::PtyRegistry;
 use crate::upstream::{CredentialHolder, UpstreamState};
 
@@ -43,6 +45,8 @@ pub(crate) struct AppState {
     commands: Vec<String>,
     /// The owner's credential, swappable while the agent runs.
     credential: CredentialHolder,
+    /// Signed GitHub policy shared by the control lane and platform proxy.
+    github_capability: GithubCapabilityGate,
     /// This pod's home directory, where the agent keeps its conversation.
     home: std::path::PathBuf,
     /// The repository workspace, kept outside the agent's configuration and
@@ -115,6 +119,7 @@ impl AppState {
             )),
             commands: commands.iter().map(|c| (*c).to_string()).collect(),
             credential: CredentialHolder::new(),
+            github_capability: GithubCapabilityGate::disabled(),
             home: std::path::PathBuf::from("/home/chrono"),
             workspace_root: std::path::PathBuf::from("/home/chrono/workspace"),
             startup_gate: std::sync::Arc::new(RwLock::new(())),
@@ -277,6 +282,39 @@ async fn main() {
     }
 
     let credential = CredentialHolder::new();
+    let capability_required = match std::env::var("CHRONO_GITHUB_CAPABILITY_REQUIRED")
+        .unwrap_or_else(|_| "false".to_string())
+        .as_str()
+    {
+        "true" => true,
+        "false" => false,
+        _ => {
+            tracing::error!("CHRONO_GITHUB_CAPABILITY_REQUIRED must be exactly true or false");
+            std::process::exit(2);
+        }
+    };
+    let session_id = std::env::var("CHRONO_SESSION_ID").unwrap_or_default();
+    let reaches = std::env::var("CHRONO_SESSION_REACHES")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let verification_keys =
+        std::env::var("CHRONO_GITHUB_CAPABILITY_VERIFY_KEYS").unwrap_or_default();
+    let github_capability = match GithubCapabilityGate::from_configuration(
+        capability_required,
+        session_id,
+        reaches,
+        &verification_keys,
+    ) {
+        Ok(gate) => gate,
+        Err(error) => {
+            tracing::error!(%error, "GitHub capability configuration is not usable");
+            std::process::exit(2);
+        }
+    };
 
     // The agent talks to this proxy, not to the model endpoint. Configuration
     // is written before anything starts so the first turn already goes through
@@ -305,6 +343,7 @@ async fn main() {
             proxy_bind,
             upstream_base.clone(),
             credential.clone(),
+            None,
         );
     }
 
@@ -338,6 +377,7 @@ async fn main() {
             platform_bind,
             platform_upstream,
             credential.clone(),
+            Some(github_capability.clone()),
         );
     }
 
@@ -351,6 +391,7 @@ async fn main() {
         command: std::sync::Arc::new(std::sync::Mutex::new(command.clone())),
         commands,
         credential,
+        github_capability,
         home: home.clone(),
         workspace_root,
         startup_gate: std::sync::Arc::new(RwLock::new(())),
@@ -530,8 +571,12 @@ fn spawn_credential_proxy(
     bind: std::net::SocketAddr,
     upstream_base: String,
     credential: CredentialHolder,
+    github_capability: Option<GithubCapabilityGate>,
 ) -> upstream::UpstreamFault {
-    let state = UpstreamState::new(upstream_base.clone(), credential);
+    let mut state = UpstreamState::new(upstream_base.clone(), credential);
+    if let Some(gate) = github_capability {
+        state = state.with_github_capability(gate);
+    }
     let fault = state.fault();
     let app = Router::new()
         .fallback(axum::routing::any(upstream::proxy))
@@ -672,6 +717,7 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         .resources
         .sample(std::time::Instant::now())
         .has_observations();
+    let github_capability = state.github_capability.snapshot().await;
     // Whether a credential is held, never which one: an operator needs to know
     // if calls would fail, not what the value is.
     axum::Json(serde_json::json!({
@@ -685,6 +731,15 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // as a sandbox that is gone and replaces a healthy one.
         "prelude": true,
         "workspaceCheckpoint": { "version": workspace::VERSION },
+        "githubCapability": {
+            "name": "github_capability_v1",
+            "version": github_capability::POLICY_VERSION,
+            "operationClasses": github_capability::GithubOperationClass::ALL
+                .iter()
+                .map(|operation| operation.wire_name())
+                .collect::<Vec<_>>(),
+            "runtime": github_capability,
+        },
         // Declared only when this pod has observed something useful. The route
         // existing proves a wire version, not that this guest exposes any
         // counter. A control plane must still never open the link on a guess:

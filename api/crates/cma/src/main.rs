@@ -325,7 +325,36 @@ async fn main() {
         }
     }
 
-    let adapters = crate::kernels::registry(&config);
+    let github_capability_signer = match config.github_capability_signing.as_ref() {
+        Some(signing) => {
+            match trigger::capability_signing::CapabilitySigner::from_config(signing) {
+                Ok(signer) => {
+                    tracing::info!(
+                        key_id = signer.key_id(),
+                        "GitHub runtime-policy signing is enabled"
+                    );
+                    Some(Arc::new(signer))
+                }
+                Err(error) => {
+                    tracing::error!(error = %error, "GitHub runtime-policy signing is not usable");
+                    std::process::exit(2);
+                }
+            }
+        }
+        None => {
+            tracing::warn!(
+                "GitHub runtime-policy signing is disabled; Trigger Launch execution will remain disabled"
+            );
+            None
+        }
+    };
+    let adapters = crate::kernels::registry(
+        &config,
+        github_capability_signer
+            .as_ref()
+            .map(|signer| signer.verification_keys_json())
+            .unwrap_or_default(),
+    );
 
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
         Box::new(VtScreen::new(geometry)) as Box<dyn ScreenModel>
@@ -583,15 +612,20 @@ async fn main() {
     // read-only attachment check. Scheduler activation remains gated on the
     // rest of the closed effect vocabulary.
     let _trigger_effect_executor = trigger_github.and_then(|github| {
-        trigger_workspace_store.as_ref().map(|workspace_store| {
-            let workspace_store: Arc<dyn layer2_core::BaselineObjectStore> =
-                Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
-            Arc::new(trigger::github_effects::GithubEffectExecutor::with_runtime(
-                github,
-                workspace_store,
-                Arc::clone(&service),
-            ))
-        })
+        trigger_workspace_store
+            .as_ref()
+            .and_then(|workspace_store| {
+                github_capability_signer.as_ref().map(|signer| {
+                    let workspace_store: Arc<dyn layer2_core::BaselineObjectStore> =
+                        Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
+                    Arc::new(trigger::github_effects::GithubEffectExecutor::with_runtime(
+                        github,
+                        workspace_store,
+                        Arc::clone(&service),
+                        Arc::clone(signer),
+                    ))
+                })
+            })
     });
 
     // Keeps delegated credentials valid underneath running sessions, and pushes

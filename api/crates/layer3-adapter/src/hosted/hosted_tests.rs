@@ -174,6 +174,7 @@ fn spec() -> RuntimeSpec {
         workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
@@ -856,6 +857,109 @@ fn a_malformed_or_unrelated_control_frame_is_not_a_credential_result() {
 }
 
 #[test]
+fn runtime_policy_results_are_closed_and_require_complete_acknowledgement_metadata() {
+    for text in [
+        r#"{"t":"github_capability_result","operation_id":"opaque","accepted":true}"#,
+        r#"{"t":"github_capability_result","operation_id":"opaque","accepted":true,"generation":1,"fence":2}"#,
+        r#"{"t":"github_capability_result","operation_id":"opaque","accepted":false}"#,
+        r#"{"t":"github_capability_result","accepted":false,"refusal":"expired"}"#,
+        r#"{"t":"credential_result","operation_id":"opaque","accepted":false,"refusal":"expired"}"#,
+        "not json",
+    ] {
+        assert_eq!(
+            super::link::runtime_policy_answer(text),
+            None,
+            "accepted partial policy result {text}"
+        );
+    }
+    assert_eq!(
+        super::link::runtime_policy_answer(
+            r#"{"t":"github_capability_result","operation_id":"opaque","accepted":true,"generation":3,"fence":7,"revoked":false}"#,
+        ),
+        Some((
+            "opaque".into(),
+            super::link::RuntimePolicyAnswer {
+                accepted: true,
+                generation: Some(3),
+                fence: Some(7),
+                revoked: Some(false),
+                refusal: None,
+            },
+        ))
+    );
+    assert_eq!(
+        super::link::runtime_policy_answer(
+            r#"{"t":"github_capability_result","operation_id":"opaque","accepted":false,"refusal":"expired"}"#,
+        ),
+        Some((
+            "opaque".into(),
+            super::link::RuntimePolicyAnswer {
+                accepted: false,
+                generation: None,
+                fence: None,
+                revoked: None,
+                refusal: Some("expired".into()),
+            },
+        ))
+    );
+}
+
+#[test]
+fn runtime_policy_input_is_an_identical_text_control_frame_on_both_wire_dialects() {
+    for framed in [false, true] {
+        let message = HostedKernel::encode(
+            TerminalInput::RuntimePolicy {
+                operation_id: "policy-operation".into(),
+                envelope: "signed-envelope".into(),
+            },
+            framed,
+        );
+        let Message::Text(body) = message else {
+            panic!("runtime policy must travel on the text control lane");
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed,
+            serde_json::json!({
+                "t": "github_capability",
+                "operation_id": "policy-operation",
+                "envelope": "signed-envelope",
+            })
+        );
+    }
+}
+
+#[test]
+fn runtime_policy_readiness_requires_the_exact_name_version_and_runtime_support() {
+    let ready = |name: &str, version: u64, supported: bool| {
+        serde_json::json!({
+            "githubCapability": {
+                "name": name,
+                "version": version,
+                "runtime": { "supported": supported },
+            }
+        })
+        .to_string()
+    };
+    assert!(super::readiness_supports_runtime_policy(
+        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, true).as_bytes()
+    ));
+    for body in [
+        ready("github_capability_v2", super::RUNTIME_POLICY_VERSION, true),
+        ready(
+            "github_capability_v1",
+            super::RUNTIME_POLICY_VERSION + 1,
+            true,
+        ),
+        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, false),
+        "{}".into(),
+        "not-json".into(),
+    ] {
+        assert!(!super::readiness_supports_runtime_policy(body.as_bytes()));
+    }
+}
+
+#[test]
 fn terminal_input_is_framed_only_on_the_wire_that_has_lanes() {
     // Control travels as text and is identical on both dialects, which is what
     // lets a credential reach a pod that predates lanes and one that does not
@@ -926,6 +1030,37 @@ async fn a_conversations_control_lane_carries_a_credential() {
     assert_eq!(parsed["t"], "credential");
     assert_eq!(parsed["operation_id"], "credential-operation");
     assert_eq!(parsed["value"], "a-real-credential-value");
+}
+
+#[tokio::test]
+async fn a_conversations_control_lane_carries_runtime_policy() {
+    let sent: Arc<tokio::sync::Mutex<Vec<Message>>> = Arc::default();
+    let sink = Arc::new(tokio::sync::Mutex::new(Recorder(Arc::clone(&sent))));
+
+    let control = super::control_lane(sink, None);
+    control
+        .send(TerminalInput::RuntimePolicy {
+            operation_id: "policy-operation".into(),
+            envelope: "signed-envelope".into(),
+        })
+        .await
+        .expect("the lane accepts runtime policy");
+    for _ in 0..50 {
+        if !sent.lock().await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    let frames = sent.lock().await.clone();
+    assert_eq!(frames.len(), 1);
+    let Message::Text(body) = &frames[0] else {
+        panic!("runtime policy travels as a control frame: {frames:?}");
+    };
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(parsed["t"], "github_capability");
+    assert_eq!(parsed["operation_id"], "policy-operation");
+    assert_eq!(parsed["envelope"], "signed-envelope");
 }
 
 #[tokio::test]
