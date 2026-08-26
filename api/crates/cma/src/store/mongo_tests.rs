@@ -1,4 +1,7 @@
 use super::*;
+use layer2_core::coordination::{
+    RuntimeCleanupReason, SessionBoundary, SessionLeaseRequest, SessionOperation,
+};
 use layer2_core::{
     AgentOptions, Event, EventKind, KernelId, PageCursor, PageRequest, Rate, RateCardId,
     RecoveryState, Session, SessionId, SessionListQuery, SessionPricing, SessionRecord,
@@ -218,6 +221,25 @@ fn a_document_without_revision_reads_as_revision_zero() {
         mongodb::bson::deserialize_from_bson(document.into()).expect("legacy doc reads");
 
     assert_eq!(from_doc(legacy).expect("legacy record decodes").revision, 0);
+}
+
+#[test]
+fn a_document_without_coordination_reads_as_exact_legacy_authority() {
+    let mut record = record_with(None);
+    record.runtime_id = Some("runtime-legacy".into());
+    let stored = to_doc(&record).expect("record can be stored");
+    let mut document = mongodb::bson::serialize_to_document(&stored).expect("doc serializes");
+    assert!(document.remove("coordination").is_some());
+    let legacy: SessionDoc =
+        mongodb::bson::deserialize_from_bson(document.into()).expect("legacy doc reads");
+
+    assert_eq!(
+        runtime_authority_from_doc(&legacy).expect("legacy authority is valid"),
+        RuntimeAuthority {
+            generation: 0,
+            runtime_id: Some("runtime-legacy".into()),
+        }
+    );
 }
 
 #[test]
@@ -912,6 +934,53 @@ fn namespace_cutover_marker_accepts_only_supported_immutable_provenance() {
 }
 
 #[test]
+fn coordination_receipt_provenance_is_exact_and_uuid_bound() {
+    assert_eq!(
+        validate_coordination_receipts_provenance(
+            coordination_receipts_provenance_document(&CoordinationReceiptsProvenance::InProgress,)
+                .unwrap(),
+        )
+        .unwrap(),
+        CoordinationReceiptsProvenance::InProgress
+    );
+    let complete = CoordinationReceiptsProvenance::Complete {
+        collection_id: test_collection_uuid(9),
+    };
+    assert_eq!(
+        validate_coordination_receipts_provenance(
+            coordination_receipts_provenance_document(&complete).unwrap(),
+        )
+        .unwrap(),
+        complete
+    );
+    for invalid in [
+        doc! {
+            "_id": COORDINATION_RECEIPTS_PROVENANCE_ID,
+            "protocol": COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL + 1,
+            "phase": "in-progress",
+        },
+        doc! {
+            "_id": COORDINATION_RECEIPTS_PROVENANCE_ID,
+            "protocol": COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL,
+            "phase": "complete",
+        },
+        doc! {
+            "_id": COORDINATION_RECEIPTS_PROVENANCE_ID,
+            "protocol": COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL,
+            "phase": "in-progress",
+            "extra": true,
+        },
+    ] {
+        assert!(validate_coordination_receipts_provenance(invalid).is_err());
+    }
+    assert!(validate_exact_coordination_receipts_id(
+        &test_collection_uuid(1),
+        &test_collection_uuid(2),
+    )
+    .is_err());
+}
+
+#[test]
 fn completed_namespace_provenance_rejects_loss_and_replacement() {
     let ready = |authoritative: &str, uuid| NamespacePair {
         legacy: Some(NamespaceKind::View {
@@ -961,6 +1030,7 @@ fn protocol_validators_require_the_current_marker_and_session_revision() {
         .get_array("required")
         .expect("required fields are explicit");
     assert!(required.contains(&Bson::String(WRITE_PROTOCOL_FIELD.into())));
+    assert!(required.contains(&Bson::String(COORDINATION_PROTOCOL_FIELD.into())));
     assert!(required.contains(&Bson::String("revision".into())));
     assert_eq!(
         schema
@@ -977,12 +1047,19 @@ fn protocol_validators_require_the_current_marker_and_session_revision() {
         event_protocol_validator(),
         write_protocol_validator(),
         tombstone_protocol_validator(),
+        coordination_receipt_protocol_validator(),
     ] {
         let schema = validator.get_document("$jsonSchema").unwrap();
         assert!(schema
             .get_array("required")
             .unwrap()
             .contains(&Bson::String(WRITE_PROTOCOL_FIELD.into())));
+        if documents_equivalent(&validator, &coordination_receipt_protocol_validator()) {
+            assert!(schema
+                .get_array("required")
+                .unwrap()
+                .contains(&Bson::String(COORDINATION_PROTOCOL_FIELD.into())));
+        }
         assert_eq!(
             schema
                 .get_document("properties")
@@ -1023,8 +1100,12 @@ fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types(
                     "enum": [WRITE_PROTOCOL],
                     "bsonType": "int",
                 },
+                COORDINATION_PROTOCOL_FIELD: {
+                    "enum": [COORDINATION_PROTOCOL],
+                    "bsonType": "int",
+                },
             },
-            "required": [WRITE_PROTOCOL_FIELD, "revision"],
+            "required": [WRITE_PROTOCOL_FIELD, "revision", COORDINATION_PROTOCOL_FIELD],
             "bsonType": "object",
         }
     };
@@ -1046,8 +1127,12 @@ fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types(
                     "enum": [WRITE_PROTOCOL],
                 },
                 "revision": { "bsonType": "long" },
+                COORDINATION_PROTOCOL_FIELD: {
+                    "bsonType": "int",
+                    "enum": [COORDINATION_PROTOCOL],
+                },
             },
-            "required": ["revision", WRITE_PROTOCOL_FIELD],
+            "required": ["revision", WRITE_PROTOCOL_FIELD, COORDINATION_PROTOCOL_FIELD],
             "bsonType": "object",
         }
     };
@@ -1059,13 +1144,17 @@ fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types(
     let wrong_bson_type = doc! {
         "$jsonSchema": {
             "bsonType": "object",
-            "required": [WRITE_PROTOCOL_FIELD, "revision"],
+            "required": [WRITE_PROTOCOL_FIELD, "revision", COORDINATION_PROTOCOL_FIELD],
             "properties": {
                 WRITE_PROTOCOL_FIELD: {
                     "bsonType": "int",
                     "enum": [i64::from(WRITE_PROTOCOL)],
                 },
                 "revision": { "bsonType": "long" },
+                COORDINATION_PROTOCOL_FIELD: {
+                    "bsonType": "int",
+                    "enum": [COORDINATION_PROTOCOL],
+                },
             },
         }
     };
@@ -1123,6 +1212,24 @@ fn required_event_index() -> RequiredIndex {
         .into_iter()
         .find(|required| required.collection == EVENTS)
         .expect("the event sequence index is required")
+}
+
+#[test]
+fn coordination_receipts_have_a_required_session_and_kind_index() {
+    let required = required_indexes()
+        .into_iter()
+        .find(|required| required.collection == COORDINATION_RECEIPTS)
+        .expect("coordination receipts are indexed for debt scans and deletion");
+    assert_eq!(
+        required.keys,
+        doc! {
+            "_id.session_id": 1,
+            "_id.kind": 1,
+            "payload.type": 1,
+        }
+    );
+    validate_required_index(&required, &[required_index_model(&required)])
+        .expect("the exact coordination receipt index is accepted");
 }
 
 #[test]
@@ -1193,13 +1300,18 @@ fn namespace_mutation_authorization_requires_a_transaction_qualification_token()
 }
 
 #[test]
-fn current_session_documents_carry_the_write_protocol() {
+fn current_session_documents_carry_both_writer_protocols() {
     let stored = to_doc(&record_with(None)).expect("record encodes");
     let document = mongodb::bson::serialize_to_document(&stored).expect("record serializes");
     assert_eq!(
         document.get_i32(WRITE_PROTOCOL_FIELD).unwrap(),
         WRITE_PROTOCOL
     );
+    assert_eq!(
+        document.get_i32(COORDINATION_PROTOCOL_FIELD).unwrap(),
+        COORDINATION_PROTOCOL
+    );
+    assert!(document.contains_key("coordination"));
 }
 
 #[test]
@@ -2320,6 +2432,328 @@ async fn a_real_legacy_document_passes_its_first_revision_zero_cas() {
         .expect("updated record exists");
     assert_eq!(durable.revision, 1);
     assert_eq!(durable.context_ref.as_deref(), Some("first-cas-succeeded"));
+
+    client
+        .database(&database)
+        .drop()
+        .await
+        .expect("temporary database drops");
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_legacy_document_can_acquire_its_first_durable_lease() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_legacy_coordination_{}_{}",
+        std::process::id(),
+        nonce
+    );
+
+    let mut original = record_with(None);
+    original.session.id = SessionId("sesn_legacy_coordination".into());
+    original.session.last_seq = 0;
+    let stored = to_doc(&original).expect("record encodes");
+    let mut legacy = mongodb::bson::serialize_to_document(&stored).expect("record serializes");
+    assert!(legacy.remove("revision").is_some());
+    assert!(legacy.remove(WRITE_PROTOCOL_FIELD).is_some());
+    assert!(legacy.remove(COORDINATION_PROTOCOL_FIELD).is_some());
+    assert!(legacy.remove("coordination").is_some());
+    client
+        .database(&database)
+        .collection::<Document>(LEGACY_SESSIONS)
+        .insert_one(legacy)
+        .await
+        .expect("legacy document is seeded before either writer fence");
+
+    let store = MongoSessionStore::open(&client, &database, true)
+        .await
+        .expect("test store opens and fences the legacy namespace");
+    let record = store
+        .get(&original.session.id)
+        .await
+        .expect("legacy session reads")
+        .expect("legacy session exists");
+    let authority = store
+        .runtime_authority(&original.session.id)
+        .await
+        .expect("legacy authority reads")
+        .expect("legacy session has authority metadata");
+    let mut forbidden = record.clone();
+    forbidden.runtime_id = Some("runtime-bypassing-coordination".into());
+    assert!(matches!(
+        store
+            .commit_session_idempotent("legacy-runtime-bypass", &forbidden, &[])
+            .await,
+        Err(StoreError::SessionAuthorityChanged { .. })
+    ));
+    let request = SessionLeaseRequest {
+        session_id: original.session.id.clone(),
+        holder: "legacy-coordination-test".into(),
+        token: "lease-legacy-first-touch".into(),
+        boundary: SessionBoundary::for_record(&record, authority.generation),
+        operation: SessionOperation::Lifecycle,
+        ttl: Duration::from_secs(30),
+    };
+    let lease = store
+        .acquire_session_lease(&request)
+        .await
+        .expect("the first coordination write promotes every required field");
+
+    let promoted = store
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &original.session.id.0 })
+        .await
+        .expect("promoted document reads")
+        .expect("promoted document exists");
+    assert_eq!(promoted.get_i64("revision").unwrap(), 0);
+    assert_eq!(
+        promoted.get_i32(WRITE_PROTOCOL_FIELD).unwrap(),
+        WRITE_PROTOCOL
+    );
+    assert_eq!(
+        promoted.get_i32(COORDINATION_PROTOCOL_FIELD).unwrap(),
+        COORDINATION_PROTOCOL
+    );
+    assert!(promoted
+        .get_document("coordination")
+        .unwrap()
+        .get_datetime("server_now")
+        .is_ok());
+    store
+        .release_session_lease(&lease)
+        .await
+        .expect("the promoted lease releases");
+
+    client
+        .database(&database)
+        .drop()
+        .await
+        .expect("temporary database drops");
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_store_coordinates_exact_cleanup_before_deletion() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!("chrono_exact_coordination_{}_{}", std::process::id(), nonce);
+    let store = MongoSessionStore::open(&client, &database, false)
+        .await
+        .expect("test store opens");
+
+    let id = SessionId("sesn_exact_coordination".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.last_seq = 0;
+    seed.runtime_id = None;
+    store
+        .create_session_idempotent("seed-exact-coordination", &seed, &[])
+        .await
+        .expect("coordination session is seeded");
+    let durable = store.get(&id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let mut lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "exact-coordination-test".into(),
+            token: "lease-exact-coordination".into(),
+            boundary: SessionBoundary::for_record(&durable, authority.generation),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .expect("lifecycle lease is acquired");
+    assert!(matches!(
+        store.delete(&id).await,
+        Err(StoreError::SessionLeaseHeld { .. })
+    ));
+
+    let reservation = store
+        .reserve_runtime_generation(&lease, "reservation-runtime-one")
+        .await
+        .expect("runtime generation is reserved");
+    assert_eq!(
+        store
+            .reserve_runtime_generation(&lease, "reservation-runtime-one")
+            .await
+            .expect("reservation retry replays"),
+        reservation
+    );
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, "runtime-one")
+        .await
+        .expect("runtime candidate is registered");
+    assert_eq!(
+        store
+            .register_runtime_candidate(&lease, &reservation, "runtime-one")
+            .await
+            .expect("candidate retry replays"),
+        candidate
+    );
+    let candidate_debts = store.runtime_cleanup_debts(&id).await.unwrap();
+    assert_eq!(candidate_debts.len(), 1);
+    assert_eq!(candidate_debts[0].generation, reservation.generation.get());
+    assert_eq!(candidate_debts[0].runtime_id, "runtime-one");
+    assert_eq!(
+        candidate_debts[0].reason,
+        RuntimeCleanupReason::UncommittedCandidate
+    );
+
+    let mut switch_retry_lease = lease.clone();
+    let switched = store
+        .switch_runtime_authority(&mut lease, &candidate)
+        .await
+        .expect("candidate becomes authority atomically");
+    assert_eq!(
+        store
+            .switch_runtime_authority(&mut switch_retry_lease, &candidate)
+            .await
+            .expect("switch retry replays"),
+        switched
+    );
+    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
+    assert_eq!(
+        store.runtime_authority(&id).await.unwrap().unwrap(),
+        switched.boundary.authority
+    );
+
+    let mut retirement_retry_lease = lease.clone();
+    let retired = store
+        .retire_runtime_authority(&mut lease, "retirement-runtime-one")
+        .await
+        .expect("authority retires with exact cleanup debt");
+    assert_eq!(
+        store
+            .retire_runtime_authority(&mut retirement_retry_lease, "retirement-runtime-one",)
+            .await
+            .expect("retirement retry replays"),
+        retired
+    );
+    assert_eq!(
+        store.runtime_cleanup_debts(&id).await.unwrap(),
+        vec![retired.cleanup.clone()]
+    );
+    store
+        .release_session_lease(&lease)
+        .await
+        .expect("retirement lease releases");
+    assert!(matches!(
+        store.delete(&id).await,
+        Err(StoreError::SessionCleanupPending {
+            runtime_id: None,
+            cleanup_debts: 1,
+            ..
+        })
+    ));
+
+    let current = store.get(&id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let cleanup_lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "exact-cleanup-test".into(),
+            token: "lease-exact-cleanup".into(),
+            boundary: SessionBoundary::for_record(&current, authority.generation),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .expect("cleanup lease is acquired");
+    store
+        .acknowledge_runtime_cleanup(&cleanup_lease, &retired.cleanup)
+        .await
+        .expect("exact cleanup is acknowledged");
+    store
+        .acknowledge_runtime_cleanup(&cleanup_lease, &retired.cleanup)
+        .await
+        .expect("cleanup acknowledgement retry replays");
+    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
+    store
+        .release_session_lease(&cleanup_lease)
+        .await
+        .expect("cleanup lease releases");
+    store.delete(&id).await.expect("clean session deletes");
+    assert_eq!(
+        store
+            .receipts
+            .count_documents(all_session_receipts_filter(&id))
+            .await
+            .unwrap(),
+        0
+    );
+
+    client
+        .database(&database)
+        .drop()
+        .await
+        .expect("temporary database drops");
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_store_refuses_a_replaced_coordination_receipt_collection() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_coordination_receipt_replacement_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let store = MongoSessionStore::open(&client, &database, false)
+        .await
+        .expect("test store opens");
+    let original_id = store
+        .collection_ids
+        .get(COORDINATION_RECEIPTS)
+        .expect("receipt UUID is captured")
+        .clone();
+
+    store
+        .receipts
+        .drop()
+        .await
+        .expect("test removes the proven receipt collection");
+    store
+        .database
+        .create_collection(COORDINATION_RECEIPTS)
+        .await
+        .expect("test creates a replacement collection");
+    let replacement_id = store
+        .current_coordination_receipts_id()
+        .await
+        .unwrap()
+        .expect("replacement UUID reads");
+    assert_ne!(replacement_id, original_id);
+
+    let error = match MongoSessionStore::open(&client, &database, false).await {
+        Ok(_) => panic!("a replacement receipt namespace must not be adopted"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("UUID no longer matches"));
 
     client
         .database(&database)
