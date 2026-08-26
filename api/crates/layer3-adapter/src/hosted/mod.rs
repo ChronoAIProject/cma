@@ -756,14 +756,28 @@ impl HostedKernel {
 
     /// Tear a sandbox down.
     pub async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
-        // Retire only the generation present when termination began. A new
-        // provider object may reuse this handle while deletion is in flight;
-        // its link is not evidence that the captured object still exists.
-        let link = self.links.lock().await.remove(&handle.0);
-        if let Some(link) = link {
-            self.retire_removed_link(&handle.0, link).await;
+        // Remember the generation that is already stale if the provider says
+        // this handle is absent. This snapshot is never authority to delete.
+        let absent_link = self.links.lock().await.get(&handle.0).cloned();
+
+        // Provider authority precedes the link snapshot used by deletion. A
+        // link can take indefinitely to retire, and a provider object that
+        // disappears during that wait may have its handle reused. The
+        // configured reclaimer captures the exact Kubernetes
+        // UID/resourceVersion; the compatibility fallback explicitly relies on
+        // handles not being reused during one lifecycle operation.
+        let Some(target) = self.client.capture_delete_target(&handle.0).await? else {
+            if let Some(absent_link) = absent_link.as_ref() {
+                self.retire_captured_link(&handle.0, absent_link).await;
+            }
+            tracing::info!(sandbox = %handle.0, "sandbox already absent");
+            return Ok(());
+        };
+        let captured = self.links.lock().await.get(&handle.0).cloned();
+        self.client.delete_captured(target).await?;
+        if let Some(captured) = captured.as_ref() {
+            self.retire_captured_link(&handle.0, captured).await;
         }
-        self.client.delete(&handle.0).await?;
         tracing::info!(sandbox = %handle.0, "sandbox deleted");
         Ok(())
     }
