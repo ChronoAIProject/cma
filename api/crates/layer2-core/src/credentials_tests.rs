@@ -21,6 +21,7 @@ use crate::test_support::{await_settled, FakeStore, NullScreen};
 /// share a channel with keystrokes.
 struct RecordingAdapter {
     sent: Arc<tokio::sync::Mutex<Vec<String>>>,
+    refuse: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[async_trait::async_trait]
@@ -66,6 +67,11 @@ impl KernelAdapter for RecordingAdapter {
         _handle: &layer3_adapter::RuntimeHandle,
         credential: &str,
     ) -> Result<(), layer3_adapter::AdapterError> {
+        if self.refuse.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::Unavailable(
+                "the runtime did not take the credential".into(),
+            ));
+        }
         self.sent.lock().await.push(credential.to_string());
         Ok(())
     }
@@ -142,10 +148,26 @@ fn service_with_store(
     observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
     tracks_subject: bool,
 ) -> Arc<SessionService> {
+    service_with_store_and_refusal(
+        sent,
+        store,
+        observed_callers,
+        tracks_subject,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )
+}
+
+fn service_with_store_and_refusal(
+    sent: Arc<tokio::sync::Mutex<Vec<String>>>,
+    store: Arc<FakeStore>,
+    observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
+    tracks_subject: bool,
+    refuse: Arc<std::sync::atomic::AtomicBool>,
+) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(
         KernelId::new("recording"),
-        Arc::new(RecordingAdapter { sent }),
+        Arc::new(RecordingAdapter { sent, refuse }),
     );
     // A real store rather than a stub: these tests care that a credential
     // reaches the runtime, and that path now runs through persistence.
@@ -173,6 +195,20 @@ fn service_with_store(
         ),
         crate::test_support::owned(),
     )
+}
+
+fn service_with_delivery_switch(
+    sent: Arc<tokio::sync::Mutex<Vec<String>>>,
+) -> (Arc<SessionService>, Arc<std::sync::atomic::AtomicBool>) {
+    let refuse = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let service = service_with_store_and_refusal(
+        sent,
+        Arc::new(FakeStore::default()),
+        None,
+        true,
+        Arc::clone(&refuse),
+    );
+    (service, refuse)
 }
 
 async fn credentials_seen(sent: &Arc<tokio::sync::Mutex<Vec<String>>>) -> Vec<String> {
@@ -426,6 +462,99 @@ async fn a_session_is_minted_a_credential_even_when_the_caller_delegated_none() 
     );
 }
 
+#[tokio::test]
+async fn a_refused_credential_is_neither_recorded_nor_evidence_for_reclaim() {
+    let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (svc, refuse) = service_with_delivery_switch(sent);
+    let owner = caller("delivery-owner");
+    let session = svc
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("session is created");
+    await_settled(&svc, &owner, &session.id).await;
+
+    let working = svc
+        .credential_held(&session.id)
+        .await
+        .expect("the running session has its initial credential");
+    assert!(svc
+        .can_reclaim_untracked_credential(&session.id, &[working.as_str()])
+        .await
+        .expect("session store works"));
+
+    refuse.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        !svc.push_session_credential(&session.id, "undelivered-replacement".into())
+            .await
+    );
+    assert_eq!(
+        svc.credential_held(&session.id).await.as_deref(),
+        Some(working.as_str()),
+        "a refusal must leave the recorded working value unchanged"
+    );
+    assert!(!svc
+        .can_reclaim_untracked_credential(&session.id, &["undelivered-replacement"])
+        .await
+        .expect("session store works"));
+}
+
+#[tokio::test]
+async fn a_delivered_credential_is_recorded_as_reclaim_evidence() {
+    let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (svc, _refuse) = service_with_delivery_switch(sent);
+    let owner = caller("delivery-owner");
+    let session = svc
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("session is created");
+    await_settled(&svc, &owner, &session.id).await;
+
+    assert!(
+        svc.push_session_credential(&session.id, "delivered-replacement".into())
+            .await
+    );
+    assert_eq!(
+        svc.credential_held(&session.id).await.as_deref(),
+        Some("delivered-replacement")
+    );
+    assert!(svc
+        .can_reclaim_untracked_credential(&session.id, &["delivered-replacement"])
+        .await
+        .expect("session store works"));
+}
+
+#[tokio::test]
+async fn a_failed_top_up_stays_missing_until_delivery_can_be_retried() {
+    let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (svc, refuse) = service_with_delivery_switch(sent);
+    let owner = caller("recovered-owner");
+    let session = svc
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("session is created");
+    await_settled(&svc, &owner, &session.id).await;
+
+    svc.entries
+        .write()
+        .await
+        .get_mut(&session.id)
+        .expect("the running session has an entry")
+        .subject_credential = None;
+    refuse.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    assert_eq!(svc.top_up_credentials().await, 0);
+    assert_eq!(svc.credential_held(&session.id).await, None);
+    let recovered = format!("minted-for-{}", session.id);
+    assert!(!svc
+        .can_reclaim_untracked_credential(&session.id, &[recovered.as_str()])
+        .await
+        .expect("session store works"));
+
+    refuse.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(svc.top_up_credentials().await, 1);
+    assert_eq!(svc.credential_held(&session.id).await, Some(recovered));
+}
+
 /// Which sessions still have a claim on the credential minted for them.
 ///
 /// The reclaim sweep asks this before taking a key back, and asking the wrong
@@ -462,6 +591,10 @@ mod what_still_claims_a_credential {
             !svc.session_is_live(&session.id).await,
             "though it wants no runtime, which is the answer that used to be asked"
         );
+        assert!(svc
+            .can_reclaim_untracked_credential(&session.id, &[])
+            .await
+            .expect("session store works"));
     }
 
     #[tokio::test]
@@ -497,6 +630,10 @@ mod what_still_claims_a_credential {
                 .expect("session store works"),
             "a key naming a session nobody has is exactly what the sweep exists for"
         );
+        assert!(svc
+            .can_reclaim_untracked_credential(&crate::ids::SessionId("sesn_never".into()), &[],)
+            .await
+            .expect("session store works"));
     }
 
     #[tokio::test]
@@ -513,6 +650,14 @@ mod what_still_claims_a_credential {
         assert!(matches!(
             svc.session_claims_credential(&crate::ids::SessionId("sesn_unreadable".into()))
                 .await,
+            Err(crate::store::StoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            svc.can_reclaim_untracked_credential(
+                &crate::ids::SessionId("sesn_unreadable".into()),
+                &[],
+            )
+            .await,
             Err(crate::store::StoreError::Unavailable(_))
         ));
     }
