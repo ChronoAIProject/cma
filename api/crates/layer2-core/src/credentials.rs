@@ -209,7 +209,7 @@ impl SessionService {
 
     /// Give a credential to every live session that has none.
     ///
-    /// The safety net under [`Self::supply_credential`]: a session may be
+    /// The safety net under `Self::supply_credential`: a session may be
     /// recovered before its owner has signed back in, at which point there is
     /// no credential to give it and none will arrive on its own.
     pub async fn top_up_credentials(&self) -> usize {
