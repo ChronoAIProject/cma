@@ -447,6 +447,14 @@ async fn answering_an_approval_reaches_the_runtime_and_the_record() {
         &e.kind,
         EventKind::ApprovalResolved { request_id, allowed } if request_id == "req-1" && *allowed
     )));
+
+    assert_eq!(
+        svc.resolve_approval(&alice, &id, "req-1".into(), ApprovalDecision::Allow)
+            .await
+            .err(),
+        Some(crate::error::CoreError::InvalidState),
+        "an answered approval cannot be resolved a second time"
+    );
 }
 
 #[tokio::test]
