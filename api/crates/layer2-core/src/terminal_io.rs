@@ -383,7 +383,12 @@ impl SessionService {
                 "the live terminal belongs to another runtime generation".into(),
             ));
         }
-        if input.is_some() {
+        if let Some(sender) = input {
+            // Keep runtime output from being folded at the old geometry after
+            // the runtime has accepted this resize. The relay takes this same
+            // lock before applying and broadcasting each output frame.
+            let mut screen_guard = screen.lock().await;
+
             // Validate the captured sender under the service map, then release
             // that global lock before awaiting its receipt. The caller holds the
             // per-session input fence across this whole continuation, so a
@@ -395,7 +400,6 @@ impl SessionService {
                 })?;
                 Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
             }
-            let sender = input.expect("the resize path has a captured sender");
             authority.ensure_delivery_allowed()?;
             self.forward_input(
                 id,
@@ -417,19 +421,22 @@ impl SessionService {
             })?;
             Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
             Self::install_committed_resize(entry, committed);
+            screen_guard.resize(geometry);
         } else {
             // A live entry can intentionally have no runtime input link while
             // its screen remains useful. In that case the same final authority
             // check admits a local-only update of the durable desired state.
-            let mut entries = self.entries.write().await;
-            let entry = entries.get_mut(id).ok_or_else(|| {
-                CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
-            })?;
-            Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
-            authority.ensure_delivery_allowed()?;
-            Self::install_committed_resize(entry, committed);
+            {
+                let mut entries = self.entries.write().await;
+                let entry = entries.get_mut(id).ok_or_else(|| {
+                    CoreError::RuntimeUnavailable("this session has no live terminal entry".into())
+                })?;
+                Self::require_same_resize_target(entry, owner, runtime_generation, screen, input)?;
+                authority.ensure_delivery_allowed()?;
+                Self::install_committed_resize(entry, committed);
+            }
+            screen.lock().await.resize(geometry);
         }
-        screen.lock().await.resize(geometry);
         Ok(())
     }
 

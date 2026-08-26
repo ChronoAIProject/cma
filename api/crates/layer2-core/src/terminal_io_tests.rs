@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use layer3_adapter::{AdapterError, TerminalInput, TerminalInputSender};
+use layer3_adapter::{AdapterError, TerminalInput, TerminalInputSender, TerminalOutput};
 
 use crate::commit_fault_support::CommitFaultStore;
 use crate::coordination::SessionOperation;
@@ -94,6 +94,102 @@ async fn a_second_service_readopts_before_fenced_resize_delivery() {
             .expect("the readopted screen is visible")
             .geometry,
         geometry
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn output_after_a_resize_receipt_waits_for_the_new_screen_geometry() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let service = service(Arc::clone(&store), Arc::clone(&adapter));
+    let owner = user("resize-output-order-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("created");
+    await_settled(&service, &owner, &created.id).await;
+    adapter.terminal_inputs.lock().await.clear();
+    let mut live = {
+        let entries = service.entries.read().await;
+        entries
+            .get(&created.id)
+            .expect("the terminal entry is live")
+            .live
+            .as_ref()
+            .expect("the runtime output relay is live")
+            .subscribe()
+    };
+    let runtime = adapter
+        .senders
+        .lock()
+        .await
+        .last()
+        .cloned()
+        .expect("runtime output sender");
+    let desired = TerminalGeometry::new(109, 39).expect("valid geometry");
+    adapter.pause_next_terminal_input();
+
+    let resizing = tokio::spawn({
+        let service = Arc::clone(&service);
+        let owner = owner.clone();
+        let id = created.id.clone();
+        async move { service.resize_terminal(&owner, &id, desired).await }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+
+    // Hold the map after final link validation. Once the runtime accepts the
+    // resize, final local publication waits for this reader while output from
+    // the resized PTY races toward the screen model.
+    let entries = service.entries.read().await;
+    adapter.resume_terminal_input();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while adapter.terminal_inputs.lock().await.is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the runtime-link writer accepts the resize");
+
+    let redraw = b"redraw at the accepted geometry".to_vec();
+    runtime
+        .send(TerminalOutput::Bytes(redraw.clone()))
+        .await
+        .expect("the resized runtime emits a redraw");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while runtime.capacity() != runtime.max_capacity() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the relay consumes the redraw and waits for the screen");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), live.recv())
+            .await
+            .is_err(),
+        "runtime output must not be folded or broadcast before the screen uses the accepted geometry"
+    );
+
+    drop(entries);
+    tokio::time::timeout(Duration::from_secs(2), resizing)
+        .await
+        .expect("the resize completes after the entry map is released")
+        .expect("the resize task stays alive")
+        .expect("the resize succeeds");
+    wait_for_interaction_release(&store, &created.id).await;
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), live.recv())
+            .await
+            .expect("the redraw is broadcast after the model is resized")
+            .expect("the live output channel remains open"),
+        redraw
+    );
+    assert_eq!(
+        service
+            .screen_snapshot(&owner, &created.id)
+            .await
+            .expect("the resized screen is visible")
+            .geometry,
+        desired
     );
 }
 
