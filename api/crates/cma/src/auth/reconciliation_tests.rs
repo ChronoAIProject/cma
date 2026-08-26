@@ -1,13 +1,18 @@
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
+use std::time::{Duration, Instant, SystemTime};
 
 use axum::body::Body;
-use axum::extract::{Extension, State};
+use axum::extract::{Extension, Form, State};
 use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use layer2_core::{Authorization, Capability, SubjectId};
+use tokio::sync::Notify;
 use tower::ServiceExt;
 
 use super::persistence::{
@@ -15,8 +20,8 @@ use super::persistence::{
     SubjectAuthState, SubjectRefreshLease,
 };
 use super::{
-    AuthMode, AuthOperationBudget, AuthState, AuthorizationCheckOutcome, AUTHORIZATION_CHECK_ATTEMPT_BUDGET,
-    SESSION_COOKIE,
+    AuthMode, AuthOperationBudget, AuthState, AuthorizationCheckOutcome,
+    AUTHORIZATION_CHECK_ATTEMPT_BUDGET, SESSION_COOKIE,
 };
 
 #[derive(Clone)]
@@ -37,6 +42,8 @@ struct ProviderState {
     introspection_body: IntrospectionBody,
     permissions: Vec<String>,
     seen_userinfo_tokens: Arc<Mutex<Vec<String>>>,
+    seen_introspection_tokens: Arc<Mutex<Vec<String>>>,
+    introspection_calls: Arc<AtomicUsize>,
 }
 
 async fn discovery(State(provider): State<ProviderState>) -> Json<serde_json::Value> {
@@ -77,7 +84,16 @@ async fn userinfo(State(provider): State<ProviderState>, headers: HeaderMap) -> 
     .into_response()
 }
 
-async fn introspection(State(provider): State<ProviderState>) -> Response {
+async fn introspection(
+    State(provider): State<ProviderState>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    provider.introspection_calls.fetch_add(1, Ordering::SeqCst);
+    provider
+        .seen_introspection_tokens
+        .lock()
+        .expect("introspection token log")
+        .push(form.get("token").cloned().unwrap_or_default());
     if !provider.introspection_status.is_success() {
         return provider.introspection_status.into_response();
     }
@@ -114,15 +130,23 @@ async fn provider(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind provider");
-    let base = format!("http://{}", listener.local_addr().expect("provider address"));
+    let base = format!(
+        "http://{}",
+        listener.local_addr().expect("provider address")
+    );
     let state = ProviderState {
         base,
         userinfo_status,
         userinfo_subject: userinfo_subject.map(str::to_string),
         introspection_status,
         introspection_body,
-        permissions: permissions.iter().map(|value| (*value).to_string()).collect(),
+        permissions: permissions
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
         seen_userinfo_tokens: Arc::new(Mutex::new(Vec::new())),
+        seen_introspection_tokens: Arc::new(Mutex::new(Vec::new())),
+        introspection_calls: Arc::new(AtomicUsize::new(0)),
     };
     let app = Router::new()
         .route("/.well-known/openid-configuration", get(discovery))
@@ -131,6 +155,68 @@ async fn provider(
         .with_state(state.clone());
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.expect("serve provider");
+    });
+    (state, server)
+}
+
+#[derive(Clone)]
+struct OrderedProviderState {
+    base: String,
+    calls: Arc<AtomicUsize>,
+    first_started: Arc<Notify>,
+    release_first: Arc<Notify>,
+}
+
+async fn ordered_discovery(
+    State(provider): State<OrderedProviderState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "authorization_endpoint": format!("{}/authorize", provider.base),
+        "token_endpoint": format!("{}/token", provider.base),
+        "introspection_endpoint": format!("{}/introspect", provider.base),
+    }))
+}
+
+async fn ordered_introspection(State(provider): State<OrderedProviderState>) -> Response {
+    let call = provider.calls.fetch_add(1, Ordering::SeqCst);
+    if call == 0 {
+        provider.first_started.notify_one();
+        provider.release_first.notified().await;
+        return Json(serde_json::json!({
+            "active": true,
+            "permissions": ["cma:admin"],
+        }))
+        .into_response();
+    }
+    Json(serde_json::json!({
+        "active": true,
+        "permissions": ["cma:session:use"],
+    }))
+    .into_response()
+}
+
+async fn ordered_provider() -> (OrderedProviderState, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ordered provider");
+    let base = format!(
+        "http://{}",
+        listener.local_addr().expect("provider address")
+    );
+    let state = OrderedProviderState {
+        base,
+        calls: Arc::new(AtomicUsize::new(0)),
+        first_started: Arc::new(Notify::new()),
+        release_first: Arc::new(Notify::new()),
+    };
+    let app = Router::new()
+        .route("/.well-known/openid-configuration", get(ordered_discovery))
+        .route("/introspect", post(ordered_introspection))
+        .with_state(state.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve ordered provider");
     });
     (state, server)
 }
@@ -162,13 +248,14 @@ async fn seed_subject(
             revision: 0,
             token_generation: 1,
             tokens: Some(DurableSubjectTokens {
-                access_token: SecretValue::new(access_token.into()),
+                access_token: Some(SecretValue::new(access_token.into())),
                 refresh_token: refresh_token.map(|value| SecretValue::new(value.into())),
                 expires_at,
             }),
             refresh_lease: None,
             authorization: Authorization::from_capabilities([Capability::ReadAllSessions]),
             authorization_check_after: SystemTime::UNIX_EPOCH,
+            authorization_lease: None,
             profile: super::profile::Profile::default(),
         })
         .await
@@ -186,6 +273,23 @@ async fn issue_cookie(store: &MemoryAuthStore, subject: &str, cookie: &str) {
         })
         .await
         .expect("browser session persists");
+}
+
+async fn expire_authorization_lease(store: &MemoryAuthStore, subject: &str) {
+    let subject = SubjectId(subject.into());
+    let mut leased = store.subject(&subject).await.unwrap().unwrap();
+    let revision = leased.revision;
+    leased.revision += 1;
+    leased
+        .authorization_lease
+        .as_mut()
+        .expect("authorization check was durably claimed")
+        .expires_at = SystemTime::UNIX_EPOCH;
+    let incarnation = leased.incarnation.clone();
+    assert!(store
+        .replace_subject(&incarnation, revision, leased)
+        .await
+        .unwrap());
 }
 
 async fn privileged(Extension(authorization): Extension<Authorization>) -> StatusCode {
@@ -237,13 +341,6 @@ async fn a_far_from_expiry_token_loses_revoked_capability_on_the_next_cookie_req
     issue_cookie(&store, "subject-a", "cookie-a").await;
     assert_eq!(
         cookie_status(auth.clone(), "cookie-a").await,
-        StatusCode::NO_CONTENT
-    );
-
-    crate::renewal::sweep_once(&auth, &super::empty_session_service()).await;
-
-    assert_eq!(
-        cookie_status(auth, "cookie-a").await,
         StatusCode::FORBIDDEN
     );
     let fact = store
@@ -251,7 +348,10 @@ async fn a_far_from_expiry_token_loses_revoked_capability_on_the_next_cookie_req
         .await
         .unwrap()
         .unwrap();
-    assert!(fact.tokens.is_some(), "grant reduction does not discard tokens");
+    assert!(
+        fact.tokens.is_some(),
+        "grant reduction does not discard tokens"
+    );
     assert!(!fact.authorization.allows(Capability::ReadAllSessions));
     server.abort();
 }
@@ -260,43 +360,37 @@ async fn a_far_from_expiry_token_loses_revoked_capability_on_the_next_cookie_req
 async fn transient_userinfo_and_introspection_failures_preserve_the_complete_answer() {
     let cases = [
         (
-            StatusCode::FORBIDDEN,
-            StatusCode::OK,
-            IntrospectionBody::Active(true),
-            None,
-        ),
-        (
-            StatusCode::OK,
+            StatusCode::SERVICE_UNAVAILABLE,
             StatusCode::SERVICE_UNAVAILABLE,
             IntrospectionBody::Active(true),
             None,
         ),
         (
-            StatusCode::OK,
-            StatusCode::FORBIDDEN,
-            IntrospectionBody::Active(true),
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::SERVICE_UNAVAILABLE,
+            IntrospectionBody::MissingActive,
             None,
         ),
         (
-            StatusCode::OK,
+            StatusCode::SERVICE_UNAVAILABLE,
             StatusCode::OK,
             IntrospectionBody::MissingActive,
             None,
         ),
         (
-            StatusCode::OK,
+            StatusCode::SERVICE_UNAVAILABLE,
             StatusCode::OK,
             IntrospectionBody::MissingPermissions,
             None,
         ),
         (
-            StatusCode::OK,
+            StatusCode::SERVICE_UNAVAILABLE,
             StatusCode::OK,
             IntrospectionBody::MalformedPermissions,
             None,
         ),
         (
-            StatusCode::OK,
+            StatusCode::SERVICE_UNAVAILABLE,
             StatusCode::OK,
             IntrospectionBody::Malformed,
             None,
@@ -304,7 +398,7 @@ async fn transient_userinfo_and_introspection_failures_preserve_the_complete_ans
         (
             StatusCode::OK,
             StatusCode::OK,
-            IntrospectionBody::Active(true),
+            IntrospectionBody::MissingActive,
             Some(""),
         ),
     ];
@@ -327,8 +421,6 @@ async fn transient_userinfo_and_introspection_failures_preserve_the_complete_ans
             SystemTime::now() + Duration::from_secs(3600),
         )
         .await;
-        let started = SystemTime::now();
-
         crate::renewal::sweep_once(&auth, &super::empty_session_service()).await;
 
         let fact = store
@@ -337,21 +429,312 @@ async fn transient_userinfo_and_introspection_failures_preserve_the_complete_ans
             .unwrap()
             .unwrap();
         assert!(fact.authorization.allows(Capability::ReadAllSessions));
-        assert_eq!(fact.tokens.unwrap().refresh_token.unwrap().expose(), "refresh-a");
-        assert!(fact.authorization_check_after > started);
-        assert!(
-            fact.authorization_check_after <= started + Duration::from_secs(61),
-            "a transient answer remains due on the next minute sweep"
+        assert_eq!(
+            fact.tokens.unwrap().refresh_token.unwrap().expose(),
+            "refresh-a"
         );
+        assert_eq!(fact.authorization_check_after, SystemTime::UNIX_EPOCH);
+        assert!(fact.authorization_lease.is_none());
         server.abort();
     }
 }
 
 #[tokio::test]
-async fn a_transient_answer_is_selected_again_at_the_next_sweep_deadline() {
-    let (unavailable, unavailable_server) = provider(
-        StatusCode::FORBIDDEN,
+async fn userinfo_401_and_403_cannot_mask_reduced_or_inactive_introspection() {
+    for userinfo_status in [StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN] {
+        for active in [true, false] {
+            let (provider, server) = provider(
+                userinfo_status,
+                StatusCode::OK,
+                IntrospectionBody::Active(active),
+                &["cma:session:use"],
+                None,
+            )
+            .await;
+            let store = Arc::new(MemoryAuthStore::default());
+            let auth = provider_auth(provider.base.clone(), store.clone());
+            seed_subject(
+                &store,
+                "subject-a",
+                "token:subject-a",
+                Some("refresh-a"),
+                SystemTime::now() + Duration::from_secs(3600),
+            )
+            .await;
+
+            crate::renewal::sweep_once(&auth, &super::empty_session_service()).await;
+
+            let fact = store
+                .subject(&SubjectId("subject-a".into()))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!fact.authorization.allows(Capability::ReadAllSessions));
+            let tokens = fact.tokens.expect("the refresh grant remains eligible");
+            assert_eq!(tokens.access_token.is_some(), active);
+            assert_eq!(tokens.refresh_token.unwrap().expose(), "refresh-a");
+            assert_eq!(provider.introspection_calls.load(Ordering::SeqCst), 1);
+            assert!(provider.seen_userinfo_tokens.lock().unwrap().is_empty());
+            server.abort();
+        }
+    }
+}
+
+#[tokio::test]
+async fn two_replicas_share_one_durable_authorization_check() {
+    let (provider, server) = provider(
         StatusCode::OK,
+        StatusCode::OK,
+        IntrospectionBody::Active(true),
+        &["cma:session:use"],
+        None,
+    )
+    .await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let first = provider_auth(provider.base.clone(), store.clone());
+    let second = provider_auth(provider.base.clone(), store.clone());
+    seed_subject(
+        &store,
+        "subject-a",
+        "token:subject-a",
+        Some("refresh-a"),
+        SystemTime::now() + Duration::from_secs(3600),
+    )
+    .await;
+    let selected = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let first_budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+    let second_budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+
+    let (left, right) = tokio::join!(
+        first.reconcile_authorization_with_budget(
+            selected.clone(),
+            SystemTime::now(),
+            &first_budget,
+        ),
+        second.reconcile_authorization_with_budget(selected, SystemTime::now(), &second_budget,),
+    );
+
+    let outcomes = [left.unwrap(), right.unwrap()];
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, AuthorizationCheckOutcome::Replaced))
+            .count(),
+        1
+    );
+    assert_eq!(provider.introspection_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.seen_introspection_tokens.lock().unwrap().len(), 1);
+    assert!(provider.seen_userinfo_tokens.lock().unwrap().is_empty());
+    let durable = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(durable.authorization_lease.is_none());
+    assert!(!durable.authorization.allows(Capability::ReadAllSessions));
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_expired_lease_takeover_fences_a_late_more_privileged_answer() {
+    let (provider, server) = ordered_provider().await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let first = provider_auth(provider.base.clone(), store.clone());
+    let second = provider_auth(provider.base.clone(), store.clone());
+    seed_subject(
+        &store,
+        "subject-a",
+        "token:subject-a",
+        Some("refresh-a"),
+        SystemTime::now() + Duration::from_secs(3600),
+    )
+    .await;
+    let selected = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let first_task = tokio::spawn(async move {
+        let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+        first
+            .reconcile_authorization_with_budget(selected, SystemTime::now(), &budget)
+            .await
+    });
+    provider.first_started.notified().await;
+    expire_authorization_lease(&store, "subject-a").await;
+
+    let takeover = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let takeover_budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+    let takeover_outcome = second
+        .reconcile_authorization_with_budget(takeover, SystemTime::now(), &takeover_budget)
+        .await
+        .unwrap();
+    assert!(matches!(
+        takeover_outcome,
+        AuthorizationCheckOutcome::Replaced
+    ));
+
+    provider.release_first.notify_one();
+    let late_outcome = first_task.await.unwrap().unwrap();
+    assert!(matches!(late_outcome, AuthorizationCheckOutcome::Skipped));
+    let durable = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!durable.authorization.allows(Capability::ReadAllSessions));
+    assert!(durable.authorization_lease.is_none());
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_cancelled_worker_is_taken_over_after_its_durable_lease_expires() {
+    let (provider, server) = ordered_provider().await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let first = provider_auth(provider.base.clone(), store.clone());
+    let restarted = provider_auth(provider.base.clone(), store.clone());
+    seed_subject(
+        &store,
+        "subject-a",
+        "token:subject-a",
+        Some("refresh-a"),
+        SystemTime::now() + Duration::from_secs(3600),
+    )
+    .await;
+    let selected = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let cancelled = tokio::spawn(async move {
+        let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+        first
+            .reconcile_authorization_with_budget(selected, SystemTime::now(), &budget)
+            .await
+    });
+    provider.first_started.notified().await;
+    cancelled.abort();
+    let _ = cancelled.await;
+
+    let still_leased = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(still_leased.authorization_lease.is_some());
+    let blocked_budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+    let blocked = restarted
+        .reconcile_authorization_with_budget(still_leased, SystemTime::now(), &blocked_budget)
+        .await
+        .unwrap();
+    assert!(matches!(blocked, AuthorizationCheckOutcome::Skipped));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+
+    expire_authorization_lease(&store, "subject-a").await;
+    let expired = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let takeover_budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+    let takeover = restarted
+        .reconcile_authorization_with_budget(expired, SystemTime::now(), &takeover_budget)
+        .await
+        .unwrap();
+    assert!(matches!(takeover, AuthorizationCheckOutcome::Replaced));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    provider.release_first.notify_one();
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_overdue_cookie_fails_closed_within_the_request_allowance_for_a_slow_provider() {
+    let (provider, server) = ordered_provider().await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = provider_auth(provider.base.clone(), store.clone());
+    seed_subject(
+        &store,
+        "subject-a",
+        "token:subject-a",
+        Some("refresh-a"),
+        SystemTime::now() + Duration::from_secs(3600),
+    )
+    .await;
+    issue_cookie(&store, "subject-a", "slow-cookie").await;
+
+    let started = Instant::now();
+    let status = cookie_status(auth, "slow-cookie").await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let durable = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(durable.authorization_lease.is_some());
+    assert!(durable.authorization.allows(Capability::ReadAllSessions));
+    provider.release_first.notify_one();
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_successful_check_schedules_from_provider_completion_not_sweep_start() {
+    let (provider, server) = ordered_provider().await;
+    let store = Arc::new(MemoryAuthStore::default());
+    let auth = provider_auth(provider.base.clone(), store.clone());
+    seed_subject(
+        &store,
+        "subject-a",
+        "token:subject-a",
+        Some("refresh-a"),
+        SystemTime::now() + Duration::from_secs(3600),
+    )
+    .await;
+    let selected = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let task = tokio::spawn(async move {
+        let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+        auth.reconcile_authorization_with_budget(selected, SystemTime::now(), &budget)
+            .await
+    });
+    provider.first_started.notified().await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    let completion_floor = SystemTime::now();
+    provider.release_first.notify_one();
+    assert!(matches!(
+        task.await.unwrap().unwrap(),
+        AuthorizationCheckOutcome::Replaced
+    ));
+
+    let durable = store
+        .subject(&SubjectId("subject-a".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        durable.authorization_check_after >= completion_floor + super::AUTHORIZATION_CHECK_INTERVAL
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_transient_answer_releases_its_claim_and_remains_immediately_due() {
+    let (unavailable, unavailable_server) = provider(
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::SERVICE_UNAVAILABLE,
         IntrospectionBody::Active(true),
         &[],
         None,
@@ -373,30 +756,21 @@ async fn a_transient_answer_is_selected_again_at_the_next_sweep_deadline() {
         .unwrap()
         .unwrap();
     let due_at = SystemTime::now();
-    let retry_at = due_at + Duration::from_secs(60);
     let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
     let outcome = first_auth
-        .reconcile_authorization_with_budget(selected, due_at, retry_at, &budget)
+        .reconcile_authorization_with_budget(selected, due_at, &budget)
         .await
         .unwrap();
     assert!(matches!(outcome, AuthorizationCheckOutcome::Preserved(_)));
     unavailable_server.abort();
 
-    assert!(store
-        .subjects_due_for_authorization_check(
-            retry_at - Duration::from_millis(1),
-            None,
-            1,
-        )
-        .await
-        .unwrap()
-        .is_empty());
+    let retry_at = SystemTime::now();
     let retry = store
         .subjects_due_for_authorization_check(retry_at, None, 1)
         .await
         .unwrap()
         .pop()
-        .expect("transient subject is due on the next sweep")
+        .expect("transient subject remains immediately due")
         .state
         .unwrap();
 
@@ -411,12 +785,7 @@ async fn a_transient_answer_is_selected_again_at_the_next_sweep_deadline() {
     let retry_auth = provider_auth(healthy.base, store.clone());
     let retry_budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
     retry_auth
-        .reconcile_authorization_with_budget(
-            retry,
-            retry_at,
-            retry_at + Duration::from_secs(60),
-            &retry_budget,
-        )
+        .reconcile_authorization_with_budget(retry, retry_at, &retry_budget)
         .await
         .unwrap();
     assert!(!store
@@ -449,6 +818,7 @@ async fn authoritative_inactive_and_subject_mismatch_answers_fail_closed() {
         SystemTime::now() + Duration::from_secs(3600),
     )
     .await;
+    issue_cookie(&inactive_store, "subject-a", "inactive-cookie").await;
     crate::renewal::sweep_once(&inactive_auth, &super::empty_session_service()).await;
     let inactive_fact = inactive_store
         .subject(&SubjectId("subject-a".into()))
@@ -456,10 +826,28 @@ async fn authoritative_inactive_and_subject_mismatch_answers_fail_closed() {
         .unwrap()
         .unwrap();
     assert_eq!(inactive_fact.authorization.capabilities().count(), 0);
-    assert!(
-        inactive_fact.tokens.is_some(),
-        "inactive access-token introspection does not prove the refresh grant invalid"
+    let inactive_tokens = inactive_fact
+        .tokens
+        .expect("inactive access introspection does not invalidate the refresh grant");
+    assert!(inactive_tokens.access_token.is_none());
+    assert_eq!(inactive_tokens.refresh_token.unwrap().expose(), "refresh-a");
+    let through_sequence = inactive_store.auth_sweep_high_water().await.unwrap();
+    let refreshable = inactive_store
+        .unleased_subjects_due_for_refresh(SystemTime::now(), None, through_sequence, 10)
+        .await
+        .unwrap();
+    assert_eq!(refreshable.len(), 1, "quarantine forces immediate refresh");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::COOKIE,
+        format!("{SESSION_COOKIE}=inactive-cookie").parse().unwrap(),
     );
+    let resolved = inactive_auth
+        .resolve_request(&headers)
+        .await
+        .unwrap()
+        .expect("the cookie still authenticates");
+    assert!(resolved.delegated_credential.is_none());
     inactive_server.abort();
 
     let (mismatch, mismatch_server) = provider(
@@ -564,7 +952,7 @@ async fn browser_sign_in_still_accepts_a_token_without_refresh_custody() {
     auth.store_sign_in(
         &SubjectId("subject-a".into()),
         DurableSubjectTokens {
-            access_token: SecretValue::new("access-only".into()),
+            access_token: Some(SecretValue::new("access-only".into())),
             refresh_token: None,
             expires_at: SystemTime::now() + Duration::from_secs(600),
         },
@@ -613,7 +1001,7 @@ async fn a_cas_miss_preserves_a_concurrently_rotated_token_and_refresh_lease() {
     winner.revision += 1;
     winner.token_generation += 1;
     winner.tokens = Some(DurableSubjectTokens {
-        access_token: SecretValue::new("token:subject-a:new".into()),
+        access_token: Some(SecretValue::new("token:subject-a:new".into())),
         refresh_token: Some(SecretValue::new("refresh-new".into())),
         expires_at: SystemTime::now() + Duration::from_secs(7200),
     });
@@ -625,12 +1013,7 @@ async fn a_cas_miss_preserves_a_concurrently_rotated_token_and_refresh_lease() {
     let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
 
     let outcome = auth
-        .reconcile_authorization_with_budget(
-            selected,
-            SystemTime::now(),
-            SystemTime::now() + Duration::from_secs(60),
-            &budget,
-        )
+        .reconcile_authorization_with_budget(selected, SystemTime::now(), &budget)
         .await
         .unwrap();
 
@@ -641,7 +1024,7 @@ async fn a_cas_miss_preserves_a_concurrently_rotated_token_and_refresh_lease() {
         .unwrap()
         .unwrap();
     let tokens = preserved.tokens.unwrap();
-    assert_eq!(tokens.access_token.expose(), "token:subject-a:new");
+    assert_eq!(tokens.access_token.unwrap().expose(), "token:subject-a:new");
     assert_eq!(tokens.refresh_token.unwrap().expose(), "refresh-new");
     assert_eq!(preserved.refresh_lease.unwrap().holder, "refresh-winner");
     assert_eq!(
@@ -691,12 +1074,7 @@ async fn a_refresh_lease_expiring_at_the_observation_boundary_does_not_block_rec
     let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
 
     let outcome = auth
-        .reconcile_authorization_with_budget(
-            selected,
-            due_at,
-            due_at + Duration::from_secs(60),
-            &budget,
-        )
+        .reconcile_authorization_with_budget(selected, due_at, &budget)
         .await
         .unwrap();
 
@@ -712,7 +1090,7 @@ async fn a_refresh_lease_expiring_at_the_observation_boundary_does_not_block_rec
 }
 
 #[tokio::test]
-async fn a_rotated_token_generation_is_resolved_again_before_the_cas_retry() {
+async fn a_rotated_token_generation_is_claimed_before_any_provider_request() {
     let (provider, server) = provider(
         StatusCode::OK,
         StatusCode::OK,
@@ -740,28 +1118,20 @@ async fn a_rotated_token_generation_is_resolved_again_before_the_cas_retry() {
     winner.revision += 1;
     winner.token_generation += 1;
     winner.tokens = Some(DurableSubjectTokens {
-        access_token: SecretValue::new("token:subject-a:new".into()),
+        access_token: Some(SecretValue::new("token:subject-a:new".into())),
         refresh_token: Some(SecretValue::new("refresh-new".into())),
         expires_at: SystemTime::now() + Duration::from_secs(7200),
     });
     store.install_subject_winner_on_replace(1, winner).await;
     let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
 
-    auth.reconcile_authorization_with_budget(
-        selected,
-        SystemTime::now(),
-        SystemTime::now() + Duration::from_secs(60),
-        &budget,
-    )
-    .await
-    .unwrap();
+    auth.reconcile_authorization_with_budget(selected, SystemTime::now(), &budget)
+        .await
+        .unwrap();
 
     assert_eq!(
-        *provider.seen_userinfo_tokens.lock().unwrap(),
-        vec![
-            "token:subject-a:old".to_string(),
-            "token:subject-a:new".to_string(),
-        ]
+        *provider.seen_introspection_tokens.lock().unwrap(),
+        vec!["token:subject-a:new".to_string()]
     );
     let preserved = store
         .subject(&SubjectId("subject-a".into()))
@@ -776,7 +1146,7 @@ async fn a_rotated_token_generation_is_resolved_again_before_the_cas_retry() {
 }
 
 #[tokio::test]
-async fn a_recreated_subject_incarnation_is_resolved_again_even_at_the_same_generation() {
+async fn a_recreated_subject_incarnation_is_claimed_before_any_provider_request() {
     let (provider, server) = provider(
         StatusCode::OK,
         StatusCode::OK,
@@ -804,28 +1174,20 @@ async fn a_recreated_subject_incarnation_is_resolved_again_even_at_the_same_gene
     recreated.incarnation = "recreated-incarnation".into();
     recreated.revision = 0;
     recreated.tokens = Some(DurableSubjectTokens {
-        access_token: SecretValue::new("token:subject-a:new".into()),
+        access_token: Some(SecretValue::new("token:subject-a:new".into())),
         refresh_token: Some(SecretValue::new("refresh-new".into())),
         expires_at: SystemTime::now() + Duration::from_secs(7200),
     });
     store.install_subject_winner_on_replace(1, recreated).await;
     let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
 
-    auth.reconcile_authorization_with_budget(
-        selected,
-        SystemTime::now(),
-        SystemTime::now() + Duration::from_secs(60),
-        &budget,
-    )
-    .await
-    .unwrap();
+    auth.reconcile_authorization_with_budget(selected, SystemTime::now(), &budget)
+        .await
+        .unwrap();
 
     assert_eq!(
-        *provider.seen_userinfo_tokens.lock().unwrap(),
-        vec![
-            "token:subject-a:old".to_string(),
-            "token:subject-a:new".to_string(),
-        ]
+        *provider.seen_introspection_tokens.lock().unwrap(),
+        vec!["token:subject-a:new".to_string()]
     );
     let durable = store
         .subject(&SubjectId("subject-a".into()))
@@ -833,7 +1195,7 @@ async fn a_recreated_subject_incarnation_is_resolved_again_even_at_the_same_gene
         .unwrap()
         .unwrap();
     assert_eq!(durable.incarnation, "recreated-incarnation");
-    assert_eq!(durable.revision, 1);
+    assert_eq!(durable.revision, 2);
     assert_eq!(durable.token_generation, 1);
     assert_eq!(
         durable.tokens.unwrap().refresh_token.unwrap().expose(),
@@ -871,16 +1233,11 @@ async fn repeated_cas_contention_stops_at_the_explicit_budget_and_stays_due() {
     let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
 
     assert!(auth
-        .reconcile_authorization_with_budget(
-            selected,
-            SystemTime::now(),
-            SystemTime::now() + Duration::from_secs(60),
-            &budget,
-        )
+        .reconcile_authorization_with_budget(selected, SystemTime::now(), &budget,)
         .await
         .is_err());
 
-    assert_eq!(store.subject_replace_calls(), 3);
+    assert_eq!(store.subject_replace_calls(), 4);
     let fact = store
         .subject(&SubjectId("subject-a".into()))
         .await
@@ -892,7 +1249,7 @@ async fn repeated_cas_contention_stops_at_the_explicit_budget_and_stays_due() {
 }
 
 #[tokio::test]
-async fn one_sweep_advances_past_an_unreadable_page_tail_and_drains_the_next_page() {
+async fn an_overdue_cookie_bypasses_a_multipage_backlog_and_the_sweep_keeps_paging() {
     let (provider, server) = provider(
         StatusCode::OK,
         StatusCode::OK,
@@ -914,11 +1271,25 @@ async fn one_sweep_advances_past_an_unreadable_page_tail_and_drains_the_next_pag
         )
         .await;
     }
+    issue_cookie(&store, "subject-101", "backlog-cookie").await;
+    assert_eq!(
+        cookie_status(auth.clone(), "backlog-cookie").await,
+        StatusCode::FORBIDDEN,
+        "request-time enforcement does not wait behind the sweep backlog"
+    );
     store
         .fail_subject_read(Some(SubjectId("subject-099".into())))
         .await;
 
     crate::renewal::sweep_once(&auth, &super::empty_session_service()).await;
+    assert_eq!(
+        provider.seen_introspection_tokens.lock().unwrap().len(),
+        1 + super::AUTHORIZATION_CHECK_BATCH_SIZE,
+        "one slow-worker pass admits only one provider batch"
+    );
+    for _ in 1..7 {
+        crate::renewal::sweep_once(&auth, &super::empty_session_service()).await;
+    }
 
     store.fail_subject_read(None).await;
     let failed = store
@@ -934,6 +1305,9 @@ async fn one_sweep_advances_past_an_unreadable_page_tail_and_drains_the_next_pag
         .unwrap()
         .unwrap();
     assert!(!last.authorization.allows(Capability::ReadAllSessions));
-    assert_eq!(provider.seen_userinfo_tokens.lock().unwrap().len(), 101);
+    assert_eq!(
+        provider.seen_introspection_tokens.lock().unwrap().len(),
+        101
+    );
     server.abort();
 }

@@ -150,7 +150,7 @@ fn subject_state() -> SubjectAuthState {
         revision: 7,
         token_generation: 5,
         tokens: Some(DurableSubjectTokens {
-            access_token: SecretValue::new("access-plaintext".into()),
+            access_token: Some(SecretValue::new("access-plaintext".into())),
             refresh_token: Some(SecretValue::new("refresh-plaintext".into())),
             expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_000),
         }),
@@ -163,6 +163,7 @@ fn subject_state() -> SubjectAuthState {
             Capability::ReadAllSessions,
         ]),
         authorization_check_after: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_120),
+        authorization_lease: None,
         profile: Profile {
             display_name: Some("Example Person".into()),
             email: Some("person@example.test".into()),
@@ -407,6 +408,22 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
     };
     let legacy_authorization =
         subject_authorization_filter(second_time, Some(&legacy_authorization_cursor));
+    let authorization_base = legacy_authorization.get_array("$and").unwrap()[0]
+        .as_document()
+        .unwrap();
+    let authorization_lease_branches = authorization_base.get_array("$or").unwrap();
+    assert_eq!(authorization_lease_branches.len(), 3);
+    assert_eq!(
+        authorization_lease_branches[2]
+            .as_document()
+            .unwrap()
+            .get_document("authorization_lease.expires_at")
+            .unwrap()
+            .get_datetime("$lte")
+            .unwrap()
+            .to_system_time(),
+        second_time
+    );
     let legacy_position = legacy_authorization.get_array("$and").unwrap()[2]
         .as_document()
         .unwrap()
@@ -533,7 +550,7 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, AUTH_SCHEMA_VERSION] } },
             ],
             "revoke_debt.0": { "$exists": true },
             "revoke_debt_ordered": { "$ne": true },
@@ -634,7 +651,16 @@ fn only_a_fully_settled_retired_credential_gets_ttl_cleanup() {
 #[test]
 fn subject_secrets_are_encrypted_and_round_trip() {
     let cipher = cipher();
-    let stored = subject_to_doc(subject_state(), &cipher).unwrap();
+    let mut state = subject_state();
+    state.authorization_lease = Some(SubjectAuthorizationLease {
+        holder: "authorization-worker-a".into(),
+        fence: 7,
+        acquired_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_100),
+        expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_130),
+        checked_incarnation: "subject-incarnation-a".into(),
+        checked_token_generation: 5,
+    });
+    let stored = subject_to_doc(state, &cipher).unwrap();
     let rendered = format!(
         "{:?}",
         mongodb::bson::serialize_to_document(&stored).unwrap()
@@ -644,7 +670,10 @@ fn subject_secrets_are_encrypted_and_round_trip() {
 
     let restored = subject_from_doc(stored, &cipher).unwrap();
     let tokens = restored.tokens.unwrap();
-    assert_eq!(tokens.access_token.expose(), "access-plaintext");
+    assert_eq!(
+        tokens.access_token.as_ref().unwrap().expose(),
+        "access-plaintext"
+    );
     assert_eq!(
         tokens.refresh_token.as_ref().unwrap().expose(),
         "refresh-plaintext"
@@ -662,10 +691,48 @@ fn subject_secrets_are_encrypted_and_round_trip() {
         restored.authorization_check_after,
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_120)
     );
+    let authorization_lease = restored.authorization_lease.unwrap();
+    assert_eq!(authorization_lease.holder, "authorization-worker-a");
+    assert_eq!(authorization_lease.fence, 7);
+    assert_eq!(
+        authorization_lease.acquired_at,
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_100)
+    );
+    assert_eq!(
+        authorization_lease.expires_at,
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_130)
+    );
+    assert_eq!(
+        authorization_lease.checked_incarnation,
+        "subject-incarnation-a"
+    );
+    assert_eq!(authorization_lease.checked_token_generation, 5);
     assert_eq!(
         restored.profile.display_name.as_deref(),
         Some("Example Person")
     );
+}
+
+#[test]
+fn quarantined_access_is_absent_while_the_encrypted_refresh_grant_round_trips() {
+    let cipher = cipher();
+    let mut state = subject_state();
+    state
+        .tokens
+        .as_mut()
+        .expect("subject fixture has tokens")
+        .access_token = None;
+
+    let stored = subject_to_doc(state, &cipher).unwrap();
+    let document = mongodb::bson::serialize_to_document(&stored).unwrap();
+    let tokens = document.get_document("tokens").unwrap();
+    assert!(!tokens.contains_key("access_token"));
+    assert!(tokens.contains_key("refresh_token"));
+
+    let restored = subject_from_doc(stored, &cipher).unwrap();
+    let tokens = restored.tokens.unwrap();
+    assert!(tokens.access_token.is_none());
+    assert_eq!(tokens.refresh_token.unwrap().expose(), "refresh-plaintext");
 }
 
 #[test]
@@ -690,13 +757,13 @@ fn legacy_subject_bson_defaults_incarnation_generation_and_retention() {
     assert_eq!(restored.token_generation, 0);
     assert_eq!(restored.authorization_check_after, SystemTime::UNIX_EPOCH);
     assert_eq!(
-        restored.tokens.unwrap().access_token.expose(),
+        restored.tokens.unwrap().access_token.unwrap().expose(),
         "access-plaintext"
     );
 }
 
 #[test]
-fn schema_compatibility_accepts_v1_v2_and_rejects_future_documents() {
+fn schema_compatibility_accepts_v1_through_v3_and_rejects_future_documents() {
     let cipher = cipher();
 
     let mut legacy_subject = subject_to_doc(subject_state(), &cipher).unwrap();
@@ -706,6 +773,10 @@ fn schema_compatibility_accepts_v1_v2_and_rejects_future_documents() {
     v2_subject.auth_schema_version = 2;
     v2_subject.authorization_check_after = None;
     assert!(subject_from_doc(v2_subject, &cipher).is_ok());
+    let mut v3_subject = subject_to_doc(subject_state(), &cipher).unwrap();
+    v3_subject.auth_schema_version = 3;
+    v3_subject.authorization_lease = None;
+    assert!(subject_from_doc(v3_subject, &cipher).is_ok());
     let mut future_subject = subject_to_doc(subject_state(), &cipher).unwrap();
     future_subject.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -719,6 +790,9 @@ fn schema_compatibility_accepts_v1_v2_and_rejects_future_documents() {
     let mut v2_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
     v2_credential.auth_schema_version = 2;
     assert!(credential_state_from_doc(v2_credential, &cipher).is_ok());
+    let mut v3_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    v3_credential.auth_schema_version = 3;
+    assert!(credential_state_from_doc(v3_credential, &cipher).is_ok());
     let mut future_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
     future_credential.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -731,7 +805,7 @@ fn schema_compatibility_accepts_v1_v2_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64] } },
             ]
         }
     );
@@ -740,7 +814,7 @@ fn schema_compatibility_accepts_v1_v2_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, AUTH_SCHEMA_VERSION] } },
             ]
         }
     );
@@ -751,10 +825,7 @@ fn moving_subject_ciphertext_to_another_field_fails_closed() {
     let cipher = cipher();
     let mut stored = subject_to_doc(subject_state(), &cipher).unwrap();
     let tokens = stored.tokens.as_mut().unwrap();
-    std::mem::swap(
-        &mut tokens.access_token,
-        tokens.refresh_token.as_mut().unwrap(),
-    );
+    std::mem::swap(&mut tokens.access_token, &mut tokens.refresh_token);
     assert!(matches!(
         subject_from_doc(stored, &cipher),
         Err(StoreError::Malformed(_))

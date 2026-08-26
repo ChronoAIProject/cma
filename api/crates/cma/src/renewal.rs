@@ -309,12 +309,8 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
         }
     }
     let authorization_due_at = std::time::SystemTime::now();
-    auth.reconcile_due_authorizations(
-        authorization_due_at,
-        authorization_due_at + SWEEP_INTERVAL,
-        &authorization_page_budget,
-    )
-    .await;
+    auth.reconcile_due_authorizations(authorization_due_at, &authorization_page_budget)
+        .await;
     pass.used()
 }
 

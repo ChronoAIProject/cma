@@ -109,8 +109,11 @@ pub struct LoginAttempt {
 /// Provider tokens retained for one subject.
 #[derive(Debug, Clone)]
 pub struct DurableSubjectTokens {
-    /// Currently delegated access token.
-    pub access_token: SecretValue,
+    /// Currently delegated access token, absent once the provider marks it inactive.
+    ///
+    /// The surrounding token fact can remain so its refresh grant is still
+    /// eligible for an immediate exchange without exposing the rejected bearer.
+    pub access_token: Option<SecretValue>,
     /// Token used for renewal, when the provider issued one.
     pub refresh_token: Option<SecretValue>,
     /// Absolute access-token expiry.
@@ -124,6 +127,23 @@ pub struct SubjectRefreshLease {
     pub holder: String,
     /// When another worker may take over after process loss.
     pub expires_at: SystemTime,
+}
+
+/// Durable ownership of one provider authorization check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectAuthorizationLease {
+    /// Unique replica operation allowed to publish the provider answer.
+    pub holder: String,
+    /// Subject revision written by acquisition; monotonically fences takeovers.
+    pub fence: u64,
+    /// When the provider check was claimed.
+    pub acquired_at: SystemTime,
+    /// When another worker may take over after cancellation or process loss.
+    pub expires_at: SystemTime,
+    /// Subject lifecycle whose token was presented to the provider.
+    pub checked_incarnation: String,
+    /// Token generation whose access bearer was presented to the provider.
+    pub checked_token_generation: u64,
 }
 
 /// Stable position in either time-ordered subject refresh work set.
@@ -175,6 +195,8 @@ pub struct SubjectAuthState {
     pub authorization: Authorization,
     /// Earliest instant at which the provider must be asked again.
     pub authorization_check_after: SystemTime,
+    /// Fences provider authorization checks across replicas.
+    pub authorization_lease: Option<SubjectAuthorizationLease>,
     /// Non-authoritative display material.
     pub profile: Profile,
 }
@@ -533,11 +555,7 @@ impl MemoryAuthStore {
 
     /// Install a concurrent winner immediately before one selected CAS.
     /// A new incarnation models TTL deletion followed by subject recreation.
-    pub async fn install_subject_winner_on_replace(
-        &self,
-        call: usize,
-        winner: SubjectAuthState,
-    ) {
+    pub async fn install_subject_winner_on_replace(&self, call: usize, winner: SubjectAuthState) {
         self.subject_replace_calls.store(0, Ordering::SeqCst);
         *self.concurrent_subject_winner.lock().await = Some((call, winner));
     }
@@ -786,7 +804,10 @@ impl AuthStore for MemoryAuthStore {
         }
         let concurrent = {
             let mut injected = self.concurrent_subject_winner.lock().await;
-            if injected.as_ref().is_some_and(|(selected, _)| *selected == call) {
+            if injected
+                .as_ref()
+                .is_some_and(|(selected, _)| *selected == call)
+            {
                 injected.take().map(|(_, winner)| winner)
             } else {
                 None
@@ -923,7 +944,14 @@ impl AuthStore for MemoryAuthStore {
         let subjects = self.subjects.lock().await;
         let mut page: Vec<_> = subjects
             .values()
-            .filter(|state| state.tokens.is_some() && state.authorization_check_after <= now)
+            .filter(|state| {
+                state.tokens.is_some()
+                    && state.authorization_check_after <= now
+                    && state
+                        .authorization_lease
+                        .as_ref()
+                        .is_none_or(|lease| lease.expires_at <= now)
+            })
             .map(|state| {
                 let cursor = SubjectAuthorizationCursor {
                     ready_at: Some(state.authorization_check_after),
@@ -946,9 +974,7 @@ impl AuthStore for MemoryAuthStore {
                 })
             })
             .collect();
-        page.sort_by(|left, right| {
-            subject_authorization_cursor_cmp(&left.cursor, &right.cursor)
-        });
+        page.sort_by(|left, right| subject_authorization_cursor_cmp(&left.cursor, &right.cursor));
         page.truncate(limit);
         Ok(page)
     }
