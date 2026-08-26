@@ -19,14 +19,14 @@ const IDEMPOTENCY_KEY: &str = "idempotency-key";
 const MAX_KEY_BYTES: usize = 255;
 pub(super) const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// A JSON value accompanied by the digest of the bytes that carried it.
+/// A JSON decoding result accompanied by the digest of the bytes that carried it.
 pub(super) struct RequestBody<T> {
-    value: T,
+    value: Result<T, BodyProblem>,
     fingerprint: [u8; 32],
 }
 
 impl<T> RequestBody<T> {
-    pub(super) fn into_parts(self) -> (T, [u8; 32]) {
+    pub(super) fn into_parts(self) -> (Result<T, BodyProblem>, [u8; 32]) {
         (self.value, self.fingerprint)
     }
 }
@@ -39,13 +39,17 @@ where
     type Rejection = BodyProblem;
 
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
-        if !is_json_content_type(request.headers()) {
-            return Err(BodyProblem::missing_json_content_type());
-        }
+        let is_json = is_json_content_type(request.headers());
         let bytes = Bytes::from_request(request, state).await.map_err(|error| {
             BodyProblem::from(axum::extract::rejection::JsonRejection::from(error))
         })?;
-        let Json(value) = Json::<T>::from_bytes(&bytes).map_err(BodyProblem::from)?;
+        let value = if is_json {
+            Json::<T>::from_bytes(&bytes)
+                .map(|Json(value)| value)
+                .map_err(BodyProblem::from)
+        } else {
+            Err(BodyProblem::missing_json_content_type())
+        };
         Ok(Self {
             value,
             fingerprint: Sha256::digest(&bytes).into(),
