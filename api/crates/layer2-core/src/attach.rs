@@ -190,8 +190,6 @@ impl SessionService {
             // open — which is a lie the person cannot act on.
             self.readopt(&record).await?;
         }
-        let lifecycle = self.lock_lifecycle(id).await;
-
         // The session may have been recovered before its owner had signed back
         // in, when there was no credential to be had. This is the moment they
         // are demonstrably here, so it is the moment to check: without it the
@@ -206,6 +204,12 @@ impl SessionService {
         if unfunded {
             self.supply_credential(id, &caller.subject).await;
         }
+
+        // Credential supply takes this same non-reentrant gate while choosing
+        // and acknowledging an exact runtime. Acquire the attachment fence only
+        // after that attempt; the entry checks below repeat all mutable facts
+        // while this guard is held.
+        let lifecycle = self.lock_lifecycle(id).await;
 
         let commit = {
             let mut entries = self.entries.write().await;

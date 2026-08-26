@@ -5,6 +5,10 @@
 //! interprets. The value is opaque here: the core forwards it, and only the
 //! runtime and the provider ever understand it.
 
+use std::future::Future;
+
+use layer3_adapter::RuntimeHandle;
+
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::SessionService;
 
@@ -20,29 +24,62 @@ impl SessionService {
     /// Reports whether it arrived. A credential that quietly failed to land
     /// leaves a session that looks alive and refuses every call the agent makes
     /// on its owner's behalf.
-    async fn deliver_credential(&self, id: &SessionId, credential: &str) -> bool {
-        let placed = {
+    pub(crate) async fn install_credential_while_lifecycle_locked<F, Fut>(
+        &self,
+        _lifecycle: &tokio::sync::OwnedMutexGuard<()>,
+        id: &SessionId,
+        expected_runtime: &RuntimeHandle,
+        credential: &str,
+        commit: F,
+    ) -> Result<bool, crate::store::StoreError>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<bool, crate::store::StoreError>> + Send,
+    {
+        let kernel = {
             let entries = self.entries.read().await;
-            entries
-                .get(id)
-                .and_then(|e| e.runtime.clone().map(|h| (e.session.kernel.clone(), h)))
+            entries.get(id).and_then(|entry| {
+                (entry.runtime.as_ref() == Some(expected_runtime))
+                    .then(|| entry.session.kernel.clone())
+            })
         };
-        let Some((kernel, handle)) = placed else {
-            tracing::warn!(session_id = %id, "no runtime to give a credential to");
-            return false;
+        let Some(kernel) = kernel else {
+            tracing::warn!(session_id = %id, "the selected runtime is no longer current for credential delivery");
+            return Ok(false);
         };
         let Some(adapter) = self.adapter_for(&kernel) else {
             tracing::warn!(session_id = %id, %kernel, "no adapter to give a credential through");
-            return false;
+            return Ok(false);
         };
-        match adapter.refresh_credential(&handle, credential).await {
-            Ok(()) => true,
-            Err(e) => {
-                // Never logged with its value — only that one did not arrive.
-                tracing::warn!(session_id = %id, error = %e, "could not deliver the credential");
-                false
-            }
+        if let Err(error) = adapter
+            .refresh_credential(expected_runtime, credential)
+            .await
+        {
+            // Never logged with its value — only that one did not arrive.
+            tracing::warn!(session_id = %id, %error, "could not confirm credential delivery");
+            return Ok(false);
         }
+
+        // For a replacement this is the generation-CAS promotion. It runs only
+        // after H1 acknowledged the exact value and before H1 can be removed.
+        // A failed promotion leaves the old entry evidence untouched.
+        if !commit().await? {
+            return Ok(false);
+        }
+
+        let mut entries = self.entries.write().await;
+        let Some(entry) = entries
+            .get_mut(id)
+            .filter(|entry| entry.runtime.as_ref() == Some(expected_runtime))
+        else {
+            // Defensive even though lifecycle replacement obeys the same gate:
+            // if a non-lifecycle path removed H1, durable promotion already
+            // makes any successor select the acknowledged value.
+            tracing::warn!(session_id = %id, runtime = %expected_runtime.0, "credential was acknowledged after its runtime entry changed");
+            return Ok(false);
+        };
+        entry.subject_credential = Some(credential.to_string());
+        Ok(true)
     }
 
     /// The adapter backing a kernel, if this deployment has one.
@@ -157,25 +194,70 @@ impl SessionService {
     /// not shared: replacing every session's value when one was reissued would
     /// give each of them somebody else's.
     pub async fn push_session_credential(&self, id: &SessionId, credential: String) -> bool {
-        if !self.deliver_credential(id, &credential).await {
-            return false;
-        }
-        self.remember_credential(id, credential).await
+        self.push_session_credential_with(id, &credential, || async {
+            Ok::<bool, crate::store::StoreError>(true)
+        })
+        .await
+        .unwrap_or(false)
     }
 
-    /// Record a credential only after its runtime confirmed receipt.
+    /// Deliver, durably commit, and record a credential on one runtime generation.
     ///
-    /// Recording first lets cleanup treat the new value as current after a
-    /// failed delivery and revoke the old value the runtime is still using.
-    /// Delivery first can cause a harmless repeat when the entry disappears
-    /// between the two operations, but it cannot strand a live session.
-    async fn remember_credential(&self, id: &SessionId, credential: String) -> bool {
-        let mut entries = self.entries.write().await;
-        let Some(entry) = entries.get_mut(id) else {
+    /// `commit` is called only after the adapter acknowledges installation and
+    /// while lifecycle replacement remains fenced. CMA uses it to promote the
+    /// exact pending value before its predecessor can enter revoke debt.
+    pub async fn push_session_credential_with<F, Fut>(
+        &self,
+        id: &SessionId,
+        credential: &str,
+        commit: F,
+    ) -> Result<bool, crate::store::StoreError>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<bool, crate::store::StoreError>> + Send,
+    {
+        let lifecycle = self.lock_lifecycle(id).await;
+        let runtime = self
+            .entries
+            .read()
+            .await
+            .get(id)
+            .and_then(|entry| entry.runtime.clone());
+        let Some(runtime) = runtime else {
+            tracing::warn!(session_id = %id, "no runtime to give a credential to");
+            return Ok(false);
+        };
+        self.install_credential_while_lifecycle_locked(&lifecycle, id, &runtime, credential, commit)
+            .await
+    }
+
+    /// Push a shared subject credential only while this subject still owns the
+    /// selected live runtime. Provenance is read outside the lifecycle gate,
+    /// so ownership and status must be checked again after acquiring it.
+    async fn push_subject_credential(
+        &self,
+        id: &SessionId,
+        subject: &SubjectId,
+        credential: &str,
+    ) -> bool {
+        let lifecycle = self.lock_lifecycle(id).await;
+        let runtime = self.entries.read().await.get(id).and_then(|entry| {
+            (entry.session.is_owned_by(subject) && !entry.session.status.is_terminal())
+                .then(|| entry.runtime.clone())
+                .flatten()
+        });
+        let Some(runtime) = runtime else {
             return false;
         };
-        entry.subject_credential = Some(credential);
-        true
+        self.install_credential_while_lifecycle_locked(
+            &lifecycle,
+            id,
+            &runtime,
+            credential,
+            || async { Ok::<bool, crate::store::StoreError>(true) },
+        )
+        .await
+        .unwrap_or(false)
     }
 
     pub(crate) async fn services_for(&self, id: &SessionId) -> Vec<crate::environment::ServiceId> {
@@ -232,16 +314,14 @@ impl SessionService {
                 return;
             }
         };
-        if !self.deliver_credential(id, &credential).await {
+        if !self.push_session_credential(id, credential).await {
             tracing::warn!(
                 session_id = %id,
                 "credential delivery failed; keeping any predecessor eligible until retry"
             );
             return;
         }
-        if self.remember_credential(id, credential).await {
-            tracing::info!(session_id = %id, "credential supplied to a recovered session");
-        }
+        tracing::info!(session_id = %id, "credential supplied to a recovered session");
     }
 
     /// Give a credential to every live session that has none.
@@ -325,18 +405,16 @@ impl SessionService {
                 None => false,
             };
             if tracks_subject {
-                if let Some(entry) = self.entries.write().await.get_mut(&id).filter(|entry| {
-                    entry.session.is_owned_by(subject) && !entry.session.status.is_terminal()
-                }) {
-                    entry.subject_credential = Some(credential.clone());
-                    targets.push(id);
-                }
+                targets.push(id);
             }
         }
 
         let mut delivered = 0;
         for id in targets {
-            if self.deliver_credential(&id, &credential).await {
+            if self
+                .push_subject_credential(&id, subject, &credential)
+                .await
+            {
                 delivered += 1;
             }
         }
