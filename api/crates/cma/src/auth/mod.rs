@@ -23,7 +23,7 @@ use tokio::sync::{Mutex, RwLock};
 use persistence::{
     AuthStore, AuthSweepItem, BrowserSession, CredentialLeaseCursor, CredentialMutationCursor,
     CredentialReissueCursor, DurableSubjectTokens, RevokeDebtCursor, SecretDigest,
-    SubjectAuthState, SubjectOwnerCursor, SubjectRefreshCursor,
+    SubjectAuthState, SubjectAuthorizationCursor, SubjectOwnerCursor, SubjectRefreshCursor,
 };
 #[cfg(test)]
 use persistence::{MemoryAuthStore, SecretValue};
@@ -55,18 +55,20 @@ const AUTH_SWEEP_LEASE_LANE_BATCH_SIZE: usize =
 pub(super) const AUTH_REISSUE_ATTEMPT_BUDGET: usize = 15;
 /// Maximum external operations available to one selected recurring refresh.
 pub(super) const AUTH_REFRESH_ATTEMPT_BUDGET: usize = 10;
-/// One selected authorization check can resolve twice around one CAS loss.
+/// Maximum age of a complete cookie-session authorization answer.
+pub(super) const AUTHORIZATION_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+/// One selected authorization check can claim, resolve, and publish around one CAS loss.
 ///
-/// The first attempt spends metadata, userinfo, optional introspection, and a
-/// two-operation durable replacement. A contended retry additionally rereads
-/// the winner before resolving against its token generation.
+/// The allowance covers a two-operation durable claim, provider metadata,
+/// introspection plus a userinfo fallback, a two-operation completion, and the
+/// bounded contention reads/writes needed to observe a concurrent winner.
 pub(super) const AUTHORIZATION_CHECK_ATTEMPT_BUDGET: usize = 11;
-/// One hundred work pages plus one terminating/backlog-probe query (10,000 subjects).
-pub(super) const AUTHORIZATION_CHECK_PAGE_BUDGET: usize = 101;
+/// Provider checks admitted concurrently by one bounded background batch.
+pub(super) const AUTHORIZATION_CHECK_BATCH_SIZE: usize = 16;
+/// One normal page read plus one read when the fairness cursor wraps.
+pub(super) const AUTHORIZATION_CHECK_PAGE_BUDGET: usize = 2;
 pub(super) const AUTHORIZATION_CHECK_LANE_BUDGET: usize = AUTHORIZATION_CHECK_PAGE_BUDGET
-    + (AUTHORIZATION_CHECK_PAGE_BUDGET - 1)
-        * AUTH_SWEEP_BATCH_SIZE
-        * AUTHORIZATION_CHECK_ATTEMPT_BUDGET;
+    + AUTHORIZATION_CHECK_BATCH_SIZE * AUTHORIZATION_CHECK_ATTEMPT_BUDGET;
 
 struct AuthPassBudgetState {
     remaining: AtomicUsize,
@@ -293,6 +295,7 @@ pub struct AuthState {
     orphan_reconciliation_sweep: Mutex<OrphanReconciliationSweep>,
     reissue_sweep_epochs: Mutex<ReissueSweepEpochs>,
     revoke_debt_sweep_epoch: Mutex<Option<SweepEpoch<RevokeDebtCursor>>>,
+    authorization_sweep_after: Mutex<Option<SubjectAuthorizationCursor>>,
     /// What the provider has said about bearer tokens, briefly.
     ///
     /// Separate from `sessions` because the two are different credentials with
@@ -367,6 +370,7 @@ impl AuthState {
             orphan_reconciliation_sweep: Mutex::new(OrphanReconciliationSweep::default()),
             reissue_sweep_epochs: Mutex::new(ReissueSweepEpochs::default()),
             revoke_debt_sweep_epoch: Mutex::new(None),
+            authorization_sweep_after: Mutex::new(None),
             bearer: bearer::BearerCache::default(),
         })
     }
@@ -437,10 +441,12 @@ impl AuthState {
                                     credential_is_request_bound: false,
                                 }));
                             };
+                            let fact = self.enforce_cookie_authorization(fact).await?;
                             let delegated_credential = fact
                                 .tokens
                                 .filter(|tokens| tokens.expires_at > SystemTime::now())
-                                .map(|tokens| tokens.access_token.into_inner());
+                                .and_then(|tokens| tokens.access_token)
+                                .map(|access| access.into_inner());
                             return Ok(Some(RequestAuth {
                                 subject,
                                 authorization: fact.authorization,
@@ -971,6 +977,7 @@ impl AuthState {
                 refresh_lease: None,
                 authorization: Authorization::none(),
                 authorization_check_after: SystemTime::UNIX_EPOCH,
+                authorization_lease: None,
                 profile: profile::Profile::default(),
             });
             update(&mut next)?;
@@ -1003,11 +1010,12 @@ impl AuthState {
             state.token_generation = next_token_generation(state.token_generation)?;
             state.tokens = Some(tokens.clone());
             state.refresh_lease = None;
+            state.authorization_lease = None;
             state.authorization = authorization.clone();
-            // The sweep ticker is globally aligned, not relative to sign-in.
-            // Due-now guarantees this complete answer is checked on the next
-            // tick rather than narrowly missing it and waiting two periods.
-            state.authorization_check_after = SystemTime::now();
+            // Sign-in just obtained a complete provider answer. Request-time
+            // enforcement will require another one no later than this deadline,
+            // independent of where the background ticker happens to be.
+            state.authorization_check_after = SystemTime::now() + AUTHORIZATION_CHECK_INTERVAL;
             state.profile = profile.clone();
             Ok(())
         })
@@ -1025,7 +1033,7 @@ impl AuthState {
             .expires_at
             .saturating_duration_since(std::time::Instant::now());
         let durable = DurableSubjectTokens {
-            access_token: SecretValue::new(tokens.access_token),
+            access_token: Some(SecretValue::new(tokens.access_token)),
             refresh_token: tokens.refresh_token.map(SecretValue::new),
             expires_at: SystemTime::now() + remaining,
         };
@@ -1033,6 +1041,8 @@ impl AuthState {
             state.token_generation = next_token_generation(state.token_generation)?;
             state.tokens = Some(durable.clone());
             state.refresh_lease = None;
+            state.authorization_lease = None;
+            state.authorization_check_after = SystemTime::UNIX_EPOCH;
             Ok(())
         })
         .await
@@ -1053,7 +1063,8 @@ impl AuthState {
             .await?
             .and_then(|state| state.tokens)
             .filter(|tokens| tokens.expires_at > SystemTime::now())
-            .map(|tokens| tokens.access_token.into_inner()))
+            .and_then(|tokens| tokens.access_token)
+            .map(|access| access.into_inner()))
     }
 
     /// Subjects whose access token is close enough to expiry to renew.

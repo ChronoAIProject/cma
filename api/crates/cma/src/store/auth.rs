@@ -16,7 +16,8 @@ use crate::auth::persistence::{
     CredentialMutationCursor, CredentialReconciliationCursor, CredentialReissueCursor,
     DurableCredential, DurableSubjectTokens, LoginAttempt, RevokeDebt, RevokeDebtCursor,
     RevokeDebtWork, SecretDigest, SecretValue, SessionCredentialState, SubjectAuthState,
-    SubjectAuthorizationCursor, SubjectOwnerCursor, SubjectRefreshCursor, SubjectRefreshLease,
+    SubjectAuthorizationCursor, SubjectAuthorizationLease, SubjectOwnerCursor,
+    SubjectRefreshCursor, SubjectRefreshLease,
 };
 use crate::auth::profile::Profile;
 
@@ -52,12 +53,13 @@ const CREDENTIAL_MIGRATION_INDEX: &str = "auth_credential_schema_migration";
 const DUPLICATE_KEY: i32 = 11000;
 /// Persisted shape written by this binary.
 ///
-/// Version 3 adds durable authorization-recheck scheduling. The deployment's
+/// Version 4 adds a durable authorization-check lease and quarantinable access
+/// tokens. The deployment's
 /// `Recreate` strategy is a hard writer boundary: an older binary uses
 /// whole-document replacement and cannot preserve newer fields if both write at
 /// once. Migration fences operations that predate the cutover, but does not
 /// claim arbitrary mixed-version rolling-writer compatibility.
-const AUTH_SCHEMA_VERSION: i64 = 3;
+const AUTH_SCHEMA_VERSION: i64 = 4;
 const AUTH_MIGRATION_LANE_BATCH_SIZE: usize = 50;
 const AUTH_SCHEMA_OPEN_BUDGET: usize = 2 * (AUTH_MIGRATION_LANE_BATCH_SIZE + 2) + 2;
 
@@ -104,7 +106,8 @@ struct LoginAttemptDoc {
 
 #[derive(Serialize, Deserialize)]
 struct SubjectTokensDoc {
-    access_token: CipherEnvelope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    access_token: Option<CipherEnvelope>,
     refresh_token: Option<CipherEnvelope>,
     expires_at: DateTime,
 }
@@ -137,6 +140,8 @@ struct SubjectAuthDoc {
     capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     authorization_check_after: Option<DateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authorization_lease: Option<SubjectAuthorizationLeaseDoc>,
     profile: ProfileDoc,
 }
 
@@ -144,6 +149,16 @@ struct SubjectAuthDoc {
 struct SubjectRefreshLeaseDoc {
     holder: String,
     expires_at: DateTime,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SubjectAuthorizationLeaseDoc {
+    holder: String,
+    fence: i64,
+    acquired_at: DateTime,
+    expires_at: DateTime,
+    checked_incarnation: String,
+    checked_token_generation: i64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -810,13 +825,9 @@ impl AuthStore for MongoAuthStore {
             .await
             .map_err(|error| read_failure("list subjects due for authorization check", &error))?;
         let mut states = Vec::new();
-        while let Some(stored) = cursor
-            .try_next()
-            .await
-            .map_err(|error| {
-                read_failure("list subjects due for authorization check cursor", &error)
-            })?
-        {
+        while let Some(stored) = cursor.try_next().await.map_err(|error| {
+            read_failure("list subjects due for authorization check cursor", &error)
+        })? {
             states.push(AuthSweepItem {
                 cursor: subject_authorization_cursor_from_document(&stored)?,
                 state: decode_subject_document(stored, &self.cipher),
@@ -1144,7 +1155,7 @@ fn legacy_schema_filter() -> Document {
     doc! {
         "$or": [
             { "auth_schema_version": { "$exists": false } },
-            { "auth_schema_version": { "$in": [1_i64, 2_i64] } },
+            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64] } },
         ]
     }
 }
@@ -1153,7 +1164,7 @@ fn supported_schema_filter() -> Document {
     doc! {
         "$or": [
             { "auth_schema_version": { "$exists": false } },
-            { "auth_schema_version": { "$in": [1_i64, 2_i64, AUTH_SCHEMA_VERSION] } },
+            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, AUTH_SCHEMA_VERSION] } },
         ]
     }
 }
@@ -1215,6 +1226,10 @@ fn subject_migration_update(
                     "$$NOW",
                 ]
             },
+            // A v3 writer cannot understand or preserve an authorization lease.
+            // The revision/incarnation fence above prevents any overlapping
+            // pre-cutover check from publishing after this reset.
+            "authorization_lease": Bson::Null,
             "sweep_sequence": sweep_sequence,
             "auth_schema_version": AUTH_SCHEMA_VERSION,
         }
@@ -1418,6 +1433,16 @@ fn subject_authorization_filter(
     let base = doc! {
         "_id": { "$type": "string" },
         "tokens": { "$type": "object" },
+        "$or": [
+            { "authorization_lease": Bson::Null },
+            { "authorization_lease": { "$exists": false } },
+            {
+                "authorization_lease.expires_at": {
+                    "$type": "date",
+                    "$lte": DateTime::from_system_time(now),
+                }
+            },
+        ],
     };
     let due = doc! {
         "$or": [
@@ -2026,8 +2051,12 @@ fn subject_delete_after(
     let retained = anchor.checked_add(SUBJECT_RETENTION).ok_or_else(|| {
         StoreError::Malformed("subject retention deadline exceeds the system clock".into())
     })?;
-    Ok(state
+    let retained = state
         .refresh_lease
+        .as_ref()
+        .map_or(retained, |lease| retained.max(lease.expires_at));
+    Ok(state
+        .authorization_lease
         .as_ref()
         .map_or(retained, |lease| retained.max(lease.expires_at)))
 }
@@ -2046,18 +2075,25 @@ fn subject_to_doc(
         refresh_lease,
         authorization,
         authorization_check_after,
+        authorization_lease,
         profile,
     } = state;
     let id = subject.0;
     let tokens = tokens
         .map(|tokens| {
             Ok(SubjectTokensDoc {
-                access_token: cipher.seal(
-                    SUBJECT_KIND,
-                    id.as_bytes(),
-                    ACCESS_TOKEN_FIELD,
-                    tokens.access_token.expose(),
-                )?,
+                access_token: tokens
+                    .access_token
+                    .as_ref()
+                    .map(|value| {
+                        cipher.seal(
+                            SUBJECT_KIND,
+                            id.as_bytes(),
+                            ACCESS_TOKEN_FIELD,
+                            value.expose(),
+                        )
+                    })
+                    .transpose()?,
                 refresh_token: tokens
                     .refresh_token
                     .as_ref()
@@ -2093,6 +2129,23 @@ fn subject_to_doc(
             .map(str::to_string)
             .collect(),
         authorization_check_after: Some(DateTime::from_system_time(authorization_check_after)),
+        authorization_lease: authorization_lease
+            .map(
+                |lease| -> Result<SubjectAuthorizationLeaseDoc, StoreError> {
+                    Ok(SubjectAuthorizationLeaseDoc {
+                        holder: lease.holder,
+                        fence: stored_counter(lease.fence, "subject authorization lease fence")?,
+                        acquired_at: DateTime::from_system_time(lease.acquired_at),
+                        expires_at: DateTime::from_system_time(lease.expires_at),
+                        checked_incarnation: lease.checked_incarnation,
+                        checked_token_generation: stored_counter(
+                            lease.checked_token_generation,
+                            "subject authorization lease token generation",
+                        )?,
+                    })
+                },
+            )
+            .transpose()?,
         profile: ProfileDoc {
             display_name: profile.display_name,
             email: profile.email,
@@ -2112,12 +2165,14 @@ fn subject_from_doc(
         .tokens
         .map(|tokens| {
             Ok(DurableSubjectTokens {
-                access_token: SecretValue::new(cipher.open(
-                    SUBJECT_KIND,
-                    id.as_bytes(),
-                    ACCESS_TOKEN_FIELD,
-                    tokens.access_token,
-                )?),
+                access_token: tokens
+                    .access_token
+                    .map(|value| {
+                        cipher
+                            .open(SUBJECT_KIND, id.as_bytes(), ACCESS_TOKEN_FIELD, value)
+                            .map(SecretValue::new)
+                    })
+                    .transpose()?,
                 refresh_token: tokens
                     .refresh_token
                     .map(|value| {
@@ -2149,6 +2204,22 @@ fn subject_from_doc(
         authorization_check_after: stored
             .authorization_check_after
             .map_or(SystemTime::UNIX_EPOCH, |deadline| deadline.to_system_time()),
+        authorization_lease: stored
+            .authorization_lease
+            .map(|lease| -> Result<SubjectAuthorizationLease, StoreError> {
+                Ok(SubjectAuthorizationLease {
+                    holder: lease.holder,
+                    fence: read_counter(lease.fence, "subject authorization lease fence")?,
+                    acquired_at: lease.acquired_at.to_system_time(),
+                    expires_at: lease.expires_at.to_system_time(),
+                    checked_incarnation: lease.checked_incarnation,
+                    checked_token_generation: read_counter(
+                        lease.checked_token_generation,
+                        "subject authorization lease token generation",
+                    )?,
+                })
+            })
+            .transpose()?,
         profile: Profile {
             display_name: stored.profile.display_name,
             email: stored.profile.email,

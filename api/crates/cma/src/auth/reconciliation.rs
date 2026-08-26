@@ -6,20 +6,24 @@
 //! revision CAS against the token generation that was actually checked.
 
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use futures_util::{stream, StreamExt};
 use layer2_core::store::StoreError;
 use layer2_core::{Authorization, SubjectId};
 
-use super::persistence::{SubjectAuthState, SubjectAuthorizationCursor};
+use super::persistence::{SubjectAuthState, SubjectAuthorizationCursor, SubjectAuthorizationLease};
 use super::{
-    next_token_generation, AuthMode, AuthOperationBudget, AuthState,
-    AUTHORIZATION_CHECK_ATTEMPT_BUDGET, AUTHORIZATION_CHECK_PAGE_BUDGET,
-    AUTH_SWEEP_BATCH_SIZE,
+    next_token_generation, random_token, AuthMode, AuthOperationBudget, AuthState,
+    AUTHORIZATION_CHECK_ATTEMPT_BUDGET, AUTHORIZATION_CHECK_BATCH_SIZE,
+    AUTHORIZATION_CHECK_INTERVAL,
 };
 
-const AUTHORIZATION_CHECK_CONCURRENCY: usize = 16;
+const AUTHORIZATION_CHECK_LEASE_LIFETIME: Duration = Duration::from_secs(30);
+#[cfg(not(test))]
+const REQUEST_AUTHORIZATION_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const REQUEST_AUTHORIZATION_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// One page whose cursor advances independently of item outcomes.
 struct AuthorizationCheckPage {
@@ -33,8 +37,27 @@ struct AuthorizationCheckPage {
 enum ProviderAnswer {
     Complete {
         authorization: Authorization,
-        retire_tokens: bool,
+        token_disposition: TokenDisposition,
     },
+    Transient(String),
+}
+
+#[derive(Clone, Copy)]
+enum TokenDisposition {
+    Keep,
+    QuarantineAccess,
+    RetireDelegation,
+}
+
+enum UserinfoAnswer {
+    Complete(Vec<String>),
+    SubjectMismatch,
+    Transient(String),
+}
+
+enum IntrospectionAnswer {
+    Active(Vec<String>),
+    Inactive,
     Transient(String),
 }
 
@@ -81,123 +104,82 @@ fn take_operation(
 }
 
 impl AuthState {
-    /// Drain every due page admitted by the explicit page-query allowance.
+    /// Process one provider batch and advance a fairness cursor for the next sweep.
     pub(crate) async fn reconcile_due_authorizations(
         self: &Arc<Self>,
         due_at: SystemTime,
-        next_check: SystemTime,
         page_budget: &AuthOperationBudget,
     ) {
-        let mut after = None;
-        let mut work_pages_remaining = AUTHORIZATION_CHECK_PAGE_BUDGET - 1;
-        loop {
-            if work_pages_remaining == 0 {
-                if let Err(error) = take_operation(
-                    page_budget,
-                    1,
-                    "authorization due-backlog probe",
-                ) {
-                    tracing::error!(error = %error, "could not reserve the authorization backlog probe");
-                    break;
-                }
-                let probe = self
-                    .store
-                    .subjects_due_for_authorization_check(due_at, after.as_ref(), 1)
-                    .await;
-                match probe {
-                    Ok(items) if items.len() <= 1 => {
-                        if !items.is_empty() {
-                            tracing::warn!(
-                                subjects = (AUTHORIZATION_CHECK_PAGE_BUDGET - 1)
-                                    * AUTH_SWEEP_BATCH_SIZE,
-                                "authorization reconciliation reached its per-sweep subject ceiling"
-                            );
-                        }
-                    }
-                    Ok(_) => tracing::error!(
-                        "subject authorization store exceeded its backlog-probe limit"
-                    ),
-                    Err(error) => tracing::error!(
-                        error = %error,
-                        "could not probe the remaining authorization reconciliation backlog"
-                    ),
-                }
-                break;
+        let after = self.authorization_sweep_after.lock().await.clone();
+        let mut page = match self
+            .authorization_check_page_with_budget(due_at, after.as_ref(), page_budget)
+            .await
+        {
+            Ok(page) => page,
+            Err(error) => {
+                tracing::error!(error = %error, "could not list subjects due for authorization reconciliation");
+                return;
             }
-            let page = match self
-                .authorization_check_page_with_budget(due_at, after.as_ref(), page_budget)
+        };
+        if page.next.is_none() && after.is_some() {
+            page = match self
+                .authorization_check_page_with_budget(due_at, None, page_budget)
                 .await
             {
                 Ok(page) => page,
                 Err(error) => {
-                    tracing::error!(error = %error, "could not list subjects due for authorization reconciliation");
-                    break;
+                    tracing::error!(error = %error, "could not wrap the authorization reconciliation cursor");
+                    return;
                 }
             };
-            work_pages_remaining -= 1;
-            if let Some(error) = page.first_error {
-                tracing::error!(
-                    error = %error,
-                    "one authorization reconciliation record could not be read"
-                );
-            }
+        }
+        if let Some(error) = page.first_error {
+            tracing::error!(
+                error = %error,
+                "one authorization reconciliation record could not be read"
+            );
+        }
 
-            let full = page.full;
-            let next = page.next;
-            let outcomes = stream::iter(page.work)
-                .map(|state| {
-                    let auth = Arc::clone(self);
-                    async move {
-                        let subject = state.subject.clone();
-                        let budget = AuthOperationBudget::standalone(
-                            AUTHORIZATION_CHECK_ATTEMPT_BUDGET,
-                        );
-                        let outcome = auth
-                            .reconcile_authorization_with_budget(
-                                state,
-                                due_at,
-                                next_check,
-                                &budget,
-                            )
-                            .await;
-                        (subject, outcome)
-                    }
-                })
-                .buffer_unordered(AUTHORIZATION_CHECK_CONCURRENCY)
-                .collect::<Vec<_>>()
-                .await;
+        let next_after = if page.full { page.next.clone() } else { None };
+        *self.authorization_sweep_after.lock().await = next_after;
+        let outcomes = stream::iter(page.work)
+            .map(|state| {
+                let auth = Arc::clone(self);
+                async move {
+                    let subject = state.subject.clone();
+                    let budget =
+                        AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+                    let outcome = auth
+                        .reconcile_authorization_with_budget(state, due_at, &budget)
+                        .await;
+                    (subject, outcome)
+                }
+            })
+            .buffer_unordered(AUTHORIZATION_CHECK_BATCH_SIZE)
+            .collect::<Vec<_>>()
+            .await;
 
-            for (subject, outcome) in outcomes {
-                match outcome {
-                    Ok(AuthorizationCheckOutcome::Replaced) => {
-                        tracing::info!(%subject, "reconciled subject authorization");
-                    }
-                    Ok(AuthorizationCheckOutcome::Preserved(error)) => {
-                        tracing::warn!(
-                            %subject,
-                            error = %error,
-                            "provider authorization answer was incomplete; retained prior grants"
-                        );
-                    }
-                    Ok(AuthorizationCheckOutcome::Skipped) => {}
-                    Err(error) => {
-                        tracing::warn!(
-                            %subject,
-                            error = %error,
-                            "authorization remains due after bounded reconciliation contention"
-                        );
-                    }
+        for (subject, outcome) in outcomes {
+            match outcome {
+                Ok(AuthorizationCheckOutcome::Replaced) => {
+                    tracing::info!(%subject, "reconciled subject authorization");
+                }
+                Ok(AuthorizationCheckOutcome::Preserved(error)) => {
+                    tracing::warn!(
+                        %subject,
+                        error = %error,
+                        "provider authorization answer was incomplete; retained prior grants"
+                    );
+                }
+                Ok(AuthorizationCheckOutcome::Skipped) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        %subject,
+                        error = %error,
+                        "authorization remains due after bounded reconciliation contention"
+                    );
                 }
             }
-
-            if !full {
-                break;
-            }
-            let Some(next) = next else {
-                tracing::error!("full authorization page carried no continuation cursor");
-                break;
-            };
-            after = Some(next);
         }
     }
 
@@ -211,10 +193,10 @@ impl AuthState {
         take_operation(budget, 1, "authorization due-page query")?;
         let selected = self
             .store
-            .subjects_due_for_authorization_check(now, after, AUTH_SWEEP_BATCH_SIZE)
+            .subjects_due_for_authorization_check(now, after, AUTHORIZATION_CHECK_BATCH_SIZE)
             .await?;
         let selected_len = selected.len();
-        if selected_len > AUTH_SWEEP_BATCH_SIZE {
+        if selected_len > AUTHORIZATION_CHECK_BATCH_SIZE {
             return Err(StoreError::Malformed(
                 "subject authorization store exceeded its requested page limit".into(),
             ));
@@ -225,7 +207,7 @@ impl AuthState {
             "selected authorization item reservations",
         )?;
 
-        let full = selected_len == AUTH_SWEEP_BATCH_SIZE;
+        let full = selected_len == AUTHORIZATION_CHECK_BATCH_SIZE;
         let next = selected.last().map(|item| item.cursor.clone());
         let mut first_error = None;
         let mut work = Vec::with_capacity(selected_len);
@@ -244,9 +226,7 @@ impl AuthState {
                 }
             }
         }
-        budget.refund(
-            selected_len.saturating_sub(work.len()) * AUTHORIZATION_CHECK_ATTEMPT_BUDGET,
-        );
+        budget.refund(selected_len.saturating_sub(work.len()) * AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
         Ok(AuthorizationCheckPage {
             work,
             next,
@@ -255,90 +235,168 @@ impl AuthState {
         })
     }
 
-    /// Reconcile one selected fact against the exact lifecycle and token generation checked.
+    /// Reconcile one selected fact against a durable claim on the exact token checked.
     pub(crate) async fn reconcile_authorization_with_budget(
+        &self,
+        current: SubjectAuthState,
+        due_at: SystemTime,
+        budget: &AuthOperationBudget,
+    ) -> Result<AuthorizationCheckOutcome, StoreError> {
+        let Some(claimed) = self
+            .claim_authorization_check(current, due_at, budget)
+            .await?
+        else {
+            return Ok(AuthorizationCheckOutcome::Skipped);
+        };
+        let tokens = claimed
+            .tokens
+            .as_ref()
+            .expect("an authorization claim is issued only for token state");
+        let answer = if tokens.expires_at <= SystemTime::now() && tokens.refresh_token.is_none() {
+            ProviderAnswer::Complete {
+                authorization: Authorization::none(),
+                token_disposition: TokenDisposition::RetireDelegation,
+            }
+        } else {
+            let access_token = tokens
+                .access_token
+                .as_ref()
+                .expect("an authorization claim is issued only for a usable access token")
+                .expose()
+                .to_string();
+            self.resolve_authorization_answer(&claimed.subject, &access_token, budget)
+                .await
+        };
+        self.complete_authorization_check(claimed, answer, budget)
+            .await
+    }
+
+    async fn claim_authorization_check(
         &self,
         mut current: SubjectAuthState,
         due_at: SystemTime,
-        next_check: SystemTime,
         budget: &AuthOperationBudget,
-    ) -> Result<AuthorizationCheckOutcome, StoreError> {
-        let mut cached: Option<(String, u64, ProviderAnswer)> = None;
-
+    ) -> Result<Option<SubjectAuthState>, StoreError> {
         loop {
+            let now = SystemTime::now();
             if current.authorization_check_after > due_at || current.tokens.is_none() {
-                return Ok(AuthorizationCheckOutcome::Skipped);
+                return Ok(None);
             }
-            // A refresh worker owns token mutation while this lease is live.
-            // Leaving the deadline untouched makes this row due again after
-            // the short lease rather than competing with its completion.
             if current
-                .refresh_lease
+                .authorization_lease
                 .as_ref()
-                .is_some_and(|lease| lease.expires_at > due_at)
+                .is_some_and(|lease| lease.expires_at > now)
+                || current
+                    .refresh_lease
+                    .as_ref()
+                    .is_some_and(|lease| lease.expires_at > now)
             {
-                return Ok(AuthorizationCheckOutcome::Skipped);
+                return Ok(None);
             }
-
             let tokens = current
                 .tokens
                 .as_ref()
                 .expect("token presence was checked above");
-            let answer = if tokens.expires_at <= due_at && tokens.refresh_token.is_none() {
-                ProviderAnswer::Complete {
-                    authorization: Authorization::none(),
-                    retire_tokens: true,
-                }
-            } else if let Some(answer) = cached.as_ref().and_then(
-                |(incarnation, generation, answer)| {
-                    if incarnation == &current.incarnation
-                        && *generation == current.token_generation
-                    {
-                        Some(answer.clone())
-                    } else {
-                        None
-                    }
-                },
-            ) {
-                answer
-            } else {
-                let resolved = self
-                    .resolve_authorization_answer(
-                        &current.subject,
-                        tokens.access_token.expose(),
-                        budget,
-                    )
-                    .await;
-                cached = Some((
-                    current.incarnation.clone(),
-                    current.token_generation,
-                    resolved.clone(),
-                ));
-                resolved
+            // Refresh owns expired renewable tokens. Keeping this row due makes
+            // cookie requests fail closed until the refreshed generation has a
+            // complete authorization answer.
+            if tokens.access_token.is_none()
+                || (tokens.expires_at <= now && tokens.refresh_token.is_some())
+            {
+                return Ok(None);
+            }
+
+            let fence = current
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| StoreError::Malformed("subject auth revision exhausted".into()))?;
+            let mut next = current.clone();
+            next.revision = fence;
+            next.authorization_lease = Some(SubjectAuthorizationLease {
+                holder: random_token(),
+                fence,
+                acquired_at: now,
+                expires_at: now + AUTHORIZATION_CHECK_LEASE_LIFETIME,
+                checked_incarnation: current.incarnation.clone(),
+                checked_token_generation: current.token_generation,
+            });
+            take_operation(budget, 2, "authorization-check lease acquisition")?;
+            if self
+                .store
+                .replace_subject(&current.incarnation, current.revision, next.clone())
+                .await?
+            {
+                return Ok(Some(next));
+            }
+
+            take_operation(budget, 1, "authorization-check lease contention read")?;
+            let Some(winner) = self.store.subject(&current.subject).await? else {
+                return Ok(None);
             };
+            current = winner;
+        }
+    }
+
+    async fn complete_authorization_check(
+        &self,
+        mut current: SubjectAuthState,
+        answer: ProviderAnswer,
+        budget: &AuthOperationBudget,
+    ) -> Result<AuthorizationCheckOutcome, StoreError> {
+        loop {
+            let Some(lease) = current.authorization_lease.as_ref() else {
+                return Ok(AuthorizationCheckOutcome::Skipped);
+            };
+            if lease.checked_incarnation != current.incarnation
+                || lease.checked_token_generation != current.token_generation
+            {
+                return Ok(AuthorizationCheckOutcome::Skipped);
+            }
 
             let mut next = current.clone();
             next.revision = current
                 .revision
                 .checked_add(1)
                 .ok_or_else(|| StoreError::Malformed("subject auth revision exhausted".into()))?;
-            next.authorization_check_after = next_check;
-            match &answer {
-                ProviderAnswer::Complete {
-                    authorization,
-                    retire_tokens,
-                } => {
-                    next.authorization = authorization.clone();
-                    if *retire_tokens {
+            next.authorization_lease = None;
+            if let ProviderAnswer::Complete {
+                authorization,
+                token_disposition,
+            } = &answer
+            {
+                let completed_at = SystemTime::now();
+                next.authorization = authorization.clone();
+                next.authorization_check_after = completed_at + AUTHORIZATION_CHECK_INTERVAL;
+                match token_disposition {
+                    TokenDisposition::Keep => {}
+                    TokenDisposition::QuarantineAccess => {
+                        next.token_generation = next_token_generation(current.token_generation)?;
+                        if next
+                            .tokens
+                            .as_ref()
+                            .is_some_and(|tokens| tokens.refresh_token.is_some())
+                        {
+                            let tokens = next
+                                .tokens
+                                .as_mut()
+                                .expect("refresh eligibility was checked above");
+                            tokens.access_token = None;
+                            tokens.expires_at = completed_at;
+                            next.refresh_lease = None;
+                        } else {
+                            next.tokens = None;
+                            next.refresh_lease = None;
+                        }
+                    }
+                    TokenDisposition::RetireDelegation => {
                         next.token_generation = next_token_generation(current.token_generation)?;
                         next.tokens = None;
                         next.refresh_lease = None;
                     }
                 }
-                ProviderAnswer::Transient(_) => {}
             }
 
-            take_operation(budget, 2, "authorization reconciliation write")?;
+            take_operation(budget, 2, "authorization-check completion")?;
             if self
                 .store
                 .replace_subject(&current.incarnation, current.revision, next)
@@ -346,16 +404,26 @@ impl AuthState {
             {
                 return Ok(match answer {
                     ProviderAnswer::Complete { .. } => AuthorizationCheckOutcome::Replaced,
-                    ProviderAnswer::Transient(error) => {
-                        AuthorizationCheckOutcome::Preserved(error)
-                    }
+                    ProviderAnswer::Transient(error) => AuthorizationCheckOutcome::Preserved(error),
                 });
             }
 
-            take_operation(budget, 1, "authorization reconciliation contention read")?;
+            take_operation(budget, 1, "authorization-check completion contention read")?;
             let Some(winner) = self.store.subject(&current.subject).await? else {
                 return Ok(AuthorizationCheckOutcome::Skipped);
             };
+            let same_claim = winner
+                .authorization_lease
+                .as_ref()
+                .is_some_and(|winner_lease| {
+                    winner_lease.holder == lease.holder
+                        && winner_lease.fence == lease.fence
+                        && winner_lease.checked_incarnation == lease.checked_incarnation
+                        && winner_lease.checked_token_generation == lease.checked_token_generation
+                });
+            if !same_claim {
+                return Ok(AuthorizationCheckOutcome::Skipped);
+            }
             current = winner;
         }
     }
@@ -373,37 +441,130 @@ impl AuthState {
             Ok(meta) => meta,
             Err(error) => return ProviderAnswer::Transient(error),
         };
-        let Some(userinfo_endpoint) = meta.userinfo_endpoint.as_ref() else {
-            return ProviderAnswer::Transient("provider advertises no userinfo endpoint".into());
-        };
 
-        if let Err(error) = take_operation(budget, 1, "provider userinfo check") {
-            return ProviderAnswer::Transient(error.to_string());
+        match (
+            meta.introspection_endpoint.as_deref(),
+            meta.userinfo_endpoint.as_deref(),
+        ) {
+            (Some(introspection), Some(userinfo)) => {
+                if let Err(error) = take_operation(budget, 1, "provider introspection check") {
+                    return ProviderAnswer::Transient(error.to_string());
+                }
+                let introspection = self.introspection_answer(introspection, access_token).await;
+                if !matches!(&introspection, IntrospectionAnswer::Transient(_)) {
+                    return Self::answer_from_introspection(introspection);
+                }
+                if let Err(error) = take_operation(budget, 1, "provider userinfo fallback") {
+                    return ProviderAnswer::Transient(error.to_string());
+                }
+                let userinfo = self
+                    .userinfo_answer(userinfo, expected_subject, access_token)
+                    .await;
+                Self::combine_provider_answers(introspection, userinfo)
+            }
+            (Some(introspection), None) => {
+                if let Err(error) = take_operation(budget, 1, "provider introspection check") {
+                    return ProviderAnswer::Transient(error.to_string());
+                }
+                Self::answer_from_introspection(
+                    self.introspection_answer(introspection, access_token).await,
+                )
+            }
+            (None, Some(userinfo)) => {
+                if let Err(error) = take_operation(budget, 1, "provider userinfo check") {
+                    return ProviderAnswer::Transient(error.to_string());
+                }
+                Self::answer_from_userinfo(
+                    self.userinfo_answer(userinfo, expected_subject, access_token)
+                        .await,
+                )
+            }
+            (None, None) => ProviderAnswer::Transient(
+                "provider advertises neither introspection nor userinfo".into(),
+            ),
         }
-        let response = match self
-            .http
-            .get(userinfo_endpoint)
-            .bearer_auth(access_token)
-            .send()
-            .await
-        {
+    }
+
+    async fn introspection_answer(
+        &self,
+        endpoint: &str,
+        access_token: &str,
+    ) -> IntrospectionAnswer {
+        let AuthMode::Provider {
+            client_id,
+            client_secret,
+            ..
+        } = &self.mode
+        else {
+            return IntrospectionAnswer::Transient("no provider configured".into());
+        };
+        let form = [
+            ("token", access_token),
+            ("token_type_hint", "access_token"),
+            ("client_id", client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
+        ];
+        let response = match self.http.post(endpoint).form(&form).send().await {
             Ok(response) => response,
             Err(error) => {
-                return ProviderAnswer::Transient(format!("userinfo request failed: {error}"));
+                return IntrospectionAnswer::Transient(format!(
+                    "introspection request failed: {error}"
+                ));
             }
         };
         if !response.status().is_success() {
-            return ProviderAnswer::Transient(format!(
-                "userinfo returned {}",
+            return IntrospectionAnswer::Transient(format!(
+                "introspection returned {}",
                 response.status()
             ));
         }
         let body: serde_json::Value = match response.json().await {
             Ok(body) => body,
             Err(error) => {
-                return ProviderAnswer::Transient(format!(
-                    "userinfo body not usable: {error}"
+                return IntrospectionAnswer::Transient(format!(
+                    "introspection body not usable: {error}"
                 ));
+            }
+        };
+        let Some(active) = body.get("active").and_then(|value| value.as_bool()) else {
+            return IntrospectionAnswer::Transient(
+                "introspection body carried no active boolean".into(),
+            );
+        };
+        if !active {
+            return IntrospectionAnswer::Inactive;
+        }
+        match complete_permissions_claim(&body, "introspection body") {
+            Ok(permissions) => IntrospectionAnswer::Active(permissions),
+            Err(error) => IntrospectionAnswer::Transient(error),
+        }
+    }
+
+    async fn userinfo_answer(
+        &self,
+        endpoint: &str,
+        expected_subject: &SubjectId,
+        access_token: &str,
+    ) -> UserinfoAnswer {
+        let response = match self
+            .http
+            .get(endpoint)
+            .bearer_auth(access_token)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return UserinfoAnswer::Transient(format!("userinfo request failed: {error}"));
+            }
+        };
+        if !response.status().is_success() {
+            return UserinfoAnswer::Transient(format!("userinfo returned {}", response.status()));
+        }
+        let body: serde_json::Value = match response.json().await {
+            Ok(body) => body,
+            Err(error) => {
+                return UserinfoAnswer::Transient(format!("userinfo body not usable: {error}"));
             }
         };
         let Some(subject) = body
@@ -411,80 +572,102 @@ impl AuthState {
             .and_then(|value| value.as_str())
             .filter(|subject| !subject.is_empty())
         else {
-            return ProviderAnswer::Transient("userinfo carried no subject claim".into());
+            return UserinfoAnswer::Transient("userinfo carried no subject claim".into());
         };
         if subject != expected_subject.as_str() {
+            return UserinfoAnswer::SubjectMismatch;
+        }
+        match complete_permissions_claim(&body, "userinfo body") {
+            Ok(permissions) => UserinfoAnswer::Complete(permissions),
+            Err(error) => UserinfoAnswer::Transient(error),
+        }
+    }
+
+    fn complete_permissions(permissions: &[String]) -> ProviderAnswer {
+        ProviderAnswer::Complete {
+            authorization: crate::permissions::capabilities_from_permissions(permissions),
+            token_disposition: TokenDisposition::Keep,
+        }
+    }
+
+    fn answer_from_introspection(answer: IntrospectionAnswer) -> ProviderAnswer {
+        match answer {
+            IntrospectionAnswer::Active(permissions) => Self::complete_permissions(&permissions),
+            IntrospectionAnswer::Inactive => ProviderAnswer::Complete {
+                authorization: Authorization::none(),
+                token_disposition: TokenDisposition::QuarantineAccess,
+            },
+            IntrospectionAnswer::Transient(error) => ProviderAnswer::Transient(error),
+        }
+    }
+
+    fn answer_from_userinfo(answer: UserinfoAnswer) -> ProviderAnswer {
+        match answer {
+            UserinfoAnswer::Complete(permissions) => Self::complete_permissions(&permissions),
+            UserinfoAnswer::SubjectMismatch => ProviderAnswer::Complete {
+                authorization: Authorization::none(),
+                token_disposition: TokenDisposition::RetireDelegation,
+            },
+            UserinfoAnswer::Transient(error) => ProviderAnswer::Transient(error),
+        }
+    }
+
+    fn combine_provider_answers(
+        introspection: IntrospectionAnswer,
+        userinfo: UserinfoAnswer,
+    ) -> ProviderAnswer {
+        if matches!(&userinfo, UserinfoAnswer::SubjectMismatch) {
             return ProviderAnswer::Complete {
                 authorization: Authorization::none(),
-                retire_tokens: true,
+                token_disposition: TokenDisposition::RetireDelegation,
             };
         }
-
-        let permissions = if let Some(endpoint) = meta.introspection_endpoint.as_ref() {
-            let AuthMode::Provider {
-                client_id,
-                client_secret,
-                ..
-            } = &self.mode
-            else {
-                return ProviderAnswer::Transient("no provider configured".into());
-            };
-            if let Err(error) = take_operation(budget, 1, "provider introspection check") {
-                return ProviderAnswer::Transient(error.to_string());
-            }
-            let form = [
-                ("token", access_token),
-                ("token_type_hint", "access_token"),
-                ("client_id", client_id.as_str()),
-                ("client_secret", client_secret.as_str()),
-            ];
-            let response = match self.http.post(endpoint).form(&form).send().await {
-                Ok(response) => response,
-                Err(error) => {
-                    return ProviderAnswer::Transient(format!(
-                        "introspection request failed: {error}"
-                    ));
+        match introspection {
+            IntrospectionAnswer::Active(permissions) => Self::complete_permissions(&permissions),
+            IntrospectionAnswer::Inactive => ProviderAnswer::Complete {
+                authorization: Authorization::none(),
+                token_disposition: TokenDisposition::QuarantineAccess,
+            },
+            IntrospectionAnswer::Transient(introspection_error) => match userinfo {
+                UserinfoAnswer::Complete(permissions) => Self::complete_permissions(&permissions),
+                UserinfoAnswer::SubjectMismatch => unreachable!("handled above"),
+                UserinfoAnswer::Transient(userinfo_error) => {
+                    ProviderAnswer::Transient(format!("{introspection_error}; {userinfo_error}"))
                 }
-            };
-            if !response.status().is_success() {
-                return ProviderAnswer::Transient(format!(
-                    "introspection returned {}",
-                    response.status()
-                ));
-            }
-            let answer: serde_json::Value = match response.json().await {
-                Ok(answer) => answer,
-                Err(error) => {
-                    return ProviderAnswer::Transient(format!(
-                        "introspection body not usable: {error}"
-                    ));
-                }
-            };
-            let Some(active) = answer.get("active").and_then(|value| value.as_bool()) else {
-                return ProviderAnswer::Transient(
-                    "introspection body carried no active boolean".into(),
-                );
-            };
-            if !active {
-                return ProviderAnswer::Complete {
-                    authorization: Authorization::none(),
-                    retire_tokens: false,
-                };
-            }
-            match complete_permissions_claim(&answer, "introspection body") {
-                Ok(permissions) => permissions,
-                Err(error) => return ProviderAnswer::Transient(error),
-            }
-        } else {
-            match complete_permissions_claim(&body, "userinfo body") {
-                Ok(permissions) => permissions,
-                Err(error) => return ProviderAnswer::Transient(error),
-            }
-        };
-
-        ProviderAnswer::Complete {
-            authorization: crate::permissions::capabilities_from_permissions(&permissions),
-            retire_tokens: false,
+            },
         }
+    }
+
+    /// Require a fresh complete answer before an overdue cookie can carry authority.
+    pub(super) async fn enforce_cookie_authorization(
+        &self,
+        current: SubjectAuthState,
+    ) -> Result<SubjectAuthState, StoreError> {
+        let due_at = SystemTime::now();
+        if current.authorization_check_after > due_at {
+            return Ok(current);
+        }
+        let subject = current.subject.clone();
+        let budget = AuthOperationBudget::standalone(AUTHORIZATION_CHECK_ATTEMPT_BUDGET);
+        tokio::time::timeout(
+            REQUEST_AUTHORIZATION_CHECK_TIMEOUT,
+            self.reconcile_authorization_with_budget(current, due_at, &budget),
+        )
+        .await
+        .map_err(|_| {
+            StoreError::Unavailable(
+                "provider authorization check exceeded the request-time allowance".into(),
+            )
+        })??;
+
+        let latest = self.store.subject(&subject).await?.ok_or_else(|| {
+            StoreError::Unavailable("subject authorization disappeared during its check".into())
+        })?;
+        if latest.authorization_check_after <= SystemTime::now() {
+            return Err(StoreError::Unavailable(
+                "subject authorization is overdue or another worker is checking it".into(),
+            ));
+        }
+        Ok(latest)
     }
 }
