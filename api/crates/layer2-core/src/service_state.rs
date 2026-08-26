@@ -149,12 +149,13 @@ pub struct Deployment {
     pub adopts_untagged: bool,
 }
 
-/// Per-session desired-state and runtime-installation gates.
+/// Per-session operation gates.
 ///
 /// A gate may be held across store I/O, but the service-wide `entries` lock
 /// must never be. Callers acquire a gate before `entries`; no path acquires
-/// them in the opposite order. Weak values keep one-off lifecycle requests
-/// from turning the registry into a second session store.
+/// them in the opposite order. Separate registries use this shape for separate
+/// ordering domains. Weak values keep one-off operations from turning either
+/// registry into a second session store.
 #[derive(Default)]
 pub(crate) struct SessionGates {
     held: StdMutex<HashMap<SessionId, Weak<Mutex<()>>>>,
@@ -213,6 +214,19 @@ pub struct SessionService {
     pub(crate) lifecycle_gates: SessionGates,
     /// Fences runtime input delivery against the transition into rotation.
     pub(crate) input_gates: SessionInputGates,
+    /// Serializes readoption before any adapter access within this process.
+    ///
+    /// Process-local exclusion is sufficient only while
+    /// `infra/api/deployment.yaml` keeps `replicas: 1`. Horizontal scaling
+    /// requires durable cross-process ownership before that value can grow.
+    pub(crate) readoption_gates: SessionGates,
+    /// Orders accepted prompts before the runtime updates they cause.
+    ///
+    /// Separate from lifecycle installation because a conversation starts
+    /// reporting sign-in and command updates before its live entry exists.
+    pub(crate) conversation_order_gates: SessionGates,
+    /// Serializes prompt admission until an accepted turn is visible.
+    pub(crate) prompt_gates: SessionGates,
     /// The single writer of every session's event sequence.
     ///
     /// Owned by the durable lanes, so allocation and FIFO insertion share the

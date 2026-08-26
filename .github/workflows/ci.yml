@@ -168,7 +168,9 @@ jobs:
       - name: Install (lockfile integrity)
         run: npm ci
       - name: Server fixtures are byte-identical
-        run: diff -ru ../../api/crates/layer1-public/tests/fixtures/rest-sdk tests/fixtures
+        run: |
+          diff -ru ../../api/crates/layer1-public/tests/fixtures/rest-sdk tests/fixtures
+          diff -ru ../../api/crates/layer1-public/tests/fixtures/agui-sdk tests/agui-fixtures
       - name: Format
         run: npm run format:check
       - name: Lint
@@ -390,6 +392,7 @@ jobs:
           outputs: type=cacheonly
           build-args: |
             CHRONO_BUILD_SHA=${{ github.sha }}
+            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           # Scoped per component so api and web never overwrite each other's
           # cache. A branch's first run is still cold, since it can only read
           # what the base branch has already populated.
@@ -407,6 +410,7 @@ jobs:
           tags: cma-${{ matrix.component }}:ci
           build-args: |
             CHRONO_BUILD_SHA=${{ github.sha }}
+            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0

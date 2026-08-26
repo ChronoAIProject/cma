@@ -76,6 +76,39 @@ async fn await_ready(
 }
 
 #[tokio::test]
+async fn runtime_updates_take_the_input_fence_before_conversation_ordering() {
+    let (service, _owner, id, _adapter) = conversation().await;
+    let input_gate = service.input_gates.gate(&id);
+    let input_writer = input_gate.write_owned().await;
+    let ordering = service.conversation_order_gates.gate(&id);
+    let fold = service.fold_update(
+        &id,
+        layer3_adapter::ConversationUpdate::Lost { frames: 1 },
+        &ordering,
+    );
+    tokio::pin!(fold);
+
+    // Poll until the first blocked acquisition. The required order blocks on
+    // the held input writer before it can own conversation ordering. Reversing
+    // those gates leaves the ordering probe locked and recreates the rotation
+    // deadlock this test guards against.
+    tokio::select! {
+        biased;
+        result = &mut fold => panic!("the input fence did not block folding: {result:?}"),
+        () = tokio::task::yield_now() => {}
+    }
+    let ordering_probe = ordering
+        .try_lock()
+        .expect("a blocked input fence must not retain conversation ordering");
+    drop(ordering_probe);
+    drop(input_writer);
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), &mut fold)
+        .await
+        .expect("folding resumes after the input boundary opens");
+}
+
+#[tokio::test]
 async fn a_tool_call_and_its_progress_are_recorded() {
     let (svc, alice, id, adapter) = conversation().await;
     {
