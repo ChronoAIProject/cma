@@ -5,10 +5,10 @@
 //! with a session that already exists and whose runtime is either gone or
 //! still there without anything attached to it.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use layer3_adapter::RuntimeHandle;
-use tokio::sync::{broadcast, watch, Mutex};
+use layer3_adapter::{PermissionLocator, RuntimeHandle};
+use tokio::sync::{broadcast, watch, Mutex, OwnedMutexGuard};
 
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
@@ -16,9 +16,28 @@ use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::service::{store_failed, SessionEntry, SessionService, LIVE_BUFFER, RESOURCE_BUFFER};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
-use crate::store::SessionRecord;
+use crate::store::{SessionRecord, StoreError};
 use crate::terminal::ScreenModel;
 use crate::terminal_io::spawn_relay;
+use crate::SessionMode;
+
+/// Durable conversation state a replacement process needs before it attaches.
+#[derive(Default)]
+pub(crate) struct ReadoptionHistory {
+    pub(crate) conversation_id: Option<String>,
+    pub(crate) pending_approvals: HashMap<String, Option<PermissionLocator>>,
+    pub(crate) approval_locators: HashMap<String, Option<PermissionLocator>>,
+}
+
+/// One serialized attempt to rebuild a process-local runtime attachment.
+///
+/// Holding the permit inside this value makes it impossible to read the
+/// durable snapshot and then accidentally release exclusivity before the
+/// socket and its folder have been installed.
+pub(crate) struct Readoption {
+    _permit: OwnedMutexGuard<()>,
+    history: ReadoptionHistory,
+}
 
 impl SessionService {
     /// Give a stopped session a runtime again.
@@ -41,7 +60,7 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
-        if record.session.status.wants_runtime() {
+        if record.session.wants_runtime() {
             // Already running or already starting. Reviving again would
             // provision a second sandbox for one session.
             return Ok(record.session);
@@ -137,6 +156,76 @@ impl SessionService {
         Ok(session)
     }
 
+    /// Read the durable facts needed to rebuild one conversation attachment.
+    ///
+    /// Kept separate from the network work so reconciliation can defer safely
+    /// when history is unavailable. Attaching first and discovering that the
+    /// answerable set cannot be rebuilt would leave a live runtime claimed by
+    /// neither the old process nor the replacement.
+    pub(crate) async fn readoption_history(
+        &self,
+        record: &SessionRecord,
+    ) -> Result<ReadoptionHistory, StoreError> {
+        if record.session.options.mode != SessionMode::Conversation {
+            return Ok(ReadoptionHistory::default());
+        }
+        let id = &record.session.id;
+        let stored_events = self.store.events_since(id, 0).await?;
+        let mut durable_events = Vec::with_capacity(stored_events.len());
+        for stored in stored_events {
+            let seq = stored.seq;
+            match stored.kind {
+                crate::event::StoredEventKind::Known(kind) => durable_events.push(Event {
+                    session_id: stored.session_id,
+                    seq,
+                    kind,
+                    appended_at: stored.appended_at,
+                }),
+                crate::event::StoredEventKind::Unknown { tag, .. } => {
+                    return Err(StoreError::Malformed(format!(
+                        "cannot restore approval state past unknown event {tag} at sequence {seq}"
+                    )))
+                }
+            }
+        }
+        let conversation_id = durable_events
+            .iter()
+            .rev()
+            .find_map(|event| match &event.kind {
+                EventKind::ConversationOpened { conversation_id } => Some(conversation_id.clone()),
+                _ => None,
+            });
+        let approvals = crate::conversation_log::pending_approvals_from(&durable_events)
+            .map_err(StoreError::Malformed)?;
+        Ok(ReadoptionHistory {
+            conversation_id,
+            pending_approvals: approvals.pending,
+            approval_locators: approvals.locators,
+        })
+    }
+
+    /// Serialize and prepare one readoption before touching the runtime.
+    ///
+    /// The entry check is deliberately after acquiring the permit. Callers
+    /// commonly arrive together after a process restart; a check before the
+    /// gate lets each of them open a socket and spawn a folder before only one
+    /// can win installation.
+    pub(crate) async fn prepare_readoption(
+        &self,
+        record: &SessionRecord,
+    ) -> Result<Option<Readoption>, StoreError> {
+        let id = &record.session.id;
+        let permit = self.readoption_gates.gate(id).lock_owned().await;
+        if self.entries.read().await.contains_key(id) {
+            return Ok(None);
+        }
+        let history = self.readoption_history(record).await?;
+        Ok(Some(Readoption {
+            _permit: permit,
+            history,
+        }))
+    }
+
     /// Take an existing runtime back under management after losing track of it.
     ///
     /// A sandbox belongs to the provider, not to this process, so it is still
@@ -148,58 +237,22 @@ impl SessionService {
     /// The screen is rebuilt from the stored transcript, so what someone left
     /// is what they come back to. Without that the session would be alive and
     /// usable but visibly empty, which reads as lost work.
-    /// What the runtime called this session's conversation, from the record.
-    ///
-    /// Read rather than remembered, which is the §5 rule applied to the one
-    /// thing a replacement control plane cannot rebuild for itself. The last
-    /// one wins: a session may have been rejoined before, and each rejoin
-    /// records the name it ended up with.
-    ///
-    /// `None` where nothing named one — a session whose runtime has no name for
-    /// a conversation, or one recorded before this was written down. The caller
-    /// says so out loud rather than treating it as ordinary.
-    async fn recorded_conversation(&self, id: &SessionId) -> Option<String> {
-        let stored = self.store.events_since(id, 0).await.ok()?;
-        stored
-            .into_iter()
-            .filter_map(crate::event::StoredEvent::into_known)
-            .rev()
-            .find_map(|event| match event.kind {
-                crate::event::EventKind::ConversationOpened { conversation_id } => {
-                    Some(conversation_id)
-                }
-                _ => None,
-            })
-    }
-
     pub(crate) async fn readopt(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
         let service = Arc::clone(self);
         let record = record.clone();
-        let id = record.session.id.clone();
-        let task_id = id.clone();
+        let task_id = record.session.id.clone();
         let readoption = tokio::spawn(async move {
-            // The task owns the operation once it starts. A caller whose wait
-            // is cancelled detaches from this task instead of abandoning an
-            // adapter channel halfway through opening it.
-            let _operation = service.readoption_gates.gate(&id).lock_owned().await;
-            if service.entries.read().await.contains_key(&id) {
-                return Ok(());
-            }
-            let mut lease = service
-                .acquire_runtime_lease_at(&record, crate::coordination::SessionOperation::Readopt)
+            // The task owns the complete operation once it starts. A caller
+            // whose wait is cancelled detaches instead of abandoning durable
+            // preparation or an adapter channel halfway through opening it.
+            let Some(readoption) = service
+                .prepare_readoption(&record)
                 .await
-                .map_err(store_failed)?;
-            let result = service.readopt_with_lease(&record, &mut lease).await;
-            if let Some(held) = lease.take() {
-                if let Err(error) = service.store.release_session_lease(&held).await {
-                    tracing::debug!(
-                        session_id = %record.session.id,
-                        %error,
-                        "readoption lease ended before explicit release"
-                    );
-                }
-            }
-            result
+                .map_err(store_failed)?
+            else {
+                return Ok(());
+            };
+            service.readopt_prepared(&record, readoption).await
         });
 
         readoption.await.map_err(|error| {
@@ -210,12 +263,44 @@ impl SessionService {
         })?
     }
 
+    pub(crate) async fn readopt_prepared(
+        self: &Arc<Self>,
+        record: &SessionRecord,
+        readoption: Readoption,
+    ) -> Result<(), CoreError> {
+        let Readoption {
+            _permit: _readoption,
+            history,
+        } = readoption;
+        let mut lease = self
+            .acquire_runtime_lease_at(record, crate::coordination::SessionOperation::Readopt)
+            .await
+            .map_err(store_failed)?;
+        let result = self.readopt_with_lease(record, history, &mut lease).await;
+        if let Some(held) = lease.take() {
+            if let Err(error) = self.store.release_session_lease(&held).await {
+                tracing::debug!(
+                    session_id = %record.session.id,
+                    %error,
+                    "readoption lease ended before explicit release"
+                );
+            }
+        }
+        result
+    }
+
     async fn readopt_with_lease(
         self: &Arc<Self>,
         record: &SessionRecord,
+        history: ReadoptionHistory,
         lease: &mut Option<crate::coordination::SessionLease>,
     ) -> Result<(), CoreError> {
         let id = record.session.id.clone();
+        let ReadoptionHistory {
+            conversation_id,
+            pending_approvals: _,
+            approval_locators: _,
+        } = history;
         let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
             // Nothing to reclaim: the session never got a runtime, or its
             // runtime was already torn down.
@@ -286,12 +371,12 @@ impl SessionService {
                     .await
                     .map_err(store_failed)?;
                 // What the runtime calls the conversation already running in
-                // it, read from the record because this process was not here
-                // when it was opened. Rejoining is the whole point: without it
-                // the runtime opens a second conversation beside the first and
-                // the agent loses everything it knew.
+                // it, read from the same durable snapshot as pending approvals.
+                // The last recorded name wins because a session may have been
+                // rejoined before. Rejoining is the whole point: without it the
+                // runtime opens a second conversation beside the first.
                 let mut options = crate::provision::runtime_options(&record.session.options);
-                options.resume_conversation = self.recorded_conversation(&id).await;
+                options.resume_conversation = conversation_id.clone();
                 if options.resume_conversation.is_none() {
                     tracing::warn!(
                         session_id = %id,
@@ -363,6 +448,9 @@ impl SessionService {
             .await
             .map_err(store_failed)?;
         let installation = self.lock_lifecycle(&id).await;
+        let input_fence = self.input_gates.gate(&id).read_owned().await;
+        let ordering = self.conversation_order_gates.gate(&id);
+        let ordered_installation = ordering.lock().await;
         if self.entries.read().await.contains_key(&id) {
             return Ok(());
         }
@@ -375,7 +463,7 @@ impl SessionService {
         if current.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
-        if !current.session.status.wants_runtime()
+        if !current.session.wants_runtime()
             || current.session.kernel != record.session.kernel
             || current.runtime_id.as_deref() != Some(handle.0.as_str())
             || lease.as_ref().is_some_and(|held| {
@@ -387,6 +475,27 @@ impl SessionService {
                 "the session changed while its runtime was being reconnected".into(),
             ));
         }
+
+        // The first snapshot selected the conversation to rejoin. Updates can
+        // become durable while the network attachment is being built, so fold
+        // approval state again at the installation boundary. The folder takes
+        // this same gate before recording an update; none can land between
+        // this read and publishing the entry.
+        let final_history = self
+            .readoption_history(&current)
+            .await
+            .map_err(|error| {
+                CoreError::RuntimeRefused(format!(
+                    "the runtime was reached but its final conversation state could not be rebuilt: {error}"
+                ))
+            })?;
+        if final_history.conversation_id != conversation_id {
+            return Err(CoreError::RuntimeRefused(
+                "the conversation changed while its runtime was being reconnected".into(),
+            ));
+        }
+        let pending_approvals = final_history.pending_approvals;
+        let approval_locators = final_history.approval_locators;
 
         // A reachable runtime proves that a recorded provisioning state has
         // completed. Make that fact durable before publishing the entry; doing
@@ -424,6 +533,14 @@ impl SessionService {
             }
         }
 
+        if !pending_approvals.is_empty() {
+            tracing::info!(
+                session_id = %id,
+                count = pending_approvals.len(),
+                "pending approvals restored during readoption"
+            );
+        }
+
         let owner = current.session.owner.clone();
         let mut adopted = current.session.clone();
         adopted.capabilities = capabilities;
@@ -446,7 +563,8 @@ impl SessionService {
             memory_pressure: Default::default(),
             readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),
-            pending_approvals: Default::default(),
+            pending_approvals,
+            approval_locators,
             assembling: None,
             context_reading: None,
             attached: None,
@@ -455,6 +573,8 @@ impl SessionService {
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
+        drop(ordered_installation);
+        drop(input_fence);
         drop(installation);
         crate::resources::spawn_resource_watch(
             Arc::clone(self),

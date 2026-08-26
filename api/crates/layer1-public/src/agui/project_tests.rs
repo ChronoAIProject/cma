@@ -301,6 +301,7 @@ fn an_approval_ends_the_run_to_ask() {
         request_id: "apr_7Q2".into(),
         action: Some("command_execution".into()),
         detail: Some("Run `rm -rf build/`?".into()),
+        locator: None,
     });
     assert_eq!(kinds(&p), vec!["RUN_FINISHED", "STATE_DELTA"]);
     assert_eq!(p.ending, Some(Ending::Interrupted));
@@ -326,6 +327,7 @@ fn an_approval_with_nothing_to_say_still_asks() {
         request_id: "apr_1".into(),
         action: None,
         detail: None,
+        locator: None,
     });
     assert_eq!(p.ending, Some(Ending::Interrupted));
     assert_eq!(
@@ -341,6 +343,7 @@ fn an_approval_id_is_one_escaped_json_pointer_token() {
         request_id: "approval/~one".into(),
         action: Some("file_write".into()),
         detail: None,
+        locator: None,
     });
 
     assert_eq!(
