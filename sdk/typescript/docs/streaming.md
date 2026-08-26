@@ -118,7 +118,9 @@ ephemeral, deduplicate it, or advance the reconnect cursor. An unnumbered
 `RUN_FINISHED` is different: it is the durable prefix of an approval request and
 stays buffered until the following numbered pending-state delta completes that
 projection. Every other known durable singleton or final requires a positive
-SSE id.
+SSE id. Numbered durable continuation projections may follow the cursorless
+`RUN_STARTED` before the answered approval is removed; consumers must not assume
+those two frames are adjacent.
 
 ## Why the SDK owns the patches
 
