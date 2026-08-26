@@ -502,6 +502,8 @@ pub(super) async fn steer(
     // Declared, not discovered. A session whose kernel does not steer refuses
     // here rather than accepting the request and delivering it as an ordinary
     // turn, which would be a different thing done under the caller's name.
+    // Layer 2 enforces the same invariant for every prompt sent mid-turn; this
+    // dedicated boundary still refuses before asking the core to do any work.
     session.capabilities.require(SessionCapability::Steer)?;
     let text = body
         .text

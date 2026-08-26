@@ -12,6 +12,7 @@
  */
 
 import type { ITheme } from '@xterm/xterm';
+import { observeBrowserCompatibility } from '../observability/browserCompatibility';
 import { terminalTheme, type ThemeName } from './theme';
 
 /** A named palette, and the appearance it belongs beside. */
@@ -190,6 +191,10 @@ export function themesFor(appearance: ThemeName): readonly TerminalTheme[] {
 const STORAGE_KEY = 'cma:terminal-theme';
 const LEGACY_STORAGE_KEY = 'chrono-bot:terminal-theme';
 
+function isHistoricalProductId(value: string | null): boolean {
+  return value === 'chronobot-dark' || value === 'chronobot-light';
+}
+
 function canonicalThemeId(value: string | null): string | null {
   if (value === 'chronobot-dark') {
     return 'cma-dark';
@@ -200,10 +205,17 @@ function canonicalThemeId(value: string | null): string | null {
   return value !== null && allThemes().some((theme) => theme.id === value) ? value : null;
 }
 
-function readThemeId(key: string): string | null {
+function readThemeId(key: string, observeCanonical: boolean = false): string | null {
   try {
-    return window.localStorage.getItem(key);
+    const value = window.localStorage.getItem(key);
+    if (observeCanonical) {
+      observeBrowserCompatibility(['terminal-theme', 'canonical', 'read-ok']);
+    }
+    return value;
   } catch {
+    if (observeCanonical) {
+      observeBrowserCompatibility(['terminal-theme', 'canonical', 'read-blocked']);
+    }
     return null;
   }
 }
@@ -211,34 +223,48 @@ function readThemeId(key: string): string | null {
 function writeThemeId(id: string): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, id);
+    observeBrowserCompatibility(['terminal-theme', 'canonical', 'write-ok']);
   } catch {
+    observeBrowserCompatibility(['terminal-theme', 'canonical', 'write-blocked']);
     // Applying the palette does not depend on remembering it.
   }
 }
 
 /** The palette this browser last chose, if it still exists. */
 export function storedThemeId(): string | null {
-  const rawCanonical = readThemeId(STORAGE_KEY);
+  const rawCanonical = readThemeId(STORAGE_KEY, true);
   const canonical = canonicalThemeId(rawCanonical);
   if (canonical !== null) {
     if (canonical !== rawCanonical) {
+      if (isHistoricalProductId(rawCanonical)) {
+        observeBrowserCompatibility(['terminal-theme', 'historical-id', 'normalized']);
+      }
       writeThemeId(canonical);
     }
     return canonical;
   }
 
-  const historical = canonicalThemeId(readThemeId(LEGACY_STORAGE_KEY));
+  const rawHistorical = readThemeId(LEGACY_STORAGE_KEY);
+  const historical = canonicalThemeId(rawHistorical);
   if (historical === null) {
     return null;
   }
 
+  observeBrowserCompatibility(['terminal-theme', 'historical-key', 'fallback-used']);
+  if (isHistoricalProductId(rawHistorical)) {
+    observeBrowserCompatibility(['terminal-theme', 'historical-id', 'normalized']);
+  }
   writeThemeId(historical);
   return historical;
 }
 
 /** Remember a palette choice. */
 export function storeThemeId(id: string): void {
-  writeThemeId(canonicalThemeId(id) ?? id);
+  const canonical = canonicalThemeId(id) ?? id;
+  if (canonical !== id && isHistoricalProductId(id)) {
+    observeBrowserCompatibility(['terminal-theme', 'historical-id', 'normalized']);
+  }
+  writeThemeId(canonical);
 }
 
 /**
