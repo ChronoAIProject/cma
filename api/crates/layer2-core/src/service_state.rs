@@ -192,6 +192,13 @@ pub struct SessionService {
     pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
     /// Serializes lifecycle decisions and installation for one session only.
     pub(crate) lifecycle_gates: SessionGates,
+    /// Serializes rebuilding one runtime attachment after process replacement.
+    ///
+    /// Separate from lifecycle ordering because opening a conversation may wait
+    /// on a human-paced sign-in. The permit spans the history read, network
+    /// open, folder creation and installation so two callers cannot leave two
+    /// sockets draining and folding the same runtime conversation.
+    pub(crate) readoption_gates: SessionGates,
     /// Orders accepted prompts before the runtime updates they cause.
     ///
     /// Separate from lifecycle installation because a conversation starts
