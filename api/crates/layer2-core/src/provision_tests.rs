@@ -15,8 +15,30 @@ use crate::provision_failure::{Abandonment, StartFailure};
 use crate::session::{SessionStatus, StopReason};
 use crate::store::{SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
-    await_settled, service, service_over, spec, user, FakeAdapter, FakeStore,
+    await_settled, service, service_over, service_with_credential_source, spec, user, FakeAdapter,
+    FakeStore,
 };
+
+struct UnavailableCredentialSource;
+
+#[async_trait::async_trait]
+impl crate::store::CredentialSource for UnavailableCredentialSource {
+    async fn credential_for(
+        &self,
+        _session: &crate::SessionId,
+        _subject: &crate::SubjectId,
+        _services: &[crate::environment::ServiceId],
+        _caller_credential: Option<&crate::CallerCredential>,
+    ) -> Result<Option<String>, StoreError> {
+        Err(StoreError::Unavailable(
+            "credential custody is unavailable".into(),
+        ))
+    }
+
+    async fn release(&self, _session: &crate::SessionId) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
 
 fn is_ready_commit(_record: &crate::store::SessionRecord, events: &[Event]) -> bool {
     events.iter().any(|event| {
@@ -139,6 +161,42 @@ async fn coordinated_provisioning_switches_the_reserved_generation_into_authorit
         .runtime_cleanup_debts(&created.id)
         .await
         .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn credential_custody_failure_is_settled_under_a_runtime_lease() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let caller = user("credential-failure-owner");
+    let svc = service_with_credential_source(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::new(UnavailableCredentialSource),
+    );
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+
+    assert_eq!(settled.status, SessionStatus::Terminated);
+    assert_eq!(settled.stop_reason, Some(StopReason::Error));
+    assert_eq!(
+        store.session_lease_acquisitions(),
+        1,
+        "credential failure must enter the same durable lifecycle authority as provisioning"
+    );
+    assert!(store.active_session_lease(&created.id).await.is_none());
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no provider object may be created without credential custody"
+    );
+    assert!(store
+        .runtime_cleanup_debts(&created.id)
+        .await
+        .expect("cleanup debt is readable")
         .is_empty());
 }
 
