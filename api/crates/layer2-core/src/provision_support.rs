@@ -167,9 +167,11 @@ impl RuntimeInteractionAuthority {
             .validity
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if validity.invalid_reason.is_none() {
-            validity.deadline = Some(deadline);
-        }
+        // Delivery permission and lease lifetime are independent. Caller
+        // cancellation forbids the next send without ending the owned action,
+        // which still needs renewed exclusion while it reaches that check or
+        // settles mandatory post-receipt finalization.
+        validity.deadline = Some(deadline);
     }
 
     fn invalidate(&self, reason: String) {
