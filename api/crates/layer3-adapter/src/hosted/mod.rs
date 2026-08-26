@@ -21,6 +21,7 @@ mod deployment;
 mod handshake;
 mod inbound;
 mod link;
+pub(crate) use link::credential_answer;
 mod loss;
 mod telemetry;
 pub(super) mod turn;
