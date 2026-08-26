@@ -16,7 +16,7 @@ use layer2_core::coordination::{
     RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionLease,
     SessionLeaseRequest, SessionOperation,
 };
-use mongodb::bson::{doc, DateTime, Document};
+use mongodb::bson::{doc, Bson, DateTime, Document};
 use mongodb::options::{ReadConcern, ReplaceOptions, WriteConcern};
 use serde::{Deserialize, Serialize};
 
@@ -826,7 +826,60 @@ fn require_cleanup_receipt(
     Ok(())
 }
 
-fn validate_coordination_receipt_set(
+fn coordination_receipt_from_document(
+    document: Document,
+) -> Result<CoordinationReceiptDoc, StoreError> {
+    let payload = document.get_document("payload").map_err(|_| {
+        StoreError::Malformed("MongoDB coordination receipt payload must be a document".into())
+    })?;
+    let kind = payload.get_str("type").map_err(|_| {
+        StoreError::Malformed("MongoDB coordination receipt payload type must be a string".into())
+    })?;
+    let value = payload.get_document("value").map_err(|_| {
+        StoreError::Malformed(
+            "MongoDB coordination receipt payload value must be a document".into(),
+        )
+    })?;
+    match (kind, value.get("completed_by")) {
+        (RECEIPT_CLEANUP, None) => {}
+        (RECEIPT_CLEANUP, Some(Bson::String(completed_by))) if !completed_by.is_empty() => {}
+        (RECEIPT_CLEANUP, Some(_)) => {
+            return Err(StoreError::Malformed(
+                "MongoDB cleanup receipt completion must be a non-empty string when present".into(),
+            ));
+        }
+        (_, None) => {}
+        (_, Some(_)) => {
+            return Err(StoreError::Malformed(
+                "MongoDB non-cleanup receipt carries cleanup completion metadata".into(),
+            ));
+        }
+    }
+
+    let receipt: CoordinationReceiptDoc = mongodb::bson::deserialize_from_document(document)
+        .map_err(|error| {
+            StoreError::Malformed(format!("decode MongoDB coordination receipt: {error}"))
+        })?;
+    receipt.validate_stored()?;
+    Ok(receipt)
+}
+
+fn coordination_receipt_map(
+    documents: impl IntoIterator<Item = Document>,
+) -> Result<BTreeMap<CoordinationReceiptIdDoc, CoordinationReceiptDoc>, StoreError> {
+    let mut receipts = BTreeMap::new();
+    for document in documents {
+        let receipt = coordination_receipt_from_document(document)?;
+        if receipts.insert(receipt.id.clone(), receipt).is_some() {
+            return Err(StoreError::Malformed(
+                "MongoDB coordination receipts contain a duplicate logical identity".into(),
+            ));
+        }
+    }
+    Ok(receipts)
+}
+
+pub(super) fn validate_coordination_receipt_set(
     sessions: &BTreeMap<String, SessionDoc>,
     receipts: &BTreeMap<CoordinationReceiptIdDoc, CoordinationReceiptDoc>,
 ) -> Result<(), StoreError> {
@@ -957,6 +1010,26 @@ fn validate_coordination_receipt_set(
         }
     }
     Ok(())
+}
+
+pub(super) fn validate_session_coordination_receipts(
+    session: Option<&SessionDoc>,
+    documents: Vec<Document>,
+) -> Result<usize, StoreError> {
+    let receipts = coordination_receipt_map(documents)?;
+    let sessions = session
+        .map(|session| BTreeMap::from([(session.id.clone(), session.clone())]))
+        .unwrap_or_default();
+    validate_coordination_receipt_set(&sessions, &receipts)?;
+    Ok(receipts
+        .values()
+        .filter(|receipt| {
+            matches!(
+                &receipt.payload,
+                CoordinationReceiptPayloadDoc::Cleanup(stored) if stored.completed_by.is_none()
+            )
+        })
+        .count())
 }
 
 fn coordination_clock_update() -> Document {
@@ -1702,62 +1775,66 @@ fn apply_command_transition(
 
 impl MongoSessionStore {
     pub(super) async fn validate_coordination_receipts(&self) -> Result<(), StoreError> {
-        let mut sessions = BTreeMap::new();
-        let mut session_cursor = self.sessions.find(doc! {}).await.map_err(|error| {
-            StoreError::Unavailable(format!("scan MongoDB session coordination state: {error}"))
+        let context = (
+            self.sessions.clone(),
+            self.receipts.clone_with_type::<Document>(),
+        );
+        let mut client_session = self.client.start_session().await.map_err(|error| {
+            StoreError::Unavailable(format!("start MongoDB coordination receipt audit: {error}"))
         })?;
-        while let Some(session) = session_cursor.try_next().await.map_err(|error| {
-            StoreError::Malformed(format!(
-                "decode MongoDB session coordination state: {error}"
-            ))
-        })? {
-            sessions.insert(session.id.clone(), session);
-        }
+        client_session
+            .start_transaction()
+            .read_concern(ReadConcern::snapshot())
+            .write_concern(WriteConcern::majority())
+            .and_run(
+                context,
+                |client_session, (sessions_collection, receipts_collection)| {
+                    async move {
+                        let mut session_cursor = sessions_collection
+                            .find(doc! {})
+                            .session(&mut *client_session)
+                            .await?;
+                        let mut sessions = BTreeMap::new();
+                        while let Some(session) = session_cursor
+                            .next(&mut *client_session)
+                            .await
+                            .transpose()?
+                        {
+                            sessions.insert(session.id.clone(), session);
+                        }
 
-        let mut cursor = self.receipts.find(doc! {}).await.map_err(|error| {
-            StoreError::Unavailable(format!("scan MongoDB coordination receipts: {error}"))
-        })?;
-        let mut receipts = BTreeMap::new();
-        while let Some(receipt) = cursor.try_next().await.map_err(|error| {
-            StoreError::Malformed(format!("decode MongoDB coordination receipt: {error}"))
-        })? {
-            receipt.validate_stored()?;
-            receipts.insert(receipt.id.clone(), receipt);
-        }
-        match validate_coordination_receipt_set(&sessions, &receipts) {
-            Ok(()) => Ok(()),
-            Err(first) => {
-                // A command or deletion can commit between independent scans.
-                // Retry a suspicious snapshot once before reporting corruption.
-                let mut sessions = BTreeMap::new();
-                let mut session_cursor = self.sessions.find(doc! {}).await.map_err(|error| {
-                    StoreError::Unavailable(format!(
-                        "recheck MongoDB session coordination state: {error}"
-                    ))
-                })?;
-                while let Some(session) = session_cursor.try_next().await.map_err(|error| {
-                    StoreError::Malformed(format!(
-                        "decode rechecked MongoDB session coordination state: {error}"
-                    ))
-                })? {
-                    sessions.insert(session.id.clone(), session);
-                }
-                let mut receipts = BTreeMap::new();
-                let mut cursor = self.receipts.find(doc! {}).await.map_err(|error| {
-                    StoreError::Unavailable(format!(
-                        "recheck MongoDB coordination receipts: {error}"
-                    ))
-                })?;
-                while let Some(receipt) = cursor.try_next().await.map_err(|error| {
-                    StoreError::Malformed(format!(
-                        "decode rechecked MongoDB coordination receipt: {error}"
-                    ))
-                })? {
-                    receipts.insert(receipt.id.clone(), receipt);
-                }
-                validate_coordination_receipt_set(&sessions, &receipts).map_err(|_| first)
-            }
-        }
+                        let mut receipt_cursor = receipts_collection
+                            .find(doc! {})
+                            .session(&mut *client_session)
+                            .await?;
+                        let mut documents = Vec::new();
+                        while let Some(document) = receipt_cursor
+                            .next(&mut *client_session)
+                            .await
+                            .transpose()?
+                        {
+                            documents.push(document);
+                        }
+                        let receipts = coordination_receipt_map(documents)
+                            .map_err(mongodb::error::Error::custom)?;
+                        validate_coordination_receipt_set(&sessions, &receipts)
+                            .map_err(mongodb::error::Error::custom)?;
+                        Ok(())
+                    }
+                    .boxed()
+                },
+            )
+            .await
+            .map_err(|error| {
+                error
+                    .get_custom::<StoreError>()
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        StoreError::Unavailable(format!(
+                            "audit MongoDB coordination receipts: {error}"
+                        ))
+                    })
+            })
     }
 
     pub(super) async fn run_coordination_command(
@@ -1906,12 +1983,7 @@ impl MongoSessionStore {
         }
         let mut cursor = self
             .receipts
-            .find(doc! {
-                "_id.session_id": &id.0,
-                "_id.kind": RECEIPT_CLEANUP,
-                "payload.type": "cleanup",
-                "payload.value.completed_by": { "$exists": false },
-            })
+            .find(active_cleanup_filter(id))
             .await
             .map_err(|error| {
                 StoreError::Unavailable(format!("read runtime cleanup debts: {error}"))
@@ -1932,7 +2004,10 @@ pub(super) fn active_cleanup_filter(id: &layer2_core::SessionId) -> Document {
         "_id.session_id": &id.0,
         "_id.kind": RECEIPT_CLEANUP,
         "payload.type": "cleanup",
-        "payload.value.completed_by": { "$exists": false },
+        "$or": [
+            { "payload.value.completed_by": { "$exists": false } },
+            { "payload.value.completed_by": Bson::Null },
+        ],
     }
 }
 
@@ -2484,7 +2559,7 @@ mod tests {
             reason: RuntimeCleanupReason::RetiredAuthority,
         };
         let stored = cleanup_receipt(&id, &cleanup).unwrap();
-        let document = mongodb::bson::serialize_to_document(&stored).unwrap();
+        let mut document = mongodb::bson::serialize_to_document(&stored).unwrap();
         assert_eq!(
             document
                 .get_document("payload")
@@ -2500,13 +2575,25 @@ mod tests {
             .unwrap()
             .contains_key("completed_by"));
         assert_eq!(cleanup_from_receipt(&stored).unwrap(), cleanup);
+        coordination_receipt_from_document(document.clone())
+            .expect("the canonical active cleanup BSON shape decodes");
+        document
+            .get_document_mut("payload")
+            .unwrap()
+            .get_document_mut("value")
+            .unwrap()
+            .insert("completed_by", Bson::Null);
+        assert!(coordination_receipt_from_document(document).is_err());
         assert_eq!(
             active_cleanup_filter(&id),
             doc! {
                 "_id.session_id": "sesn_bson_cleanup",
                 "_id.kind": "cleanup",
                 "payload.type": "cleanup",
-                "payload.value.completed_by": { "$exists": false },
+                "$or": [
+                    { "payload.value.completed_by": { "$exists": false } },
+                    { "payload.value.completed_by": Bson::Null },
+                ],
             }
         );
     }

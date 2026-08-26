@@ -36,9 +36,9 @@ use super::event_doc;
 mod coordination;
 
 use coordination::{
-    active_cleanup_filter, all_session_receipts_filter, has_session_lease,
-    runtime_authority_from_doc, validate_coordination_state, CoordinationCommand, CoordinationDoc,
-    CoordinationOutcome, CoordinationReceiptDoc, COORDINATION_RECEIPTS,
+    all_session_receipts_filter, has_session_lease, runtime_authority_from_doc,
+    validate_coordination_state, validate_session_coordination_receipts, CoordinationCommand,
+    CoordinationDoc, CoordinationOutcome, CoordinationReceiptDoc, COORDINATION_RECEIPTS,
 };
 
 const LEGACY_SESSIONS: &str = "sessions";
@@ -542,7 +542,7 @@ impl MongoSessionStore {
         self.verify_collection_contracts(Some(self.collection_ids.as_ref()))
             .await?;
         self.verify_required_indexes().await?;
-        self.audit_history_if_due().await
+        self.audit_integrity_if_due().await
     }
 
     async fn qualify_transaction(
@@ -1829,7 +1829,7 @@ impl MongoSessionStore {
         Ok(snapshot)
     }
 
-    async fn audit_history_if_due(&self) -> Result<(), StoreError> {
+    async fn audit_integrity_if_due(&self) -> Result<(), StoreError> {
         let previous = {
             let audit = self.integrity.lock().await;
             if let Some(cached) = audit.cached_result(Instant::now()) {
@@ -1838,7 +1838,12 @@ impl MongoSessionStore {
             audit.snapshot.clone()
         };
 
-        let result = self.audited_history_snapshot(previous.as_ref()).await;
+        let result = async {
+            let snapshot = self.audited_history_snapshot(previous.as_ref()).await?;
+            self.validate_coordination_receipts().await?;
+            Ok(snapshot)
+        }
+        .await;
         let checked_at = Instant::now();
         let mut audit = self.integrity.lock().await;
         match result {
@@ -2881,7 +2886,32 @@ fn tombstone_protocol_validator() -> Document {
 }
 
 fn coordination_receipt_protocol_validator() -> Document {
-    coordination_protocol_validator(protocol_validator(vec![COORDINATION_PROTOCOL_FIELD], &[]))
+    let mut validator = coordination_protocol_validator(protocol_validator(
+        vec![COORDINATION_PROTOCOL_FIELD, "payload"],
+        &[],
+    ));
+    validator
+        .get_document_mut("$jsonSchema")
+        .expect("the protocol validator has a JSON schema")
+        .get_document_mut("properties")
+        .expect("the protocol validator has properties")
+        .insert(
+            "payload",
+            Bson::Document(doc! {
+                "bsonType": "object",
+                "required": ["type", "value"],
+                "properties": {
+                    "type": { "bsonType": "string" },
+                    "value": {
+                        "bsonType": "object",
+                        "properties": {
+                            "completed_by": { "bsonType": "string" },
+                        },
+                    },
+                },
+            }),
+        );
+    validator
 }
 
 fn coordination_protocol_validator(mut validator: Document) -> Document {
@@ -4201,10 +4231,22 @@ impl MongoSessionStore {
                             .find_one(doc! { "_id": &id.0 })
                             .session(&mut *session)
                             .await?;
-                        let cleanup_debts = receipts
-                            .count_documents(active_cleanup_filter(&id))
+                        let mut receipt_cursor = receipts
+                            .clone_with_type::<Document>()
+                            .find(all_session_receipts_filter(&id))
                             .session(&mut *session)
                             .await?;
+                        let mut receipt_documents = Vec::new();
+                        while let Some(document) =
+                            receipt_cursor.next(&mut *session).await.transpose()?
+                        {
+                            receipt_documents.push(document);
+                        }
+                        let cleanup_debts = validate_session_coordination_receipts(
+                            stored.as_ref(),
+                            receipt_documents,
+                        )
+                        .map_err(mongodb::error::Error::custom)?;
                         if let Some(stored) = stored.as_ref() {
                             if has_session_lease(stored).map_err(mongodb::error::Error::custom)? {
                                 return Err(mongodb::error::Error::custom(
@@ -4218,8 +4260,7 @@ impl MongoSessionStore {
                                     StoreError::SessionCleanupPending {
                                         id: id.clone(),
                                         runtime_id: authority.runtime_id,
-                                        cleanup_debts: usize::try_from(cleanup_debts)
-                                            .unwrap_or(usize::MAX),
+                                        cleanup_debts,
                                     },
                                 ));
                             }
@@ -4228,8 +4269,7 @@ impl MongoSessionStore {
                                 StoreError::SessionCleanupPending {
                                     id: id.clone(),
                                     runtime_id: None,
-                                    cleanup_debts: usize::try_from(cleanup_debts)
-                                        .unwrap_or(usize::MAX),
+                                    cleanup_debts,
                                 },
                             ));
                         }

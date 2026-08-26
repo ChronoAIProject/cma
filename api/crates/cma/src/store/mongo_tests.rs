@@ -1071,6 +1071,31 @@ fn protocol_validators_require_the_current_marker_and_session_revision() {
             &[Bson::Int32(WRITE_PROTOCOL)]
         );
     }
+
+    let receipt_schema = coordination_receipt_protocol_validator();
+    let receipt_schema = receipt_schema.get_document("$jsonSchema").unwrap();
+    assert!(receipt_schema
+        .get_array("required")
+        .unwrap()
+        .contains(&Bson::String("payload".into())));
+    assert_eq!(
+        receipt_schema
+            .get_document("properties")
+            .unwrap()
+            .get_document("payload")
+            .unwrap()
+            .get_document("properties")
+            .unwrap()
+            .get_document("value")
+            .unwrap()
+            .get_document("properties")
+            .unwrap()
+            .get_document("completed_by")
+            .unwrap()
+            .get_str("bsonType")
+            .unwrap(),
+        "string"
+    );
 }
 
 fn test_collection_uuid(value: u8) -> Binary {
@@ -2698,6 +2723,186 @@ async fn a_real_store_coordinates_exact_cleanup_before_deletion() {
             .unwrap(),
         0
     );
+
+    client
+        .database(&database)
+        .drop()
+        .await
+        .expect("temporary database drops");
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_store_refuses_missing_cleanup_receipts_at_every_deletion_gate() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_missing_cleanup_receipt_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let store = MongoSessionStore::open(&client, &database, false)
+        .await
+        .expect("test store opens");
+    let id = SessionId("sesn_missing_cleanup_receipt".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.last_seq = 0;
+    seed.runtime_id = None;
+    store
+        .create_session_idempotent("seed-missing-cleanup-receipt", &seed, &[])
+        .await
+        .expect("coordination session is seeded");
+    let durable = store.get(&id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "missing-cleanup-receipt-test".into(),
+            token: "lease-missing-cleanup-receipt".into(),
+            boundary: SessionBoundary::for_record(&durable, authority.generation),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .expect("lifecycle lease is acquired");
+    let reservation = store
+        .reserve_runtime_generation(&lease, "reservation-missing-cleanup")
+        .await
+        .expect("runtime generation is reserved");
+    store
+        .register_runtime_candidate(&lease, &reservation, "runtime-missing-cleanup")
+        .await
+        .expect("runtime candidate is registered with cleanup debt");
+    store
+        .release_session_lease(&lease)
+        .await
+        .expect("lifecycle lease releases");
+
+    let deleted = store
+        .receipts
+        .delete_one(doc! {
+            "_id.session_id": &id.0,
+            "_id.kind": "cleanup",
+        })
+        .await
+        .expect("test removes the required cleanup receipt");
+    assert_eq!(deleted.deleted_count, 1);
+    assert!(store.runtime_cleanup_debts(&id).await.unwrap().is_empty());
+    assert!(matches!(
+        store.delete(&id).await,
+        Err(StoreError::Malformed(_))
+    ));
+
+    store.integrity.lock().await.checked_at = None;
+    assert!(matches!(
+        store.check_readiness().await,
+        Err(StoreError::Malformed(_))
+    ));
+    let restart = match MongoSessionStore::open(&client, &database, false).await {
+        Ok(_) => panic!("startup must reject a missing required cleanup receipt"),
+        Err(error) => error,
+    };
+    assert!(matches!(restart, StoreError::Malformed(_)));
+
+    client
+        .database(&database)
+        .drop()
+        .await
+        .expect("temporary database drops");
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_real_store_rejects_null_cleanup_completion_without_hiding_the_debt() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_null_cleanup_completion_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let store = MongoSessionStore::open(&client, &database, false)
+        .await
+        .expect("test store opens");
+    let id = SessionId("sesn_null_cleanup_completion".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.last_seq = 0;
+    seed.runtime_id = None;
+    store
+        .create_session_idempotent("seed-null-cleanup-completion", &seed, &[])
+        .await
+        .expect("coordination session is seeded");
+    let durable = store.get(&id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(&id).await.unwrap().unwrap();
+    let lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: id.clone(),
+            holder: "null-cleanup-completion-test".into(),
+            token: "lease-null-cleanup-completion".into(),
+            boundary: SessionBoundary::for_record(&durable, authority.generation),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(60),
+        })
+        .await
+        .expect("lifecycle lease is acquired");
+    let reservation = store
+        .reserve_runtime_generation(&lease, "reservation-null-cleanup")
+        .await
+        .expect("runtime generation is reserved");
+    store
+        .register_runtime_candidate(&lease, &reservation, "runtime-null-cleanup")
+        .await
+        .expect("runtime candidate is registered with cleanup debt");
+    store
+        .release_session_lease(&lease)
+        .await
+        .expect("lifecycle lease releases");
+
+    let filter = doc! {
+        "_id.session_id": &id.0,
+        "_id.kind": "cleanup",
+    };
+    let update = doc! { "$set": { "payload.value.completed_by": Bson::Null } };
+    assert!(store
+        .receipts
+        .clone_with_type::<Document>()
+        .update_one(filter.clone(), update.clone())
+        .await
+        .is_err());
+    store
+        .receipts
+        .clone_with_type::<Document>()
+        .update_one(filter, update)
+        .bypass_document_validation(true)
+        .await
+        .expect("the test bypasses validation to model administrative corruption");
+
+    assert_eq!(store.runtime_cleanup_debts(&id).await.unwrap().len(), 1);
+    assert!(matches!(
+        store.delete(&id).await,
+        Err(StoreError::Malformed(_))
+    ));
+    store.integrity.lock().await.checked_at = None;
+    assert!(matches!(
+        store.check_readiness().await,
+        Err(StoreError::Malformed(_))
+    ));
 
     client
         .database(&database)
