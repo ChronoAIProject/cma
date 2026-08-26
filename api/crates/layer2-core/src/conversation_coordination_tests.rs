@@ -191,7 +191,7 @@ async fn cancelling_an_unknown_opening_acquisition_releases_the_exact_claim() {
     assert!(store.active_conversation_opening(&id()).await.is_some());
 
     acquiring.abort();
-    assert!(acquiring.await.unwrap_err().is_cancelled());
+    assert!(matches!(acquiring.await, Err(error) if error.is_cancelled()));
     tokio::time::advance(Duration::from_millis(5)).await;
     for _ in 0..32 {
         if store.active_conversation_opening(&id()).await.is_none() {
