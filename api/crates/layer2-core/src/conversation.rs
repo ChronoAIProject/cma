@@ -97,7 +97,10 @@ impl SessionService {
         let input = {
             let entries = self.entries.read().await;
             let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-            entry.session.capabilities.require(Capability::Conversation)?;
+            entry
+                .session
+                .capabilities
+                .require(Capability::Conversation)?;
             entry.conversation.clone().ok_or_else(|| {
                 CoreError::RuntimeUnavailable("this session holds no conversation".into())
             })?
