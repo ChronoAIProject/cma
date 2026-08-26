@@ -102,6 +102,51 @@ impl SessionLeaseRequest {
     }
 }
 
+/// One bounded request to fence input against a runtime handover.
+///
+/// Interaction leases are intentionally separate from provider-operation
+/// leases. A provider operation needs a permanent idempotency receipt because
+/// it may create or retire an external object. An interaction has no side
+/// effect until after acquisition returns, and can occur for every keystroke;
+/// retaining one receipt per request would make durable state grow without
+/// bound. Stores instead issue a token from a monotonic per-session
+/// epoch and retain only that epoch plus the active lease.
+#[derive(Debug, Clone)]
+pub struct SessionInteractionLeaseRequest {
+    /// Session whose authoritative runtime will receive the interaction.
+    pub session_id: SessionId,
+    /// Process instance asking. Deployment identity alone is not unique.
+    pub holder: String,
+    /// Idempotency nonce for retrying an acquisition whose result was unknown.
+    ///
+    /// Unlike a provider-operation token, this is retained only while the
+    /// interaction lease is active. The store returns its own monotonic token
+    /// as part of [`SessionLease`].
+    pub nonce: String,
+    /// Exact authority and status the caller read before asking.
+    pub boundary: SessionBoundary,
+    /// Requested lifetime, measured by the store's clock.
+    pub ttl: Duration,
+}
+
+impl SessionInteractionLeaseRequest {
+    /// Build an interaction request against one exact durable boundary.
+    pub fn new(
+        session_id: SessionId,
+        holder: impl Into<String>,
+        boundary: SessionBoundary,
+        ttl: Duration,
+    ) -> Self {
+        Self {
+            session_id,
+            holder: holder.into(),
+            nonce: format!("interaction_request_{}", uuid::Uuid::new_v4().simple()),
+            boundary,
+            ttl,
+        }
+    }
+}
+
 /// A durable exclusive lease returned by the store.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionLease {
@@ -261,17 +306,33 @@ mod tests {
         )
     }
 
+    async fn interaction_request(
+        store: &FakeStore,
+        holder: &str,
+        ttl: Duration,
+    ) -> SessionInteractionLeaseRequest {
+        let record = store.get(&record().session.id).await.unwrap().unwrap();
+        let authority = store
+            .runtime_authority(&record.session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        SessionInteractionLeaseRequest::new(
+            record.session.id.clone(),
+            holder,
+            SessionBoundary {
+                status: record.session.status,
+                authority,
+            },
+            ttl,
+        )
+    }
+
     #[tokio::test]
     async fn one_store_lease_excludes_another_service_instance() {
         let store = Arc::new(FakeStore::default());
         store.seed(&record()).await.unwrap();
-        let first = request(
-            &store,
-            "replica-a",
-            SessionOperation::Interact,
-            Duration::from_secs(30),
-        )
-        .await;
+        let first = interaction_request(&store, "replica-a", Duration::from_secs(30)).await;
         let second = request(
             &store,
             "replica-b",
@@ -280,7 +341,7 @@ mod tests {
         )
         .await;
 
-        let held = store.acquire_session_lease(&first).await.unwrap();
+        let held = store.acquire_interaction_lease(&first).await.unwrap();
         assert!(matches!(
             store.acquire_session_lease(&second).await,
             Err(StoreError::SessionLeaseHeld { id }) if id == record().session.id
@@ -315,7 +376,7 @@ mod tests {
         let expired = request(
             &store,
             "replica-a",
-            SessionOperation::Interact,
+            SessionOperation::Readopt,
             Duration::from_millis(1),
         )
         .await;
@@ -329,7 +390,7 @@ mod tests {
         let successor = request(
             &store,
             "replica-b",
-            SessionOperation::Interact,
+            SessionOperation::Readopt,
             Duration::from_secs(30),
         )
         .await;
@@ -350,7 +411,7 @@ mod tests {
         let expired = request(
             &store,
             "replica-a",
-            SessionOperation::Interact,
+            SessionOperation::Lifecycle,
             Duration::ZERO,
         )
         .await;
@@ -358,7 +419,7 @@ mod tests {
         let successor = request(
             &store,
             "replica-a",
-            SessionOperation::Interact,
+            SessionOperation::Lifecycle,
             Duration::from_secs(30),
         )
         .await;
@@ -389,6 +450,164 @@ mod tests {
                 .await,
             Err(StoreError::SessionLeaseHeld { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn bounded_interaction_acquire_and_release_are_idempotent_while_retained() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let request = interaction_request(&store, "replica-a", Duration::from_secs(30)).await;
+
+        let first = store.acquire_interaction_lease(&request).await.unwrap();
+        let replay = store.acquire_interaction_lease(&request).await.unwrap();
+        assert_eq!(replay, first);
+        store.release_session_lease(&first).await.unwrap();
+        store
+            .release_session_lease(&first)
+            .await
+            .expect("the bounded epoch replays an unknown release success");
+        let successor = store.acquire_interaction_lease(&request).await.unwrap();
+        assert_ne!(successor.token, first.token);
+        store.release_session_lease(&successor).await.unwrap();
+        store
+            .release_session_lease(&first)
+            .await
+            .expect("an older release remains a no-op after its successor releases");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expired_interaction_release_is_a_no_op_beside_a_provider_lease() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let interaction = interaction_request(&store, "replica-a", Duration::from_secs(1)).await;
+        let expired = store.acquire_interaction_lease(&interaction).await.unwrap();
+
+        tokio::time::advance(Duration::from_secs(2)).await;
+        store
+            .release_session_lease(&expired)
+            .await
+            .expect("releasing the expired current interaction succeeds");
+
+        let provider_request = request(
+            &store,
+            "replica-b",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let provider = store
+            .acquire_session_lease(&provider_request)
+            .await
+            .unwrap();
+        store
+            .release_session_lease(&expired)
+            .await
+            .expect("an old interaction release cannot disturb a provider lease");
+        store
+            .release_session_lease(&provider)
+            .await
+            .expect("the provider lease remains the exact active lease");
+    }
+
+    #[tokio::test]
+    async fn forged_identity_at_the_current_interaction_epoch_cannot_release_it() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let request = interaction_request(&store, "replica-a", Duration::from_secs(30)).await;
+        let lease = store.acquire_interaction_lease(&request).await.unwrap();
+        let mut forged = lease.clone();
+        forged.holder = "replica-b".into();
+
+        assert!(matches!(
+            store.release_session_lease(&forged).await,
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        store
+            .release_session_lease(&lease)
+            .await
+            .expect("the exact current interaction identity remains active");
+    }
+
+    #[tokio::test]
+    async fn an_interaction_nonce_is_validated_at_the_store_boundary() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let mut request = interaction_request(&store, "replica-a", Duration::from_secs(30)).await;
+        request.nonce.clear();
+
+        assert!(matches!(
+            store.acquire_interaction_lease(&request).await,
+            Err(StoreError::Malformed(message)) if message.contains("nonce")
+        ));
+    }
+
+    #[tokio::test]
+    async fn interaction_renewal_requires_its_boundary_but_release_allows_status_drift() {
+        let store = FakeStore::default();
+        let mut changed = record();
+        store.seed(&changed).await.unwrap();
+        let request = interaction_request(&store, "replica-a", Duration::from_secs(30)).await;
+        let lease = store.acquire_interaction_lease(&request).await.unwrap();
+
+        changed.session.status = SessionStatus::Idle;
+        changed.revision = store
+            .commit_session_idempotent("interaction-status-drift", &changed, &[])
+            .await
+            .unwrap();
+        assert!(matches!(
+            store
+                .renew_session_lease(&lease, Duration::from_secs(30))
+                .await,
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        store
+            .release_session_lease(&lease)
+            .await
+            .expect("the exact interaction token clears after status drift");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expired_interaction_nonce_gets_a_new_epoch_and_cannot_clear_its_successor() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let interaction = interaction_request(&store, "replica-a", Duration::from_secs(1)).await;
+        let old = store.acquire_interaction_lease(&interaction).await.unwrap();
+
+        tokio::time::advance(Duration::from_secs(2)).await;
+        let successor = store.acquire_interaction_lease(&interaction).await.unwrap();
+        assert_ne!(old.token, successor.token);
+        assert!(matches!(
+            store.delete(&record().session.id).await,
+            Err(StoreError::SessionLeaseHeld { .. })
+        ));
+        assert!(matches!(
+            store
+                .renew_session_lease(&old, Duration::from_secs(30))
+                .await,
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        store
+            .release_session_lease(&old)
+            .await
+            .expect("an older interaction release is a no-op beside its successor");
+
+        let blocked = request(
+            &store,
+            "replica-b",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        assert!(matches!(
+            store.acquire_session_lease(&blocked).await,
+            Err(StoreError::SessionLeaseHeld { .. })
+        ));
+
+        tokio::time::advance(Duration::from_secs(2)).await;
+        store
+            .delete(&record().session.id)
+            .await
+            .expect("an expired interaction lease does not strand deletion");
     }
 
     #[tokio::test]
@@ -940,6 +1159,7 @@ mod tests {
                 .as_deref(),
             Some("runtime-current")
         );
+        store.release_session_lease(&reclaim).await.unwrap();
         assert!(matches!(
             store.delete(&record().session.id).await,
             Err(StoreError::SessionCleanupPending { .. })
