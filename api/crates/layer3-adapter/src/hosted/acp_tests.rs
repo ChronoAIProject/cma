@@ -152,6 +152,50 @@ async fn bridging_offering(
     (url, served)
 }
 
+async fn bridge_holding_initialize() -> (
+    String,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let (started, started_rx) = tokio::sync::oneshot::channel();
+    let served = tokio::spawn(async move {
+        let mut started = Some(started);
+        let (socket, _) = listener.accept().await.expect("a client");
+        let mut ws = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        ws.send(Message::Text(declaration(None)))
+            .await
+            .expect("the declaration is sent");
+        while let Some(frame) = ws.next().await {
+            match frame {
+                Ok(Message::Binary(bytes))
+                    if supervisor::unframe(&bytes)
+                        .is_some_and(|(lane, _)| lane == supervisor::LANE_CONVERSATION) =>
+                {
+                    if let Some(started) = started.take() {
+                        let _ = started.send(());
+                    }
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
+        while let Some(frame) = ws.next().await {
+            match frame {
+                Ok(Message::Close(_)) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    (url, started_rx, served)
+}
+
 /// A bridge that asks its owner to sign in, and waits there.
 ///
 /// The other fixtures answer `authenticate` immediately, which is the one
@@ -320,7 +364,7 @@ async fn open_bridge(
 ) -> Result<
     (
         crate::ConversationChannel,
-        mpsc::Sender<crate::TerminalInput>,
+        crate::TerminalInputSender,
         mpsc::Receiver<crate::ConversationUpdate>,
     ),
     AdapterError,
@@ -377,7 +421,7 @@ async fn a_conversation_close_removes_its_registered_generation() {
     let handle = RuntimeHandle("sbx_close_after_open".into());
     let (url, served) = bridging(None, None, None).await;
     let stream = connect(&url).await;
-    let (_channel, control, _updates) = open_bridge(
+    let (channel, control, _updates) = open_bridge(
         stream,
         "/home/chrono".into(),
         None,
@@ -397,6 +441,15 @@ async fn a_conversation_close_removes_its_registered_generation() {
     served.abort();
     let _ = served.await;
     wait_until_link_is_gone(&kernel, &handle.0).await;
+    assert!(channel
+        .input
+        .send(crate::ConversationInput::Cancel)
+        .await
+        .is_err());
+    assert!(control
+        .send(crate::TerminalInput::Credential("unused".into()))
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -512,6 +565,43 @@ async fn a_failed_handshake_closes_a_runtime_that_keeps_its_socket_open() {
         observed.asked,
         vec!["initialize", "session/new", "session/set_mode"]
     );
+    wait_until_link_is_gone(&kernel, &handle.0).await;
+}
+
+#[tokio::test]
+async fn canceling_open_during_a_held_handshake_retires_the_whole_generation() {
+    let kernel = hosted();
+    let handle = RuntimeHandle("sbx_canceled_acp_open".into());
+    let (url, initialize_started, served) = bridge_holding_initialize().await;
+    let stream = connect(&url).await;
+    let (updates, _received) = mpsc::channel(8);
+    let opening = tokio::spawn(Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        None,
+        None,
+        Some(kernel.link_lifecycle(&handle.0)),
+        false,
+        updates,
+    ));
+
+    initialize_started
+        .await
+        .expect("the open reaches its held initialize call");
+    assert!(
+        kernel.link_to(&handle.0).await.is_some(),
+        "the generation is registered while its handshake is in flight"
+    );
+    opening.abort();
+    assert!(opening
+        .await
+        .expect_err("the open future is canceled")
+        .is_cancelled());
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), served)
+        .await
+        .expect("canceling open disconnects the held runtime peer")
+        .expect("the held bridge fixture does not panic");
     wait_until_link_is_gone(&kernel, &handle.0).await;
 }
 

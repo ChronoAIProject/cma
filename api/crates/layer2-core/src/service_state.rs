@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 
-use layer3_adapter::{KernelAdapter, PermissionLocator, RuntimeHandle, TerminalInput};
-use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
+use layer3_adapter::{KernelAdapter, PermissionLocator, RuntimeHandle, TerminalInputSender};
+use tokio::sync::{broadcast, watch, Mutex, RwLock};
 
 use crate::environment_service::EnvironmentProfileService;
 use crate::ids::{KernelId, SessionId};
@@ -56,7 +56,7 @@ pub(crate) struct SessionEntry {
     pub(crate) environment_values: Vec<String>,
     pub(crate) screen: Arc<Mutex<Box<dyn ScreenModel>>>,
     pub(crate) runtime: Option<RuntimeHandle>,
-    pub(crate) input: Option<mpsc::Sender<TerminalInput>>,
+    pub(crate) input: Option<TerminalInputSender>,
     /// Where this session's stored context lives, once any has been captured.
     pub(crate) context_ref: Option<String>,
     /// Transcript length at the last capture, so an unchanged one is not rewritten.

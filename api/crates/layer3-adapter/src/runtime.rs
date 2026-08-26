@@ -467,7 +467,7 @@ pub struct TerminalChannel {
     /// Ordered output and ending reports produced by the runtime.
     pub output: mpsc::Receiver<TerminalOutput>,
     /// Input destined for the runtime.
-    pub input: mpsc::Sender<TerminalInput>,
+    pub input: crate::TerminalInputSender,
 }
 
 /// One skill, as bytes ready to be written.
