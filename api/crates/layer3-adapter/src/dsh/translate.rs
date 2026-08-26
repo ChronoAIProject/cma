@@ -125,7 +125,7 @@ impl Harness {
             session: rejoin.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
             folder: Arc::new(Mutex::new(Folder::default())),
         });
-        let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
+        let control = crate::hosted::control_lane(Arc::clone(&harness.sink), None);
         link.register(control.clone()).await;
 
         let writer = Arc::clone(&harness);
