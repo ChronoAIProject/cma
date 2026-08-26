@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MockSession } from '../../src/testing/mock.js';
 import { AguiConnection } from '../../src/agui/connection.js';
 import { AguiOperations } from '../../src/agui/operations.js';
+import { parseEventStream } from '../../src/agui/wire.js';
 import { fold } from '../../src/conversation/fold.js';
 import { TRANSCRIPTS, transcriptNamed } from '../../src/testing/transcripts.js';
 import type { AguiEvent } from '../../src/agui/events.js';
@@ -19,7 +20,7 @@ import type { Transcript } from '../../src/testing/types.js';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function replay(session: MockSession) {
+async function replay(session: MockSession, inspect?: (event: AguiEvent, cursor: number) => void) {
   const seen: AguiEvent[] = [];
   const statuses: string[] = [];
   const connection = new AguiConnection(session.transport, session.id, {
@@ -28,7 +29,10 @@ async function replay(session: MockSession) {
     sleep: () => Promise.resolve(),
   });
   const stop = connection.subscribe(
-    (event) => seen.push(event),
+    (event) => {
+      seen.push(event);
+      inspect?.(event, connection.cursor);
+    },
     (status) => statuses.push(status),
   );
   for (let i = 0; i < 30; i += 1) {
@@ -52,6 +56,11 @@ function projectionTranscript(
       event: { threadId: 'sesn_projection_reconnect', ...event },
     })),
   };
+}
+
+function asSse(event: Readonly<Record<string, unknown>>): string {
+  const { seq, ...payload } = event;
+  return `${typeof seq === 'number' && seq > 0 ? `id: ${String(seq)}\n` : ''}data: ${JSON.stringify(payload)}\n\n`;
 }
 
 describe('every fixture', () => {
@@ -86,15 +95,31 @@ describe('every fixture', () => {
   it('replays through the real client', async () => {
     for (const transcript of TRANSCRIPTS) {
       const { seen } = await replay(new MockSession(transcript));
-      expect(seen.length, transcript.name).toBe(transcript.frames.length);
+      const getFrames = transcript.frames.filter(
+        ({ event }) => !(event.type === 'RUN_STARTED' && event.seq === 0),
+      );
+      expect(seen.length, transcript.name).toBe(getFrames.length);
       // Sequence order, exactly once each — which is the connection's work,
       // not the mock's, and is the point.
       expect(
         seen.map((e) => e.seq),
         transcript.name,
-      ).toEqual(transcript.frames.map((f) => f.event.seq));
+      ).toEqual(getFrames.map((f) => f.event.seq));
     }
   });
+
+  it.each(['approval-granted', 'approval-denied'] as const)(
+    'parses the authored %s continuation boundary on its POST-body surface',
+    (name) => {
+      const boundary = transcriptNamed(name).frames.find(
+        ({ event }) => event.type === 'RUN_STARTED' && event.seq === 0,
+      )?.event;
+      expect(boundary).toBeDefined();
+      expect(parseEventStream(asSse(boundary ?? {}))).toEqual([
+        expect.objectContaining({ type: 'RUN_STARTED', seq: 0, ephemeral: false }),
+      ]);
+    },
+  );
 });
 
 describe('the cases the milestone needs', () => {
@@ -361,6 +386,57 @@ describe('the mock drives the real client', () => {
     expect(cursor).toBe(1);
     expect(history).toEqual([transcript.frames[0]?.event]);
   });
+
+  it('omits a POST-only interface boundary from delivery and history', async () => {
+    const transcript = projectionTranscript('continuation-boundary', [
+      { type: 'RUN_STARTED', runId: 'run_resume', seq: 0 },
+      {
+        type: 'REASONING_MESSAGE_CONTENT',
+        runId: 'run_resume',
+        seq: 0,
+        messageId: 'reasoning_resume_1',
+        delta: 'Continuing.',
+        'cma:live': true,
+      },
+      { type: 'RUN_FINISHED', runId: 'run_resume', seq: 1 },
+    ]);
+    const session = new MockSession(transcript);
+    const { cursor, seen } = await replay(session);
+    const history = await session.transport.history(session.id, 0);
+
+    expect(seen.map((event) => event.type)).toEqual(['REASONING_MESSAGE_CONTENT', 'RUN_FINISHED']);
+    expect(seen.map((event) => event.ephemeral === true)).toEqual([true, false]);
+    expect(cursor).toBe(1);
+    expect(history).toEqual([transcript.frames[2]?.event]);
+  });
+
+  it.each([
+    ['approval-granted', 'run_5'],
+    ['approval-denied', 'run_7'],
+  ] as const)(
+    'keeps the authored %s POST boundary outside GET delivery and replay state',
+    async (name, runId) => {
+      const session = new MockSession(transcriptNamed(name));
+      const { cursor, seen } = await replay(session);
+      const history = await session.transport.history(session.id, 0);
+
+      expect(
+        seen.filter((event) => event.runId === runId).map((event) => [event.type, event.seq]),
+      ).toEqual([
+        ['TEXT_MESSAGE_START', 0],
+        ['TEXT_MESSAGE_CONTENT', 0],
+        ['TEXT_MESSAGE_END', 4],
+        ['RUN_FINISHED', 5],
+      ]);
+      expect(cursor).toBe(5);
+      expect(seen).not.toContainEqual(
+        expect.objectContaining({ type: 'RUN_STARTED', runId, seq: 0 }),
+      );
+      expect(history).not.toContainEqual(
+        expect.objectContaining({ type: 'RUN_STARTED', runId, seq: 0 }),
+      );
+    },
+  );
 
   it('records what the operations sent, without answering for the control plane', async () => {
     // A mock that refused would be asserting something about the control

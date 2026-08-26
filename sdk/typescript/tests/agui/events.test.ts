@@ -20,7 +20,7 @@ const durableProjectionPrefixes = [
 ] as const;
 const durableProjectionPrefixSet = new Set<string>(durableProjectionPrefixes);
 const durableFinalOrSingletonKinds = KNOWN_EVENTS.filter(
-  (kind) => !durableProjectionPrefixSet.has(kind),
+  (kind) => !durableProjectionPrefixSet.has(kind) && kind !== 'RUN_STARTED',
 );
 
 function validFrame(type: (typeof KNOWN_EVENTS)[number]): Record<string, unknown> {
@@ -66,6 +66,12 @@ describe('reading a frame', () => {
       expect(() => toEvent({ ...validFrame(type), seq: 0 })).toThrow(ProtocolError);
     },
   );
+
+  it('accepts non-live RUN_STARTED as a cursorless interface boundary', () => {
+    const event = toEvent({ ...validFrame('RUN_STARTED'), seq: 0 });
+
+    expect(event).toMatchObject({ type: 'RUN_STARTED', seq: 0, ephemeral: false });
+  });
 
   it('preserves an unnumbered unknown durable prefix', () => {
     const raw = { ...base, type: 'FUTURE_THING', seq: 0, futureValue: 7 };
