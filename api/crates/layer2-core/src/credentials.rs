@@ -194,6 +194,9 @@ impl SessionService {
     /// not shared: replacing every session's value when one was reissued would
     /// give each of them somebody else's.
     pub async fn push_session_credential(&self, id: &SessionId, credential: String) -> bool {
+        // This compatibility callback performs no store I/O, so StoreError is
+        // unreachable. A future fallible caller must use the Result-returning
+        // `push_session_credential_with` path instead of extending this wrapper.
         self.push_session_credential_with(id, &credential, || async {
             Ok::<bool, crate::store::StoreError>(true)
         })

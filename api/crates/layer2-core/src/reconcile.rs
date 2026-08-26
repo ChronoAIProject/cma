@@ -276,6 +276,10 @@ impl SessionService {
         if alive == Some(false) {
             let expected_runtime = record.runtime_id.clone();
             let expected_kernel = record.session.kernel.clone();
+            // Nothing in this critical section may reacquire this session's
+            // lifecycle gate. It deliberately spans the authoritative store
+            // recheck, loss persistence, and exact entry removal so delivery,
+            // rotation, and reconciliation cannot interleave generations.
             let lifecycle = self.lock_lifecycle(&id).await;
             let latest = match self.store.get(&id).await {
                 Ok(Some(latest))
