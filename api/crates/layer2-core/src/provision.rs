@@ -122,14 +122,9 @@ impl SessionService {
                     "this session's environment could not be prepared: {e}"
                 ))
             })?;
-        let skills = self
-            .prepare_skill_packs(
-                &id,
-                spec.caller_credential.as_deref(),
-                &environment.skills,
-                prepared_skills,
-            )
-            .await?;
+        let Some(skills) = self.prepare_skill_packs(session, prepared_skills).await? else {
+            return Ok(());
+        };
         self.note_progress(&id, ProvisioningStage::RuntimeRequested)
             .await;
         // What the runtime is told, translated once. Some kernels settle how
@@ -257,8 +252,6 @@ impl SessionService {
         if lease.is_none() {
             self.remember_runtime(&id, &handle).await;
         }
-        // And what it actually has, which is not always what it asked for.
-        self.remember_skills(&id, &skills).await;
         self.note_progress(&id, ProvisioningStage::RuntimeCreated)
             .await;
         // The skills are on the pod's disk by now: the adapter puts them there
