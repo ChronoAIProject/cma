@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use layer2_core::{
     ApprovalDecision, ApprovalResolution, ConversationReadinessError, CoreError, OperationStore,
-    SessionId, SessionService, SessionStatus,
+    Session, SessionCapability, SessionId, SessionService, SessionStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -99,11 +99,13 @@ pub(super) async fn prepare(
     service: Arc<SessionService>,
     operations: Arc<dyn OperationStore>,
     caller: layer2_core::Caller,
-    id: SessionId,
-    status: SessionStatus,
+    session: Session,
     explicit_run_id: Option<&str>,
     action: RunAction,
 ) -> Result<StreamPlan, RunFailure> {
+    let id = session.id;
+    let status = session.status;
+    let capabilities = session.capabilities;
     let deferred = action.is_prompt() && status == SessionStatus::Provisioning;
     let reservation = match explicit_run_id {
         Some(key) => Some(
@@ -122,15 +124,19 @@ pub(super) async fn prepare(
     };
 
     match reservation {
-        Some(Reservation::Complete(outcome)) => {
-            replay_plan(&service, &caller, &id, outcome).await
-        }
+        Some(Reservation::Complete(outcome)) => replay_plan(&service, &caller, &id, outcome).await,
         claim => {
             let claim = match claim {
                 Some(Reservation::Acquired(claim)) => Some(claim),
                 None => None,
                 Some(Reservation::Complete(_)) => unreachable!("handled above"),
             };
+            if action.is_prompt() && status == SessionStatus::Running {
+                if let Err(error) = capabilities.require(SessionCapability::Steer) {
+                    let problem = core_problem(error).await;
+                    return plan_from_report(complete_refusal(problem, false, claim).await);
+                }
+            }
             let admission = spawn_admission(service, caller, id, action, deferred, claim);
             if deferred {
                 Ok(StreamPlan {
@@ -186,9 +192,9 @@ fn spawn_admission(
     deferred: bool,
     claim: Option<AcquiredClaim>,
 ) -> tokio::task::JoinHandle<AdmissionReport> {
-    tokio::spawn(async move {
-        perform_admission(service, caller, id, action, deferred, claim).await
-    })
+    tokio::spawn(
+        async move { perform_admission(service, caller, id, action, deferred, claim).await },
+    )
 }
 
 async fn perform_admission(

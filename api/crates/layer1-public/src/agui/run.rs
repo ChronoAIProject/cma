@@ -250,8 +250,7 @@ async fn prepare_run(
         Arc::clone(&service),
         operations,
         caller.clone(),
-        id.clone(),
-        session.status,
+        session,
         explicit_run_id.as_deref(),
         action,
     )
