@@ -21,7 +21,7 @@
 //! is a filter that silently eats real output in the next.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
@@ -97,6 +97,28 @@ pub struct Bridge {
     /// has to be matched to the JSON-RPC request that is still waiting — and
     /// to the options that request offered, which only it knows.
     pub(super) blocked: Mutex<HashMap<String, Blocked>>,
+    /// Answers accepted in the active turn, including ones restored from a
+    /// durable locator rather than observed on this socket.
+    ///
+    /// The whole response is retained so a duplicate delivery of the same
+    /// JSON-RPC request can receive the identical answer without asking its
+    /// owner a second time. Cleared at the prompt's terminal response so a
+    /// later turn may safely reuse a JSON-RPC correlation id.
+    pub(super) answered: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    /// How many prompt waiters this Bridge currently owns.
+    ///
+    /// More than one may exist while a runtime accepts steering. Counting them
+    /// keeps one prompt's completion from making a later live permission request
+    /// look like restart recovery merely because another prompt is still active.
+    pub(super) owned_prompt_waiters: Arc<AtomicUsize>,
+    /// A prompt begun on a replaced control plane whose terminal response no
+    /// longer has a process-local waiter.
+    ///
+    /// Set only when a permission route had to be reconstructed from durable
+    /// state. The next unmatched JSON-RPC response is then the blocked prompt
+    /// continuing to its terminal response, and must reach the core instead of
+    /// being discarded with the old connection's waiter.
+    pub(super) orphaned_prompt_response: AtomicBool,
 }
 
 /// A permission request the bridge is waiting on an answer to.
@@ -105,6 +127,12 @@ pub(super) struct Blocked {
     pub(super) call: serde_json::Value,
     /// The options the bridge offered, which an intent is rendered into.
     pub(super) options: Vec<crate::PermissionOption>,
+    /// Whether a prompt begun on this Bridge owns the eventual terminal answer.
+    ///
+    /// Captured when the request arrives. A runtime can replay a blocked request
+    /// onto a replacement socket, so presence in the live map alone does not
+    /// prove that this process owns the corresponding prompt waiter.
+    pub(super) owns_prompt_waiter: bool,
 }
 
 impl Bridge {
@@ -174,6 +202,9 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             session: Mutex::new(None),
             blocked: Mutex::new(HashMap::new()),
+            answered: Arc::new(Mutex::new(HashMap::new())),
+            owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
+            orphaned_prompt_response: AtomicBool::new(false),
         });
         // This sender's channel identity is the generation of this socket.
         // Keep it beside the reader so a late answer from this socket cannot
