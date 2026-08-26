@@ -43,7 +43,8 @@ use coordination::{
 
 const LEGACY_SESSIONS: &str = "sessions";
 const LEGACY_EVENTS: &str = "session_events";
-const SESSIONS: &str = "sessions_v2";
+const PRE_COORDINATION_SESSIONS: &str = "sessions_v2";
+const SESSIONS: &str = "sessions_v3";
 const EVENTS: &str = "session_events_v2";
 const STORE_PING_TIMEOUT: Duration = Duration::from_secs(2);
 const STORE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -57,6 +58,8 @@ const NAMESPACE_CUTOVERS: &str = "_cma_session_namespace_cutovers";
 const NAMESPACE_CUTOVER_ID: &str = "sessions-v2";
 const NAMESPACE_CUTOVER_PROTOCOL: i32 = 1;
 const NAMESPACE_CUTOVER_OBSERVED_ORIGIN: &str = "observed-complete";
+const COORDINATION_ACTIVATION_ID: &str = "session-coordination-v1";
+const COORDINATION_ACTIVATION_PROTOCOL: i32 = 1;
 const COORDINATION_RECEIPTS_PROVENANCE_ID: &str = "session-coordination-receipts-v1";
 const COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL: i32 = 1;
 pub(super) const WRITE_PROTOCOL: i32 = 1;
@@ -307,11 +310,20 @@ impl TransactionQualified {
 #[derive(Debug)]
 struct NamespaceCutoverAuthorized;
 
-impl NamespaceCutoverAuthorized {
+trait NamespaceMutationAuthorized {
     fn authorize(&self, action: NamespaceAction) -> NamespaceAction {
         action
     }
 }
+
+impl NamespaceMutationAuthorized for NamespaceCutoverAuthorized {}
+
+/// Proof that the irreversible coordination activation was durably recorded
+/// before the pre-coordination session namespace was changed.
+#[derive(Debug)]
+struct CoordinationActivationAuthorized;
+
+impl NamespaceMutationAuthorized for CoordinationActivationAuthorized {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NamespaceCutoverAuthorization {
@@ -343,6 +355,17 @@ enum NamespaceCutoverMarker {
 enum CoordinationReceiptsProvenance {
     InProgress,
     Complete { collection_id: Binary },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CoordinationActivationMarker {
+    InProgress {
+        origin: String,
+    },
+    Complete {
+        origin: String,
+        collection_ids: BTreeMap<String, Binary>,
+    },
 }
 
 struct EventTransaction {
@@ -423,6 +446,7 @@ impl MongoSessionStore {
         client: &Client,
         database: &str,
         legacy_cutover_confirmed: bool,
+        coordination_cutover_confirmed: bool,
     ) -> Result<Self, StoreError> {
         let db = client.database(database);
         let mut store = Self {
@@ -437,57 +461,102 @@ impl MongoSessionStore {
             integrity: Arc::new(tokio::sync::Mutex::new(IntegrityAudit::default())),
             readiness_probe: Arc::new(tokio::sync::Semaphore::new(1)),
         };
+        // This observation must precede every collection or provenance write.
+        // An empty session namespace inside an otherwise established database
+        // is not enough to prove that no pre-coordination process can return.
+        let database_was_pristine = store.coordination_database_is_pristine().await?;
         store
             .validate_transaction_topology(STORE_OPEN_TIMEOUT)
             .await?;
         let qualification = store.qualify_transaction(STORE_OPEN_TIMEOUT).await?;
-        let cutover = store
-            .authorize_namespace_cutover(legacy_cutover_confirmed)
-            .await?;
-        store.ensure_tombstone_collection().await?;
-        // Legacy flushes mutate the session record before appending events, and
-        // legacy deletes remove the session before removing its events. First
-        // prove the pre-cutover owner relation, then fence session mutations in
-        // place. Validators do not stop deletes, so event history is moved to
-        // its protected namespace before the session collection is renamed.
-        store
-            .prepare_legacy_session_fence(&qualification, &cutover)
-            .await?;
-        store
-            .capture_legacy_events(&qualification, &cutover)
-            .await?;
-        // An old flush which passed the session fence may now append into a
-        // race-created legacy event spill. Keep that name writable until every
-        // position its record advertised has arrived, then freeze and absorb
-        // the spill before exposing the compatibility view.
-        store.verify_legacy_writers_drained().await?;
-        store
-            .ensure_versioned_namespace(&qualification, &cutover, LEGACY_EVENTS, EVENTS)
-            .await?;
-        store.reconcile_cutover_deletes().await?;
-        store
-            .ensure_versioned_namespace(&qualification, &cutover, LEGACY_SESSIONS, SESSIONS)
-            .await?;
-        // A legacy delete can remove its session after the first reconciliation
-        // and before the session rename. Once the view exists no further old
-        // delete can cross that boundary, so this closes the last such race.
-        store.reconcile_cutover_deletes().await?;
-        let cutover_collection_ids = store.finalize_namespace_cutover_marker().await?;
-        let coordination_receipts_id = store.prepare_coordination_receipts_provenance().await?;
-        store.ensure_indexes().await?;
-        store.install_protocol_validators().await?;
-        store
-            .complete_coordination_receipts_provenance(&coordination_receipts_id)
-            .await?;
+        let initial_activation = store.coordination_activation_marker().await?;
+        let cutover_collection_ids = if initial_activation.is_some() {
+            // An activation proof means the v1-to-v2 cutover already completed.
+            // Its session collection may since have been renamed to v3, so the
+            // old mutation pipeline must not try to reconstruct the v2 shape.
+            store.completed_legacy_cutover_ids_from_marker().await?
+        } else {
+            let cutover = store
+                .authorize_namespace_cutover(legacy_cutover_confirmed)
+                .await?;
+            store.ensure_tombstone_collection().await?;
+            // Legacy flushes mutate the session record before appending events,
+            // and legacy deletes remove the session before removing its events.
+            // Fence session mutations before moving either protected history.
+            store
+                .prepare_legacy_session_fence(&qualification, &cutover)
+                .await?;
+            store
+                .capture_legacy_events(&qualification, &cutover)
+                .await?;
+            store.verify_legacy_writers_drained().await?;
+            store
+                .ensure_versioned_namespace(&qualification, &cutover, LEGACY_EVENTS, EVENTS)
+                .await?;
+            store.reconcile_cutover_deletes().await?;
+            store
+                .ensure_versioned_namespace(
+                    &qualification,
+                    &cutover,
+                    LEGACY_SESSIONS,
+                    PRE_COORDINATION_SESSIONS,
+                )
+                .await?;
+            // Once the view exists no old delete can cross this boundary, so a
+            // second pass closes the last session-before-events delete race.
+            store.reconcile_cutover_deletes().await?;
+            store.finalize_namespace_cutover_marker().await?
+        };
+
+        let activation = match initial_activation {
+            Some(marker) => marker,
+            None => {
+                store
+                    .authorize_coordination_activation(
+                        database_was_pristine,
+                        coordination_cutover_confirmed,
+                    )
+                    .await?
+            }
+        };
+        let activation_in_progress =
+            matches!(activation, CoordinationActivationMarker::InProgress { .. });
+        if activation_in_progress {
+            store
+                .verify_coordination_migration_source(&cutover_collection_ids)
+                .await?;
+            let activation = CoordinationActivationAuthorized;
+            store
+                .ensure_coordination_namespace(&qualification, &activation)
+                .await?;
+            let coordination_receipts_id = store.prepare_coordination_receipts_provenance().await?;
+            store.ensure_indexes().await?;
+            store.install_protocol_validators().await?;
+            store
+                .complete_coordination_receipts_provenance(&coordination_receipts_id)
+                .await?;
+        }
+
         let collection_ids = store.authoritative_collection_ids().await?;
-        validate_completed_namespace_ids(&cutover_collection_ids, &collection_ids)?;
-        validate_coordination_receipts_id(&coordination_receipts_id, &collection_ids)?;
+        validate_migrated_namespace_ids(&cutover_collection_ids, &collection_ids)?;
+        store.verify_coordinated_namespaces().await?;
+        store
+            .verify_coordination_receipts_provenance_ids(&collection_ids)
+            .await?;
         store
             .verify_collection_contracts(Some(&collection_ids))
             .await?;
         store.verify_required_indexes().await?;
         store.validate_coordination_receipts().await?;
         let snapshot = store.validate_post_fence_state().await?;
+        if activation_in_progress {
+            store
+                .complete_coordination_activation(&collection_ids)
+                .await?;
+        }
+        store
+            .verify_coordination_activation(&collection_ids)
+            .await?;
         {
             let mut integrity = store.integrity.lock().await;
             integrity.checked_at = Some(Instant::now());
@@ -538,7 +607,10 @@ impl MongoSessionStore {
             .map_err(|error| StoreError::Unavailable(format!("ping: {error}")))?;
         self.validate_transaction_topology_unbounded().await?;
         self.verify_versioned_namespaces().await?;
-        self.verify_coordination_receipts_provenance().await?;
+        self.verify_coordination_activation(self.collection_ids.as_ref())
+            .await?;
+        self.verify_coordination_receipts_provenance_ids(self.collection_ids.as_ref())
+            .await?;
         self.verify_collection_contracts(Some(self.collection_ids.as_ref()))
             .await?;
         self.verify_required_indexes().await?;
@@ -592,11 +664,292 @@ impl MongoSessionStore {
         Ok(TransactionQualified)
     }
 
+    async fn coordination_database_is_pristine(&self) -> Result<bool, StoreError> {
+        let mut collections = self.database.list_collections().await.map_err(|error| {
+            StoreError::Unavailable(format!(
+                "inspect MongoDB database before coordination activation: {error}"
+            ))
+        })?;
+        collections
+            .try_next()
+            .await
+            .map(|collection| collection.is_none())
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "inspect MongoDB database namespace cursor before coordination activation: {error}"
+                ))
+            })
+    }
+
+    async fn coordination_activation_marker(
+        &self,
+    ) -> Result<Option<CoordinationActivationMarker>, StoreError> {
+        let marker = self
+            .database
+            .collection::<Document>(NAMESPACE_CUTOVERS)
+            .find_one(doc! { "_id": COORDINATION_ACTIVATION_ID })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "read MongoDB coordination-activation provenance: {error}"
+                ))
+            })?;
+        marker
+            .map(validate_coordination_activation_marker)
+            .transpose()
+    }
+
+    async fn completed_legacy_cutover_ids_from_marker(
+        &self,
+    ) -> Result<BTreeMap<String, Binary>, StoreError> {
+        match self.namespace_cutover_marker().await? {
+            Some(NamespaceCutoverMarker::Complete { collection_ids, .. }) => Ok(collection_ids),
+            Some(NamespaceCutoverMarker::InProgress { .. }) => Err(StoreError::Unavailable(
+                "MongoDB coordination activation requires the legacy namespace cutover provenance to be complete"
+                    .into(),
+            )),
+            None => Err(StoreError::Unavailable(
+                "MongoDB coordination activation exists without the completed legacy namespace cutover provenance"
+                    .into(),
+            )),
+        }
+    }
+
+    async fn authorize_coordination_activation(
+        &self,
+        database_was_pristine: bool,
+        coordination_cutover_confirmed: bool,
+    ) -> Result<CoordinationActivationMarker, StoreError> {
+        self.completed_legacy_cutover_ids_from_marker().await?;
+        if let Some(marker) = self.coordination_activation_marker().await? {
+            return Ok(marker);
+        }
+        let origin =
+            coordination_activation_origin(database_was_pristine, coordination_cutover_confirmed)?;
+
+        for _ in 0..4 {
+            if let Some(marker) = self.coordination_activation_marker().await? {
+                return Ok(marker);
+            }
+            let marker = CoordinationActivationMarker::InProgress {
+                origin: origin.to_owned(),
+            };
+            let document = coordination_activation_marker_document(&marker)?;
+            let inserted = self
+                .database
+                .collection::<Document>(NAMESPACE_CUTOVERS)
+                .insert_one(document)
+                .with_options(
+                    InsertOneOptions::builder()
+                        .write_concern(WriteConcern::majority())
+                        .build(),
+                )
+                .await;
+            match inserted {
+                Ok(_) => continue,
+                Err(error) => {
+                    if self.coordination_activation_marker().await?.is_some() {
+                        continue;
+                    }
+                    return Err(StoreError::Unavailable(format!(
+                        "record MongoDB coordination activation before changing {PRE_COORDINATION_SESSIONS}: {error}"
+                    )));
+                }
+            }
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB coordination activation did not reach a stable authorized state".into(),
+        ))
+    }
+
+    async fn verify_coordination_migration_source(
+        &self,
+        cutover_collection_ids: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        let compatibility = self
+            .namespace_pair(LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS)
+            .await?;
+        if !namespace_is_empty_view(compatibility.legacy.as_ref(), PRE_COORDINATION_SESSIONS) {
+            return Err(StoreError::Unavailable(format!(
+                "MongoDB coordination activation requires {LEGACY_SESSIONS} to remain a read-only view of {PRE_COORDINATION_SESSIONS}"
+            )));
+        }
+
+        let sessions = self
+            .namespace_pair(PRE_COORDINATION_SESSIONS, SESSIONS)
+            .await?;
+        let session_id = coordination_migration_session_id(&sessions)?.clone();
+        let events = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+        if next_namespace_action(&events, LEGACY_EVENTS, EVENTS)? != NamespaceAction::Ready {
+            return Err(StoreError::Unavailable(format!(
+                "MongoDB coordination activation requires {LEGACY_EVENTS} to remain a read-only view of {EVENTS}"
+            )));
+        }
+        let event_id = events.authoritative_uuid.clone().ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "MongoDB coordination activation cannot identify the {EVENTS} collection UUID"
+            ))
+        })?;
+        validate_migrated_namespace_ids(
+            cutover_collection_ids,
+            &BTreeMap::from([
+                (SESSIONS.to_owned(), session_id),
+                (EVENTS.to_owned(), event_id),
+            ]),
+        )
+    }
+
+    async fn ensure_coordination_namespace(
+        &self,
+        qualification: &TransactionQualified,
+        activation: &CoordinationActivationAuthorized,
+    ) -> Result<(), StoreError> {
+        self.ensure_versioned_namespace(
+            qualification,
+            activation,
+            PRE_COORDINATION_SESSIONS,
+            SESSIONS,
+        )
+        .await
+    }
+
+    async fn verify_coordinated_namespaces(&self) -> Result<(), StoreError> {
+        let compatibility = self
+            .namespace_pair(LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS)
+            .await?;
+        if !namespace_is_empty_view(compatibility.legacy.as_ref(), PRE_COORDINATION_SESSIONS)
+            || !namespace_is_empty_view(compatibility.authoritative.as_ref(), SESSIONS)
+        {
+            return Err(StoreError::Unavailable(format!(
+                "MongoDB session compatibility chain must be {LEGACY_SESSIONS} -> {PRE_COORDINATION_SESSIONS} -> {SESSIONS}"
+            )));
+        }
+
+        let sessions = self
+            .namespace_pair(PRE_COORDINATION_SESSIONS, SESSIONS)
+            .await?;
+        if next_namespace_action(&sessions, PRE_COORDINATION_SESSIONS, SESSIONS)?
+            != NamespaceAction::Ready
+        {
+            return Err(StoreError::Unavailable(format!(
+                "MongoDB pre-coordination namespace {PRE_COORDINATION_SESSIONS} is no longer a read-only view of {SESSIONS}"
+            )));
+        }
+        let events = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
+        if next_namespace_action(&events, LEGACY_EVENTS, EVENTS)? != NamespaceAction::Ready {
+            return Err(StoreError::Unavailable(format!(
+                "MongoDB legacy namespace {LEGACY_EVENTS} is no longer a read-only view of {EVENTS}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn current_coordination_activation_ids(
+        &self,
+    ) -> Result<BTreeMap<String, Binary>, StoreError> {
+        let contracts = self.collection_contracts().await?;
+        let mut ids = BTreeMap::new();
+        for collection in [SESSIONS, COORDINATION_RECEIPTS] {
+            let contract = contracts.get(collection).ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "completed MongoDB coordination activation no longer has protected collection {collection}; refusing to recreate lost coordination state"
+                ))
+            })?;
+            if contract.kind != NamespaceKind::Collection {
+                return Err(StoreError::Unavailable(format!(
+                    "completed MongoDB coordination activation namespace {collection} is no longer a collection"
+                )));
+            }
+            let uuid = contract.uuid.clone().ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "completed MongoDB coordination activation collection {collection} has no stable UUID"
+                ))
+            })?;
+            validate_cutover_uuid(collection, &uuid)?;
+            ids.insert(collection.to_owned(), uuid);
+        }
+        Ok(ids)
+    }
+
+    async fn complete_coordination_activation(
+        &self,
+        expected: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        let expected = coordination_activation_ids(expected)?;
+        for _ in 0..4 {
+            let actual = self.current_coordination_activation_ids().await?;
+            validate_coordination_activation_ids(&expected, &actual)?;
+            match self.coordination_activation_marker().await? {
+                Some(CoordinationActivationMarker::Complete { collection_ids, .. }) => {
+                    return validate_coordination_activation_ids(&expected, &collection_ids);
+                }
+                Some(CoordinationActivationMarker::InProgress { origin }) => {
+                    let complete = CoordinationActivationMarker::Complete {
+                        origin: origin.clone(),
+                        collection_ids: expected.clone(),
+                    };
+                    let replacement = coordination_activation_marker_document(&complete)?;
+                    let replaced = self
+                        .database
+                        .collection::<Document>(NAMESPACE_CUTOVERS)
+                        .replace_one(
+                            doc! {
+                                "_id": COORDINATION_ACTIVATION_ID,
+                                "protocol": COORDINATION_ACTIVATION_PROTOCOL,
+                                "origin": &origin,
+                                "phase": "in-progress",
+                            },
+                            replacement,
+                        )
+                        .with_options(
+                            ReplaceOptions::builder()
+                                .upsert(false)
+                                .write_concern(WriteConcern::majority())
+                                .build(),
+                        )
+                        .await;
+                    match replaced {
+                        Ok(result) if result.matched_count == 1 => continue,
+                        Ok(_) | Err(_) => continue,
+                    }
+                }
+                None => {
+                    return Err(StoreError::Unavailable(
+                        "MongoDB coordination activation provenance disappeared before completion"
+                            .into(),
+                    ));
+                }
+            }
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB coordination activation did not reach a stable completed state".into(),
+        ))
+    }
+
+    async fn verify_coordination_activation(
+        &self,
+        expected: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        let expected = coordination_activation_ids(expected)?;
+        let Some(CoordinationActivationMarker::Complete { collection_ids, .. }) =
+            self.coordination_activation_marker().await?
+        else {
+            return Err(StoreError::Unavailable(
+                "MongoDB coordination activation provenance is not complete".into(),
+            ));
+        };
+        validate_coordination_activation_ids(&expected, &collection_ids)?;
+        let actual = self.current_coordination_activation_ids().await?;
+        validate_coordination_activation_ids(&collection_ids, &actual)
+    }
+
     async fn authorize_namespace_cutover(
         &self,
         legacy_cutover_confirmed: bool,
     ) -> Result<NamespaceCutoverAuthorized, StoreError> {
-        let sessions = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+        let sessions = self
+            .namespace_pair(LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS)
+            .await?;
         let events = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
         let marker = self.namespace_cutover_marker().await?;
         let authorization = namespace_cutover_authorization(
@@ -810,15 +1163,15 @@ impl MongoSessionStore {
         ))
     }
 
-    async fn verify_coordination_receipts_provenance(&self) -> Result<(), StoreError> {
-        let expected = self
-            .collection_ids
-            .get(COORDINATION_RECEIPTS)
-            .ok_or_else(|| {
-                StoreError::Unavailable(
-                    "MongoDB readiness has no coordination-receipt collection UUID".into(),
-                )
-            })?;
+    async fn verify_coordination_receipts_provenance_ids(
+        &self,
+        expected_ids: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        let expected = expected_ids.get(COORDINATION_RECEIPTS).ok_or_else(|| {
+            StoreError::Unavailable(
+                "MongoDB readiness has no coordination-receipt collection UUID".into(),
+            )
+        })?;
         let Some(CoordinationReceiptsProvenance::Complete { collection_id }) =
             self.coordination_receipts_provenance().await?
         else {
@@ -864,7 +1217,9 @@ impl MongoSessionStore {
     async fn current_completed_namespace_ids(
         &self,
     ) -> Result<BTreeMap<String, Binary>, StoreError> {
-        let sessions = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+        let sessions = self
+            .namespace_pair(LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS)
+            .await?;
         let events = self.namespace_pair(LEGACY_EVENTS, EVENTS).await?;
         completed_namespace_ids(&sessions, &events)?.ok_or_else(|| {
             StoreError::Unavailable(
@@ -997,7 +1352,9 @@ impl MongoSessionStore {
         cutover: &NamespaceCutoverAuthorized,
     ) -> Result<(), StoreError> {
         for _ in 0..12 {
-            let pair = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            let pair = self
+                .namespace_pair(LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS)
+                .await?;
             match (&pair.legacy, &pair.authoritative) {
                 (None, None) => {
                     self.verify_legacy_pre_cutover_owners().await?;
@@ -1011,7 +1368,7 @@ impl MongoSessionStore {
                         cutover,
                         NamespaceAction::FenceLegacy,
                         LEGACY_SESSIONS,
-                        SESSIONS,
+                        PRE_COORDINATION_SESSIONS,
                     )
                     .await?;
                 }
@@ -1025,7 +1382,7 @@ impl MongoSessionStore {
                         cutover,
                         NamespaceAction::FenceAuthoritative,
                         LEGACY_SESSIONS,
-                        SESSIONS,
+                        PRE_COORDINATION_SESSIONS,
                     )
                     .await?;
                 }
@@ -1041,7 +1398,9 @@ impl MongoSessionStore {
                         pipeline_is_empty: true,
                     }),
                     Some(NamespaceKind::Collection),
-                ) if source == SESSIONS && pair.authoritative_fenced => return Ok(()),
+                ) if source == PRE_COORDINATION_SESSIONS && pair.authoritative_fenced => {
+                    return Ok(())
+                }
                 _ => {
                     return Err(StoreError::Unavailable(format!(
                     "MongoDB session namespace cannot establish the legacy-writer fence: {pair:?}"
@@ -1131,7 +1490,9 @@ impl MongoSessionStore {
 
     async fn cutover_session_owner_exists(&self, id: &str) -> Result<bool, StoreError> {
         for _ in 0..12 {
-            let before = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            let before = self
+                .namespace_pair(LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS)
+                .await?;
             let owner_collection = cutover_session_owner_namespace(&before)?;
             let owner = match owner_collection {
                 Some(collection) => Some((
@@ -1147,7 +1508,9 @@ impl MongoSessionStore {
             // or recreate the compatibility view while the find is in flight.
             // Never turn a miss (or a namespace error) into a tombstone until
             // the namespace identity and shape are unchanged across the read.
-            let after = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+            let after = self
+                .namespace_pair(LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS)
+                .await?;
             let owner_found = owner
                 .as_ref()
                 .is_some_and(|(_, result)| matches!(result, Ok(Some(_))));
@@ -1173,24 +1536,21 @@ impl MongoSessionStore {
     }
 
     async fn verify_versioned_namespaces(&self) -> Result<(), StoreError> {
-        for (legacy, authoritative) in [(LEGACY_SESSIONS, SESSIONS), (LEGACY_EVENTS, EVENTS)] {
-            let pair = self.namespace_pair(legacy, authoritative).await?;
-            if next_namespace_action(&pair, legacy, authoritative)? != NamespaceAction::Ready {
-                return Err(StoreError::Unavailable(format!(
-                    "MongoDB legacy namespace {legacy} is no longer a read-only view of {authoritative}"
-                )));
-            }
-        }
-        Ok(())
+        self.verify_coordinated_namespaces().await?;
+        let cutover_ids = self.completed_legacy_cutover_ids_from_marker().await?;
+        validate_migrated_namespace_ids(&cutover_ids, self.collection_ids.as_ref())
     }
 
-    async fn ensure_versioned_namespace(
+    async fn ensure_versioned_namespace<Authorization>(
         &self,
         qualification: &TransactionQualified,
-        cutover: &NamespaceCutoverAuthorized,
+        authorization: &Authorization,
         legacy: &str,
         authoritative: &str,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), StoreError>
+    where
+        Authorization: NamespaceMutationAuthorized,
+    {
         // Another replica may be performing the same cutover, and a process may
         // have stopped after the rename but before creating the view. Re-read
         // after every action. A protocol-fenced authoritative collection is the
@@ -1205,7 +1565,13 @@ impl MongoSessionStore {
             }
 
             if let Err(error) = self
-                .execute_namespace_action(qualification, cutover, action, legacy, authoritative)
+                .execute_namespace_action(
+                    qualification,
+                    authorization,
+                    action,
+                    legacy,
+                    authoritative,
+                )
                 .await
             {
                 let after = self.namespace_pair(legacy, authoritative).await?;
@@ -1258,15 +1624,18 @@ impl MongoSessionStore {
         Ok(pair)
     }
 
-    async fn execute_namespace_action(
+    async fn execute_namespace_action<Authorization>(
         &self,
         qualification: &TransactionQualified,
-        cutover: &NamespaceCutoverAuthorized,
+        authorization: &Authorization,
         action: NamespaceAction,
         legacy: &str,
         authoritative: &str,
-    ) -> Result<(), StoreError> {
-        match qualification.authorize(cutover.authorize(action)) {
+    ) -> Result<(), StoreError>
+    where
+        Authorization: NamespaceMutationAuthorized,
+    {
+        match qualification.authorize(authorization.authorize(action)) {
             NamespaceAction::CreateAuthoritative => self
                 .database
                 .create_collection(authoritative)
@@ -1460,13 +1829,15 @@ impl MongoSessionStore {
     }
 
     async fn validated_cutover_session_tails(&self) -> Result<BTreeMap<String, u64>, StoreError> {
-        let pair = self.namespace_pair(LEGACY_SESSIONS, SESSIONS).await?;
+        let pair = self
+            .namespace_pair(LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS)
+            .await?;
         let mut collections = Vec::new();
         if matches!(pair.legacy, Some(NamespaceKind::Collection)) {
             collections.push(LEGACY_SESSIONS);
         }
         if matches!(pair.authoritative, Some(NamespaceKind::Collection)) {
-            collections.push(SESSIONS);
+            collections.push(PRE_COORDINATION_SESSIONS);
         }
         if matches!(pair.legacy, Some(NamespaceKind::View { .. }))
             && !matches!(pair.authoritative, Some(NamespaceKind::Collection))
@@ -1985,7 +2356,15 @@ fn namespace_has_protocol_validator(
                 .options
                 .validator
                 .as_ref()
-                .is_some_and(|actual| documents_equivalent(actual, &expected))
+                .is_some_and(|actual| {
+                    documents_equivalent(actual, &expected)
+                        // A deployment which reached the original coordination
+                        // implementation may already have the stronger v3
+                        // validator on v2. Treat it as fenced without briefly
+                        // weakening it before the rollback-resistant rename.
+                        || (authoritative == PRE_COORDINATION_SESSIONS
+                            && documents_equivalent(actual, &session_protocol_validator()))
+                })
         })
         && specification.options.validation_level == Some(ValidationLevel::Strict)
 }
@@ -2000,6 +2379,7 @@ fn namespace_is_protocol_fenced(
 
 fn expected_validator(collection: &str) -> Option<Document> {
     match collection {
+        PRE_COORDINATION_SESSIONS => Some(pre_coordination_session_protocol_validator()),
         SESSIONS => Some(session_protocol_validator()),
         EVENTS => Some(event_protocol_validator()),
         WRITES => Some(write_protocol_validator()),
@@ -2398,10 +2778,10 @@ fn namespace_cutover_marker_document(
         "phase": phase,
     };
     if let Some(collection_ids) = collection_ids {
-        let sessions = required_cutover_uuid(collection_ids, SESSIONS)?;
+        let sessions = required_cutover_uuid(collection_ids, PRE_COORDINATION_SESSIONS)?;
         let events = required_cutover_uuid(collection_ids, EVENTS)?;
         let mut stored = Document::new();
-        stored.insert(SESSIONS, sessions.clone());
+        stored.insert(PRE_COORDINATION_SESSIONS, sessions.clone());
         stored.insert(EVENTS, events.clone());
         document.insert("collection_uuids", stored);
     }
@@ -2424,6 +2804,184 @@ fn coordination_receipts_provenance_document(
         document.insert("collection_uuid", collection_id.clone());
     }
     Ok(document)
+}
+
+fn coordination_activation_marker_document(
+    marker: &CoordinationActivationMarker,
+) -> Result<Document, StoreError> {
+    let (origin, phase, collection_ids) = match marker {
+        CoordinationActivationMarker::InProgress { origin } => (origin, "in-progress", None),
+        CoordinationActivationMarker::Complete {
+            origin,
+            collection_ids,
+        } => (origin, "complete", Some(collection_ids)),
+    };
+    validate_coordination_activation_origin(origin)?;
+    let mut document = doc! {
+        "_id": COORDINATION_ACTIVATION_ID,
+        "protocol": COORDINATION_ACTIVATION_PROTOCOL,
+        "origin": origin,
+        "phase": phase,
+    };
+    if let Some(collection_ids) = collection_ids {
+        let sessions = required_activation_uuid(collection_ids, SESSIONS)?;
+        let receipts = required_activation_uuid(collection_ids, COORDINATION_RECEIPTS)?;
+        let mut stored = Document::new();
+        stored.insert(SESSIONS, sessions.clone());
+        stored.insert(COORDINATION_RECEIPTS, receipts.clone());
+        document.insert("collection_uuids", stored);
+    }
+    Ok(document)
+}
+
+fn validate_coordination_activation_marker(
+    document: Document,
+) -> Result<CoordinationActivationMarker, StoreError> {
+    let id = document.get_str("_id").map_err(|_| {
+        StoreError::Malformed("MongoDB coordination-activation marker _id must be a string".into())
+    })?;
+    let protocol = document.get_i32("protocol").map_err(|_| {
+        StoreError::Malformed(
+            "MongoDB coordination-activation marker protocol must be an int".into(),
+        )
+    })?;
+    let origin = document.get_str("origin").map_err(|_| {
+        StoreError::Malformed(
+            "MongoDB coordination-activation marker origin must be a string".into(),
+        )
+    })?;
+    let phase = document.get_str("phase").map_err(|_| {
+        StoreError::Malformed(
+            "MongoDB coordination-activation marker phase must be a string".into(),
+        )
+    })?;
+    if id != COORDINATION_ACTIVATION_ID || protocol != COORDINATION_ACTIVATION_PROTOCOL {
+        return Err(StoreError::Malformed(format!(
+            "MongoDB coordination-activation marker is not the supported {COORDINATION_ACTIVATION_ID} protocol {COORDINATION_ACTIVATION_PROTOCOL} proof"
+        )));
+    }
+    validate_coordination_activation_origin(origin)?;
+    match phase {
+        "in-progress" if document.len() == 4 => Ok(CoordinationActivationMarker::InProgress {
+            origin: origin.to_owned(),
+        }),
+        "complete" if document.len() == 5 => {
+            let stored = document.get_document("collection_uuids").map_err(|_| {
+                StoreError::Malformed(
+                    "completed MongoDB coordination-activation marker must contain collection_uuids"
+                        .into(),
+                )
+            })?;
+            if stored.len() != 2 {
+                return Err(StoreError::Malformed(
+                    "completed MongoDB coordination-activation marker must name exactly the sessions and receipt collection UUIDs"
+                        .into(),
+                ));
+            }
+            Ok(CoordinationActivationMarker::Complete {
+                origin: origin.to_owned(),
+                collection_ids: BTreeMap::from([
+                    (
+                        SESSIONS.to_owned(),
+                        stored_activation_uuid(stored, SESSIONS)?,
+                    ),
+                    (
+                        COORDINATION_RECEIPTS.to_owned(),
+                        stored_activation_uuid(stored, COORDINATION_RECEIPTS)?,
+                    ),
+                ]),
+            })
+        }
+        _ => Err(StoreError::Malformed(
+            "MongoDB coordination-activation marker has an unsupported phase or field set".into(),
+        )),
+    }
+}
+
+fn validate_coordination_activation_origin(origin: &str) -> Result<(), StoreError> {
+    if matches!(origin, "new-database" | "operator-drained") {
+        return Ok(());
+    }
+    Err(StoreError::Malformed(
+        "MongoDB coordination-activation marker has an unsupported origin".into(),
+    ))
+}
+
+fn required_activation_uuid<'a>(
+    collection_ids: &'a BTreeMap<String, Binary>,
+    collection: &str,
+) -> Result<&'a Binary, StoreError> {
+    let uuid = collection_ids.get(collection).ok_or_else(|| {
+        StoreError::Malformed(format!(
+            "completed MongoDB coordination-activation marker is missing the {collection} UUID"
+        ))
+    })?;
+    validate_cutover_uuid(collection, uuid)?;
+    Ok(uuid)
+}
+
+fn stored_activation_uuid(document: &Document, collection: &str) -> Result<Binary, StoreError> {
+    let uuid = match document.get(collection) {
+        Some(Bson::Binary(uuid)) => uuid.clone(),
+        _ => {
+            return Err(StoreError::Malformed(format!(
+                "completed MongoDB coordination-activation marker {collection} UUID must be binary"
+            )))
+        }
+    };
+    validate_cutover_uuid(collection, &uuid)?;
+    Ok(uuid)
+}
+
+fn coordination_activation_ids(
+    collection_ids: &BTreeMap<String, Binary>,
+) -> Result<BTreeMap<String, Binary>, StoreError> {
+    Ok(BTreeMap::from([
+        (
+            SESSIONS.to_owned(),
+            required_activation_uuid(collection_ids, SESSIONS)?.clone(),
+        ),
+        (
+            COORDINATION_RECEIPTS.to_owned(),
+            required_activation_uuid(collection_ids, COORDINATION_RECEIPTS)?.clone(),
+        ),
+    ]))
+}
+
+fn coordination_activation_origin(
+    database_was_pristine: bool,
+    coordination_cutover_confirmed: bool,
+) -> Result<&'static str, StoreError> {
+    if database_was_pristine {
+        return Ok("new-database");
+    }
+    if coordination_cutover_confirmed {
+        return Ok("operator-drained");
+    }
+    Err(StoreError::Unavailable(
+        "an existing MongoDB database requires an offline coordination activation: stop every pre-coordination CMA process, wait for all MongoDB and external provider operations to finish, then start exactly one replacement with CHRONO_MONGODB_COORDINATION_CUTOVER=drained; CMA cannot prove that drain itself"
+            .into(),
+    ))
+}
+
+fn validate_coordination_activation_ids(
+    recorded: &BTreeMap<String, Binary>,
+    actual: &BTreeMap<String, Binary>,
+) -> Result<(), StoreError> {
+    for collection in [SESSIONS, COORDINATION_RECEIPTS] {
+        let recorded_uuid = required_activation_uuid(recorded, collection)?;
+        let actual_uuid = actual.get(collection).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "completed MongoDB coordination activation no longer has protected collection {collection}; refusing to recreate lost coordination state"
+            ))
+        })?;
+        if recorded_uuid != actual_uuid {
+            return Err(StoreError::Unavailable(format!(
+                "completed MongoDB coordination activation {collection} UUID no longer matches its durable completion record; refusing replacement data"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_coordination_receipts_provenance(
@@ -2512,7 +3070,10 @@ fn validate_namespace_cutover_marker(
                 ));
             }
             let collection_ids = BTreeMap::from([
-                (SESSIONS.to_owned(), stored_cutover_uuid(stored, SESSIONS)?),
+                (
+                    PRE_COORDINATION_SESSIONS.to_owned(),
+                    stored_cutover_uuid(stored, PRE_COORDINATION_SESSIONS)?,
+                ),
                 (EVENTS.to_owned(), stored_cutover_uuid(stored, EVENTS)?),
             ]);
             Ok(NamespaceCutoverMarker::Complete {
@@ -2577,7 +3138,7 @@ fn completed_namespace_ids(
     events: &NamespacePair,
 ) -> Result<Option<BTreeMap<String, Binary>>, StoreError> {
     let ready = matches!(
-        next_namespace_action(sessions, LEGACY_SESSIONS, SESSIONS),
+        next_namespace_action(sessions, LEGACY_SESSIONS, PRE_COORDINATION_SESSIONS,),
         Ok(NamespaceAction::Ready)
     ) && matches!(
         next_namespace_action(events, LEGACY_EVENTS, EVENTS),
@@ -2598,7 +3159,7 @@ fn completed_namespace_ids(
         )
     })?;
     Ok(Some(BTreeMap::from([
-        (SESSIONS.to_owned(), sessions_uuid),
+        (PRE_COORDINATION_SESSIONS.to_owned(), sessions_uuid),
         (EVENTS.to_owned(), events_uuid),
     ])))
 }
@@ -2607,7 +3168,7 @@ fn validate_completed_namespace_ids(
     recorded: &BTreeMap<String, Binary>,
     actual: &BTreeMap<String, Binary>,
 ) -> Result<(), StoreError> {
-    for collection in [SESSIONS, EVENTS] {
+    for collection in [PRE_COORDINATION_SESSIONS, EVENTS] {
         let recorded_uuid = required_cutover_uuid(recorded, collection)?;
         let actual_uuid = actual.get(collection).ok_or_else(|| {
             StoreError::Unavailable(format!(
@@ -2623,6 +3184,58 @@ fn validate_completed_namespace_ids(
     Ok(())
 }
 
+fn validate_migrated_namespace_ids(
+    recorded: &BTreeMap<String, Binary>,
+    actual: &BTreeMap<String, Binary>,
+) -> Result<(), StoreError> {
+    for (recorded_collection, actual_collection) in
+        [(PRE_COORDINATION_SESSIONS, SESSIONS), (EVENTS, EVENTS)]
+    {
+        let recorded_uuid = required_cutover_uuid(recorded, recorded_collection)?;
+        let actual_uuid = actual.get(actual_collection).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "completed MongoDB namespace cutover no longer has migrated collection {actual_collection}; refusing to recreate or replace it"
+            ))
+        })?;
+        if recorded_uuid != actual_uuid {
+            return Err(StoreError::Unavailable(format!(
+                "completed MongoDB namespace cutover {recorded_collection} UUID no longer matches migrated collection {actual_collection}; refusing replacement data"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn namespace_is_empty_view(kind: Option<&NamespaceKind>, source: &str) -> bool {
+    matches!(
+        kind,
+        Some(NamespaceKind::View {
+            source: Some(actual),
+            pipeline_is_empty: true,
+        }) if actual == source
+    )
+}
+
+fn coordination_migration_session_id(pair: &NamespacePair) -> Result<&Binary, StoreError> {
+    match (&pair.legacy, &pair.authoritative) {
+        (Some(NamespaceKind::Collection), None) => pair.legacy_uuid.as_ref(),
+        (None, Some(NamespaceKind::Collection)) => pair.authoritative_uuid.as_ref(),
+        (
+            Some(NamespaceKind::View {
+                source: Some(source),
+                pipeline_is_empty: true,
+            }),
+            Some(NamespaceKind::Collection),
+        ) if source == SESSIONS => pair.authoritative_uuid.as_ref(),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        StoreError::Unavailable(format!(
+            "MongoDB coordination activation cannot prove one preserved session collection across {PRE_COORDINATION_SESSIONS} -> {SESSIONS}: {pair:?}"
+        ))
+    })
+}
+
 fn validate_exact_coordination_receipts_id(
     expected: &Binary,
     actual: &Binary,
@@ -2633,18 +3246,6 @@ fn validate_exact_coordination_receipts_id(
     Err(StoreError::Unavailable(format!(
         "MongoDB coordination-receipt collection {COORDINATION_RECEIPTS} UUID no longer matches its durable provenance; refusing replacement data"
     )))
-}
-
-fn validate_coordination_receipts_id(
-    expected: &Binary,
-    actual: &BTreeMap<String, Binary>,
-) -> Result<(), StoreError> {
-    let actual = actual.get(COORDINATION_RECEIPTS).ok_or_else(|| {
-        StoreError::Unavailable(format!(
-            "MongoDB coordination-receipt collection {COORDINATION_RECEIPTS} disappeared during startup"
-        ))
-    })?;
-    validate_exact_coordination_receipts_id(expected, actual)
 }
 
 fn namespace_cutover_authorization(
@@ -2760,7 +3361,7 @@ fn cutover_session_owner_namespace(
             Ok(Some(LEGACY_SESSIONS))
         }
         (None, Some(NamespaceKind::Collection)) if pair.authoritative_fenced => {
-            Ok(Some(SESSIONS))
+            Ok(Some(PRE_COORDINATION_SESSIONS))
         }
         (
             Some(NamespaceKind::View {
@@ -2768,7 +3369,9 @@ fn cutover_session_owner_namespace(
                 pipeline_is_empty: true,
             }),
             Some(NamespaceKind::Collection),
-        ) if source == SESSIONS && pair.authoritative_fenced => Ok(Some(SESSIONS)),
+        ) if source == PRE_COORDINATION_SESSIONS && pair.authoritative_fenced => {
+            Ok(Some(PRE_COORDINATION_SESSIONS))
+        }
         _ => Err(StoreError::Unavailable(format!(
             "MongoDB session owner namespace is ambiguous during cutover: {pair:?}; refusing delete reconciliation"
         ))),
@@ -2873,6 +3476,10 @@ fn session_protocol_validator() -> Document {
     ))
 }
 
+fn pre_coordination_session_protocol_validator() -> Document {
+    protocol_validator(vec!["revision"], &["revision"])
+}
+
 fn event_protocol_validator() -> Document {
     protocol_validator(Vec::new(), &[])
 }
@@ -2905,7 +3512,10 @@ fn coordination_receipt_protocol_validator() -> Document {
                     "value": {
                         "bsonType": "object",
                         "properties": {
-                            "completed_by": { "bsonType": "string" },
+                            "completed_by": {
+                                "bsonType": "string",
+                                "minLength": 1,
+                            },
                         },
                     },
                 },
@@ -3691,9 +4301,9 @@ impl SessionStore for MongoSessionStore {
     }
 
     async fn legacy_runtime_cleanup_authorized(&self) -> Result<bool, StoreError> {
-        // Namespace cutover fences record writers, but it is not yet the
-        // irreversible provider-writer drain proof required for generation zero.
-        Ok(false)
+        self.verify_coordination_activation(self.collection_ids.as_ref())
+            .await?;
+        Ok(true)
     }
 
     async fn acknowledge_runtime_cleanup(

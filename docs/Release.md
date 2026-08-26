@@ -166,7 +166,28 @@ Default startup refuses a writable or unproven partial legacy state before renam
 
 ---
 
-## 6. When it goes wrong
+## 6. One-time MongoDB coordination activation
+
+The release that makes runtime authority and cleanup debt durable moves the writable session collection from `sessions_v2` to `sessions_v3`. It leaves `session_events_v2` in place. This activation cannot overlap any pre-coordination CMA process: an old process can make an external provider call before its database write, and no MongoDB validator can recall that call. `CHRONO_MONGODB_COORDINATION_CUTOVER=drained` is the operator's assertion that both database work and provider work from those processes have permanently stopped.
+
+Run this once for every existing CMA database, after the namespace cutover in section 5 is complete:
+
+1. Take one transaction-consistent backup or snapshot containing `sessions_v3` if it already exists, otherwise `sessions_v2`; `session_events_v2`; `session_coordination_receipts`; `_cma_session_namespace_cutovers`; `session_writes`; and `session_tombstones`. Keep these collections and provenance records as one recovery unit. Do not combine session data from one point in time with receipts or markers from another.
+2. Stop every pre-coordination CMA binary. Wait for every pod/process, outstanding MongoDB operation, and external provider create, delete, or replacement operation to finish. Prevent the old workload from returning. Rotate or revoke its database and provider credentials where the deployment permits that stronger fence.
+3. Set `CHRONO_MONGODB_COORDINATION_CUTOVER` to the exact value `drained`. If section 5 has not yet run, set its separate legacy acknowledgement only after satisfying that section's drain conditions too.
+4. Start exactly one new CMA replica. Do not start another activation candidate and do not restore any old replica while startup is in progress. A crash after the durable in-progress marker may be resumed by the same new binary without reasserting the flag.
+5. Verify directly in MongoDB that `sessions` is a read-only view of `sessions_v2`, `sessions_v2` is a read-only view of `sessions_v3`, and `sessions_v3` is the sole writable session collection. Confirm that the coordination activation and receipt provenance records in `_cma_session_namespace_cutovers` are complete and UUID-bound, then confirm `/ready` returns `200`.
+6. Leave the verified replica running and unset `CHRONO_MONGODB_COORDINATION_CUTOVER`. Start the remaining new replicas without the acknowledgement only after an unflagged replica becomes Ready.
+
+A genuinely empty database activates automatically. Any database that existed before startup requires the exact acknowledgement, even when its session collections happen to be empty. The activation majority-writes intent before fencing and renaming `sessions_v2`; the rename preserves its collection UUID. It then creates `sessions_v2` as a view of `sessions_v3`, establishes and audits the receipt collection, and completes a marker bound to both protected UUIDs. A completed marker authorizes verification only: startup will not recreate a missing session or receipt collection, repair a replacement collection, or infer a new empty store.
+
+Rollback to a pre-coordination image is intentionally unsupported. Such an image expects `sessions_v2` to be a collection; after activation it is a view, so startup and direct old-style insert, replace, and delete operations must fail. Keep old workloads disabled after the upgrade rather than treating that refusal as a reason to restore one.
+
+If protected data or proof is lost, never create a new `session_coordination_receipts` collection and never synthesize or delete an activation marker to make startup pass. Restore `sessions_v3`, `session_events_v2`, `session_coordination_receipts`, all provenance records in `_cma_session_namespace_cutovers`, `session_writes`, and `session_tombstones` from the same consistent backup. Simultaneous loss of protected data and its durable proof is outside automatic recovery and requires an explicit incident recovery decision.
+
+---
+
+## 7. When it goes wrong
 
 **The publish run failed before the images pushed.** Nothing was released — no tag exists, so nothing consumed the version. Fix the cause and re-run the workflow; it computes the same number again.
 
