@@ -96,6 +96,7 @@ pub(crate) fn chunk(text: &str) -> ConversationUpdate {
 pub(crate) fn asking(id: &str, title: &str) -> PermissionRequest {
     PermissionRequest {
         id: id.to_string(),
+        locator: None,
         request: RequestPermissionRequest::new(
             ConversationId::new("sesn-under-test"),
             ToolCallUpdate::new(
