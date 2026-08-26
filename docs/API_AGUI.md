@@ -173,6 +173,8 @@ brackets the run without advancing a replay cursor.
     "contextUsed": null,
     "contextWindow": null
   },
+  "status": null,
+  "progress": null,
   "mode": null,
   "plan": null,
   "configOptions": null,
@@ -199,6 +201,8 @@ unknown. `/usage/contextUsed` is different only at the core event boundary:
 zero there is the established "no context reading" sentinel, so its projection
 omits that operation and preserves the canonical `null` or last positive value.
 For `/memoryPressure`, `null` means no pressure episode is currently open.
+For `/status` and `/progress`, `null` means that no durable lifecycle or
+provisioning value has reached this stream yet.
 
 ### `STATE_DELTA` paths
 
@@ -217,9 +221,11 @@ of the current contract.
 | `/pendingApprovals/{requestId}` | `add` or `remove` | on `add`, `{id: string, reason: string, message: string or null}`; `remove` carries no value | an approval is requested or resolved |
 | `/plan` | `replace` | array of `{title: string, status: string}` | the agent reports a complete plan revision |
 | `/planeChanges/-` | `add` | `{from: string, to: string, snapshotAt: string}` | the owner moves the session between terminal and conversation planes |
+| `/progress` | `replace` | `accepted`, `runtime_requested`, `runtime_created`, `skills_installed`, `attaching`, or `ready` | initial provisioning or a replacement runtime advances to another named stage |
 | `/resources` | `replace` | object containing all fourteen numeric-or-null resource fields shown below | a resource reading arrives on the cursorless live lane |
 | `/runtimeLosses/-` | `add` | `{runtime: string, cause: string or null, noticedAt: string or null}` | reconciliation establishes that a runtime was lost |
 | `/signIn` | `replace` | `{url: string, code: string or null, message: string or null}` | the agent needs its owner to complete an own-account sign-in |
+| `/status` | `replace` | `provisioning`, `ready`, `running`, `rotating`, `idle`, or `terminated` | a lifecycle transition does not already end the AG-UI run |
 | `/usage/contextUsed` | `replace` | positive integer token count | a usage report carries a positive context reading; the zero sentinel emits no operation |
 | `/usage/contextWindow` | `replace` | non-negative integer token count | a usage report states the context ceiling; omission preserves the prior value |
 | `/usage/inputTokens` | `replace` | non-negative integer token count | any usage report arrives, including a zero count |
@@ -238,6 +244,29 @@ one narrow fold exception: a remove whose decoded pointer is exactly
 `["pendingApprovals", requestId]` is **remove-if-present**, and is a no-op when
 that own member is absent. This is not strict RFC 6902. No other missing remove
 is relaxed, and malformed pointers or missing parents remain protocol errors.
+
+#### `/status` and `/progress` report runtime availability
+
+The `/status` vocabulary is the Layer 2 session status serialized with the same
+spelling REST uses: `provisioning`, `ready`, `running`, `rotating`, `idle`, and
+`terminated`. This build emits the state delta only for a status transition that
+does not already end the AG-UI run. In particular, `rotating`, `terminated`, and
+an `idle` transition caused by `error`, `revoked`, or `budget_reached` remain a
+single `RUN_ERROR`; that same durable event never also emits a `/status` frame.
+
+At the lifecycle level, `ready` accepts an ordinary new run. `running` is also
+interactive, but mid-turn input is steer: it requires the session's granted
+`steer` capability and is then governed by its `concurrent_input` policy.
+`provisioning`, `rotating`, `idle`, and `terminated` are not interactive. An
+`idle` session remains revivable, but a client must revive it before enabling
+ordinary input.
+
+`/progress` uses the Layer 2 provisioning stages in order: `accepted`,
+`runtime_requested`, `runtime_created`, `skills_installed`, `attaching`, and
+`ready`. It is detail about bringing up a runtime, not permission to send a
+run. In particular, `/progress=ready` does not change composer admission in
+either direction. Only `/status=ready` makes the session lifecycle interactive;
+the final progress record may be adjacent to that transition on either side.
 
 #### `/signIn` is the own-account prompt
 
@@ -403,7 +432,7 @@ A stretch of conversation the runtime had to drop also arrives as a state patch,
 
 `cause` is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`, and is `null` where the service could establish no reason. `noticedAt` is when the service established that the runtime was lost, up to one reconciliation sweep after it actually stopped; it is not a claimed time of death. Do not draw the loss as the session having failed: a replacement runtime is started. The agent's conversation does **not** cross a runtime it lost, however, so it begins again from the terminal context that was captured rather than resuming that conversation.
 
-**The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Start a new run when the session is usable again — the same session, the same conversation, resumed.
+**The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Keep following the session stream: optional `/progress` deltas describe the replacement starting, and `/status=ready` says the same session can accept a new run with the same conversation resumed.
 
 ### `RUN_ERROR` covers two different things, and says which
 
@@ -427,6 +456,21 @@ The protocol has one event for a run ending badly, and two things end one: the a
 | `cma:returns` | **`true` when the session is coming back.** This is a handover, not a fault: the run ended because the runtime behind it is being torn down, and a new run starts on the same session once it is usable. Draw it as a boundary, not as a failure. |
 
 A client that ignores `cma:returns` draws every rotation as a fault, and under §5 of `CLAUDE.md` a rotation is a routine consequence of a deployment. Treat its absence as `false`: that is the safer of the two to be wrong about, because a failure drawn as a handover tells somebody their session is returning when it is not.
+
+The complete handover is visible on one followed session stream, without a REST
+status poll:
+
+```text
+RUN_ERROR   { "cma:returns": true, ... }
+STATE_DELTA { "delta": [{ "op": "replace", "path": "/progress", "value": "runtime_requested" }] }  # optional, may repeat with later stages
+STATE_DELTA { "delta": [{ "op": "replace", "path": "/status", "value": "ready" }] }
+```
+
+Disable ordinary input when the returning `RUN_ERROR` arrives, keep it disabled
+through every progress update, and enable it only after `/status=ready`. A
+transient replacement failure may be retried, so a later successful attempt can
+still reach `ready`; within a failed attempt, its ending failure is not followed
+by a fabricated ready delta.
 
 ### Tool kinds are the runtime's own word
 
