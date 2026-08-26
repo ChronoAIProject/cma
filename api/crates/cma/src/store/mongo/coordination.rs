@@ -2568,7 +2568,7 @@ impl MongoSessionStore {
                             found.push(receipt);
                         }
                     }
-                    let (outcome, mutations) = apply_command(&mut stored, &command, &found)
+                    let (outcome, mutations) = apply_command(&mut stored, command, &found)
                         .map_err(mongodb::error::Error::custom)?;
                     for mutation in mutations {
                         match mutation {

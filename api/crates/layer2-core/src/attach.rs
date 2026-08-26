@@ -34,6 +34,15 @@ struct AttachmentInteractionOwnership {
     interaction: RetainedRuntimeInteraction,
 }
 
+struct AttachmentLinkSnapshot<'a> {
+    screen: &'a EntryScreen,
+    runtime_id: Option<&'a str>,
+    runtime_generation: u64,
+    input: &'a Option<TerminalInputSender>,
+    live: &'a Option<broadcast::Sender<Vec<u8>>>,
+    ending: &'a watch::Sender<Option<crate::lease::Detached>>,
+}
+
 impl AttachmentInteractionOwnership {
     fn release(self) {
         drop(self.lifecycle);
@@ -201,11 +210,7 @@ fn refuse_committed_attachment(
 fn validate_attachment_link(
     entry: &SessionEntry,
     owner: &SubjectId,
-    screen: &EntryScreen,
-    runtime_generation: u64,
-    input: &Option<TerminalInputSender>,
-    live: &Option<broadcast::Sender<Vec<u8>>>,
-    ending: &watch::Sender<Option<crate::lease::Detached>>,
+    link: AttachmentLinkSnapshot<'_>,
     claim: AttachmentClaim,
 ) -> Result<(), CoreError> {
     if !entry.session.is_owned_by(owner) {
@@ -218,21 +223,22 @@ fn validate_attachment_link(
         return Err(CoreError::SessionRotating);
     }
     entry.session.capabilities.require(Capability::Terminal)?;
-    let same_input = match (&entry.input, input) {
+    let same_input = match (&entry.input, link.input) {
         (Some(current), Some(expected)) => current.same_channel(expected),
         (None, None) => true,
         _ => false,
     };
-    let same_live = match (&entry.live, live) {
+    let same_live = match (&entry.live, link.live) {
         (Some(current), Some(expected)) => current.same_channel(expected),
         (None, None) => true,
         _ => false,
     };
-    if !Arc::ptr_eq(&entry.screen, screen)
-        || entry.runtime_generation != runtime_generation
+    if !Arc::ptr_eq(&entry.screen, link.screen)
+        || entry.runtime.as_ref().map(|runtime| runtime.0.as_str()) != link.runtime_id
+        || entry.runtime_generation != link.runtime_generation
         || !same_input
         || !same_live
-        || !entry.terminal_ending.same_channel(ending)
+        || !entry.terminal_ending.same_channel(link.ending)
     {
         return Err(CoreError::RuntimeUnavailable(
             "the live terminal link changed before attachment delivery".into(),
@@ -285,7 +291,7 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
-        if record.session.status.is_rotating() {
+        if record.is_effectively_rotating() {
             return Err(CoreError::SessionRotating);
         }
         let entries = self.entries.read().await;
@@ -336,7 +342,7 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
-        if record.session.status.is_rotating() {
+        if record.is_effectively_rotating() {
             return Err(CoreError::SessionRotating);
         }
         record.session.capabilities.require(Capability::Terminal)?;
@@ -388,13 +394,12 @@ impl SessionService {
                     "the terminal attachment generation is exhausted".into(),
                 ));
             }
-            let boundary = authority.ensure_delivery_allowed()?;
-            if entry.runtime_generation != boundary.authority.generation {
-                return Err(CoreError::RuntimeUnavailable(
-                    "the live terminal belongs to another runtime generation".into(),
-                ));
-            }
+            let runtime_id = entry.runtime.as_ref().map(|runtime| runtime.0.clone());
             let runtime_generation = entry.runtime_generation;
+            authority.ensure_runtime_delivery_allowed(
+                runtime_id.as_deref(),
+                runtime_generation,
+            )?;
             let screen = Arc::clone(&entry.screen);
             let input = entry.input.clone();
             let live = entry.live.clone();
@@ -449,11 +454,14 @@ impl SessionService {
                             validate_attachment_link(
                                 entry,
                                 &owner,
-                                &screen,
-                                runtime_generation,
-                                &input,
-                                &live,
-                                &ending,
+                                AttachmentLinkSnapshot {
+                                    screen: &screen,
+                                    runtime_id: runtime_id.as_deref(),
+                                    runtime_generation,
+                                    input: &input,
+                                    live: &live,
+                                    ending: &ending,
+                                },
                                 claim,
                             )
                         });
@@ -468,7 +476,10 @@ impl SessionService {
                         );
                     }
 
-                    if let Err(error) = delivery_authority.ensure_delivery_allowed() {
+                    if let Err(error) = delivery_authority.ensure_runtime_delivery_allowed(
+                        runtime_id.as_deref(),
+                        runtime_generation,
+                    ) {
                         return refuse_committed_attachment(
                             Arc::clone(&service),
                             session_id.clone(),
@@ -523,11 +534,14 @@ impl SessionService {
                         if let Err(error) = validate_attachment_link(
                             entry,
                             &owner,
-                            &screen,
-                            runtime_generation,
-                            &input,
-                            &live,
-                            &ending,
+                            AttachmentLinkSnapshot {
+                                screen: &screen,
+                                runtime_id: runtime_id.as_deref(),
+                                runtime_generation,
+                                input: &input,
+                                live: &live,
+                                ending: &ending,
+                            },
                             claim,
                         ) {
                             return refuse_committed_attachment(

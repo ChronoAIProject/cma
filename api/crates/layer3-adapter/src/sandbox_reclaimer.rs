@@ -394,7 +394,7 @@ fn identity_mismatch(handle: &RuntimeHandle, detail: &str) -> SandboxError {
 fn kube_error(operation: &str, error: kube::Error) -> SandboxError {
     match error {
         kube::Error::Api(response) => SandboxError::Rejected {
-            status: u16::try_from(response.code).unwrap_or(500),
+            status: response.code,
             detail: format!("{operation}: {}", response.message),
         },
         other => SandboxError::Unreachable(format!("{operation}: {other}")),

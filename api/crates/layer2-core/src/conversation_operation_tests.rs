@@ -248,6 +248,68 @@ async fn a_mid_turn_prompt_without_steer_reaches_neither_runtime_nor_log() {
 }
 
 #[tokio::test]
+async fn a_running_rotation_claim_precedes_the_missing_steer_grant() {
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "begin the claimed turn".into())
+        .await
+        .expect("the idle prompt starts the turn");
+
+    let sent_before = until_sent(&adapter, |input| {
+        matches!(input, ConversationInput::Prompt(_))
+    })
+    .await;
+    let events_before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
+    let cursor = events_before.last().expect("the turn was recorded").seq;
+
+    let mut record = svc
+        .store
+        .get(&id)
+        .await
+        .expect("the running boundary is readable")
+        .expect("the session remains durable");
+    assert_eq!(record.session.status, SessionStatus::Running);
+    assert!(!record.session.capabilities.steer);
+    record.rotation_claim = Some("rotn_running_without_steer".into());
+    record.revision = svc
+        .store
+        .commit_session_idempotent("test-running-rotation-claim", &record, &[])
+        .await
+        .expect("the rotation claim is durable");
+
+    assert_eq!(
+        svc.send_prompt(&alice, &id, "must wait for publication".into())
+            .await,
+        Err(CoreError::SessionRotating),
+        "a durable handover fence must win over a missing mid-turn grant"
+    );
+
+    tokio::task::yield_now().await;
+    let sent_after = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains open")
+        .sent()
+        .await;
+    assert_eq!(
+        sent_after.len(),
+        sent_before.len(),
+        "the outgoing runtime sees no input"
+    );
+    assert!(
+        svc.events_since(&alice, &id, Some(cursor))
+            .await
+            .expect("history readable")
+            .is_empty(),
+        "the refused prompt appends no durable work"
+    );
+}
+
+#[tokio::test]
 async fn concurrent_idle_prompts_admit_one_before_the_other_can_decide_to_steer() {
     let (svc, alice, id, _adapter) = conversation().await;
     let before = svc
@@ -515,7 +577,7 @@ async fn a_stale_conversation_generation_reaches_no_sender() {
     assert_eq!(
         svc.interrupt_turn(&alice, &id).await,
         Err(CoreError::RuntimeUnavailable(
-            "the live conversation belongs to another runtime generation".into()
+            "the live channel belongs to another runtime authority".into()
         ))
     );
     assert!(adapter

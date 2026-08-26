@@ -97,6 +97,10 @@ fn start_mock_registration(
     (link, whole_retirement, registered, supervisor)
 }
 
+async fn credential_waiter_count(kernel: &HostedKernel) -> usize {
+    kernel.credential_waiters.0.lock().await.len()
+}
+
 /// Serve one HTTP response and then stop.
 async fn one_response_server(
     status: u16,
@@ -429,22 +433,217 @@ async fn terminating_against_a_dead_provider_is_still_an_error() {
 
 #[tokio::test]
 async fn a_credential_reaches_a_runtime_over_the_link_it_already_has() {
-    // The frame is unchanged, which is the point: a pod started before this
-    // method existed still understands what arrives, so no live session has to
-    // be replaced to keep its credential fresh.
+    // The value and tag remain legacy-compatible, while the current runtime
+    // echoes an opaque operation id only after installing it.
     let k = hosted("http://127.0.0.1:1");
     let handle = RuntimeHandle("sbx-1".into());
     let (tx, mut rx) = input_link(4);
-    k.remember_link(&handle.0, tx).await;
+    k.remember_link(&handle.0, tx.clone()).await;
+    let waiters = k.credential_waiters();
+    let runtime = handle.0.clone();
+    let responder = tokio::spawn(async move {
+        match rx.recv().await.expect("the frame was sent") {
+            TerminalInput::Credential {
+                operation_id,
+                value,
+            } => {
+                assert!(!operation_id.is_empty());
+                assert_eq!(value, "a-fresh-credential");
+                waiters.settle(&runtime, &operation_id, &tx, true).await;
+            }
+            other => panic!("expected a credential frame, got {other:?}"),
+        }
+    });
 
     k.refresh_credential(&handle, "a-fresh-credential")
         .await
-        .expect("a live link carries a credential");
+        .expect("a matching acknowledgement confirms installation");
+    responder.await.expect("the runtime responder ran");
+    assert_eq!(credential_waiter_count(&k).await, 0);
+}
 
-    match rx.recv().await.expect("the frame was sent") {
-        TerminalInput::Credential(value) => assert_eq!(value, "a-fresh-credential"),
-        other => panic!("expected a credential frame, got {other:?}"),
-    }
+#[tokio::test]
+async fn a_runtime_credential_refusal_is_not_delivery() {
+    let kernel = Arc::new(hosted("http://127.0.0.1:1"));
+    let handle = RuntimeHandle("sbx-install-refusal".into());
+    let (link, mut input) = input_link(4);
+    kernel.remember_link(&handle.0, link.clone()).await;
+
+    let attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.refresh_credential(&handle, "refused-value").await })
+    };
+    let TerminalInput::Credential { operation_id, .. } =
+        input.recv().await.expect("the request was queued")
+    else {
+        panic!("a credential request was expected");
+    };
+
+    kernel
+        .credential_waiters()
+        .settle(&handle.0, &operation_id, &link, false)
+        .await;
+    let outcome = attempt.await.expect("the delivery attempt ran");
+    assert!(
+        matches!(outcome, Err(AdapterError::Unavailable(ref why)) if why.contains("did not install")),
+        "a negative acknowledgement must fail closed: {outcome:?}"
+    );
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
+}
+
+#[tokio::test]
+async fn a_queued_credential_whose_socket_write_fails_is_not_delivery() {
+    let kernel = Arc::new(hosted("http://127.0.0.1:1"));
+    let handle = RuntimeHandle("sbx-write-failure".into());
+    let (link, mut input) = input_link(4);
+    kernel.remember_link(&handle.0, link).await;
+
+    let attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.refresh_credential(&handle, "queued-only").await })
+    };
+    let TerminalInput::Credential { operation_id, .. } = input
+        .recv()
+        .await
+        .expect("the request reached the writer queue")
+    else {
+        panic!("a credential request was expected");
+    };
+
+    // This is the detached writer's failure path after mpsc accepted the item
+    // but the WebSocket sink refused it.
+    kernel
+        .link_lifecycle(&handle.0)
+        .fail_credential(&operation_id)
+        .await;
+    let outcome = attempt.await.expect("the delivery attempt ran");
+    assert!(
+        matches!(outcome, Err(AdapterError::Unavailable(ref why)) if why.contains("did not install")),
+        "a queue receipt must not count as runtime receipt: {outcome:?}"
+    );
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
+}
+
+#[tokio::test]
+async fn silence_from_an_old_runtime_times_out_without_delivery() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let handle = RuntimeHandle("sbx-legacy-runtime".into());
+    let (link, mut input) = input_link(4);
+    kernel.remember_link(&handle.0, link).await;
+    let request = tokio::spawn(async move { input.recv().await });
+
+    let outcome = kernel
+        .refresh_credential(&handle, "installed-but-unconfirmed")
+        .await;
+    assert!(matches!(
+        request.await.expect("the legacy runtime task ran"),
+        Some(TerminalInput::Credential { .. })
+    ));
+    assert!(
+        matches!(outcome, Err(AdapterError::Unavailable(ref why)) if why.contains("did not acknowledge")),
+        "a new control plane must not promote on an old runtime's silence: {outcome:?}"
+    );
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
+}
+
+#[tokio::test]
+async fn a_wrong_credential_operation_id_does_not_settle_delivery() {
+    let kernel = Arc::new(hosted("http://127.0.0.1:1"));
+    let handle = RuntimeHandle("sbx-wrong-operation".into());
+    let (link, mut input) = input_link(4);
+    kernel.remember_link(&handle.0, link.clone()).await;
+    let attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.refresh_credential(&handle, "new-value").await })
+    };
+    let TerminalInput::Credential { operation_id, .. } =
+        input.recv().await.expect("the request was queued")
+    else {
+        panic!("a credential request was expected");
+    };
+
+    let waiters = kernel.credential_waiters();
+    waiters
+        .settle(&handle.0, "some-other-operation", &link, true)
+        .await;
+    tokio::task::yield_now().await;
+    assert!(!attempt.is_finished(), "an unrelated result was ignored");
+    assert_eq!(credential_waiter_count(&kernel).await, 1);
+
+    waiters.settle(&handle.0, &operation_id, &link, true).await;
+    attempt
+        .await
+        .expect("the delivery task ran")
+        .expect("the matching result settles delivery");
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
+}
+
+#[tokio::test]
+async fn a_replaced_socket_cancels_only_its_credential_operation() {
+    let kernel = Arc::new(hosted("http://127.0.0.1:1"));
+    let handle = RuntimeHandle("sbx-credential-generation".into());
+    let (old_link, mut old_input) = input_link(4);
+    kernel.remember_link(&handle.0, old_link.clone()).await;
+    let old_attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.refresh_credential(&handle, "old-socket-value").await })
+    };
+    let TerminalInput::Credential {
+        operation_id: old_operation,
+        ..
+    } = old_input.recv().await.expect("the old request was queued")
+    else {
+        panic!("a credential request was expected");
+    };
+
+    let (new_link, mut new_input) = input_link(4);
+    kernel.remember_link(&handle.0, new_link.clone()).await;
+    assert!(matches!(
+        old_attempt.await.expect("the old delivery task ran"),
+        Err(AdapterError::Unavailable(_))
+    ));
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
+
+    let new_attempt = {
+        let kernel = Arc::clone(&kernel);
+        let handle = handle.clone();
+        tokio::spawn(async move { kernel.refresh_credential(&handle, "new-socket-value").await })
+    };
+    let TerminalInput::Credential {
+        operation_id: new_operation,
+        ..
+    } = new_input
+        .recv()
+        .await
+        .expect("the successor request was queued")
+    else {
+        panic!("a credential request was expected");
+    };
+
+    let waiters = kernel.credential_waiters();
+    waiters
+        .settle(&handle.0, &old_operation, &old_link, true)
+        .await;
+    waiters
+        .settle(&handle.0, &new_operation, &old_link, true)
+        .await;
+    tokio::task::yield_now().await;
+    assert!(
+        !new_attempt.is_finished(),
+        "late and wrong-generation results cannot settle the successor"
+    );
+    waiters
+        .settle(&handle.0, &new_operation, &new_link, true)
+        .await;
+    new_attempt
+        .await
+        .expect("the successor delivery task ran")
+        .expect("its own socket result settles it");
+    assert_eq!(credential_waiter_count(&kernel).await, 0);
 }
 
 #[tokio::test]
@@ -468,6 +667,7 @@ async fn a_link_that_closed_is_forgotten_rather_than_retried_forever() {
     k.remember_link(&handle.0, tx).await;
 
     assert!(k.refresh_credential(&handle, "unused").await.is_err());
+    assert_eq!(credential_waiter_count(&k).await, 0);
     assert!(
         k.link_to(&handle.0).await.is_none(),
         "a dead link kept in the map would fail every renewal the same way forever"
@@ -663,6 +863,31 @@ fn a_malformed_or_unrelated_control_frame_is_not_an_exit() {
 }
 
 #[test]
+fn a_malformed_or_unrelated_control_frame_is_not_a_credential_result() {
+    for text in [
+        r#"{"t":"credential_result","operation_id":"opaque"}"#,
+        r#"{"t":"credential_result","installed":true}"#,
+        r#"{"t":"credential_result","operation_id":17,"installed":true}"#,
+        r#"{"t":"credential_result","operation_id":"opaque","installed":"true"}"#,
+        r#"{"t":"something_else","operation_id":"opaque","installed":true}"#,
+        "not json",
+    ] {
+        assert_eq!(
+            super::link::credential_answer(text),
+            None,
+            "accepted {text}"
+        );
+    }
+    assert_eq!(
+        super::link::credential_answer(
+            r#"{"t":"credential_result","operation_id":"opaque","installed":false}"#
+        ),
+        Some(("opaque".to_string(), false)),
+        "a well-formed negative result must reach the fail-closed waiter path"
+    );
+}
+
+#[test]
 fn terminal_input_is_framed_only_on_the_wire_that_has_lanes() {
     // Control travels as text and is identical on both dialects, which is what
     // lets a credential reach a pod that predates lanes and one that does not
@@ -709,9 +934,12 @@ async fn a_conversations_control_lane_carries_a_credential() {
     let sent: Arc<tokio::sync::Mutex<Vec<Message>>> = Arc::default();
     let sink = Arc::new(tokio::sync::Mutex::new(Recorder(Arc::clone(&sent))));
 
-    let control = super::control_lane(sink);
+    let control = super::control_lane(sink, None);
     control
-        .send(TerminalInput::Credential("a-real-credential-value".into()))
+        .send(TerminalInput::Credential {
+            operation_id: "credential-operation".into(),
+            value: "a-real-credential-value".into(),
+        })
         .await
         .expect("the lane accepts a credential");
     for _ in 0..50 {
@@ -728,6 +956,7 @@ async fn a_conversations_control_lane_carries_a_credential() {
     };
     let parsed: serde_json::Value = serde_json::from_str(body).expect("json");
     assert_eq!(parsed["t"], "credential");
+    assert_eq!(parsed["operation_id"], "credential-operation");
     assert_eq!(parsed["value"], "a-real-credential-value");
 }
 
@@ -739,7 +968,7 @@ async fn a_conversations_control_lane_carries_nothing_else() {
     let sent: Arc<tokio::sync::Mutex<Vec<Message>>> = Arc::default();
     let sink = Arc::new(tokio::sync::Mutex::new(Recorder(Arc::clone(&sent))));
 
-    let control = super::control_lane(sink);
+    let control = super::control_lane(sink, None);
     let error = control
         .send(TerminalInput::Bytes(b"ls -la".to_vec()))
         .await

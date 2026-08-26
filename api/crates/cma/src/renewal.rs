@@ -15,9 +15,10 @@ use std::time::Duration;
 use layer2_core::SessionService;
 
 use crate::auth::{
-    AuthOperationBudget, AuthPassBudget, AuthState, AUTHORIZATION_CHECK_LANE_BUDGET,
-    AUTH_REFRESH_ATTEMPT_BUDGET, AUTH_REISSUE_ATTEMPT_BUDGET, AUTH_RENEWAL_PASS_BUDGET,
-    AUTH_SWEEP_BATCH_SIZE, AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+    credential_replace_before, AuthOperationBudget, AuthPassBudget, AuthState,
+    AUTHORIZATION_CHECK_LANE_BUDGET, AUTH_REFRESH_ATTEMPT_BUDGET, AUTH_REISSUE_ATTEMPT_BUDGET,
+    AUTH_RENEWAL_PASS_BUDGET, AUTH_SWEEP_BATCH_SIZE, AUTH_SWEEP_TWO_LANE_BATCH_SIZE,
+    CREDENTIAL_ROTATION_AGE,
 };
 
 /// How often to look for credentials approaching expiry.
@@ -47,13 +48,6 @@ pub fn spawn(auth: Arc<AuthState>, service: Arc<SessionService>) {
     );
 }
 
-/// How long a minted session credential is kept before it is replaced.
-///
-/// The platform does not give these keys an expiry. Twelve hours is a local
-/// rotation cadence: it limits how long one value is used without pretending
-/// the provider will invalidate it on that schedule.
-const CREDENTIAL_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
-
 /// One pass: renew what is close to expiry, then push it into live sessions.
 pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionService>) -> usize {
     let pass = AuthPassBudget::new(AUTH_RENEWAL_PASS_BUDGET);
@@ -77,10 +71,10 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
     // A control plane that stopped between minting and releasing leaves one
     // behind, and nothing else records the pairing — the key's own name is
     // what says whose it was. Reclaiming needs the owner's token, which this
-    // process may not hold after a restart, and there is no expiry behind it:
-    // until that owner signs in again the key stays valid. This sweep is the
-    // only thing that takes it back, so a pass it cannot make is a credential
-    // still open, not a tidy-up postponed.
+    // process may not hold after a restart. New keys then remain valid only to
+    // their provider expiry, while legacy keys may have no bound at all. This
+    // sweep is the path that takes both back promptly, so a pass it cannot make
+    // is still a credential open, not a tidy-up postponed.
     match auth
         .reclaim_orphaned_credentials_with_budgets(
             service,
@@ -122,12 +116,15 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
             tracing::info!(count = taken, "took back retired session credentials");
         }
 
-        // Sessions whose own credential is old enough to swap. Distinct from
-        // the subject refresh below: that keeps this service able to mint,
-        // while this keeps the sessions able to act.
+        // Sessions whose own credential is old enough to rotate or inside the
+        // provider-expiry selection horizon. Both paths get twelve hours of
+        // retry runway; the narrower delivery margin is checked only before a
+        // value crosses into a runtime. Legacy values remain age-driven.
+        // Distinct from the subject refresh below: that keeps this service able
+        // to mint, while this keeps sessions able to act.
         let due_for_reissue = if reissue_budget.remaining() > 0 {
             match auth
-                .sessions_due_for_reissue_with_budget(CREDENTIAL_LIFETIME, &reissue_budget)
+                .sessions_due_for_reissue_with_budget(CREDENTIAL_ROTATION_AGE, &reissue_budget)
                 .await
             {
                 Ok(batch) => {
@@ -169,8 +166,15 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
                     continue;
                 }
             };
+            let replace_before = credential_replace_before();
             let value = match auth
-                .reissue_with_budget(&session, &owner, &services, item_budget.clone())
+                .reissue_with_budget(
+                    &session,
+                    &owner,
+                    &services,
+                    replace_before,
+                    item_budget.clone(),
+                )
                 .await
             {
                 Ok(Some(value)) => value,
@@ -191,29 +195,56 @@ pub(crate) async fn sweep_once(auth: &Arc<AuthState>, service: &Arc<SessionServi
                 tracing::warn!(session_id = %session, "replacement remains pending because this pass exhausted its operation allowance");
                 continue;
             }
-            if service.push_session_credential(&session, value).await {
-                match auth
-                    .confirm_reissue_with_budget(&session, &item_budget)
-                    .await
-                {
-                    Ok(true) => {
-                        tracing::info!(session_id = %session, "session credential replaced");
-                    }
-                    Ok(false) => {
-                        // Release may have won the race after delivery. Its
-                        // durable retirement owns both values in that case.
-                        tracing::warn!(session_id = %session, "delivered replacement was retired concurrently");
-                    }
-                    Err(error) => {
-                        tracing::error!(
-                            session_id = %session,
-                            error = %error,
-                            "could not confirm durable credential replacement"
-                        );
-                    }
+            let prepare_auth = Arc::clone(auth);
+            let prepare_session = session.clone();
+            let prepare_value = value.clone();
+            let prepare_budget = item_budget.clone();
+            let commit_auth = Arc::clone(auth);
+            let commit_session = session.clone();
+            let commit_value = value.clone();
+            let commit_budget = item_budget.clone();
+            match service
+                .push_session_credential_with(
+                    &session,
+                    &value,
+                    move |target| async move {
+                        prepare_auth
+                            .prepare_reissue_delivery_with_budget(
+                                &prepare_session,
+                                &prepare_value,
+                                &target,
+                                replace_before,
+                                &prepare_budget,
+                            )
+                            .await
+                    },
+                    move |target| async move {
+                        commit_auth
+                            .confirm_reissue_delivery_with_budget(
+                                &commit_session,
+                                &commit_value,
+                                &target,
+                                replace_before,
+                                &commit_budget,
+                            )
+                            .await
+                    },
+                )
+                .await
+            {
+                Ok(true) => {
+                    tracing::info!(session_id = %session, "session credential replaced");
                 }
-            } else {
-                tracing::warn!(session_id = %session, "replacement remains pending because nothing received it");
+                Ok(false) => {
+                    tracing::warn!(session_id = %session, "credential replacement did not complete delivery and durable promotion");
+                }
+                Err(error) => {
+                    tracing::error!(
+                        session_id = %session,
+                        error = %error,
+                        "credential replacement failed during coordination or durable custody finalization"
+                    );
+                }
             }
         }
     }
@@ -322,13 +353,66 @@ mod tests {
         SessionCredentialState, SubjectRefreshLease,
     };
     use crate::auth::{AuthMode, SubjectTokens};
-    use layer2_core::{SessionId, SubjectId};
+    use layer2_core::{
+        CredentialDeliveryTarget, CredentialSource as _, ServiceId, SessionId, SubjectId,
+    };
     use std::collections::HashSet;
     use std::time::SystemTime;
 
     #[derive(Clone, Default)]
     struct TrustedDebtPlatform {
         deleted: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[derive(Clone, Default)]
+    struct BudgetMintPlatform {
+        mints: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    async fn list_budget_services(headers: axum::http::HeaderMap) -> axum::Json<serde_json::Value> {
+        assert_eq!(
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer owner-access")
+        );
+        axum::Json(serde_json::json!({
+            "services": [{
+                "id": "resolved-model",
+                "slug": "model",
+                "is_active": true,
+            }]
+        }))
+    }
+
+    async fn mint_budget_key(
+        axum::extract::State(platform): axum::extract::State<BudgetMintPlatform>,
+        headers: axum::http::HeaderMap,
+    ) -> axum::Json<serde_json::Value> {
+        assert_eq!(
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer owner-access")
+        );
+        let mint = platform
+            .mints
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        axum::Json(serde_json::json!({
+            "id": format!("provider-key-{mint}"),
+            "full_key": format!("full-key-{mint}"),
+        }))
+    }
+
+    async fn list_budget_keys(headers: axum::http::HeaderMap) -> axum::Json<serde_json::Value> {
+        assert_eq!(
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer owner-access")
+        );
+        axum::Json(serde_json::json!({ "keys": [] }))
     }
 
     async fn delete_trusted_debt(
@@ -352,6 +436,577 @@ mod tests {
             refresh_token: refresh.map(|r| r.to_string()),
             expires_at: std::time::Instant::now() + expires_in,
         }
+    }
+
+    #[test]
+    fn session_key_rotation_leaves_the_documented_provider_expiry_margin() {
+        assert_eq!(
+            crate::auth::keys::SESSION_KEY_LIFETIME - CREDENTIAL_ROTATION_AGE,
+            Duration::from_secs((29 * 24 + 12) * 60 * 60)
+        );
+    }
+
+    #[tokio::test]
+    async fn reissue_budget_covers_binding_delivery_and_promotion() {
+        let platform = BudgetMintPlatform::default();
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/user-services",
+                axum::routing::get(list_budget_services),
+            )
+            .route("/api/v1/api-keys", axum::routing::post(mint_budget_key))
+            .with_state(platform.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind budget mint platform");
+        let base = format!("http://{}", listener.local_addr().expect("local address"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve budget mint platform");
+        });
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+            store.clone(),
+        );
+        auth.use_issuer(Arc::new(crate::auth::keys::KeyIssuer::new(
+            reqwest::Client::new(),
+            base,
+            "test",
+        )))
+        .await;
+        let owner = SubjectId("owner".into());
+        auth.store_tokens(
+            &owner,
+            SubjectTokens {
+                access_token: "owner-access".into(),
+                refresh_token: None,
+                expires_at: std::time::Instant::now() + Duration::from_secs(60),
+            },
+        )
+        .await
+        .expect("owner token persists");
+        let session = SessionId("sesn_expired_pending_budget".into());
+        let services = [ServiceId::new("model")];
+        assert_eq!(
+            auth.credential_for(&session, &owner, &services, None)
+                .await
+                .expect("initial A mints"),
+            Some("full-key-1".into())
+        );
+        assert_eq!(
+            auth.reissue(&session, &owner, &services)
+                .await
+                .expect("pending B mints"),
+            Some("full-key-2".into())
+        );
+        let mut custody = store
+            .credential(&session)
+            .await
+            .expect("store works")
+            .expect("A and B remain in custody");
+        let generation = custody.generation;
+        custody.generation += 1;
+        custody
+            .pending
+            .as_mut()
+            .expect("B remains pending")
+            .expires_at = Some(SystemTime::now() - Duration::from_secs(1));
+        assert!(store
+            .replace_credential(generation, custody)
+            .await
+            .expect("B expiry persists"));
+
+        let budget = AuthOperationBudget::standalone(AUTH_REISSUE_ATTEMPT_BUDGET);
+        assert!(budget.take(2), "session context fits the item allowance");
+        let replace_before = credential_replace_before();
+        let value = auth
+            .reissue_with_budget(&session, &owner, &services, replace_before, budget.clone())
+            .await
+            .expect("stale B retires and fresh C mints")
+            .expect("C is selected");
+        assert_eq!(value, "full-key-3");
+        assert!(budget.take(1), "runtime delivery fits the item allowance");
+        let target = CredentialDeliveryTarget {
+            runtime_generation: 2,
+            runtime_id: "runtime-h2".into(),
+        };
+        assert!(auth
+            .prepare_reissue_delivery_with_budget(
+                &session,
+                &value,
+                &target,
+                replace_before,
+                &budget,
+            )
+            .await
+            .expect("C binds to H2"));
+        assert!(auth
+            .confirm_reissue_delivery_with_budget(
+                &session,
+                &value,
+                &target,
+                replace_before,
+                &budget,
+            )
+            .await
+            .expect("H2 acknowledgement promotes C"));
+        assert_eq!(budget.remaining(), 0);
+        assert!(!budget.take(1));
+
+        let settled = store
+            .credential(&session)
+            .await
+            .expect("store works")
+            .expect("custody remains");
+        assert_eq!(
+            settled.current.as_ref().map(|held| held.id.as_str()),
+            Some("provider-key-3")
+        );
+        assert!(settled.pending.is_none());
+        assert!(settled.pending_target.is_none());
+        assert_eq!(
+            settled
+                .revoke_debt
+                .iter()
+                .map(|debt| debt.id.as_str())
+                .collect::<Vec<_>>(),
+            ["provider-key-1", "provider-key-2"]
+        );
+        assert_eq!(platform.mints.load(std::sync::atomic::Ordering::SeqCst), 3);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn recurring_selector_rotates_a_young_near_expiry_current_through_acknowledgement() {
+        let runtime = crate::pty_integration_tests::credential_sweep_fixture().await;
+        let session = runtime.session.clone();
+        let owner = runtime.owner.clone();
+        let services = [ServiceId::new("model")];
+        let platform = BudgetMintPlatform::default();
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/user-services",
+                axum::routing::get(list_budget_services),
+            )
+            .route(
+                "/api/v1/api-keys",
+                axum::routing::get(list_budget_keys).post(mint_budget_key),
+            )
+            .with_state(platform.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind near-expiry mint platform");
+        let base = format!("http://{}", listener.local_addr().expect("local address"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve near-expiry mint platform");
+        });
+        let store = Arc::new(MemoryAuthStore::default());
+        let auth = AuthState::with_store(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+            store.clone(),
+        );
+        auth.use_issuer(Arc::new(crate::auth::keys::KeyIssuer::new(
+            reqwest::Client::new(),
+            base,
+            "test",
+        )))
+        .await;
+        auth.store_tokens(
+            &owner,
+            SubjectTokens {
+                access_token: "owner-access".into(),
+                refresh_token: None,
+                expires_at: std::time::Instant::now() + Duration::from_secs(60),
+            },
+        )
+        .await
+        .expect("owner token persists");
+        assert_eq!(
+            auth.credential_for(&session, &owner, &services, None)
+                .await
+                .expect("initial A mints"),
+            Some("full-key-1".into())
+        );
+        assert!(
+            runtime
+                .service
+                .push_session_credential(&session, "full-key-1".into())
+                .await
+        );
+        let initially_delivered = runtime.delivered_credentials().await;
+        assert_eq!(initially_delivered.len(), 1);
+        assert_eq!(initially_delivered[0].1, "full-key-1");
+        let runtime_handle = initially_delivered[0].0.clone();
+
+        let original_expires_at = SystemTime::now() + Duration::from_secs(4 * 60);
+        let mut custody = store
+            .credential(&session)
+            .await
+            .expect("store works")
+            .expect("A remains in custody");
+        let generation = custody.generation;
+        custody.generation += 1;
+        let current = custody.current.as_mut().expect("A is current");
+        current.issued_at = SystemTime::now();
+        current.expires_at = Some(original_expires_at);
+        assert!(store
+            .replace_credential(generation, custody)
+            .await
+            .expect("near-expiry A persists"));
+        platform.mints.store(2, std::sync::atomic::Ordering::SeqCst);
+
+        let _operations = sweep_once(&auth, &runtime.service).await;
+
+        let delivered = runtime.delivered_credentials().await;
+        assert_eq!(
+            delivered,
+            vec![
+                (runtime_handle.clone(), "full-key-1".into()),
+                (runtime_handle, "full-key-3".into()),
+            ],
+            "the recurring sweep installs C on the same live runtime that held A"
+        );
+
+        let settled = store
+            .credential(&session)
+            .await
+            .expect("store works")
+            .expect("custody remains");
+        assert_eq!(
+            settled.current.as_ref().map(|held| held.id.as_str()),
+            Some("provider-key-3")
+        );
+        assert!(settled.pending.is_none());
+        assert!(settled.pending_target.is_none());
+        assert_eq!(
+            settled
+                .revoke_debt
+                .iter()
+                .map(|debt| debt.id.as_str())
+                .collect::<Vec<_>>(),
+            ["provider-key-1"]
+        );
+        assert!(
+            SystemTime::now() < original_expires_at,
+            "A enters durable revoke debt before its provider expiry"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn age_expiry_overlap_consumes_one_attempt_allowance_and_malformed_rows_consume_none() {
+        let owner = SubjectId("owner".into());
+        let session = SessionId("sesn_age_expiry_overlap".into());
+        let overlapping_state = || SessionCredentialState {
+            session: session.clone(),
+            generation: 0,
+            request_bound_credential: None,
+            current: Some(DurableCredential {
+                id: "provider-overlap".into(),
+                value: SecretValue::new("value".into()),
+                owner: owner.clone(),
+                issued_at: SystemTime::now() - CREDENTIAL_ROTATION_AGE - Duration::from_secs(60),
+                expires_at: Some(SystemTime::now() + Duration::from_secs(60)),
+                scope_fingerprint: "scope".into(),
+                revocation_credential: None,
+            }),
+            pending: None,
+            pending_target: None,
+            revoke_debt: Vec::new(),
+            lease: None,
+            retired: false,
+        };
+
+        let store = Arc::new(MemoryAuthStore::default());
+        assert!(store
+            .insert_credential(overlapping_state())
+            .await
+            .expect("overlapping state persists"));
+        let auth = AuthState::with_store(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+            store,
+        );
+        let budget = AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE);
+        let due = auth
+            .sessions_due_for_reissue_with_budget(CREDENTIAL_ROTATION_AGE, &budget)
+            .await
+            .expect("overlapping raw lanes are read");
+        assert_eq!(due.work, vec![session.clone()]);
+        assert!(due.first_error.is_none());
+        assert_eq!(
+            budget.remaining(),
+            AUTH_SWEEP_BATCH_SIZE - (1 + 6 + 2 + AUTH_REISSUE_ATTEMPT_BUDGET),
+            "both raw index rows and two empty spill reads are charged, but the replacement attempt is reserved once"
+        );
+
+        let malformed_store = Arc::new(MemoryAuthStore::default());
+        assert!(malformed_store
+            .insert_credential(overlapping_state())
+            .await
+            .expect("malformed fixture persists before read failure injection"));
+        malformed_store
+            .fail_credential_read(Some(session.clone()))
+            .await;
+        let malformed_auth = AuthState::with_store(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+            malformed_store,
+        );
+        let malformed_budget = AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE);
+        let malformed = malformed_auth
+            .sessions_due_for_reissue_with_budget(CREDENTIAL_ROTATION_AGE, &malformed_budget)
+            .await
+            .expect("per-row decode failures remain isolated");
+        assert!(malformed.work.is_empty());
+        assert!(malformed.first_error.is_some());
+        assert_eq!(
+            malformed_budget.remaining(),
+            AUTH_SWEEP_BATCH_SIZE - (1 + 6 + 2),
+            "malformed duplicate rows and empty spill reads consume cost but no attempt allowance"
+        );
+    }
+
+    #[tokio::test]
+    async fn spill_page_age_expiry_overlap_prepays_one_unique_attempt() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let owner = SubjectId("owner".into());
+        let overlap = SessionId("sesn_spill_overlap".into());
+        let expiry_first = SessionId("sesn_spill_expiry_first".into());
+        let now = SystemTime::now();
+        let state = |session: SessionId, issued_at, expires_at| SessionCredentialState {
+            session,
+            generation: 0,
+            request_bound_credential: None,
+            current: Some(DurableCredential {
+                id: "provider-overlap".into(),
+                value: SecretValue::new("value".into()),
+                owner: owner.clone(),
+                issued_at,
+                expires_at: Some(expires_at),
+                scope_fingerprint: "scope".into(),
+                revocation_credential: None,
+            }),
+            pending: None,
+            pending_target: None,
+            revoke_debt: Vec::new(),
+            lease: None,
+            retired: false,
+        };
+        assert!(store
+            .insert_credential(state(
+                expiry_first.clone(),
+                now,
+                now + Duration::from_secs(60),
+            ))
+            .await
+            .expect("expiry-only first row persists"));
+        assert!(store
+            .insert_credential(state(
+                overlap.clone(),
+                now - CREDENTIAL_ROTATION_AGE - Duration::from_secs(60),
+                now + Duration::from_secs(2 * 60),
+            ))
+            .await
+            .expect("overlapping second expiry row persists"));
+        let auth = AuthState::with_store(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+            store,
+        );
+        let budget = AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE);
+        let due = auth
+            .sessions_due_for_reissue_with_budget(CREDENTIAL_ROTATION_AGE, &budget)
+            .await
+            .expect("spill page loads");
+        assert_eq!(due.work.len(), 2);
+        assert!(due.work.contains(&overlap));
+        assert!(due.work.contains(&expiry_first));
+        assert!(due.first_error.is_none());
+        assert_eq!(
+            budget.remaining(),
+            AUTH_SWEEP_BATCH_SIZE - (1 + 6 + 3 + 2 * AUTH_REISSUE_ATTEMPT_BUDGET),
+            "the overlap costs two raw rows across pages but one unique attempt"
+        );
+    }
+
+    #[tokio::test]
+    async fn sole_expiry_burst_spills_capacity_with_hours_of_retry_runway() {
+        const BURST: usize = 6;
+
+        let store = Arc::new(MemoryAuthStore::default());
+        let owner = SubjectId("owner".into());
+        let expires_at = SystemTime::now() + CREDENTIAL_ROTATION_AGE - Duration::from_secs(60);
+        for number in 0..BURST {
+            assert!(store
+                .insert_credential(SessionCredentialState {
+                    session: SessionId(format!("expiry-burst-{number:03}")),
+                    generation: 0,
+                    request_bound_credential: None,
+                    current: Some(DurableCredential {
+                        id: format!("provider-expiry-burst-{number:03}"),
+                        value: SecretValue::new("value".into()),
+                        owner: owner.clone(),
+                        issued_at: SystemTime::now(),
+                        expires_at: Some(expires_at),
+                        scope_fingerprint: "scope".into(),
+                        revocation_credential: None,
+                    }),
+                    pending: None,
+                    pending_target: None,
+                    revoke_debt: Vec::new(),
+                    lease: None,
+                    retired: false,
+                })
+                .await
+                .expect("expiry burst row persists"));
+        }
+        let auth = AuthState::with_store(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+            store,
+        );
+
+        let first_budget = AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE);
+        let first = auth
+            .sessions_due_for_reissue_with_budget(CREDENTIAL_ROTATION_AGE, &first_budget)
+            .await
+            .expect("first burst page loads");
+        assert_eq!(first.work.len(), 4, "three unused lanes spill to expiry");
+        let second_budget = AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE);
+        let second = auth
+            .sessions_due_for_reissue_with_budget(CREDENTIAL_ROTATION_AGE, &second_budget)
+            .await
+            .expect("second burst page loads");
+        assert_eq!(second.work.len(), BURST - first.work.len());
+        let selected = first
+            .work
+            .into_iter()
+            .chain(second.work)
+            .collect::<HashSet<_>>();
+        assert_eq!(selected.len(), BURST);
+        assert!(
+            SystemTime::now() < expires_at,
+            "the burst is admitted far outside the five-minute delivery margin"
+        );
+    }
+
+    #[tokio::test]
+    async fn expiry_crossing_frozen_horizon_appears_after_epoch_wrap() {
+        let store = Arc::new(MemoryAuthStore::default());
+        let owner = SubjectId("owner".into());
+        let now = SystemTime::now();
+        for number in 0..4 {
+            assert!(store
+                .insert_credential(SessionCredentialState {
+                    session: SessionId(format!("frozen-expiry-{number:03}")),
+                    generation: 0,
+                    request_bound_credential: None,
+                    current: Some(DurableCredential {
+                        id: format!("provider-frozen-expiry-{number:03}"),
+                        value: SecretValue::new("value".into()),
+                        owner: owner.clone(),
+                        issued_at: now,
+                        expires_at: Some(now + Duration::from_secs(60)),
+                        scope_fingerprint: "scope".into(),
+                        revocation_credential: None,
+                    }),
+                    pending: None,
+                    pending_target: None,
+                    revoke_debt: Vec::new(),
+                    lease: None,
+                    retired: false,
+                })
+                .await
+                .expect("frozen epoch row persists"));
+        }
+        let crossing = SessionId("frozen-expiry-crossing".into());
+        assert!(store
+            .insert_credential(SessionCredentialState {
+                session: crossing.clone(),
+                generation: 0,
+                request_bound_credential: None,
+                current: Some(DurableCredential {
+                    id: "provider-frozen-expiry-crossing".into(),
+                    value: SecretValue::new("value".into()),
+                    owner,
+                    issued_at: now,
+                    expires_at: Some(
+                        SystemTime::now() + CREDENTIAL_ROTATION_AGE + Duration::from_secs(1),
+                    ),
+                    scope_fingerprint: "scope".into(),
+                    revocation_credential: None,
+                }),
+                pending: None,
+                pending_target: None,
+                revoke_debt: Vec::new(),
+                lease: None,
+                retired: false,
+            })
+            .await
+            .expect("crossing row persists"));
+        let auth = AuthState::with_store(
+            AuthMode::Trusted {
+                subject: "local".into(),
+            },
+            None,
+            store,
+        );
+
+        let first = auth
+            .sessions_due_for_reissue_with_budget(
+                CREDENTIAL_ROTATION_AGE,
+                &AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE),
+            )
+            .await
+            .expect("the first frozen page loads");
+        assert_eq!(first.work.len(), 4);
+        assert!(!first.work.contains(&crossing));
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+
+        let old_epoch_tail = auth
+            .sessions_due_for_reissue_with_budget(
+                CREDENTIAL_ROTATION_AGE,
+                &AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE),
+            )
+            .await
+            .expect("the old frozen epoch completes");
+        assert!(old_epoch_tail.work.is_empty());
+        let wrapped_head = auth
+            .sessions_due_for_reissue_with_budget(
+                CREDENTIAL_ROTATION_AGE,
+                &AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE),
+            )
+            .await
+            .expect("the refreshed expiry epoch head loads");
+        assert_eq!(wrapped_head.work.len(), 4);
+        assert!(!wrapped_head.work.contains(&crossing));
+        let wrapped_tail = auth
+            .sessions_due_for_reissue_with_budget(
+                CREDENTIAL_ROTATION_AGE,
+                &AuthOperationBudget::standalone(AUTH_SWEEP_BATCH_SIZE),
+            )
+            .await
+            .expect("the refreshed expiry epoch tail loads");
+        assert_eq!(wrapped_tail.work, vec![crossing]);
     }
 
     #[test]
@@ -654,8 +1309,9 @@ mod tests {
             store.clone(),
         );
         let owner = SubjectId("owner".into());
-        let issued_at = SystemTime::now() - Duration::from_secs(60);
-        let credential = |id: String| DurableCredential {
+        let old_issued_at = SystemTime::now() - CREDENTIAL_ROTATION_AGE - Duration::from_secs(60);
+        let young_issued_at = SystemTime::now();
+        let credential = |id: String, issued_at| DurableCredential {
             id,
             value: SecretValue::new("credential-value".into()),
             owner: owner.clone(),
@@ -664,15 +1320,19 @@ mod tests {
             scope_fingerprint: "scope".into(),
             revocation_credential: None,
         };
-        let ordinary_lane_work = crate::auth::AUTH_SWEEP_BATCH_SIZE / 3 + 2;
-        for number in 0..ordinary_lane_work {
+        let lane_work = crate::auth::AUTH_SWEEP_BATCH_SIZE / 4 + 2;
+        for number in 0..lane_work {
             assert!(store
                 .insert_credential(SessionCredentialState {
                     session: SessionId(format!("current-{number:03}")),
                     generation: 0,
                     request_bound_credential: None,
-                    current: Some(credential(format!("provider-current-{number:03}"))),
+                    current: Some(credential(
+                        format!("provider-current-{number:03}"),
+                        old_issued_at,
+                    )),
                     pending: None,
+                    pending_target: None,
                     revoke_debt: Vec::new(),
                     lease: None,
                     retired: false,
@@ -684,30 +1344,56 @@ mod tests {
                     session: SessionId(format!("pending-{number:03}")),
                     generation: 0,
                     request_bound_credential: None,
-                    current: Some(credential(format!("provider-old-{number:03}"))),
-                    pending: Some(credential(format!("provider-pending-{number:03}"))),
+                    current: Some(credential(
+                        format!("provider-old-{number:03}"),
+                        old_issued_at,
+                    )),
+                    pending: Some(credential(
+                        format!("provider-pending-{number:03}"),
+                        old_issued_at,
+                    )),
+                    pending_target: None,
                     revoke_debt: Vec::new(),
                     lease: None,
                     retired: false,
                 })
                 .await
                 .expect("pending state persists"));
-        }
-        let lease_lane_size =
-            crate::auth::AUTH_SWEEP_BATCH_SIZE - 2 * (crate::auth::AUTH_SWEEP_BATCH_SIZE / 3);
-        for number in 0..(lease_lane_size + 2) {
+
+            let mut expiring =
+                credential(format!("provider-expiring-{number:03}"), young_issued_at);
+            expiring.expires_at = Some(SystemTime::now() + Duration::from_secs(60));
+            assert!(store
+                .insert_credential(SessionCredentialState {
+                    session: SessionId(format!("expiring-{number:03}")),
+                    generation: 0,
+                    request_bound_credential: None,
+                    current: Some(expiring),
+                    pending: None,
+                    pending_target: None,
+                    revoke_debt: Vec::new(),
+                    lease: None,
+                    retired: false,
+                })
+                .await
+                .expect("expiring current state persists"));
+
             assert!(store
                 .insert_credential(SessionCredentialState {
                     session: SessionId(format!("expired-lease-{number:03}")),
                     generation: 0,
                     request_bound_credential: None,
-                    current: Some(credential(format!("provider-leased-{number:03}"))),
+                    current: Some(credential(
+                        format!("provider-leased-{number:03}"),
+                        old_issued_at,
+                    )),
                     pending: None,
+                    pending_target: None,
                     revoke_debt: Vec::new(),
                     lease: Some(CredentialLease {
                         holder: "abandoned-worker".into(),
                         fence: 1,
-                        acquired_at: issued_at,
+                        acquired_at: old_issued_at,
                         expires_at: SystemTime::now() - Duration::from_secs(1),
                         scope_fingerprint: "scope".into(),
                     }),
@@ -718,7 +1404,7 @@ mod tests {
         }
 
         let first = auth
-            .sessions_due_for_reissue(Duration::ZERO)
+            .sessions_due_for_reissue(CREDENTIAL_ROTATION_AGE)
             .await
             .expect("first mixed page loads");
         assert_eq!(first.len(), crate::auth::AUTH_SWEEP_BATCH_SIZE);
@@ -727,21 +1413,28 @@ mod tests {
                 .iter()
                 .filter(|session| session.as_str().starts_with("current-"))
                 .count(),
-            crate::auth::AUTH_SWEEP_BATCH_SIZE / 3
+            crate::auth::AUTH_SWEEP_BATCH_SIZE / 4
         );
         assert_eq!(
             first
                 .iter()
                 .filter(|session| session.as_str().starts_with("pending-"))
                 .count(),
-            crate::auth::AUTH_SWEEP_BATCH_SIZE / 3
+            crate::auth::AUTH_SWEEP_BATCH_SIZE / 4
+        );
+        assert_eq!(
+            first
+                .iter()
+                .filter(|session| session.as_str().starts_with("expiring-"))
+                .count(),
+            crate::auth::AUTH_SWEEP_BATCH_SIZE / 4
         );
         assert_eq!(
             first
                 .iter()
                 .filter(|session| session.as_str().starts_with("expired-lease-"))
                 .count(),
-            lease_lane_size
+            crate::auth::AUTH_SWEEP_BATCH_SIZE / 4
         );
 
         for number in 0..crate::auth::AUTH_SWEEP_BATCH_SIZE {
@@ -750,8 +1443,15 @@ mod tests {
                     session: SessionId(format!("pending-tail-{number:03}")),
                     generation: 0,
                     request_bound_credential: None,
-                    current: Some(credential(format!("provider-tail-old-{number:03}"))),
-                    pending: Some(credential(format!("provider-tail-pending-{number:03}"))),
+                    current: Some(credential(
+                        format!("provider-tail-old-{number:03}"),
+                        old_issued_at,
+                    )),
+                    pending: Some(credential(
+                        format!("provider-tail-pending-{number:03}"),
+                        old_issued_at,
+                    )),
+                    pending_target: None,
                     revoke_debt: Vec::new(),
                     lease: None,
                     retired: false,
@@ -761,10 +1461,10 @@ mod tests {
         }
 
         let second = auth
-            .sessions_due_for_reissue(Duration::ZERO)
+            .sessions_due_for_reissue(CREDENTIAL_ROTATION_AGE)
             .await
             .expect("second mixed page loads");
-        assert_eq!(second.len(), 6);
+        assert_eq!(second.len(), 8);
         assert_eq!(
             second
                 .iter()
@@ -774,13 +1474,20 @@ mod tests {
         );
 
         let wrapped = auth
-            .sessions_due_for_reissue(Duration::ZERO)
+            .sessions_due_for_reissue(CREDENTIAL_ROTATION_AGE)
             .await
             .expect("finite epochs wrap despite a sustained tail");
         assert_eq!(wrapped.len(), crate::auth::AUTH_SWEEP_BATCH_SIZE);
         assert!(wrapped
             .iter()
             .any(|session| session.as_str() == "pending-000"));
+        assert_eq!(
+            second
+                .iter()
+                .filter(|session| session.as_str().starts_with("expiring-"))
+                .count(),
+            2
+        );
         assert_eq!(
             second
                 .iter()
@@ -826,6 +1533,7 @@ mod tests {
                     request_bound_credential: None,
                     current: Some(credential(format!("provider-current-{number:03}"))),
                     pending: None,
+                    pending_target: None,
                     revoke_debt: Vec::new(),
                     lease: None,
                     retired: false,
@@ -839,6 +1547,7 @@ mod tests {
                     request_bound_credential: None,
                     current: Some(credential(format!("provider-old-{number:03}"))),
                     pending: Some(credential(format!("provider-pending-{number:03}"))),
+                    pending_target: None,
                     revoke_debt: Vec::new(),
                     lease: None,
                     retired: false,
@@ -887,6 +1596,7 @@ mod tests {
 
     #[tokio::test]
     async fn shared_pass_budget_caps_saturated_lanes_while_fair_cursors_progress() {
+        const PASSES: usize = 3;
         const REISSUE_PER_SUBLANE: usize = 6;
         const REFRESH_PER_SUBLANE: usize = 12;
 
@@ -913,20 +1623,27 @@ mod tests {
             revocation_credential: None,
         };
         for number in 0..REISSUE_PER_SUBLANE {
-            for (kind, pending, lease) in [
-                ("current", false, false),
-                ("pending", true, false),
-                ("lease", false, true),
+            for (kind, pending, lease, expiring) in [
+                ("current", false, false, false),
+                ("expiring", false, false, true),
+                ("pending", true, false, false),
+                ("lease", false, true, false),
             ] {
                 let session = SessionId(format!("{kind}-{number:03}"));
+                let mut current = credential(format!("provider-{kind}-{number:03}"));
+                if expiring {
+                    current.issued_at = SystemTime::now() + Duration::from_secs(60 * 60);
+                    current.expires_at = Some(SystemTime::now() + Duration::from_secs(60));
+                }
                 assert!(store
                     .insert_credential(SessionCredentialState {
                         session,
                         generation: 0,
                         request_bound_credential: None,
-                        current: Some(credential(format!("provider-{kind}-{number:03}"))),
+                        current: Some(current),
                         pending: pending
                             .then(|| credential(format!("provider-pending-{number:03}"))),
+                        pending_target: None,
                         revoke_debt: Vec::new(),
                         lease: lease.then(|| CredentialLease {
                             holder: "expired-worker".into(),
@@ -968,7 +1685,7 @@ mod tests {
 
         let mut reissued = HashSet::new();
         let mut refreshed = HashSet::new();
-        for _ in 0..3 {
+        for _ in 0..PASSES {
             let pass = AuthPassBudget::new(AUTH_RENEWAL_PASS_BUDGET);
             let schema = pass.lane(AUTH_SWEEP_BATCH_SIZE);
             let active = pass.lane(AUTH_SWEEP_TWO_LANE_BATCH_SIZE);
@@ -1017,15 +1734,17 @@ mod tests {
             );
         }
 
-        assert_eq!(reissued.len(), REISSUE_PER_SUBLANE * 3);
+        // Target binding makes each reissue attempt costlier, so the fixed hard
+        // lane ceiling now admits one row from each sublane on every pass.
+        assert_eq!(reissued.len(), PASSES * 4);
         assert_eq!(refreshed.len(), REFRESH_PER_SUBLANE * 2);
-        for prefix in ["current-", "pending-", "lease-"] {
+        for prefix in ["current-", "expiring-", "pending-", "lease-"] {
             assert_eq!(
                 reissued
                     .iter()
                     .filter(|session| session.starts_with(prefix))
                     .count(),
-                REISSUE_PER_SUBLANE
+                PASSES
             );
         }
         for prefix in ["unleased-", "leased-"] {
@@ -1060,6 +1779,7 @@ mod tests {
                 request_bound_credential: None,
                 current: None,
                 pending: None,
+                pending_target: None,
                 revoke_debt: vec![RevokeDebt {
                     id: "provider-key".into(),
                     owner,

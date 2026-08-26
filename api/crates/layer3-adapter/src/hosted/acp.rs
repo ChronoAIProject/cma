@@ -211,7 +211,7 @@ impl Bridge {
         // This sender's channel identity is the generation of this socket.
         // Keep it beside the reader so a late answer from this socket cannot
         // settle a waiter installed by a replacement connection.
-        let control = super::control_lane(Arc::clone(&bridge.sink));
+        let control = super::control_lane(Arc::clone(&bridge.sink), link.clone());
         let mut abort_on_drop = super::AbortLinkOnDrop::new(control.clone());
 
         let writer = Arc::clone(&bridge);
@@ -245,14 +245,21 @@ impl Bridge {
                         _ => {}
                     },
                     Ok(Message::Text(text)) => {
-                        // A runtime's answer to a plane switch, and nothing
-                        // else: the conversation itself travels framed on its
-                        // own lane.
-                        if let (Some(accepted), Some(lifecycle)) =
-                            (super::link::switch_answer(&text), link_for_reader.as_ref())
-                        {
-                            if let Some(control) = control_for_reader.upgrade() {
-                                lifecycle.settle(&control, accepted).await;
+                        // Runtime control answers; the conversation itself
+                        // travels framed on its own lane.
+                        if let Some(lifecycle) = link_for_reader.as_ref() {
+                            if let Some((operation_id, installed)) =
+                                super::link::credential_answer(&text)
+                            {
+                                if let Some(control) = control_for_reader.upgrade() {
+                                    lifecycle
+                                        .settle_credential(&control, &operation_id, installed)
+                                        .await;
+                                }
+                            } else if let Some(accepted) = super::link::switch_answer(&text) {
+                                if let Some(control) = control_for_reader.upgrade() {
+                                    lifecycle.settle(&control, accepted).await;
+                                }
                             }
                         }
                     }

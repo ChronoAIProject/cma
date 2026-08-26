@@ -194,12 +194,16 @@ fn owner() -> SubjectId {
 }
 
 fn app() -> Router {
+    app_for(SessionStatus::Running, None, true)
+}
+
+fn app_for(status: SessionStatus, rotation_claim: Option<&str>, conversation: bool) -> Router {
     let owner = owner();
-    let record = SessionRecord::new(Session {
+    let mut record = SessionRecord::new(Session {
         id: SessionId(SESSION_ID.into()),
         owner: owner.clone(),
         kernel: KernelId::new("test-kernel"),
-        status: SessionStatus::Running,
+        status,
         recovery_state: RecoveryState::Normal,
         stop_reason: None,
         options: Default::default(),
@@ -210,7 +214,7 @@ fn app() -> Router {
         rotations: 0,
         rotated_at: None,
         capabilities: SessionCapabilities {
-            conversation: true,
+            conversation,
             steer: false,
             ..Default::default()
         },
@@ -219,6 +223,7 @@ fn app() -> Router {
         pricing: None,
         created_at: "2026-08-26T00:00:00Z".into(),
     });
+    record.rotation_claim = rotation_claim.map(str::to_string);
     let settings = Arc::new(PlatformSettingsService::unconfigured());
     let environments = EnvironmentProfileService::new(
         Arc::new(NoProfiles),
@@ -297,4 +302,41 @@ async fn both_public_prompt_routes_refuse_ungranted_mid_turn_input_before_stream
             .expect("the router answers");
         assert_named_steer_problem(response).await;
     }
+}
+
+#[tokio::test]
+async fn agui_refuses_a_durable_ready_rotation_claim_before_capabilities_or_recovery() {
+    let response = app_for(
+        SessionStatus::Ready,
+        Some("rotn_ready_on_another_replica"),
+        false,
+    )
+    .oneshot(
+        Request::post("/api/v1/agui/run")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "threadId": SESSION_ID,
+                    "messages": [{ "role": "user", "content": "must wait" }]
+                })
+                .to_string(),
+            ))
+            .expect("request builds"),
+    )
+    .await
+    .expect("the router answers");
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE),
+        Some(&header::HeaderValue::from_static(
+            "application/problem+json"
+        )),
+        "the lifecycle refusal must be rendered before an SSE response opens"
+    );
+    let bytes = to_bytes(response.into_body(), 16 * 1024)
+        .await
+        .expect("problem documents are small");
+    let problem: Value = serde_json::from_slice(&bytes).expect("the problem is JSON");
+    assert_eq!(problem["code"], "session_rotating");
 }

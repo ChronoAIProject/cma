@@ -51,6 +51,7 @@ impl SessionService {
     ) -> Arc<Self> {
         let SessionPorts {
             context,
+            handovers,
             credentials,
             skills,
             settings,
@@ -77,6 +78,7 @@ impl SessionService {
             screen_factory,
             store,
             context,
+            handovers,
             credentials,
             environments,
             settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),
@@ -585,7 +587,10 @@ impl SessionService {
                     adapter,
                     geometry,
                     None,
-                    crate::provision_failure::Abandonment::Retire,
+                    crate::provision_support::BringUpContext::compatibility(
+                        crate::provision_failure::Abandonment::Retire,
+                        None,
+                    ),
                 )
                 .await;
         });
@@ -599,6 +604,7 @@ impl SessionService {
     /// Scoped to live sessions on purpose: this guards the terminal-driving
     /// operations, which are meaningless without a runtime to drive.
     pub(crate) async fn authorize(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
+        self.session_for_interaction(caller, id).await?;
         let entries = self.entries.read().await;
         if let Some(entry) = entries.get(id) {
             if !entry.session.is_owned_by(&caller.subject) {
@@ -647,7 +653,7 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return CoreError::SessionTerminated;
         }
-        if record.session.status.is_rotating() || rotation_in_progress {
+        if record.is_effectively_rotating() || rotation_in_progress {
             return CoreError::SessionRotating;
         }
         CoreError::SessionNotFound

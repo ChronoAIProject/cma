@@ -16,7 +16,7 @@ use layer3_adapter::{AdapterError, TermSize, TerminalInput, TerminalOutput};
 use crate::attach::AttachmentClaim;
 use crate::commit_fault_support::CommitFaultStore;
 use crate::conversation::ApprovalDecision;
-use crate::coordination::{SessionLease, SessionOperation};
+use crate::coordination::{SessionBoundary, SessionLease, SessionLeaseRequest, SessionOperation};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::store::SessionStore;
@@ -51,6 +51,12 @@ fn is_terminal_attachment_change(_record: &crate::store::SessionRecord, events: 
             EventKind::TerminalAttached | EventKind::TerminalDetached
         )
     })
+}
+
+fn is_rotation_claim_clear(record: &crate::store::SessionRecord, events: &[Event]) -> bool {
+    events.is_empty()
+        && record.session.status == crate::session::SessionStatus::Ready
+        && record.rotation_claim.is_none()
 }
 
 /// A service with one running session, and its owner.
@@ -1842,7 +1848,7 @@ async fn a_stale_terminal_generation_reaches_no_sender() {
     assert_eq!(
         svc.send_input(&alice, &created.id, b"stale".to_vec()).await,
         Err(CoreError::RuntimeUnavailable(
-            "the live terminal belongs to another runtime generation".into()
+            "the live channel belongs to another runtime authority".into()
         ))
     );
     assert!(adapter.terminal_inputs.lock().await.is_empty());
@@ -2039,6 +2045,7 @@ async fn every_operation_refuses_the_retained_outgoing_runtime_and_retries_on_th
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
     let svc = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    let observer = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
     let alice = user("rotating-terminal-owner");
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
@@ -2119,19 +2126,33 @@ async fn every_operation_refuses_the_retained_outgoing_runtime_and_retries_on_th
         crate::session::SessionStatus::Rotating,
         "durable readiness alone must not make the outgoing entry interactive"
     );
+    let ready = store
+        .get(&created.id)
+        .await
+        .expect("readiness is readable")
+        .expect("session remains durable");
     assert_eq!(
-        store
-            .get(&created.id)
-            .await
-            .expect("readiness is readable")
-            .expect("session remains durable")
-            .session
-            .status,
+        ready.session.status,
         crate::session::SessionStatus::Ready,
         "the in-progress rotation marker spans the final durable/live disagreement"
     );
+    assert!(
+        ready.rotation_claim.is_some(),
+        "durable readiness retains the cross-replica rotation fence"
+    );
+    assert!(
+        !observer.rotation_in_progress(&created.id).await,
+        "another replica has no process-local rotation marker"
+    );
     assert_every_runtime_operation_fails_with(
         &svc,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
         &alice,
         &created.id,
         CoreError::SessionRotating,
@@ -2158,6 +2179,15 @@ async fn every_operation_refuses_the_retained_outgoing_runtime_and_retries_on_th
     );
     let settled = await_settled(&svc, &alice, &created.id).await;
     assert_eq!(settled.runtime_version.as_deref(), Some("runtime:2"));
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("published rotation is readable")
+            .expect("rotated session remains durable")
+            .rotation_claim,
+        None
+    );
 
     let (replacement_input, mut replacement_runtime) = terminal_input_channel(8);
     svc.entries
@@ -2243,7 +2273,32 @@ async fn a_restarted_rotation_stays_rotating_until_the_replacement_is_live() {
         .runtime_id
         .take()
         .expect("the outgoing runtime was recorded");
+    let rotation_claim = "rotn_restarted_compatibility_attach".to_string();
+    let snapshot_at = "2026-08-27T03:04:05Z".to_string();
+    let snapshot_ref = format!("sessions/{}/handover.snapshot", created.id.0);
+    let target_runtime_version = "runtime:restarted-attach".to_string();
+    let exact_restore = b"restarted rotation attach state".to_vec();
     record.session.status = crate::session::SessionStatus::Rotating;
+    record.rotation_claim = Some(rotation_claim.clone());
+    record.pending_handover = Some(crate::store::PendingHandover {
+        claim: rotation_claim.clone(),
+        snapshot_ref: snapshot_ref.clone(),
+        snapshot_at: snapshot_at.clone(),
+        rotations_from: record.session.rotations,
+        rotations_to: record.session.rotations.saturating_add(1),
+        target: crate::store::PendingHandoverTarget::RuntimeVersion {
+            from_runtime_version: record.session.runtime_version.clone(),
+            runtime_version: target_runtime_version.clone(),
+        },
+    });
+    adapter.stored_handovers.lock().await.insert(
+        snapshot_ref,
+        crate::store::HandoverSnapshot {
+            claim: rotation_claim.clone(),
+            snapshot_at,
+            restore: Some(exact_restore.clone()),
+        },
+    );
     store
         .seed(&record)
         .await
@@ -2252,6 +2307,7 @@ async fn a_restarted_rotation_stays_rotating_until_the_replacement_is_live() {
     drop(first);
 
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let observer = service(Arc::clone(&store), Arc::clone(&adapter));
     adapter.pause_next_provision();
     restarted.pause_next_live_install();
     let recovered = restarted.reconcile().await;
@@ -2262,19 +2318,57 @@ async fn a_restarted_rotation_stays_rotating_until_the_replacement_is_live() {
         !restarted.entries.read().await.contains_key(&created.id),
         "the recovered replacement has not been provisioned yet"
     );
+    let provisioning = store
+        .get(&created.id)
+        .await
+        .expect("recovery is readable")
+        .expect("session remains durable");
     assert_eq!(
-        store
-            .get(&created.id)
-            .await
-            .expect("recovery is readable")
-            .expect("session remains durable")
-            .session
-            .status,
+        provisioning.session.status,
         crate::session::SessionStatus::Provisioning,
         "reconciliation rewrites the durable rotation state while recovery starts"
     );
+    assert_eq!(
+        provisioning.rotation_claim.as_deref(),
+        Some(rotation_claim.as_str()),
+        "recovery preserves the exact interrupted claim"
+    );
+    assert_eq!(
+        provisioning
+            .pending_handover
+            .as_ref()
+            .map(|pending| pending.claim.as_str()),
+        Some(rotation_claim.as_str()),
+        "the compatibility descriptor remains durable during provisioning"
+    );
+    assert!(restarted.rotation_in_progress(&created.id).await);
+    assert!(
+        !observer.rotation_in_progress(&created.id).await,
+        "the observing replica has no process-local rotation knowledge"
+    );
+    assert_eq!(
+        restarted
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating)
+    );
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating)
+    );
     assert_every_runtime_operation_fails_with(
         &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
         &alice,
         &created.id,
         CoreError::SessionRotating,
@@ -2295,19 +2389,56 @@ async fn a_restarted_rotation_stays_rotating_until_the_replacement_is_live() {
         !restarted.entries.read().await.contains_key(&created.id),
         "the recovered replacement is not live before installation"
     );
+    let ready = store
+        .get(&created.id)
+        .await
+        .expect("readiness is readable")
+        .expect("session remains durable");
     assert_eq!(
-        store
-            .get(&created.id)
-            .await
-            .expect("readiness is readable")
-            .expect("session remains durable")
-            .session
-            .status,
+        ready.session.status,
         crate::session::SessionStatus::Ready,
         "recovery rewrites the durable rotation state before live installation"
     );
+    assert_eq!(
+        ready.rotation_claim.as_deref(),
+        Some(rotation_claim.as_str()),
+        "the exact claim spans durable readiness until live publication"
+    );
+    assert_eq!(
+        ready
+            .pending_handover
+            .as_ref()
+            .map(|pending| pending.claim.as_str()),
+        Some(rotation_claim.as_str()),
+        "the exact descriptor spans durable readiness until live publication"
+    );
+    assert!(
+        !observer.rotation_in_progress(&created.id).await,
+        "the observing replica still has no local marker in the Ready gap"
+    );
+    assert_eq!(
+        restarted
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating)
+    );
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating)
+    );
     assert_every_runtime_operation_fails_with(
         &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
         &alice,
         &created.id,
         CoreError::SessionRotating,
@@ -2334,10 +2465,555 @@ async fn a_restarted_rotation_stays_rotating_until_the_replacement_is_live() {
     })
     .await
     .expect("the recovered replacement becomes live and clears the marker");
+    let published = store
+        .get(&created.id)
+        .await
+        .expect("published replacement is readable")
+        .expect("published session remains durable");
+    assert_eq!(published.rotation_claim, None);
+    assert_eq!(published.pending_handover, None);
+    assert_eq!(
+        published.session.runtime_version.as_deref(),
+        Some(target_runtime_version.as_str())
+    );
+    assert_eq!(adapter.handovers.lock().await.last(), Some(&exact_restore));
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .expect("every replica admits the published replacement")
+            .status,
+        crate::session::SessionStatus::Ready
+    );
     restarted
         .send_input(&alice, &created.id, ROTATION_BYTES.to_vec())
         .await
         .expect("input succeeds once the recovered replacement is live");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_coordinated_restarted_rotation_keeps_its_exact_claim_until_publication() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("coordinated-restarted-rotation-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    first.flush(&created.id).await;
+
+    let mut rotating = store
+        .get(&created.id)
+        .await
+        .expect("the coordinated session is readable")
+        .expect("the coordinated session remains durable");
+    let outgoing = rotating
+        .runtime_id
+        .clone()
+        .expect("the coordinated session names its first runtime");
+    let original_authority = store
+        .runtime_authority(&created.id)
+        .await
+        .expect("the first runtime authority is readable")
+        .expect("the first runtime authority exists");
+    assert!(
+        original_authority.generation > 0,
+        "the regression must exercise coordinated recovery"
+    );
+    assert_eq!(
+        original_authority.runtime_id.as_deref(),
+        Some(outgoing.as_str())
+    );
+    let provisioned_before = adapter.issued.load(Ordering::SeqCst);
+    let provision_calls_before = adapter.provision_calls.load(Ordering::SeqCst);
+
+    let request = SessionLeaseRequest::new(
+        created.id.clone(),
+        "interrupted-coordinated-rotation-holder",
+        SessionBoundary::for_record(&rotating, original_authority.generation),
+        SessionOperation::Recover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store
+        .acquire_session_lease(&request)
+        .await
+        .expect("the interrupted rotation acquires exact authority");
+    let exact_claim = "rotn_interrupted_coordinated_exact_claim".to_string();
+    rotating.session.status = crate::session::SessionStatus::Rotating;
+    rotating.rotation_claim = Some(exact_claim.clone());
+    rotating.revision = store
+        .commit_session_idempotent("interrupted-coordinated-rotation-claim", &rotating, &[])
+        .await
+        .expect("the coordinated rotation claim is durable");
+    let rotating_boundary = SessionBoundary::for_record(&rotating, original_authority.generation);
+    store
+        .advance_session_lease(&mut lease, &rotating_boundary)
+        .await
+        .expect("the recovery lease advances to the rotating boundary");
+    let retired = store
+        .retire_runtime_authority(&mut lease, "interrupted-coordinated-rotation-retirement")
+        .await
+        .expect("the exact outgoing authority is retired");
+    assert_eq!(retired.cleanup.runtime_id, outgoing);
+    assert_eq!(retired.cleanup.generation, original_authority.generation);
+    assert_eq!(
+        retired.boundary.authority.runtime_id, None,
+        "retirement creates the no-runtime recovery boundary"
+    );
+    assert_eq!(
+        retired.boundary.authority.generation, original_authority.generation,
+        "retirement cannot reset or reuse the coordinated generation"
+    );
+    store
+        .release_session_lease(&lease)
+        .await
+        .expect("the interrupted process's lease is released");
+    adapter.lose(&retired.cleanup.runtime_id).await;
+    drop(first);
+
+    let interrupted = store
+        .get(&created.id)
+        .await
+        .expect("the interrupted rotation is readable")
+        .expect("the interrupted rotation remains durable");
+    assert_eq!(
+        interrupted.session.status,
+        crate::session::SessionStatus::Rotating
+    );
+    assert_eq!(
+        interrupted.rotation_claim.as_deref(),
+        Some(exact_claim.as_str())
+    );
+    assert_eq!(interrupted.runtime_id, None);
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let observer = service(Arc::clone(&store), Arc::clone(&adapter));
+    adapter.pause_next_provision();
+    restarted.pause_next_live_install();
+    let recovered = restarted.reconcile().await;
+    assert_eq!(recovered.lost_runtimes, 1);
+    assert_eq!(recovered.reprovisioned_sessions, 1);
+    adapter.wait_until_provision_paused().await;
+
+    let provisioning = store
+        .get(&created.id)
+        .await
+        .expect("the resumed recovery is readable")
+        .expect("the resumed recovery remains durable");
+    assert_eq!(
+        provisioning.session.status,
+        crate::session::SessionStatus::Provisioning
+    );
+    assert_eq!(
+        provisioning.rotation_claim.as_deref(),
+        Some(exact_claim.as_str()),
+        "the exact interrupted claim survives coordinated recovery"
+    );
+    let provisioning_authority = store
+        .runtime_authority(&created.id)
+        .await
+        .expect("the provisioning authority is readable")
+        .expect("the provisioning authority remains recorded");
+    assert_eq!(provisioning_authority.runtime_id, None);
+    assert_eq!(
+        provisioning_authority.generation, original_authority.generation,
+        "recovery cannot advance authority before a candidate exists"
+    );
+    assert!(!restarted.entries.read().await.contains_key(&created.id));
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+
+    adapter.resume_provision();
+    restarted.wait_until_live_install_paused().await;
+
+    let ready = store
+        .get(&created.id)
+        .await
+        .expect("the coordinated ready boundary is readable")
+        .expect("the coordinated session remains durable");
+    let replacement = ready
+        .runtime_id
+        .clone()
+        .expect("the coordinated replacement has exact authority");
+    assert_ne!(replacement, retired.cleanup.runtime_id);
+    assert_eq!(ready.session.status, crate::session::SessionStatus::Ready);
+    assert_eq!(
+        ready.rotation_claim.as_deref(),
+        Some(exact_claim.as_str()),
+        "durable readiness remains fenced until exact local publication"
+    );
+    let ready_authority = store
+        .runtime_authority(&created.id)
+        .await
+        .expect("the replacement authority is readable")
+        .expect("the replacement authority exists");
+    assert_eq!(
+        ready_authority.runtime_id.as_deref(),
+        Some(replacement.as_str())
+    );
+    assert_eq!(
+        ready_authority.generation,
+        original_authority.generation + 1,
+        "one replacement consumes exactly one never-reused generation"
+    );
+    assert_eq!(
+        adapter.issued.load(Ordering::SeqCst),
+        provisioned_before + 1,
+        "recovery publishes one replacement runtime"
+    );
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provision_calls_before + 1,
+        "recovery makes no duplicate provisioning attempt"
+    );
+    assert!(!restarted.entries.read().await.contains_key(&created.id));
+    assert_every_runtime_operation_fails_with(
+        &restarted,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+    assert_every_runtime_operation_fails_with(
+        &observer,
+        &alice,
+        &created.id,
+        CoreError::SessionRotating,
+    )
+    .await;
+
+    restarted.resume_live_install();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let claim_cleared = store
+                .get(&created.id)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|record| record.rotation_claim.is_none());
+            let exact_publication =
+                restarted
+                    .entries
+                    .read()
+                    .await
+                    .get(&created.id)
+                    .is_some_and(|entry| {
+                        entry.publication_complete
+                            && entry.runtime_generation == ready_authority.generation
+                            && entry.runtime.as_ref().map(|runtime| runtime.0.as_str())
+                                == Some(replacement.as_str())
+                    });
+            if claim_cleared && exact_publication {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the exact coordinated replacement is published and unfenced");
+
+    let published = store
+        .get(&created.id)
+        .await
+        .expect("the published session is readable")
+        .expect("the published session remains durable");
+    assert_eq!(published.rotation_claim, None);
+    assert_eq!(published.runtime_id.as_deref(), Some(replacement.as_str()));
+    assert_eq!(
+        store
+            .runtime_authority(&created.id)
+            .await
+            .expect("the final authority is readable")
+            .expect("the final authority exists"),
+        ready_authority,
+        "publication cannot switch authority or reuse its generation"
+    );
+    assert_eq!(
+        adapter.issued.load(Ordering::SeqCst),
+        provisioned_before + 1
+    );
+    assert_eq!(
+        adapter.provision_calls.load(Ordering::SeqCst),
+        provision_calls_before + 1
+    );
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .expect("every replica admits the published replacement")
+            .status,
+        crate::session::SessionStatus::Ready
+    );
+    restarted
+        .send_input(&alice, &created.id, ROTATION_BYTES.to_vec())
+        .await
+        .expect("the exact published replacement accepts retried input");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_live_legacy_rotation_is_published_before_its_claim_clears() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("live-legacy-rotation-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let mut rotating = store
+        .get(&created.id)
+        .await
+        .expect("rotation is readable")
+        .expect("session remains durable");
+    rotating.session.status = crate::session::SessionStatus::Rotating;
+    rotating.rotation_claim = None;
+    store
+        .seed(&rotating)
+        .await
+        .expect("a legacy rotation without a claim is durable");
+    drop(first);
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let observer = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+    assert_eq!(recovered.readopted_sessions, 1);
+    assert!(restarted.entries.read().await.contains_key(&created.id));
+
+    let published = store
+        .get(&created.id)
+        .await
+        .expect("published session is readable")
+        .expect("published session remains durable");
+    assert_eq!(
+        published.session.status,
+        crate::session::SessionStatus::Ready
+    );
+    assert_eq!(published.rotation_claim, None);
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .expect("all replicas admit the republished runtime")
+            .status,
+        crate::session::SessionStatus::Ready
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_completed_publication_survives_claim_clear_failure_for_exact_retry() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_rotation_claim_clear,
+    ));
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("publication-clear-retry-owner");
+    let first = service_over(store.clone(), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let mut legacy = inner
+        .get(&created.id)
+        .await
+        .expect("the legacy rotation is readable")
+        .expect("the session remains durable");
+    legacy.session.status = crate::session::SessionStatus::Rotating;
+    legacy.rotation_claim = None;
+    let runtime_id = legacy
+        .runtime_id
+        .clone()
+        .expect("the retained runtime has an exact handle");
+    let provisioned_before = adapter.issued.load(Ordering::SeqCst);
+    inner
+        .seed(&legacy)
+        .await
+        .expect("the live legacy rotation is durable");
+    drop(first);
+
+    // Exhaust the session log's bounded retries for the final claim-only CAS.
+    store.fail_next(4);
+    let restarted = service_over(store.clone(), Arc::clone(&adapter));
+    let observer = service_over(store.clone(), Arc::clone(&adapter));
+    assert_eq!(restarted.reconcile().await.readopted_sessions, 1);
+
+    let retained = inner
+        .get(&created.id)
+        .await
+        .expect("the failed clear is readable")
+        .expect("the session remains durable");
+    let claim = retained
+        .rotation_claim
+        .clone()
+        .expect("the failed clear retains its exact claim");
+    let (published_screen, published_generation) = {
+        let entries = restarted.entries.read().await;
+        let entry = entries
+            .get(&created.id)
+            .expect("the completed publication remains installed");
+        assert!(entry.publication_complete);
+        (Arc::clone(&entry.screen), entry.runtime_generation)
+    };
+    assert_eq!(retained.runtime_id.as_deref(), Some(runtime_id.as_str()));
+    assert_eq!(adapter.issued.load(Ordering::SeqCst), provisioned_before);
+    assert_eq!(
+        observer
+            .session_for_interaction(&alice, &created.id)
+            .await
+            .err(),
+        Some(CoreError::SessionRotating),
+        "the retained claim keeps every replica fenced"
+    );
+
+    let retried = restarted.reconcile().await;
+    assert_eq!(retried.readopted_sessions, 0);
+    assert_eq!(retried.reprovisioned_sessions, 0);
+    let settled = inner
+        .get(&created.id)
+        .await
+        .expect("the retried clear is readable")
+        .expect("the session remains durable");
+    assert_eq!(settled.rotation_claim, None);
+    assert_eq!(settled.runtime_id.as_deref(), Some(runtime_id.as_str()));
+    assert_eq!(adapter.issued.load(Ordering::SeqCst), provisioned_before);
+    let entries = restarted.entries.read().await;
+    let entry = entries
+        .get(&created.id)
+        .expect("claim retry reuses the completed publication");
+    assert!(entry.publication_complete);
+    assert_eq!(entry.runtime_generation, published_generation);
+    assert_eq!(
+        entry.runtime.as_ref().map(|handle| handle.0.as_str()),
+        Some(runtime_id.as_str())
+    );
+    assert!(Arc::ptr_eq(&entry.screen, &published_screen));
+    assert_ne!(claim, "", "the retried claim has an opaque identity");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_post_insert_publication_removes_only_its_incomplete_entry() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:2");
+    svc.retry_backoff_ms.store(1, Ordering::Relaxed);
+    let alice = user("failed-publication-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let mut old = store
+        .get(&created.id)
+        .await
+        .expect("the outgoing runtime is readable")
+        .expect("the session remains durable");
+    old.session.runtime_version = Some("runtime:1".into());
+    store.seed(&old).await.expect("the old version is durable");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("the outgoing entry is live")
+        .session
+        .runtime_version = Some("runtime:1".into());
+
+    adapter.pause_next_provision();
+    svc.pause_next_live_install();
+    let reconciling = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        async move { svc.reconcile().await }
+    });
+    adapter.wait_until_provision_paused().await;
+    adapter.resume_provision();
+    svc.wait_until_live_install_paused().await;
+
+    let ready = store
+        .get(&created.id)
+        .await
+        .expect("the ready publication boundary is readable")
+        .expect("the session remains durable");
+    let claim = ready
+        .rotation_claim
+        .clone()
+        .expect("the replacement remains durably fenced");
+    let runtime_id = ready
+        .runtime_id
+        .clone()
+        .expect("the replacement has exact durable authority");
+    let provisioned_before_failure = adapter.issued.load(Ordering::SeqCst);
+    store.fail_everything().await;
+    svc.resume_live_install();
+    reconciling
+        .await
+        .expect("the reconciliation initiator completes");
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while svc.rotation_in_progress(&created.id).await {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the failed publication attempt settles");
+    assert!(
+        !svc.entries.read().await.contains_key(&created.id),
+        "the failed attempt cannot leave an incomplete entry as publication proof"
+    );
+
+    *store.broken.lock().await = false;
+    let retained = store
+        .get(&created.id)
+        .await
+        .expect("the retained fence is readable")
+        .expect("the session remains durable");
+    assert_eq!(retained.rotation_claim.as_deref(), Some(claim.as_str()));
+    if let Some(lease) = store.active_session_lease(&created.id).await {
+        store
+            .release_session_lease(&lease)
+            .await
+            .expect("the deliberately orphaned fixture lease is released");
+    }
+
+    let recovered = svc.reconcile().await;
+    assert_eq!(recovered.readopted_sessions, 1);
+    assert_eq!(recovered.reprovisioned_sessions, 0);
+    let published = store
+        .get(&created.id)
+        .await
+        .expect("the recovered publication is readable")
+        .expect("the session remains durable");
+    assert_eq!(published.runtime_id.as_deref(), Some(runtime_id.as_str()));
+    assert_eq!(published.rotation_claim, None);
+    assert_eq!(
+        adapter.issued.load(Ordering::SeqCst),
+        provisioned_before_failure,
+        "recovery readopts the switched runtime instead of provisioning again"
+    );
+
+    let (publication_token, published_screen) = {
+        let mut entries = svc.entries.write().await;
+        let entry = entries
+            .get_mut(&created.id)
+            .expect("the recovered entry is installed");
+        assert!(entry.publication_complete);
+        entry.publication_complete = false;
+        (entry.publication_token.clone(), Arc::clone(&entry.screen))
+    };
+    svc.remove_incomplete_runtime_entry(&created.id, "publication_not_the_owner")
+        .await;
+    let mut entries = svc.entries.write().await;
+    let entry = entries
+        .get_mut(&created.id)
+        .expect("a mismatched cleanup token cannot remove the successor");
+    assert_eq!(entry.publication_token, publication_token);
+    assert!(Arc::ptr_eq(&entry.screen, &published_screen));
+    entry.publication_complete = true;
 }
 
 #[tokio::test]

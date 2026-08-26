@@ -30,6 +30,8 @@ pub(crate) struct FakeAdapter {
     /// When set, provisioning succeeds and attaching does not. This is the
     /// case that leaks: a runtime exists that nothing has a handle to yet.
     pub(crate) refuse_attach: bool,
+    /// Terminal attach attempts to fail before returning to normal behavior.
+    pub(crate) fail_terminal_attaches: std::sync::atomic::AtomicUsize,
     /// Kept alive so the relay's output channel does not close immediately,
     /// which would make a live session look dead.
     pub(crate) senders: Mutex<Vec<mpsc::Sender<TerminalOutput>>>,
@@ -97,8 +99,16 @@ pub(crate) struct FakeAdapter {
     pub(crate) accept_plane_switch: bool,
     /// Every in-place plane switch the core attempted.
     pub(crate) plane_switches: Mutex<Vec<(String, RuntimeMode)>>,
+    /// Provider teardown calls to fail before changing any provider state.
+    pub(crate) fail_terminations: std::sync::atomic::AtomicUsize,
     /// Conversations handed to newly provisioned runtimes, in order.
     pub(crate) handovers: Mutex<Vec<Vec<u8>>>,
+    /// Stable claim-bound handover objects shared by restarted test services.
+    pub(crate) stored_handovers: Mutex<HashMap<String, crate::store::HandoverSnapshot>>,
+    /// Handover object writes to fail before changing stored state.
+    pub(crate) fail_handover_puts: std::sync::atomic::AtomicUsize,
+    /// Handover object reads to fail before returning stored state.
+    pub(crate) fail_handover_gets: std::sync::atomic::AtomicUsize,
     /// Snapshot calls completed, so concurrency tests can wait for rehearsal.
     pub(crate) snapshot_calls: std::sync::atomic::AtomicUsize,
     /// One-based snapshot call to pause, or zero when none is armed.
@@ -173,6 +183,7 @@ impl Default for FakeAdapter {
             refuse_at_capacity: false,
             fail_first: std::sync::atomic::AtomicUsize::new(0),
             refuse_attach: false,
+            fail_terminal_attaches: std::sync::atomic::AtomicUsize::new(0),
             senders: Mutex::default(),
             terminal_inputs: Arc::new(Mutex::default()),
             pause_next_terminal_input: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -193,7 +204,11 @@ impl Default for FakeAdapter {
             conversations: Mutex::default(),
             accept_plane_switch: false,
             plane_switches: Mutex::default(),
+            fail_terminations: std::sync::atomic::AtomicUsize::new(0),
             handovers: Mutex::default(),
+            stored_handovers: Mutex::default(),
+            fail_handover_puts: std::sync::atomic::AtomicUsize::new(0),
+            fail_handover_gets: std::sync::atomic::AtomicUsize::new(0),
             snapshot_calls: std::sync::atomic::AtomicUsize::new(0),
             pause_snapshot_call: std::sync::atomic::AtomicUsize::new(0),
             snapshot_paused: Notify::new(),
@@ -271,6 +286,46 @@ impl FakeAdapter {
         self.provision_resume.notify_one();
     }
 
+    pub(crate) fn fail_terminations(&self, count: usize) {
+        self.fail_terminations
+            .store(count, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn fail_terminal_attaches(&self, count: usize) {
+        self.fail_terminal_attaches
+            .store(count, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn fail_handover_puts(&self, count: usize) {
+        self.fail_handover_puts
+            .store(count, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn fail_handover_gets(&self, count: usize) {
+        self.fail_handover_gets
+            .store(count, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn terminal_attach_fails(&self) -> bool {
+        self.fail_terminal_attaches
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+    }
+
+    fn termination_fails(&self) -> bool {
+        self.fail_terminations
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+    }
+
     /// Forget a runtime without being told to, as a provider does when a node
     /// is replaced underneath a sandbox.
     pub(crate) async fn lose(&self, handle: &str) {
@@ -333,6 +388,68 @@ impl FakeAdapter {
 
     pub(crate) fn resume_snapshot(&self) {
         self.snapshot_resume.notify_one();
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::store::HandoverStore for FakeAdapter {
+    async fn put(
+        &self,
+        id: &crate::ids::SessionId,
+        snapshot: crate::store::HandoverSnapshot,
+    ) -> Result<String, crate::store::StoreError> {
+        if self
+            .fail_handover_puts
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err(crate::store::StoreError::Unavailable(
+                "handover object write unavailable".into(),
+            ));
+        }
+        let reference = format!("sessions/{}/handover.snapshot", id.0);
+        self.stored_handovers
+            .lock()
+            .await
+            .insert(reference.clone(), snapshot);
+        Ok(reference)
+    }
+
+    async fn get_for(
+        &self,
+        id: &crate::ids::SessionId,
+        reference: &str,
+    ) -> Result<Option<crate::store::HandoverSnapshot>, crate::store::StoreError> {
+        if self
+            .fail_handover_gets
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+        {
+            return Err(crate::store::StoreError::Unavailable(
+                "handover object read unavailable".into(),
+            ));
+        }
+        let expected = format!("sessions/{}/handover.snapshot", id.0);
+        if reference != expected {
+            return Err(crate::store::StoreError::Malformed(
+                "handover reference belongs to another session".into(),
+            ));
+        }
+        Ok(self.stored_handovers.lock().await.get(reference).cloned())
+    }
+
+    async fn delete_for(&self, id: &crate::ids::SessionId) -> Result<(), crate::store::StoreError> {
+        let reference = format!("sessions/{}/handover.snapshot", id.0);
+        self.stored_handovers.lock().await.remove(&reference);
+        Ok(())
     }
 }
 
@@ -413,7 +530,7 @@ impl KernelAdapter for FakeAdapter {
         &self,
         handle: &RuntimeHandle,
     ) -> Result<TerminalChannel, AdapterError> {
-        if self.refuse_attach {
+        if self.refuse_attach || self.terminal_attach_fails() {
             return Err(AdapterError::Unavailable("terminal not listening".into()));
         }
         // A sandbox that is not running cannot be attached to. Without this the
@@ -564,6 +681,11 @@ impl KernelAdapter for FakeAdapter {
     }
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
+        if self.termination_fails() {
+            return Err(AdapterError::Unavailable(
+                "the selected runtime teardown is unavailable".into(),
+            ));
+        }
         self.terminated.lock().await.push(handle.0.clone());
         self.running.lock().await.remove(&handle.0);
         self.generations.lock().await.remove(&handle.0);
@@ -571,6 +693,11 @@ impl KernelAdapter for FakeAdapter {
     }
 
     async fn terminate_if_identity(&self, identity: &RuntimeIdentity) -> Result<(), AdapterError> {
+        if self.termination_fails() {
+            return Err(AdapterError::Unavailable(
+                "the selected runtime teardown is unavailable".into(),
+            ));
+        }
         let mut terminated = self.terminated.lock().await;
         let mut running = self.running.lock().await;
         let mut generations = self.generations.lock().await;
