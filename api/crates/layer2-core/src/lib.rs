@@ -59,6 +59,8 @@ mod adapter_support;
 #[cfg(test)]
 mod commit_fault_support;
 #[cfg(test)]
+mod conversation_readiness_tests;
+#[cfg(test)]
 mod conversation_support;
 #[cfg(test)]
 mod environment_support;
@@ -132,7 +134,7 @@ pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
-pub use conversation::{ApprovalDecision, Usage};
+pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
 pub use coordination::{
     RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
     RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionLease,
@@ -174,14 +176,16 @@ pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
 pub use session::{
-    RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus, StopReason,
+    CallerCredential, RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus,
+    StopReason,
 };
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
 pub use store::{
-    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, Page, PageCursor,
-    PageRequest, SessionListQuery, SessionRecord, SessionStore, SkillPack, SkillSource, StoreError,
-    UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, OperationClaim,
+    OperationReservation, OperationStore, Page, PageCursor, PageRequest, SessionListQuery,
+    SessionRecord, SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
+    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { fold } from '../../src/conversation/fold.js';
+import { fold, initialConversation, reduce } from '../../src/conversation/fold.js';
 import type { AguiEvent } from '../../src/agui/index.js';
+import { initialState } from '../../src/wire.js';
 
 /**
  * The reducer that turns an event stream into a conversation.
@@ -25,6 +26,19 @@ function delta(seq: number, path: string, value: unknown): AguiEvent {
     // A parsed event, not a wire frame: `delta` is what the service sends and
     // `patch` is what this client calls it once read (`wire.ts`).
     patch: [{ op: 'add', path, value }],
+  };
+}
+
+function accountingDelta(seq: number, inputTokens: number, outputTokens: number): AguiEvent {
+  return {
+    type: 'STATE_DELTA',
+    seq,
+    threadId: 'sesn_1',
+    runId: 'run_1',
+    patch: [
+      { op: 'replace', path: '/usage/inputTokens', value: inputTokens },
+      { op: 'replace', path: '/usage/outputTokens', value: outputTokens },
+    ],
   };
 }
 
@@ -104,9 +118,9 @@ describe('a runtime the session lost', () => {
     expect(state.runtimeLoss).toBeUndefined();
   });
 
-  it('continues to ignore an unrelated state path', () => {
+  it('retains an unrelated additive state field without projecting it', () => {
     const state = stream([
-      delta(8, '/somethingElse/-', {
+      delta(8, '/somethingElse', {
         runtime: 'not-a-runtime-loss',
         cause: 'failed',
       }),
@@ -114,6 +128,10 @@ describe('a runtime the session lost', () => {
 
     expect(state.runtimeLoss).toBeUndefined();
     expect(state.entries).toEqual([]);
+    expect(state.aguiState.somethingElse).toEqual({
+      runtime: 'not-a-runtime-loss',
+      cause: 'failed',
+    });
   });
 });
 
@@ -154,7 +172,7 @@ describe('a plane change is a boundary', () => {
     expect(gaps[1]).toMatchObject({ movedTo: 'terminal' });
   });
 
-  it.each([{}, { frames: 'seven' }, { frames: Number.NaN }])(
+  it.each([{}, { frames: 'seven' }, { frames: -1 }])(
     'keeps a malformed conversation gap visible without inventing a count %#',
     (value) => {
       const state = stream([delta(4, '/gaps/-', value)]);
@@ -163,23 +181,233 @@ describe('a plane change is a boundary', () => {
   );
 
   it('does not interpret a lookalike patch path as a conversation gap', () => {
-    const state = stream([delta(4, '/gaps-not-the-log/-', { frames: 7 })]);
+    const state = stream([delta(4, '/gaps-not-the-log', [{ frames: 7 }])]);
     expect(state.entries).toEqual([]);
   });
 });
 
+describe('a durable pending approval', () => {
+  it('disappears for a watcher and a full replay when another tab resolves it', () => {
+    const interrupted: AguiEvent = {
+      type: 'RUN_FINISHED',
+      seq: 0,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      timestamp: '2026-08-26T01:02:03Z',
+      outcome: {
+        type: 'interrupt',
+        interrupts: [
+          {
+            id: 'approval/~one',
+            reason: 'cma:command_execution',
+            message: 'Run the command?',
+          },
+        ],
+      },
+    };
+    const requested: AguiEvent = {
+      type: 'STATE_DELTA',
+      seq: 7,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [
+        {
+          op: 'add',
+          path: '/pendingApprovals/approval~1~0one',
+          value: {
+            id: 'approval/~one',
+            reason: 'cma:command_execution',
+            message: 'Run the command?',
+          },
+        },
+      ],
+    };
+    const resolved: AguiEvent = {
+      type: 'STATE_DELTA',
+      seq: 8,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [{ op: 'remove', path: '/pendingApprovals/approval~1~0one' }],
+    };
+
+    const waiting = stream([interrupted, requested]);
+    expect(waiting.pending).toMatchObject({
+      id: 'approval/~one',
+      askedAt: '2026-08-26T01:02:03Z',
+    });
+    expect(waiting.aguiState.pendingApprovals).toHaveProperty('approval/~one');
+
+    const watched = reduce(waiting, resolved);
+    const replayed = stream([interrupted, requested, resolved]);
+    expect(watched).toEqual(replayed);
+    expect(watched.pending).toBeUndefined();
+    expect(watched.aguiState.pendingApprovals).toEqual({});
+  });
+});
+
+describe('canonical state replay', () => {
+  it('starts every production fold from a fresh canonical document', () => {
+    const first = initialConversation();
+    const second = initialConversation();
+    const folded = reduce(first, delta(1, '/gaps/-', { frames: 2 }));
+
+    expect(first.aguiState).toEqual(initialState());
+    expect(second.aguiState).toEqual(initialState());
+    expect(folded.aguiState.gaps).toEqual([{ frames: 2 }]);
+    expect(first.aguiState.gaps).not.toBe(second.aguiState.gaps);
+    expect(fold([]).aguiState).toEqual(initialState());
+  });
+
+  it('folds the same durable append delta only once', () => {
+    const event = delta(8, '/gaps/-', { frames: 5 });
+    const once = reduce(initialConversation(), event);
+    const twice = reduce(once, event);
+
+    expect(twice).toBe(once);
+    expect(twice.aguiState.gaps).toEqual([{ frames: 5 }]);
+    expect(twice.entries.filter((entry) => entry.kind === 'gap')).toHaveLength(1);
+  });
+
+  it('makes a full replay equal a prefix plus an overlapping resumed suffix', () => {
+    const events = [
+      delta(4, '/gaps/-', { frames: 2 }),
+      delta(5, '/planeChanges/-', {
+        to: 'conversation',
+        snapshotAt: '2026-08-18T10:00:00Z',
+      }),
+      delta(6, '/contextCompactions/-', { was: 120, now: 60, window: 200 }),
+    ];
+
+    const full = fold(events);
+    const prefix = fold(events.slice(0, 2));
+    const resumed = fold(events.slice(1), prefix);
+    expect(resumed).toEqual(full);
+  });
+
+  it('keeps multiple additions in one delta in exact order and cardinality', () => {
+    const event: AguiEvent = {
+      type: 'STATE_DELTA',
+      seq: 9,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [
+        { op: 'add', path: '/gaps/-', value: { frames: 1 } },
+        { op: 'add', path: '/gaps/-', value: { frames: 2 } },
+        { op: 'add', path: '/gaps/-', value: { frames: 3 } },
+      ],
+    };
+
+    const state = reduce(initialConversation(), event);
+    expect(state.aguiState.gaps).toEqual([{ frames: 1 }, { frames: 2 }, { frames: 3 }]);
+    const gaps = state.entries.filter((entry) => entry.kind === 'gap');
+    expect(gaps.map((entry) => entry.frames)).toEqual([1, 2, 3]);
+    expect(new Set(gaps.map((entry) => entry.id)).size).toBe(3);
+  });
+
+  it('applies separate ephemeral deltas even though they have no durable sequence', () => {
+    const live = (frames: number): AguiEvent => ({
+      ...delta(0, '/gaps/-', { frames }),
+      ephemeral: true,
+    });
+    const state = fold([live(1), live(2)]);
+
+    expect(state.stateDeltaSeq).toBe(0);
+    expect(state.aguiState.gaps).toEqual([{ frames: 1 }, { frames: 2 }]);
+    expect(state.entries.filter((entry) => entry.kind === 'gap')).toHaveLength(2);
+  });
+
+  it('keeps the existing defensive projections for malformed semantic values', () => {
+    const valid: AguiEvent = {
+      type: 'STATE_DELTA',
+      seq: 10,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [
+        { op: 'replace', path: '/usage/inputTokens', value: 80 },
+        { op: 'replace', path: '/usage/outputTokens', value: 20 },
+        { op: 'replace', path: '/mode', value: 'safe' },
+        { op: 'replace', path: '/plan', value: [{ title: 'Inspect', status: 'active' }] },
+        {
+          op: 'replace',
+          path: '/configOptions',
+          value: [{ id: 'effort', name: 'Effort', kind: 'select' }],
+        },
+        {
+          op: 'replace',
+          path: '/availableCommands',
+          value: [{ name: 'stop', description: 'Stop this run' }],
+        },
+        {
+          op: 'replace',
+          path: '/signIn',
+          value: { url: 'https://example.test/sign-in', code: 'ABCD' },
+        },
+      ],
+    };
+    const malformed: AguiEvent = {
+      type: 'STATE_DELTA',
+      seq: 11,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [
+        { op: 'replace', path: '/usage/inputTokens', value: 'eighty' },
+        { op: 'replace', path: '/mode', value: 7 },
+        { op: 'replace', path: '/plan', value: { title: 'not-a-list' } },
+        { op: 'replace', path: '/configOptions', value: null },
+        { op: 'replace', path: '/availableCommands', value: 'stop' },
+        { op: 'replace', path: '/signIn', value: { code: 'missing-url' } },
+      ],
+    };
+
+    const before = reduce(initialConversation(), valid);
+    const after = reduce(before, malformed);
+    expect(before.usage).toMatchObject({ inputTokens: 80, outputTokens: 20, tokens: 100 });
+    expect(after.usage).toEqual(before.usage);
+    expect(after.mode).toBe('safe');
+    expect(after.plan).toEqual([{ title: 'Inspect', status: 'active' }]);
+    expect(after.configOptions).toEqual([{ id: 'effort', name: 'Effort', kind: 'select' }]);
+    expect(after.availableCommands).toEqual([{ name: 'stop', description: 'Stop this run' }]);
+    // An object-shaped sign-in without a usable URL has always cleared the card.
+    expect(after.signIn).toBeUndefined();
+    expect(after.aguiState.mode).toBe(7);
+  });
+});
+
 describe('context readings and summary boundaries', () => {
-  it('keeps the last positive reading and the latest stated ceiling', () => {
+  it('keeps context unknown when turn accounting carries no reading', () => {
+    const state = stream([accountingDelta(1, 0, 0)]);
+
+    expect(state.aguiState.usage).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      contextUsed: null,
+      contextWindow: null,
+    });
+    expect(state.usage).toMatchObject({ inputTokens: 0, outputTokens: 0, tokens: 0 });
+    expect(state.usage?.contextUsed).toBeUndefined();
+  });
+
+  it('keeps the last positive reading and stated ceiling through contextless accounting', () => {
     const state = stream([
       delta(1, '/usage/contextUsed', 198_000),
       delta(2, '/usage/contextWindow', 200_000),
-      // Turn accounting has no context reading or ceiling. Its zero must not
-      // erase either fact already stated by the runtime update stream.
-      delta(3, '/usage/contextUsed', 0),
-      delta(4, '/usage/contextUsed', 42_100),
+      // The projection emits the real zero token totals, but no context patch.
+      accountingDelta(3, 0, 0),
     ]);
 
-    expect(state.usage).toMatchObject({ contextUsed: 42_100, contextWindow: 200_000 });
+    expect(state.aguiState.usage).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      contextUsed: 198_000,
+      contextWindow: 200_000,
+    });
+    expect(state.usage).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      tokens: 0,
+      contextUsed: 198_000,
+      contextWindow: 200_000,
+    });
   });
 
   it('folds a complete summary boundary and drops incomplete ones', () => {
@@ -291,6 +519,46 @@ describe('a session being carried onto another runtime is not a failure', () => 
     const state = stream([failed(2, { message: 'the runtime went away' })]);
 
     expect(state.entries.filter((entry) => entry.kind === 'failure')).toHaveLength(1);
+  });
+
+  it('stays noninteractive through replacement progress and reopens on ready', () => {
+    const replace = (seq: number, path: string, value: unknown): AguiEvent => ({
+      type: 'STATE_DELTA',
+      seq,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [{ op: 'replace', path, value }],
+    });
+
+    let state = reduce(initialConversation(), replace(1, '/status', 'ready'));
+    expect(state.sessionInteractive).toBe(true);
+
+    state = reduce(
+      state,
+      failed(2, { message: 'moving this session to a replacement runtime', returns: true }),
+    );
+    expect(state.sessionInteractive).toBe(false);
+
+    state = reduce(state, replace(3, '/progress', 'runtime_requested'));
+    expect(state.aguiState.status).toBe('ready');
+    expect(state.aguiState.progress).toBe('runtime_requested');
+    expect(state.sessionInteractive).toBe(false);
+
+    state = reduce(state, replace(4, '/progress', 'ready'));
+    expect(state.sessionInteractive).toBe(false);
+
+    state = reduce(state, replace(5, '/status', 'ready'));
+    expect(state.aguiState.status).toBe('ready');
+    expect(state.sessionInteractive).toBe(true);
+
+    state = reduce(state, replace(6, '/progress', 'ready'));
+    expect(state.sessionInteractive).toBe(true);
+  });
+
+  it('does not treat an idle but revivable session as interactive', () => {
+    const state = stream([delta(1, '/status', 'idle')]);
+    expect(state.aguiState.status).toBe('idle');
+    expect(state.sessionInteractive).toBe(false);
   });
 });
 

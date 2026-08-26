@@ -633,7 +633,10 @@ mod tests {
             Duration::from_secs(30),
         )
         .await;
-        let mut handover = store.acquire_session_lease(&handover_request).await.unwrap();
+        let mut handover = store
+            .acquire_session_lease(&handover_request)
+            .await
+            .unwrap();
         let reservation = store
             .reserve_runtime_generation(&handover, "reservation-current")
             .await
@@ -655,7 +658,10 @@ mod tests {
             Duration::from_secs(30),
         )
         .await;
-        let mut recovery = store.acquire_session_lease(&recovery_request).await.unwrap();
+        let mut recovery = store
+            .acquire_session_lease(&recovery_request)
+            .await
+            .unwrap();
         let retired = store
             .retire_runtime_authority(&mut recovery, "confirmed-loss")
             .await
@@ -666,7 +672,10 @@ mod tests {
         assert!(retired.boundary.authority.runtime_id.is_none());
         assert_eq!(retired.cleanup.generation, 1);
         assert_eq!(retired.cleanup.runtime_id, "runtime-current");
-        assert_eq!(retired.cleanup.reason, RuntimeCleanupReason::RetiredAuthority);
+        assert_eq!(
+            retired.cleanup.reason,
+            RuntimeCleanupReason::RetiredAuthority
+        );
         assert!(store
             .get(&record().session.id)
             .await

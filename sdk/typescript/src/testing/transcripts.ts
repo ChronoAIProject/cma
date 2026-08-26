@@ -177,7 +177,7 @@ export const APPROVAL_GRANTED: Transcript = {
         ],
       },
     }),
-    frame(900, { type: 'RUN_STARTED', runId: 'run_5', seq: 3 }),
+    frame(900, { type: 'RUN_STARTED', runId: 'run_5', seq: 0 }),
     frame(120, {
       type: 'TEXT_MESSAGE_START',
       runId: 'run_5',
@@ -224,7 +224,7 @@ export const APPROVAL_DENIED: Transcript = {
         ],
       },
     }),
-    frame(700, { type: 'RUN_STARTED', runId: 'run_7', seq: 3 }),
+    frame(700, { type: 'RUN_STARTED', runId: 'run_7', seq: 0 }),
     frame(180, {
       type: 'TEXT_MESSAGE_START',
       runId: 'run_7',
@@ -288,7 +288,7 @@ export const REPORTS_USAGE: Transcript = {
       seq: 2,
       delta: [
         { op: 'replace', path: '/usage/inputTokens', value: 1840 },
-        { op: 'replace', path: '/usage/cost', value: '0.014' },
+        { op: 'add', path: '/usage/cost', value: '0.014' },
       ],
     }),
     frame(300, {
@@ -312,17 +312,17 @@ export const REPORTS_USAGE: Transcript = {
       seq: 4,
       delta: [
         { op: 'replace', path: '/usage/inputTokens', value: 2310 },
-        { op: 'replace', path: '/usage/cost', value: '0.019' },
+        { op: 'add', path: '/usage/cost', value: '0.019' },
       ],
     }),
     frame(20, { type: 'RUN_FINISHED', runId: 'run_9', seq: 5, outcome: { type: 'end_turn' } }),
   ],
 };
 
-/** A context reading accompanied by the ceiling the runtime stated. */
+/** A context reading survives later turn accounting that carried no reading. */
 export const CONTEXT_WITH_WINDOW: Transcript = {
   name: 'context-with-window',
-  about: 'Context fullness arrives with the window it is drawn from.',
+  about: 'Context fullness and its window survive a later contextless usage report.',
   provenance: 'authored',
   source: 'docs/API_AGUI.md §3, "STATE_DELTA is where get_usage lands"',
   frames: [
@@ -339,9 +339,18 @@ export const CONTEXT_WITH_WINDOW: Transcript = {
       ],
     }),
     frame(20, {
-      type: 'RUN_FINISHED',
+      type: 'STATE_DELTA',
       runId: 'run_context_window',
       seq: 3,
+      delta: [
+        { op: 'replace', path: '/usage/inputTokens', value: 0 },
+        { op: 'replace', path: '/usage/outputTokens', value: 0 },
+      ],
+    }),
+    frame(20, {
+      type: 'RUN_FINISHED',
+      runId: 'run_context_window',
+      seq: 4,
       outcome: { type: 'end_turn' },
     }),
   ],
@@ -672,7 +681,7 @@ export const FULL_CONVERSATION: Transcript = {
         { op: 'replace', path: '/usage/outputTokens', value: 1840 },
         { op: 'replace', path: '/usage/contextUsed', value: 24_800 },
         { op: 'replace', path: '/usage/contextWindow', value: 200_000 },
-        { op: 'replace', path: '/usage/cost', value: '0.087' },
+        { op: 'add', path: '/usage/cost', value: '0.087' },
         {
           op: 'replace',
           path: '/signIn',

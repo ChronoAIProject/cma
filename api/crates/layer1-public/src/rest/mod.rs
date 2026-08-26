@@ -14,7 +14,7 @@ use axum::{
     Json, Router,
 };
 use layer2_core::{
-    Caller, CoreError, EnvironmentProfileService, PublicIdentity, Quote, Session,
+    Caller, CoreError, EnvironmentProfileService, OperationStore, PublicIdentity, Quote, Session,
     SessionCapabilities, SessionCapability, SessionId, SessionService, SessionSpec,
     TerminalGeometry, UserDirectory,
 };
@@ -25,6 +25,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 mod allowance;
 mod deployment_capacity;
 mod events;
+mod idempotency;
 mod openapi;
 mod openapi_shapes;
 mod operate;
@@ -719,6 +720,8 @@ pub enum RequestFailure {
     Query(QueryProblem),
     /// The body was fine and the core would not do it.
     Refused(Problem),
+    /// Durable state could not be read or written.
+    Store(crate::auth::StoreUnavailable),
 }
 
 impl From<CoreError> for RequestFailure {
@@ -730,6 +733,12 @@ impl From<CoreError> for RequestFailure {
 impl From<Problem> for RequestFailure {
     fn from(problem: Problem) -> Self {
         Self::Refused(problem)
+    }
+}
+
+impl From<layer2_core::store::StoreError> for RequestFailure {
+    fn from(_: layer2_core::store::StoreError) -> Self {
+        Self::Store(crate::auth::StoreUnavailable)
     }
 }
 
@@ -757,6 +766,7 @@ impl IntoResponse for RequestFailure {
             Self::Body(e) => e.into_response(),
             Self::Query(e) => e.into_response(),
             Self::Refused(e) => e.into_response(),
+            Self::Store(e) => e.into_response(),
         }
     }
 }
@@ -978,6 +988,8 @@ pub struct SessionsState {
     /// is not something an owner recognises. The catalogue is asked as the
     /// caller, since which services exist is a fact about their account.
     pub environments: Arc<EnvironmentProfileService>,
+    /// Durable claims used by the operations that promise one execution.
+    pub operations: Arc<dyn OperationStore>,
 }
 
 impl FromRef<SessionsState> for Arc<SessionService> {
@@ -1001,6 +1013,12 @@ impl FromRef<SessionsState> for Arc<TerminalTickets> {
 impl FromRef<SessionsState> for Arc<EnvironmentProfileService> {
     fn from_ref(state: &SessionsState) -> Self {
         Arc::clone(&state.environments)
+    }
+}
+
+impl FromRef<SessionsState> for Arc<dyn OperationStore> {
+    fn from_ref(state: &SessionsState) -> Self {
+        Arc::clone(&state.operations)
     }
 }
 
@@ -1094,14 +1112,20 @@ async fn pricing_quote(
     post,
     path = "/api/v1/sessions",
     tag = "sessions",
+    params(("Idempotency-Key" = Option<String>, Header)),
     request_body = CreateSessionRequest,
-    responses((status = 201, description = "Session created", body = SessionView))
+    responses(
+        (status = 201, description = "Session created", body = SessionView),
+        (status = 400, description = "Malformed operation key"),
+        (status = 409, description = "Operation with this key is still running"),
+        (status = 422, description = "Operation key names a different request"),
+        (status = 503, description = "Operation store unavailable")
+    )
 )]
 async fn create(
-    State(service): State<Arc<SessionService>>,
-    State(environments): State<Arc<EnvironmentProfileService>>,
-    State(users): State<Arc<UserDirectory>>,
+    State(state): State<SessionsState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    key: idempotency::IdempotencyKey,
     // Optional on purpose: a deployment with no delegation configured still
     // creates sessions, they simply cannot call out as the owner.
     credential: Option<axum::Extension<DelegatedCredential>>,
@@ -1110,54 +1134,88 @@ async fn create(
     // rejection returns its own plain body, and a caller would meet two
     // different error shapes from one endpoint depending on which half of the
     // request was wrong.
-    body: Result<Json<CreateSessionRequest>, axum::extract::rejection::JsonRejection>,
-) -> Result<(StatusCode, ProjectedSession), RequestFailure> {
-    let Json(body) = body?;
-    let parts = body.into_parts()?;
-    let credential_value = credential.as_ref().map(|axum::Extension(c)| c.0.clone());
-    let session = service
-        .create_session(
-            &caller,
-            SessionSpec {
-                environment_profile: parts
-                    .environment_profile
-                    .map(layer2_core::EnvironmentProfileId),
-                geometry: parts.geometry,
-                // Replaced by the core from the profile this session names.
-                // Sent as a default rather than left out because the spec is
-                // also what a rotation rebuilds a session from, where these
-                // are the values the session was started with.
-                options: Default::default(),
-                // The caller's own token, for asking the platform as them. It is
-                // never what the session runs on: the core mints that.
-                caller_credential: credential.map(|axum::Extension(c)| c.0),
-                runtime_credential: None,
-                // This interface takes no plane, so the profile or the
-                // deployment decides — which is what it has always done.
-                requested_mode: None,
-                quoted_rate_card: parts.quoted_rate_card.map(layer2_core::RateCardId),
-            },
-        )
-        .await?;
-    /*
-     * Filled here, not left as the placeholder it starts as.
-     *
-     * `From<Session>` seeds `reach: Vec::new()` for `reached` to fill, and
-     * this handler used to return before that happened. An empty list is a
-     * real answer on this interface — it means the session reaches nothing —
-     * so a client showed a freshly created session as reaching no services
-     * until something refetched it. The two ends disagreed about what `[]`
-     * meant, and both were reading their own contract correctly.
-     */
-    let view = viewed_one(
-        &environments,
-        &users,
+    body: Result<idempotency::RequestBody<CreateSessionRequest>, BodyProblem>,
+) -> Response {
+    let SessionsState {
+        sessions: service,
+        users,
+        environments,
+        operations,
+        ..
+    } = state;
+    let (body, fingerprint) = match body {
+        Ok(body) => body.into_parts(),
+        Err(error) => return RequestFailure::from(error).into_response(),
+    };
+    let guard = match idempotency::Idempotency::begin(
+        key,
+        operations,
         &caller,
-        credential_value.as_deref(),
-        session,
+        "session-create",
+        fingerprint,
     )
+    .await
+    {
+        Ok(idempotency::Idempotency::Replay(response)) => return response,
+        Ok(guard) => guard,
+        Err(response) => return response,
+    };
+    let body = match body {
+        Ok(body) => body,
+        Err(error) => return guard.finish(Err(RequestFailure::from(error))).await,
+    };
+    let result: Result<Response, RequestFailure> = async {
+        let parts = body.into_parts()?;
+        let credential_value = credential
+            .as_ref()
+            .map(|axum::Extension(c)| c.value().to_owned());
+        let session = service
+            .create_session(
+                &caller,
+                SessionSpec {
+                    environment_profile: parts
+                        .environment_profile
+                        .map(layer2_core::EnvironmentProfileId),
+                    geometry: parts.geometry,
+                    // Replaced by the core from the profile this session names.
+                    // Sent as a default rather than left out because the spec is
+                    // also what a rotation rebuilds a session from, where these
+                    // are the values the session was started with.
+                    options: Default::default(),
+                    // The caller's own token, for asking the platform as them. It is
+                    // never what the session runs on: the core mints that.
+                    caller_credential: credential
+                        .map(|axum::Extension(c)| c.into_caller_credential()),
+                    runtime_credential: None,
+                    // This interface takes no plane, so the profile or the
+                    // deployment decides — which is what it has always done.
+                    requested_mode: None,
+                    quoted_rate_card: parts.quoted_rate_card.map(layer2_core::RateCardId),
+                },
+            )
+            .await?;
+        /*
+         * Filled here, not left as the placeholder it starts as.
+         *
+         * `From<Session>` seeds `reach: Vec::new()` for `reached` to fill, and
+         * this handler used to return before that happened. An empty list is a
+         * real answer on this interface — it means the session reaches nothing —
+         * so a client showed a freshly created session as reaching no services
+         * until something refetched it. The two ends disagreed about what `[]`
+         * meant, and both were reading their own contract correctly.
+         */
+        let view = viewed_one(
+            &environments,
+            &users,
+            &caller,
+            credential_value.as_deref(),
+            session,
+        )
+        .await;
+        Ok((StatusCode::CREATED, view).into_response())
+    }
     .await;
-    Ok((StatusCode::CREATED, view))
+    guard.finish(result).await
 }
 
 #[utoipa::path(
@@ -1184,7 +1242,7 @@ async fn list(
         .list_sessions(&caller, &params.store_query())
         .await?;
     let headers = params.next_headers("/api/v1/sessions", sessions.next.as_ref());
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     let views = viewed(
         &environments,
         &users,
@@ -1212,7 +1270,7 @@ async fn read(
     Path(id): Path<String>,
 ) -> Result<ProjectedSession, Problem> {
     let session = service.get_session(&caller, &SessionId(id)).await?;
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     let view = viewed_one(
         &environments,
         &users,
@@ -1295,7 +1353,7 @@ async fn plane(
     let session = service
         .change_plane(&caller, &SessionId(id), body.plane)
         .await?;
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     Ok(viewed_one(
         &environments,
         &users,
@@ -1322,7 +1380,7 @@ async fn revive(
     Path(id): Path<String>,
 ) -> Result<ProjectedSession, Problem> {
     let session = service.revive_session(&caller, &SessionId(id)).await?;
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     Ok(viewed_one(
         &environments,
         &users,

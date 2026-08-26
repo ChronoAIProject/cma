@@ -13,6 +13,7 @@ test-support = []
 # For the terminal plane's raw input, which arrives base64-encoded because a
 # JSON string cannot carry an arbitrary control sequence.
 base64 = { workspace = true }
+async-trait = { workspace = true }
 axum = { workspace = true }
 futures-util = { workspace = true }
 layer2-core = { workspace = true }
@@ -24,6 +25,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # Serializes continuation links with the same form encoding axum accepts.
 serde_urlencoded = "0.7"
+sha2 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true }
@@ -33,8 +35,9 @@ utoipa-axum = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-# Only the tests implement a core port, and every port in this project is an
-# async trait. The interface layer itself defines none.
-async-trait = { workspace = true }
+# Applies the projection's patches with an independent RFC 6902 implementation,
+# so the canonical starting document is a proven wire contract rather than an
+# example that only this crate understands.
+json-patch = { version = "4.2", default-features = false }
 # Drives the actual router in path-precedence tests.
 tower = { version = "0.5", features = ["util"] }

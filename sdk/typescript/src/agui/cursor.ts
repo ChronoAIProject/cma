@@ -3,6 +3,22 @@ import { KNOWN_EVENTS } from '../wire.js';
 const knownEvents = new Set<string>(KNOWN_EVENTS);
 
 /**
+ * Whether an unnumbered frame is an interface boundary rather than liveness or
+ * part of a durable projection.
+ *
+ * A continuation has no new durable turn to project, but its response still
+ * opens with `RUN_STARTED`. The frame is deliberately cursorless and non-live:
+ * it is delivered as an ordering boundary without becoming reconnect state.
+ */
+export function isCursorlessInterfaceBoundary(
+  kind: string,
+  seq: number,
+  ephemeral: boolean | undefined,
+): boolean {
+  return kind === 'RUN_STARTED' && seq === 0 && !ephemeral;
+}
+
+/**
  * Whether a durable frame may precede the frame that carries its projection's
  * cursor.
  *
@@ -17,6 +33,7 @@ export function canBeDurableProjectionPrefix(kind: string): boolean {
     return true;
   }
   switch (kind) {
+    case 'RUN_FINISHED':
     case 'TEXT_MESSAGE_START':
     case 'TEXT_MESSAGE_CONTENT':
     case 'TOOL_CALL_START':

@@ -15,6 +15,8 @@
  * not user content: knowing somebody prefers a canvas leaks nothing.
  */
 
+import { observeBrowserCompatibility } from '../observability/browserCompatibility';
+
 export type Arrangement = 'list' | 'canvas';
 
 /** The list is the historical surface and stays the default for a new browser. */
@@ -45,10 +47,21 @@ function canonicalArrangement(value: string | null): Arrangement | null {
   return isArrangement(value) ? value : null;
 }
 
-function readArrangement(store: Storage, key: string): string | null {
+function readArrangement(
+  store: Storage,
+  key: string,
+  observeCanonical: boolean = false,
+): string | null {
   try {
-    return store.getItem(key);
+    const value = store.getItem(key);
+    if (observeCanonical) {
+      observeBrowserCompatibility(['view-mode', 'canonical', 'read-ok']);
+    }
+    return value;
   } catch {
+    if (observeCanonical) {
+      observeBrowserCompatibility(['view-mode', 'canonical', 'read-blocked']);
+    }
     return null;
   }
 }
@@ -56,7 +69,9 @@ function readArrangement(store: Storage, key: string): string | null {
 function writeArrangement(store: Storage, arrangement: Arrangement): void {
   try {
     store.setItem(KEY, arrangement);
+    observeBrowserCompatibility(['view-mode', 'canonical', 'write-ok']);
   } catch {
+    observeBrowserCompatibility(['view-mode', 'canonical', 'write-blocked']);
     // Applying the arrangement does not depend on remembering it.
   }
 }
@@ -73,10 +88,11 @@ function writeArrangement(store: Storage, arrangement: Arrangement): void {
 export function loadArrangement(): Arrangement {
   const store = storage();
   if (store === null) {
+    observeBrowserCompatibility(['view-mode', 'canonical', 'read-blocked']);
     return DEFAULT_ARRANGEMENT;
   }
 
-  const rawCanonical = readArrangement(store, KEY);
+  const rawCanonical = readArrangement(store, KEY, true);
   const canonical = canonicalArrangement(rawCanonical);
   if (canonical !== null) {
     if (canonical !== rawCanonical) {
@@ -90,6 +106,7 @@ export function loadArrangement(): Arrangement {
     return DEFAULT_ARRANGEMENT;
   }
 
+  observeBrowserCompatibility(['view-mode', 'historical-key', 'fallback-used']);
   writeArrangement(store, historical);
   return historical;
 }
@@ -99,5 +116,7 @@ export function saveArrangement(arrangement: Arrangement): void {
   const store = storage();
   if (store !== null) {
     writeArrangement(store, arrangement);
+  } else {
+    observeBrowserCompatibility(['view-mode', 'canonical', 'write-blocked']);
   }
 }

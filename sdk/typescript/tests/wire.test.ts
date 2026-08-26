@@ -4,12 +4,15 @@ import {
   GAP_VALUE_FRAMES,
   PATHS,
   PRICING_WIRE,
+  PROVISIONING_STAGES,
+  SESSION_STATUSES,
   STATE_DELTA_PATCHES,
   frameKey,
 } from '../src/wire.js';
 import { toEvent } from '../src/agui/events.js';
 import { toSession } from '../src/sessions.js';
 import { EMPTY, reduce } from '../src/conversation/fold.js';
+import { initialState } from '../src/index.js';
 
 /**
  * The wire, pinned.
@@ -41,6 +44,62 @@ describe('a STATE_DELTA carries its patches under the name the service uses', ()
       return;
     }
     expect(event.patch).toHaveLength(1);
+  });
+});
+
+describe('the canonical AG-UI initial state', () => {
+  it('is the exact document published by the service contract', () => {
+    const document = readFileSync(new URL('../../../docs/API_AGUI.md', import.meta.url), 'utf8');
+    const marker = '### Canonical initial state\n\n```json\n';
+    const published = document.split(marker)[1]?.split('\n```')[0];
+
+    expect(published, 'docs/API_AGUI.md has no canonical initial-state block').toBeDefined();
+    expect(initialState()).toEqual(JSON.parse(published ?? 'null'));
+  });
+
+  it('returns fresh arrays for every session fold', () => {
+    const first = initialState();
+    first.gaps.push({ frames: 1 });
+    first.usage.inputTokens = 99;
+
+    expect(initialState().gaps).toEqual([]);
+    expect(initialState().usage.inputTokens).toBeNull();
+  });
+
+  it('keeps unreported usage and commands distinct from zero and empty reports', () => {
+    const state = initialState();
+
+    expect(state.usage).toEqual({
+      inputTokens: null,
+      outputTokens: null,
+      contextUsed: null,
+      contextWindow: null,
+    });
+    expect(state.availableCommands).toBeNull();
+    expect(state.pendingApprovals).toEqual({});
+    expect(state.status).toBeNull();
+    expect(state.progress).toBeNull();
+  });
+
+  it('pins the Layer 2 status and provisioning vocabularies', () => {
+    expect(SESSION_STATUSES).toEqual([
+      'provisioning',
+      'ready',
+      'running',
+      'rotating',
+      'idle',
+      'terminated',
+    ]);
+    expect(PROVISIONING_STAGES).toEqual([
+      'accepted',
+      'runtime_requested',
+      'runtime_created',
+      'skills_installed',
+      'attaching',
+      'ready',
+    ]);
+    expect(PATHS.status).toBe('/status');
+    expect(PATHS.progress).toBe('/progress');
   });
 });
 
@@ -116,19 +175,16 @@ describe('usage lands where the service writes it', () => {
       { op: 'replace', path: PATHS.contextUsed, value: 44 },
       { op: 'replace', path: PATHS.contextWindow, value: 200_000 },
     ];
-    let state = EMPTY;
-    for (const patch of frames) {
-      state = reduce(
-        state,
-        toEvent({
-          type: 'STATE_DELTA',
-          threadId: 'sesn_1',
-          runId: 'run_1',
-          seq: 5,
-          delta: [patch],
-        }),
-      );
-    }
+    const state = reduce(
+      EMPTY,
+      toEvent({
+        type: 'STATE_DELTA',
+        threadId: 'sesn_1',
+        runId: 'run_1',
+        seq: 5,
+        delta: frames,
+      }),
+    );
 
     expect(state.usage?.inputTokens).toBe(1200);
     expect(state.usage?.outputTokens).toBe(300);
@@ -160,7 +216,7 @@ describe('one durable event may project to several frames', () => {
 describe('the paths match what the service emits', () => {
   /*
    * The list on the right was read out of `api/crates/layer1-public/src/agui/`
-   * on 2026-08-19, and checked again on 2026-08-23, by listing every `"path"`
+   * on 2026-08-19, and checked again on 2026-08-26, by listing every `"path"`
    * the projection writes. It is the whole set, so this catches both halves of the drift that caused the
    * original defect: a path declared here that nothing writes, and a path the
    * service writes that nothing here reads.
@@ -175,11 +231,14 @@ describe('the paths match what the service emits', () => {
     '/gaps/-',
     '/memoryPressure',
     '/mode',
+    '/pendingApprovals/{requestId}',
     '/plan',
     '/planeChanges/-',
+    '/progress',
     '/resources',
     '/runtimeLosses/-',
     '/signIn',
+    '/status',
     '/usage/contextUsed',
     '/usage/contextWindow',
     '/usage/inputTokens',

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use layer3_adapter::KernelAdapter;
 
 use crate::authz::{Authorization, Caller, Capability};
-use crate::ids::{KernelId, SubjectId};
+use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::SessionService;
 use crate::session::SessionSpec;
 use crate::terminal::ScreenModel;
@@ -96,7 +96,10 @@ fn caller(id: &str) -> Caller {
 /// The whole point of the mint is that what the runtime presents is not what
 /// the person presented, so a fake that echoed the caller's token back would
 /// pass whether or not the mint happened.
-struct MintingSource;
+struct MintingSource {
+    observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
+    tracks_subject: bool,
+}
 
 #[async_trait::async_trait]
 impl crate::store::CredentialSource for MintingSource {
@@ -105,15 +108,40 @@ impl crate::store::CredentialSource for MintingSource {
         session: &crate::SessionId,
         _subject: &crate::SubjectId,
         _services: &[crate::environment::ServiceId],
-    ) -> Option<String> {
-        Some(format!("minted-for-{}", session.0))
+        caller_credential: Option<&crate::session::CallerCredential>,
+    ) -> Result<Option<String>, crate::store::StoreError> {
+        if let Some(observed) = &self.observed_callers {
+            observed
+                .lock()
+                .await
+                .push(caller_credential.map(|credential| credential.as_ref().to_owned()));
+        }
+        Ok(Some(format!("minted-for-{}", session.0)))
     }
 
     /// Nothing to reclaim: this mints a value rather than registering one.
-    async fn release(&self, _session: &crate::SessionId) {}
+    async fn release(&self, _session: &crate::SessionId) -> Result<(), crate::store::StoreError> {
+        Ok(())
+    }
+
+    async fn tracks_subject_credential(
+        &self,
+        _session: &crate::SessionId,
+    ) -> Result<bool, crate::store::StoreError> {
+        Ok(self.tracks_subject)
+    }
 }
 
 fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
+    service_with_store(sent, Arc::new(FakeStore::default()), None, true)
+}
+
+fn service_with_store(
+    sent: Arc<tokio::sync::Mutex<Vec<String>>>,
+    store: Arc<FakeStore>,
+    observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
+    tracks_subject: bool,
+) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     adapters.insert(
         KernelId::new("recording"),
@@ -124,9 +152,12 @@ fn service(sent: Arc<tokio::sync::Mutex<Vec<String>>>) -> Arc<SessionService> {
     SessionService::new(
         adapters,
         Arc::new(|g| Box::new(NullScreen(g)) as Box<dyn ScreenModel>),
-        Arc::new(FakeStore::default()),
+        store,
         crate::service::SessionPorts {
-            credentials: Some(Arc::new(MintingSource)),
+            credentials: Some(Arc::new(MintingSource {
+                observed_callers,
+                tracks_subject,
+            })),
             ..Default::default()
         },
         crate::environment_service::EnvironmentProfileService::new(
@@ -161,7 +192,13 @@ async fn the_runtime_is_given_a_minted_credential_and_never_its_owner_s_own() {
      * was actually handed, and "first-token" appearing in it is the defect.
      */
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let svc = service(Arc::clone(&sent));
+    let observed_callers = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let svc = service_with_store(
+        Arc::clone(&sent),
+        Arc::new(FakeStore::default()),
+        Some(Arc::clone(&observed_callers)),
+        true,
+    );
     let owner = caller("subject-a");
     let session = svc
         .create_session(
@@ -189,6 +226,11 @@ async fn the_runtime_is_given_a_minted_credential_and_never_its_owner_s_own() {
     assert!(
         !seen.iter().any(|c| c == "first-token"),
         "the caller's own credential must never reach the runtime, got {seen:?}"
+    );
+    assert_eq!(
+        *observed_callers.lock().await,
+        vec![Some("first-token".to_string())],
+        "the credential source needs the initiating request's authority to mint custody"
     );
 }
 
@@ -240,6 +282,47 @@ async fn a_renewal_reaches_a_running_session_without_recreating_it() {
         .await
         .expect("session still exists");
     assert_eq!(after.id, session.id);
+}
+
+#[tokio::test]
+async fn a_subject_renewal_does_not_replace_a_request_bound_session_credential() {
+    let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let svc = service_with_store(
+        Arc::clone(&sent),
+        Arc::new(FakeStore::default()),
+        None,
+        false,
+    );
+    let owner = caller("subject-a");
+    let session = svc
+        .create_session(
+            &owner,
+            SessionSpec {
+                environment_profile: None,
+                geometry: None,
+                options: Default::default(),
+                caller_credential: Some(crate::CallerCredential::request_bound(
+                    "bearer-token".into(),
+                )),
+                runtime_credential: None,
+                requested_mode: None,
+                quoted_rate_card: None,
+            },
+        )
+        .await
+        .expect("session created");
+    await_settled(&svc, &owner, &session.id).await;
+
+    let pushed = svc
+        .refresh_subject_credential(&owner.subject, "browser-renewal".into())
+        .await;
+    assert_eq!(pushed, 0);
+    assert!(
+        !credentials_seen(&sent)
+            .await
+            .contains(&"browser-renewal".to_string()),
+        "a browser renewal must not overwrite request-bound authority"
+    );
 }
 
 #[tokio::test]
@@ -370,7 +453,9 @@ mod what_still_claims_a_credential {
             .expect("a session can be paused");
 
         assert!(
-            svc.session_claims_credential(&session.id).await,
+            svc.session_claims_credential(&session.id)
+                .await
+                .expect("session store works"),
             "a paused session keeps its claim"
         );
         assert!(
@@ -395,7 +480,9 @@ mod what_still_claims_a_credential {
             .expect("a session can be ended");
 
         assert!(
-            !svc.session_claims_credential(&session.id).await,
+            !svc.session_claims_credential(&session.id)
+                .await
+                .expect("session store works"),
             "an ended session has no claim, so its key is the sweep's to take"
         );
     }
@@ -406,8 +493,112 @@ mod what_still_claims_a_credential {
         let svc = service(Arc::clone(&sent));
         assert!(
             !svc.session_claims_credential(&crate::ids::SessionId("sesn_never".into()))
-                .await,
+                .await
+                .expect("session store works"),
             "a key naming a session nobody has is exactly what the sweep exists for"
         );
+    }
+
+    #[tokio::test]
+    async fn a_store_outage_is_not_misreported_as_an_unclaimed_credential() {
+        let store = Arc::new(FakeStore::default());
+        let svc = service_with_store(
+            Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            Arc::clone(&store),
+            None,
+            true,
+        );
+        store.fail_everything().await;
+
+        assert!(matches!(
+            svc.session_claims_credential(&crate::ids::SessionId("sesn_unreadable".into()))
+                .await,
+            Err(crate::store::StoreError::Unavailable(_))
+        ));
+    }
+}
+
+/// The durable authority used when recurring work replaces a session key.
+mod recurring_credential_context {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_active_session_returns_its_durable_owner_and_frozen_grant() {
+        let store = Arc::new(FakeStore::default());
+        let svc = service_with_store(
+            Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            Arc::clone(&store),
+            None,
+            true,
+        );
+        let owner = caller("durable-owner");
+        let session = svc
+            .create_session(&owner, crate::test_support::spec())
+            .await
+            .expect("session is durably created");
+
+        let (recorded_owner, services) = svc
+            .session_credential_context(&session.id)
+            .await
+            .expect("session store works")
+            .expect("active session has credential context");
+        assert_eq!(recorded_owner, owner.subject);
+        assert_eq!(
+            services,
+            store
+                .sessions
+                .lock()
+                .await
+                .get(session.id.as_str())
+                .expect("durable session exists")
+                .session
+                .granted_services
+                .clone()
+                .expect("new sessions freeze their service grant")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_and_terminal_sessions_have_no_credential_context() {
+        let svc = service(Arc::new(tokio::sync::Mutex::new(Vec::new())));
+        assert_eq!(
+            svc.session_credential_context(&SessionId("sesn_missing".into()))
+                .await
+                .expect("session store works"),
+            None
+        );
+
+        let owner = caller("terminal-owner");
+        let session = svc
+            .create_session(&owner, crate::test_support::spec())
+            .await
+            .expect("session is created");
+        svc.terminate_session(&owner, &session.id)
+            .await
+            .expect("session is terminated");
+        assert_eq!(
+            svc.session_credential_context(&session.id)
+                .await
+                .expect("session store works"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_store_outage_is_not_misreported_as_missing_context() {
+        let store = Arc::new(FakeStore::default());
+        let svc = service_with_store(
+            Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            Arc::clone(&store),
+            None,
+            true,
+        );
+        store.fail_everything().await;
+
+        assert!(matches!(
+            svc.session_credential_context(&SessionId("sesn_unreadable".into()))
+                .await,
+            Err(crate::store::StoreError::Unavailable(_))
+        ));
     }
 }

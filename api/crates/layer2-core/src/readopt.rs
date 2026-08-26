@@ -60,31 +60,29 @@ impl SessionService {
             })?;
 
         let mut lease = self
-            .acquire_runtime_lease_at(
-                &record,
-                crate::coordination::SessionOperation::Provision,
-            )
+            .acquire_runtime_lease_at(&record, crate::coordination::SessionOperation::Provision)
             .await
             .map_err(store_failed)?;
 
         let mut starting = record.clone();
         starting.session.status = SessionStatus::Provisioning;
         starting.session.stop_reason = None;
-        if let Err(error) = self.persist_durably(
-            &mut starting,
-            vec![Event {
-                session_id: id.clone(),
-                seq: 0,
-                kind: EventKind::StatusChanged {
-                    status: SessionStatus::Provisioning,
-                    stop_reason: None,
-                    detail: None,
-                    capability: None,
-                },
-                appended_at: String::new(),
-            }],
-        )
-        .await
+        if let Err(error) = self
+            .persist_durably(
+                &mut starting,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq: 0,
+                    kind: EventKind::StatusChanged {
+                        status: SessionStatus::Provisioning,
+                        stop_reason: None,
+                        detail: None,
+                        capability: None,
+                    },
+                    appended_at: String::new(),
+                }],
+            )
+            .await
         {
             if let Some(held) = lease.as_ref() {
                 let _ = self.store.release_session_lease(held).await;
@@ -175,24 +173,41 @@ impl SessionService {
     }
 
     pub(crate) async fn readopt(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
-        let mut lease = self
-            .acquire_runtime_lease_at(
-                record,
-                crate::coordination::SessionOperation::Readopt,
-            )
-            .await
-            .map_err(store_failed)?;
-        let result = self.readopt_with_lease(record, &mut lease).await;
-        if let Some(held) = lease.take() {
-            if let Err(error) = self.store.release_session_lease(&held).await {
-                tracing::debug!(
-                    session_id = %record.session.id,
-                    %error,
-                    "readoption lease ended before explicit release"
-                );
+        let service = Arc::clone(self);
+        let record = record.clone();
+        let id = record.session.id.clone();
+        let task_id = id.clone();
+        let readoption = tokio::spawn(async move {
+            // The task owns the operation once it starts. A caller whose wait
+            // is cancelled detaches from this task instead of abandoning an
+            // adapter channel halfway through opening it.
+            let _operation = service.readoption_gates.gate(&id).lock_owned().await;
+            if service.entries.read().await.contains_key(&id) {
+                return Ok(());
             }
-        }
-        result
+            let mut lease = service
+                .acquire_runtime_lease_at(&record, crate::coordination::SessionOperation::Readopt)
+                .await
+                .map_err(store_failed)?;
+            let result = service.readopt_with_lease(&record, &mut lease).await;
+            if let Some(held) = lease.take() {
+                if let Err(error) = service.store.release_session_lease(&held).await {
+                    tracing::debug!(
+                        session_id = %record.session.id,
+                        %error,
+                        "readoption lease ended before explicit release"
+                    );
+                }
+            }
+            result
+        });
+
+        readoption.await.map_err(|error| {
+            tracing::error!(session_id = %task_id, %error, "session readoption task failed");
+            CoreError::RuntimeUnavailable(
+                "session readoption stopped before it could complete".into(),
+            )
+        })?
     }
 
     async fn readopt_with_lease(

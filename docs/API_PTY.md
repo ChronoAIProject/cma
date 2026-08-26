@@ -57,11 +57,11 @@ The body is optional; omitting it means `takeover: false`.
 
 **What makes a ticket in a URL acceptable.** It is single-use — the second redemption is refused, and so is the second attempt after a refused first. It expires in about thirty seconds. It is bound to one session and one subject, and it grants nothing but the attachment it was issued for. A ticket presented against a different session is refused *and spent*. The long-lived credential never appears in a URL, a proxy log, or a browser history entry, which is the whole point of the exchange.
 
-**A ticket is never recorded.** The activity log keeps only what its classifier names, and `ticket` is not a name it knows. Nothing logs a ticket's value. Asking for a ticket is recorded as the attach it is for, with no query parameters and no body content.
+**The bearer ticket value is never recorded.** Durable ticket custody records only its SHA-256 digest plus the session, subject, captured authorization and attachment claim, and expiry needed to redeem it atomically on another replica. The digest cannot be presented as the ticket. The activity log keeps only what its classifier names, and `ticket` is not a name it knows; nothing logs the bearer value. Asking for a ticket is recorded as the attach it is for, with no query parameters and no body content.
 
 **Alternative considered.** The token could instead ride `Sec-WebSocket-Protocol`, which browsers do let a page set. The ticket is preferred because it keeps long-lived credentials out of the WebSocket layer entirely: a subprotocol header carries the real credential into every intermediary on the path and into whatever any of them logs, for the life of the connection, whereas a ticket's exposure is bounded to seconds and to one use.
 
-**Refusals happen before the upgrade.** A missing, spent, expired, or wrong-session ticket produces an HTTP `401` with a problem document, not a socket that opens and immediately closes — so a client can tell "you are not allowed" from "the terminal went away".
+**Refusals happen before the upgrade.** A missing, spent, expired, or wrong-session ticket produces an HTTP `401` with a problem document, not a socket that opens and immediately closes — so a client can tell "you are not allowed" from "the terminal went away". If durable ticket custody cannot be read or written, ticket issue or redemption returns the typed `503 store_failed` problem instead of pretending the ticket was invalid. That response is retryable.
 
 ### Framing
 

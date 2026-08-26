@@ -39,6 +39,7 @@
 //! demonstrated against the platform rather than assumed, nothing here may be
 //! written as though it already were.
 
+use futures_util::StreamExt as _;
 use layer2_core::{ServiceId, SessionId, SubjectId};
 use serde::Deserialize;
 
@@ -84,6 +85,24 @@ const USER_SERVICES_PATH: &str = "/api/v1/user-services";
 /// meant to act through the platform, not to reconfigure it — and a credential
 /// that could edit its own allowance would not be an allowance.
 const KEY_SCOPES: &str = "proxy read";
+
+/// NyxID exposes no supported key-list pagination, so one response is the
+/// completeness unit. Refuse oversized accounts visibly instead of buffering
+/// an arbitrary response or describing an unbounded listing as a bounded pass.
+const PROVIDER_KEY_LIST_MAX_BYTES: usize = 1024 * 1024;
+const PROVIDER_KEY_LIST_MAX_ROWS: usize = 1_000;
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum ProviderKeyListingError {
+    #[error("provider key listing request failed")]
+    Request(#[from] reqwest::Error),
+    #[error("provider key listing exceeded the {limit}-byte response limit")]
+    TooManyBytes { limit: usize },
+    #[error("provider key listing exceeded the {limit}-row limit")]
+    TooManyRows { limit: usize },
+    #[error("provider key listing response was not valid JSON")]
+    InvalidJson(#[from] serde_json::Error),
+}
 
 /// A key as the platform describes it.
 #[derive(Debug, Deserialize)]
@@ -132,6 +151,22 @@ pub fn session_of(deployment: &str, name: &str) -> Option<SessionId> {
             name.strip_prefix(&prefix)
                 .map(|session| SessionId(session.to_string()))
         })
+}
+
+fn mint_request_body(
+    deployment: &str,
+    session: &SessionId,
+    allowed_service_ids: &[String],
+) -> serde_json::Value {
+    serde_json::json!({
+        "name": key_name(deployment, session),
+        "scopes": KEY_SCOPES,
+        "allowed_service_ids": allowed_service_ids,
+        // Both stated rather than left out. The platform allows everything by
+        // default, so omission would silently turn a scoped key into an open one.
+        "allow_all_services": false,
+        "allow_all_nodes": false,
+    })
 }
 
 /// Mints and reclaims per-session credentials on the identity platform.
@@ -232,16 +267,7 @@ impl KeyIssuer {
             return None;
         }
 
-        let body = serde_json::json!({
-            "name": key_name(&self.deployment, session),
-            "scopes": KEY_SCOPES,
-            "allowed_service_ids": allowed,
-            // Both stated rather than left out. The platform allows everything
-            // by default, so an omitted field here is the difference between
-            // the feature working and the feature appearing to work.
-            "allow_all_services": false,
-            "allow_all_nodes": false,
-        });
+        let body = mint_request_body(&self.deployment, session, &allowed);
 
         let url = format!("{}{KEYS_PATH}", self.base_url);
         match self
@@ -328,7 +354,7 @@ impl KeyIssuer {
     /// this function and not about the consequence: these keys carry no
     /// expiry, so a reclaim that did not happen costs an open credential
     /// rather than a row in a list. The orphan sweep sees a surviving key again
-    /// by re-listing it; the superseded sweep sees it again because it remains
+    /// by re-listing it; the durable-debt sweep sees it again because it remains
     /// queued until this returns success. Every non-success response remains a
     /// failure: this client has no verified provider contract under which a 404
     /// proves that the intended credential was deleted. What must not happen is
@@ -338,15 +364,17 @@ impl KeyIssuer {
         let url = format!("{}{KEYS_PATH}/{id}", self.base_url);
         match self.http.delete(&url).bearer_auth(owner_token).send().await {
             Ok(resp) if resp.status().is_success() => {
-                tracing::info!(key_id = %id, "reclaimed a session credential");
+                tracing::info!("reclaimed a session credential");
                 true
             }
             Ok(resp) => {
-                tracing::warn!(key_id = %id, status = %resp.status(), "could not reclaim a session credential");
+                tracing::warn!(status = %resp.status(), "could not reclaim a session credential");
                 false
             }
-            Err(e) => {
-                tracing::warn!(key_id = %id, error = %e, "could not reach the platform to reclaim");
+            Err(_) => {
+                // The request error contains the URL, whose last component is
+                // the provider key identifier. Keep that value out of logs.
+                tracing::warn!("could not reach the platform to reclaim a session credential");
                 false
             }
         }
@@ -362,43 +390,59 @@ impl KeyIssuer {
     /// no pagination metadata. Its matching server handler accepts no page
     /// query and collects the complete database cursor. This therefore reads
     /// one complete response rather than inventing an unsupported page shape.
-    pub async fn minted_here(
+    pub(super) async fn minted_here(
         &self,
         owner_token: &str,
-    ) -> Result<Vec<(String, SessionId)>, reqwest::Error> {
+    ) -> Result<Vec<(String, SessionId)>, ProviderKeyListingError> {
         let url = format!("{}{KEYS_PATH}", self.base_url);
-        let listing: KeyListing = self
+        let response = self
             .http
             .get(&url)
             .bearer_auth(owner_token)
             .send()
             .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        Ok(listing
-            .into_rows()
+            .error_for_status()?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > PROVIDER_KEY_LIST_MAX_BYTES as u64)
+        {
+            return Err(ProviderKeyListingError::TooManyBytes {
+                limit: PROVIDER_KEY_LIST_MAX_BYTES,
+            });
+        }
+
+        let mut body = Vec::with_capacity(
+            response
+                .content_length()
+                .and_then(|length| usize::try_from(length).ok())
+                .unwrap_or_default()
+                .min(PROVIDER_KEY_LIST_MAX_BYTES),
+        );
+        let mut chunks = response.bytes_stream();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk?;
+            if body
+                .len()
+                .checked_add(chunk.len())
+                .is_none_or(|length| length > PROVIDER_KEY_LIST_MAX_BYTES)
+            {
+                return Err(ProviderKeyListingError::TooManyBytes {
+                    limit: PROVIDER_KEY_LIST_MAX_BYTES,
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
+
+        let listing: KeyListing = serde_json::from_slice(&body)?;
+        let rows = listing.into_rows();
+        if rows.len() > PROVIDER_KEY_LIST_MAX_ROWS {
+            return Err(ProviderKeyListingError::TooManyRows {
+                limit: PROVIDER_KEY_LIST_MAX_ROWS,
+            });
+        }
+        Ok(rows
             .into_iter()
             .filter_map(|k| session_of(&self.deployment, &k.name).map(|s| (k.id, s)))
-            .collect())
-    }
-
-    /// Every key this deployment named for one session on an owner's account.
-    ///
-    /// Kept over [`Self::minted_here`] rather than issuing a second listing
-    /// request shape: pagination and platform response handling belong to that
-    /// one path, whether a caller is sweeping an account or releasing one
-    /// session after this process has forgotten what it minted.
-    pub async fn minted_for(
-        &self,
-        session: &SessionId,
-        owner_token: &str,
-    ) -> Result<Vec<String>, reqwest::Error> {
-        Ok(self
-            .minted_here(owner_token)
-            .await?
-            .into_iter()
-            .filter_map(|(id, named)| (named == *session).then_some(id))
             .collect())
     }
 }
@@ -630,6 +674,24 @@ mod tests {
     }
 
     #[test]
+    fn the_mint_body_has_exactly_the_demonstrated_non_expiring_field_set() {
+        assert_eq!(
+            mint_request_body(
+                "production",
+                &SessionId("sesn_abc".into()),
+                &["user-service-1".into(), "user-service-2".into()],
+            ),
+            serde_json::json!({
+                "name": "cma:production:sesn_abc",
+                "scopes": "proxy read",
+                "allowed_service_ids": ["user-service-1", "user-service-2"],
+                "allow_all_services": false,
+                "allow_all_nodes": false,
+            })
+        );
+    }
+
+    #[test]
     fn a_new_key_carries_the_deployment_and_the_session_it_belongs_to() {
         let name = key_name("chrono-bot-prod", &SessionId("sesn_abc".into()));
         assert_eq!(name, "cma:chrono-bot-prod:sesn_abc");
@@ -710,6 +772,48 @@ mod tests {
 
         assert_eq!(listed.len(), 125);
         assert_eq!(listed[124].1, SessionId("sesn_124".into()));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_oversized_unpaginated_key_row_set_fails_visibly() {
+        let keys = (0..=PROVIDER_KEY_LIST_MAX_ROWS)
+            .map(|number| {
+                serde_json::json!({
+                    "id": format!("k{number}"),
+                    "name": format!("foreign-{number}"),
+                })
+            })
+            .collect::<Vec<_>>();
+        let (base, server) = platform(StatusCode::OK, serde_json::json!({ "keys": keys })).await;
+
+        let result = issuer(&base).minted_here("owner-access").await;
+
+        assert!(matches!(
+            result,
+            Err(ProviderKeyListingError::TooManyRows {
+                limit: PROVIDER_KEY_LIST_MAX_ROWS
+            })
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_oversized_unpaginated_key_response_fails_before_json_buffering() {
+        let oversized_name = "x".repeat(PROVIDER_KEY_LIST_MAX_BYTES + 1);
+        let body = serde_json::json!({
+            "keys": [{ "id": "k", "name": oversized_name }]
+        });
+        let (base, server) = platform(StatusCode::OK, body).await;
+
+        let result = issuer(&base).minted_here("owner-access").await;
+
+        assert!(matches!(
+            result,
+            Err(ProviderKeyListingError::TooManyBytes {
+                limit: PROVIDER_KEY_LIST_MAX_BYTES
+            })
+        ));
         server.abort();
     }
 
