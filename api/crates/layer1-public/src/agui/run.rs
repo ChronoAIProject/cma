@@ -211,22 +211,23 @@ pub(super) async fn run(
         .capabilities
         .require(SessionCapability::Conversation)?;
 
-    // Read before the turn is opened, so the stream starts exactly where the
-    // client's own actions begin and replays nothing it has already seen.
-    let from = service
-        .events_since(&caller, &id, None)
-        .await?
-        .last()
-        .map(|e| e.seq)
-        .unwrap_or(0);
-
     let continuation = !body.resume.is_empty();
-    if continuation {
+    let from = if continuation {
+        // A continuation has no durable TurnStarted of its own. Snapshot before
+        // resolving so every durable effect of the answer remains on its run
+        // stream, after the synthetic cursorless boundary.
+        let from = service
+            .events_since(&caller, &id, None)
+            .await?
+            .last()
+            .map(|event| event.seq)
+            .unwrap_or(0);
         for item in &body.resume {
             service
                 .resolve_approval(&caller, &id, item.interrupt_id.clone(), decision_of(item))
                 .await?;
         }
+        from
     } else {
         let prompt = body
             .messages
@@ -237,8 +238,16 @@ pub(super) async fn run(
             .ok_or_else(|| {
                 CoreError::InvalidRequest("a run needs a user message to send".to_string())
             })?;
-        service.send_prompt(&caller, &id, prompt).await?;
-    }
+        // Anchor this response immediately before its own durable boundary.
+        // Another runtime update may have landed while the request was being
+        // admitted; replaying from an earlier snapshot could put that update
+        // ahead of RUN_STARTED even though this prompt itself is ordered.
+        service
+            .send_prompt(&caller, &id, prompt)
+            .await?
+            .checked_sub(1)
+            .expect("a durable TurnStarted has a positive sequence")
+    };
 
     // Subscribed after the prompt is sent, so the turn is already underway and
     // the receiver exists before the runtime has anything to say. A session
@@ -252,9 +261,11 @@ pub(super) async fn run(
         service,
         caller,
         id,
-        run_id,
+        RunBoundary {
+            id: run_id,
+            continuation,
+        },
         from,
-        continuation,
         watching,
         resources,
     ))
@@ -293,6 +304,11 @@ fn continuation_started(run_id: &str, thread_id: &str) -> super::project::AguiEv
     }
 }
 
+struct RunBoundary {
+    id: String,
+    continuation: bool,
+}
+
 /// The run's event stream, from `after` until the turn ends.
 ///
 /// Three lanes on one stream. The durable one is polled from the log and is
@@ -309,9 +325,8 @@ fn events(
     service: Arc<SessionService>,
     caller: layer2_core::Caller,
     id: SessionId,
-    run_id: String,
+    run: RunBoundary,
     after: u64,
-    continuation: bool,
     watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
     resources: Option<tokio::sync::broadcast::Receiver<layer2_core::ResourceReading>>,
 ) -> impl Stream<Item = Result<SseEvent, std::convert::Infallible>> {
@@ -331,8 +346,9 @@ fn events(
         ended: bool,
     }
 
-    let pending = continuation
-        .then(|| continuation_started(&run_id, &id.0))
+    let pending = run
+        .continuation
+        .then(|| continuation_started(&run.id, &id.0))
         .into_iter()
         .collect();
 
@@ -341,7 +357,7 @@ fn events(
             service,
             caller,
             id,
-            run_id,
+            run_id: run.id,
             seq: after,
             pending,
             watching,
