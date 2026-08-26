@@ -49,11 +49,15 @@ const INTERACTION_LEASE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 /// Leave enough authority for the bounded sender to finish after its final check.
 const INTERACTION_DELIVERY_MARGIN: Duration = Duration::from_secs(5);
 
-/// Exact runtime boundary plus the live permission to begin one mutation.
+/// Exact runtime boundary plus the live permission to begin one interaction step.
 ///
 /// Interaction closures may wait on process-local gates after durable
-/// acquisition. They must call [`Self::ensure_delivery_allowed`] while holding
-/// that gate, immediately before cloning a sender or committing a mutation.
+/// acquisition. They must call [`Self::ensure_delivery_allowed`] immediately
+/// before every external delivery, or immediately before a purely local
+/// mutation. Once an external delivery returns a successful receipt, however,
+/// its causally required local enqueue or durable commit is mandatory
+/// service-owned finalization and must not be refused by checking this guard
+/// again.
 #[derive(Clone)]
 pub(crate) struct RuntimeInteractionAuthority {
     boundary: SessionBoundary,
@@ -76,11 +80,23 @@ impl RuntimeInteractionAuthority {
         }
     }
 
-    /// Refuse delivery without enough authority for the bounded send to finish.
+    /// Whether durable coordination already excludes concurrent lifecycle work.
+    ///
+    /// Compatibility interactions must retain the process-local
+    /// lifecycle-before-input lock order. Durably fenced interactions can skip
+    /// that lifecycle gate because the interaction lease excludes lifecycle
+    /// operations at the store boundary.
+    pub(crate) fn is_durably_fenced(&self) -> bool {
+        self.deadline().is_some()
+    }
+
+    /// Refuse a new delivery without enough authority for its bounded send.
     ///
     /// This is the only boundary accessor so generation validation cannot be
-    /// separated from the live validity check. Multi-send work must call it
-    /// again immediately before each delivery.
+    /// separated from the live validity check. Call it immediately before each
+    /// external delivery, or before a purely local mutation. Do not call it
+    /// again between a successful external receipt and the local enqueue or
+    /// durable commit required to finalize that receipt.
     pub(crate) fn ensure_delivery_allowed(&self) -> Result<&SessionBoundary, CoreError> {
         let validity = self
             .validity
@@ -497,10 +513,19 @@ impl SessionService {
 
     /// Run one interaction while its exact runtime authority remains fenced.
     ///
-    /// The action must take any process-local input gate itself. Acquiring the
-    /// durable lease first is the lock order used by handover and prevents a
-    /// local reader from holding that gate while waiting behind a handover that
-    /// needs the corresponding writer.
+    /// The action must take any required process-local input gate itself.
+    /// Acquiring the durable lease first is the lock order used by handover and
+    /// prevents a local reader from holding that gate while waiting behind a
+    /// handover that needs the corresponding writer. Durably fenced actions may
+    /// skip a process-local lifecycle gate; compatibility actions must preserve
+    /// the lifecycle-before-input lock order.
+    ///
+    /// Call [`RuntimeInteractionAuthority::ensure_delivery_allowed`]
+    /// immediately before every external delivery, or before a purely local
+    /// mutation. After an external delivery returns a successful receipt, its
+    /// causally required local enqueue or durable commit is mandatory
+    /// service-owned finalization: complete it without re-checking the deadline
+    /// guard, even if the interaction lease expires while it settles.
     pub(crate) async fn run_runtime_interaction_at<T, A, F>(
         self: &Arc<Self>,
         record: &crate::store::SessionRecord,
@@ -560,27 +585,22 @@ impl SessionService {
             let action_result = service
                 .run_owned_runtime_interaction(lease.as_ref(), authority, action)
                 .await;
+            // A release can commit and still lose or indefinitely delay its
+            // response. Publish the known action result before starting it so
+            // cleanup cannot invite a duplicate non-idempotent delivery.
+            let _ = finished.send(action_result);
 
             let Some(lease) = lease else {
-                let _ = finished.send(action_result);
                 return;
             };
-            match service.store.release_session_lease(&lease).await {
-                Ok(()) => {
-                    let _ = finished.send(action_result);
-                }
-                Err(first_error) => {
-                    // Delivery has a known result. Report it before cleanup so
-                    // an unavailable release cannot invite duplicate input.
-                    let _ = finished.send(action_result);
-                    if let Err(retry_error) = service.store.release_session_lease(&lease).await {
-                        tracing::warn!(
-                            session_id = %lease.session_id,
-                            error = %retry_error,
-                            first_error = %first_error,
-                            "interaction lease release remained unresolved after exact retry"
-                        );
-                    }
+            if let Err(first_error) = service.store.release_session_lease(&lease).await {
+                if let Err(retry_error) = service.store.release_session_lease(&lease).await {
+                    tracing::warn!(
+                        session_id = %lease.session_id,
+                        error = %retry_error,
+                        first_error = %first_error,
+                        "interaction lease release remained unresolved after exact retry"
+                    );
                 }
             }
         });
