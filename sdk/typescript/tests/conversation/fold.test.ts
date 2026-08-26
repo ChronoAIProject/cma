@@ -186,6 +186,65 @@ describe('a plane change is a boundary', () => {
   });
 });
 
+describe('a durable pending approval', () => {
+  it('disappears for a watcher and a full replay when another tab resolves it', () => {
+    const interrupted: AguiEvent = {
+      type: 'RUN_FINISHED',
+      seq: 0,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      timestamp: '2026-08-26T01:02:03Z',
+      outcome: {
+        type: 'interrupt',
+        interrupts: [
+          {
+            id: 'approval/~one',
+            reason: 'cma:command_execution',
+            message: 'Run the command?',
+          },
+        ],
+      },
+    };
+    const requested: AguiEvent = {
+      type: 'STATE_DELTA',
+      seq: 7,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [
+        {
+          op: 'add',
+          path: '/pendingApprovals/approval~1~0one',
+          value: {
+            id: 'approval/~one',
+            reason: 'cma:command_execution',
+            message: 'Run the command?',
+          },
+        },
+      ],
+    };
+    const resolved: AguiEvent = {
+      type: 'STATE_DELTA',
+      seq: 8,
+      threadId: 'sesn_1',
+      runId: 'run_1',
+      patch: [{ op: 'remove', path: '/pendingApprovals/approval~1~0one' }],
+    };
+
+    const waiting = stream([interrupted, requested]);
+    expect(waiting.pending).toMatchObject({
+      id: 'approval/~one',
+      askedAt: '2026-08-26T01:02:03Z',
+    });
+    expect(waiting.aguiState.pendingApprovals).toHaveProperty('approval/~one');
+
+    const watched = reduce(waiting, resolved);
+    const replayed = stream([interrupted, requested, resolved]);
+    expect(watched).toEqual(replayed);
+    expect(watched.pending).toBeUndefined();
+    expect(watched.aguiState.pendingApprovals).toEqual({});
+  });
+});
+
 describe('canonical state replay', () => {
   it('starts every production fold from a fresh canonical document', () => {
     const first = initialConversation();

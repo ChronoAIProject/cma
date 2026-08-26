@@ -16,6 +16,13 @@
 /** Where an AG-UI event's RFC 6902 patches live — `docs/API_AGUI.md` §3. */
 export const STATE_DELTA_PATCHES = 'delta';
 
+/** The durable state value for one approval the session is waiting on. */
+export interface PendingApprovalState {
+  readonly id: string;
+  readonly reason: string;
+  readonly message: string | null;
+}
+
 /** The public document an AG-UI session's first `STATE_DELTA` patches. */
 export interface AguiState {
   /** Additive protocol fields a newer control plane may introduce. */
@@ -32,6 +39,7 @@ export interface AguiState {
   plan: unknown;
   configOptions: unknown;
   availableCommands: unknown[] | null;
+  pendingApprovals: Record<string, PendingApprovalState>;
   signIn: unknown;
   gaps: unknown[];
   planeChanges: unknown[];
@@ -59,6 +67,7 @@ export function initialState(): AguiState {
     plan: null,
     configOptions: null,
     availableCommands: null,
+    pendingApprovals: {},
     signIn: null,
     gaps: [],
     planeChanges: [],
@@ -133,6 +142,8 @@ export const PATHS = {
   cost: '/usage/cost',
   /** The permission mode the agent is running under. */
   mode: '/mode',
+  /** One pending approval, keyed by its RFC 6901-escaped request id. */
+  pendingApproval: '/pendingApprovals/{requestId}',
   /** What the agent intends to do, as steps. */
   plan: '/plan',
   /** The settings this session may change, in the kernel's own words. */
