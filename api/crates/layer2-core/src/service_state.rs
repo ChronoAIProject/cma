@@ -193,6 +193,8 @@ pub struct SessionService {
     /// Separate from lifecycle installation because a conversation starts
     /// reporting sign-in and command updates before its live entry exists.
     pub(crate) conversation_order_gates: SessionGates,
+    /// Serializes prompt admission until an accepted turn is visible.
+    pub(crate) prompt_gates: SessionGates,
     /// The single writer of every session's event sequence.
     ///
     /// Owned by the durable lanes, so allocation and FIFO insertion share the

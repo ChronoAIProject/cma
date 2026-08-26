@@ -126,8 +126,15 @@ pub(crate) fn conversing() -> KernelCapabilities {
 
 /// A live conversation session, and the runtime holding the other end.
 pub(crate) async fn conversation() -> (Arc<SessionService>, Caller, SessionId, Arc<FakeAdapter>) {
+    conversation_with(conversing()).await
+}
+
+/// A live conversation backed by a test kernel with an exact advertised set.
+pub(crate) async fn conversation_with(
+    capabilities: KernelCapabilities,
+) -> (Arc<SessionService>, Caller, SessionId, Arc<FakeAdapter>) {
     let adapter = Arc::new(FakeAdapter {
-        capabilities: conversing(),
+        capabilities,
         ..FakeAdapter::default()
     });
     let profiles =

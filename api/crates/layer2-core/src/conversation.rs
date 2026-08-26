@@ -84,16 +84,42 @@ impl SessionService {
         id: &SessionId,
         text: String,
     ) -> Result<(), CoreError> {
-        // Authorize and, after a control-plane restart, readopt before taking
-        // the ordering gate. Opening a conversation can itself report sign-in
-        // and command updates, and those must remain foldable during readoption.
+        // One prompt must publish its Running transition before the next one
+        // decides whether it is steering. This gate is deliberately separate
+        // from the lifecycle gate `conversation_input` may acquire in readoption.
+        let _admission = self.prompt_gates.gate(id).lock_owned().await;
+        // A recorded running conversation can be refused before recovery is
+        // attempted, so unsupported mid-turn input reaches neither a runtime
+        // nor the log. An older record may still carry an unrecorded grant;
+        // `conversation_input` settles that record, and the live check below
+        // applies the same rule after it has done so.
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if record.session.status == SessionStatus::Running
+            && !record.session.capabilities.unrecorded()
+        {
+            record
+                .session
+                .capabilities
+                .require(Capability::Conversation)?;
+            record.session.capabilities.require(Capability::Steer)?;
+        }
+
+        // Readopt before taking the update-ordering gate. Opening a conversation
+        // can itself report sign-in and command updates, and those must remain
+        // foldable while lifecycle recovery runs.
         self.conversation_input(caller, id, Capability::Conversation)
             .await?;
         let ordering = self.conversation_order_gates.gate(id);
         let ordered_turn = ordering.lock().await;
-        // The entry may have been replaced between readoption and the gate.
-        // Drive the sender that is live now, under the same gate its folder
-        // takes before recording anything that delivery can cause.
+        // The live entry may have changed during readoption. Recheck both prompt
+        // capabilities and drive the sender that is current under the same gate
+        // its folder takes before recording delivery effects.
         let input = {
             let entries = self.entries.read().await;
             let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
@@ -101,6 +127,9 @@ impl SessionService {
                 .session
                 .capabilities
                 .require(Capability::Conversation)?;
+            if entry.session.status == SessionStatus::Running {
+                entry.session.capabilities.require(Capability::Steer)?;
+            }
             entry.conversation.clone().ok_or_else(|| {
                 CoreError::RuntimeUnavailable("this session holds no conversation".into())
             })?
