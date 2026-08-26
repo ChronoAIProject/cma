@@ -1,6 +1,6 @@
 import type { AguiEvent } from '../agui/index.js';
 import { applyStateDelta } from '../agui/state.js';
-import { GAP_VALUE_FRAMES, type AguiState } from '../wire.js';
+import { GAP_VALUE_FRAMES, PATHS, type AguiState } from '../wire.js';
 import type { AvailableCommand, ConfigOption, Conversation, Entry, PlanStep } from './model.js';
 import { memoryPressureFrom, resourcesFrom } from './resources.js';
 
@@ -21,7 +21,7 @@ export function reduceStateDelta(
     stateDeltaSeq: event.ephemeral === true ? state.stateDeltaSeq : event.seq,
   };
 
-  next = projectScalarState(next, previous, aguiState);
+  next = projectScalarState(next, previous, aguiState, event);
   next = projectGaps(next, previous, aguiState, event);
   next = projectPlaneChanges(next, previous, aguiState, event);
   next = projectContextCompactions(next, previous, aguiState, event);
@@ -32,8 +32,25 @@ function projectScalarState(
   state: Conversation,
   previous: AguiState,
   current: AguiState,
+  event: Extract<AguiEvent, { type: 'STATE_DELTA' }>,
 ): Conversation {
   let next = state;
+
+  // A returning RUN_ERROR disables interaction without rewriting canonical
+  // state, so the later durable Ready report can replace an identical value.
+  const statusReported = event.patch.some(
+    (operation) => operation.op === 'replace' && operation.path === PATHS.status,
+  );
+  if (statusReported || fieldChanged(previous, current, 'status')) {
+    const status = fieldOf(current, 'status');
+    next = {
+      ...next,
+      // Unknown future values stay noninteractive until this SDK learns what
+      // they mean. `running` is lifecycle-interactive; steer admission still
+      // depends on the granted capability and concurrent-input policy.
+      sessionInteractive: status === 'ready' || status === 'running',
+    };
+  }
 
   if (fieldChanged(previous, current, 'resources')) {
     next = { ...next, resources: resourcesFrom(fieldOf(current, 'resources')) };
