@@ -97,6 +97,13 @@ impl SessionService {
         let record = self.record(id).await?;
         self.authorize_control(caller, &record, "terminate")?;
         let owner = record.session.owner.clone();
+        let lease = self
+            .acquire_runtime_lease_at(&record, crate::coordination::SessionOperation::Lifecycle)
+            .await
+            .map_err(store_failed)?;
+        if let Some(lease) = lease {
+            return self.end_session_coordinated(record, lease, lifecycle).await;
+        }
         if record.session.status.is_terminal() {
             return Ok(owner);
         }
@@ -232,6 +239,237 @@ impl SessionService {
         .map_err(store_failed)
     }
 
+    /// End a coordinated session without ever deleting by provider handle alone.
+    ///
+    /// Current authority is cleared atomically into exact cleanup debt before
+    /// the terminal status is committed. Already-terminal rows take this path
+    /// too, which lets an idempotent retry finish authority or cleanup work left
+    /// by a process that died between those commits.
+    async fn end_session_coordinated(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        mut lease: crate::coordination::SessionLease,
+        lifecycle: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<SubjectId, CoreError> {
+        let id = record.session.id.clone();
+        let owner = record.session.owner.clone();
+        let adapter = self.adapters.get(&record.session.kernel).cloned();
+        if self.entries.read().await.contains_key(&id) {
+            self.capture_transcript(&id).await;
+        }
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+
+        if record.runtime_id.is_some() {
+            if let Err(error) = self.retire_current_runtime(&mut lease).await {
+                if !self.confirm_retired_lifecycle_authority(&mut lease).await {
+                    // The store result is unknown. Keeping a live entry would
+                    // let input reach a runtime whose authority may already be
+                    // retired, so fail closed until reconciliation can read it.
+                    self.entries.write().await.remove(&id);
+                    drop(input_fence);
+                    let _ = self.store.release_session_lease(&lease).await;
+                    drop(lifecycle);
+                    return Err(store_failed(error));
+                }
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "runtime retirement was confirmed after an unknown store result"
+                );
+            }
+        }
+
+        let mut terminal = match self.store.get(&id).await {
+            Ok(Some(terminal)) if terminal.runtime_id.is_none() => terminal,
+            Ok(Some(_)) => {
+                self.entries.write().await.remove(&id);
+                drop(input_fence);
+                let _ = self.store.release_session_lease(&lease).await;
+                drop(lifecycle);
+                return Err(CoreError::RuntimeUnavailable(
+                    "runtime authority changed while the session was ending".into(),
+                ));
+            }
+            Ok(None) => {
+                self.entries.write().await.remove(&id);
+                drop(input_fence);
+                let _ = self.store.release_session_lease(&lease).await;
+                drop(lifecycle);
+                return Err(CoreError::SessionNotFound);
+            }
+            Err(error) => {
+                self.entries.write().await.remove(&id);
+                drop(input_fence);
+                let _ = self.store.release_session_lease(&lease).await;
+                drop(lifecycle);
+                return Err(store_failed(error));
+            }
+        };
+
+        if !terminal.session.status.is_terminal()
+            || terminal.session.stop_reason != Some(StopReason::UserTerminated)
+            || terminal.session.recovery_state != RecoveryState::Retired
+        {
+            terminal.session.status = SessionStatus::Terminated;
+            terminal.session.stop_reason = Some(StopReason::UserTerminated);
+            terminal.session.recovery_state = RecoveryState::Retired;
+            if let Err(error) = self
+                .persist_durably(
+                    &mut terminal,
+                    vec![Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::StatusChanged {
+                            status: SessionStatus::Terminated,
+                            stop_reason: Some(StopReason::UserTerminated),
+                            detail: None,
+                            capability: None,
+                        },
+                        appended_at: String::new(),
+                    }],
+                )
+                .await
+            {
+                self.entries.write().await.remove(&id);
+                drop(input_fence);
+                let _ = self.store.release_session_lease(&lease).await;
+                drop(lifecycle);
+                return Err(store_failed(error));
+            }
+        }
+
+        let boundary = crate::coordination::SessionBoundary::for_record(
+            &terminal,
+            lease.boundary.authority.generation,
+        );
+        if boundary != lease.boundary {
+            if let Err(error) = self.advance_lifecycle_lease(&mut lease, &boundary).await {
+                self.entries.write().await.remove(&id);
+                drop(input_fence);
+                let _ = self.store.release_session_lease(&lease).await;
+                drop(lifecycle);
+                return Err(store_failed(error));
+            }
+        }
+
+        if let Some(entry) = self.entries.write().await.get_mut(&id) {
+            entry.session.status = terminal.session.status;
+            entry.session.stop_reason = terminal.session.stop_reason;
+            entry.session.recovery_state = terminal.session.recovery_state;
+            entry.session.last_seq = terminal.session.last_seq;
+            entry.runtime = None;
+            entry.input = None;
+            entry.conversation = None;
+        }
+        drop(input_fence);
+
+        if let Some(adapter) = adapter {
+            match self.store.runtime_cleanup_debts(&id).await {
+                Ok(cleanups) => {
+                    for cleanup in cleanups {
+                        if let Err(error) = self
+                            .reclaim_runtime_with_lease(&adapter, &lease, &cleanup)
+                            .await
+                        {
+                            tracing::warn!(
+                                session_id = %id,
+                                runtime = %cleanup.runtime_id,
+                                generation = cleanup.generation,
+                                %error,
+                                "terminated runtime cleanup remains durable for retry"
+                            );
+                        }
+                    }
+                }
+                Err(error) => tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "cannot enumerate terminated runtime cleanup debt"
+                ),
+            }
+        }
+        if let Some(source) = self.credentials.as_ref() {
+            source.release(&id).await;
+        }
+        if let Err(error) = self.store.release_session_lease(&lease).await {
+            tracing::debug!(
+                session_id = %id,
+                %error,
+                "termination lease ended before explicit release"
+            );
+        }
+        drop(lifecycle);
+        tracing::info!(session_id = %id, "session terminated");
+        Ok(owner)
+    }
+
+    /// Resolve an unknown retirement result without inventing a new operation.
+    ///
+    /// The same lease token can adopt the store's resulting no-runtime boundary
+    /// only when that exact token still owns it. A successor lease, changed
+    /// status, or surviving runtime all make renewal fail or refuse confirmation.
+    async fn confirm_retired_lifecycle_authority(
+        &self,
+        lease: &mut crate::coordination::SessionLease,
+    ) -> bool {
+        let record = match self.store.get(&lease.session_id).await {
+            Ok(Some(record)) => record,
+            _ => return false,
+        };
+        let authority = match self.store.runtime_authority(&lease.session_id).await {
+            Ok(Some(authority)) => authority,
+            _ => return false,
+        };
+        if record.runtime_id.is_some()
+            || authority.runtime_id.is_some()
+            || authority.generation != lease.boundary.authority.generation
+            || record.session.status != lease.boundary.status
+        {
+            return false;
+        }
+        let boundary = crate::coordination::SessionBoundary {
+            status: record.session.status,
+            authority,
+        };
+        let mut confirmed = lease.clone();
+        confirmed.boundary = boundary;
+        if self.renew_runtime_lease(Some(&confirmed)).await.is_err() {
+            return false;
+        }
+        *lease = confirmed;
+        true
+    }
+
+    /// Advance a lifecycle lease with an idempotent retry and boundary receipt.
+    async fn advance_lifecycle_lease(
+        &self,
+        lease: &mut crate::coordination::SessionLease,
+        boundary: &crate::coordination::SessionBoundary,
+    ) -> Result<(), StoreError> {
+        let error = match self.store.advance_session_lease(lease, boundary).await {
+            Ok(()) => return Ok(()),
+            Err(StoreError::Unavailable(_)) => {
+                match self.store.advance_session_lease(lease, boundary).await {
+                    Ok(()) => return Ok(()),
+                    Err(error) => error,
+                }
+            }
+            Err(error) => error,
+        };
+
+        // A transport error may have hidden a committed advance. Confirm it by
+        // renewing this token at the target boundary; an uncommitted advance
+        // still has the old held boundary and cannot pass this comparison.
+        let mut confirmed = lease.clone();
+        confirmed.boundary = boundary.clone();
+        if self.renew_runtime_lease(Some(&confirmed)).await.is_ok() {
+            *lease = confirmed;
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
     /// Stop a session's runtime, keeping the session.
     ///
     /// The reversible half of ending something. The sandbox goes, so nothing
@@ -275,10 +513,7 @@ impl SessionService {
             return Err(CoreError::SessionTerminated);
         }
         let lease = self
-            .acquire_runtime_lease_at(
-                &record,
-                crate::coordination::SessionOperation::Lifecycle,
-            )
+            .acquire_runtime_lease_at(&record, crate::coordination::SessionOperation::Lifecycle)
             .await
             .map_err(store_failed)?;
         if let Some(lease) = lease {
@@ -486,7 +721,11 @@ impl SessionService {
             &resting,
             lease.boundary.authority.generation,
         );
-        if let Err(error) = self.store.advance_session_lease(&mut lease, &boundary).await {
+        if let Err(error) = self
+            .store
+            .advance_session_lease(&mut lease, &boundary)
+            .await
+        {
             self.entries.write().await.remove(&id);
             drop(input_fence);
             let _ = self.store.release_session_lease(&lease).await;
@@ -543,9 +782,10 @@ impl SessionService {
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
         }
-        if !record.session.status.is_terminal() {
-            self.terminate_session(caller, id).await?;
-        }
+        // Idempotent termination also repairs a terminal row whose authority or
+        // exact cleanup debt survived an earlier process. Delete must not skip
+        // that repair and then erase the only row capable of safe reclamation.
+        self.terminate_session(caller, id).await?;
         self.entries.write().await.remove(id);
         loop {
             match self.delete_durably(id).await {

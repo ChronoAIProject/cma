@@ -30,51 +30,6 @@ fn operator() -> Caller {
     )
 }
 
-async fn install_coordinated_authority(
-    store: &FakeStore,
-    adapter: &FakeAdapter,
-    id: &SessionId,
-) -> String {
-    let record = store.get(id).await.unwrap().unwrap();
-    let authority = store.runtime_authority(id).await.unwrap().unwrap();
-    let request = SessionLeaseRequest::new(
-        id.clone(),
-        "lifecycle-coordination-test",
-        SessionBoundary {
-            status: record.session.status,
-            authority,
-        },
-        SessionOperation::Handover,
-        Duration::from_secs(30),
-    );
-    let mut lease = store.acquire_session_lease(&request).await.unwrap();
-    let reservation = store
-        .reserve_runtime_generation(&lease, "lifecycle-candidate")
-        .await
-        .unwrap();
-    let runtime = "runtime-coordinated".to_string();
-    adapter
-        .running
-        .lock()
-        .await
-        .insert(runtime.clone(), Some(id.0.clone()));
-    adapter
-        .generations
-        .lock()
-        .await
-        .insert(runtime.clone(), reservation.generation);
-    let candidate = store
-        .register_runtime_candidate(&lease, &reservation, &runtime)
-        .await
-        .unwrap();
-    store
-        .switch_runtime_authority(&mut lease, &candidate)
-        .await
-        .unwrap();
-    store.release_session_lease(&lease).await.unwrap();
-    runtime
-}
-
 #[tokio::test]
 async fn a_terminated_session_remains_listed_until_it_is_deleted() {
     // Terminate and delete are different acts. A finished conversation is
@@ -83,6 +38,7 @@ async fn a_terminated_session_remains_listed_until_it_is_deleted() {
     let caller = user("alice");
     let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
     let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
 
     svc.terminate_session(&caller, &created.id)
         .await
@@ -110,43 +66,139 @@ async fn a_terminated_session_remains_listed_until_it_is_deleted() {
 }
 
 #[tokio::test]
-async fn coordinated_lifecycle_refuses_handle_only_provider_mutations() {
+async fn coordinated_termination_retries_exact_debt_before_delete() {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
     let caller = user("alice");
     let svc = service(Arc::clone(&store), Arc::clone(&adapter));
     let created = svc.create_session(&caller, spec()).await.expect("created");
     await_settled(&svc, &caller, &created.id).await;
-    let current = install_coordinated_authority(&store, &adapter, &created.id).await;
-    let terminated_before = adapter.terminated.lock().await.len();
-
-    assert!(matches!(
-        svc.stop_session(&caller, &created.id).await,
-        Err(CoreError::RuntimeUnavailable(_))
-    ));
-    assert!(matches!(
-        svc.terminate_session(&caller, &created.id).await,
-        Err(CoreError::RuntimeUnavailable(_))
-    ));
-    assert!(matches!(
-        svc.delete_session(&caller, &created.id).await,
-        Err(CoreError::RuntimeUnavailable(_))
-    ));
-
-    assert_eq!(adapter.terminated.lock().await.len(), terminated_before);
     let durable = store.get(&created.id).await.unwrap().unwrap();
-    assert_eq!(durable.session.status, SessionStatus::Ready);
-    assert_eq!(durable.runtime_id.as_deref(), Some(current.as_str()));
+    let runtime = durable.runtime_id.unwrap();
+    let generation = store
+        .runtime_authority(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .generation;
+
+    // Make the first conditional cleanup refuse this stale provider identity.
+    // Termination must still commit terminal state and retain exact debt.
+    adapter.generations.lock().await.insert(
+        runtime.clone(),
+        std::num::NonZeroU64::new(generation + 1).unwrap(),
+    );
+    svc.terminate_session(&caller, &created.id)
+        .await
+        .expect("terminal state commits even when cleanup must be retried");
     assert_eq!(
         store
-            .runtime_authority(&created.id)
+            .get(&created.id)
             .await
             .unwrap()
             .unwrap()
-            .generation,
+            .session
+            .status,
+        SessionStatus::Terminated
+    );
+    assert_eq!(
+        store
+            .runtime_cleanup_debts(&created.id)
+            .await
+            .unwrap()
+            .len(),
         1
     );
+    assert!(adapter.running.lock().await.contains_key(&runtime));
+
+    // Deleting an already-terminal row re-enters coordinated termination, so
+    // restoring the exact provider identity lets it settle debt before the row
+    // (the only cleanup authority) is removed.
+    adapter.generations.lock().await.insert(
+        runtime.clone(),
+        std::num::NonZeroU64::new(generation).unwrap(),
+    );
+    svc.delete_session(&caller, &created.id)
+        .await
+        .expect("delete retries and settles terminal cleanup debt");
+    assert!(store.get(&created.id).await.unwrap().is_none());
+    assert!(!adapter.running.lock().await.contains_key(&runtime));
 }
+
+#[tokio::test]
+async fn coordinated_termination_preserves_each_failed_identity_among_multiple_debts() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let caller = user("alice");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
+
+    let original = store.get(&created.id).await.unwrap().unwrap();
+    let original_runtime = original.runtime_id.clone().unwrap();
+    let authority = store.runtime_authority(&created.id).await.unwrap().unwrap();
+    let request = SessionLeaseRequest::new(
+        created.id.clone(),
+        "terminal-multiple-debt-test",
+        SessionBoundary {
+            status: original.session.status,
+            authority,
+        },
+        SessionOperation::Handover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store.acquire_session_lease(&request).await.unwrap();
+    let reservation = store
+        .reserve_runtime_generation(&lease, "terminal-current-candidate")
+        .await
+        .unwrap();
+    let current_runtime = "runtime-terminal-current".to_string();
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(current_runtime.clone(), Some(created.id.0.clone()));
+    adapter
+        .generations
+        .lock()
+        .await
+        .insert(current_runtime.clone(), reservation.generation);
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, &current_runtime)
+        .await
+        .unwrap();
+    let original_cleanup = store
+        .switch_runtime_authority(&mut lease, &candidate)
+        .await
+        .unwrap()
+        .cleanup
+        .expect("switching retains the former authority as exact debt");
+    store.release_session_lease(&lease).await.unwrap();
+
+    adapter.generations.lock().await.insert(
+        original_runtime.clone(),
+        std::num::NonZeroU64::new(original_cleanup.generation + 100).unwrap(),
+    );
+    svc.terminate_session(&caller, &created.id)
+        .await
+        .expect("one failed cleanup does not block the other debt");
+
+    let remaining = store.runtime_cleanup_debts(&created.id).await.unwrap();
+    assert_eq!(remaining, vec![original_cleanup.clone()]);
+    assert!(adapter.running.lock().await.contains_key(&original_runtime));
+    assert!(!adapter.running.lock().await.contains_key(&current_runtime));
+
+    adapter.generations.lock().await.insert(
+        original_runtime.clone(),
+        std::num::NonZeroU64::new(original_cleanup.generation).unwrap(),
+    );
+    svc.delete_session(&caller, &created.id)
+        .await
+        .expect("delete retries the one remaining exact identity");
+    assert!(store.get(&created.id).await.unwrap().is_none());
+    assert!(!adapter.running.lock().await.contains_key(&original_runtime));
+}
+
 #[tokio::test]
 async fn deleting_a_running_session_tears_its_runtime_down_first() {
     // Otherwise the record vanishes while the sandbox keeps running, and the
@@ -179,6 +231,7 @@ async fn deleting_removes_the_durable_history_too() {
     let caller = user("alice");
     let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
     let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
     svc.delete_session(&caller, &created.id)
         .await
         .expect("deletes");
@@ -198,6 +251,7 @@ async fn a_terminated_session_cannot_be_attached_to() {
     let caller = user("alice");
     let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
     let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
     svc.terminate_session(&caller, &created.id)
         .await
         .expect("terminates");
@@ -220,6 +274,7 @@ async fn terminating_twice_is_not_an_error() {
     let caller = user("alice");
     let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
     let created = svc.create_session(&caller, spec()).await.expect("created");
+    await_settled(&svc, &caller, &created.id).await;
 
     svc.terminate_session(&caller, &created.id)
         .await
@@ -265,8 +320,9 @@ async fn a_session_can_be_terminated_after_a_restart() {
     // live memory, a restart would strand a running runtime with no way to
     // reclaim it — and the user's terminate button is the only reaper there is.
     let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
     let caller = user("alice");
-    let first = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
     let created = first
         .create_session(&caller, spec())
         .await
@@ -281,7 +337,6 @@ async fn a_session_can_be_terminated_after_a_restart() {
         .runtime_id
         .expect("the session has a runtime");
 
-    let adapter = Arc::new(FakeAdapter::default());
     let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
     restarted
         .terminate_session(&caller, &created.id)
@@ -312,19 +367,21 @@ async fn a_session_can_be_terminated_after_a_restart() {
 #[tokio::test]
 async fn terminating_records_the_status_change_durably() {
     let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
     let caller = user("alice");
-    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
     let created = svc
         .create_session(&caller, spec())
         .await
         .expect("session is created");
+    await_settled(&svc, &caller, &created.id).await;
     let before = svc
         .events_since(&caller, &created.id, None)
         .await
         .expect("history readable")
         .len();
 
-    service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
+    service(Arc::clone(&store), Arc::clone(&adapter))
         .terminate_session(&caller, &created.id)
         .await
         .expect("terminates");
