@@ -125,7 +125,7 @@ impl Harness {
             session: rejoin.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
             folder: Arc::new(Mutex::new(Folder::default())),
         });
-        let control = crate::hosted::control_lane(Arc::clone(&harness.sink));
+        let control = crate::hosted::control_lane(Arc::clone(&harness.sink), Some(link.clone()));
         link.register(control.clone()).await;
 
         let writer = Arc::clone(&harness);
@@ -158,6 +158,15 @@ impl Harness {
                         }
                         _ => {}
                     },
+                    Ok(Message::Text(text)) => {
+                        if let Some((operation_id, installed)) =
+                            crate::hosted::credential_answer(&text)
+                        {
+                            link_for_reader
+                                .settle_credential(&control_for_reader, &operation_id, installed)
+                                .await;
+                        }
+                    }
                     Ok(Message::Close(_)) => break,
                     Ok(_) => {}
                     Err(e) => {

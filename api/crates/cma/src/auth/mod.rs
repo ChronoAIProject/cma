@@ -935,12 +935,13 @@ impl AuthState {
         self.promote_pending_credential(session).await
     }
 
-    pub(super) async fn confirm_reissue_with_budget(
+    pub(super) async fn confirm_reissue_delivery_with_budget(
         &self,
         session: &SessionId,
+        delivered_value: &str,
         budget: &AuthOperationBudget,
     ) -> Result<bool, StoreError> {
-        self.promote_pending_credential_with_budget(session, budget)
+        self.promote_delivered_credential_with_budget(session, delivered_value, budget)
             .await
     }
 

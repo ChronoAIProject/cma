@@ -421,7 +421,9 @@ impl SessionService {
         let entry = SessionEntry {
             session: seeded,
             event_log,
-            subject_credential: spec.runtime_credential.clone(),
+            // Evidence means the adapter acknowledged this exact value, not
+            // merely that provisioning intends to send it.
+            subject_credential: None,
             environment_values,
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
@@ -444,6 +446,38 @@ impl SessionService {
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
+
+        // The installation gate fences this exact runtime from stop, rotation,
+        // and replacement until acknowledgement and evidence recording finish.
+        // Refusal is not fatal: the runtime remains usable and the top-up sweep
+        // retries while the marker stays empty.
+        if let Some(credential) = spec.runtime_credential.as_deref() {
+            match self
+                .install_credential_while_lifecycle_locked(
+                    &installation,
+                    &id,
+                    &handle,
+                    credential,
+                    || async { Ok::<bool, crate::store::StoreError>(true) },
+                )
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        "the runtime started without its owner's credential"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "the runtime's credential could not be recorded"
+                    );
+                }
+            }
+        }
         drop(installation);
         crate::resources::spawn_resource_watch(
             Arc::clone(self),
@@ -465,24 +499,6 @@ impl SessionService {
                 live,
                 terminal_ending,
             );
-        }
-        // Handed over before the agent can need it, so the first turn is
-        // already authenticated. Asked of the adapter rather than pushed down
-        // the terminal channel: the credential's consumer is the supervisor's
-        // proxy, and a runtime that renders no terminal still calls out on its
-        // owner's behalf.
-        if let Some(credential) = spec.runtime_credential.as_deref() {
-            if let Err(e) = adapter.refresh_credential(&handle, credential).await {
-                // Logged rather than fatal, and never with the value. The
-                // session is usable — someone can read it and type into it —
-                // and what it cannot do is act on their behalf until a
-                // credential lands. The top-up sweep is what retries that.
-                tracing::warn!(
-                    session_id = %id,
-                    error = %e,
-                    "the runtime started without its owner's credential"
-                );
-            }
         }
         if let Some(input) = &terminal_input {
             let _ = input

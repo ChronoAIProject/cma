@@ -274,13 +274,54 @@ impl SessionService {
          * runtime has not lost one.
          */
         if alive == Some(false) {
-            if let Some(runtime) = record.runtime_id.clone() {
+            let expected_runtime = record.runtime_id.clone();
+            let expected_kernel = record.session.kernel.clone();
+            // Nothing in this critical section may reacquire this session's
+            // lifecycle gate. It deliberately spans the authoritative store
+            // recheck, loss persistence, and exact entry removal so delivery,
+            // rotation, and reconciliation cannot interleave generations.
+            let lifecycle = self.lock_lifecycle(&id).await;
+            let latest = match self.store.get(&id).await {
+                Ok(Some(latest))
+                    if latest.session.wants_runtime()
+                        && latest.session.kernel == expected_kernel
+                        && latest.runtime_id == expected_runtime =>
+                {
+                    latest
+                }
+                Ok(_) => {
+                    tracing::debug!(session_id = %id, "the session changed before its lost runtime could be recorded");
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(session_id = %id, %error, "cannot recheck the session before recording its lost runtime");
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            record = latest;
+
+            let entry_matches_snapshot = {
+                let entries = self.entries.read().await;
+                entries.get(&id).is_none_or(|entry| {
+                    entry.runtime.as_ref().map(|handle| handle.0.as_str())
+                        == expected_runtime.as_deref()
+                })
+            };
+            if !entry_matches_snapshot {
+                tracing::warn!(session_id = %id, "a newer runtime entry replaced the one reported lost; deferring reconciliation");
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+
+            if let Some(runtime) = expected_runtime.as_deref() {
                 let cause = census
                     .get(&record.session.kernel)
-                    .and_then(|view| view.stopped_because.get(&runtime))
+                    .and_then(|view| view.stopped_because.get(runtime))
                     .copied()
                     .map(RuntimeLossCause::from);
-                if let Err(error) = self.record_runtime_lost(&mut record, &runtime, cause).await {
+                if let Err(error) = self.record_runtime_lost(&mut record, runtime, cause).await {
                     tracing::error!(
                         session_id = %id,
                         runtime = %runtime,
@@ -292,6 +333,28 @@ impl SessionService {
                 }
                 reclaimed.lost_runtimes += 1;
             }
+
+            // Remove only the entry backed by the runtime the census proved
+            // lost. A newer generation is evidence that this sweep snapshot
+            // is stale and must never be discarded here.
+            let removed = {
+                let mut entries = self.entries.write().await;
+                let exact_lost = entries.get(&id).is_some_and(|entry| {
+                    entry.runtime.as_ref().map(|handle| handle.0.as_str())
+                        == expected_runtime.as_deref()
+                });
+                exact_lost.then(|| entries.remove(&id)).flatten()
+            };
+            if removed.is_some() {
+                if expected_runtime.is_some() {
+                    tracing::warn!(session_id = %id, "the runtime behind a live session has gone");
+                }
+            } else if self.entries.read().await.contains_key(&id) {
+                tracing::warn!(session_id = %id, "the runtime entry changed while its loss was being recorded; deferring reconciliation");
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
+            drop(lifecycle);
         }
 
         // A session that is running, but not on what it should be running. Tried
@@ -314,11 +377,11 @@ impl SessionService {
                 // grounds for touching a session this process is serving.
                 return;
             }
-            // Serving a session whose sandbox is known to be gone: every
-            // keystroke is going nowhere. Drop the attachment so it can be
-            // rebuilt honestly.
-            tracing::warn!(session_id = %id, "the runtime behind a live session has gone");
-            self.entries.write().await.remove(&id);
+            // The known-lost branch above removes only the exact generation it
+            // proved dead. Anything still here is newer or internally
+            // inconsistent; neither may be replaced from this stale snapshot.
+            reclaimed.deferred_sessions += 1;
+            return;
         }
 
         // Worth trying whenever the runtime is not known to be gone, because
