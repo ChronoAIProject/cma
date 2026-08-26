@@ -27,7 +27,7 @@
 //! sets differ between runtimes and grow without warning, and a session must
 //! not fail because a kernel invented a category.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use layer3_adapter::{
     AdapterError, ContentBlock, ConversationInput, ConversationInputSender, PermissionDecision,
@@ -71,7 +71,81 @@ pub enum ApprovalDecision {
     Abort,
 }
 
+/// Why waiting for a session's conversation did not reach a usable state.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ConversationReadinessError {
+    /// The session could not become conversable for a reason already named by
+    /// the core, such as ownership, termination, or a missing capability.
+    #[error(transparent)]
+    Refused(#[from] CoreError),
+    /// Provisioning did not publish a usable conversation before the caller's
+    /// deadline.
+    #[error("session provisioning timed out before its conversation became ready")]
+    ProvisioningTimedOut,
+}
+
+const CONVERSATION_READINESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 impl SessionService {
+    /// Wait for a provisioning session to accept conversation input.
+    ///
+    /// Readiness means more than a durable `Ready` status: the runtime's live
+    /// entry and conversation sender must also have been published. The local
+    /// bring-up claim spans that gap, so waiting on it avoids opening a second
+    /// conversation beside one that is still being installed. A ready session
+    /// with no local entry is readopted, preserving operation after a control
+    /// plane restart.
+    pub async fn await_conversable(
+        self: &Arc<Self>,
+        caller: &Caller,
+        id: &SessionId,
+        bound: Duration,
+    ) -> Result<(), ConversationReadinessError> {
+        let wait_for_publication = async {
+            loop {
+                let record = self.record(id).await?;
+                if !record.session.is_owned_by(&caller.subject) {
+                    return Err(CoreError::Forbidden);
+                }
+                if record.session.status.is_terminal() {
+                    return Err(CoreError::SessionTerminated);
+                }
+                if !record.session.capabilities.unrecorded() {
+                    record
+                        .session
+                        .capabilities
+                        .require(Capability::Conversation)?;
+                }
+
+                match record.session.status {
+                    SessionStatus::Provisioning => {}
+                    SessionStatus::Ready | SessionStatus::Running => {
+                        if !self.starting.read().await.contains(id) {
+                            return Ok(());
+                        }
+                    }
+                    SessionStatus::Rotating | SessionStatus::Idle => {
+                        return Err(CoreError::InvalidState)
+                    }
+                    SessionStatus::Terminated => unreachable!("terminal status handled above"),
+                }
+
+                tokio::time::sleep(CONVERSATION_READINESS_POLL_INTERVAL).await;
+            }
+        };
+
+        tokio::time::timeout(bound, wait_for_publication)
+            .await
+            .map_err(|_| ConversationReadinessError::ProvisioningTimedOut)??;
+
+        // Readoption can open channels and publish a live entry. Once begun it
+        // must run to a typed completion rather than be cancelled by the
+        // provisioning deadline halfway through those state changes.
+        self.conversation_input(caller, id, Capability::Conversation)
+            .await?;
+        Ok(())
+    }
+
     /// Open a prompt turn on a session's conversation.
     ///
     /// The turn is recorded as beginning here rather than waited for, because
