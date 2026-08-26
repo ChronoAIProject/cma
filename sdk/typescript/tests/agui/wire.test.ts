@@ -43,7 +43,7 @@ const durableProjectionPrefixes = [
 ] as const;
 const durableProjectionPrefixSet = new Set<string>(durableProjectionPrefixes);
 const durableFinalOrSingletonKinds = KNOWN_EVENTS.filter(
-  (kind) => !durableProjectionPrefixSet.has(kind),
+  (kind) => !durableProjectionPrefixSet.has(kind) && kind !== 'RUN_STARTED',
 );
 const invalidSequenceLines = [
   'id:',
@@ -300,6 +300,20 @@ describe('the SSE id identifies only a complete durable projection', () => {
     },
   );
 
+  it('accepts a RUN_STARTED interface boundary without an SSE id', () => {
+    expect(parseEventFrames(literalFrame('RUN_STARTED'))).toEqual([
+      expect.objectContaining({ type: 'RUN_STARTED', seq: 0 }),
+    ]);
+  });
+
+  it('returns a cursorless interface boundary without waiting for a numbered final', () => {
+    const events = parseEventStream(literalFrame('RUN_STARTED'));
+
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'RUN_STARTED', seq: 0, ephemeral: false }),
+    ]);
+  });
+
   it('preserves an omitted id on an unknown durable prefix', () => {
     expect(parseEventFrames(literalFrame('SOMETHING_ADDED_LATER'))).toEqual([
       expect.objectContaining({ type: 'SOMETHING_ADDED_LATER', seq: 0 }),
@@ -309,6 +323,7 @@ describe('the SSE id identifies only a complete durable projection', () => {
   it.each([
     ['known prefix', 'TEXT_MESSAGE_START'],
     ['known final', 'TEXT_MESSAGE_END'],
+    ['interface boundary', 'RUN_STARTED'],
     ['unknown kind', 'SOMETHING_ADDED_LATER'],
   ] as const)('rejects invalid ids on a %s', (_class, kind) => {
     for (const idLine of invalidSequenceLines) {
@@ -344,6 +359,12 @@ describe('the SSE id identifies only a complete durable projection', () => {
     expect(() => parseEventStream(literalFrame('FUTURE_PREFIX'))).toThrow(
       'AG-UI event stream ended inside a durable projection',
     );
+  });
+
+  it('rejects a cursorless interface boundary inside a durable projection', () => {
+    expect(() =>
+      parseEventStream(literalFrame('FUTURE_PREFIX') + literalFrame('RUN_STARTED')),
+    ).toThrow('interface boundary appeared inside a durable projection');
   });
 
   it('requires a numbered final frame after an unnumbered RUN_FINISHED', () => {
