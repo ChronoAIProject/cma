@@ -21,27 +21,23 @@
 //! session, and cleanup reads it back. That survives a restart, which a note
 //! held in memory would not.
 //!
-//! **There is no backstop. Deletion is the only hygiene there is.** This module
-//! used to say the opposite — that these keys last a day whatever happens to
-//! them, so one left behind stops working on its own — and every decision
-//! about tolerating a failed reclaim was justified by it. The mint below
-//! requests no expiry, and production reports `expires_at: null` on every key
-//! this service has ever created. The claim was never true.
+//! **Expiry is the backstop; deletion remains the hygiene.** Every new key asks
+//! NyxID for one exact absolute expiry thirty days after minting. A running
+//! session starts replacement after twelve hours, leaving twenty-nine and a
+//! half days for durable retry before the provider bound is reached. Sessions
+//! may run indefinitely by rotating through bounded keys; no individual key
+//! needs to be indefinite for the session to be indefinite.
 //!
-//! It is worth being blunt about the cost, because four separate comments in
-//! this tree leaned on it: a key we fail to take back is a live credential
-//! carrying `proxy read` over that session's services, for ever, held by
-//! nobody and watched by nobody. Reclaiming needs its owner's token, which
-//! this process may not hold after a restart until they next sign in, and
-//! until then the key stays valid.
-//!
-//! Giving these keys a bounded life is #445's own follow-up. Until that is
-//! demonstrated against the platform rather than assumed, nothing here may be
-//! written as though it already were.
+//! Expiry is not permission to abandon revocation. A key we fail to take back
+//! remains a live `proxy read` credential until its provider deadline, and
+//! legacy keys created without an expiry remain live until explicitly deleted.
+//! Every failed revoke therefore stays visible to the durable reconciliation
+//! paths even though newly minted keys now have a finite last-resort bound.
 
 use futures_util::StreamExt as _;
 use layer2_core::{ServiceId, SessionId, SubjectId};
 use serde::Deserialize;
+use std::time::{Duration, SystemTime};
 
 /// Where keys are minted, relative to the platform root.
 const KEYS_PATH: &str = "/api/v1/api-keys";
@@ -86,6 +82,21 @@ const USER_SERVICES_PATH: &str = "/api/v1/user-services";
 /// that could edit its own allowance would not be an allowance.
 const KEY_SCOPES: &str = "proxy read";
 
+/// Provider-enforced lifetime of one session credential.
+///
+/// Session continuity does not depend on one key surviving this long. The
+/// renewal loop starts durable replacement after twelve hours, so this bound
+/// leaves 29.5 days for retries while still putting a finite ceiling on a key
+/// that every explicit revocation path failed to reclaim.
+pub(crate) const SESSION_KEY_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+fn session_key_expiry(now: SystemTime) -> SystemTime {
+    // NyxID persists API-key expiry at millisecond precision. Round before
+    // sending and retaining it so CMA never believes the key lives even a
+    // fraction longer than the provider does.
+    mongodb::bson::DateTime::from_system_time(now + SESSION_KEY_LIFETIME).to_system_time()
+}
+
 /// NyxID exposes no supported key-list pagination, so one response is the
 /// completeness unit. Refuse oversized accounts visibly instead of buffering
 /// an arbitrary response or describing an unbounded listing as a bounded pass.
@@ -105,12 +116,23 @@ pub(super) enum ProviderKeyListingError {
 }
 
 /// A key as the platform describes it.
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct MintedKey {
     /// The platform's identifier for the key, used to take it back.
     pub id: String,
     /// The value itself, returned only at creation and never again.
     pub full_key: String,
+    /// The exact provider expiry CMA requested for this key.
+    pub expires_at: SystemTime,
+}
+
+/// NyxID's create response omits `expires_at`, even when it accepted and
+/// persisted one. Keep the wire shape separate so CMA retains the exact instant
+/// it sent instead of inventing a value from the response.
+#[derive(Debug, Deserialize)]
+struct MintedKeyResponse {
+    id: String,
+    full_key: String,
 }
 
 /// A service as the platform lists it.
@@ -157,10 +179,15 @@ fn mint_request_body(
     deployment: &str,
     session: &SessionId,
     allowed_service_ids: &[String],
+    expires_at: SystemTime,
 ) -> serde_json::Value {
+    let expires_at = mongodb::bson::DateTime::from_system_time(expires_at)
+        .try_to_rfc3339_string()
+        .expect("a thirty-day API-key expiry is representable as RFC 3339");
     serde_json::json!({
         "name": key_name(deployment, session),
         "scopes": KEY_SCOPES,
+        "expires_at": expires_at,
         "allowed_service_ids": allowed_service_ids,
         // Both stated rather than left out. The platform allows everything by
         // default, so omission would silently turn a scoped key into an open one.
@@ -267,7 +294,8 @@ impl KeyIssuer {
             return None;
         }
 
-        let body = mint_request_body(&self.deployment, session, &allowed);
+        let expires_at = session_key_expiry(SystemTime::now());
+        let body = mint_request_body(&self.deployment, session, &allowed, expires_at);
 
         let url = format!("{}{KEYS_PATH}", self.base_url);
         match self
@@ -278,21 +306,27 @@ impl KeyIssuer {
             .send()
             .await
         {
-            Ok(resp) if resp.status().is_success() => match resp.json::<MintedKey>().await {
-                Ok(key) => {
-                    // The value is never logged, only the fact and the reach.
-                    tracing::info!(
-                        session_id = %session,
-                        services = allowed.len(),
-                        "minted a credential for this session"
-                    );
-                    Some(key)
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<MintedKeyResponse>().await {
+                    Ok(key) => {
+                        // The value is never logged, only the fact and the reach.
+                        tracing::info!(
+                            session_id = %session,
+                            services = allowed.len(),
+                            "minted a credential for this session"
+                        );
+                        Some(MintedKey {
+                            id: key.id,
+                            full_key: key.full_key,
+                            expires_at,
+                        })
+                    }
+                    Err(e) => {
+                        tracing::error!(session_id = %session, error = %e, "mint response was not usable");
+                        None
+                    }
                 }
-                Err(e) => {
-                    tracing::error!(session_id = %session, error = %e, "mint response was not usable");
-                    None
-                }
-            },
+            }
             Ok(resp) => {
                 tracing::error!(session_id = %session, status = %resp.status(), "the platform refused to mint");
                 None
@@ -351,10 +385,10 @@ impl KeyIssuer {
     /// Take a key back.
     ///
     /// Failure is logged and not retried **here**, which is a statement about
-    /// this function and not about the consequence: these keys carry no
-    /// expiry, so a reclaim that did not happen costs an open credential
-    /// rather than a row in a list. The orphan sweep sees a surviving key again
-    /// by re-listing it; the durable-debt sweep sees it again because it remains
+    /// this function and not about the consequence: a reclaim that did not
+    /// happen costs an open credential until its provider expiry rather than a
+    /// harmless row in a list. The orphan sweep sees a surviving key again by
+    /// re-listing it; the durable-debt sweep sees it again because it remains
     /// queued until this returns success. Every non-success response remains a
     /// failure: this client has no verified provider contract under which a 404
     /// proves that the intended credential was deleted. What must not happen is
@@ -674,16 +708,18 @@ mod tests {
     }
 
     #[test]
-    fn the_mint_body_has_exactly_the_demonstrated_non_expiring_field_set() {
+    fn the_mint_body_has_exactly_the_demonstrated_expiring_field_set() {
         assert_eq!(
             mint_request_body(
                 "production",
                 &SessionId("sesn_abc".into()),
                 &["user-service-1".into(), "user-service-2".into()],
+                SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_000),
             ),
             serde_json::json!({
                 "name": "cma:production:sesn_abc",
                 "scopes": "proxy read",
+                "expires_at": "2030-03-17T17:46:40Z",
                 "allowed_service_ids": ["user-service-1", "user-service-2"],
                 "allow_all_services": false,
                 "allow_all_nodes": false,

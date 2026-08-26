@@ -898,7 +898,7 @@ impl AuthState {
     ///
     /// The provider request belongs to a detached task. Cancelling the caller
     /// only stops it waiting: a successful mint is still recorded in `pending`
-    /// for the next sweep, rather than becoming an unowned no-expiry key. The
+    /// for the next sweep, rather than becoming an unowned key until expiry. The
     /// current credential remains issued until [`Self::confirm_reissue`] says
     /// the runtime accepted this value.
     #[cfg(test)]
