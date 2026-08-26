@@ -792,6 +792,14 @@ impl AuthState {
                         .as_mut()
                         .expect("the provider snapshot remains initialized")
                         .push_front((id, session));
+                    tracing::info!(
+                        %current.subject,
+                        credentials = current
+                            .remaining_credentials
+                            .as_ref()
+                            .map_or(0, std::collections::VecDeque::len),
+                        "provider credential reconciliation deferred by the pass bound"
+                    );
                     break;
                 }
 
@@ -810,9 +818,31 @@ impl AuthState {
                     Some(state)
                         if custody_protects_provider_credential(&state, &id, SystemTime::now()) => {
                     }
-                    Some(_) => {
-                        if issuer.revoke(&id, &token).await {
-                            reclaimed += 1;
+                    Some(state) => {
+                        let tracked_values = state
+                            .current
+                            .iter()
+                            .chain(state.pending.iter())
+                            .map(|credential| credential.value.expose())
+                            .collect::<Vec<_>>();
+                        match service
+                            .can_reclaim_untracked_credential(&session, &tracked_values)
+                            .await
+                        {
+                            Ok(true) => {
+                                if issuer.revoke(&id, &token).await {
+                                    reclaimed += 1;
+                                }
+                            }
+                            Ok(false) => tracing::warn!(
+                                session_id = %session,
+                                "same-session credential reclaim deferred until recorded custody reaches the runtime"
+                            ),
+                            Err(error) => remember_pass_error(
+                                &mut first_error,
+                                error,
+                                "confirm delivered custody before provider reclaim",
+                            ),
                         }
                     }
                     None => match service.session_claims_credential(&session).await {
@@ -1082,15 +1112,54 @@ impl AuthState {
         self.promote_pending_credential_inner(session, None).await
     }
 
-    pub(super) async fn promote_pending_credential_with_budget(
+    /// Promote only the exact pending value a runtime acknowledged installing.
+    ///
+    /// Comparing the opaque value closes the response-loss race: a retry for B
+    /// cannot accidentally promote a newer pending C, and an acknowledgement
+    /// for B remains idempotently successful after B is already current.
+    pub(super) async fn promote_delivered_credential_with_budget(
         &self,
         session: &SessionId,
+        delivered_value: &str,
         budget: &AuthOperationBudget,
     ) -> Result<bool, StoreError> {
-        self.promote_pending_credential_inner(session, Some(budget))
-            .await
+        loop {
+            take_operation(Some(budget), 1, "delivered credential promotion read")?;
+            let Some(mut current) = self.store.credential(session).await? else {
+                return Ok(false);
+            };
+            if current.retired {
+                return Ok(false);
+            }
+            if current
+                .current
+                .as_ref()
+                .is_some_and(|held| held.value.expose() == delivered_value)
+            {
+                return Ok(true);
+            }
+            let Some(replacement) = current.pending.as_ref() else {
+                return Ok(false);
+            };
+            if replacement.value.expose() != delivered_value {
+                return Ok(false);
+            }
+
+            let before = current.clone();
+            let replacement = current
+                .pending
+                .take()
+                .expect("the exact pending credential was checked above");
+            if let Some(displaced) = current.current.replace(replacement) {
+                queue_debt(&mut current, &displaced);
+            }
+            if replace_state(&self.store, &before, current, Some(budget)).await? {
+                return Ok(true);
+            }
+        }
     }
 
+    #[cfg(test)]
     async fn promote_pending_credential_inner(
         &self,
         session: &SessionId,
@@ -1150,6 +1219,7 @@ impl AuthState {
             // attempt, owner read, provider DELETE, custody read, and the
             // sequence allocation plus CAS write used to settle it.
             if !budget.take(8) {
+                tracing::info!("credential revocation debt deferred by the pass bound");
                 break;
             }
             let mut page = match self
