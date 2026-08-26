@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 
 use json_patch::Patch;
 use layer2_core::{
-    Event, EventKind, LiveFrame, ResourceReading, SessionId, SessionMode, SessionStatus, StopReason,
+    session::ProvisioningStage, Event, EventKind, LiveFrame, ResourceReading, SessionId,
+    SessionMode, SessionStatus, StopReason,
 };
 use serde_json::{json, Value};
 
@@ -386,6 +387,44 @@ fn an_approval_request_and_resolution_are_strictly_applicable_in_order() {
 
     let state = apply_all(initial_state(), &deltas);
     assert_eq!(state["pendingApprovals"], json!({}));
+}
+
+#[test]
+fn status_and_progress_replacements_apply_to_the_canonical_document() {
+    let status = project(
+        &logged(
+            1,
+            EventKind::StatusChanged {
+                status: SessionStatus::Ready,
+                stop_reason: None,
+                detail: None,
+                capability: None,
+            },
+        ),
+        "run_state_contract",
+        "sesn_state_contract",
+    );
+    let progress = project(
+        &logged(
+            2,
+            EventKind::Progress {
+                stage: ProvisioningStage::RuntimeRequested,
+            },
+        ),
+        "run_state_contract",
+        "sesn_state_contract",
+    );
+
+    let deltas = status
+        .events
+        .iter()
+        .chain(&progress.events)
+        .cloned()
+        .collect::<Vec<_>>();
+    let state = apply_all(initial_state(), &deltas);
+
+    assert_eq!(state["status"], "ready");
+    assert_eq!(state["progress"], "runtime_requested");
 }
 
 #[test]
