@@ -138,7 +138,7 @@ async fn callback(
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "title": "Missing state parameter" })),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -168,7 +168,7 @@ async fn callback(
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "title": "Discovery failed", "detail": e })),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -250,7 +250,7 @@ async fn callback(
         .store_sign_in(
             &subject,
             DurableSubjectTokens {
-                access_token: SecretValue::new(token.access_token),
+                access_token: Some(SecretValue::new(token.access_token)),
                 refresh_token: token.refresh_token.map(SecretValue::new),
                 expires_at: SystemTime::now()
                     + Duration::from_secs(token.expires_in.unwrap_or(3600)),
@@ -746,7 +746,7 @@ mod tests {
             .authorization
             .allows(layer2_core::Capability::CreateSession));
         let tokens = fact.tokens.expect("tokens persist as part of the fact");
-        assert_eq!(tokens.access_token.expose(), "access-a");
+        assert_eq!(tokens.access_token.unwrap().expose(), "access-a");
         assert_eq!(
             tokens.refresh_token.as_ref().map(|value| value.expose()),
             Some("refresh-a")

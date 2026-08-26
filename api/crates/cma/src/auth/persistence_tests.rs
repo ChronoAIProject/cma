@@ -13,6 +13,7 @@ fn subject_state(revision: u64) -> SubjectAuthState {
         refresh_lease: None,
         authorization: Authorization::none(),
         authorization_check_after: SystemTime::UNIX_EPOCH,
+        authorization_lease: None,
         profile: Profile::default(),
     }
 }
@@ -32,7 +33,7 @@ fn credential_state(generation: u64) -> SessionCredentialState {
 
 fn subject_tokens(expires_at: SystemTime, refresh: Option<&str>) -> DurableSubjectTokens {
     DurableSubjectTokens {
-        access_token: SecretValue::new("access".into()),
+        access_token: Some(SecretValue::new("access".into())),
         refresh_token: refresh.map(|value| SecretValue::new(value.into())),
         expires_at,
     }
@@ -354,12 +355,52 @@ async fn authorization_due_pages_order_by_deadline_then_subject() {
         .unwrap();
     assert_eq!(second.len(), 1);
     assert_eq!(second[0].cursor.subject.as_str(), "subject-c");
-    assert_eq!(second[0].cursor.ready_at, Some(now - Duration::from_secs(1)));
+    assert_eq!(
+        second[0].cursor.ready_at,
+        Some(now - Duration::from_secs(1))
+    );
     assert!(store
         .subjects_due_for_authorization_check(now, None, 0)
         .await
         .unwrap()
         .is_empty());
+
+    let mut leased = subject_state(0);
+    leased.subject = SubjectId("subject-leased".into());
+    leased.tokens = Some(subject_tokens(
+        now + Duration::from_secs(600),
+        Some("refresh"),
+    ));
+    leased.authorization_check_after = first_deadline;
+    leased.authorization_lease = Some(SubjectAuthorizationLease {
+        holder: "worker-a".into(),
+        fence: 0,
+        acquired_at: now,
+        expires_at: now + Duration::from_secs(30),
+        checked_incarnation: leased.incarnation.clone(),
+        checked_token_generation: leased.token_generation,
+    });
+    assert!(store.insert_subject(leased.clone()).await.unwrap());
+    assert!(store
+        .subjects_due_for_authorization_check(now, None, 10)
+        .await
+        .unwrap()
+        .iter()
+        .all(|item| item.cursor.subject.as_str() != "subject-leased"));
+
+    leased.revision += 1;
+    leased.authorization_lease.as_mut().unwrap().expires_at = now;
+    let incarnation = leased.incarnation.clone();
+    assert!(store
+        .replace_subject(&incarnation, 0, leased)
+        .await
+        .unwrap());
+    assert!(store
+        .subjects_due_for_authorization_check(now, None, 10)
+        .await
+        .unwrap()
+        .iter()
+        .any(|item| item.cursor.subject.as_str() == "subject-leased"));
 }
 
 #[tokio::test]
