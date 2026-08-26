@@ -797,21 +797,31 @@ fn a_public_lifecycle_call_recovers_an_orphaned_polled_continuation() {
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let lifecycle_gate = service.lifecycle_gates.gate(&id());
     let continuation_started = Arc::new(Notify::new());
-    let release_continuation = Arc::new(Notify::new());
     let continued = Arc::new(AtomicUsize::new(0));
 
     let mut pending = None;
     origin.block_on(async {
         let lifecycle = service.lock_lifecycle(&id()).await;
         let started = Arc::clone(&continuation_started);
-        let release = Arc::clone(&release_continuation);
         let continuation_count = Arc::clone(&continued);
         pending = Some(service.persist_durably_with(
             seeded,
             vec![said(0, "runtime-drop-first-continuation-pending")],
             move |_committed| async move {
-                started.notify_one();
-                release.notified().await;
+                let mut timer = Box::pin(tokio::time::sleep(Duration::from_secs(1)));
+                std::future::poll_fn(|context| {
+                    match std::future::Future::poll(timer.as_mut(), context) {
+                        std::task::Poll::Pending => {
+                            started.notify_one();
+                            std::task::Poll::Ready(())
+                        }
+                        std::task::Poll::Ready(()) => {
+                            panic!("the continuation timer must become pending before runtime loss")
+                        }
+                    }
+                })
+                .await;
+                timer.await;
                 continuation_count.fetch_add(1, Ordering::SeqCst);
                 ((), lifecycle)
             },
@@ -836,9 +846,8 @@ fn a_public_lifecycle_call_recovers_an_orphaned_polled_continuation() {
 
     let replacement = current_thread_runtime();
     replacement.block_on(async {
-        release_continuation.notify_one();
         tokio::time::timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(5),
             service.stop_session(&user("subject-log"), &id()),
         )
         .await
