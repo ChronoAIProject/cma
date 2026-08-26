@@ -323,7 +323,7 @@ async fn main() {
         }
     }
 
-    let adapters = crate::kernels::registry(&config);
+    let adapters = crate::kernels::registry(&config).await;
 
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
         Box::new(VtScreen::new(geometry)) as Box<dyn ScreenModel>
@@ -337,6 +337,7 @@ async fn main() {
         &config.mongodb_database,
         config.activity_retention,
         config.mongodb_legacy_cutover,
+        config.mongodb_coordination_cutover,
         &config.deployment_id,
         &config.auth_encryption_key,
     )
@@ -366,8 +367,9 @@ async fn main() {
         "every request is recorded, and entries older than this are removed"
     );
 
-    // Context storage is optional: without it a session still works, it simply
-    // cannot carry its transcript into a new sandbox.
+    // Blob storage is optional: without it a session still works, but it cannot
+    // persist either its transcript or the snapshot needed for a runtime
+    // handover to survive a control-plane restart.
     //
     // It needs both an address and an identity, and switches off unless both
     // are present. Half a configuration would build a store that authenticates
@@ -385,7 +387,7 @@ async fn main() {
     // The bucket is as load-bearing as the identity: this service writes only
     // into the one it is given and creates none, so an unnamed bucket is not a
     // default to fall back on.
-    let context: Option<Arc<dyn layer2_core::ContextStore>> =
+    let storage: Option<Arc<crate::store::ChronoStorageContextStore>> =
         match identity.filter(|_| !config.context_bucket.trim().is_empty()) {
             Some(tokens) => Some(Arc::new(crate::store::ChronoStorageContextStore::new(
                 format!(
@@ -397,7 +399,8 @@ async fn main() {
             ))),
             None => {
                 tracing::warn!(
-                    "session context will not be stored. CHRONO_PLATFORM_BASE_URL, \
+                    "session context and durable handover snapshots will not be stored. \
+                 CHRONO_PLATFORM_BASE_URL, \
                  CHRONO_STORAGE_CLIENT_ID, CHRONO_STORAGE_CLIENT_SECRET and \
                  CHRONO_CONTEXT_BUCKET are all required. The bucket must already \
                  exist and be owned by this identity — nothing here creates one. \
@@ -406,6 +409,10 @@ async fn main() {
                 None
             }
         };
+    let context = storage
+        .as_ref()
+        .map(|store| Arc::clone(store) as Arc<dyn layer2_core::ContextStore>);
+    let handovers = storage.map(|store| store as Arc<dyn layer2_core::store::HandoverStore>);
 
     // Built before the service because the service asks it for an owner's
     // credential whenever it has to put a runtime back under a session that
@@ -492,6 +499,7 @@ async fn main() {
         Arc::clone(&store),
         layer2_core::SessionPorts {
             context,
+            handovers,
             credentials: Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
             // The same registry the profile editor picks from, asked for
             // contents rather than for names. A deployment without one still

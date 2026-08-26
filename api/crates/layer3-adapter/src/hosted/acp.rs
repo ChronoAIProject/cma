@@ -30,8 +30,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::supervisor;
+use crate::task_retirement::TaskRetirement;
 use crate::{
     AdapterError, ConversationChannel, ConversationInputSender, ConversationUpdate, PromptResponse,
+    TerminalInputSender,
 };
 
 /// The protocol version this client speaks.
@@ -172,7 +174,7 @@ impl Bridge {
         own_credential: bool,
         // Already being drained by the caller when this is called. See above.
         updates_tx: mpsc::Sender<ConversationUpdate>,
-    ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
+    ) -> Result<(ConversationChannel, TerminalInputSender), AdapterError> {
         let (sink, mut source) = stream.split();
 
         // The pod's own declaration, read before anything else, because it
@@ -210,28 +212,21 @@ impl Bridge {
         // Keep it beside the reader so a late answer from this socket cannot
         // settle a waiter installed by a replacement connection.
         let control = super::control_lane(Arc::clone(&bridge.sink), link.clone());
-        let control_for_reader = control.clone();
-        if let Some(lifecycle) = link.as_ref() {
-            // Registered before the reader can observe a close. Registering in
-            // the caller after the handshake allowed a just-closed socket to
-            // be inserted as the current generation.
-            lifecycle.register(control.clone()).await;
-        }
+        let mut abort_on_drop = super::AbortLinkOnDrop::new(control.clone());
 
         let writer = Arc::clone(&bridge);
         let writer_updates = updates_tx.clone();
-        let (input, input_task) =
-            ConversationInputSender::spawn_with_abort(INPUT_BUFFER, move |input| {
-                let writer = Arc::clone(&writer);
-                let updates = writer_updates.clone();
-                async move { writer.drive(input, &updates).await }
-            });
-        let input_task_for_reader = input_task.clone();
+        let input = ConversationInputSender::spawn(INPUT_BUFFER, move |input| {
+            let writer = Arc::clone(&writer);
+            let updates = writer_updates.clone();
+            async move { writer.drive(input, &updates).await }
+        });
 
         // Read before anything is sent: the handshake's own answers arrive on
         // this loop, so it has to be running to receive them.
         let reader = Arc::clone(&bridge);
         let updates = updates_tx.clone();
+        let control_for_reader = control.downgrade();
         let link_for_reader = link.clone();
         let reader_task = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
@@ -256,15 +251,15 @@ impl Bridge {
                             if let Some((operation_id, installed)) =
                                 super::link::credential_answer(&text)
                             {
-                                lifecycle
-                                    .settle_credential(
-                                        &control_for_reader,
-                                        &operation_id,
-                                        installed,
-                                    )
-                                    .await;
+                                if let Some(control) = control_for_reader.upgrade() {
+                                    lifecycle
+                                        .settle_credential(&control, &operation_id, installed)
+                                        .await;
+                                }
                             } else if let Some(accepted) = super::link::switch_answer(&text) {
-                                lifecycle.settle(&control_for_reader, accepted).await;
+                                if let Some(control) = control_for_reader.upgrade() {
+                                    lifecycle.settle(&control, accepted).await;
+                                }
                             }
                         }
                     }
@@ -276,23 +271,78 @@ impl Bridge {
                     }
                 }
             }
-            /*
-             * Every call still waiting on this link is answered by dropping
-             * its sender, which wakes the waiter at once with an error.
-             *
-             * Without this, a link that closed left its oneshots alive
-             * forever: the handshake, a mode change, and above all a prompt
-             * would await an answer that could no longer come, and the turn
-             * sat "running" until somebody gave up. A dead link is an answer,
-             * and it has to be delivered as one.
-             */
-            reader.pending.lock().await.clear();
-            if let Some(lifecycle) = link_for_reader.as_ref() {
-                lifecycle.forget(&control_for_reader).await;
+        });
+
+        let whole_retirement = TaskRetirement::default();
+        let whole_guard = whole_retirement.guard();
+        let (installed, installation) = if link.is_some() {
+            let (installed, installation) = tokio::sync::oneshot::channel();
+            (Some(installed), Some(installation))
+        } else {
+            (None, None)
+        };
+        let cleanup_bridge = Arc::clone(&bridge);
+        let input_retired = input.retirement();
+        let input_abort = input.abort_handle();
+        let control_retired = control.retirement();
+        let control_abort = control.abort_handle();
+        let control_for_cleanup = control.downgrade();
+        let link_for_cleanup = link.clone();
+        let cleanup_task = tokio::spawn(async move {
+            let _whole_guard = whole_guard;
+            let mut reader = reader_task;
+            let input_ended = input_retired.clone();
+            let control_ended = control_retired.clone();
+            tokio::select! {
+                _ = input_ended.wait() => {
+                    reader.abort();
+                    let _ = reader.await;
+                    control_abort.abort();
+                    control_retired.wait().await;
+                }
+                _ = control_ended.wait() => {
+                    reader.abort();
+                    let _ = reader.await;
+                    input_abort.abort();
+                    input_retired.wait().await;
+                }
+                _ = &mut reader => {
+                    input_abort.abort();
+                    control_abort.abort();
+                    input_retired.wait().await;
+                    control_retired.wait().await;
+                }
             }
-            input_task_for_reader.abort();
+            // Dropping every waiter makes a dead link an immediate answer.
+            cleanup_bridge.pending.lock().await.clear();
+            if let (Some(lifecycle), Some(installation)) = (link_for_cleanup.as_ref(), installation)
+            {
+                if installation.await.is_ok() {
+                    if let Some(control) = control_for_cleanup.upgrade() {
+                        lifecycle.forget(&control).await;
+                    }
+                }
+            }
             tracing::info!("conversation link ended");
         });
+
+        if let Some(lifecycle) = link.as_ref() {
+            if !lifecycle
+                .register(
+                    control.clone(),
+                    whole_retirement.clone(),
+                    installed.expect("a registered link has an installation barrier"),
+                )
+                .await
+            {
+                control.abort();
+                let _ = cleanup_task.await;
+                let _ = bridge.sink.lock().await.close().await;
+                return Err(AdapterError::Unavailable(
+                    "the conversation link was superseded while opening".into(),
+                ));
+            }
+        }
 
         // A conversation to rejoin wins over one the pod says it was handed.
         // They answer different questions — one is a control plane taking back
@@ -305,19 +355,24 @@ impl Bridge {
             // The runtime may reject the handshake while deliberately keeping
             // its socket open. Stop every detached owner before returning, or
             // repeated readoption attempts accumulate sockets and relay tasks.
-            reader_task.abort();
-            let _ = reader_task.await;
-            input_task.abort();
-            if let Some(lifecycle) = link.as_ref() {
-                lifecycle.forget(&control).await;
-            }
-            drop(input);
-            drop(control);
+            control.abort();
+            let _ = cleanup_task.await;
             let _ = bridge.sink.lock().await.close().await;
             return Err(error);
         }
         let conversation_id = bridge.session.lock().await.clone();
+        if let Some(lifecycle) = link.as_ref() {
+            if !lifecycle.is_current(&control).await {
+                control.abort();
+                let _ = cleanup_task.await;
+                let _ = bridge.sink.lock().await.close().await;
+                return Err(AdapterError::Unavailable(
+                    "the conversation link ended or was superseded while opening".into(),
+                ));
+            }
+        }
 
+        abort_on_drop.disarm();
         Ok((
             ConversationChannel {
                 input,

@@ -87,7 +87,7 @@ provisioning ──► ready ──► running ⇄ idle ──► terminated
 
 `idle` is the state most often misread. A session whose bot pod was reclaimed to save resources is `idle`, and it revives under the same session id.
 
-`rotating` is the second. It means the runtime image has moved on and this session is being carried onto the current one: its conversation is captured, the sandbox is replaced, and the agent resumes from the capture. **Clients must refuse input while it lasts** — a keystroke sent now reaches a sandbox being torn down, so it would be accepted and then lost. It is not a failure, it needs no action from the owner, and it ends on its own.
+`rotating` is the second. It means the runtime image has moved on and this session is being carried onto the current one: its conversation is captured, the sandbox is replaced, and the agent resumes from the capture. **The server refuses input while it lasts with `409 session-rotating`**, so nothing can reach the sandbox being torn down. Clients should also disable input during this window for a clear experience, but correctness does not depend on them doing so. It is not a failure, it needs no action from the owner, and it ends on its own.
 
 ### Runtime version
 

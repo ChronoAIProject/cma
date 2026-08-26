@@ -13,6 +13,8 @@ fn spec_with(permission: RuntimePermission, effort: Option<&str>) -> RuntimeSpec
         created_by: None,
         environment: Default::default(),
         session_id: "sesn_x".into(),
+        generation: None,
+        reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
         subject_credential: None,

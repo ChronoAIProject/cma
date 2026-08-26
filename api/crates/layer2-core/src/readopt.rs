@@ -7,7 +7,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use layer3_adapter::{PermissionLocator, RuntimeHandle};
+use layer3_adapter::{ConversationUpdate, PermissionLocator, RuntimeHandle};
 use tokio::sync::{broadcast, watch, Mutex, OwnedMutexGuard};
 
 use crate::authz::{Caller, Capability};
@@ -65,7 +65,11 @@ impl SessionService {
             // provision a second sandbox for one session.
             return Ok(record.session);
         }
-
+        if record.runtime_id.is_some() {
+            return Err(CoreError::RuntimeUnavailable(
+                "the stopped session's previous runtime cleanup is still pending".into(),
+            ));
+        }
         let settings = self.settings.for_provisioning().await;
         let limit_guard = self
             .refuse_at_session_limit(caller, settings.live_sessions)
@@ -79,25 +83,111 @@ impl SessionService {
                 CoreError::RuntimeUnavailable(format!("no runtime {}", record.session.kernel))
             })?;
 
+        if !self.begin_start(id).await {
+            return Err(CoreError::InvalidState);
+        }
+
+        let (record, restore) = if let Some(pending) = record.pending_handover.as_ref() {
+            let restore = match self.load_pending_handover_snapshot(&record).await {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    self.finish_start(id).await;
+                    return Err(store_failed(error));
+                }
+            };
+            let mut rotating = record.clone();
+            rotating.session.status = SessionStatus::Rotating;
+            rotating.session.stop_reason = None;
+            rotating.rotation_claim = Some(pending.claim.clone());
+            if let Err(error) = self
+                .persist_durably(
+                    &mut rotating,
+                    vec![Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::StatusChanged {
+                            status: SessionStatus::Rotating,
+                            stop_reason: None,
+                            detail: Some(
+                                "resuming the stored runtime handover from its exact snapshot"
+                                    .into(),
+                            ),
+                            capability: None,
+                        },
+                        appended_at: String::new(),
+                    }],
+                )
+                .await
+            {
+                self.finish_start(id).await;
+                return Err(store_failed(error));
+            }
+            let published = match self.publish_pending_handover_target(rotating).await {
+                Ok(published) => published,
+                Err(error) => {
+                    self.finish_start(id).await;
+                    return Err(store_failed(error));
+                }
+            };
+            (published, restore)
+        } else {
+            (record, None)
+        };
+
+        let mut lease = match self
+            .acquire_runtime_lease_at(&record, crate::coordination::SessionOperation::Provision)
+            .await
+        {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.finish_start(id).await;
+                return Err(store_failed(error));
+            }
+        };
+
         let mut starting = record.clone();
         starting.session.status = SessionStatus::Provisioning;
         starting.session.stop_reason = None;
-        self.persist_durably(
-            &mut starting,
-            vec![Event {
-                session_id: id.clone(),
-                seq: 0,
-                kind: EventKind::StatusChanged {
-                    status: SessionStatus::Provisioning,
-                    stop_reason: None,
-                    detail: None,
-                    capability: None,
-                },
-                appended_at: String::new(),
-            }],
-        )
-        .await
-        .map_err(store_failed)?;
+        if starting.pending_handover.is_none() {
+            // Older failure paths could leave a private claim without a
+            // recoverable descriptor. Ordinary revive repairs that stale
+            // fence; a descriptor-backed revive preserves its exact claim.
+            starting.rotation_claim = None;
+        }
+        if let Err(error) = self
+            .persist_durably(
+                &mut starting,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq: 0,
+                    kind: EventKind::StatusChanged {
+                        status: SessionStatus::Provisioning,
+                        stop_reason: None,
+                        detail: None,
+                        capability: None,
+                    },
+                    appended_at: String::new(),
+                }],
+            )
+            .await
+        {
+            if let Some(held) = lease.as_ref() {
+                let _ = self.store.release_session_lease(held).await;
+            }
+            self.finish_start(id).await;
+            return Err(store_failed(error));
+        }
+        if let Some(held) = lease.as_mut() {
+            let boundary = crate::coordination::SessionBoundary::for_record(
+                &starting,
+                held.boundary.authority.generation,
+            );
+            if let Err(error) = self.advance_runtime_lease(held, &boundary).await {
+                let _ = self.store.release_session_lease(held).await;
+                self.finish_start(id).await;
+                return Err(store_failed(error));
+            }
+        }
         limit_guard.record_written(self.store.as_ref()).await;
 
         let geometry = starting.session.geometry;
@@ -113,19 +203,24 @@ impl SessionService {
             quoted_rate_card: None,
         };
 
-        self.begin_start(id).await;
         let service = Arc::clone(self);
         let session = starting.session.clone();
+        let rotation_claim = starting.rotation_claim.clone();
         let spawned = session.clone();
         tokio::spawn(async move {
             service
-                .bring_up(
+                .bring_up_with_lease(
                     spawned,
-                    spec,
                     adapter,
+                    spec,
                     geometry,
-                    None,
-                    crate::provision_failure::Abandonment::Keep,
+                    restore,
+                    crate::provision_support::BringUpContext {
+                        outcome: crate::provision_failure::Abandonment::Keep,
+                        lease,
+                        handover: None,
+                        rotation_claim,
+                    },
                 )
                 .await;
         });
@@ -246,11 +341,56 @@ impl SessionService {
         record: &SessionRecord,
         readoption: Readoption,
     ) -> Result<(), CoreError> {
-        let id = record.session.id.clone();
         let Readoption {
             _permit: _readoption,
             history,
         } = readoption;
+        let mut lease = match self
+            .acquire_runtime_lease_at(record, crate::coordination::SessionOperation::Readopt)
+            .await
+        {
+            Ok(lease) => lease,
+            Err(error @ StoreError::SessionAuthorityChanged { .. }) => {
+                let current = self
+                    .store
+                    .get(&record.session.id)
+                    .await
+                    .map_err(store_failed)?;
+                if current.is_some_and(|record| record.session.status.is_terminal()) {
+                    return Err(CoreError::SessionTerminated);
+                }
+                return Err(store_failed(error));
+            }
+            Err(error) => return Err(store_failed(error)),
+        };
+        let publication_token = format!("publication_{}", uuid::Uuid::new_v4().simple());
+        let result = self
+            .readopt_with_lease(record, history, &mut lease, &publication_token)
+            .await;
+        if result.is_err() {
+            self.remove_incomplete_runtime_entry(&record.session.id, &publication_token)
+                .await;
+        }
+        if let Some(held) = lease.take() {
+            if let Err(error) = self.store.release_session_lease(&held).await {
+                tracing::debug!(
+                    session_id = %record.session.id,
+                    %error,
+                    "readoption lease ended before explicit release"
+                );
+            }
+        }
+        result
+    }
+
+    async fn readopt_with_lease(
+        self: &Arc<Self>,
+        record: &SessionRecord,
+        history: ReadoptionHistory,
+        lease: &mut Option<crate::coordination::SessionLease>,
+        publication_token: &str,
+    ) -> Result<(), CoreError> {
+        let id = record.session.id.clone();
         let ReadoptionHistory {
             conversation_id,
             pending_approvals: _,
@@ -308,6 +448,9 @@ impl SessionService {
             ))
         };
 
+        self.renew_runtime_lease(lease.as_ref())
+            .await
+            .map_err(store_failed)?;
         let terminal = match conversing {
             false => Some(
                 adapter
@@ -317,8 +460,11 @@ impl SessionService {
             ),
             true => None,
         };
-        let conversation = match conversing {
+        let (conversation, mut conversation_opening) = match conversing {
             true => {
+                self.renew_runtime_lease(lease.as_ref())
+                    .await
+                    .map_err(store_failed)?;
                 // What the runtime calls the conversation already running in
                 // it, read from the same durable snapshot as pending approvals.
                 // The last recorded name wins because a session may have been
@@ -332,25 +478,95 @@ impl SessionService {
                         "this session's conversation was never named; the runtime will be asked for a new one"
                     );
                 }
-                /*
-                 * Folding starts before the open, for the reason given at the
-                 * equivalent point in `provision.rs`: a conversation reports
-                 * things while it is being opened, and a taken-back-over
-                 * session is exactly where those reports matter — this is the
-                 * path a control-plane replacement runs.
-                 */
-                let (updates_tx, updates_rx) =
-                    tokio::sync::mpsc::channel(crate::provision::CONVERSATION_BUFFER);
-                crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), updates_rx);
-                Some(
-                    adapter
-                        .open_conversation(&handle, &options, updates_tx)
-                        .await
-                        .map_err(unreachable)?,
-                )
+                let opening_authority = self
+                    .acquire_conversation_opening(
+                        &id,
+                        &handle.0,
+                        lease
+                            .as_ref()
+                            .map_or(0, |held| held.boundary.authority.generation),
+                        None,
+                        lease.as_ref(),
+                    )
+                    .await
+                    .map_err(store_failed)?;
+                let (updates_tx, mut opening) =
+                    crate::conversation_opening::ConversationOpening::channel(
+                        crate::provision::CONVERSATION_BUFFER,
+                        opening_authority,
+                        Arc::clone(&self.store),
+                    );
+                let renewal_authority = opening.authority().clone();
+                let opening_result: Result<_, CoreError> = {
+                    let open = adapter.open_conversation(&handle, &options, updates_tx);
+                    tokio::pin!(open);
+                    let renewal = tokio::time::sleep(
+                        crate::provision_support::CONVERSATION_OPENING_RENEW_INTERVAL,
+                    );
+                    tokio::pin!(renewal);
+                    let mut receiving = true;
+                    loop {
+                        tokio::select! {
+                            result = &mut open => break Ok(result),
+                            () = &mut renewal => {
+                                if let Err(error) = self
+                                    .renew_conversation_opening(
+                                        &renewal_authority,
+                                        lease.as_ref(),
+                                    )
+                                    .await
+                                {
+                                    break Err(store_failed(error));
+                                }
+                                renewal.as_mut().reset(
+                                    tokio::time::Instant::now()
+                                        + crate::provision_support::CONVERSATION_OPENING_RENEW_INTERVAL,
+                                );
+                            }
+                            update = opening.receive(), if receiving => match update {
+                                Some(ConversationUpdate::SignInRequired { url, code, message }) => {
+                                    if !opening.can_publish_sign_in() {
+                                        break Err(CoreError::RuntimeRefused(
+                                            "the runtime emitted an ordinary conversation update before its opening sign-in prompt".into(),
+                                        ));
+                                    }
+                                    if let Err(error) = self
+                                        .persist_opening_sign_in(
+                                            &id,
+                                            &renewal_authority,
+                                            lease.as_ref(),
+                                            url,
+                                            code,
+                                            message,
+                                        )
+                                        .await
+                                    {
+                                        break Err(store_failed(error));
+                                    }
+                                }
+                                Some(update) => opening.hold(update),
+                                None => receiving = false,
+                            }
+                        }
+                    }
+                };
+                match opening_result {
+                    Ok(Ok(channel)) => (Some(channel), Some(opening)),
+                    Ok(Err(error)) => {
+                        self.revoke_conversation_opening(&id, opening).await;
+                        return Err(unreachable(error));
+                    }
+                    Err(error) => {
+                        self.revoke_conversation_opening(&id, opening).await;
+                        return Err(error);
+                    }
+                }
             }
-            false => None,
+            false => (None, None),
         };
+
+        let mut conversation_publication = None;
+        let result = async {
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let (terminal_ending, _) = watch::channel(None);
@@ -394,6 +610,7 @@ impl SessionService {
         // by this stale snapshot. The service-wide entries lock is never held
         // across the durable read or write.
         let installation = self.lock_lifecycle(&id).await;
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
         let ordering = self.conversation_order_gates.gate(&id);
         let ordered_installation = ordering.lock().await;
         if self.entries.read().await.contains_key(&id) {
@@ -408,7 +625,13 @@ impl SessionService {
         if current.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
+        let status_changed_by_conversation = matches!(
+            current.session.status,
+            SessionStatus::Ready | SessionStatus::Running
+        ) || (current.session.status == SessionStatus::Idle
+            && current.session.stop_reason == Some(crate::session::StopReason::RequiresAction));
         if !current.session.wants_runtime()
+            || (current.session.status != record.session.status && !status_changed_by_conversation)
             || current.session.kernel != record.session.kernel
             || current.runtime_id.as_deref() != Some(handle.0.as_str())
         {
@@ -416,33 +639,47 @@ impl SessionService {
                 "the session changed while its runtime was being reconnected".into(),
             ));
         }
-
-        // The first snapshot selected the conversation to rejoin. Updates can
-        // become durable while the network attachment is being built, so fold
-        // approval state again at the installation boundary. The folder takes
-        // this same gate before recording an update; none can land between
-        // this read and publishing the entry.
-        let final_history = self
-            .readoption_history(&current)
-            .await
-            .map_err(|error| {
-                CoreError::RuntimeRefused(format!(
-                    "the runtime was reached but its final conversation state could not be rebuilt: {error}"
-                ))
-            })?;
-        if final_history.conversation_id != conversation_id {
-            return Err(CoreError::RuntimeRefused(
-                "the conversation changed while its runtime was being reconnected".into(),
-            ));
+        if let Some(held) = lease.as_mut() {
+            let current_boundary = crate::coordination::SessionBoundary::for_record(
+                &current,
+                held.boundary.authority.generation,
+            );
+            if current_boundary == held.boundary {
+                self.renew_runtime_lease(Some(held))
+                    .await
+                    .map_err(store_failed)?;
+            } else {
+                // A rejoined runtime can report a request, completion, or
+                // resolution while its channel is opening. Those conversation
+                // updates change status without changing runtime authority. The
+                // store advances only if this lease is still current and the
+                // record is exactly the boundary just validated above.
+                self.advance_runtime_lease(held, &current_boundary)
+                    .await
+                    .map_err(store_failed)?;
+            }
         }
-        let pending_approvals = final_history.pending_approvals;
-        let approval_locators = final_history.approval_locators;
 
         // A reachable runtime proves that a recorded provisioning state has
-        // completed. Make that fact durable before publishing the entry; doing
-        // it afterwards leaves a window where a concurrent stop can commit
-        // idle and then be overwritten by this stale ready write.
-        if current.session.status == SessionStatus::Provisioning {
+        // completed. It can also safely cancel an interrupted handover whose
+        // still-authoritative runtime survived the process that claimed it;
+        // the next reconciliation may start a fresh version rotation. Mint the
+        // legacy claim before leaving `Rotating` so every other replica stays
+        // fenced until this exact readoption is locally published.
+        //
+        // Make that fact durable before publishing the entry; doing it
+        // afterwards leaves a window where a concurrent stop can commit idle
+        // and then be overwritten by this stale ready write.
+        if matches!(
+            current.session.status,
+            SessionStatus::Provisioning | SessionStatus::Rotating
+        ) {
+            if current.session.status.is_rotating() && current.rotation_claim.is_none() {
+                current.rotation_claim = Some(format!(
+                    "rotn_{}",
+                    uuid::Uuid::new_v4().simple()
+                ));
+            }
             current.session.status = SessionStatus::Ready;
             current.session.recovery_state = RecoveryState::Normal;
             current.session.stop_reason = None;
@@ -462,7 +699,35 @@ impl SessionService {
             )
             .await
             .map_err(store_failed)?;
+            if let Some(held) = lease.as_mut() {
+                let boundary = crate::coordination::SessionBoundary::for_record(
+                    &current,
+                    held.boundary.authority.generation,
+                );
+                self.advance_runtime_lease(held, &boundary)
+                    .await
+                    .map_err(store_failed)?;
+            }
         }
+
+        // Rebuild from the final durable history after any readiness event.
+        // The opening FIFO is still private and will be folded immediately
+        // after this state is installed under the same two input/order gates.
+        let final_history = self
+            .readoption_history(&current)
+            .await
+            .map_err(|error| {
+                CoreError::RuntimeRefused(format!(
+                    "the runtime was reached but its final conversation state could not be rebuilt: {error}"
+                ))
+            })?;
+        if final_history.conversation_id != conversation_id {
+            return Err(CoreError::RuntimeRefused(
+                "the conversation changed while its runtime was being reconnected".into(),
+            ));
+        }
+        let pending_approvals = final_history.pending_approvals;
+        let approval_locators = final_history.approval_locators;
 
         if !pending_approvals.is_empty() {
             tracing::info!(
@@ -472,7 +737,26 @@ impl SessionService {
             );
         }
 
-        let owner = current.session.owner.clone();
+        let (conversation_link, conversation_authority, opening_updates, conversation_updates) =
+            match conversation_opening.take() {
+                Some(opening) => {
+                    if let Err(error) = self
+                        .renew_conversation_opening(opening.authority(), lease.as_ref())
+                        .await
+                    {
+                        opening.revoke().await;
+                        return Err(store_failed(error));
+                    }
+                    let (link, durable, held, updates, publication) = opening
+                        .publish(lease.as_ref())
+                        .await
+                        .map_err(store_failed)?;
+                    conversation_publication = Some(publication);
+                    (Some(link), Some(durable), Some(held), Some(updates))
+                }
+                None => (None, None, None, None),
+            };
+
         let mut adopted = current.session.clone();
         adopted.capabilities = capabilities;
         let event_log = self.event_logs.lane(&id);
@@ -485,6 +769,13 @@ impl SessionService {
             environment_values,
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
+            runtime_generation: lease
+                .as_ref()
+                .map_or(0, |held| held.boundary.authority.generation),
+            publication_token: publication_token.to_string(),
+            publication_complete: false,
+            conversation_link,
+            conversation_authority,
             input: terminal.as_ref().map(|c| c.input.clone()),
             live: Some(live.clone()),
             terminal_ending: terminal_ending.clone(),
@@ -504,31 +795,143 @@ impl SessionService {
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
-        drop(ordered_installation);
-        drop(installation);
-        crate::resources::spawn_resource_watch(
-            Arc::clone(self),
-            id.clone(),
-            Arc::clone(&adapter),
-            handle,
-        );
-        if let Some(channel) = terminal {
-            spawn_relay(
+        if let (Some(link), Some(updates)) = (conversation_link, opening_updates) {
+            if !self.fold_opening_updates_locked(&id, link, updates).await {
+                return Err(CoreError::RuntimeRefused(
+                    "the conversation link was superseded during opening replay".into(),
+                ));
+            }
+        }
+        let runtime_generation = lease
+            .as_ref()
+            .map_or(0, |held| held.boundary.authority.generation);
+        if let Some(held) = lease.as_mut() {
+            let replayed = self
+                .store
+                .get(&id)
+                .await
+                .map_err(store_failed)?
+                .ok_or(CoreError::SessionNotFound)?;
+            let boundary =
+                crate::coordination::SessionBoundary::for_record(&replayed, runtime_generation);
+            if boundary != held.boundary {
+                self.advance_runtime_lease(held, &boundary)
+                    .await
+                    .map_err(store_failed)?;
+            }
+        }
+        // Readoption already owns the exact durable runtime boundary. Use it
+        // to install and acknowledge custody before this entry becomes valid
+        // evidence that a retained rotation claim may clear. Waiting until
+        // lease release would let an ordinary prompt win the credential race.
+        if self.credentials.is_some() {
+            match self
+                .install_prepared_credential_while_lifecycle_locked(
+                    &installation,
+                    &current.session,
+                    None,
+                    &handle,
+                    runtime_generation,
+                    lease.as_ref(),
+                )
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => tracing::warn!(
+                    session_id = %id,
+                    "the readopted runtime resumed without its owner's credential"
+                ),
+                Err(error) => tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "the readopted runtime's credential could not be recorded"
+                ),
+            }
+        }
+        {
+            let mut entries = self.entries.write().await;
+            let exact = entries.get(&id).is_some_and(|entry| {
+                entry.runtime.as_ref() == Some(&handle)
+                    && entry.runtime_generation == runtime_generation
+                    && entry.publication_token == publication_token
+                    && Arc::ptr_eq(&entry.screen, &screen)
+            });
+            if !exact {
+                return Err(CoreError::RuntimeUnavailable(
+                    "the runtime entry changed before readoption completed".into(),
+                ));
+            }
+            if let (Some(link), Some(updates)) = (conversation_link, conversation_updates) {
+                crate::conversation_log::spawn_folder(
+                    Arc::clone(self),
+                    id.clone(),
+                    link,
+                    runtime_generation,
+                    updates,
+                );
+                conversation_publication
+                    .take()
+                    .expect("a published conversation receiver retains its cleanup guard")
+                    .disarm();
+            }
+            crate::resources::spawn_resource_watch(
                 Arc::clone(self),
                 id.clone(),
-                channel.output,
-                screen,
-                live,
-                terminal_ending,
+                Arc::clone(&adapter),
+                handle.clone(),
             );
+            if let Some(channel) = terminal {
+                spawn_relay(
+                    Arc::clone(self),
+                    id.clone(),
+                    channel.output,
+                    Arc::clone(&screen),
+                    live,
+                    terminal_ending,
+                );
+            }
+            entries
+                .get_mut(&id)
+                .expect("the exact readopted entry remains locked")
+                .publication_complete = true;
         }
-
-        // The sandbox kept running, but the credential it was given belonged to
-        // a process that has gone. Without this the session answers every
-        // prompt with an authorisation failure.
-        self.supply_credential(&id, &owner).await;
+        drop(ordered_installation);
+        drop(input_fence);
+        drop(installation);
+        if let Some(claim) = current.rotation_claim.as_deref() {
+            match self.finalize_rotation_publication(&id, claim).await {
+                Ok(true) => {}
+                Ok(false) => tracing::warn!(
+                    session_id = %id,
+                    "the readopted runtime no longer owns its rotation publication claim"
+                ),
+                Err(error) => tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "the readopted runtime remains interaction-fenced until reconciliation clears its rotation claim"
+                ),
+            }
+        }
+        if let Some(held) = lease.take() {
+            if let Err(error) = self.store.release_session_lease(&held).await {
+                tracing::debug!(
+                    session_id = %id,
+                    %error,
+                    "readoption lease ended before explicit release"
+                );
+            }
+        }
 
         tracing::info!(session_id = %id, "reconnected to an existing runtime");
         Ok(())
+        }
+        .await;
+        if let Some(publication) = conversation_publication.take() {
+            self.revoke_conversation_publication(&id, publication).await;
+        }
+        if let Some(opening) = conversation_opening.take() {
+            self.revoke_conversation_opening(&id, opening).await;
+        }
+        result
     }
 }

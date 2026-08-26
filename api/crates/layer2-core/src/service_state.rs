@@ -3,14 +3,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 
-use layer3_adapter::{KernelAdapter, PermissionLocator, RuntimeHandle, TerminalInput};
-use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
+use layer3_adapter::{KernelAdapter, PermissionLocator, RuntimeHandle, TerminalInputSender};
+use tokio::sync::{broadcast, watch, Mutex, RwLock};
 
 use crate::environment_service::EnvironmentProfileService;
 use crate::ids::{KernelId, SessionId};
 use crate::platform_service::PlatformSettingsService;
 use crate::session::Session;
-use crate::store::{ContextStore, CredentialSource, SessionStore};
+use crate::store::{ContextStore, CredentialSource, HandoverStore, SessionStore};
 use crate::terminal::{ScreenModel, TerminalGeometry};
 
 /// How many output chunks a slow attached client may fall behind before it is
@@ -56,7 +56,33 @@ pub(crate) struct SessionEntry {
     pub(crate) environment_values: Vec<String>,
     pub(crate) screen: Arc<Mutex<Box<dyn ScreenModel>>>,
     pub(crate) runtime: Option<RuntimeHandle>,
-    pub(crate) input: Option<mpsc::Sender<TerminalInput>>,
+    /// Durable authority generation to which the live runtime channels belong.
+    pub(crate) runtime_generation: u64,
+    /// Never-reused process-local identity of the attempt that installed this
+    /// entry. A cancelled attempt can remove only its own incomplete entry even
+    /// when a compatibility store has no durable runtime generation.
+    pub(crate) publication_token: String,
+    /// Whether every process-local consumer for this entry has been installed.
+    ///
+    /// An entry becomes visible before buffered conversation updates can be
+    /// folded, but a cancelled or failed publication must never prove that a
+    /// durable rotation is complete. Reconciliation may discard an incomplete
+    /// entry; only a complete one may settle its durable rotation claim.
+    pub(crate) publication_complete: bool,
+    /// Process-local identity of the exact conversation link installed here.
+    ///
+    /// Durable generation zero is shared by every compatibility runtime, and a
+    /// readoption keeps the same durable runtime generation. Neither therefore
+    /// identifies one folder. This token does: an older folder can never match a
+    /// replacement entry, even when both point at the same durable generation.
+    pub(crate) conversation_link: Option<crate::conversation_opening::ConversationLinkId>,
+    /// Store-issued identity of the one link allowed to commit inbound work.
+    ///
+    /// Unlike `conversation_link`, this crosses replicas. Publication advances
+    /// its epoch atomically, and every conversation-originated store commit is
+    /// conditioned on the exact value installed here.
+    pub(crate) conversation_authority: Option<crate::coordination::ConversationLink>,
+    pub(crate) input: Option<TerminalInputSender>,
     /// Where this session's stored context lives, once any has been captured.
     pub(crate) context_ref: Option<String>,
     /// Transcript length at the last capture, so an unchanged one is not rewritten.
@@ -186,19 +212,45 @@ impl SessionGates {
     }
 }
 
+/// Per-session boundary between accepted input and a rotation transition.
+///
+/// Input holds a read lease from its final state check through delivery. A
+/// rotation holds the write lease while publishing `Rotating` durably and in
+/// the live entry, so an operation accepted against the old runtime finishes
+/// before the handover window opens and no later operation can cross into it.
+#[derive(Default)]
+pub(crate) struct SessionInputGates {
+    held: StdMutex<HashMap<SessionId, Weak<RwLock<()>>>>,
+}
+
+impl SessionInputGates {
+    pub(crate) fn gate(&self, id: &SessionId) -> Arc<RwLock<()>> {
+        let mut held = self.held.lock().unwrap_or_else(|error| error.into_inner());
+        held.retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = held.get(id).and_then(Weak::upgrade) {
+            return gate;
+        }
+        let gate = Arc::new(RwLock::new(()));
+        held.insert(id.clone(), Arc::downgrade(&gate));
+        gate
+    }
+}
+
 /// The core service.
 pub struct SessionService {
     /// Live sessions, keyed by id. Only those with a running runtime appear.
     pub(crate) entries: RwLock<HashMap<SessionId, SessionEntry>>,
     /// Serializes lifecycle decisions and installation for one session only.
     pub(crate) lifecycle_gates: SessionGates,
+    /// Fences runtime input delivery against the transition into rotation.
+    pub(crate) input_gates: SessionInputGates,
     /// Serializes rebuilding one runtime attachment after process replacement.
     ///
     /// Separate from lifecycle ordering because opening a conversation may wait
     /// on a human-paced sign-in. Within this process, the permit spans the
-    /// history read, network open, folder creation and installation so two
-    /// callers cannot leave two sockets draining and folding the same runtime
-    /// conversation.
+    /// history read, network open, folder creation, installation, and durable
+    /// lease release so two callers cannot leave two sockets draining and
+    /// folding the same runtime conversation.
     ///
     /// Process-local exclusion is sufficient only while
     /// `infra/api/deployment.yaml` keeps `replicas: 1`. Horizontal scaling
@@ -224,6 +276,8 @@ pub struct SessionService {
     pub(crate) store: Arc<dyn SessionStore>,
     /// Where an agent's accumulated context is kept, when a deployment has one.
     pub(crate) context: Option<Arc<dyn ContextStore>>,
+    /// Where claim-bound compatibility handover snapshots are kept.
+    pub(crate) handovers: Option<Arc<dyn HandoverStore>>,
     /// Where to get an owner's credential when the owner is not here to give one.
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
     /// Where this session's skills are fetched from, when anything can.
@@ -235,6 +289,12 @@ pub struct SessionService {
     /// sandbox. A restarted process asks again, which is right - by then the
     /// runtime may well have been replaced by other means.
     pub(crate) rotation_refused: RwLock<HashSet<SessionId>>,
+    /// Sessions whose outgoing runtime is being replaced.
+    ///
+    /// Unlike the durable `Rotating` status, this spans the final installation
+    /// boundary where readiness is committed just before the replacement entry
+    /// becomes live. It is consulted only after a live lookup misses.
+    pub(crate) rotations_in_progress: RwLock<HashSet<SessionId>>,
     /// Who this control plane says it is, on the runtimes it creates.
     ///
     /// A sandbox provider is shared: one key sees everything provisioned
@@ -242,6 +302,11 @@ pub struct SessionService {
     /// entirely. Without an identity on each one, a second control plane reads
     /// every session it has never heard of as an orphan and tears it down.
     pub(crate) identity: Option<String>,
+    /// Unique identity of this process instance for durable operation leases.
+    ///
+    /// Deployment identity deliberately is not enough: two replicas from one
+    /// rollout share it and must still be distinguishable across lease expiry.
+    pub(crate) coordination_holder: String,
     /// Whether runtimes carrying no identity are this control plane's to judge.
     ///
     /// True for the deployment that owns a provider, so runtimes created before
@@ -277,6 +342,12 @@ pub struct SessionService {
     /// Held here rather than as a constant so a test can exercise the retry
     /// path without waiting out a delay meant for a provider under load.
     pub(crate) retry_backoff_ms: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    pub(crate) pause_next_live_install: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(crate) live_install_paused: tokio::sync::Notify,
+    #[cfg(test)]
+    pub(crate) live_install_resume: tokio::sync::Notify,
 }
 
 /// What a session service reaches outside itself, beyond its own store.
@@ -289,6 +360,8 @@ pub struct SessionService {
 pub struct SessionPorts {
     /// Where a session's conversation is stored between runtimes.
     pub context: Option<Arc<dyn ContextStore>>,
+    /// Where compatibility handover snapshots are durably staged.
+    pub handovers: Option<Arc<dyn HandoverStore>>,
     /// Where a session's own credential is minted.
     pub credentials: Option<Arc<dyn CredentialSource>>,
     /// Where a session's skills are fetched from.

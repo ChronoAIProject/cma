@@ -18,19 +18,25 @@
 //! branched on: the sets differ between runtimes and grow without warning, and
 //! a session must not fail because a kernel invented a category.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use layer3_adapter::{
     ContentBlock, ConversationUpdate, PermissionLocator, PermissionRequest, PromptResponse,
     SessionUpdate,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
+use crate::conversation_opening::{ConversationLinkId, ConversationOpeningClaim};
+use crate::coordination::{
+    ConversationOpeningLease, ConversationOpeningLeaseRequest, ConversationWriteAuthority,
+    RuntimeCandidate, SessionLease,
+};
 use crate::event::{ConfigOption, Event, EventKind, LiveFrame, PlanStep, ToolBody};
 use crate::ids::SessionId;
-use crate::log::append;
+use crate::log::append_conversation;
 use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
+use crate::store::StoreError;
 
 /// Rebuild the approval requests a live entry must still accept.
 ///
@@ -41,6 +47,33 @@ use crate::session::{SessionStatus, StopReason};
 pub(crate) struct ApprovalState {
     pub(crate) pending: HashMap<String, Option<PermissionLocator>>,
     pub(crate) locators: HashMap<String, Option<PermissionLocator>>,
+}
+
+struct FoldedUpdate {
+    changed: bool,
+    live: Option<(broadcast::Sender<LiveFrame>, LiveFrame)>,
+}
+
+impl FoldedUpdate {
+    fn quiet(changed: bool) -> Self {
+        Self {
+            changed,
+            live: None,
+        }
+    }
+
+    fn live(changed: bool, sender: broadcast::Sender<LiveFrame>, frame: LiveFrame) -> Self {
+        Self {
+            changed,
+            live: Some((sender, frame)),
+        }
+    }
+
+    fn emit(self) {
+        if let Some((sender, frame)) = self.live {
+            let _ = sender.send(frame);
+        }
+    }
 }
 
 pub(crate) fn pending_approvals_from(events: &[Event]) -> Result<ApprovalState, String> {
@@ -95,6 +128,180 @@ pub(crate) fn pending_approvals_from(events: &[Event]) -> Result<ApprovalState, 
 }
 
 impl SessionService {
+    /// Reserve durable authority before polling an adapter conversation open.
+    pub(crate) async fn acquire_conversation_opening(
+        &self,
+        id: &SessionId,
+        runtime_id: &str,
+        runtime_generation: u64,
+        runtime_candidate: Option<&RuntimeCandidate>,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningClaim, StoreError> {
+        let request = ConversationOpeningLeaseRequest::new(
+            id.clone(),
+            self.coordination_holder.clone(),
+            runtime_id,
+            runtime_generation,
+            runtime_candidate,
+            crate::provision_support::RUNTIME_OPERATION_LEASE_TTL,
+        );
+        ConversationOpeningClaim::acquire(Arc::clone(&self.store), request, session_lease.cloned())
+            .await
+    }
+
+    /// Refresh both layers of authority while an adapter open remains pending.
+    pub(crate) async fn renew_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<(), StoreError> {
+        self.renew_runtime_lease(session_lease).await?;
+        self.store
+            .renew_conversation_opening(
+                opening,
+                session_lease,
+                crate::provision_support::RUNTIME_OPERATION_LEASE_TTL,
+            )
+            .await
+    }
+
+    /// Persist the sign-in prompt that can block `open_conversation` itself.
+    ///
+    /// No ordinary opening update comes through this path. The caller first
+    /// supplies its real durable operation authority; this method takes the
+    /// local lifecycle, input, and conversation-order gates, renews and validates
+    /// that authority there, then commits against a fresh record. A successor
+    /// therefore invalidates either the lease/candidate check or the exact record
+    /// revision used by `persist_durably`.
+    pub(crate) async fn persist_opening_sign_in(
+        &self,
+        id: &SessionId,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+        url: String,
+        code: Option<String>,
+        message: Option<String>,
+    ) -> Result<(), StoreError> {
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let _input_fence = self.input_gates.gate(id).write_owned().await;
+        let ordering = self.conversation_order_gates.gate(id);
+        let _ordered = ordering.lock().await;
+        self.renew_conversation_opening(opening, session_lease)
+            .await?;
+        let mut record = self
+            .store
+            .get(id)
+            .await?
+            .ok_or_else(|| StoreError::SessionDeleted { id: id.clone() })?;
+        tracing::info!(session_id = %id, "this session is waiting for its owner to sign in");
+        self.persist_conversation_durably(
+            &mut record,
+            vec![Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::SignInRequired { url, code, message },
+                appended_at: String::new(),
+            }],
+            ConversationWriteAuthority::Opening {
+                opening: opening.clone(),
+                session_lease: session_lease.cloned(),
+            },
+        )
+        .await
+    }
+
+    /// Revoke an unpublished receiver at the same local boundary as install.
+    pub(crate) async fn revoke_conversation_opening(
+        &self,
+        id: &SessionId,
+        opening: crate::conversation_opening::ConversationOpening,
+    ) {
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let _input_fence = self.input_gates.gate(id).write_owned().await;
+        let ordering = self.conversation_order_gates.gate(id);
+        let _ordered = ordering.lock().await;
+        opening.revoke().await;
+    }
+
+    /// Revoke a published link that never reached folder ownership.
+    pub(crate) async fn revoke_conversation_publication(
+        &self,
+        id: &SessionId,
+        publication: crate::conversation_opening::ConversationPublication,
+    ) {
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let _input_fence = self.input_gates.gate(id).write_owned().await;
+        let ordering = self.conversation_order_gates.gate(id);
+        let _ordered = ordering.lock().await;
+        self.retire_conversation_link(id, publication.link(), publication.authority())
+            .await;
+        publication.revoke().await;
+    }
+
+    pub(crate) async fn retire_conversation_link(
+        &self,
+        id: &SessionId,
+        link: ConversationLinkId,
+        authority: &crate::coordination::ConversationLink,
+    ) {
+        let mut entries = self.entries.write().await;
+        let matches = entries.get(id).is_some_and(|entry| {
+            entry.conversation_link == Some(link)
+                && entry.conversation_authority.as_ref() == Some(authority)
+        });
+        if matches {
+            entries.remove(id);
+        }
+    }
+
+    /// Linearize one inbound frame against durable link publication.
+    async fn admit_conversation_link(&self, id: &SessionId, link: ConversationLinkId) -> bool {
+        let authority = {
+            let entries = self.entries.read().await;
+            let Some(entry) = entries
+                .get(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return false;
+            };
+            let Some(authority) = entry.conversation_authority.clone() else {
+                return false;
+            };
+            authority
+        };
+        let mut delay = Duration::from_millis(5);
+        loop {
+            let still_local = self.entries.read().await.get(id).is_some_and(|entry| {
+                entry.conversation_link == Some(link)
+                    && entry.conversation_authority.as_ref() == Some(&authority)
+            });
+            if !still_local {
+                return false;
+            }
+            match self.store.validate_conversation_link(&authority).await {
+                Ok(()) => return true,
+                Err(StoreError::Unavailable(error)) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "conversation authority could not be checked; retaining the inbound frame"
+                    );
+                    tokio::time::sleep(delay).await;
+                    delay = delay.saturating_mul(2).min(Duration::from_secs(5));
+                }
+                Err(error) => {
+                    self.retire_conversation_link(id, link, &authority).await;
+                    tracing::debug!(
+                        session_id = %id,
+                        %error,
+                        "conversation link was retired before folding an inbound frame"
+                    );
+                    return false;
+                }
+            }
+        }
+    }
+
     /// Record one thing a runtime said.
     ///
     /// Recorded and then shown, never the other way round: a client that saw
@@ -103,29 +310,57 @@ impl SessionService {
     async fn fold_update(
         &self,
         id: &SessionId,
+        link: ConversationLinkId,
         update: ConversationUpdate,
-        ordered: tokio::sync::MutexGuard<'_, ()>,
-    ) {
+        ordering: &tokio::sync::Mutex<()>,
+    ) -> bool {
+        // Rotation takes these gates in the same order before publishing its
+        // durable boundary. Keeping that order here makes every admitted
+        // runtime update finish its mutation before rotation can begin.
+        let input_fence = self.input_gates.gate(id).read_owned().await;
+        let ordered = ordering.lock().await;
+        if !self.admit_conversation_link(id, link).await {
+            return false;
+        }
+        let folded = self.fold_update_locked(id, link, update).await;
+        let current = !folded.changed || self.flush_conversation(id, link).await;
+        if current {
+            folded.emit();
+        }
+        drop(ordered);
+        drop(input_fence);
+        current
+    }
+
+    /// Fold one already-admitted update while publication owns the input and
+    /// conversation-order gates.
+    ///
+    /// The same function serves the long-lived folder and the opening backlog,
+    /// so replay cannot accidentally have a smaller vocabulary than live input.
+    /// It queues every durable mutation but leaves the caller to place one flush
+    /// barrier after the complete FIFO.
+    async fn fold_update_locked(
+        &self,
+        id: &SessionId,
+        link: ConversationLinkId,
+        update: ConversationUpdate,
+    ) -> FoldedUpdate {
         let update = match update {
             ConversationUpdate::Said(update) => update,
             ConversationUpdate::Asked(request) => {
-                self.fold_request(id, request, ordered).await;
-                return;
+                return FoldedUpdate::quiet(self.fold_request(id, link, request).await);
             }
             ConversationUpdate::TurnEnded(completed) => {
-                self.fold_completion(id, completed, ordered).await;
-                return;
+                return FoldedUpdate::quiet(self.fold_completion(id, link, completed).await);
             }
             ConversationUpdate::SignInRequired { url, code, message } => {
-                self.fold_sign_in(id, url, code, message, ordered).await;
-                return;
+                return FoldedUpdate::quiet(self.fold_sign_in(id, link, url, code, message).await);
             }
             ConversationUpdate::Failed {
                 message,
                 capability,
             } => {
-                self.fold_failure(id, message, capability, ordered).await;
-                return;
+                return FoldedUpdate::quiet(self.fold_failure(id, link, message, capability).await);
             }
             ConversationUpdate::Lost { frames } => {
                 // Recorded where it happened, in the same spirit as a
@@ -134,14 +369,15 @@ impl SessionService {
                 tracing::warn!(session_id = %id, frames, "part of this conversation was lost");
                 {
                     let mut entries = self.entries.write().await;
-                    let Some(entry) = entries.get_mut(id) else {
-                        return;
+                    let Some(entry) = entries
+                        .get_mut(id)
+                        .filter(|entry| entry.conversation_link == Some(link))
+                    else {
+                        return FoldedUpdate::quiet(false);
                     };
-                    append(entry, EventKind::ConversationGap { frames });
+                    append_conversation(entry, EventKind::ConversationGap { frames });
                 }
-                drop(ordered);
-                self.flush(id).await;
-                return;
+                return FoldedUpdate::quiet(true);
             }
         };
         // A piece of the agent's reasoning. Liveness and nothing else: unlike a
@@ -151,33 +387,38 @@ impl SessionService {
         // share is the accumulation.
         if let SessionUpdate::AgentThoughtChunk(chunk) = &update {
             let Some(text) = plain_text(&chunk.content) else {
-                return;
+                return FoldedUpdate::quiet(false);
             };
             let live = {
                 let entries = self.entries.read().await;
-                let Some(entry) = entries.get(id) else {
-                    return;
+                let Some(entry) = entries
+                    .get(id)
+                    .filter(|entry| entry.conversation_link == Some(link))
+                else {
+                    return FoldedUpdate::quiet(false);
                 };
                 entry.live_frames.clone()
             };
             // No flush: nothing was appended and nothing changed about the
             // session. A thought that reaches nobody is simply unwatched.
-            let _ = live.send(LiveFrame::ThoughtDelta(text));
-            return;
+            return FoldedUpdate::live(false, live, LiveFrame::ThoughtDelta(text));
         }
         // A piece of a message is liveness, and is shown rather than recorded.
         // What is recorded is the message the pieces add up to, at the moment
         // the runtime moves on from it.
         if let SessionUpdate::AgentMessageChunk(chunk) = &update {
             let Some(text) = plain_text(&chunk.content) else {
-                return;
+                return FoldedUpdate::quiet(false);
             };
             let message_id = chunk.message_id.as_ref().map(|id| id.0.to_string());
             let mut finished = None;
             let live = {
                 let mut entries = self.entries.write().await;
-                let Some(entry) = entries.get_mut(id) else {
-                    return;
+                let Some(entry) = entries
+                    .get_mut(id)
+                    .filter(|entry| entry.conversation_link == Some(link))
+                else {
+                    return FoldedUpdate::quiet(false);
                 };
                 match &mut entry.assembling {
                     // The same message, still being typed.
@@ -193,17 +434,13 @@ impl SessionService {
                     }
                     None => entry.assembling = Some((message_id, text.clone())),
                 }
+                let changed = finished.is_some();
                 if let Some((_, content)) = finished {
-                    append(entry, EventKind::MessageCommitted { content });
+                    append_conversation(entry, EventKind::MessageCommitted { content });
                 }
-                entry.live_frames.clone()
+                (entry.live_frames.clone(), changed)
             };
-            // A send with no subscriber is not an error: the session is simply
-            // unwatched, and the whole message is committed either way.
-            let _ = live.send(LiveFrame::MessageDelta(text));
-            drop(ordered);
-            self.flush(id).await;
-            return;
+            return FoldedUpdate::live(live.1, live.0, LiveFrame::MessageDelta(text));
         }
 
         /*
@@ -221,44 +458,24 @@ impl SessionService {
          * alternative, and it is replaced whole each time the kernel speaks.
          */
         if let SessionUpdate::AvailableCommandsUpdate(commands) = &update {
-            let commands: Vec<crate::event::AvailableCommand> = commands
-                .available_commands
-                .iter()
-                .map(|command| crate::event::AvailableCommand {
-                    name: command.name.clone(),
-                    description: command.description.clone(),
-                })
-                .collect();
+            let commands = offered_commands(commands);
             let live = {
                 let mut entries = self.entries.write().await;
-                match entries.get_mut(id) {
-                    Some(entry) => {
-                        append(
-                            entry,
-                            EventKind::AvailableCommandsSet {
-                                commands: commands.clone(),
-                            },
-                        );
-                        Some(entry.live_frames.clone())
-                    }
-                    // Announced before the entry exists, which for this update
-                    // is the ordinary case rather than a fault.
-                    None => None,
-                }
+                let Some(entry) = entries
+                    .get_mut(id)
+                    .filter(|entry| entry.conversation_link == Some(link))
+                else {
+                    return FoldedUpdate::quiet(false);
+                };
+                append_conversation(
+                    entry,
+                    EventKind::AvailableCommandsSet {
+                        commands: commands.clone(),
+                    },
+                );
+                entry.live_frames.clone()
             };
-            match live {
-                Some(live) => {
-                    let _ = live.send(LiveFrame::AvailableCommands(commands));
-                    drop(ordered);
-                    self.flush(id).await;
-                }
-                None => {
-                    drop(ordered);
-                    self.append_without_entry(id, EventKind::AvailableCommandsSet { commands })
-                        .await;
-                }
-            }
-            return;
+            return FoldedUpdate::live(true, live, LiveFrame::AvailableCommands(commands));
         }
 
         // Read the grant and the values to redact before folding. A tool body
@@ -267,8 +484,11 @@ impl SessionService {
         // variable's value.
         let (record_tool_bodies, secrets) = {
             let entries = self.entries.read().await;
-            let Some(entry) = entries.get(id) else {
-                return;
+            let Some(entry) = entries
+                .get(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return FoldedUpdate::quiet(false);
             };
             let mut secrets = entry.environment_values.clone();
             if let Some(credential) = entry.subject_credential.as_ref() {
@@ -287,39 +507,78 @@ impl SessionService {
             // guessed at: the vocabulary here is the core's own, and inventing
             // an event for something it does not model would put a runtime's
             // shape into the one layer that must outlive it.
-            return;
+            return FoldedUpdate::quiet(false);
         };
         {
             let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return;
+            let Some(entry) = entries
+                .get_mut(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return FoldedUpdate::quiet(false);
             };
             if let Some((now, window)) = reading {
                 if let Some(was) = entry.context_reading.filter(|was| *was > now) {
-                    append(entry, EventKind::ContextCompacted { was, now, window });
+                    append_conversation(entry, EventKind::ContextCompacted { was, now, window });
                 }
                 entry.context_reading = Some(now);
             }
-            append(entry, kind);
+            append_conversation(entry, kind);
         }
-        drop(ordered);
-        self.flush(id).await;
+        FoldedUpdate::quiet(true)
+    }
+
+    /// Replay every frame drained while the adapter was opening.
+    ///
+    /// The caller owns the input write and conversation-order gates and has
+    /// already installed `link`. One final barrier makes the complete FIFO
+    /// durable before either gate is released or the queued receiver starts.
+    pub(crate) async fn fold_opening_updates_locked(
+        &self,
+        id: &SessionId,
+        link: ConversationLinkId,
+        updates: std::collections::VecDeque<ConversationUpdate>,
+    ) -> bool {
+        let mut changed = false;
+        let mut live = Vec::new();
+        for update in updates {
+            if !self.admit_conversation_link(id, link).await {
+                return false;
+            }
+            let folded = self.fold_update_locked(id, link, update).await;
+            changed |= folded.changed;
+            if let Some(frame) = folded.live {
+                live.push(frame);
+            }
+        }
+        let current = if changed {
+            self.flush_conversation(id, link).await
+        } else {
+            self.admit_conversation_link(id, link).await
+        };
+        if current {
+            for (sender, frame) in live {
+                let _ = sender.send(frame);
+            }
+        }
+        current
     }
 
     /// Record something the runtime is blocked on, and park the session.
     async fn fold_request(
         &self,
         id: &SessionId,
+        link: ConversationLinkId,
         request: PermissionRequest,
-        ordered: tokio::sync::MutexGuard<'_, ()>,
-    ) {
+    ) -> bool {
         let locator = request.locator.clone();
         {
             let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                drop(entries);
-                self.fold_early_request(id, request, ordered).await;
-                return;
+            let Some(entry) = entries
+                .get_mut(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return false;
             };
             if let Some(previous) = entry.approval_locators.get(&request.id) {
                 if previous != &locator {
@@ -328,7 +587,7 @@ impl SessionService {
                         "a permission request id was reused with a different locator"
                     );
                 }
-                return;
+                return false;
             }
             entry
                 .pending_approvals
@@ -340,9 +599,12 @@ impl SessionService {
             // `RequiresAction` is the one stop reason that is explicitly not
             // terminal, which is what lets a client show this as a question
             // rather than as a session that died.
-            entry.session.status = SessionStatus::Idle;
-            entry.session.stop_reason = Some(StopReason::RequiresAction);
-            append(
+            let rotating = entry.session.status.is_rotating();
+            if !rotating {
+                entry.session.status = SessionStatus::Idle;
+                entry.session.stop_reason = Some(StopReason::RequiresAction);
+            }
+            append_conversation(
                 entry,
                 EventKind::ApprovalRequested {
                     request_id: request.id.clone(),
@@ -351,95 +613,19 @@ impl SessionService {
                     locator,
                 },
             );
-            append(
-                entry,
-                EventKind::StatusChanged {
-                    status: SessionStatus::Idle,
-                    stop_reason: Some(StopReason::RequiresAction),
-                    detail: None,
-                    capability: None,
-                },
-            );
-        }
-        drop(ordered);
-        self.flush(id).await;
-    }
-
-    /// Record a request replayed while readoption has not installed its entry.
-    async fn fold_early_request(
-        &self,
-        id: &SessionId,
-        request: PermissionRequest,
-        ordered: tokio::sync::MutexGuard<'_, ()>,
-    ) {
-        let mut record = match self.store.get(id).await {
-            Ok(Some(record)) => record,
-            Ok(None) => {
-                tracing::error!(session_id = %id, "cannot record an early permission request: the session is absent");
-                return;
-            }
-            Err(error) => {
-                tracing::error!(session_id = %id, %error, "cannot record an early permission request");
-                return;
-            }
-        };
-        let history = match self.readoption_history(&record).await {
-            Ok(history) => history,
-            Err(error) => {
-                tracing::error!(
-                    session_id = %id,
-                    %error,
-                    "cannot verify an early permission request"
-                );
-                return;
-            }
-        };
-        if let Some(previous) = history.approval_locators.get(&request.id) {
-            if previous != &request.locator {
-                tracing::error!(
-                    session_id = %id,
-                    "a replayed permission request id changed its locator"
+            if !rotating {
+                append_conversation(
+                    entry,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Idle,
+                        stop_reason: Some(StopReason::RequiresAction),
+                        detail: None,
+                        capability: None,
+                    },
                 );
             }
-            return;
         }
-
-        record.session.status = SessionStatus::Idle;
-        record.session.stop_reason = Some(StopReason::RequiresAction);
-        let events = vec![
-            Event {
-                session_id: id.clone(),
-                seq: 0,
-                kind: EventKind::ApprovalRequested {
-                    request_id: request.id,
-                    action: request.request.tool_call.fields.title,
-                    detail: None,
-                    locator: request.locator,
-                },
-                appended_at: String::new(),
-            },
-            Event {
-                session_id: id.clone(),
-                seq: 0,
-                kind: EventKind::StatusChanged {
-                    status: SessionStatus::Idle,
-                    stop_reason: Some(StopReason::RequiresAction),
-                    detail: None,
-                    capability: None,
-                },
-                appended_at: String::new(),
-            },
-        ];
-        if let Err(error) = self.persist_durably(&mut record, events).await {
-            tracing::error!(
-                session_id = %id,
-                %error,
-                "cannot record an early permission request"
-            );
-        }
-        // Installation takes the same gate before its final history read. The
-        // guard is released only after this direct append has settled.
-        drop(ordered);
+        true
     }
 
     /// Record that a turn ended, and why.
@@ -450,20 +636,23 @@ impl SessionService {
     async fn fold_completion(
         &self,
         id: &SessionId,
+        link: ConversationLinkId,
         completed: PromptResponse,
-        ordered: tokio::sync::MutexGuard<'_, ()>,
-    ) {
+    ) -> bool {
         {
             let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return;
+            let Some(entry) = entries
+                .get_mut(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return false;
             };
             let reason = stop_reason_for(&completed);
             // Reported here because this is where a runtime reports it: the
             // turn's response carries the counts, and the update stream
             // carries only how full the context is.
             if let Some(used) = completed.usage.as_ref() {
-                append(
+                append_conversation(
                     entry,
                     EventKind::UsageReported {
                         input_tokens: used.input_tokens,
@@ -482,25 +671,29 @@ impl SessionService {
             // saying. Committed before the boundary so the log reads in the
             // order it happened.
             if let Some((_, content)) = entry.assembling.take() {
-                append(entry, EventKind::MessageCommitted { content });
+                append_conversation(entry, EventKind::MessageCommitted { content });
             }
             entry.pending_approvals.clear();
             entry.approval_locators.clear();
-            entry.session.status = SessionStatus::Ready;
-            entry.session.stop_reason = Some(reason);
-            append(entry, EventKind::TurnCompleted);
-            append(
-                entry,
-                EventKind::StatusChanged {
-                    status: SessionStatus::Ready,
-                    stop_reason: Some(reason),
-                    detail: None,
-                    capability: None,
-                },
-            );
+            let rotating = entry.session.status.is_rotating();
+            if !rotating {
+                entry.session.status = SessionStatus::Ready;
+                entry.session.stop_reason = Some(reason);
+            }
+            append_conversation(entry, EventKind::TurnCompleted);
+            if !rotating {
+                append_conversation(
+                    entry,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Ready,
+                        stop_reason: Some(reason),
+                        detail: None,
+                        capability: None,
+                    },
+                );
+            }
         }
-        drop(ordered);
-        self.flush(id).await;
+        true
     }
 
     /// Record that the agent is waiting for its owner to sign in.
@@ -515,81 +708,23 @@ impl SessionService {
     async fn fold_sign_in(
         &self,
         id: &SessionId,
+        link: ConversationLinkId,
         url: String,
         code: Option<String>,
         message: Option<String>,
-        ordered: tokio::sync::MutexGuard<'_, ()>,
-    ) {
+    ) -> bool {
         tracing::info!(session_id = %id, "this session is waiting for its owner to sign in");
         {
             let mut entries = self.entries.write().await;
-            if let Some(entry) = entries.get_mut(id) {
-                append(entry, EventKind::SignInRequired { url, code, message });
-                drop(entries);
-                drop(ordered);
-                self.flush(id).await;
-                return;
-            }
+            let Some(entry) = entries
+                .get_mut(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return false;
+            };
+            append_conversation(entry, EventKind::SignInRequired { url, code, message });
         }
-        /*
-         * No entry yet, which for this one update is the normal case rather
-         * than the exception. `entries` holds sessions that have a running
-         * runtime, and a kernel raises this from inside `open_conversation`,
-         * before that is true — then waits there for as long as a person takes
-         * to act on it. Returning here is what left an own-account session
-         * sitting in `provisioning` with nothing in its log to say why.
-         *
-         * So it goes to the store directly, the way provisioning progress
-         * already does. The sequence comes from the same shared allocator, so
-         * the two paths cannot hand out the same number.
-         */
-        drop(ordered);
-        self.append_without_entry(id, EventKind::SignInRequired { url, code, message })
-            .await;
-    }
-
-    /// Append one event for a session that has no live entry yet.
-    ///
-    /// Deliberately not offered to `fold_update` at large: most updates
-    /// describe a conversation that is already running, and one arriving with
-    /// no entry means something is wrong rather than something is early. Two
-    /// legitimately precede the runtime being ready — a sign-in the owner must
-    /// complete before anything can start, and the kernel's announcement of
-    /// what it offers, which it makes as the conversation opens. Both say so
-    /// at their call sites.
-    async fn append_without_entry(&self, id: &SessionId, kind: EventKind) {
-        let Ok(Some(mut record)) = self.store.get(id).await else {
-            tracing::error!(
-                session_id = %id,
-                event = kind.tag(),
-                "cannot record this event: the session is not in the store"
-            );
-            return;
-        };
-        if let Err(e) = self
-            .persist_durably(
-                &mut record,
-                vec![Event {
-                    session_id: id.clone(),
-                    seq: 0,
-                    kind,
-                    appended_at: String::new(),
-                }],
-            )
-            .await
-        {
-            /*
-             * Error, not a warning, and never a silent return. A dropped
-             * sign-in leaves a session waiting on a prompt nobody will ever
-             * see, and the whole of #351 was that this path failed quietly
-             * underneath a `tracing::info!` that read like success.
-             */
-            tracing::error!(
-                session_id = %id,
-                error = %e,
-                "cannot record this event"
-            );
-        }
+        true
     }
 
     /// Record a turn that stopped because something went wrong.
@@ -603,39 +738,46 @@ impl SessionService {
     async fn fold_failure(
         &self,
         id: &SessionId,
+        link: ConversationLinkId,
         message: String,
         capability: Option<String>,
-        ordered: tokio::sync::MutexGuard<'_, ()>,
-    ) {
+    ) -> bool {
         tracing::warn!(session_id = %id, %message, "a turn failed");
         {
             let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return;
+            let Some(entry) = entries
+                .get_mut(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return false;
             };
             // Half a message is still what the agent said, and it is the last
             // thing anybody saw. Committed before the failure so the log
             // reads in the order it happened.
             if let Some((_, content)) = entry.assembling.take() {
-                append(entry, EventKind::MessageCommitted { content });
+                append_conversation(entry, EventKind::MessageCommitted { content });
             }
             entry.pending_approvals.clear();
             entry.approval_locators.clear();
-            entry.session.status = SessionStatus::Ready;
-            entry.session.stop_reason = Some(StopReason::Error);
-            append(entry, EventKind::TurnCompleted);
-            append(
-                entry,
-                EventKind::StatusChanged {
-                    status: SessionStatus::Ready,
-                    stop_reason: Some(StopReason::Error),
-                    detail: Some(message),
-                    capability,
-                },
-            );
+            let rotating = entry.session.status.is_rotating();
+            if !rotating {
+                entry.session.status = SessionStatus::Ready;
+                entry.session.stop_reason = Some(StopReason::Error);
+            }
+            append_conversation(entry, EventKind::TurnCompleted);
+            if !rotating {
+                append_conversation(
+                    entry,
+                    EventKind::StatusChanged {
+                        status: SessionStatus::Ready,
+                        stop_reason: Some(StopReason::Error),
+                        detail: Some(message),
+                        capability,
+                    },
+                );
+            }
         }
-        drop(ordered);
-        self.flush(id).await;
+        true
     }
 
     /// Close a turn the runtime left open when its conversation ended.
@@ -643,17 +785,32 @@ impl SessionService {
     /// A dangling turn sits in the log forever looking like work in progress,
     /// which is indistinguishable from an agent that is simply slow. The
     /// reason it actually stopped for is recorded instead.
-    async fn close_open_turn(&self, id: &SessionId, ordered: tokio::sync::MutexGuard<'_, ()>) {
-        {
+    async fn close_open_turn(
+        &self,
+        id: &SessionId,
+        link: ConversationLinkId,
+        ordering: &tokio::sync::Mutex<()>,
+    ) {
+        let input_fence = self.input_gates.gate(id).read_owned().await;
+        let ordered = ordering.lock().await;
+        if !self.admit_conversation_link(id, link).await {
+            return;
+        }
+        let changed = {
             let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
+            let Some(entry) = entries
+                .get_mut(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
                 return;
             };
+            let mut changed = false;
             if let Some((_, content)) = entry.assembling.take() {
                 // Half a message is still what the agent said. Losing it
                 // because the runtime went away would leave the log missing
                 // the last thing anybody saw on screen.
-                append(entry, EventKind::MessageCommitted { content });
+                append_conversation(entry, EventKind::MessageCommitted { content });
+                changed = true;
             }
             // Only a turn that was actually open is closed. A session that
             // was idle when its runtime went away has nothing dangling, and
@@ -663,22 +820,32 @@ impl SessionService {
             {
                 entry.pending_approvals.clear();
                 entry.approval_locators.clear();
-                entry.session.status = SessionStatus::Idle;
-                entry.session.stop_reason = Some(StopReason::Error);
-                append(entry, EventKind::TurnCompleted);
-                append(
-                    entry,
-                    EventKind::StatusChanged {
-                        status: SessionStatus::Idle,
-                        stop_reason: Some(StopReason::Error),
-                        detail: Some("the runtime's conversation ended mid-turn".to_string()),
-                        capability: None,
-                    },
-                );
+                let rotating = entry.session.status.is_rotating();
+                if !rotating {
+                    entry.session.status = SessionStatus::Idle;
+                    entry.session.stop_reason = Some(StopReason::Error);
+                }
+                append_conversation(entry, EventKind::TurnCompleted);
+                if !rotating {
+                    append_conversation(
+                        entry,
+                        EventKind::StatusChanged {
+                            status: SessionStatus::Idle,
+                            stop_reason: Some(StopReason::Error),
+                            detail: Some("the runtime's conversation ended mid-turn".to_string()),
+                            capability: None,
+                        },
+                    );
+                }
+                changed = true;
             }
+            changed
+        };
+        if changed {
+            self.flush_conversation(id, link).await;
         }
         drop(ordered);
-        self.flush(id).await;
+        drop(input_fence);
     }
 }
 
@@ -849,6 +1016,19 @@ fn plain_text(content: &ContentBlock) -> Option<String> {
     }
 }
 
+fn offered_commands(
+    update: &layer3_adapter::AvailableCommandsUpdate,
+) -> Vec<crate::event::AvailableCommand> {
+    update
+        .available_commands
+        .iter()
+        .map(|command| crate::event::AvailableCommand {
+            name: command.name.clone(),
+            description: command.description.clone(),
+        })
+        .collect()
+}
+
 /// Fold a runtime's conversation into a session's durable log.
 ///
 /// Runs for the session's life, independent of any client, exactly as the
@@ -857,27 +1037,29 @@ fn plain_text(content: &ContentBlock) -> Option<String> {
 pub(crate) fn spawn_folder(
     service: Arc<SessionService>,
     id: SessionId,
+    link: ConversationLinkId,
+    runtime_generation: u64,
     mut updates: mpsc::Receiver<ConversationUpdate>,
 ) {
     // Kept alive for the folder's lifetime so every prompt and every update
-    // for this runtime meet at the same per-session gate. Each fold drops its
-    // guard after mutation and enqueue, before waiting for store durability:
-    // the event lane preserves that order without letting slow I/O block the
-    // next operation's admission. The gate is deliberately independent of
-    // lifecycle installation because this folder starts first while a
-    // conversation can already be reporting useful updates.
+    // for this runtime meet at the same per-session gate. A durable-producing
+    // fold keeps both gates through its conditional FIFO barrier, so neither
+    // another inbound frame nor a local prompt can observe rejected state. The
+    // gate is deliberately independent of lifecycle installation because the
+    // folder outlives that one publication guard and every later prompt still
+    // meets it at conversation ordering.
     let ordering = service.conversation_order_gates.gate(&id);
     tokio::spawn(async move {
         while let Some(update) = updates.recv().await {
-            let ordered_update = ordering.lock().await;
-            service.fold_update(&id, update, ordered_update).await;
+            if !service.fold_update(&id, link, update, &ordering).await {
+                break;
+            }
         }
         // The channel ending is the runtime's conversation ending. A turn left
         // open would sit in the log forever looking like work still in
         // progress, so it is closed with the reason it actually stopped for.
-        let ordered_close = ordering.lock().await;
-        service.close_open_turn(&id, ordered_close).await;
-        tracing::info!(session_id = %id, "conversation folding ended");
+        service.close_open_turn(&id, link, &ordering).await;
+        tracing::info!(session_id = %id, runtime_generation, "conversation folding ended");
     });
 }
 

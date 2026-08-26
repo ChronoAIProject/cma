@@ -79,6 +79,44 @@ async fn a_stopped_session_can_still_be_read() {
 }
 
 #[tokio::test]
+async fn a_live_transcript_wait_does_not_hold_the_session_entry_map() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("live-transcript-lock-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let screen = {
+        let entries = svc.entries.read().await;
+        entries
+            .get(&created.id)
+            .expect("the session is live")
+            .screen
+            .clone()
+    };
+    let screen_guard = screen.lock().await;
+    let transcript = svc.session_transcript(&alice, &created.id);
+    tokio::pin!(transcript);
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+
+    assert!(matches!(
+        std::future::Future::poll(transcript.as_mut(), &mut context),
+        std::task::Poll::Pending
+    ));
+    let entries = svc
+        .entries
+        .try_write()
+        .expect("a transcript waiting for the screen releases the session entry map");
+    drop(entries);
+
+    drop(screen_guard);
+    assert!(transcript
+        .await
+        .expect("the live transcript is readable")
+        .is_empty());
+}
+
+#[tokio::test]
 async fn a_privileged_reader_cannot_read_a_screen_they_cannot_read_as_a_transcript() {
     // The same bytes by two routes, so they must answer to the same rule. A
     // session's screen shows whatever the agent printed, and the values of the

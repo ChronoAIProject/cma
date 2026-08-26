@@ -69,8 +69,10 @@ do not build unvalidated JSON around the client to imitate them.
 
 `SessionStatus` names `Provisioning`, `Ready`, `Running`, `Rotating`, `Idle`, and
 `Terminated`. `RecoveryState` is separate operational health. While status is
-`Rotating`, refuse new input and keep reading events until the replacement runtime
-is usable. `StopReason::RequiresAction` means the runtime is waiting for an owner
+`Rotating`, the server refuses new input with the retryable `409 session_rotating`
+error. Clients should disable input controls for experience and keep reading events
+until the replacement runtime is usable; correctness does not depend on that client
+guard. `StopReason::RequiresAction` means the runtime is waiting for an owner
 decision and is not terminal.
 
 The Rust session enums currently validate known wire values strictly. A future
