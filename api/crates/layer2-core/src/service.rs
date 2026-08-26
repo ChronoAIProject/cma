@@ -123,7 +123,10 @@ impl SessionService {
     /// lifecycle while the coordinated implementations are rolled out. Once a
     /// non-zero authority exists, every provider mutation must arrive through a
     /// lease-aware path; callers without one fail closed instead of falling back
-    /// to a handle-only adapter call.
+    /// to a handle-only adapter call. The remaining compatibility path has no
+    /// cross-replica object identity of its own and is limited to providers that
+    /// either capture immutable deletion identity inside the adapter or do not
+    /// reuse a handle while a lifecycle operation is in flight.
     pub(crate) async fn require_compatibility_provider_mutation(
         &self,
         id: &SessionId,
