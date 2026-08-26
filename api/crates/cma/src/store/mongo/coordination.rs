@@ -1375,7 +1375,11 @@ fn apply_command_transition(
         }
         CoordinationCommand::Release(lease) => {
             if lease.operation == SessionOperation::Interact {
-                let lease_epoch = interaction_token_epoch(&lease.token)?;
+                let lease_epoch = interaction_token_epoch(&lease.token).map_err(|_| {
+                    StoreError::SessionLeaseLost {
+                        id: lease.session_id.clone(),
+                    }
+                })?;
                 let state = session
                     .coordination
                     .get_or_insert_with(CoordinationDoc::default);
@@ -2826,6 +2830,44 @@ mod tests {
                 &mut session,
                 &mut receipts,
                 CoordinationCommand::Release(forged),
+            ),
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        assert_eq!(
+            session
+                .coordination
+                .as_ref()
+                .and_then(|state| state.lease.as_ref())
+                .unwrap()
+                .to_core(&lease.session_id)
+                .unwrap(),
+            lease
+        );
+    }
+
+    #[test]
+    fn malformed_interaction_release_token_is_reported_as_lease_loss() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let request = interaction_request(&session, "interaction-nonce-malformed-release");
+        let lease = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::AcquireInteraction(request),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("interaction lease expected"),
+        };
+        let mut malformed = lease.clone();
+        malformed.token = "not-an-interaction-epoch".into();
+
+        assert!(matches!(
+            run(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::Release(malformed),
             ),
             Err(StoreError::SessionLeaseLost { .. })
         ));
