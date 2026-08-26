@@ -151,8 +151,24 @@ impl TerminalInputSender {
         self.inner.same_channel(&other.inner)
     }
 
-    pub(crate) async fn retire(&self) {
+    pub(crate) fn abort(&self) {
         self.abort.abort();
+    }
+
+    pub(crate) fn abort_handle(&self) -> tokio::task::AbortHandle {
+        self.abort.clone()
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self.inner.is_closed()
+    }
+
+    pub(crate) fn retirement(&self) -> TaskRetirement {
+        self.retirement.clone()
+    }
+
+    pub(crate) async fn retire(&self) {
+        self.abort();
         self.retirement.wait().await;
     }
 

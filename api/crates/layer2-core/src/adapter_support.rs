@@ -6,10 +6,12 @@
 //! what it currently has running, and every way it can refuse.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use layer3_adapter::{
     AdapterError, KernelAdapter, RuntimeGeneration, RuntimeHandle, RuntimeIdentity, RuntimeListing,
-    RuntimeLossReason, RuntimeMode, RuntimeSpec, TerminalChannel, TerminalOutput,
+    RuntimeLossReason, RuntimeMode, RuntimeSpec, TerminalChannel, TerminalInput,
+    TerminalInputSender, TerminalOutput,
 };
 use tokio::sync::{mpsc, Mutex, Notify, Semaphore};
 
@@ -31,6 +33,12 @@ pub(crate) struct FakeAdapter {
     /// Kept alive so the relay's output channel does not close immediately,
     /// which would make a live session look dead.
     pub(crate) senders: Mutex<Vec<mpsc::Sender<TerminalOutput>>>,
+    /// Terminal operations that reached their runtime-link writer.
+    pub(crate) terminal_inputs: Arc<Mutex<Vec<(String, TerminalInput)>>>,
+    /// Deterministically hold one terminal write inside its delivery receipt.
+    pub(crate) pause_next_terminal_input: Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) terminal_input_paused: Arc<Notify>,
+    pub(crate) terminal_input_resume: Arc<Notify>,
     /// What the provider currently has running: handle to the session it was
     /// provisioned for. This is the provider's own view, which is the thing
     /// reconciliation compares the record against.
@@ -159,6 +167,10 @@ impl Default for FakeAdapter {
             fail_first: std::sync::atomic::AtomicUsize::new(0),
             refuse_attach: false,
             senders: Mutex::default(),
+            terminal_inputs: Arc::new(Mutex::default()),
+            pause_next_terminal_input: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            terminal_input_paused: Arc::new(Notify::new()),
+            terminal_input_resume: Arc::new(Notify::new()),
             running: Mutex::default(),
             generations: Mutex::default(),
             refuse_list: false,
@@ -206,6 +218,28 @@ impl Default for FakeAdapter {
 }
 
 impl FakeAdapter {
+    pub(crate) fn pause_next_terminal_input(&self) {
+        assert!(
+            !self
+                .pause_next_terminal_input
+                .swap(true, std::sync::atomic::Ordering::SeqCst),
+            "a terminal input pause is already armed"
+        );
+    }
+
+    pub(crate) async fn wait_until_terminal_input_paused(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.terminal_input_paused.notified(),
+        )
+        .await
+        .expect("terminal input reached the runtime-link writer");
+    }
+
+    pub(crate) fn resume_terminal_input(&self) {
+        self.terminal_input_resume.notify_one();
+    }
+
     pub(crate) fn pause_next_provision(&self) {
         assert!(
             !self
@@ -380,13 +414,30 @@ impl KernelAdapter for FakeAdapter {
             return Err(AdapterError::Unavailable("no such runtime".into()));
         }
         let (out_tx, out_rx) = mpsc::channel(8);
-        let (in_tx, _in_rx) = mpsc::channel(8);
         self.senders.lock().await.push(out_tx);
-        // The input receiver is dropped: nothing in these tests reads it, and
-        // the service tolerates a closed input channel by design.
+        let runtime = handle.0.clone();
+        let terminal_inputs = Arc::clone(&self.terminal_inputs);
+        let pause_next = Arc::clone(&self.pause_next_terminal_input);
+        let paused = Arc::clone(&self.terminal_input_paused);
+        let resume = Arc::clone(&self.terminal_input_resume);
+        let input = TerminalInputSender::spawn(8, move |input| {
+            let runtime = runtime.clone();
+            let terminal_inputs = Arc::clone(&terminal_inputs);
+            let pause_next = Arc::clone(&pause_next);
+            let paused = Arc::clone(&paused);
+            let resume = Arc::clone(&resume);
+            async move {
+                if pause_next.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    paused.notify_one();
+                    resume.notified().await;
+                }
+                terminal_inputs.lock().await.push((runtime, input));
+                Ok(())
+            }
+        });
         Ok(TerminalChannel {
             output: out_rx,
-            input: in_tx,
+            input,
         })
     }
 

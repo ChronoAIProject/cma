@@ -275,6 +275,14 @@ impl ConversationInputSender {
         self.retirement.wait().await;
     }
 
+    pub(crate) fn abort_handle(&self) -> tokio::task::AbortHandle {
+        self.abort.clone()
+    }
+
+    pub(crate) fn retirement(&self) -> TaskRetirement {
+        self.retirement.clone()
+    }
+
     pub(crate) async fn wait_retired(&self) {
         self.retirement.wait().await;
     }

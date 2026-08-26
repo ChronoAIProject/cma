@@ -354,14 +354,16 @@ impl KernelAdapter for WireAdapter {
         _handle: &RuntimeHandle,
     ) -> Result<TerminalChannel, AdapterError> {
         let (output, output_rx) = mpsc::channel(16);
-        let (input, mut input_rx) = mpsc::channel::<TerminalInput>(16);
         self.outputs.lock().await.push(output);
         let terminal_inputs = Arc::clone(&self.terminal_inputs);
         let terminal_input_arrived = Arc::clone(&self.terminal_input_arrived);
-        tokio::spawn(async move {
-            while let Some(input) = input_rx.recv().await {
+        let input = layer3_adapter::TerminalInputSender::spawn(16, move |input| {
+            let terminal_inputs = Arc::clone(&terminal_inputs);
+            let terminal_input_arrived = Arc::clone(&terminal_input_arrived);
+            async move {
                 terminal_inputs.lock().await.push(input);
                 terminal_input_arrived.notify_one();
+                Ok(())
             }
         });
         Ok(TerminalChannel {

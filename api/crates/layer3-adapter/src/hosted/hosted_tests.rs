@@ -28,6 +28,75 @@ fn hosted(base: &str) -> HostedKernel {
     )
 }
 
+fn input_link(
+    capacity: usize,
+) -> (
+    crate::TerminalInputSender,
+    mpsc::Receiver<crate::TerminalInput>,
+) {
+    let (writer, received) = mpsc::channel(capacity);
+    let link = crate::TerminalInputSender::spawn(capacity, move |input| {
+        let writer = writer.clone();
+        async move {
+            writer
+                .send(input)
+                .await
+                .map_err(|_| AdapterError::Unavailable("the test terminal writer closed".into()))
+        }
+    });
+    (link, received)
+}
+
+fn start_mock_registration(
+    lifecycle: LinkLifecycle,
+    pause_cleanup: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+) -> (
+    TerminalInputSender,
+    crate::task_retirement::TaskRetirement,
+    tokio::task::JoinHandle<bool>,
+    tokio::task::JoinHandle<()>,
+) {
+    let link = TerminalInputSender::spawn(1, |_input| {
+        std::future::pending::<Result<(), AdapterError>>()
+    });
+    let writer_retired = link.retirement();
+    let identity = link.downgrade();
+    let whole_retirement = crate::task_retirement::TaskRetirement::default();
+    let whole_guard = whole_retirement.guard();
+    let (installed, installation) = tokio::sync::oneshot::channel();
+    let cleanup_lifecycle = lifecycle.clone();
+    let supervisor = tokio::spawn(async move {
+        let _whole_guard = whole_guard;
+        writer_retired.wait().await;
+        if let Some((started, resume)) = pause_cleanup {
+            let _ = started.send(());
+            let _ = resume.await;
+        }
+        if installation.await.is_ok() {
+            if let Some(link) = identity.upgrade() {
+                cleanup_lifecycle.forget(&link).await;
+            }
+        }
+    });
+
+    let registration_link = link.clone();
+    let registration_retirement = whole_retirement.clone();
+    let registered = tokio::spawn(async move {
+        let mut abort_on_drop = AbortLinkOnDrop::new(registration_link.clone());
+        let is_current = lifecycle
+            .register(registration_link, registration_retirement, installed)
+            .await;
+        if is_current {
+            abort_on_drop.disarm();
+        }
+        is_current
+    });
+    (link, whole_retirement, registered, supervisor)
+}
+
 /// Serve one provider listing response and then stop.
 async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -352,7 +421,7 @@ async fn a_credential_reaches_a_runtime_over_the_link_it_already_has() {
     // be replaced to keep its credential fresh.
     let k = hosted("http://127.0.0.1:1");
     let handle = RuntimeHandle("sbx-1".into());
-    let (tx, mut rx) = mpsc::channel(4);
+    let (tx, mut rx) = input_link(4);
     k.remember_link(&handle.0, tx).await;
 
     k.refresh_credential(&handle, "a-fresh-credential")
@@ -381,7 +450,7 @@ async fn a_credential_for_a_runtime_with_no_link_is_refused_rather_than_dropped(
 async fn a_link_that_closed_is_forgotten_rather_than_retried_forever() {
     let k = hosted("http://127.0.0.1:1");
     let handle = RuntimeHandle("sbx-1".into());
-    let (tx, rx) = mpsc::channel(1);
+    let (tx, rx) = input_link(1);
     drop(rx);
     k.remember_link(&handle.0, tx).await;
 
@@ -398,13 +467,45 @@ async fn tearing_a_runtime_down_forgets_its_link() {
     // has ever served.
     let k = hosted("http://127.0.0.1:1");
     let handle = RuntimeHandle("sbx-1".into());
-    let (tx, _rx) = mpsc::channel(1);
-    k.remember_link(&handle.0, tx).await;
+    let (tx, _rx) = input_link(1);
+    k.remember_link(&handle.0, tx.clone()).await;
 
     // Against a dead provider the delete fails; the link is dropped first, on
     // purpose, because the sandbox is going either way.
     let _ = k.terminate(&handle).await;
     assert!(k.link_to(&handle.0).await.is_none());
+    tx.wait_retired().await;
+    assert!(tx
+        .send(TerminalInput::Bytes(b"late".to_vec()))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn failed_identity_delete_keeps_the_captured_link_live() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let handle = RuntimeHandle("sbx_identity_delete_failed".into());
+    let (link, mut received) = input_link(1);
+    kernel.remember_link(&handle.0, link.clone()).await;
+    let identity = RuntimeIdentity {
+        handle: handle.clone(),
+        session: "sesn_identity_delete_failed".into(),
+        generation: std::num::NonZeroU64::new(1),
+    };
+
+    assert!(kernel.terminate_if_identity(&identity).await.is_err());
+    let current = kernel
+        .link_to(&handle.0)
+        .await
+        .expect("provider failure says nothing about the captured link");
+    assert!(current.same_channel(&link));
+    link.send(TerminalInput::Bytes(b"still-live".to_vec()))
+        .await
+        .expect("the captured link was not retired on provider failure");
+    assert!(matches!(
+        received.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == b"still-live"
+    ));
 }
 
 #[tokio::test]
@@ -555,10 +656,11 @@ async fn a_conversations_control_lane_carries_nothing_else() {
     let sink = Arc::new(tokio::sync::Mutex::new(Recorder(Arc::clone(&sent))));
 
     let control = super::control_lane(sink);
-    control
+    let error = control
         .send(TerminalInput::Bytes(b"ls -la".to_vec()))
         .await
-        .expect("accepted by the channel");
+        .expect_err("terminal bytes are rejected by a conversation control lane");
+    assert!(matches!(error, AdapterError::Rejected(_)), "got {error:?}");
     tokio::time::sleep(std::time::Duration::from_millis(60)).await;
 
     assert!(
@@ -609,7 +711,7 @@ async fn a_runtime_that_never_answers_a_switch_is_not_recorded_as_having_switche
     // caller to a rotation — which is how such a session moved before the
     // in-place switch existed, and still moves correctly.
     let kernel = hosted("http://127.0.0.1:1");
-    let (link, _held) = mpsc::channel::<TerminalInput>(4);
+    let (link, _held) = input_link(4);
     kernel.remember_link("sbx_old", link).await;
 
     let started = std::time::Instant::now();
@@ -630,15 +732,16 @@ async fn a_runtime_that_never_answers_a_switch_is_not_recorded_as_having_switche
 #[tokio::test]
 async fn cleanup_from_an_old_link_preserves_its_successor_and_waiter() {
     let kernel = hosted("http://127.0.0.1:1");
-    let (old_link, _old_input) = mpsc::channel::<TerminalInput>(1);
+    let (old_link, _old_input) = input_link(1);
     kernel
         .remember_link("sbx_generation", old_link.clone())
         .await;
 
-    let (successor, _successor_input) = mpsc::channel::<TerminalInput>(1);
+    let (successor, _successor_input) = input_link(1);
     kernel
         .remember_link("sbx_generation", successor.clone())
         .await;
+    old_link.wait_retired().await;
     let waiters = kernel.switch_waiters();
     let mut answer = waiters.expect("sbx_generation", &successor).await;
 
@@ -664,9 +767,124 @@ async fn cleanup_from_an_old_link_preserves_its_successor_and_waiter() {
 }
 
 #[tokio::test]
+async fn chained_registration_does_not_wait_for_a_superseded_predecessors_predecessor() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let lifecycle = kernel.link_lifecycle("sbx_registration_chain");
+    let (r0_cleanup_started, r0_cleanup_started_rx) = tokio::sync::oneshot::channel();
+    let (resume_r0_cleanup, resume_r0_cleanup_rx) = tokio::sync::oneshot::channel();
+    let (r0, r0_retired, r0_registration, r0_supervisor) = start_mock_registration(
+        lifecycle.clone(),
+        Some((r0_cleanup_started, resume_r0_cleanup_rx)),
+    );
+    assert!(r0_registration.await.expect("R0 registration runs"));
+
+    let (a, a_retired, a_registration, a_supervisor) =
+        start_mock_registration(lifecycle.clone(), None);
+    r0_cleanup_started_rx
+        .await
+        .expect("A starts retiring R0 but R0 cleanup is paused");
+    assert!(!a_registration.is_finished());
+
+    let (b, b_retired, b_registration, b_supervisor) =
+        start_mock_registration(lifecycle, None);
+    let b_is_current = tokio::time::timeout(std::time::Duration::from_secs(1), b_registration)
+        .await
+        .expect("B does not wait behind R0 cleanup")
+        .expect("B registration runs");
+    assert!(b_is_current);
+    a_retired.wait().await;
+    a_supervisor.await.expect("A supervisor retires");
+
+    let current = kernel
+        .link_to("sbx_registration_chain")
+        .await
+        .expect("B remains registered");
+    assert!(current.same_channel(&b));
+
+    let _ = resume_r0_cleanup.send(());
+    r0_retired.wait().await;
+    r0_supervisor.await.expect("R0 supervisor retires");
+    assert!(
+        !a_registration.await.expect("A registration resumes"),
+        "A reports that B superseded it"
+    );
+    assert!(r0.is_closed());
+    assert!(a.is_closed());
+
+    b.abort();
+    b_retired.wait().await;
+    b_supervisor.await.expect("B supervisor retires");
+    assert!(kernel.link_to("sbx_registration_chain").await.is_none());
+}
+
+#[tokio::test]
+async fn canceling_registration_while_it_retires_a_predecessor_rolls_it_back() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let lifecycle = kernel.link_lifecycle("sbx_canceled_registration");
+    let (r0_cleanup_started, r0_cleanup_started_rx) = tokio::sync::oneshot::channel();
+    let (resume_r0_cleanup, resume_r0_cleanup_rx) = tokio::sync::oneshot::channel();
+    let (_r0, r0_retired, r0_registration, r0_supervisor) = start_mock_registration(
+        lifecycle.clone(),
+        Some((r0_cleanup_started, resume_r0_cleanup_rx)),
+    );
+    assert!(r0_registration.await.expect("R0 registration runs"));
+
+    let (_a, a_retired, a_registration, a_supervisor) =
+        start_mock_registration(lifecycle, None);
+    r0_cleanup_started_rx
+        .await
+        .expect("A is installed and waiting for R0 cleanup");
+    a_registration.abort();
+    assert!(a_registration
+        .await
+        .expect_err("A registration is canceled")
+        .is_cancelled());
+    a_retired.wait().await;
+    a_supervisor.await.expect("A supervisor retires");
+    assert!(kernel.link_to("sbx_canceled_registration").await.is_none());
+
+    let _ = resume_r0_cleanup.send(());
+    r0_retired.wait().await;
+    r0_supervisor.await.expect("R0 supervisor retires");
+}
+
+#[tokio::test]
+async fn post_delete_cleanup_of_a_captured_link_preserves_its_successor() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let handle = "sbx_reused_while_delete_waited";
+    let (old, _old_input) = input_link(1);
+    kernel.remember_link(handle, old).await;
+    let captured = kernel
+        .links
+        .lock()
+        .await
+        .get(handle)
+        .cloned()
+        .expect("the pre-delete generation is captured");
+
+    let (successor, mut successor_input) = input_link(1);
+    kernel.remember_link(handle, successor.clone()).await;
+    kernel.retire_captured_link(handle, &captured).await;
+
+    let current = kernel
+        .link_to(handle)
+        .await
+        .expect("post-delete cleanup leaves the concurrent successor");
+    assert!(current.same_channel(&successor));
+    successor
+        .send(TerminalInput::Bytes(b"successor".to_vec()))
+        .await
+        .expect("the successor writer was not retired");
+    assert!(matches!(
+        successor_input.recv().await,
+        Some(TerminalInput::Bytes(bytes)) if bytes == b"successor"
+    ));
+}
+
+#[tokio::test]
 async fn a_waiter_does_not_keep_its_control_lane_alive() {
     let waiters = super::SwitchWaiters::default();
-    let (link, mut input) = mpsc::channel::<TerminalInput>(1);
+    let (link, mut input) = input_link(1);
     let _answer = waiters.expect("sbx_weak_waiter", &link).await;
 
     drop(link);
@@ -679,7 +897,7 @@ async fn a_waiter_does_not_keep_its_control_lane_alive() {
 #[tokio::test]
 async fn remembering_the_same_link_again_keeps_its_waiter() {
     let kernel = hosted("http://127.0.0.1:1");
-    let (link, _input) = mpsc::channel::<TerminalInput>(1);
+    let (link, _input) = input_link(1);
     kernel
         .remember_link("sbx_same_generation", link.clone())
         .await;
@@ -702,7 +920,7 @@ async fn remembering_the_same_link_again_keeps_its_waiter() {
 async fn replacing_a_link_cancels_only_that_generations_pending_switch() {
     let kernel = Arc::new(hosted("http://127.0.0.1:1"));
     let handle = RuntimeHandle("sbx_replaced_waiter".into());
-    let (old_link, mut old_input) = mpsc::channel::<TerminalInput>(1);
+    let (old_link, mut old_input) = input_link(1);
     kernel.remember_link(&handle.0, old_link).await;
 
     let old_attempt = {
@@ -715,7 +933,7 @@ async fn replacing_a_link_cancels_only_that_generations_pending_switch() {
         Some(TerminalInput::SwitchPlane { command }) if command == "old-command"
     ));
 
-    let (successor, mut successor_input) = mpsc::channel::<TerminalInput>(1);
+    let (successor, mut successor_input) = input_link(1);
     kernel.remember_link(&handle.0, successor.clone()).await;
     let old_outcome = old_attempt.await.expect("the old switch task ran");
     assert!(
@@ -748,7 +966,7 @@ async fn stale_switch_failure_and_late_reply_do_not_settle_the_successor() {
     let handle = RuntimeHandle("sbx_race".into());
 
     // Fill the old channel so its switch send parks after obtaining that link.
-    let (old_link, old_input) = mpsc::channel::<TerminalInput>(1);
+    let (old_link, old_input) = input_link(1);
     old_link
         .send(TerminalInput::Bytes(b"occupied".to_vec()))
         .await
@@ -766,7 +984,7 @@ async fn stale_switch_failure_and_late_reply_do_not_settle_the_successor() {
         "the full old link keeps its send in flight"
     );
 
-    let (successor, mut successor_input) = mpsc::channel::<TerminalInput>(1);
+    let (successor, mut successor_input) = input_link(1);
     kernel.remember_link(&handle.0, successor.clone()).await;
     let successor_attempt = {
         let kernel = Arc::clone(&kernel);
@@ -818,7 +1036,7 @@ async fn stale_switch_failure_and_late_reply_do_not_settle_the_successor() {
 async fn a_switch_the_runtime_confirms_is_recorded_as_done() {
     // The positive case, and the only one that may be recorded in place.
     let kernel = hosted("http://127.0.0.1:1");
-    let (link, mut held) = mpsc::channel::<TerminalInput>(4);
+    let (link, mut held) = input_link(4);
     kernel.remember_link("sbx_new", link.clone()).await;
 
     // Stand in for the pod: read the request off the link and answer it the
@@ -845,7 +1063,7 @@ async fn a_refused_command_is_not_a_switch() {
     // The supervisor refuses anything outside its boot allowlist. That is a
     // negative answer, not a missing one, and it must not be recorded either.
     let kernel = hosted("http://127.0.0.1:1");
-    let (link, mut held) = mpsc::channel::<TerminalInput>(4);
+    let (link, mut held) = input_link(4);
     kernel.remember_link("sbx_ref", link.clone()).await;
 
     let waiters = kernel.switch_waiters();

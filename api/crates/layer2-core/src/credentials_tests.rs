@@ -48,16 +48,10 @@ impl KernelAdapter for RecordingAdapter {
         &self,
         _handle: &layer3_adapter::RuntimeHandle,
     ) -> Result<layer3_adapter::TerminalChannel, layer3_adapter::AdapterError> {
-        // Drained rather than inspected: what this adapter is watched for now
-        // travels through `refresh_credential`, and an unread receiver would
-        // make the service's terminal writes fail for reasons unrelated to
-        // what is under test.
-        let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<layer3_adapter::TerminalInput>(16);
         let (_out_tx, out_rx) = tokio::sync::mpsc::channel::<layer3_adapter::TerminalOutput>(16);
-        tokio::spawn(async move { while in_rx.recv().await.is_some() {} });
         Ok(layer3_adapter::TerminalChannel {
             output: out_rx,
-            input: in_tx,
+            input: layer3_adapter::TerminalInputSender::spawn(16, |_input| async { Ok(()) }),
         })
     }
 
