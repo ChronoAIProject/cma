@@ -56,6 +56,8 @@ pub(crate) struct SessionEntry {
     pub(crate) environment_values: Vec<String>,
     pub(crate) screen: Arc<Mutex<Box<dyn ScreenModel>>>,
     pub(crate) runtime: Option<RuntimeHandle>,
+    /// Durable authority generation to which the live runtime channels belong.
+    pub(crate) runtime_generation: u64,
     pub(crate) input: Option<TerminalInputSender>,
     /// Where this session's stored context lives, once any has been captured.
     pub(crate) context_ref: Option<String>,

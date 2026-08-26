@@ -280,6 +280,9 @@ impl SessionService {
                 ))
             }
         };
+        let runtime_generation = candidate
+            .as_ref()
+            .map_or(0, |candidate| candidate.generation.get());
 
         // Compatibility stores still name the handle immediately. Coordinated
         // stores keep it as uncommitted-candidate cleanup debt until attach
@@ -346,6 +349,7 @@ impl SessionService {
                 crate::conversation_log::spawn_folder(
                     Arc::clone(self),
                     session.id.clone(),
+                    runtime_generation,
                     updates_rx,
                 );
                 Some(
@@ -633,6 +637,7 @@ impl SessionService {
             environment_values,
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
+            runtime_generation,
             input: terminal_input.clone(),
             live: Some(live.clone()),
             terminal_ending: terminal_ending.clone(),
