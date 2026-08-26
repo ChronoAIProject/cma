@@ -751,33 +751,42 @@ Revocation is also state-dependent:
 Old runtime images do not understand this policy. Trigger provisioning is
 disabled for any cohort that does not advertise `github_capability_v1`.
 
-## 15. Workspace capture decision gate
+## 15. Workspace capture decision
 
-#662 owns the final transport decision. The provider question is asked before
-adding a Layer 4 workspace lane.
+#662's bounded production-provider discovery is complete and recorded in
+`docs/Sandbox_Provider.md`. The deployed OpenSandbox API advertises native
+snapshot/restore routes, but a driven snapshot failed with
+`RegistryNotConfigured`; that path is not operational. The deployed Execd
+`v1.0.20` proxy did complete a two-sandbox archive round trip, preserving text,
+binary content, executable mode, and a relative symlink. Full and ranged
+downloads worked, and a destination manifest-hash check rejected a deliberately
+truncated upload before extraction.
 
-The pinned production record identifies OpenSandbox server `0.1.2` and Execd
-`v1.0.20`. Tagged source shows no lifecycle snapshot/restore route in server
-`0.1.2`, but it does show a provider-authenticated endpoint proxy and injected
-Execd with command, file download, file upload, metadata, and directory APIs.
-An exploratory local `0.2.2`/`v1.0.21` drill successfully archived one
-workspace through that server proxy and restored it into a second sandbox;
-text, binary, executable mode, and symlink target matched byte-for-byte. Both
-probe sandboxes were deleted with provider HTTP 204.
+That round trip proves byte transport, not a coherent capture. Neither the
+provider nor the current Layer 4 wire can pause Codex and background writers,
+freeze the filesystem, or acknowledge writer quiescence. A provider-only
+archive can therefore mix workspace states while a turn or descendant process
+is writing, and it fails #662's consistency requirement.
 
-That local result is not production evidence. The selected branch remains:
+The proposed MVP selects a **versioned Layer 4 workspace checkpoint
+capability**, staged as a runtime-image rollout before any Trigger Launch uses
+it. The protocol must:
 
-- **Provider Execd archive transport**, only if the same endpoint is driven on
-  the pinned production deployment and demonstrates bounded archive creation,
-  download, upload, restore, integrity, and teardown ordering; otherwise
-- **Versioned Layer 4 workspace lane**, rolled out as a new runtime capability
-  before any Trigger Launch uses it.
+- fence one entitled writer with the Launch workspace epoch;
+- stop admitting work and positively acknowledge writer quiescence;
+- flush and seal a bounded, versioned, hash-addressed archive and manifest
+  before the old sandbox may be torn down;
+- atomically commit durable object state from the Launch's perspective while
+  retaining the previous valid checkpoint on failure;
+- verify the manifest and materialized tree before the replacement agent
+  starts; and
+- fail closed to `recovery_required`, or resume the still-live old runtime,
+  whenever a required proof is missing.
 
-Whichever branch is selected must quiesce the entitled workspace writer,
-capture before rotation terminates the old sandbox, atomically commit a
-versioned manifest, verify before resume, reject unsafe paths/symlinks, and
-retain the previous valid checkpoint after partial failure. Conversation-only
-snapshotting is not workspace recovery.
+The demonstrated Execd path may be used only as a bulk relay for an already
+sealed archive. It is not the consistency authority. Conversation-only
+snapshotting is not workspace recovery, and an old image that does not
+advertise the checkpoint capability is ineligible for a Trigger Launch.
 
 ## 16. Threat model
 
@@ -813,16 +822,22 @@ snapshotting is not workspace recovery.
 
 - [ ] This document is approved by named backend, frontend, runtime, identity,
       security, and product maintainers; #654 links the approved revision.
-- [ ] #131 records a redacted live session-side GitHub transcript, including
-      unprompted discovery, instructed use, renewal, ungranted service, and no
-      profile.
+- [ ] #131 records a redacted live session-side GitHub transcript and proves
+      that an `autonomous` scoped session can use its broker without manual
+      approval, retain its broker skills and in-flight turn across runtime
+      replacement, renew safely, deny an ungranted service, and fail closed
+      without a profile. Switching to excluded `unrestricted` mode is not an
+      acceptable result.
 - [ ] #675 records restart, refresh-token/no-refresh-token, inactive-service,
       and authority-drift evidence and accepts ADR-002's bounded branch.
 - [ ] #445 with #524/#528 proves expiring session keys, revocation, and
       duplicate-key reconciliation against the required non-production/live
-      environments.
-- [ ] #662 records the pinned production workspace-transport probe and selects
-      provider Execd or the Layer 4 lane.
+      environments. Replacement retains the known-working predecessor until
+      exact-runtime acknowledgement and durable promotion, then revokes it; a
+      revoke-before-mint sequence is not acceptable.
+- [x] #662 records the pinned production workspace-transport probe and selects
+      the versioned Layer 4 workspace checkpoint capability. Implementation and
+      staged rollout of that capability remain #662 work after this design gate.
 - [ ] Every milestone issue has a named owner and milestone `cma-trigger` has a
       maintainer-selected due date.
 

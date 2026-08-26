@@ -330,62 +330,131 @@ reason until its request and lifecycle have been driven and recorded again.
 
 Issue #662 asks whether the pinned provider can capture and restore a complete
 repository workspace without adding a new Layer 4 wire lane. This section
-records the bounded discovery result as of 2026-08-26. It does not extend the
-production capability claims above.
+records the bounded production discovery result from 2026-08-26. It does not
+advertise workspace recovery as an implemented CMA capability.
 
-### Pinned-source result
+### Deployed production surface
 
-The exact server tag deployed in the production record is OpenSandbox
-`server/v0.1.2`, commit
-`ecb1b5b012cb14a7289c5c565cc379b17a828699`. Its lifecycle schema and router:
+CMA's production `CHRONO_SANDBOX_BASE_URL` names the `opensandbox-server`
+service, not the separately installed `opensandbox-server-codex` service. The
+observed deployment is:
 
-- have no sandbox snapshot resource and no snapshot restore field;
-- create sandboxes from an image only;
-- expose `GET /v1/sandboxes/{id}/endpoints/{port}`; and
-- expose a provider-authenticated HTTP proxy to that sandbox endpoint.
+| Component | Observed value |
+|---|---|
+| Helm chart / chart app version | `opensandbox-server-0.1.2` / `0.1.0` |
+| Server image | `opensandbox/server@sha256:4b386f107a4222320928b0b4dd38df8dc5154250ea4c90b4d36767a62f69ce7c` |
+| Installed Python distribution | editable `opensandbox-server 0.1.0.dev0` from `/app` |
+| Controller | `opensandbox/controller:v0.2.0` |
+| Execd | `opensandbox/execd:v1.0.20` |
+| Provider HTTP proxy timeout | `httpx.AsyncClient(timeout=180.0)` |
+| Maximum requested sandbox lifetime | 3,600 seconds |
 
-The production record also pins Execd `v1.0.20`, commit
-`ae452d4af7b6415b5074fd7e075b97ff7a5ac236`. The server injects Execd into the
-sandbox, and that exact Execd source listens on port 44772 and exposes typed
-command, file metadata, directory listing, file download, and multipart file
-upload operations. These source facts identify a possible transport, but do
-not prove that the production endpoint is reachable or that an archive round
-trip is safe under the deployed runtime and proxy configuration.
+The chart version is not the server source version. In particular, the live
+image's API does not match the previously inspected upstream `server/v0.1.2`
+tag, so that tag and its commit cannot be used as evidence for this deployment.
+The image digest, live OpenAPI document, installed distribution, and driven
+responses above are the production record. No source commit is claimed for an
+image that does not publish one in its observed metadata.
 
-### Exploratory local protocol result
+The live OpenAPI document advertises all of:
 
-The local `kind-shining-local-cluster` deployment runs OpenSandbox server
-`0.2.2` with Execd `v1.0.21`. Two disposable, explicitly tagged sandboxes were
-used to test the candidate protocol:
+- `POST /v1/sandboxes/{sandbox_id}/snapshots`;
+- `GET /v1/snapshots` and `GET`/`DELETE /v1/snapshots/{snapshot_id}`; and
+- `CreateSandboxRequest.snapshotId` for restore.
 
-1. Execd created a workspace containing text, binary content, an executable,
-   a nested directory, and a relative symlink, then produced a POSIX archive.
-2. The archive was downloaded through the provider's server proxy. Its SHA-256
-   matched the in-sandbox value.
-3. The same archive was uploaded through Execd into a fresh sandbox and
-   extracted.
-4. All three file-content hashes, executable mode `755`, and symlink target
-   matched the source.
-5. Both sandboxes were deleted through the provider and returned HTTP 204; no
-   matching probe objects remained.
+Therefore "snapshot routes are absent" is not a valid explanation for the
+production limitation.
 
-This establishes that the proposed archive/download/upload/restore protocol is
-workable on the newer local provider. It is not evidence for production's
-older pinned versions.
+### Native snapshot result
 
-### Decision gate
+A disposable sandbox was snapshotted through the live API. Creation returned
+HTTP 202 and snapshot `ed464609-9b9b-4ad4-9269-7f4585ccdbf0`, but its terminal
+state was:
 
-Before #662 implementation, repeat the archive round trip against the pinned
-production provider and runtime, including quiescing the workspace writer,
-size/time bounds, partial transfer, integrity failure, and capture-before-
-teardown ordering. Never print the provider key or archive content.
+```text
+state:   Failed
+reason:  RegistryNotConfigured
+message: snapshot-registry not configured in controller manager
+```
 
-- If it succeeds, select the provider Execd archive transport and record the
-  exact route, version, limits, consistency protocol, and restore proof here.
-- If the route is absent, unreachable, unbounded, or cannot provide a
-  consistent capture, record that negative result and select a versioned Layer
-  4 workspace lane with a staged runtime-image rollout.
+The source sandbox subsequently expired and returned HTTP 404. The failed
+snapshot was deleted explicitly (HTTP 204) and then returned HTTP 404. The
+schema is present, but native snapshot and restore are not operational in this
+production installation. CMA must not claim or depend on them unless the
+registry is configured and a new round trip is demonstrated.
 
-The existence of OpenSandbox snapshot routes in local server `0.2.2` is not a
-shortcut: production server `0.1.2` does not expose them, and no implementation
-may advertise snapshot/restore on that basis.
+### Execd archive round trip
+
+The deployed Execd version's upstream source is pinned at
+`ae452d4af7b6415b5074fd7e075b97ff7a5ac236`. Its production endpoints were
+reachable through the provider-authenticated proxy at:
+
+```text
+POST /v1/sandboxes/{id}/proxy/44772/command
+GET  /v1/sandboxes/{id}/proxy/44772/files/download?path=...
+POST /v1/sandboxes/{id}/proxy/44772/files/upload
+```
+
+Two disposable sandboxes tagged `cma-trigger-readiness` drove this sequence:
+
+1. Execd created a nested text file, binary file, executable file with mode
+   `755`, and relative symlink, then archived the workspace.
+2. The 6,144-byte archive was downloaded with HTTP 200. Its source and local
+   SHA-256 values both were
+   `f418af1073e79d48df6c4d8b5a92dbf0e0cc7f096a47ae26a331120a336ac726`.
+3. A `Range: bytes=0-63` request returned HTTP 206, the correct
+   `Content-Range: bytes 0-63/6144`, and bytes matching the full archive's
+   prefix. The route supports ranged download.
+4. The full archive and a deliberately truncated 64-byte artifact were each
+   accepted by multipart upload with HTTP 200. Execd and the provider supplied
+   no `ETag`, `Digest`, `Content-MD5`, or checksum header, so the destination
+   compared each uploaded SHA-256 with the source manifest before extraction.
+   The truncated artifact failed that comparison and was not extracted.
+5. After full-archive verification, extraction reproduced the text and binary
+   hashes, executable mode `755`, executable size, and symlink target exactly.
+6. Both sandboxes were deleted through the provider with HTTP 204 and each
+   returned HTTP 404 afterwards. Local archive and header artifacts were also
+   removed.
+
+This demonstrates byte transport, ranged reads, multipart writes, and an
+application-level integrity check on the exact production provider. It does
+not demonstrate a resumable upload. The provider proxy has a 180-second HTTP
+client timeout and advertises no request-size or integrity bound for this
+route. A production protocol must impose its own maximum archive size,
+deadline, manifest hash, and retry rules; it must treat every interrupted or
+unknown upload as uncommitted until the complete destination hash is proven.
+
+### Consistency result and transport decision
+
+The round trip deliberately used an idle fixture. Execd can run `tar` and
+`sync`, but neither its file API nor the provider exposes a pause, filesystem
+freeze, atomic volume snapshot, or proof that the agent and its descendants
+have stopped writing. CMA's current `rotating` state refuses new client input,
+but an already-running agent turn or background process can continue changing
+the workspace. The current Layer 4 wire declares terminal, conversation,
+conversation-gap, and telemetry lanes only; none provides a workspace writer
+fence or quiescence acknowledgement.
+
+Consequently the provider-only branch fails #662's consistency requirement.
+The selected design is the explicit fallback: a versioned Layer 4 workspace
+checkpoint capability with a staged runtime-image rollout. Its protocol must:
+
+1. fence the checkpoint with the Launch workspace epoch and refuse concurrent
+   captures;
+2. stop admitting new work and positively establish that all supported
+   workspace writers are quiescent before capture;
+3. flush writes, create a bounded archive and versioned manifest, and report
+   size plus content hashes before the old runtime may be torn down;
+4. commit durable object storage and the checkpoint record atomically from the
+   Launch's perspective, leaving the previous checkpoint valid on failure;
+5. verify the manifest and materialized tree before starting the agent in a
+   replacement runtime; and
+6. fail closed to recovery-required, or resume the still-live old runtime,
+   whenever quiescence, capture, upload, commit, or restore cannot be proven.
+
+The demonstrated Execd path may be reused only as a bulk relay for an already
+sealed, hash-addressed archive. It is not the consistency authority. An old
+runtime image that does not advertise the new checkpoint capability is
+ineligible for CMA Trigger, and no rollout may rotate an existing live session
+until the complete conversation-plus-workspace handover has itself been
+demonstrated.
