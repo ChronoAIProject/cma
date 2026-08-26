@@ -974,6 +974,86 @@ async fn a_committed_attach_never_reaches_a_replaced_generation_or_sender() {
     );
 }
 
+#[tokio::test]
+async fn a_rejected_attachment_resize_is_reported_and_compensated() {
+    let store = Arc::new(FakeStore::default());
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let alice = user("rejected-attachment-resize-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let before = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("settled record exists");
+    let before_screen = svc
+        .screen_snapshot(&alice, &created.id)
+        .await
+        .expect("screen is readable");
+    let rejected = layer3_adapter::TerminalInputSender::spawn(1, |_input| async {
+        Err(AdapterError::Rejected(
+            "the runtime refused the attachment resize".into(),
+        ))
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("session is live")
+        .input = Some(rejected);
+
+    let error = svc
+        .attach_terminal(
+            &alice,
+            &created.id,
+            TerminalGeometry::new(109, 45).expect("valid geometry"),
+            AttachmentClaim::Exclusive,
+        )
+        .await
+        .err()
+        .expect("the rejected runtime resize is reported");
+    assert_eq!(
+        error,
+        CoreError::RuntimeRefused("the runtime refused the attachment resize".into())
+    );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let events = store
+                .events_since(&created.id, before.session.last_seq)
+                .await
+                .expect("attachment events are readable");
+            if events.len() == 2
+                && events.iter().any(|event| {
+                    matches!(
+                        event.kind,
+                        crate::event::StoredEventKind::Known(EventKind::TerminalDetached)
+                    )
+                })
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the rejected attachment receives a compensating detach");
+    wait_for_interaction_release(&store, &created.id).await;
+
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&created.id).expect("session remains live");
+    assert_eq!(entry.session.geometry, before.session.geometry);
+    assert!(entry.attached.is_none());
+    assert_eq!(entry.attachments_issued, 0);
+    drop(entries);
+    assert_eq!(
+        svc.screen_snapshot(&alice, &created.id)
+            .await
+            .expect("screen remains readable")
+            .geometry,
+        before_screen.geometry
+    );
+}
+
 #[test]
 fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_runtime() {
     let origin = tokio::runtime::Builder::new_current_thread()
