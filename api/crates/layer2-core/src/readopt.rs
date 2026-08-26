@@ -8,7 +8,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use layer3_adapter::{PermissionLocator, RuntimeHandle};
-use tokio::sync::{broadcast, watch, Mutex};
+use tokio::sync::{broadcast, watch, Mutex, OwnedMutexGuard};
 
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
@@ -27,6 +27,16 @@ pub(crate) struct ReadoptionHistory {
     pub(crate) conversation_id: Option<String>,
     pub(crate) pending_approvals: HashMap<String, Option<PermissionLocator>>,
     pub(crate) approval_locators: HashMap<String, Option<PermissionLocator>>,
+}
+
+/// One serialized attempt to rebuild a process-local runtime attachment.
+///
+/// Holding the permit inside this value makes it impossible to read the
+/// durable snapshot and then accidentally release exclusivity before the
+/// socket and its folder have been installed.
+pub(crate) struct Readoption {
+    _permit: OwnedMutexGuard<()>,
+    history: ReadoptionHistory,
 }
 
 impl SessionService {
@@ -172,6 +182,28 @@ impl SessionService {
         })
     }
 
+    /// Serialize and prepare one readoption before touching the runtime.
+    ///
+    /// The entry check is deliberately after acquiring the permit. Callers
+    /// commonly arrive together after a process restart; a check before the
+    /// gate lets each of them open a socket and spawn a folder before only one
+    /// can win installation.
+    pub(crate) async fn prepare_readoption(
+        &self,
+        record: &SessionRecord,
+    ) -> Result<Option<Readoption>, StoreError> {
+        let id = &record.session.id;
+        let permit = self.readoption_gates.gate(id).lock_owned().await;
+        if self.entries.read().await.contains_key(id) {
+            return Ok(None);
+        }
+        let history = self.readoption_history(record).await?;
+        Ok(Some(Readoption {
+            _permit: permit,
+            history,
+        }))
+    }
+
     /// Take an existing runtime back under management after losing track of it.
     ///
     /// A sandbox belongs to the provider, not to this process, so it is still
@@ -184,19 +216,26 @@ impl SessionService {
     /// is what they come back to. Without that the session would be alive and
     /// usable but visibly empty, which reads as lost work.
     pub(crate) async fn readopt(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
-        let history = self
-            .readoption_history(record)
+        let Some(readoption) = self
+            .prepare_readoption(record)
             .await
-            .map_err(store_failed)?;
-        self.readopt_with_history(record, history).await
+            .map_err(store_failed)?
+        else {
+            return Ok(());
+        };
+        self.readopt_prepared(record, readoption).await
     }
 
-    pub(crate) async fn readopt_with_history(
+    pub(crate) async fn readopt_prepared(
         self: &Arc<Self>,
         record: &SessionRecord,
-        history: ReadoptionHistory,
+        readoption: Readoption,
     ) -> Result<(), CoreError> {
         let id = record.session.id.clone();
+        let Readoption {
+            _permit: _readoption,
+            history,
+        } = readoption;
         let ReadoptionHistory {
             conversation_id,
             pending_approvals: _,
