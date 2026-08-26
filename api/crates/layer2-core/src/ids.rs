@@ -63,6 +63,11 @@ impl EnvironmentProfileId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Whether this identifier belongs to CMA's deterministic Trigger lane.
+    pub fn is_trigger_managed(&self) -> bool {
+        self.0.starts_with("envp_trg_")
+    }
 }
 
 impl std::fmt::Display for EnvironmentProfileId {

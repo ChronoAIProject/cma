@@ -480,6 +480,7 @@ impl SessionService {
         event_log.observe_record(&current);
         let entry = SessionEntry {
             session: adopted,
+            trigger_origin: current.trigger_origin.clone(),
             event_log,
             subject_credential: None,
             environment_values,
