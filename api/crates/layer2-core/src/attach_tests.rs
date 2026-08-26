@@ -365,15 +365,10 @@ async fn cancelling_after_attachment_install_retains_detach_when_the_entry_disap
     await_settled(&svc, &alice, &created.id).await;
     let before = inner.get(&created.id).await.unwrap().unwrap();
     let lane = svc.event_logs.lane(&created.id);
-    let screen = {
-        let entries = svc.entries.read().await;
-        Arc::clone(&entries.get(&created.id).expect("live entry").screen)
-    };
-    let screen_guard = screen.lock().await;
     let requested = TerminalGeometry::new(127, 49).expect("valid geometry");
 
     store.pause_next();
-    let attach = tokio::spawn({
+    let mut attach = Box::pin({
         let svc = Arc::clone(&svc);
         let alice = alice.clone();
         let id = created.id.clone();
@@ -382,9 +377,13 @@ async fn cancelling_after_attachment_install_retains_detach_when_the_entry_disap
                 .await
         }
     });
+    let woken = Arc::new(WakeFlag(AtomicBool::new(false)));
+    let waker = Waker::from(Arc::clone(&woken));
+    let mut context = Context::from_waker(&waker);
+    assert!(matches!(attach.as_mut().poll(&mut context), Poll::Pending));
     store.wait_until_held().await;
-    // The next selected write is the compensating detach. Holding the screen
-    // keeps handle construction behind the live installation boundary.
+    // The next selected write is the compensating detach. Leave the completed
+    // attachment buffered so dropping its caller exercises unread recovery.
     store.pause_next();
     store.release();
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -396,6 +395,7 @@ async fn cancelling_after_attachment_install_retains_detach_when_the_entry_disap
                 .get(&created.id)
                 .and_then(|entry| entry.attached.as_ref())
                 .is_some()
+                && woken.0.load(Ordering::SeqCst)
             {
                 break;
             }
@@ -413,9 +413,7 @@ async fn cancelling_after_attachment_install_retains_detach_when_the_entry_disap
         .expect("reconciliation removes the original live entry");
     assert_eq!(removed.attached.as_ref().map(|a| a.generation), Some(1));
     drop(removed);
-    attach.abort();
-    let _ = attach.await;
-    drop(screen_guard);
+    drop(attach);
 
     store.wait_until_held().await;
     let interim = inner
@@ -494,11 +492,8 @@ async fn a_terminal_attachment_carries_its_repaint_and_requested_geometry() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn output_crossing_attach_is_in_the_repaint_or_live_stream_exactly_once() {
     let adapter = Arc::new(FakeAdapter::default());
-    let svc = service_on_version(
-        Arc::new(FakeStore::default()),
-        Arc::clone(&adapter),
-        "runtime:test",
-    );
+    let store = Arc::new(FakeStore::default());
+    let svc = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:test");
     let alice = user("alice");
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
@@ -550,22 +545,11 @@ async fn output_crossing_attach_is_in_the_repaint_or_live_stream_exactly_once() 
             .await
         }
     });
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            if svc
-                .entries
-                .read()
-                .await
-                .get(&created.id)
-                .is_some_and(|entry| entry.attached.is_some())
-            {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("attachment reaches the snapshot boundary");
+    wait_for_interaction_lease(&store, &created.id).await;
+    assert!(
+        !attach.is_finished(),
+        "the attachment waits behind the earlier screen update"
+    );
 
     // A subscriber appearing while the screen is locked is the old, broken
     // ordering. Give the spawned attach ample time to expose that ordering.
@@ -709,7 +693,7 @@ async fn cancelling_an_admitted_attach_finishes_receipt_then_detaches_exactly_on
     adapter.wait_until_terminal_input_paused().await;
     let held = wait_for_interaction_lease(&store, &created.id).await;
     attaching.abort();
-    assert!(attaching.await.unwrap_err().is_cancelled());
+    assert!(matches!(attaching.await, Err(error) if error.is_cancelled()));
     assert_eq!(
         store.active_session_lease(&created.id).await,
         Some(held),
@@ -780,6 +764,7 @@ async fn cancelling_before_attach_admission_sends_nothing_and_compensates_durabl
     let alice = user("cancelled-pre-admission-attachment-owner");
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
+    store.enable_interaction_coordination();
     let before = inner
         .get(&created.id)
         .await
@@ -805,7 +790,7 @@ async fn cancelling_before_attach_admission_sends_nothing_and_compensates_durabl
     store.wait_until_held().await;
     let held = wait_for_interaction_lease(&inner, &created.id).await;
     attaching.abort();
-    assert!(attaching.await.unwrap_err().is_cancelled());
+    assert!(matches!(attaching.await, Err(error) if error.is_cancelled()));
     assert_eq!(
         inner.active_session_lease(&created.id).await,
         Some(held),
@@ -879,6 +864,7 @@ async fn a_committed_attach_never_reaches_a_replaced_generation_or_sender() {
     let alice = user("stale-attachment-generation-owner");
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
+    store.enable_interaction_coordination();
     let before = inner
         .get(&created.id)
         .await
@@ -1123,6 +1109,13 @@ fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_
         .build()
         .expect("replacement runtime builds");
     replacement.block_on(async {
+        let (replacement_input, _received) = terminal_input_channel(1);
+        svc.entries
+            .write()
+            .await
+            .get_mut(&created.id)
+            .expect("the live entry survives the executor")
+            .input = Some(replacement_input);
         let later = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             svc.attach_terminal(
@@ -1158,7 +1151,7 @@ fn dropping_an_unpolled_attach_after_its_runtime_stops_is_recovered_by_the_next_
 }
 
 #[tokio::test]
-async fn a_waiting_attach_takes_over_when_the_active_cleanup_drain_is_cancelled() {
+async fn a_cancelled_attach_keeps_the_active_cleanup_drain_service_owned() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(
         Arc::clone(&inner),
@@ -1263,13 +1256,11 @@ async fn a_waiting_attach_takes_over_when_the_active_cleanup_drain_is_cancelled(
 
     first.abort();
     assert!(matches!(first.await, Err(error) if error.is_cancelled()));
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while svc.event_logs.cleanup_drain_users(&created.id) != 1 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the waiting attach takes ownership of the cleanup drain");
+    assert_eq!(
+        svc.event_logs.cleanup_drain_users(&created.id),
+        2,
+        "caller cancellation leaves the service-owned interaction draining"
+    );
     store.release();
 
     let later = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
@@ -1293,7 +1284,7 @@ async fn a_waiting_attach_takes_over_when_the_active_cleanup_drain_is_cancelled(
             })
             .count(),
         1,
-        "cleanup takeover must not duplicate the durable detach"
+        "service-owned cleanup must not duplicate the durable detach"
     );
     assert!(matches!(
         events[2].kind,
@@ -1402,6 +1393,13 @@ fn a_detach_interrupted_after_store_commit_restarts_without_a_duplicate() {
         .build()
         .expect("replacement runtime builds");
     replacement.block_on(async {
+        let (replacement_input, _received) = terminal_input_channel(1);
+        svc.entries
+            .write()
+            .await
+            .get_mut(&created.id)
+            .expect("the live entry survives the executor")
+            .input = Some(replacement_input);
         let later = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             svc.attach_terminal(
