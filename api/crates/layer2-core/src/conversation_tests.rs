@@ -4,7 +4,7 @@
 //! client saw, a client that arrives later — or comes back after a restart —
 //! must be able to reconstruct from the sequence alone.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use layer3_adapter::{KernelAdapter, PermissionLocator};
