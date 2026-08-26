@@ -138,7 +138,7 @@ async fn callback(
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "title": "Missing state parameter" })),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -168,7 +168,7 @@ async fn callback(
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "title": "Discovery failed", "detail": e })),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -250,7 +250,7 @@ async fn callback(
         .store_sign_in(
             &subject,
             DurableSubjectTokens {
-                access_token: SecretValue::new(token.access_token),
+                access_token: Some(SecretValue::new(token.access_token)),
                 refresh_token: token.refresh_token.map(SecretValue::new),
                 expires_at: SystemTime::now()
                     + Duration::from_secs(token.expires_in.unwrap_or(3600)),
@@ -272,10 +272,12 @@ async fn callback(
         );
     }
 
-    // Capabilities are resolved once, at sign-in, from the permissions the
-    // provider reported. A caller with none authenticates successfully and is
-    // then refused every operation, which is the correct outcome for someone
-    // who has a platform account but no access here.
+    // Capabilities are resolved initially at sign-in from the permissions the
+    // provider reported. The recurring authorization sweep replaces this
+    // complete answer while the delegation remains stored. A caller with none
+    // authenticates successfully and is then refused every operation, which is
+    // the correct outcome for someone who has a platform account but no access
+    // here.
     // Written down before the sign-in completes, because this is the only
     // moment the provider's account details are in hand: a person not recorded
     // here is a person the service can never name afterwards.
@@ -353,8 +355,8 @@ pub(crate) async fn resolve_subject(
             permissions_claim(&body)
         }
     };
-    // Captured at sign-in because this is the only moment the provider's own
-    // account details are in hand; nothing later has a token to ask with.
+    // Capture display material at sign-in. Recurring authorization checks also
+    // call userinfo, but deliberately update only the security-sensitive grant.
     let profile = crate::auth::profile::Profile::from_userinfo(&body);
     Ok((subject, permissions, profile))
 }
@@ -415,15 +417,21 @@ mod tests {
         // have to provoke.
         let auth = provider_auth();
         let subject = SubjectId("subject-a".into());
-        auth.store_authorization(
+        auth.store_sign_in(
             &subject,
+            DurableSubjectTokens {
+                access_token: Some(SecretValue::new("access-a".into())),
+                refresh_token: None,
+                expires_at: SystemTime::now() + Duration::from_secs(3600),
+            },
             layer2_core::Authorization::from_capabilities([
                 layer2_core::Capability::ReadAllSessions,
                 layer2_core::Capability::ControlAnySession,
             ]),
+            crate::auth::profile::Profile::default(),
         )
         .await
-        .expect("authorization persists");
+        .expect("sign-in persists");
         let token = auth.issue_session(subject).await.expect("session persists");
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -744,7 +752,7 @@ mod tests {
             .authorization
             .allows(layer2_core::Capability::CreateSession));
         let tokens = fact.tokens.expect("tokens persist as part of the fact");
-        assert_eq!(tokens.access_token.expose(), "access-a");
+        assert_eq!(tokens.access_token.unwrap().expose(), "access-a");
         assert_eq!(
             tokens.refresh_token.as_ref().map(|value| value.expose()),
             Some("refresh-a")

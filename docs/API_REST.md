@@ -24,7 +24,11 @@ Authorization: Bearer <access token>
 
 This is the form that CMA (ChronoAI Managed Agent) clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
 
-The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so revocation takes effect within that window rather than immediately.
+The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so bearer-token revocation takes effect within that window rather than immediately.
+
+The capabilities behind a browser cookie have an authorization deadline no more than 60 seconds after the last complete provider answer and never later than the access token's own expiry. Once that deadline is due, a cookie request cannot use the stored authority until CMA obtains a complete provider answer under a durable, replica-safe single-flight claim. A complete reduced or empty permissions array takes effect on that request; `active: false` also quarantines the rejected access token and makes its retained refresh grant immediately eligible. If another worker is checking the subject, the provider is too slow, or every advertised answer is transport-failed, retryable, malformed, or incomplete, the request fails temporarily with `503` rather than exercising overdue privileges. The last complete grant remains stored for recovery but is not served while overdue. Introspection is authoritative independently of userinfo, so a healthy reduced or inactive introspection answer cannot be masked by userinfo `401` or `403`. A bounded 16-subject background batch advances a fairness cursor each sweep to prewarm and recover subjects without making revocation depend on draining the backlog.
+
+Browser sign-in does not require the provider to issue a refresh token. An access-token-only delegation remains usable through its access-token lifetime; once that nonrenewable token expires and CMA can no longer check it authoritatively, its cookie capabilities fail closed.
 
 Capabilities are the same either way: they come from the subject's roles as the provider reports them, so a client is never more privileged for having arrived over one route than the other.
 

@@ -55,17 +55,23 @@ impl AuthState {
             if current.incarnation != requested_incarnation
                 || current.token_generation != requested_generation
             {
-                return Ok(LeaseOutcome::AlreadyRefreshed(
-                    tokens.access_token.expose().to_string(),
-                ));
+                return Ok(tokens
+                    .access_token
+                    .as_ref()
+                    .map_or(LeaseOutcome::Deferred, |access| {
+                        LeaseOutcome::AlreadyRefreshed(access.expose().to_string())
+                    }));
             }
             let Some(stored_refresh) = tokens.refresh_token.as_ref() else {
                 return Err(StoreError::Malformed("subject has no refresh token".into()));
             };
             if stored_refresh.expose() != requested_refresh {
-                return Ok(LeaseOutcome::AlreadyRefreshed(
-                    tokens.access_token.expose().to_string(),
-                ));
+                return Ok(tokens
+                    .access_token
+                    .as_ref()
+                    .map_or(LeaseOutcome::Deferred, |access| {
+                        LeaseOutcome::AlreadyRefreshed(access.expose().to_string())
+                    }));
             }
             if current
                 .refresh_lease
@@ -89,6 +95,11 @@ impl AuthState {
                 holder: holder.clone(),
                 expires_at: SystemTime::now() + REFRESH_LEASE_LIFETIME,
             });
+            // Token rotation owns the next generation. Cancel a check of the
+            // old access token before the provider can rotate underneath it;
+            // otherwise an inactive answer for that old token could clear this
+            // lease and strand a newly rotated refresh token in the response.
+            next.authorization_lease = None;
             take_operation(budget, 2, "subject refresh lease write")?;
             if self
                 .store
@@ -126,7 +137,14 @@ impl AuthState {
                 .ok_or_else(|| StoreError::Malformed("subject auth revision exhausted".into()))?;
             next.token_generation = next_token_generation(current.token_generation)?;
             next.tokens = tokens.clone();
+            if tokens.is_none() {
+                next.authorization = layer2_core::Authorization::none();
+            } else {
+                // A new access token has no authorization answer yet.
+                next.authorization_check_after = SystemTime::UNIX_EPOCH;
+            }
             next.refresh_lease = None;
+            next.authorization_lease = None;
             take_operation(budget, 2, "subject refresh completion write")?;
             if self
                 .store
@@ -326,7 +344,7 @@ impl AuthState {
         };
         let access_token = body.access_token.clone();
         let tokens = DurableSubjectTokens {
-            access_token: SecretValue::new(body.access_token),
+            access_token: Some(SecretValue::new(body.access_token)),
             // A provider that rotates returns a new value; otherwise the value
             // whose lease we hold remains the next refresh credential.
             refresh_token: Some(SecretValue::new(
@@ -488,7 +506,7 @@ mod tests {
             .expect("subject exists");
         assert!(fact.refresh_lease.is_none());
         let tokens = fact.tokens.expect("tokens remain");
-        assert_eq!(tokens.access_token.expose(), "access-new");
+        assert_eq!(tokens.access_token.unwrap().expose(), "access-new");
         assert_eq!(
             tokens.refresh_token.as_ref().map(|value| value.expose()),
             Some("refresh-new")
@@ -642,7 +660,7 @@ mod tests {
             assert!(after.refresh_lease.is_none());
             assert_eq!(after.token_generation, before.token_generation);
             let tokens = after.tokens.expect("transient response retains tokens");
-            assert_eq!(tokens.access_token.expose(), "access-old");
+            assert_eq!(tokens.access_token.unwrap().expose(), "access-old");
             assert_eq!(
                 tokens.refresh_token.as_ref().map(SecretValue::expose),
                 Some("refresh-valid")
@@ -673,6 +691,14 @@ mod tests {
         )
         .await
         .expect("tokens persist");
+        auth.store_authorization(
+            &subject,
+            layer2_core::Authorization::from_capabilities([
+                layer2_core::Capability::ReadAllSessions,
+            ]),
+        )
+        .await
+        .expect("authorization persists");
         let before = store
             .subject(&subject)
             .await
@@ -695,6 +721,7 @@ mod tests {
             .expect("subject fact remains");
         assert!(after.tokens.is_none());
         assert!(after.refresh_lease.is_none());
+        assert_eq!(after.authorization.capabilities().count(), 0);
         assert_eq!(after.token_generation, before.token_generation + 1);
         server.abort();
     }
