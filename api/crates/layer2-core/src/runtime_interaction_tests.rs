@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 use crate::coordination::{
     RuntimeAuthority, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeReservation,
@@ -22,6 +22,10 @@ struct InteractionStore {
     compatibility: AtomicBool,
     release_failures: AtomicUsize,
     unknown_release_results: AtomicUsize,
+    stall_release_after_commit: AtomicBool,
+    release_response_stalled: AtomicBool,
+    release_committed: Notify,
+    release_may_return: Notify,
     renewal_failures: AtomicUsize,
     acquisitions: Mutex<Vec<SessionInteractionLeaseRequest>>,
     renewals: Mutex<Vec<(SessionLease, Duration)>>,
@@ -46,6 +50,11 @@ impl InteractionStore {
 
     fn obscure_release_success(&self) {
         self.unknown_release_results.store(1, Ordering::SeqCst);
+    }
+
+    fn stall_next_release_after_commit(&self) {
+        self.stall_release_after_commit
+            .store(true, Ordering::SeqCst);
     }
 
     fn consume(counter: &AtomicUsize) -> bool {
@@ -126,6 +135,16 @@ impl SessionStore for InteractionStore {
             ));
         }
         let released = self.inner.release_session_lease(lease).await;
+        if released.is_ok()
+            && self
+                .stall_release_after_commit
+                .swap(false, Ordering::SeqCst)
+        {
+            self.release_response_stalled.store(true, Ordering::SeqCst);
+            self.release_committed.notify_one();
+            self.release_may_return.notified().await;
+            self.release_response_stalled.store(false, Ordering::SeqCst);
+        }
         if released.is_ok() && Self::consume(&self.unknown_release_results) {
             return Err(StoreError::Unavailable(
                 "interaction release result was lost".into(),
@@ -299,7 +318,8 @@ async fn cancellation_keeps_action_owned(store: Arc<InteractionStore>) {
             service
                 .run_runtime_interaction_at(&durable, move |authority| async move {
                     let boundary = authority.ensure_delivery_allowed()?.clone();
-                    let _ = started.send(boundary);
+                    let durably_fenced = authority.is_durably_fenced();
+                    let _ = started.send((boundary, durably_fenced));
                     let _ = may_finish.await;
                     let _ = completed.send(());
                     Ok::<_, CoreError>(())
@@ -308,7 +328,7 @@ async fn cancellation_keeps_action_owned(store: Arc<InteractionStore>) {
         }
     });
 
-    let boundary = is_started.await.expect("the owned action started");
+    let (boundary, durably_fenced) = is_started.await.expect("the owned action started");
     assert_eq!(
         boundary.authority.runtime_id.as_deref(),
         Some("runtime-original")
@@ -318,7 +338,9 @@ async fn cancellation_keeps_action_owned(store: Arc<InteractionStore>) {
     finish.send(()).unwrap();
     is_completed.await.expect("the owned action completed");
 
-    if store.compatibility.load(Ordering::SeqCst) {
+    let compatibility = store.compatibility.load(Ordering::SeqCst);
+    assert_eq!(durably_fenced, !compatibility);
+    if compatibility {
         assert!(store.releases.lock().await.is_empty());
     } else {
         wait_for_releases(&store, 1).await;
@@ -382,6 +404,73 @@ async fn action_success_survives_an_unavailable_release() {
     wait_for_releases(&store, 2).await;
     let releases = store.releases.lock().await;
     assert_eq!(releases[0], releases[1]);
+}
+
+#[tokio::test]
+async fn known_result_precedes_a_stalled_release_and_a_successor_can_proceed() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    store.stall_next_release_after_commit();
+    let first_service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let second_service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+
+    let first = tokio::spawn({
+        let service = Arc::clone(&first_service);
+        let durable = durable.clone();
+        async move {
+            service
+                .run_runtime_interaction_at(&durable, |authority| async move {
+                    authority.ensure_delivery_allowed()?;
+                    Ok::<_, CoreError>("first-delivered")
+                })
+                .await
+        }
+    });
+    let first_result = tokio::time::timeout(Duration::from_secs(2), first)
+        .await
+        .expect("the known action result does not wait for release")
+        .expect("the first caller task completes")
+        .expect("the first interaction succeeds");
+    assert_eq!(first_result, "first-delivered");
+
+    tokio::time::timeout(Duration::from_secs(2), store.release_committed.notified())
+        .await
+        .expect("the first release commits before its response stalls");
+    assert!(store.release_response_stalled.load(Ordering::SeqCst));
+
+    let successor_runs = Arc::new(AtomicUsize::new(0));
+    let successor_result = tokio::time::timeout(
+        Duration::from_secs(2),
+        second_service.run_runtime_interaction_at(&durable, {
+            let successor_runs = Arc::clone(&successor_runs);
+            move |authority| async move {
+                authority.ensure_delivery_allowed()?;
+                successor_runs.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, CoreError>("successor-delivered")
+            }
+        }),
+    )
+    .await
+    .expect("a successor does not wait for the first release response")
+    .expect("the successor interaction succeeds");
+    assert_eq!(successor_result, "successor-delivered");
+    assert_eq!(successor_runs.load(Ordering::SeqCst), 1);
+    assert!(store.release_response_stalled.load(Ordering::SeqCst));
+
+    wait_for_releases(&store, 2).await;
+    let releases = store.releases.lock().await;
+    assert_ne!(releases[0].token, releases[1].token);
+    drop(releases);
+
+    store.release_may_return.notify_one();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while store.release_response_stalled.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the first release response resumes");
 }
 
 #[tokio::test]
@@ -553,6 +642,54 @@ async fn confirmed_renewal_loss_does_not_drop_a_known_action_success() {
     assert!(!runner.is_finished());
     finish.send(()).unwrap();
     assert_eq!(runner.await.unwrap().unwrap(), "committed");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_receipted_delivery_finishes_required_local_state_after_authority_expires() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    store.fail_renewals(usize::MAX);
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let deliveries = Arc::new(AtomicUsize::new(0));
+    let finalizations = Arc::new(AtomicUsize::new(0));
+    let (receipted, receipt_observed) = tokio::sync::oneshot::channel();
+    let (finalize, may_finalize) = tokio::sync::oneshot::channel();
+    let runner = tokio::spawn({
+        let service = Arc::clone(&service);
+        let deliveries = Arc::clone(&deliveries);
+        let finalizations = Arc::clone(&finalizations);
+        async move {
+            service
+                .run_runtime_interaction_at(&durable, move |authority| async move {
+                    authority.ensure_delivery_allowed()?;
+                    deliveries.fetch_add(1, Ordering::SeqCst);
+                    let _ = receipted.send(authority.clone());
+                    let _ = may_finalize.await;
+                    // A successful external receipt makes this local enqueue
+                    // mandatory; a second deadline check could strand it.
+                    finalizations.fetch_add(1, Ordering::SeqCst);
+                    Ok::<_, CoreError>("finalized")
+                })
+                .await
+        }
+    });
+
+    let authority = receipt_observed
+        .await
+        .expect("the external delivery returned a receipt");
+    assert_eq!(deliveries.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(30)).await;
+    tokio::task::yield_now().await;
+    assert!(matches!(
+        authority.ensure_delivery_allowed(),
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    assert!(!runner.is_finished());
+
+    finalize.send(()).unwrap();
+    assert_eq!(runner.await.unwrap().unwrap(), "finalized");
+    assert_eq!(finalizations.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test(start_paused = true)]

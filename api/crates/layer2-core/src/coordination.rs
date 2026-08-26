@@ -529,6 +529,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn malformed_interaction_release_token_is_reported_as_lease_loss() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let request = interaction_request(&store, "replica-a", Duration::from_secs(30)).await;
+        let lease = store.acquire_interaction_lease(&request).await.unwrap();
+        let mut malformed = lease.clone();
+        malformed.token = "not-an-interaction-epoch".into();
+
+        assert!(matches!(
+            store.release_session_lease(&malformed).await,
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        store
+            .release_session_lease(&lease)
+            .await
+            .expect("a malformed release cannot disturb the active interaction");
+    }
+
+    #[tokio::test]
     async fn an_interaction_nonce_is_validated_at_the_store_boundary() {
         let store = FakeStore::default();
         store.seed(&record()).await.unwrap();
