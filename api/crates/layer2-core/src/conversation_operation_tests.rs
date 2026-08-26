@@ -786,7 +786,7 @@ async fn answering_an_approval_reaches_the_runtime_and_the_record() {
     assert!(
         sent.iter().any(|input| matches!(
             input,
-            ConversationInput::PermissionAnswer { id, decision }
+            ConversationInput::PermissionAnswer { id, decision, .. }
                 if id == "req-1" && *decision == PermissionDecision::Allow
         )),
         "the answer must reach the runtime, which is the only thing that can act on it: {sent:?}"
@@ -908,6 +908,13 @@ async fn an_immediate_completion_cannot_overtake_approval_resolution() {
         resolved < completed,
         "resolution must precede the runtime effect it enabled: {events:?}"
     );
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&id).expect("the conversation remains live");
+    assert!(entry.pending_approvals.is_empty());
+    assert!(
+        entry.approval_locators.is_empty(),
+        "turn completion expires duplicate-delivery fingerprints"
+    );
 }
 
 #[tokio::test]
@@ -994,8 +1001,8 @@ async fn an_invalid_approval_batch_sends_and_mutates_nothing() {
         .expect("the session remains live")
         .pending_approvals;
     assert_eq!(pending.len(), 2);
-    assert!(pending.contains("req-batch-1"));
-    assert!(pending.contains("req-batch-2"));
+    assert!(pending.contains_key("req-batch-1"));
+    assert!(pending.contains_key("req-batch-2"));
     drop(entries);
     assert!(
         svc.events_since(&alice, &id, Some(cursor))
@@ -1105,8 +1112,8 @@ async fn an_accepted_batch_prefix_is_durable_before_a_later_delivery_error() {
         .get(&id)
         .expect("the session remains live")
         .pending_approvals;
-    assert!(!pending.contains("req-prefix-1"));
-    assert!(pending.contains("req-prefix-2"));
+    assert!(!pending.contains_key("req-prefix-1"));
+    assert!(pending.contains_key("req-prefix-2"));
 }
 
 #[tokio::test]
