@@ -95,6 +95,136 @@ async fn a_mid_turn_prompt_without_steer_reaches_neither_runtime_nor_log() {
 }
 
 #[tokio::test]
+async fn concurrent_idle_prompts_admit_one_before_the_other_can_decide_to_steer() {
+    let (svc, alice, id, _adapter) = conversation().await;
+    let before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
+    let cursor = before.last().expect("session readiness was recorded").seq;
+
+    let delivered = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (first_started, first_is_started) = tokio::sync::oneshot::channel();
+    let (release_first, first_may_finish) = tokio::sync::oneshot::channel();
+    let mut first_started = Some(first_started);
+    let mut first_may_finish = Some(first_may_finish);
+    let delivered_by_runtime = Arc::clone(&delivered);
+    let held_input = layer3_adapter::ConversationInputSender::spawn(2, move |input| {
+        let started = first_started.take();
+        let may_finish = first_may_finish.take();
+        let delivered = Arc::clone(&delivered_by_runtime);
+        async move {
+            delivered.lock().await.push(input);
+            if let Some(started) = started {
+                let _ = started.send(());
+            }
+            if let Some(may_finish) = may_finish {
+                let _ = may_finish.await;
+            }
+            Ok(())
+        }
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(held_input);
+
+    let first_service = Arc::clone(&svc);
+    let first_caller = alice.clone();
+    let first_id = id.clone();
+    let first = tokio::spawn(async move {
+        first_service
+            .send_prompt(&first_caller, &first_id, "first prompt".into())
+            .await
+    });
+    first_is_started
+        .await
+        .expect("the first prompt reached runtime delivery");
+
+    let second = svc.send_prompt(&alice, &id, "second prompt".into());
+    tokio::pin!(second);
+    tokio::select! {
+        biased;
+        result = &mut second => panic!("the second prompt did not wait: {result:?}"),
+        () = tokio::task::yield_now() => {}
+    }
+    assert_eq!(
+        delivered.lock().await.len(),
+        1,
+        "only the admitted prompt may reach runtime delivery"
+    );
+
+    release_first
+        .send(())
+        .expect("the first prompt is still awaiting release");
+    first
+        .await
+        .expect("the first prompt task completes")
+        .expect("the idle prompt is admitted");
+    assert_eq!(
+        second.await,
+        Err(CoreError::CapabilityUnsupported("steer".into()))
+    );
+
+    let delivered = delivered.lock().await;
+    assert_eq!(
+        delivered
+            .iter()
+            .filter(|input| matches!(input, ConversationInput::Prompt(_)))
+            .count(),
+        1,
+        "the refused concurrent prompt must never reach the runtime: {delivered:?}"
+    );
+    drop(delivered);
+
+    let appended = svc
+        .events_since(&alice, &id, Some(cursor))
+        .await
+        .expect("history readable");
+    assert_eq!(
+        appended.len(),
+        3,
+        "one prompt appends one owner message, turn boundary, and status: {appended:?}"
+    );
+    let owner_messages = appended
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::OwnerMessage { content } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        owner_messages,
+        vec!["first prompt"],
+        "only the admitted prompt may append owner input: {appended:?}"
+    );
+    assert_eq!(
+        appended
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::TurnStarted))
+            .count(),
+        1,
+        "only the admitted prompt may append a turn boundary: {appended:?}"
+    );
+    assert_eq!(
+        appended
+            .iter()
+            .filter(|event| matches!(
+                event.kind,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Running,
+                    ..
+                }
+            ))
+            .count(),
+        1,
+        "only the admitted prompt may append a running transition: {appended:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_mid_turn_prompt_with_steer_reaches_the_test_runtime() {
     let mut capabilities = conversing();
     capabilities.steer = true;
