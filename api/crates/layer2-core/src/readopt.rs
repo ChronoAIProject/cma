@@ -7,7 +7,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use layer3_adapter::{PermissionLocator, RuntimeHandle};
+use layer3_adapter::{ConversationUpdate, PermissionLocator, RuntimeHandle};
 use tokio::sync::{broadcast, watch, Mutex, OwnedMutexGuard};
 
 use crate::authz::{Caller, Capability};
@@ -379,7 +379,7 @@ impl SessionService {
             ),
             true => None,
         };
-        let conversation = match conversing {
+        let (conversation, mut conversation_opening) = match conversing {
             true => {
                 self.renew_runtime_lease(lease.as_ref())
                     .await
@@ -397,32 +397,95 @@ impl SessionService {
                         "this session's conversation was never named; the runtime will be asked for a new one"
                     );
                 }
-                /*
-                 * Folding starts before the open, for the reason given at the
-                 * equivalent point in `provision.rs`: a conversation reports
-                 * things while it is being opened, and a taken-back-over
-                 * session is exactly where those reports matter — this is the
-                 * path a control-plane replacement runs.
-                 */
-                let (updates_tx, updates_rx) =
-                    tokio::sync::mpsc::channel(crate::provision::CONVERSATION_BUFFER);
-                crate::conversation_log::spawn_folder(
-                    Arc::clone(self),
-                    id.clone(),
-                    lease
-                        .as_ref()
-                        .map_or(0, |held| held.boundary.authority.generation),
-                    updates_rx,
-                );
-                Some(
-                    adapter
-                        .open_conversation(&handle, &options, updates_tx)
-                        .await
-                        .map_err(unreachable)?,
-                )
+                let opening_authority = self
+                    .acquire_conversation_opening(
+                        &id,
+                        &handle.0,
+                        lease
+                            .as_ref()
+                            .map_or(0, |held| held.boundary.authority.generation),
+                        None,
+                        lease.as_ref(),
+                    )
+                    .await
+                    .map_err(store_failed)?;
+                let (updates_tx, mut opening) =
+                    crate::conversation_opening::ConversationOpening::channel(
+                        crate::provision::CONVERSATION_BUFFER,
+                        opening_authority,
+                        Arc::clone(&self.store),
+                    );
+                let renewal_authority = opening.authority().clone();
+                let opening_result: Result<_, CoreError> = {
+                    let open = adapter.open_conversation(&handle, &options, updates_tx);
+                    tokio::pin!(open);
+                    let renewal = tokio::time::sleep(
+                        crate::provision_support::CONVERSATION_OPENING_RENEW_INTERVAL,
+                    );
+                    tokio::pin!(renewal);
+                    let mut receiving = true;
+                    loop {
+                        tokio::select! {
+                            result = &mut open => break Ok(result),
+                            () = &mut renewal => {
+                                if let Err(error) = self
+                                    .renew_conversation_opening(
+                                        &renewal_authority,
+                                        lease.as_ref(),
+                                    )
+                                    .await
+                                {
+                                    break Err(store_failed(error));
+                                }
+                                renewal.as_mut().reset(
+                                    tokio::time::Instant::now()
+                                        + crate::provision_support::CONVERSATION_OPENING_RENEW_INTERVAL,
+                                );
+                            }
+                            update = opening.receive(), if receiving => match update {
+                                Some(ConversationUpdate::SignInRequired { url, code, message }) => {
+                                    if !opening.can_publish_sign_in() {
+                                        break Err(CoreError::RuntimeRefused(
+                                            "the runtime emitted an ordinary conversation update before its opening sign-in prompt".into(),
+                                        ));
+                                    }
+                                    if let Err(error) = self
+                                        .persist_opening_sign_in(
+                                            &id,
+                                            &renewal_authority,
+                                            lease.as_ref(),
+                                            url,
+                                            code,
+                                            message,
+                                        )
+                                        .await
+                                    {
+                                        break Err(store_failed(error));
+                                    }
+                                }
+                                Some(update) => opening.hold(update),
+                                None => receiving = false,
+                            }
+                        }
+                    }
+                };
+                match opening_result {
+                    Ok(Ok(channel)) => (Some(channel), Some(opening)),
+                    Ok(Err(error)) => {
+                        self.revoke_conversation_opening(&id, opening).await;
+                        return Err(unreachable(error));
+                    }
+                    Err(error) => {
+                        self.revoke_conversation_opening(&id, opening).await;
+                        return Err(error);
+                    }
+                }
             }
-            false => None,
+            false => (None, None),
         };
+
+        let mut conversation_publication = None;
+        let result = async {
 
         let (live, _) = broadcast::channel(LIVE_BUFFER);
         let (terminal_ending, _) = watch::channel(None);
@@ -466,7 +529,7 @@ impl SessionService {
         // by this stale snapshot. The service-wide entries lock is never held
         // across the durable read or write.
         let installation = self.lock_lifecycle(&id).await;
-        let input_fence = self.input_gates.gate(&id).read_owned().await;
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
         let ordering = self.conversation_order_gates.gate(&id);
         let ordered_installation = ordering.lock().await;
         if self.entries.read().await.contains_key(&id) {
@@ -517,27 +580,6 @@ impl SessionService {
             }
         }
 
-        // The first snapshot selected the conversation to rejoin. Updates can
-        // become durable while the network attachment is being built, so fold
-        // approval state again at the installation boundary. The folder takes
-        // this same gate before recording an update; none can land between
-        // this read and publishing the entry.
-        let final_history = self
-            .readoption_history(&current)
-            .await
-            .map_err(|error| {
-                CoreError::RuntimeRefused(format!(
-                    "the runtime was reached but its final conversation state could not be rebuilt: {error}"
-                ))
-            })?;
-        if final_history.conversation_id != conversation_id {
-            return Err(CoreError::RuntimeRefused(
-                "the conversation changed while its runtime was being reconnected".into(),
-            ));
-        }
-        let pending_approvals = final_history.pending_approvals;
-        let approval_locators = final_history.approval_locators;
-
         // A reachable runtime proves that a recorded provisioning state has
         // completed. Make that fact durable before publishing the entry; doing
         // it afterwards leaves a window where a concurrent stop can commit
@@ -574,6 +616,25 @@ impl SessionService {
             }
         }
 
+        // Rebuild from the final durable history after any readiness event.
+        // The opening FIFO is still private and will be folded immediately
+        // after this state is installed under the same two input/order gates.
+        let final_history = self
+            .readoption_history(&current)
+            .await
+            .map_err(|error| {
+                CoreError::RuntimeRefused(format!(
+                    "the runtime was reached but its final conversation state could not be rebuilt: {error}"
+                ))
+            })?;
+        if final_history.conversation_id != conversation_id {
+            return Err(CoreError::RuntimeRefused(
+                "the conversation changed while its runtime was being reconnected".into(),
+            ));
+        }
+        let pending_approvals = final_history.pending_approvals;
+        let approval_locators = final_history.approval_locators;
+
         if !pending_approvals.is_empty() {
             tracing::info!(
                 session_id = %id,
@@ -581,6 +642,26 @@ impl SessionService {
                 "pending approvals restored during readoption"
             );
         }
+
+        let (conversation_link, conversation_authority, opening_updates, conversation_updates) =
+            match conversation_opening.take() {
+                Some(opening) => {
+                    if let Err(error) = self
+                        .renew_conversation_opening(opening.authority(), lease.as_ref())
+                        .await
+                    {
+                        opening.revoke().await;
+                        return Err(store_failed(error));
+                    }
+                    let (link, durable, held, updates, publication) = opening
+                        .publish(lease.as_ref())
+                        .await
+                        .map_err(store_failed)?;
+                    conversation_publication = Some(publication);
+                    (Some(link), Some(durable), Some(held), Some(updates))
+                }
+                None => (None, None, None, None),
+            };
 
         let owner = current.session.owner.clone();
         let mut adopted = current.session.clone();
@@ -598,6 +679,8 @@ impl SessionService {
             runtime_generation: lease
                 .as_ref()
                 .map_or(0, |held| held.boundary.authority.generation),
+            conversation_link,
+            conversation_authority,
             input: terminal.as_ref().map(|c| c.input.clone()),
             live: Some(live.clone()),
             terminal_ending: terminal_ending.clone(),
@@ -617,6 +700,32 @@ impl SessionService {
             captured_len,
         };
         self.entries.write().await.insert(id.clone(), entry);
+        if let (Some(link), Some(updates)) = (conversation_link, opening_updates) {
+            if !self.fold_opening_updates_locked(&id, link, updates).await {
+                return Err(CoreError::RuntimeRefused(
+                    "the conversation link was superseded during opening replay".into(),
+                ));
+            }
+        }
+        let runtime_generation = lease
+            .as_ref()
+            .map_or(0, |held| held.boundary.authority.generation);
+        if let Some(held) = lease.as_mut() {
+            let replayed = self
+                .store
+                .get(&id)
+                .await
+                .map_err(store_failed)?
+                .ok_or(CoreError::SessionNotFound)?;
+            let boundary =
+                crate::coordination::SessionBoundary::for_record(&replayed, runtime_generation);
+            if boundary != held.boundary {
+                self.store
+                    .advance_session_lease(held, &boundary)
+                    .await
+                    .map_err(store_failed)?;
+            }
+        }
         if let Some(held) = lease.take() {
             if let Err(error) = self.store.release_session_lease(&held).await {
                 tracing::debug!(
@@ -629,6 +738,19 @@ impl SessionService {
         drop(ordered_installation);
         drop(input_fence);
         drop(installation);
+        if let (Some(link), Some(updates)) = (conversation_link, conversation_updates) {
+            crate::conversation_log::spawn_folder(
+                Arc::clone(self),
+                id.clone(),
+                link,
+                runtime_generation,
+                updates,
+            );
+            conversation_publication
+                .take()
+                .expect("a published conversation receiver retains its cleanup guard")
+                .disarm();
+        }
         crate::resources::spawn_resource_watch(
             Arc::clone(self),
             id.clone(),
@@ -653,5 +775,14 @@ impl SessionService {
 
         tracing::info!(session_id = %id, "reconnected to an existing runtime");
         Ok(())
+        }
+        .await;
+        if let Some(publication) = conversation_publication.take() {
+            self.revoke_conversation_publication(&id, publication).await;
+        }
+        if let Some(opening) = conversation_opening.take() {
+            self.revoke_conversation_opening(&id, opening).await;
+        }
+        result
     }
 }

@@ -13,9 +13,11 @@ use tokio::sync::{mpsc, Mutex};
 
 use crate::authz::{Authorization, Caller, Capability};
 use crate::coordination::{
-    RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
-    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary,
-    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionOperation,
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
+    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeCleanupReason,
+    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
+    SessionLeaseRequest, SessionOperation,
 };
 use crate::environment_service::EnvironmentProfileService;
 use crate::event::{Event, StoredEvent};
@@ -56,8 +58,15 @@ pub(crate) struct FakeStore {
     /// where readoption must defer rather than mistake an incomplete rebuild
     /// for a lost sandbox.
     pub(crate) broken_event_reads: Mutex<bool>,
+    /// Model a compatibility-stage store whose coordination port is disabled.
+    coordination_disabled: std::sync::atomic::AtomicBool,
     /// Monotonic stand-in for promotion after the exact old-writer-drain proof.
     legacy_cleanup_authorized: std::sync::atomic::AtomicBool,
+    /// One-shot committed-but-response-lost outcomes for opening retry tests.
+    lose_next_conversation_acquire_response: std::sync::atomic::AtomicBool,
+    lose_next_conversation_publish_response: std::sync::atomic::AtomicBool,
+    conversation_acquire_calls: std::sync::atomic::AtomicUsize,
+    conversation_publish_calls: std::sync::atomic::AtomicUsize,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +89,12 @@ struct FakeCandidate {
 }
 
 #[derive(Debug, Clone)]
+struct FakeConversationOpening {
+    lease: ConversationOpeningLease,
+    expires_at: tokio::time::Instant,
+}
+
+#[derive(Debug, Clone)]
 struct FakeSwitch {
     candidate: RuntimeCandidate,
     lease_token: String,
@@ -99,6 +114,9 @@ struct FakeCoordination {
     lease: Option<FakeLease>,
     retired_lease_tokens: HashSet<String>,
     interaction_epoch: u64,
+    conversation_epoch: u64,
+    conversation_link_token: Option<String>,
+    conversation_opening: Option<FakeConversationOpening>,
     next_generation: u64,
     reservations: HashMap<String, FakeReservation>,
     candidates: HashMap<String, FakeCandidate>,
@@ -118,6 +136,9 @@ impl FakeCoordination {
             lease: None,
             retired_lease_tokens: HashSet::new(),
             interaction_epoch: 0,
+            conversation_epoch: 0,
+            conversation_link_token: None,
+            conversation_opening: None,
             next_generation: 0,
             reservations: HashMap::new(),
             candidates: HashMap::new(),
@@ -138,6 +159,16 @@ impl FakeCoordination {
             if expired.lease.operation != SessionOperation::Interact {
                 self.retired_lease_tokens.insert(expired.lease.token);
             }
+        }
+    }
+
+    fn expire_conversation_opening(&mut self, now: tokio::time::Instant) {
+        if self
+            .conversation_opening
+            .as_ref()
+            .is_some_and(|held| held.expires_at <= now)
+        {
+            self.conversation_opening = None;
         }
     }
 }
@@ -179,10 +210,47 @@ impl FakeStore {
         *self.broken.lock().await = true;
     }
 
+    pub(crate) fn disable_coordination(&self) {
+        self.coordination_disabled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Model the one-way promotion that permanently fences legacy writers.
     pub(crate) fn authorize_legacy_cleanup(&self) {
         self.legacy_cleanup_authorized
             .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn lose_next_conversation_acquire_response(&self) {
+        self.lose_next_conversation_acquire_response
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn lose_next_conversation_publish_response(&self) {
+        self.lose_next_conversation_publish_response
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn conversation_acquire_calls(&self) -> usize {
+        self.conversation_acquire_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn conversation_publish_calls(&self) -> usize {
+        self.conversation_publish_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) async fn active_conversation_opening(
+        &self,
+        id: &SessionId,
+    ) -> Option<ConversationOpeningLease> {
+        self.coordination
+            .lock()
+            .await
+            .get(&id.0)
+            .and_then(|state| state.conversation_opening.as_ref())
+            .map(|held| held.lease.clone())
     }
 
     async fn guard(&self) -> Result<(), StoreError> {
@@ -245,6 +313,7 @@ impl FakeStore {
         record: &SessionRecord,
         events: &[Event],
         create: bool,
+        conversation_authority: Option<&ConversationWriteAuthority>,
     ) -> Result<u64, StoreError> {
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
@@ -262,6 +331,57 @@ impl FakeStore {
         let existing = sessions.get(&record.session.id.0);
         let actual = existing.map_or(0, |stored| stored.revision);
         let recorded_tail = existing.map_or(0, |stored| stored.session.last_seq);
+        if !create && existing.is_none() {
+            return Err(StoreError::SessionDeleted {
+                id: record.session.id.clone(),
+            });
+        }
+
+        let mut coordination = self.coordination.lock().await;
+        if let Some(authority) = conversation_authority {
+            let durable = existing.expect("a conditional conversation commit is an update");
+            let state = coordination
+                .entry(record.session.id.0.clone())
+                .or_insert_with(|| FakeCoordination::legacy(durable));
+            let now = tokio::time::Instant::now();
+            state.expire_lease(now);
+            state.expire_conversation_opening(now);
+            match authority {
+                ConversationWriteAuthority::Opening {
+                    opening,
+                    session_lease,
+                } => {
+                    if opening.session_id != record.session.id
+                        || state.conversation_opening.as_ref().map(|held| &held.lease)
+                            != Some(opening)
+                    {
+                        return Err(StoreError::ConversationOpeningLost {
+                            id: record.session.id.clone(),
+                        });
+                    }
+                    Self::validate_conversation_backing(
+                        durable,
+                        state,
+                        opening,
+                        session_lease.as_ref(),
+                    )?;
+                }
+                ConversationWriteAuthority::Active(link) => {
+                    if link.session_id != record.session.id
+                        || link.epoch == 0
+                        || state.conversation_epoch != link.epoch
+                        || state.conversation_link_token.as_deref() != Some(link.token.as_str())
+                        || state.authority.generation != link.runtime_generation
+                        || durable.runtime_id.as_deref() != Some(link.runtime_id.as_str())
+                    {
+                        return Err(StoreError::ConversationLinkChanged {
+                            id: record.session.id.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
         if create {
             if record.revision != 0 || existing.is_some() {
                 return Err(StoreError::RevisionConflict {
@@ -270,11 +390,6 @@ impl FakeStore {
                 });
             }
         } else {
-            if existing.is_none() {
-                return Err(StoreError::SessionDeleted {
-                    id: record.session.id.clone(),
-                });
-            }
             if actual != record.revision {
                 return Err(StoreError::RevisionConflict {
                     expected: record.revision,
@@ -285,6 +400,18 @@ impl FakeStore {
                 stored.session.status.is_terminal() && !record.session.status.is_terminal()
             }) {
                 return Err(StoreError::SessionTerminated {
+                    id: record.session.id.clone(),
+                });
+            }
+        }
+
+        let coordination_seed = existing.unwrap_or(record);
+        let state = coordination
+            .entry(record.session.id.0.clone())
+            .or_insert_with(|| FakeCoordination::legacy(coordination_seed));
+        if let (Some(_), Some(durable)) = (conversation_authority, existing) {
+            if durable.runtime_id != record.runtime_id {
+                return Err(StoreError::SessionAuthorityChanged {
                     id: record.session.id.clone(),
                 });
             }
@@ -314,10 +441,6 @@ impl FakeStore {
         durable.session.last_seq = durable_tail;
         held.extend(events.iter().cloned().map(StoredEvent::from));
         sessions.insert(record.session.id.0.clone(), durable.clone());
-        let mut coordination = self.coordination.lock().await;
-        let state = coordination
-            .entry(record.session.id.0.clone())
-            .or_insert_with(|| FakeCoordination::legacy(&durable));
         if state.authority.generation == 0 && state.lease.is_none() {
             // Compatibility-stage writers have no separate authority switch.
             // Once a recorded generation exists, ordinary record/event commits
@@ -328,6 +451,74 @@ impl FakeStore {
         self.upserts
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(revision)
+    }
+
+    fn validate_conversation_backing(
+        record: &SessionRecord,
+        state: &FakeCoordination,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<(), StoreError> {
+        match opening.session_lease_token.as_deref() {
+            Some(expected_token) => {
+                let Some(lease) = session_lease else {
+                    return Err(StoreError::ConversationOpeningLost {
+                        id: opening.session_id.clone(),
+                    });
+                };
+                let current = SessionBoundary::for_record(record, state.authority.generation);
+                if lease.session_id != opening.session_id
+                    || lease.holder != opening.holder
+                    || lease.token != expected_token
+                    || lease.operation == SessionOperation::Interact
+                    || state.lease.as_ref().map(|held| &held.lease) != Some(lease)
+                    || current != lease.boundary
+                {
+                    return Err(StoreError::ConversationOpeningLost {
+                        id: opening.session_id.clone(),
+                    });
+                }
+                match opening.runtime_candidate_token.as_deref() {
+                    Some(token) => {
+                        let registered = state.candidates.get(token);
+                        if registered.is_none_or(|registered| {
+                            registered.lease_token != lease.token
+                                || registered.candidate.session_id != opening.session_id
+                                || registered.candidate.generation.get()
+                                    != opening.runtime_generation
+                                || registered.candidate.runtime_id != opening.runtime_id
+                                || registered.candidate.token != token
+                        }) {
+                            return Err(StoreError::ConversationOpeningLost {
+                                id: opening.session_id.clone(),
+                            });
+                        }
+                    }
+                    None => {
+                        if state.authority.generation != opening.runtime_generation
+                            || record.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+                        {
+                            return Err(StoreError::ConversationOpeningLost {
+                                id: opening.session_id.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            None => {
+                if opening.runtime_candidate_token.is_some()
+                    || session_lease.is_some()
+                    || opening.runtime_generation != 0
+                    || state.authority.generation != 0
+                    || record.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+                {
+                    return Err(StoreError::ConversationOpeningLost {
+                        id: opening.session_id.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -348,6 +539,12 @@ impl SessionStore for FakeStore {
         id: &SessionId,
     ) -> Result<Option<RuntimeAuthority>, StoreError> {
         self.guard().await?;
+        if self
+            .coordination_disabled
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(StoreError::CoordinationDisabled);
+        }
         let _transaction = self.transaction.lock().await;
         let Some(record) = self.sessions.lock().await.get(&id.0).cloned() else {
             return Ok(None);
@@ -681,6 +878,249 @@ impl SessionStore for FakeStore {
         }
         state.lease = None;
         state.retired_lease_tokens.insert(lease.token.clone());
+        Ok(())
+    }
+
+    async fn acquire_conversation_opening(
+        &self,
+        request: &ConversationOpeningLeaseRequest,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        self.guard().await?;
+        self.conversation_acquire_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if request.holder.is_empty() || request.token.is_empty() || request.runtime_id.is_empty() {
+            return Err(StoreError::Malformed(
+                "conversation opening holder, token, and runtime handle must not be empty".into(),
+            ));
+        }
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self
+            .sessions
+            .lock()
+            .await
+            .get(&request.session_id.0)
+            .cloned()
+        else {
+            return Err(StoreError::SessionDeleted {
+                id: request.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let state = coordination
+            .entry(request.session_id.0.clone())
+            .or_insert_with(|| FakeCoordination::legacy(&record));
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        state.expire_conversation_opening(now);
+        let opening = ConversationOpeningLease {
+            session_id: request.session_id.clone(),
+            holder: request.holder.clone(),
+            token: request.token.clone(),
+            runtime_id: request.runtime_id.clone(),
+            runtime_generation: request.runtime_generation,
+            runtime_candidate_token: request.runtime_candidate_token.clone(),
+            session_lease_token: session_lease.map(|lease| lease.token.clone()),
+        };
+        Self::validate_conversation_backing(&record, state, &opening, session_lease)?;
+        let expires_at = now
+            .checked_add(request.ttl)
+            .ok_or_else(|| StoreError::Malformed("conversation opening expiry overflow".into()))?;
+        let opening = if let Some(held) = state.conversation_opening.as_mut() {
+            if held.lease != opening {
+                return Err(StoreError::ConversationOpeningHeld {
+                    id: request.session_id.clone(),
+                });
+            }
+            held.expires_at = expires_at;
+            held.lease.clone()
+        } else {
+            state.conversation_opening = Some(FakeConversationOpening {
+                lease: opening.clone(),
+                expires_at,
+            });
+            opening
+        };
+        if self
+            .lose_next_conversation_acquire_response
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(StoreError::Unavailable(
+                "test conversation acquisition response lost after commit".into(),
+            ));
+        }
+        Ok(opening)
+    }
+
+    async fn renew_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+        ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self
+            .sessions
+            .lock()
+            .await
+            .get(&opening.session_id.0)
+            .cloned()
+        else {
+            return Err(StoreError::SessionDeleted {
+                id: opening.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&opening.session_id.0) else {
+            return Err(StoreError::ConversationOpeningLost {
+                id: opening.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        state.expire_conversation_opening(now);
+        if state.conversation_opening.as_ref().map(|held| &held.lease) != Some(opening) {
+            return Err(StoreError::ConversationOpeningLost {
+                id: opening.session_id.clone(),
+            });
+        }
+        Self::validate_conversation_backing(&record, state, opening, session_lease)?;
+        state
+            .conversation_opening
+            .as_mut()
+            .expect("the exact opening was validated")
+            .expires_at = now
+            .checked_add(ttl)
+            .ok_or_else(|| StoreError::Malformed("conversation opening expiry overflow".into()))?;
+        Ok(())
+    }
+
+    async fn publish_conversation_link(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        self.guard().await?;
+        self.conversation_publish_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self
+            .sessions
+            .lock()
+            .await
+            .get(&opening.session_id.0)
+            .cloned()
+        else {
+            return Err(StoreError::SessionDeleted {
+                id: opening.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&opening.session_id.0) else {
+            return Err(StoreError::ConversationOpeningLost {
+                id: opening.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        state.expire_conversation_opening(now);
+        let link = if state.conversation_link_token.as_deref() == Some(opening.token.as_str()) {
+            if state.authority.generation != opening.runtime_generation
+                || record.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+            {
+                return Err(StoreError::ConversationOpeningLost {
+                    id: opening.session_id.clone(),
+                });
+            }
+            ConversationLink {
+                session_id: opening.session_id.clone(),
+                epoch: state.conversation_epoch,
+                token: opening.token.clone(),
+                runtime_generation: opening.runtime_generation,
+                runtime_id: opening.runtime_id.clone(),
+            }
+        } else {
+            Self::validate_conversation_backing(&record, state, opening, session_lease)?;
+            if state.conversation_opening.as_ref().map(|held| &held.lease) != Some(opening)
+                || record.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+                || state.authority.generation != opening.runtime_generation
+            {
+                return Err(StoreError::ConversationOpeningLost {
+                    id: opening.session_id.clone(),
+                });
+            }
+            state.conversation_epoch = state
+                .conversation_epoch
+                .checked_add(1)
+                .ok_or_else(|| StoreError::Malformed("conversation link epoch overflow".into()))?;
+            state.conversation_link_token = Some(opening.token.clone());
+            state.conversation_opening = None;
+            ConversationLink {
+                session_id: opening.session_id.clone(),
+                epoch: state.conversation_epoch,
+                token: opening.token.clone(),
+                runtime_generation: opening.runtime_generation,
+                runtime_id: opening.runtime_id.clone(),
+            }
+        };
+        if self
+            .lose_next_conversation_publish_response
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(StoreError::Unavailable(
+                "test conversation publication response lost after commit".into(),
+            ));
+        }
+        Ok(link)
+    }
+
+    async fn release_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+    ) -> Result<(), StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&opening.session_id.0) else {
+            return Ok(());
+        };
+        state.expire_conversation_opening(tokio::time::Instant::now());
+        if state
+            .conversation_opening
+            .as_ref()
+            .is_some_and(|held| held.lease == *opening)
+        {
+            state.conversation_opening = None;
+        }
+        if state.conversation_link_token.as_deref() == Some(opening.token.as_str()) {
+            state.conversation_link_token = None;
+        }
+        Ok(())
+    }
+
+    async fn validate_conversation_link(&self, link: &ConversationLink) -> Result<(), StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        if !self.sessions.lock().await.contains_key(&link.session_id.0) {
+            return Err(StoreError::SessionDeleted {
+                id: link.session_id.clone(),
+            });
+        }
+        let coordination = self.coordination.lock().await;
+        let current = coordination.get(&link.session_id.0);
+        if link.epoch == 0
+            || current.is_none_or(|state| {
+                state.conversation_epoch != link.epoch
+                    || state.conversation_link_token.as_deref() != Some(link.token.as_str())
+                    || state.authority.generation != link.runtime_generation
+                    || state.authority.runtime_id.as_deref() != Some(link.runtime_id.as_str())
+            })
+        {
+            return Err(StoreError::ConversationLinkChanged {
+                id: link.session_id.clone(),
+            });
+        }
         Ok(())
     }
 
@@ -1257,7 +1697,18 @@ impl SessionStore for FakeStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.commit_idempotent(write_id, record, events, false)
+        self.commit_idempotent(write_id, record, events, false, None)
+            .await
+    }
+
+    async fn commit_conversation_idempotent(
+        &self,
+        write_id: &str,
+        authority: &ConversationWriteAuthority,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.commit_idempotent(write_id, record, events, false, Some(authority))
             .await
     }
 
@@ -1267,7 +1718,8 @@ impl SessionStore for FakeStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.commit_idempotent(write_id, record, events, true).await
+        self.commit_idempotent(write_id, record, events, true, None)
+            .await
     }
 
     async fn event_tail(&self, id: &SessionId) -> Result<u64, StoreError> {

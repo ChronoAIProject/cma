@@ -12,9 +12,11 @@ use std::{
 
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
-    RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
-    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary,
-    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionOperation,
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
+    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeCleanupReason,
+    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
+    SessionLeaseRequest, SessionOperation,
 };
 use mongodb::bson::{doc, Bson, DateTime, Document};
 use mongodb::options::{ReadConcern, ReplaceOptions, WriteConcern};
@@ -40,6 +42,16 @@ pub(super) struct CoordinationDoc {
     /// Monotonic source of bounded interaction fencing tokens.
     #[serde(default)]
     interaction_epoch: i64,
+    /// Monotonic identity of the published inbound conversation link.
+    #[serde(default)]
+    conversation_epoch: i64,
+    /// Opening token promoted into the current published link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conversation_link_token: Option<String>,
+    /// Replacement opening that has authority to publish, but has not yet
+    /// displaced the current link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conversation_opening: Option<ConversationOpeningDoc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lease: Option<LeaseDoc>,
     /// Refreshed with MongoDB's `$currentDate` at the start of every command.
@@ -64,6 +76,20 @@ struct LeaseDoc {
     interaction_nonce: Option<String>,
     boundary: BoundaryDoc,
     operation: String,
+    expires_at: DateTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ConversationOpeningDoc {
+    holder: String,
+    token: String,
+    runtime_id: String,
+    #[serde(default)]
+    runtime_generation: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runtime_candidate_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_lease_token: Option<String>,
     expires_at: DateTime,
 }
 
@@ -170,6 +196,20 @@ pub(super) enum CoordinationCommand {
         boundary: SessionBoundary,
     },
     Release(SessionLease),
+    AcquireConversationOpening {
+        request: ConversationOpeningLeaseRequest,
+        session_lease: Option<SessionLease>,
+    },
+    RenewConversationOpening {
+        opening: ConversationOpeningLease,
+        session_lease: Option<SessionLease>,
+        ttl: std::time::Duration,
+    },
+    PublishConversationLink {
+        opening: ConversationOpeningLease,
+        session_lease: Option<SessionLease>,
+    },
+    ReleaseConversationOpening(ConversationOpeningLease),
     Reserve {
         lease: SessionLease,
         token: String,
@@ -200,6 +240,8 @@ pub(super) enum CoordinationOutcome {
     Candidate(RuntimeCandidate),
     Switch(RuntimeAuthoritySwitch),
     Retirement(RuntimeAuthorityRetirement),
+    ConversationOpening(ConversationOpeningLease),
+    ConversationLink(ConversationLink),
     Unit,
 }
 
@@ -327,6 +369,69 @@ impl LeaseDoc {
     }
 }
 
+impl ConversationOpeningDoc {
+    fn from_request(
+        request: &ConversationOpeningLeaseRequest,
+        session_lease: Option<&SessionLease>,
+        expires_at: DateTime,
+    ) -> Result<Self, StoreError> {
+        if request.holder.is_empty() || request.token.is_empty() || request.runtime_id.is_empty() {
+            return Err(StoreError::Malformed(
+                "conversation opening holder, token, and runtime handle must not be empty".into(),
+            ));
+        }
+        Ok(Self {
+            holder: request.holder.clone(),
+            token: request.token.clone(),
+            runtime_id: request.runtime_id.clone(),
+            runtime_generation: stored_generation(request.runtime_generation)?,
+            runtime_candidate_token: request.runtime_candidate_token.clone(),
+            session_lease_token: session_lease.map(|lease| lease.token.clone()),
+            expires_at,
+        })
+    }
+
+    fn to_core(&self, id: &layer2_core::SessionId) -> Result<ConversationOpeningLease, StoreError> {
+        if self.holder.is_empty() || self.token.is_empty() || self.runtime_id.is_empty() {
+            return Err(StoreError::Malformed(
+                "stored conversation opening holder, token, and runtime handle must not be empty"
+                    .into(),
+            ));
+        }
+        if self
+            .session_lease_token
+            .as_deref()
+            .is_some_and(str::is_empty)
+        {
+            return Err(StoreError::Malformed(
+                "stored conversation opening lease token must not be empty".into(),
+            ));
+        }
+        if self
+            .runtime_candidate_token
+            .as_deref()
+            .is_some_and(str::is_empty)
+        {
+            return Err(StoreError::Malformed(
+                "stored conversation opening candidate token must not be empty".into(),
+            ));
+        }
+        Ok(ConversationOpeningLease {
+            session_id: id.clone(),
+            holder: self.holder.clone(),
+            token: self.token.clone(),
+            runtime_id: self.runtime_id.clone(),
+            runtime_generation: loaded_generation(self.runtime_generation)?,
+            runtime_candidate_token: self.runtime_candidate_token.clone(),
+            session_lease_token: self.session_lease_token.clone(),
+        })
+    }
+
+    fn matches(&self, opening: &ConversationOpeningLease) -> Result<bool, StoreError> {
+        Ok(self.to_core(&opening.session_id)? == *opening)
+    }
+}
+
 impl LeaseReleaseDoc {
     fn from_core(lease: &SessionLease) -> Result<Self, StoreError> {
         Ok(Self {
@@ -411,7 +516,7 @@ impl CoordinationReceiptDoc {
         Self {
             id,
             write_protocol: super::WRITE_PROTOCOL,
-            coordination_protocol: super::COORDINATION_PROTOCOL,
+            coordination_protocol: super::COORDINATION_RECEIPT_PROTOCOL,
             payload,
         }
     }
@@ -428,7 +533,7 @@ impl CoordinationReceiptDoc {
 
     fn validate_stored(&self) -> Result<(), StoreError> {
         if self.write_protocol != super::WRITE_PROTOCOL
-            || self.coordination_protocol != super::COORDINATION_PROTOCOL
+            || self.coordination_protocol != super::COORDINATION_RECEIPT_PROTOCOL
             || self.id.session_id.is_empty()
             || self.id.token.is_empty()
         {
@@ -538,6 +643,10 @@ impl CoordinationCommand {
         match self {
             Self::Acquire(request) => &request.session_id,
             Self::AcquireInteraction(request) => &request.session_id,
+            Self::AcquireConversationOpening { request, .. } => &request.session_id,
+            Self::RenewConversationOpening { opening, .. }
+            | Self::PublishConversationLink { opening, .. }
+            | Self::ReleaseConversationOpening(opening) => &opening.session_id,
             Self::Renew { lease, .. }
             | Self::RenewInteraction { lease, .. }
             | Self::Advance { lease, .. }
@@ -558,6 +667,10 @@ impl CoordinationCommand {
             Self::RenewInteraction { .. } => "renew interaction lease",
             Self::Advance { .. } => "advance session lease",
             Self::Release(_) => "release session lease",
+            Self::AcquireConversationOpening { .. } => "acquire conversation opening",
+            Self::RenewConversationOpening { .. } => "renew conversation opening",
+            Self::PublishConversationLink { .. } => "publish conversation link",
+            Self::ReleaseConversationOpening(_) => "release conversation opening",
             Self::Reserve { .. } => "reserve runtime generation",
             Self::Register { .. } => "register runtime candidate",
             Self::Switch { .. } => "switch runtime authority",
@@ -613,6 +726,17 @@ impl CoordinationCommand {
                 RECEIPT_CLEANUP,
                 &cleanup.token,
             )],
+            Self::AcquireConversationOpening { request, .. } => request
+                .runtime_candidate_token
+                .as_ref()
+                .map(|token| {
+                    vec![CoordinationReceiptIdDoc::new(
+                        id,
+                        RECEIPT_RESERVATION,
+                        token,
+                    )]
+                })
+                .unwrap_or_default(),
             Self::Release(lease) if lease.operation != SessionOperation::Interact => {
                 vec![CoordinationReceiptIdDoc::new(
                     id,
@@ -621,6 +745,9 @@ impl CoordinationCommand {
                 )]
             }
             Self::AcquireInteraction(_)
+            | Self::RenewConversationOpening { .. }
+            | Self::PublishConversationLink { .. }
+            | Self::ReleaseConversationOpening(_)
             | Self::Release(_)
             | Self::Renew { .. }
             | Self::RenewInteraction { .. }
@@ -643,10 +770,7 @@ pub(super) fn runtime_authority_from_doc(
 }
 
 pub(super) fn validate_coordination_state(session: &SessionDoc) -> Result<(), StoreError> {
-    if !matches!(
-        session.coordination_protocol,
-        0 | super::COORDINATION_PROTOCOL
-    ) {
+    if session.coordination_protocol != super::SESSION_COORDINATION_PROTOCOL {
         return Err(StoreError::Malformed(format!(
             "session {} carries an unknown coordination protocol",
             session.id
@@ -659,6 +783,32 @@ pub(super) fn validate_coordination_state(session: &SessionDoc) -> Result<(), St
     let next = loaded_generation(state.next_generation)?;
     loaded_generation(state.receipt_count)?;
     let interaction_epoch = loaded_generation(state.interaction_epoch)?;
+    let conversation_epoch = loaded_generation(state.conversation_epoch)?;
+    match (conversation_epoch, state.conversation_link_token.as_deref()) {
+        (_, None) => {}
+        (0, Some(_)) => {
+            return Err(StoreError::Malformed(format!(
+                "session {} conversation epoch and link token disagree",
+                session.id
+            )))
+        }
+        (_, Some("")) => {
+            return Err(StoreError::Malformed(format!(
+                "session {} conversation link token is empty",
+                session.id
+            )))
+        }
+        (_, Some(_)) => {}
+    }
+    if let Some(opening) = state.conversation_opening.as_ref() {
+        opening.to_core(&layer2_core::SessionId(session.id.clone()))?;
+        if state.server_now.is_none() {
+            return Err(StoreError::Malformed(format!(
+                "session {} conversation opening has no coordination clock",
+                session.id
+            )));
+        }
+    }
     if next < generation {
         return Err(StoreError::Malformed(format!(
             "session {} runtime generation floor is behind current authority",
@@ -794,6 +944,122 @@ fn expire_lease(state: &mut CoordinationDoc, now: DateTime) {
     }
 }
 
+fn expire_conversation_opening(state: &mut CoordinationDoc, now: DateTime) {
+    if state
+        .conversation_opening
+        .as_ref()
+        .is_some_and(|opening| opening.expires_at.timestamp_millis() <= now.timestamp_millis())
+    {
+        state.conversation_opening = None;
+    }
+}
+
+fn require_conversation_backing(
+    session: &mut SessionDoc,
+    opening: &ConversationOpeningLease,
+    session_lease: Option<&SessionLease>,
+    now: DateTime,
+) -> Result<(), StoreError> {
+    match opening.session_lease_token.as_deref() {
+        Some(expected_token) => {
+            let Some(lease) = session_lease else {
+                return Err(StoreError::ConversationOpeningLost {
+                    id: opening.session_id.clone(),
+                });
+            };
+            if lease.session_id != opening.session_id
+                || lease.holder != opening.holder
+                || lease.token != expected_token
+                || lease.operation == SessionOperation::Interact
+                || require_current_lease(session, lease, now).is_err()
+            {
+                return Err(StoreError::ConversationOpeningLost {
+                    id: opening.session_id.clone(),
+                });
+            }
+            if opening.runtime_candidate_token.is_none()
+                && (runtime_authority_from_doc(session)?.generation != opening.runtime_generation
+                    || session.runtime_id.as_deref() != Some(opening.runtime_id.as_str()))
+            {
+                return Err(StoreError::ConversationOpeningLost {
+                    id: opening.session_id.clone(),
+                });
+            }
+        }
+        None => {
+            if opening.runtime_candidate_token.is_some()
+                || session_lease.is_some()
+                || opening.runtime_generation != 0
+                || runtime_authority_from_doc(session)?.generation != 0
+                || session.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+            {
+                return Err(StoreError::ConversationOpeningLost {
+                    id: opening.session_id.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn require_conversation_write_authority(
+    session: &mut SessionDoc,
+    authority: &ConversationWriteAuthority,
+) -> Result<(), StoreError> {
+    validate_coordination_state(session)?;
+    let id = layer2_core::SessionId(session.id.clone());
+    let now = session
+        .coordination
+        .as_ref()
+        .and_then(|state| state.server_now)
+        .ok_or_else(|| {
+            StoreError::Malformed(
+                "MongoDB coordination clock is absent during conversation write".into(),
+            )
+        })?;
+    match authority {
+        ConversationWriteAuthority::Opening {
+            opening,
+            session_lease,
+        } => {
+            if opening.session_id != id {
+                return Err(StoreError::ConversationOpeningLost { id });
+            }
+            {
+                let state = session
+                    .coordination
+                    .get_or_insert_with(CoordinationDoc::default);
+                expire_lease(state, now);
+                expire_conversation_opening(state, now);
+                let matches = state
+                    .conversation_opening
+                    .as_ref()
+                    .map_or(Ok(false), |stored| stored.matches(opening))?;
+                if !matches {
+                    return Err(StoreError::ConversationOpeningLost { id });
+                }
+            }
+            require_conversation_backing(session, opening, session_lease.as_ref(), now)
+        }
+        ConversationWriteAuthority::Active(link) => {
+            let state = session
+                .coordination
+                .as_ref()
+                .ok_or_else(|| StoreError::ConversationLinkChanged { id: id.clone() })?;
+            if link.session_id != id
+                || link.epoch == 0
+                || loaded_generation(state.conversation_epoch)? != link.epoch
+                || state.conversation_link_token.as_deref() != Some(link.token.as_str())
+                || loaded_generation(state.authority_generation)? != link.runtime_generation
+                || session.runtime_id.as_deref() != Some(link.runtime_id.as_str())
+            {
+                return Err(StoreError::ConversationLinkChanged { id });
+            }
+            Ok(())
+        }
+    }
+}
+
 fn receipt<'a>(
     receipts: &'a [CoordinationReceiptDoc],
     expected: &CoordinationReceiptIdDoc,
@@ -803,6 +1069,42 @@ fn receipt<'a>(
         found.validate_id(expected)?;
     }
     Ok(found)
+}
+
+fn require_registered_conversation_candidate(
+    receipts: &[CoordinationReceiptDoc],
+    opening: &ConversationOpeningLease,
+    session_lease: Option<&SessionLease>,
+) -> Result<(), StoreError> {
+    let Some(token) = opening.runtime_candidate_token.as_ref() else {
+        return Ok(());
+    };
+    let Some(lease) = session_lease else {
+        return Err(StoreError::ConversationOpeningLost {
+            id: opening.session_id.clone(),
+        });
+    };
+    let receipt_id = CoordinationReceiptIdDoc::new(&opening.session_id, RECEIPT_RESERVATION, token);
+    let Some(receipt) = receipt(receipts, &receipt_id)? else {
+        return Err(StoreError::ConversationOpeningLost {
+            id: opening.session_id.clone(),
+        });
+    };
+    let CoordinationReceiptPayloadDoc::Reservation(candidate) = &receipt.payload else {
+        return Err(StoreError::Malformed(
+            "MongoDB conversation candidate receipt carries another payload kind".into(),
+        ));
+    };
+    if opening.runtime_generation == 0
+        || candidate.lease_token != lease.token
+        || loaded_generation(candidate.generation)? != opening.runtime_generation
+        || candidate.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+    {
+        return Err(StoreError::ConversationOpeningLost {
+            id: opening.session_id.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn require_current_lease(
@@ -1158,7 +1460,7 @@ pub(super) fn coordination_clock_update() -> Document {
     doc! {
         "$set": {
             super::WRITE_PROTOCOL_FIELD: super::WRITE_PROTOCOL,
-            super::COORDINATION_PROTOCOL_FIELD: super::COORDINATION_PROTOCOL,
+            super::COORDINATION_PROTOCOL_FIELD: super::SESSION_COORDINATION_PROTOCOL,
         },
         "$max": { "revision": 0_i64 },
         "$currentDate": { "coordination.server_now": true },
@@ -1438,6 +1740,158 @@ fn apply_command_transition(
                     CoordinationReceiptPayloadDoc::LeaseToken(stored),
                 ))],
             ))
+        }
+        CoordinationCommand::AcquireConversationOpening {
+            request,
+            session_lease,
+        } => {
+            let expires_at = expiry(now, request.ttl)?;
+            let opening =
+                ConversationOpeningDoc::from_request(request, session_lease.as_ref(), expires_at)?;
+            let outcome = opening.to_core(&request.session_id)?;
+            require_conversation_backing(session, &outcome, session_lease.as_ref(), now)?;
+            require_registered_conversation_candidate(receipts, &outcome, session_lease.as_ref())?;
+            let state = session
+                .coordination
+                .get_or_insert_with(CoordinationDoc::default);
+            expire_conversation_opening(state, now);
+            if let Some(held) = state.conversation_opening.as_mut() {
+                if !held.matches(&outcome)? {
+                    return Err(StoreError::ConversationOpeningHeld {
+                        id: request.session_id.clone(),
+                    });
+                }
+                held.expires_at = expires_at;
+                return Ok((
+                    CoordinationOutcome::ConversationOpening(outcome),
+                    Vec::new(),
+                ));
+            }
+            state.conversation_opening = Some(opening);
+            Ok((
+                CoordinationOutcome::ConversationOpening(outcome),
+                Vec::new(),
+            ))
+        }
+        CoordinationCommand::RenewConversationOpening {
+            opening,
+            session_lease,
+            ttl,
+        } => {
+            {
+                let state = session
+                    .coordination
+                    .get_or_insert_with(CoordinationDoc::default);
+                expire_conversation_opening(state, now);
+                let matches = state
+                    .conversation_opening
+                    .as_ref()
+                    .map_or(Ok(false), |held| held.matches(opening))?;
+                if !matches {
+                    return Err(StoreError::ConversationOpeningLost {
+                        id: opening.session_id.clone(),
+                    });
+                }
+            }
+            require_conversation_backing(session, opening, session_lease.as_ref(), now)?;
+            session
+                .coordination
+                .as_mut()
+                .and_then(|state| state.conversation_opening.as_mut())
+                .expect("the exact conversation opening was validated")
+                .expires_at = expiry(now, *ttl)?;
+            Ok((CoordinationOutcome::Unit, Vec::new()))
+        }
+        CoordinationCommand::PublishConversationLink {
+            opening,
+            session_lease,
+        } => {
+            let current_generation = runtime_authority_from_doc(session)?.generation;
+            {
+                let state = session
+                    .coordination
+                    .get_or_insert_with(CoordinationDoc::default);
+                expire_conversation_opening(state, now);
+                if state.conversation_link_token.as_deref() == Some(opening.token.as_str()) {
+                    if current_generation != opening.runtime_generation
+                        || session.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+                    {
+                        return Err(StoreError::ConversationOpeningLost {
+                            id: opening.session_id.clone(),
+                        });
+                    }
+                    let epoch = loaded_generation(state.conversation_epoch)?;
+                    if epoch == 0 {
+                        return Err(StoreError::Malformed(
+                            "published conversation link has a zero epoch".into(),
+                        ));
+                    }
+                    return Ok((
+                        CoordinationOutcome::ConversationLink(ConversationLink {
+                            session_id: opening.session_id.clone(),
+                            epoch,
+                            token: opening.token.clone(),
+                            runtime_generation: opening.runtime_generation,
+                            runtime_id: opening.runtime_id.clone(),
+                        }),
+                        Vec::new(),
+                    ));
+                }
+                let matches = state
+                    .conversation_opening
+                    .as_ref()
+                    .map_or(Ok(false), |held| held.matches(opening))?;
+                if !matches {
+                    return Err(StoreError::ConversationOpeningLost {
+                        id: opening.session_id.clone(),
+                    });
+                }
+            }
+            require_conversation_backing(session, opening, session_lease.as_ref(), now)?;
+            if current_generation != opening.runtime_generation
+                || session.runtime_id.as_deref() != Some(opening.runtime_id.as_str())
+            {
+                return Err(StoreError::ConversationOpeningLost {
+                    id: opening.session_id.clone(),
+                });
+            }
+            let state = session
+                .coordination
+                .as_mut()
+                .expect("the conversation opening coordination state was validated");
+            let epoch = loaded_generation(state.conversation_epoch)?
+                .checked_add(1)
+                .ok_or_else(|| StoreError::Malformed("conversation link epoch overflow".into()))?;
+            state.conversation_epoch = stored_generation(epoch)?;
+            state.conversation_link_token = Some(opening.token.clone());
+            state.conversation_opening = None;
+            Ok((
+                CoordinationOutcome::ConversationLink(ConversationLink {
+                    session_id: opening.session_id.clone(),
+                    epoch,
+                    token: opening.token.clone(),
+                    runtime_generation: opening.runtime_generation,
+                    runtime_id: opening.runtime_id.clone(),
+                }),
+                Vec::new(),
+            ))
+        }
+        CoordinationCommand::ReleaseConversationOpening(opening) => {
+            let state = session
+                .coordination
+                .get_or_insert_with(CoordinationDoc::default);
+            expire_conversation_opening(state, now);
+            let matches = state
+                .conversation_opening
+                .as_ref()
+                .map_or(Ok(false), |held| held.matches(opening))?;
+            if matches {
+                state.conversation_opening = None;
+            }
+            if state.conversation_link_token.as_deref() == Some(opening.token.as_str()) {
+                state.conversation_link_token = None;
+            }
+            Ok((CoordinationOutcome::Unit, Vec::new()))
         }
         CoordinationCommand::Reserve { lease, token } => {
             if token.is_empty() {
@@ -2266,6 +2720,9 @@ mod tests {
             next_generation: 1,
             receipt_count: 0,
             interaction_epoch: 0,
+            conversation_epoch: 0,
+            conversation_link_token: None,
+            conversation_opening: None,
             lease: None,
             server_now: Some(DateTime::from_millis(NOW)),
         });
@@ -2365,6 +2822,380 @@ mod tests {
                 .map(|receipt| (receipt.id.clone(), receipt))
                 .collect(),
         )
+    }
+
+    fn compatibility_session_doc() -> SessionDoc {
+        let mut session = session_doc();
+        let state = session.coordination.as_mut().unwrap();
+        state.authority_generation = 0;
+        state.next_generation = 1;
+        session
+    }
+
+    fn session_bson(session: &SessionDoc) -> Document {
+        mongodb::bson::serialize_to_document(session).expect("test session serializes")
+    }
+
+    fn conversation_request(
+        session: &SessionDoc,
+        holder: &str,
+        token: &str,
+        generation: u64,
+        candidate: Option<&str>,
+    ) -> ConversationOpeningLeaseRequest {
+        ConversationOpeningLeaseRequest {
+            session_id: SessionId(session.id.clone()),
+            holder: holder.into(),
+            token: token.into(),
+            runtime_id: session.runtime_id.clone().unwrap(),
+            runtime_generation: generation,
+            runtime_candidate_token: candidate.map(str::to_owned),
+            ttl: std::time::Duration::from_secs(30),
+        }
+    }
+
+    fn acquire_conversation(
+        session: &mut SessionDoc,
+        receipts: &mut Vec<CoordinationReceiptDoc>,
+        request: ConversationOpeningLeaseRequest,
+        session_lease: Option<SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        match run(
+            session,
+            receipts,
+            CoordinationCommand::AcquireConversationOpening {
+                request,
+                session_lease,
+            },
+        )? {
+            CoordinationOutcome::ConversationOpening(opening) => Ok(opening),
+            _ => panic!("conversation opening expected"),
+        }
+    }
+
+    fn publish_conversation(
+        session: &mut SessionDoc,
+        receipts: &mut Vec<CoordinationReceiptDoc>,
+        opening: ConversationOpeningLease,
+        session_lease: Option<SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        match run(
+            session,
+            receipts,
+            CoordinationCommand::PublishConversationLink {
+                opening,
+                session_lease,
+            },
+        )? {
+            CoordinationOutcome::ConversationLink(link) => Ok(link),
+            _ => panic!("conversation link expected"),
+        }
+    }
+
+    #[test]
+    fn mongo_conversation_publication_replays_supersedes_and_releases_exactly() {
+        let mut session = compatibility_session_doc();
+        let mut receipts = Vec::new();
+        let first_request =
+            conversation_request(&session, "holder-first", "opening-first", 0, None);
+        let first =
+            acquire_conversation(&mut session, &mut receipts, first_request.clone(), None).unwrap();
+        assert_eq!(
+            acquire_conversation(&mut session, &mut receipts, first_request, None).unwrap(),
+            first
+        );
+        let held = session.clone();
+        assert!(matches!(
+            acquire_conversation(
+                &mut session,
+                &mut receipts,
+                conversation_request(&held, "holder-second", "opening-second", 0, None),
+                None,
+            ),
+            Err(StoreError::ConversationOpeningHeld { .. })
+        ));
+        assert_eq!(
+            session_bson(&session),
+            session_bson(&held),
+            "rejected contention mutates no authority"
+        );
+
+        let first_link =
+            publish_conversation(&mut session, &mut receipts, first.clone(), None).unwrap();
+        assert_eq!(
+            publish_conversation(&mut session, &mut receipts, first.clone(), None).unwrap(),
+            first_link
+        );
+        let second_request =
+            conversation_request(&session, "holder-second", "opening-second", 0, None);
+        let second =
+            acquire_conversation(&mut session, &mut receipts, second_request, None).unwrap();
+        require_conversation_write_authority(
+            &mut session,
+            &ConversationWriteAuthority::Active(first_link.clone()),
+        )
+        .expect("a pending successor does not displace the active link");
+        let second_link =
+            publish_conversation(&mut session, &mut receipts, second.clone(), None).unwrap();
+        assert!(second_link.epoch > first_link.epoch);
+        let superseded = session.clone();
+        assert!(matches!(
+            require_conversation_write_authority(
+                &mut session,
+                &ConversationWriteAuthority::Active(first_link),
+            ),
+            Err(StoreError::ConversationLinkChanged { .. })
+        ));
+        assert_eq!(
+            session_bson(&session),
+            session_bson(&superseded),
+            "stale active authority mutates nothing"
+        );
+        assert!(matches!(
+            require_conversation_write_authority(
+                &mut session,
+                &ConversationWriteAuthority::Opening {
+                    opening: first,
+                    session_lease: None,
+                },
+            ),
+            Err(StoreError::ConversationOpeningLost { .. })
+        ));
+
+        run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::ReleaseConversationOpening(second),
+        )
+        .unwrap();
+        let released_epoch = session.coordination.as_ref().unwrap().conversation_epoch;
+        assert!(released_epoch > 0);
+        assert!(session
+            .coordination
+            .as_ref()
+            .unwrap()
+            .conversation_link_token
+            .is_none());
+        validate_coordination_state(&session).unwrap();
+        assert!(matches!(
+            require_conversation_write_authority(
+                &mut session,
+                &ConversationWriteAuthority::Active(second_link),
+            ),
+            Err(StoreError::ConversationLinkChanged { .. })
+        ));
+
+        let collision_request = conversation_request(
+            &session,
+            "holder-collision",
+            "released:opening-second",
+            0,
+            None,
+        );
+        let collision =
+            acquire_conversation(&mut session, &mut receipts, collision_request, None).unwrap();
+        let collision_link =
+            publish_conversation(&mut session, &mut receipts, collision, None).unwrap();
+        assert!(collision_link.epoch > u64::try_from(released_epoch).unwrap());
+        require_conversation_write_authority(
+            &mut session,
+            &ConversationWriteAuthority::Active(collision_link),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn mongo_nonzero_conversation_openings_require_the_exact_provider_lease() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let no_lease =
+            conversation_request(&session, "mongo-test-holder", "opening-no-lease", 1, None);
+        let before = session.clone();
+        assert!(matches!(
+            acquire_conversation(&mut session, &mut receipts, no_lease, None),
+            Err(StoreError::ConversationOpeningLost { .. })
+        ));
+        assert_eq!(session_bson(&session), session_bson(&before));
+
+        let lease_request = request(&session, "lease-conversation-readoption");
+        let mut lease = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Acquire(lease_request),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("provider lease expected"),
+        };
+        let readoption =
+            conversation_request(&session, &lease.holder, "opening-readoption", 1, None);
+        let opening =
+            acquire_conversation(&mut session, &mut receipts, readoption, Some(lease.clone()))
+                .unwrap();
+        let mut forged = lease.clone();
+        forged.token.push_str("-forged");
+        assert!(matches!(
+            publish_conversation(&mut session, &mut receipts, opening.clone(), Some(forged),),
+            Err(StoreError::ConversationOpeningLost { .. })
+        ));
+        let readoption_link =
+            publish_conversation(&mut session, &mut receipts, opening, Some(lease.clone()))
+                .unwrap();
+
+        let forged_candidate = conversation_request(
+            &session,
+            &lease.holder,
+            "opening-unregistered-candidate",
+            2,
+            Some("missing-reservation"),
+        );
+        let before = session.clone();
+        let before_receipts = receipts.clone();
+        assert!(matches!(
+            acquire_conversation(
+                &mut session,
+                &mut receipts,
+                forged_candidate,
+                Some(lease.clone()),
+            ),
+            Err(StoreError::ConversationOpeningLost { .. })
+        ));
+        assert_eq!(session_bson(&session), session_bson(&before));
+        assert_eq!(receipts, before_receipts);
+
+        let reservation = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Reserve {
+                lease: lease.clone(),
+                token: "candidate-conversation".into(),
+            },
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Reservation(reservation) => reservation,
+            _ => panic!("candidate reservation expected"),
+        };
+        let candidate = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Register {
+                lease: lease.clone(),
+                reservation,
+                runtime_id: "runtime-conversation".into(),
+            },
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Candidate(candidate) => candidate,
+            _ => panic!("registered candidate expected"),
+        };
+        let before = session.clone();
+        let before_receipts = receipts.clone();
+
+        let mut wrong_generation = conversation_request(
+            &session,
+            &lease.holder,
+            "opening-wrong-generation",
+            candidate.generation.get() + 1,
+            Some(&candidate.token),
+        );
+        wrong_generation.runtime_id = candidate.runtime_id.clone();
+        assert!(matches!(
+            acquire_conversation(
+                &mut session,
+                &mut receipts,
+                wrong_generation,
+                Some(lease.clone()),
+            ),
+            Err(StoreError::ConversationOpeningLost { .. })
+        ));
+        assert_eq!(session_bson(&session), session_bson(&before));
+        assert_eq!(receipts, before_receipts);
+
+        let mut wrong_runtime = conversation_request(
+            &session,
+            &lease.holder,
+            "opening-wrong-runtime",
+            candidate.generation.get(),
+            Some(&candidate.token),
+        );
+        wrong_runtime.runtime_id = "runtime-forged".into();
+        assert!(matches!(
+            acquire_conversation(
+                &mut session,
+                &mut receipts,
+                wrong_runtime,
+                Some(lease.clone()),
+            ),
+            Err(StoreError::ConversationOpeningLost { .. })
+        ));
+        assert_eq!(session_bson(&session), session_bson(&before));
+        assert_eq!(receipts, before_receipts);
+
+        let mut candidate_request = conversation_request(
+            &session,
+            &lease.holder,
+            "opening-candidate",
+            candidate.generation.get(),
+            Some(&candidate.token),
+        );
+        candidate_request.runtime_id = candidate.runtime_id.clone();
+        let candidate_opening = acquire_conversation(
+            &mut session,
+            &mut receipts,
+            candidate_request,
+            Some(lease.clone()),
+        )
+        .expect("the exact registered candidate acquires before the switch");
+        let switched = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Switch {
+                lease: lease.clone(),
+                candidate,
+            },
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Switch(switched) => switched,
+            _ => panic!("candidate switch expected"),
+        };
+        lease.boundary = switched.boundary;
+        let candidate_link = publish_conversation(
+            &mut session,
+            &mut receipts,
+            candidate_opening.clone(),
+            Some(lease),
+        )
+        .expect("the exact candidate publishes after becoming authoritative");
+        assert!(candidate_link.epoch > readoption_link.epoch);
+        assert!(matches!(
+            require_conversation_write_authority(
+                &mut session,
+                &ConversationWriteAuthority::Active(readoption_link),
+            ),
+            Err(StoreError::ConversationLinkChanged { .. })
+        ));
+        require_conversation_write_authority(
+            &mut session,
+            &ConversationWriteAuthority::Active(candidate_link.clone()),
+        )
+        .unwrap();
+        run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::ReleaseConversationOpening(candidate_opening),
+        )
+        .unwrap();
+        assert!(matches!(
+            require_conversation_write_authority(
+                &mut session,
+                &ConversationWriteAuthority::Active(candidate_link),
+            ),
+            Err(StoreError::ConversationLinkChanged { .. })
+        ));
     }
 
     #[test]
@@ -3255,7 +4086,7 @@ mod tests {
                 "$set": {
                     super::super::WRITE_PROTOCOL_FIELD: super::super::WRITE_PROTOCOL,
                     super::super::COORDINATION_PROTOCOL_FIELD:
-                        super::super::COORDINATION_PROTOCOL,
+                        super::super::SESSION_COORDINATION_PROTOCOL,
                 },
                 "$max": { "revision": 0_i64 },
                 "$currentDate": { "coordination.server_now": true },

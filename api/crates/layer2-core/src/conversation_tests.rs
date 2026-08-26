@@ -331,11 +331,20 @@ async fn await_ready(
 #[tokio::test]
 async fn runtime_updates_take_the_input_fence_before_conversation_ordering() {
     let (service, _owner, id, _adapter) = conversation().await;
+    let link = service
+        .entries
+        .read()
+        .await
+        .get(&id)
+        .expect("the live entry is installed")
+        .conversation_link
+        .expect("the live entry carries its conversation link");
     let input_gate = service.input_gates.gate(&id);
     let input_writer = input_gate.write_owned().await;
     let ordering = service.conversation_order_gates.gate(&id);
     let fold = service.fold_update(
         &id,
+        link,
         layer3_adapter::ConversationUpdate::Lost { frames: 1 },
         &ordering,
     );
@@ -359,6 +368,251 @@ async fn runtime_updates_take_the_input_fence_before_conversation_ordering() {
     tokio::time::timeout(std::time::Duration::from_secs(1), &mut fold)
         .await
         .expect("folding resumes after the input boundary opens");
+}
+
+#[tokio::test]
+async fn opening_replay_larger_than_the_channel_is_folded_in_fifo_order() {
+    let store = Arc::new(FakeStore::default());
+    let mut replay = (0..80).map(|_| chunk("x")).collect::<Vec<_>>();
+    replay.push(layer3_adapter::ConversationUpdate::TurnEnded(
+        layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+    ));
+    replay.push(layer3_adapter::ConversationUpdate::Asked(asking(
+        "opening-replay-approval",
+        "approve after replay",
+    )));
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        opening_updates: tokio::sync::Mutex::new(replay),
+        ..FakeAdapter::default()
+    });
+    let service = versioned_conversation_service(store, adapter, "runtime:opening-replay");
+    let owner = user("opening-replay-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("the conversation is accepted");
+    await_settled(&service, &owner, &created.id).await;
+    assert!(
+        until_logged(&service, &owner, &created.id, |kind| matches!(
+            kind,
+            EventKind::ApprovalRequested { request_id, .. }
+                if request_id == "opening-replay-approval"
+        ))
+        .await,
+        "the queued tail is folded after publication"
+    );
+    let settled = service
+        .get_session(&owner, &created.id)
+        .await
+        .expect("the replayed session remains readable");
+    assert_eq!(settled.status, SessionStatus::Idle);
+    assert_eq!(settled.stop_reason, Some(StopReason::RequiresAction));
+
+    let events = service
+        .events_since(&owner, &created.id, None)
+        .await
+        .expect("opening replay is durable");
+    let message = events
+        .iter()
+        .find(|event| matches!(&event.kind, EventKind::MessageCommitted { .. }))
+        .expect("the replayed chunks are committed as one message");
+    assert!(matches!(
+        &message.kind,
+        EventKind::MessageCommitted { content } if content == &"x".repeat(80)
+    ));
+    let completion = events
+        .iter()
+        .find(|event| matches!(event.kind, EventKind::TurnCompleted))
+        .expect("the replayed turn completion is durable");
+    assert!(
+        message.seq < completion.seq,
+        "the message must remain ahead of the completion that ended it"
+    );
+    service
+        .resolve_approval(
+            &owner,
+            &created.id,
+            "opening-replay-approval".into(),
+            crate::conversation::ApprovalDecision::Deny,
+        )
+        .await
+        .expect("provisioning installs the pending approval reconstructed by replay");
+}
+
+#[tokio::test]
+async fn failed_opening_discards_ordinary_replay_and_preserves_the_runtime() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let owner = user("failed-opening-owner");
+    let first = versioned_conversation_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:failed-opening",
+    );
+    let created = first
+        .create_session(&owner, spec())
+        .await
+        .expect("the original conversation is accepted");
+    assert_eq!(
+        await_settled(&first, &owner, &created.id).await.status,
+        SessionStatus::Ready
+    );
+    let before = first
+        .events_since(&owner, &created.id, None)
+        .await
+        .expect("original history is readable")
+        .last()
+        .map_or(0, |event| event.seq);
+    let original_runtime = first
+        .record(&created.id)
+        .await
+        .expect("the original runtime is durable")
+        .runtime_id;
+
+    adapter
+        .opening_updates
+        .lock()
+        .await
+        .push(layer3_adapter::ConversationUpdate::Asked(asking(
+            "discarded-opening-request",
+            "must not become durable",
+        )));
+    adapter
+        .refuse_conversation_open
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let replacement = versioned_conversation_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:failed-opening",
+    );
+    replacement.reconcile().await;
+
+    let later = replacement
+        .events_since(&owner, &created.id, Some(before))
+        .await
+        .expect("history remains readable");
+    assert!(
+        later.iter().all(|event| !matches!(
+            &event.kind,
+            EventKind::ApprovalRequested { request_id, .. }
+                if request_id == "discarded-opening-request"
+        )),
+        "ordinary replay from a refused opening must never be published"
+    );
+    let durable = replacement
+        .record(&created.id)
+        .await
+        .expect("the existing session remains durable");
+    assert_eq!(durable.runtime_id, original_runtime);
+    assert_eq!(durable.session.status, SessionStatus::Ready);
+}
+
+#[tokio::test]
+async fn generation_zero_replacement_fences_old_updates_and_the_actual_old_close() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let owner = user("compatibility-link-owner");
+    let service = versioned_conversation_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:compatibility-link",
+    );
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("the compatibility conversation is accepted");
+    assert_eq!(
+        await_settled(&service, &owner, &created.id).await.status,
+        SessionStatus::Ready
+    );
+
+    let (old_link, old_updates) = {
+        let entries = service.entries.read().await;
+        let entry = entries.get(&created.id).expect("the first link is live");
+        assert_eq!(entry.runtime_generation, 0);
+        let updates = adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the first runtime link is open")
+            .updates
+            .clone();
+        (
+            entry
+                .conversation_link
+                .expect("the first link has a local identity"),
+            updates,
+        )
+    };
+    let record = service
+        .record(&created.id)
+        .await
+        .expect("the compatibility runtime is durable");
+    service.entries.write().await.remove(&created.id);
+    service
+        .readopt(&record)
+        .await
+        .expect("the same runtime can publish a replacement link");
+    let new_link = service
+        .entries
+        .read()
+        .await
+        .get(&created.id)
+        .expect("the replacement link is live")
+        .conversation_link
+        .expect("the replacement has a local identity");
+    assert_ne!(old_link, new_link);
+
+    service
+        .send_prompt(&owner, &created.id, "keep the successor running".into())
+        .await
+        .expect("the successor accepts a prompt");
+    let before_stale = service
+        .events_since(&owner, &created.id, None)
+        .await
+        .expect("the successor history is readable")
+        .last()
+        .map_or(0, |event| event.seq);
+
+    let ordering = service.conversation_order_gates.gate(&created.id);
+    let blocked = ordering.lock().await;
+    old_updates
+        .send(chunk("stale predecessor output"))
+        .await
+        .expect("the predecessor receiver is still alive");
+    drop(old_updates);
+    tokio::task::yield_now().await;
+    drop(blocked);
+    for _ in 0..2 {
+        let barrier = ordering.lock().await;
+        drop(barrier);
+        tokio::task::yield_now().await;
+    }
+
+    let entry = service.entries.read().await;
+    let successor = entry
+        .get(&created.id)
+        .expect("the successor entry remains installed");
+    assert_eq!(successor.session.status, SessionStatus::Running);
+    assert!(successor.assembling.is_none());
+    drop(entry);
+    assert!(
+        service
+            .events_since(&owner, &created.id, Some(before_stale))
+            .await
+            .expect("the successor history remains readable")
+            .is_empty(),
+        "the predecessor's queued frame and channel close must not mutate the successor"
+    );
 }
 
 #[tokio::test]

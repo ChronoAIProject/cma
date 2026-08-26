@@ -17,6 +17,7 @@ mod capacity_bounds;
 pub mod clock;
 pub mod conversation;
 mod conversation_log;
+mod conversation_opening;
 mod coordination;
 mod credentials;
 pub mod deployment_capacity;
@@ -58,6 +59,8 @@ mod provision_tests;
 mod adapter_support;
 #[cfg(test)]
 mod commit_fault_support;
+#[cfg(test)]
+mod conversation_coordination_tests;
 #[cfg(test)]
 mod conversation_readiness_tests;
 #[cfg(test)]
@@ -140,9 +143,11 @@ pub use capabilities::{servable_modes, Capability as SessionCapability, SessionC
 pub use clock::{rfc3339_at, seconds_from_rfc3339};
 pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
 pub use coordination::{
-    RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
-    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary,
-    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionOperation,
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
+    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeCleanupReason,
+    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
+    SessionLeaseRequest, SessionOperation,
 };
 pub use deployment_capacity::{DeploymentCapacity, Reserved};
 pub use directory::{

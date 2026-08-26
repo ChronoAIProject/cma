@@ -15,15 +15,16 @@ use std::{
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
     store::{Page, PageCursor, SessionListQuery, SessionRecord, SessionStore, StoreError},
-    Event, Rate, RateCardId, Reserved, RuntimeAuthority, RuntimeAuthorityRetirement,
-    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeReservation, SessionBoundary,
-    SessionId, SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionPricing,
-    SessionStatus, StopReason, StoredEvent, SubjectId,
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, Event, Rate, RateCardId, Reserved, RuntimeAuthority,
+    RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup,
+    RuntimeReservation, SessionBoundary, SessionId, SessionInteractionLeaseRequest, SessionLease,
+    SessionLeaseRequest, SessionPricing, SessionStatus, StopReason, StoredEvent, SubjectId,
 };
 use mongodb::bson::{doc, Binary, Bson, Document};
 use mongodb::options::{
-    IndexOptions, InsertOneOptions, ReadConcern, ReplaceOptions, ValidationAction, ValidationLevel,
-    WriteConcern,
+    IndexOptions, InsertOneOptions, ReadConcern, ReplaceOptions, UpdateOptions, ValidationAction,
+    ValidationLevel, WriteConcern,
 };
 use mongodb::results::{CollectionSpecification, CollectionType};
 use mongodb::{Client, Collection, Database, IndexModel};
@@ -35,7 +36,7 @@ mod coordination;
 
 use coordination::{
     all_session_receipts_filter, coordination_clock_update, has_session_lease,
-    runtime_authority_from_doc, validate_coordination_state,
+    require_conversation_write_authority, runtime_authority_from_doc, validate_coordination_state,
     validate_session_coordination_receipts, CoordinationCommand, CoordinationDoc,
     CoordinationOutcome, CoordinationReceiptDoc, COORDINATION_RECEIPTS,
 };
@@ -57,16 +58,21 @@ const NAMESPACE_CUTOVERS: &str = "_cma_session_namespace_cutovers";
 const NAMESPACE_CUTOVER_ID: &str = "sessions-v2";
 const NAMESPACE_CUTOVER_PROTOCOL: i32 = 1;
 const NAMESPACE_CUTOVER_OBSERVED_ORIGIN: &str = "observed-complete";
+// Keep the marker identity stable so v1 binaries fail closed when its protocol
+// advances instead of treating the v2 activation as an unrelated database.
 const COORDINATION_ACTIVATION_ID: &str = "session-coordination-v1";
-const COORDINATION_ACTIVATION_PROTOCOL: i32 = 1;
+const LEGACY_COORDINATION_ACTIVATION_PROTOCOL: i32 = 1;
+const COORDINATION_ACTIVATION_PROTOCOL: i32 = 2;
 const COORDINATION_RECEIPTS_PROVENANCE_ID: &str = "session-coordination-receipts-v1";
 const COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL: i32 = 1;
 pub(super) const WRITE_PROTOCOL: i32 = 1;
 const WRITE_PROTOCOL_FIELD: &str = "_cma_write_protocol";
 // This marker fences stale document writers after collMod, but Mongo validators
 // cannot fence deletes or provider calls. Enabling coordination still requires
-// an offline drain of every pre-coordination writer and its in-flight work.
-pub(super) const COORDINATION_PROTOCOL: i32 = 1;
+// an offline drain of every older coordination writer and its in-flight work.
+pub(super) const LEGACY_SESSION_COORDINATION_PROTOCOL: i32 = 1;
+pub(super) const SESSION_COORDINATION_PROTOCOL: i32 = 2;
+pub(super) const COORDINATION_RECEIPT_PROTOCOL: i32 = 1;
 const COORDINATION_PROTOCOL_FIELD: &str = "_cma_coordination_protocol";
 
 /// A granted skill as it is stored.
@@ -358,8 +364,19 @@ enum CoordinationReceiptsProvenance {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CoordinationActivationMarker {
+    LegacyInProgress {
+        origin: String,
+    },
+    LegacyComplete {
+        origin: String,
+        collection_ids: BTreeMap<String, Binary>,
+    },
     InProgress {
         origin: String,
+    },
+    UpgradeInProgress {
+        origin: String,
+        collection_ids: BTreeMap<String, Binary>,
     },
     Complete {
         origin: String,
@@ -375,6 +392,7 @@ struct EventTransaction {
     id: SessionId,
     write_id: String,
     create: bool,
+    conversation_authority: Option<ConversationWriteAuthority>,
     events: Vec<Event>,
     documents: Vec<Document>,
     record: SessionDoc,
@@ -508,7 +526,11 @@ impl MongoSessionStore {
         };
 
         let activation = match initial_activation {
-            Some(marker) => marker,
+            Some(marker) => {
+                store
+                    .authorize_coordination_protocol_upgrade(marker, coordination_cutover_confirmed)
+                    .await?
+            }
             None => {
                 store
                     .authorize_coordination_activation(
@@ -518,9 +540,15 @@ impl MongoSessionStore {
                     .await?
             }
         };
-        let activation_in_progress =
+        let namespace_activation_in_progress =
             matches!(activation, CoordinationActivationMarker::InProgress { .. });
-        if activation_in_progress {
+        let protocol_upgrade_ids = match &activation {
+            CoordinationActivationMarker::UpgradeInProgress { collection_ids, .. } => {
+                Some(collection_ids.clone())
+            }
+            _ => None,
+        };
+        if namespace_activation_in_progress {
             store
                 .verify_coordination_migration_source(&cutover_collection_ids)
                 .await?;
@@ -531,9 +559,26 @@ impl MongoSessionStore {
             let coordination_receipts_id = store.prepare_coordination_receipts_provenance().await?;
             store.ensure_indexes().await?;
             store.install_protocol_validators().await?;
+            store.migrate_session_coordination_protocol().await?;
             store
                 .complete_coordination_receipts_provenance(&coordination_receipts_id)
                 .await?;
+        } else if let Some(expected) = protocol_upgrade_ids.as_ref() {
+            // A durable upgrade marker authorizes mutation only of the exact
+            // collections it protected. Recheck that proof before collMod or
+            // migration on every resume so a replacement namespace is never
+            // adopted, even transiently, as protocol-v2 state.
+            store
+                .verify_coordination_protocol_upgrade_source(expected)
+                .await?;
+            // The session validator is the mixed-version fence. Install it
+            // before touching documents so every v1 mutation is rejected from
+            // this point forward; collMod does not reject legacy rows already
+            // at rest, and the raw field-only update below can repair them.
+            store.install_session_protocol_validator().await?;
+            store.migrate_session_coordination_protocol().await?;
+            let actual = store.current_coordination_activation_ids().await?;
+            validate_coordination_activation_ids(expected, &actual)?;
         }
 
         let collection_ids = store.authoritative_collection_ids().await?;
@@ -548,7 +593,7 @@ impl MongoSessionStore {
         store.verify_required_indexes().await?;
         store.validate_coordination_receipts().await?;
         let snapshot = store.validate_post_fence_state().await?;
-        if activation_in_progress {
+        if namespace_activation_in_progress || protocol_upgrade_ids.is_some() {
             store
                 .complete_coordination_activation(&collection_ids)
                 .await?;
@@ -712,6 +757,139 @@ impl MongoSessionStore {
                     .into(),
             )),
         }
+    }
+
+    async fn authorize_coordination_protocol_upgrade(
+        &self,
+        marker: CoordinationActivationMarker,
+        coordination_cutover_confirmed: bool,
+    ) -> Result<CoordinationActivationMarker, StoreError> {
+        if !matches!(
+            &marker,
+            CoordinationActivationMarker::LegacyInProgress { .. }
+                | CoordinationActivationMarker::LegacyComplete { .. }
+        ) {
+            return Ok(marker);
+        }
+        if matches!(&marker, CoordinationActivationMarker::LegacyComplete { .. })
+            && !coordination_cutover_confirmed
+        {
+            return Err(StoreError::Unavailable(
+                "upgrading an existing MongoDB coordination protocol requires an offline drain: stop every v1 CMA process, wait for its MongoDB operations to finish, then start exactly one v2 replacement with CHRONO_MONGODB_COORDINATION_CUTOVER=drained; CMA cannot prove that drain itself"
+                    .into(),
+            ));
+        }
+
+        for _ in 0..4 {
+            let marker = self.coordination_activation_marker().await?.ok_or_else(|| {
+                StoreError::Unavailable(
+                    "MongoDB coordination activation provenance disappeared before its protocol upgrade"
+                        .into(),
+                )
+            })?;
+            let replacement = match &marker {
+                CoordinationActivationMarker::LegacyInProgress { origin } => {
+                    CoordinationActivationMarker::InProgress {
+                        origin: origin.clone(),
+                    }
+                }
+                CoordinationActivationMarker::LegacyComplete { collection_ids, .. } => {
+                    self.verify_legacy_coordination_protocol_source(collection_ids)
+                        .await?;
+                    CoordinationActivationMarker::UpgradeInProgress {
+                        origin: "operator-drained".into(),
+                        collection_ids: collection_ids.clone(),
+                    }
+                }
+                current => return Ok(current.clone()),
+            };
+            let filter = coordination_activation_marker_document(&marker)?;
+            let replacement_document = coordination_activation_marker_document(&replacement)?;
+            let replaced = self
+                .database
+                .collection::<Document>(NAMESPACE_CUTOVERS)
+                .replace_one(filter, replacement_document)
+                .with_options(
+                    ReplaceOptions::builder()
+                        .upsert(false)
+                        .write_concern(WriteConcern::majority())
+                        .build(),
+                )
+                .await;
+            match replaced {
+                Ok(result) if result.matched_count == 1 => continue,
+                Ok(_) | Err(_) => continue,
+            }
+        }
+        Err(StoreError::Unavailable(
+            "MongoDB coordination activation did not reach a stable v2 upgrade state".into(),
+        ))
+    }
+
+    async fn verify_legacy_coordination_protocol_source(
+        &self,
+        expected_ids: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        let actual_ids = self.current_coordination_activation_ids().await?;
+        validate_coordination_activation_ids(expected_ids, &actual_ids)?;
+        let contracts = self.collection_contracts().await?;
+        let sessions = contracts.get(SESSIONS).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "legacy MongoDB coordination activation no longer has {SESSIONS}"
+            ))
+        })?;
+        validate_collection_contract_against(
+            SESSIONS,
+            sessions,
+            &legacy_session_protocol_validator(),
+            expected_ids.get(SESSIONS),
+        )
+    }
+
+    async fn verify_coordination_protocol_upgrade_source(
+        &self,
+        expected_ids: &BTreeMap<String, Binary>,
+    ) -> Result<(), StoreError> {
+        let expected_ids = coordination_activation_ids(expected_ids)?;
+        let actual_ids = self.current_coordination_activation_ids().await?;
+        validate_coordination_activation_ids(&expected_ids, &actual_ids)?;
+
+        let contracts = self.collection_contracts().await?;
+        let sessions = contracts.get(SESSIONS).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "MongoDB coordination protocol upgrade no longer has protected collection {SESSIONS}"
+            ))
+        })?;
+        let expected_session_validator = match sessions.validator.as_ref() {
+            Some(actual) if documents_equivalent(actual, &legacy_session_protocol_validator()) => {
+                legacy_session_protocol_validator()
+            }
+            Some(actual) if documents_equivalent(actual, &session_protocol_validator()) => {
+                session_protocol_validator()
+            }
+            _ => {
+                return Err(StoreError::Unavailable(format!(
+                "MongoDB coordination protocol upgrade found an unsupported {SESSIONS} validator"
+            )))
+            }
+        };
+        validate_collection_contract_against(
+            SESSIONS,
+            sessions,
+            &expected_session_validator,
+            expected_ids.get(SESSIONS),
+        )?;
+
+        let receipts = contracts.get(COORDINATION_RECEIPTS).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "MongoDB coordination protocol upgrade no longer has protected collection {COORDINATION_RECEIPTS}"
+            ))
+        })?;
+        validate_collection_contract(
+            COORDINATION_RECEIPTS,
+            receipts,
+            expected_ids.get(COORDINATION_RECEIPTS),
+        )
     }
 
     async fn authorize_coordination_activation(
@@ -882,24 +1060,29 @@ impl MongoSessionStore {
                 Some(CoordinationActivationMarker::Complete { collection_ids, .. }) => {
                     return validate_coordination_activation_ids(&expected, &collection_ids);
                 }
-                Some(CoordinationActivationMarker::InProgress { origin }) => {
+                Some(marker @ CoordinationActivationMarker::InProgress { .. })
+                | Some(marker @ CoordinationActivationMarker::UpgradeInProgress { .. }) => {
+                    let (origin, upgrade_ids) = match &marker {
+                        CoordinationActivationMarker::InProgress { origin } => (origin, None),
+                        CoordinationActivationMarker::UpgradeInProgress {
+                            origin,
+                            collection_ids,
+                        } => (origin, Some(collection_ids)),
+                        _ => unreachable!("only current in-progress markers reach completion"),
+                    };
+                    if let Some(upgrade_ids) = upgrade_ids {
+                        validate_coordination_activation_ids(&expected, upgrade_ids)?;
+                    }
                     let complete = CoordinationActivationMarker::Complete {
                         origin: origin.clone(),
                         collection_ids: expected.clone(),
                     };
                     let replacement = coordination_activation_marker_document(&complete)?;
+                    let filter = coordination_activation_marker_document(&marker)?;
                     let replaced = self
                         .database
                         .collection::<Document>(NAMESPACE_CUTOVERS)
-                        .replace_one(
-                            doc! {
-                                "_id": COORDINATION_ACTIVATION_ID,
-                                "protocol": COORDINATION_ACTIVATION_PROTOCOL,
-                                "origin": &origin,
-                                "phase": "in-progress",
-                            },
-                            replacement,
-                        )
+                        .replace_one(filter, replacement)
                         .with_options(
                             ReplaceOptions::builder()
                                 .upsert(false)
@@ -911,6 +1094,15 @@ impl MongoSessionStore {
                         Ok(result) if result.matched_count == 1 => continue,
                         Ok(_) | Err(_) => continue,
                     }
+                }
+                Some(
+                    CoordinationActivationMarker::LegacyInProgress { .. }
+                    | CoordinationActivationMarker::LegacyComplete { .. },
+                ) => {
+                    return Err(StoreError::Unavailable(
+                        "MongoDB coordination activation reverted to protocol v1 during v2 completion"
+                            .into(),
+                    ));
                 }
                 None => {
                     return Err(StoreError::Unavailable(
@@ -1974,19 +2166,78 @@ impl MongoSessionStore {
                 coordination_receipt_protocol_validator(),
             ),
         ] {
-            self.database
-                .run_command(doc! {
-                    "collMod": collection,
-                    "validator": validator,
-                    "validationLevel": "strict",
-                    "validationAction": "error",
-                })
-                .await
-                .map_err(|error| {
-                    StoreError::Unavailable(format!(
-                        "install MongoDB write-protocol validator on {collection}; the database role requires collMod: {error}"
-                    ))
-                })?;
+            self.install_protocol_validator(collection, validator)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn install_session_protocol_validator(&self) -> Result<(), StoreError> {
+        self.install_protocol_validator(SESSIONS, session_protocol_validator())
+            .await
+    }
+
+    async fn install_protocol_validator(
+        &self,
+        collection: &str,
+        validator: Document,
+    ) -> Result<(), StoreError> {
+        self.database
+            .run_command(doc! {
+                "collMod": collection,
+                "validator": validator,
+                "validationLevel": "strict",
+                "validationAction": "error",
+                "writeConcern": { "w": "majority" },
+            })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "install MongoDB write-protocol validator on {collection}; the database role requires collMod: {error}"
+                ))
+            })?;
+        Ok(())
+    }
+
+    async fn migrate_session_coordination_protocol(&self) -> Result<(), StoreError> {
+        let current = current_session_protocol_filter();
+        self.sessions
+            .clone_with_type::<Document>()
+            .update_many(
+                doc! { "$nor": [current.clone()] },
+                session_protocol_migration_update(),
+            )
+            .with_options(
+                UpdateOptions::builder()
+                    .upsert(false)
+                    .write_concern(WriteConcern::majority())
+                    .build(),
+            )
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "migrate MongoDB sessions to coordination protocol {SESSION_COORDINATION_PROTOCOL}: {error}"
+                ))
+            })?;
+
+        let stale = self
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "$nor": [current] })
+            .projection(doc! { "_id": 1 })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "audit MongoDB session coordination protocol migration: {error}"
+                ))
+            })?;
+        if let Some(stale) = stale {
+            return Err(StoreError::Unavailable(format!(
+                "MongoDB session {} did not reach coordination protocol {SESSION_COORDINATION_PROTOCOL}",
+                stale
+                    .get_str("_id")
+                    .unwrap_or("<invalid session identity>")
+            )));
         }
         Ok(())
     }
@@ -2398,6 +2649,15 @@ fn validate_collection_contract(
             "no MongoDB collection contract is defined for {collection}"
         ))
     })?;
+    validate_collection_contract_against(collection, actual, &expected_validator, expected_uuid)
+}
+
+fn validate_collection_contract_against(
+    collection: &str,
+    actual: &CollectionContract,
+    expected_validator: &Document,
+    expected_uuid: Option<&Binary>,
+) -> Result<(), StoreError> {
     if actual.kind != NamespaceKind::Collection {
         return Err(StoreError::Unavailable(format!(
             "authoritative MongoDB namespace {collection} is not a collection"
@@ -2406,7 +2666,7 @@ fn validate_collection_contract(
     if !actual
         .validator
         .as_ref()
-        .is_some_and(|validator| documents_equivalent(validator, &expected_validator))
+        .is_some_and(|validator| documents_equivalent(validator, expected_validator))
     {
         return Err(StoreError::Unavailable(format!(
             "authoritative MongoDB collection {collection} has a changed write-protocol validator"
@@ -2808,17 +3068,51 @@ fn coordination_receipts_provenance_document(
 fn coordination_activation_marker_document(
     marker: &CoordinationActivationMarker,
 ) -> Result<Document, StoreError> {
-    let (origin, phase, collection_ids) = match marker {
-        CoordinationActivationMarker::InProgress { origin } => (origin, "in-progress", None),
+    let (protocol, origin, phase, collection_ids) = match marker {
+        CoordinationActivationMarker::LegacyInProgress { origin } => (
+            LEGACY_COORDINATION_ACTIVATION_PROTOCOL,
+            origin,
+            "in-progress",
+            None,
+        ),
+        CoordinationActivationMarker::LegacyComplete {
+            origin,
+            collection_ids,
+        } => (
+            LEGACY_COORDINATION_ACTIVATION_PROTOCOL,
+            origin,
+            "complete",
+            Some(collection_ids),
+        ),
+        CoordinationActivationMarker::InProgress { origin } => (
+            COORDINATION_ACTIVATION_PROTOCOL,
+            origin,
+            "in-progress",
+            None,
+        ),
+        CoordinationActivationMarker::UpgradeInProgress {
+            origin,
+            collection_ids,
+        } => (
+            COORDINATION_ACTIVATION_PROTOCOL,
+            origin,
+            "upgrade-in-progress",
+            Some(collection_ids),
+        ),
         CoordinationActivationMarker::Complete {
             origin,
             collection_ids,
-        } => (origin, "complete", Some(collection_ids)),
+        } => (
+            COORDINATION_ACTIVATION_PROTOCOL,
+            origin,
+            "complete",
+            Some(collection_ids),
+        ),
     };
     validate_coordination_activation_origin(origin)?;
     let mut document = doc! {
         "_id": COORDINATION_ACTIVATION_ID,
-        "protocol": COORDINATION_ACTIVATION_PROTOCOL,
+        "protocol": protocol,
         "origin": origin,
         "phase": phase,
     };
@@ -2854,47 +3148,79 @@ fn validate_coordination_activation_marker(
             "MongoDB coordination-activation marker phase must be a string".into(),
         )
     })?;
-    if id != COORDINATION_ACTIVATION_ID || protocol != COORDINATION_ACTIVATION_PROTOCOL {
+    if id != COORDINATION_ACTIVATION_ID
+        || !matches!(
+            protocol,
+            LEGACY_COORDINATION_ACTIVATION_PROTOCOL | COORDINATION_ACTIVATION_PROTOCOL
+        )
+    {
         return Err(StoreError::Malformed(format!(
-            "MongoDB coordination-activation marker is not the supported {COORDINATION_ACTIVATION_ID} protocol {COORDINATION_ACTIVATION_PROTOCOL} proof"
+            "MongoDB coordination-activation marker is not a supported {COORDINATION_ACTIVATION_ID} protocol proof"
         )));
     }
     validate_coordination_activation_origin(origin)?;
-    match phase {
-        "in-progress" if document.len() == 4 => Ok(CoordinationActivationMarker::InProgress {
-            origin: origin.to_owned(),
-        }),
-        "complete" if document.len() == 5 => {
-            let stored = document.get_document("collection_uuids").map_err(|_| {
-                StoreError::Malformed(
-                    "completed MongoDB coordination-activation marker must contain collection_uuids"
-                        .into(),
-                )
-            })?;
-            if stored.len() != 2 {
-                return Err(StoreError::Malformed(
-                    "completed MongoDB coordination-activation marker must name exactly the sessions and receipt collection UUIDs"
-                        .into(),
-                ));
-            }
+    match (protocol, phase) {
+        (LEGACY_COORDINATION_ACTIVATION_PROTOCOL, "in-progress") if document.len() == 4 => {
+            Ok(CoordinationActivationMarker::LegacyInProgress {
+                origin: origin.to_owned(),
+            })
+        }
+        (LEGACY_COORDINATION_ACTIVATION_PROTOCOL, "complete") if document.len() == 5 => {
+            Ok(CoordinationActivationMarker::LegacyComplete {
+                origin: origin.to_owned(),
+                collection_ids: stored_coordination_activation_ids(&document)?,
+            })
+        }
+        (COORDINATION_ACTIVATION_PROTOCOL, "in-progress") if document.len() == 4 => {
+            Ok(CoordinationActivationMarker::InProgress {
+                origin: origin.to_owned(),
+            })
+        }
+        (COORDINATION_ACTIVATION_PROTOCOL, "upgrade-in-progress")
+            if document.len() == 5 =>
+        {
+            Ok(CoordinationActivationMarker::UpgradeInProgress {
+                origin: origin.to_owned(),
+                collection_ids: stored_coordination_activation_ids(&document)?,
+            })
+        }
+        (COORDINATION_ACTIVATION_PROTOCOL, "complete") if document.len() == 5 => {
             Ok(CoordinationActivationMarker::Complete {
                 origin: origin.to_owned(),
-                collection_ids: BTreeMap::from([
-                    (
-                        SESSIONS.to_owned(),
-                        stored_activation_uuid(stored, SESSIONS)?,
-                    ),
-                    (
-                        COORDINATION_RECEIPTS.to_owned(),
-                        stored_activation_uuid(stored, COORDINATION_RECEIPTS)?,
-                    ),
-                ]),
+                collection_ids: stored_coordination_activation_ids(&document)?,
             })
         }
         _ => Err(StoreError::Malformed(
-            "MongoDB coordination-activation marker has an unsupported phase or field set".into(),
+            "MongoDB coordination-activation marker has an unsupported protocol, phase, or field set"
+                .into(),
         )),
     }
+}
+
+fn stored_coordination_activation_ids(
+    document: &Document,
+) -> Result<BTreeMap<String, Binary>, StoreError> {
+    let stored = document.get_document("collection_uuids").map_err(|_| {
+        StoreError::Malformed(
+            "completed MongoDB coordination-activation marker must contain collection_uuids".into(),
+        )
+    })?;
+    if stored.len() != 2 {
+        return Err(StoreError::Malformed(
+            "completed MongoDB coordination-activation marker must name exactly the sessions and receipt collection UUIDs"
+                .into(),
+        ));
+    }
+    Ok(BTreeMap::from([
+        (
+            SESSIONS.to_owned(),
+            stored_activation_uuid(stored, SESSIONS)?,
+        ),
+        (
+            COORDINATION_RECEIPTS.to_owned(),
+            stored_activation_uuid(stored, COORDINATION_RECEIPTS)?,
+        ),
+    ]))
 }
 
 fn validate_coordination_activation_origin(origin: &str) -> Result<(), StoreError> {
@@ -3469,10 +3795,18 @@ fn protocol_validator(mut required: Vec<&str>, long_fields: &[&str]) -> Document
 }
 
 fn session_protocol_validator() -> Document {
-    coordination_protocol_validator(protocol_validator(
-        vec!["revision", COORDINATION_PROTOCOL_FIELD],
-        &["revision"],
-    ))
+    session_protocol_validator_for(SESSION_COORDINATION_PROTOCOL)
+}
+
+fn legacy_session_protocol_validator() -> Document {
+    session_protocol_validator_for(LEGACY_SESSION_COORDINATION_PROTOCOL)
+}
+
+fn session_protocol_validator_for(protocol: i32) -> Document {
+    coordination_protocol_validator(
+        protocol_validator(vec!["revision", COORDINATION_PROTOCOL_FIELD], &["revision"]),
+        protocol,
+    )
 }
 
 fn pre_coordination_session_protocol_validator() -> Document {
@@ -3492,10 +3826,10 @@ fn tombstone_protocol_validator() -> Document {
 }
 
 fn coordination_receipt_protocol_validator() -> Document {
-    let mut validator = coordination_protocol_validator(protocol_validator(
-        vec![COORDINATION_PROTOCOL_FIELD, "payload"],
-        &[],
-    ));
+    let mut validator = coordination_protocol_validator(
+        protocol_validator(vec![COORDINATION_PROTOCOL_FIELD, "payload"], &[]),
+        COORDINATION_RECEIPT_PROTOCOL,
+    );
     validator
         .get_document_mut("$jsonSchema")
         .expect("the protocol validator has a JSON schema")
@@ -3523,7 +3857,7 @@ fn coordination_receipt_protocol_validator() -> Document {
     validator
 }
 
-fn coordination_protocol_validator(mut validator: Document) -> Document {
+fn coordination_protocol_validator(mut validator: Document, protocol: i32) -> Document {
     validator
         .get_document_mut("$jsonSchema")
         .expect("the protocol validator has a JSON schema")
@@ -3533,16 +3867,34 @@ fn coordination_protocol_validator(mut validator: Document) -> Document {
             COORDINATION_PROTOCOL_FIELD,
             Bson::Document(doc! {
                 "bsonType": "int",
-                "enum": [COORDINATION_PROTOCOL],
+                "enum": [protocol],
             }),
         );
     validator
 }
 
+fn current_session_protocol_filter() -> Document {
+    doc! {
+        WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+        COORDINATION_PROTOCOL_FIELD: SESSION_COORDINATION_PROTOCOL,
+        "revision": { "$type": "long" },
+    }
+}
+
+fn session_protocol_migration_update() -> Document {
+    doc! {
+        "$set": {
+            WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+            COORDINATION_PROTOCOL_FIELD: SESSION_COORDINATION_PROTOCOL,
+        },
+        "$max": { "revision": 0_i64 },
+    }
+}
+
 fn appended_event_session_update(record: &Document, tail: i64) -> Document {
     let mut set = Document::new();
     set.insert(WRITE_PROTOCOL_FIELD, WRITE_PROTOCOL);
-    set.insert(COORDINATION_PROTOCOL_FIELD, COORDINATION_PROTOCOL);
+    set.insert(COORDINATION_PROTOCOL_FIELD, SESSION_COORDINATION_PROTOCOL);
     if !record.contains_key("revision") {
         // The first write touching a pre-revision record gives its absent
         // revision the same explicit zero used by the legacy CAS filter.
@@ -3847,7 +4199,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
     Ok(SessionDoc {
         id: s.id.0.clone(),
         write_protocol: WRITE_PROTOCOL,
-        coordination_protocol: COORDINATION_PROTOCOL,
+        coordination_protocol: SESSION_COORDINATION_PROTOCOL,
         owner: s.owner.0.clone(),
         kernel: s.kernel.0.clone(),
         status: serde_plain_string(&s.status)?,
@@ -4274,6 +4626,93 @@ impl SessionStore for MongoSessionStore {
         }
     }
 
+    async fn acquire_conversation_opening(
+        &self,
+        request: &ConversationOpeningLeaseRequest,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::AcquireConversationOpening {
+                request: request.clone(),
+                session_lease: session_lease.cloned(),
+            })
+            .await?
+        {
+            CoordinationOutcome::ConversationOpening(opening) => Ok(opening),
+            _ => unreachable!("conversation opening acquisition returns an opening"),
+        }
+    }
+
+    async fn renew_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::RenewConversationOpening {
+                opening: opening.clone(),
+                session_lease: session_lease.cloned(),
+                ttl,
+            })
+            .await?
+        {
+            CoordinationOutcome::Unit => Ok(()),
+            _ => unreachable!("conversation opening renewal returns no value"),
+        }
+    }
+
+    async fn publish_conversation_link(
+        &self,
+        opening: &ConversationOpeningLease,
+        session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::PublishConversationLink {
+                opening: opening.clone(),
+                session_lease: session_lease.cloned(),
+            })
+            .await?
+        {
+            CoordinationOutcome::ConversationLink(link) => Ok(link),
+            _ => unreachable!("conversation link publication returns a link"),
+        }
+    }
+
+    async fn release_conversation_opening(
+        &self,
+        opening: &ConversationOpeningLease,
+    ) -> Result<(), StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::ReleaseConversationOpening(
+                opening.clone(),
+            ))
+            .await?
+        {
+            CoordinationOutcome::Unit => Ok(()),
+            _ => unreachable!("conversation opening release returns no value"),
+        }
+    }
+
+    async fn validate_conversation_link(&self, link: &ConversationLink) -> Result<(), StoreError> {
+        let mut stored = self
+            .sessions
+            .find_one(doc! { "_id": &link.session_id.0 })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "read MongoDB conversation link authority: {error}"
+                ))
+            })?
+            .ok_or_else(|| StoreError::SessionDeleted {
+                id: link.session_id.clone(),
+            })?;
+        require_conversation_write_authority(
+            &mut stored,
+            &ConversationWriteAuthority::Active(link.clone()),
+        )
+    }
+
     async fn reserve_runtime_generation(
         &self,
         lease: &SessionLease,
@@ -4443,7 +4882,18 @@ impl SessionStore for MongoSessionStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.transactional_commit(write_id, record, events, false)
+        self.transactional_commit(write_id, record, events, false, None)
+            .await
+    }
+
+    async fn commit_conversation_idempotent(
+        &self,
+        write_id: &str,
+        authority: &ConversationWriteAuthority,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.transactional_commit(write_id, record, events, false, Some(authority))
             .await
     }
 
@@ -4453,7 +4903,7 @@ impl SessionStore for MongoSessionStore {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.transactional_commit(write_id, record, events, true)
+        self.transactional_commit(write_id, record, events, true, None)
             .await
     }
 
@@ -4508,6 +4958,7 @@ impl MongoSessionStore {
         record: &SessionRecord,
         events: &[Event],
         create: bool,
+        conversation_authority: Option<&ConversationWriteAuthority>,
     ) -> Result<u64, StoreError> {
         validate_transaction_input(write_id, record, events, create)?;
 
@@ -4528,6 +4979,7 @@ impl MongoSessionStore {
             id: id.clone(),
             write_id: write_id.to_string(),
             create,
+            conversation_authority: conversation_authority.cloned(),
             events: events.to_vec(),
             documents,
             record,
@@ -4560,11 +5012,38 @@ impl MongoSessionStore {
                             .map_err(mongodb::error::Error::custom);
                     }
 
-                    let existing = transaction
+                    if transaction.conversation_authority.is_some() {
+                        let clocked = transaction
+                            .sessions_collection
+                            .update_one(
+                                doc! { "_id": &transaction.id.0 },
+                                coordination_clock_update(),
+                            )
+                            .session(&mut *session)
+                            .await?;
+                        if clocked.matched_count != 1 {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::SessionDeleted {
+                                    id: transaction.id.clone(),
+                                },
+                            ));
+                        }
+                    }
+
+                    let mut existing = transaction
                         .sessions_collection
                         .find_one(doc! { "_id": &transaction.id.0 })
                         .session(&mut *session)
                         .await?;
+                    if let Some(authority) = transaction.conversation_authority.as_ref() {
+                        let stored = existing.as_mut().ok_or_else(|| {
+                            mongodb::error::Error::custom(StoreError::SessionDeleted {
+                                id: transaction.id.clone(),
+                            })
+                        })?;
+                        require_conversation_write_authority(stored, authority)
+                            .map_err(mongodb::error::Error::custom)?;
+                    }
                     let actual = existing
                         .as_ref()
                         .map(|record| {
@@ -4606,6 +5085,15 @@ impl MongoSessionStore {
                             &transaction.record.status,
                         )
                         .map_err(mongodb::error::Error::custom)?;
+                        validate_coordination_state(existing)
+                            .map_err(mongodb::error::Error::custom)?;
+                        if existing.runtime_id != transaction.record.runtime_id {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::SessionAuthorityChanged {
+                                    id: transaction.id.clone(),
+                                },
+                            ));
+                        }
                     }
 
                     let found = transaction
@@ -4636,15 +5124,6 @@ impl MongoSessionStore {
                         next_stored_revision(actual).map_err(mongodb::error::Error::custom)?;
                     let mut durable = transaction.record.clone();
                     if let Some(existing) = existing.as_ref() {
-                        validate_coordination_state(existing)
-                            .map_err(mongodb::error::Error::custom)?;
-                        if existing.runtime_id != durable.runtime_id {
-                            return Err(mongodb::error::Error::custom(
-                                StoreError::SessionAuthorityChanged {
-                                    id: transaction.id.clone(),
-                                },
-                            ));
-                        }
                         durable.coordination = Some(
                             existing
                                 .coordination
