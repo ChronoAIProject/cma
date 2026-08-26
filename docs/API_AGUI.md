@@ -499,6 +499,8 @@ problem type `https://spec.chrono-ai.fun/cma/1.0/problems/invalid-state` and cod
 
 - **Steer** — POST a new run on the same `threadId` while one is in flight. What happens is governed by the session's `concurrent_input` policy (`reject` · `enqueue` · `interrupt` · `rollback`), fixed at session creation and reported in the capability document. On `reject`, the second run returns `409` before opening a stream.
 
+  A prompt run against a session whose turn is in flight and whose granted set does not include `steer` is refused `capability_unsupported: steer` before the stream opens.
+
 ---
 
 ## 6. Capability document
