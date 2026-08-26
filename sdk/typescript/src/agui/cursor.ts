@@ -33,6 +33,7 @@ export function canBeDurableProjectionPrefix(kind: string): boolean {
     return true;
   }
   switch (kind) {
+    case 'RUN_FINISHED':
     case 'TEXT_MESSAGE_START':
     case 'TEXT_MESSAGE_CONTENT':
     case 'TOOL_CALL_START':

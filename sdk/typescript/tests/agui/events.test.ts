@@ -12,6 +12,7 @@ import { KNOWN_EVENTS } from '../../src/wire.js';
 
 const base = { threadId: 'sesn_1', runId: 'run_1', seq: 4 };
 const durableProjectionPrefixes = [
+  'RUN_FINISHED',
   'TEXT_MESSAGE_START',
   'TEXT_MESSAGE_CONTENT',
   'TOOL_CALL_START',

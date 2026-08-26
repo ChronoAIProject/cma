@@ -31,9 +31,11 @@ const hasOwn = (value: object, key: PropertyKey): boolean =>
  * Apply one AG-UI `STATE_DELTA` to its public state document.
  *
  * The operation list is validated as RFC 6902, the caller's document is never
- * mutated, and pointers never traverse JavaScript's prototype chain. Any
- * malformed operation is a protocol failure rather than a patch the client
- * partly applies or silently ignores.
+ * mutated, and pointers never traverse JavaScript's prototype chain. CMA has
+ * one explicitly narrower fold rule: removing an absent direct member of
+ * `/pendingApprovals` is a no-op, so a client that did not observe the matching
+ * request can still fold its durable resolution. Every other missing remove is
+ * a protocol failure, as strict RFC 6902 requires.
  */
 export function applyStateDelta(state: AguiState, patches: readonly JsonPatch[]): AguiState {
   try {
@@ -144,6 +146,9 @@ function applyOperation(document: JsonValue, operation: PatchOperation, index: n
     case 'add':
       return addAt(document, operation.path, operation.value, index);
     case 'remove':
+      if (isAbsentPendingApproval(document, operation.path, index)) {
+        return document;
+      }
       return removeAt(document, operation.path, index).document;
     case 'replace':
       return replaceAt(document, operation.path, operation.value, index);
@@ -167,6 +172,14 @@ function applyOperation(document: JsonValue, operation: PatchOperation, index: n
     default:
       throw new ProtocolError(`AG-UI state patch ${String(index)} was not an RFC 6902 operation`);
   }
+}
+
+function isAbsentPendingApproval(document: JsonValue, pointer: Pointer, index: number): boolean {
+  if (pointer.tokens.length !== 2 || pointer.tokens[0] !== 'pendingApprovals') {
+    return false;
+  }
+  const { parent, token } = parentAt(document, pointer, index);
+  return isJsonObject(parent) && !hasOwn(parent, token);
 }
 
 function pointersEqual(left: Pointer, right: Pointer): boolean {
