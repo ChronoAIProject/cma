@@ -77,16 +77,17 @@ infra/runtime/Dockerfile
 
 No additional manifests, no Helm charts, no kustomize overlays.
 
-`infra/web/gcpbackendpolicy.yaml` is here for the same reason its neighbour
-is, and was added after the absence was measured rather than predicted: the
-frontend's own hostname carries everything the browser calls, because the
-bundle uses same-origin paths and the image proxies them onward. Without a
-policy the balancer's default of thirty seconds bounds the whole response, and
-the conversation surface's event stream was being cut at exactly that, every
-time. A client resumes on its cursor so nothing durable is lost — what is lost
-is what is deliberately never durable, the message being typed and the agent's
-reasoning, which reads as an agent that keeps stalling rather than as a
-timeout.
+`infra/web/gcpbackendpolicy.yaml` was added after a missing backend timeout was
+measured rather than predicted. The browser still uses one origin, but the
+managed Gateway now routes its more-specific `/api` and `/auth` paths plus the
+two root-level discovery documents directly to `cma-api`; this preserves the
+load balancer's authoritative client chain and puts streams under the API
+policy. The web image keeps the same-origin nginx proxy as a fallback when it
+is reached without that route split, so the web policy remains explicit too.
+Without the applicable policy the balancer's thirty-second default cuts a live
+event stream while it is healthy. A client can replay durable frames, but the
+message being typed and the agent's live reasoning are deliberately not
+durable and disappear on each cut.
 
 The api-side five exist because the control plane depends on them by name. It
 runs as a named service account, receives the sandbox key through a named

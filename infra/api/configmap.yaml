@@ -17,16 +17,42 @@ data:
   # Origin the browser sees, used to build the sign-in redirect URI.
   #
   # The app's origin, not this API's, because the whole browser flow has to
-  # stay on one host. The proxy in front of the app forwards /auth/ here, so
-  # the callback still reaches this service — but the session cookie is set for
-  # the origin the browser is actually on, and the post-sign-in redirect lands
-  # on the app rather than on an API that serves no page there.
+  # stay on one host. The Gateway sends /auth/ on the app origin directly here,
+  # so the callback reaches this service while the session cookie is set for
+  # the origin the browser actually uses and the post-sign-in redirect lands on
+  # the app rather than on an API hostname that serves no page.
   #
   # Pointing this at the API's own hostname sends the user to a 404 holding a
   # cookie the app can never read, since the cookie is host-only by design.
   CHRONO_SERVER_PUBLIC_URL: "https://bot.chrono-ai.fun"
   # Origin allowed to call the API from a browser.
   CHRONO_SERVER_CORS_ORIGIN: "https://bot.chrono-ai.fun"
+  # Continuously refilled request budgets. Each number is also that bucket's
+  # maximum burst. The network admission guard runs before authentication and
+  # bounds identity-store/provider work; protected authenticated operations are
+  # then keyed by NyxID subject. Public and otherwise anonymous operations use
+  # the client network even when a browser attaches an ambient cookie.
+  #
+  # Health has its own bucket so ordinary traffic cannot starve probes. Startup
+  # refuses values below 30/minute, which leaves headroom above the declared
+  # kubelet and load-balancer probe schedules.
+  CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE: "6000"
+  CHRONO_SERVER_RATE_HEALTH_PER_MINUTE: "120"
+  CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE: "600"
+  CHRONO_SERVER_RATE_CREATE_PER_MINUTE: "10"
+  CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
+  # The Google external Application Load Balancer appends client IP and then
+  # forwarding-rule IP to X-Forwarded-For. Accept that chain only when the TCP
+  # peer is in an official GFE proxy range, then skip the rightmost LB token.
+  # Caller-prepended tokens remain to the left and are never selected. If the
+  # shared Gateway changes data plane, update these values with its source
+  # network and header contract rather than broadening trust speculatively. The
+  # app-origin HTTPRoute sends API, auth, and discovery paths straight to
+  # cma-api so a web-pod address never has to be trusted here.
+  CHRONO_SERVER_TRUSTED_PROXY_CIDRS: "35.191.0.0/16,130.211.0.0/22,2600:2d00:1:1::/64"
+  CHRONO_SERVER_TRUSTED_PROXY_HOPS: "1"
+  # Counters are process-local and this deployment is pinned to one API
+  # replica. Scaling out without shared state multiplies effective allowances.
   # NyxID identity provider base URL. Endpoints are discovered, never hard-coded.
   CHRONO_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
   # OAuth client identifier registered with NyxID. Not a secret.
