@@ -104,6 +104,64 @@ async fn readiness_spans_the_durable_ready_and_live_publication_boundary() {
 }
 
 #[tokio::test]
+async fn readiness_confirms_a_hidden_runtime_lease_advance_before_publication() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles =
+        crate::test_support::environments_defaulting_to(crate::environment::AgentConfiguration {
+            kernel: crate::test_support::kernel(),
+            mode: crate::options::SessionMode::Conversation,
+            ..Default::default()
+        });
+    let service = crate::test_support::service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        profiles,
+    );
+    let caller = user("hidden-readiness-advance-owner");
+
+    store.lose_runtime_advance_responses(1);
+    let created = service
+        .create_session(&caller, conversation_spec())
+        .await
+        .expect("session is recorded");
+    service
+        .await_conversable(&caller, &created.id, Duration::from_secs(2))
+        .await
+        .expect("the hidden readiness receipt does not prevent publication");
+
+    let durable = store
+        .get(&created.id)
+        .await
+        .expect("the session is readable")
+        .expect("the session remains durable");
+    let authority = store
+        .runtime_authority(&created.id)
+        .await
+        .expect("runtime authority is readable")
+        .expect("runtime authority remains durable");
+    let entries = service.entries.read().await;
+    let entry = entries
+        .get(&created.id)
+        .expect("the ready runtime is locally published");
+    assert!(entry.publication_complete);
+    assert_eq!(
+        entry.runtime.as_ref().map(|runtime| runtime.0.as_str()),
+        durable.runtime_id.as_deref()
+    );
+    assert_eq!(entry.runtime_generation, authority.generation);
+    drop(entries);
+    assert_eq!(adapter.running_count().await, 1);
+    assert!(
+        store.active_session_lease(&created.id).await.is_none(),
+        "the confirmed ready boundary must be released after publication"
+    );
+}
+
+#[tokio::test]
 async fn provisioning_that_misses_the_bound_is_typed_as_a_timeout() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(inner, is_ready_commit));
@@ -148,6 +206,56 @@ async fn readiness_preserves_the_conversation_operation_ownership_boundary() {
             .await,
         Err(ConversationReadinessError::Refused(CoreError::Forbidden))
     );
+}
+
+#[tokio::test]
+async fn recovered_rotation_refuses_readiness_before_and_after_ready_is_durable() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_ready_commit));
+    let (service, _) = conversation_service(store);
+    let caller = user("recovered-rotation-readiness-owner");
+    let created = service
+        .create_session(&caller, conversation_spec())
+        .await
+        .expect("session is recorded");
+    await_settled(&service, &caller, &created.id).await;
+
+    service.entries.write().await.remove(&created.id);
+    assert!(service.begin_start(&created.id).await);
+    service
+        .rotations_in_progress
+        .write()
+        .await
+        .insert(created.id.clone());
+
+    for status in [SessionStatus::Provisioning, SessionStatus::Ready] {
+        let mut record = inner
+            .get(&created.id)
+            .await
+            .expect("recovery state is readable")
+            .expect("session remains durable");
+        record.session.status = status;
+        inner
+            .seed(&record)
+            .await
+            .expect("recovery boundary is durable");
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            service.await_conversable(&caller, &created.id, Duration::from_secs(2)),
+        )
+        .await
+        .expect("effective rotation is refused without waiting");
+        assert_eq!(
+            result,
+            Err(ConversationReadinessError::Refused(
+                CoreError::SessionRotating
+            )),
+            "durable {status:?} remains an effective rotation until live publication"
+        );
+    }
+
+    service.finish_start(&created.id).await;
 }
 
 #[tokio::test]

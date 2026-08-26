@@ -288,7 +288,7 @@ async fn the_stored_runtime_reference_is_what_a_later_process_reclaims() {
     );
 }
 
-/// Terminal input is not routed by the persisted record, only by a live entry.
+/// A persisted session without a live runtime is unavailable, not absent.
 #[tokio::test]
 async fn driving_a_terminal_requires_a_live_runtime_not_merely_a_record() {
     let store = Arc::new(FakeStore::default());
@@ -299,12 +299,13 @@ async fn driving_a_terminal_requires_a_live_runtime_not_merely_a_record() {
         .expect("created");
 
     let restarted = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
-    assert!(matches!(
-        restarted
-            .send_input(&caller, &created.id, b"ls\n".to_vec())
-            .await,
-        Err(CoreError::SessionNotFound)
-    ));
+    let result = restarted
+        .send_input(&caller, &created.id, b"ls\n".to_vec())
+        .await;
+    assert!(
+        matches!(result, Err(CoreError::RuntimeUnavailable(_))),
+        "the durable session exists but has no live runtime yet: {result:?}"
+    );
 }
 
 #[tokio::test]

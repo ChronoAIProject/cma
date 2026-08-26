@@ -83,6 +83,17 @@ data:
   # marker: it binds completion to the authoritative collection UUIDs so a lost
   # or replaced namespace cannot be mistaken for a new empty database.
   CHRONO_MONGODB_LEGACY_CUTOVER: ""
+  # One-time acknowledgement for promoting durable runtime coordination, reused
+  # once when an established coordination-v1 database advances its session
+  # writer fence to v2. Leave this empty during ordinary startup. Before either
+  # use, stop every older process and wait for both its MongoDB work and external
+  # provider operations to finish. Start exactly one new replica. For initial
+  # activation, verify `sessions -> sessions_v2 -> sessions_v3` and the
+  # UUID-bound activation/receipt proofs. For v1 -> v2, verify the same marker is
+  # complete at protocol 2, the sessions validator and every session require
+  # protocol 2, receipts remain protocol 1, and readiness succeeds. Then remove
+  # the value. Do not roll back to an image that writes the older protocol.
+  CHRONO_MONGODB_COORDINATION_CUTOVER: ""
   # How many days a recorded action is kept before the database removes it.
   #
   # Every request this control plane serves is recorded — who asked, when, for

@@ -5,17 +5,53 @@
 //! are about what an owner does.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use layer3_adapter::{AdapterError, ConversationInput, PermissionDecision};
+use layer3_adapter::{AdapterError, ContentBlock, ConversationInput, PermissionDecision};
 
 use crate::conversation::{ApprovalDecision, ApprovalResolution};
 use crate::conversation_support::{
     asking, chunk, conversation, conversation_with, conversing, said, until_logged, until_sent,
 };
+use crate::coordination::{SessionLease, SessionOperation};
 use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::session::{SessionStatus, StopReason};
-use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+use crate::store::SessionStore;
+use crate::test_support::{
+    await_settled, environments_defaulting_to, service, service_with_environments,
+    service_with_environments_on_version, spec, user, FakeAdapter, FakeStore,
+};
+
+async fn wait_for_conversation_interaction(
+    store: &FakeStore,
+    id: &crate::ids::SessionId,
+) -> SessionLease {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(lease) = store
+                .active_session_lease(id)
+                .await
+                .filter(|lease| lease.operation == SessionOperation::Interact)
+            {
+                return lease;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the conversation interaction lease is acquired")
+}
+
+async fn wait_for_conversation_interaction_release(store: &FakeStore, id: &crate::ids::SessionId) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while store.active_session_lease(id).await.is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the conversation interaction lease is released");
+}
 
 #[tokio::test]
 async fn an_idle_prompt_needs_no_steer_grant() {
@@ -208,6 +244,68 @@ async fn a_mid_turn_prompt_without_steer_reaches_neither_runtime_nor_log() {
     assert!(
         appended.is_empty(),
         "a capability refusal must not change the log at all: {appended:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_running_rotation_claim_precedes_the_missing_steer_grant() {
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "begin the claimed turn".into())
+        .await
+        .expect("the idle prompt starts the turn");
+
+    let sent_before = until_sent(&adapter, |input| {
+        matches!(input, ConversationInput::Prompt(_))
+    })
+    .await;
+    let events_before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
+    let cursor = events_before.last().expect("the turn was recorded").seq;
+
+    let mut record = svc
+        .store
+        .get(&id)
+        .await
+        .expect("the running boundary is readable")
+        .expect("the session remains durable");
+    assert_eq!(record.session.status, SessionStatus::Running);
+    assert!(!record.session.capabilities.steer);
+    record.rotation_claim = Some("rotn_running_without_steer".into());
+    record.revision = svc
+        .store
+        .commit_session_idempotent("test-running-rotation-claim", &record, &[])
+        .await
+        .expect("the rotation claim is durable");
+
+    assert_eq!(
+        svc.send_prompt(&alice, &id, "must wait for publication".into())
+            .await,
+        Err(CoreError::SessionRotating),
+        "a durable handover fence must win over a missing mid-turn grant"
+    );
+
+    tokio::task::yield_now().await;
+    let sent_after = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains open")
+        .sent()
+        .await;
+    assert_eq!(
+        sent_after.len(),
+        sent_before.len(),
+        "the outgoing runtime sees no input"
+    );
+    assert!(
+        svc.events_since(&alice, &id, Some(cursor))
+            .await
+            .expect("history readable")
+            .is_empty(),
+        "the refused prompt appends no durable work"
     );
 }
 
@@ -424,6 +522,500 @@ async fn an_undeliverable_interrupt_is_runtime_unavailable() {
         Err(crate::error::CoreError::RuntimeUnavailable(
             "the runtime link is gone".to_string()
         ))
+    );
+}
+
+#[tokio::test]
+async fn a_second_service_readopts_before_fenced_interrupt_delivery() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let first = service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&profiles),
+    );
+    let alice = user("conversation-readoption-owner");
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let second = service_with_environments(Arc::clone(&store), Arc::clone(&adapter), profiles);
+    assert!(!second.entries.read().await.contains_key(&created.id));
+    second
+        .interrupt_turn(&alice, &created.id)
+        .await
+        .expect("the second service readopts and interrupts");
+
+    let conversation = adapter.conversation.lock().await;
+    let sent = conversation
+        .as_ref()
+        .expect("the readopted conversation is live")
+        .sent()
+        .await;
+    assert!(matches!(sent.as_slice(), [ConversationInput::Cancel]));
+    assert!(second.entries.read().await.contains_key(&created.id));
+}
+
+#[tokio::test]
+async fn a_stale_conversation_generation_reaches_no_sender() {
+    let (svc, alice, id, adapter) = conversation().await;
+    let mut entries = svc.entries.write().await;
+    let entry = entries.get_mut(&id).expect("the conversation is live");
+    entry.runtime_generation = entry
+        .runtime_generation
+        .checked_add(1)
+        .expect("test generations remain bounded");
+    drop(entries);
+
+    assert_eq!(
+        svc.interrupt_turn(&alice, &id).await,
+        Err(CoreError::RuntimeUnavailable(
+            "the live channel belongs to another runtime authority".into()
+        ))
+    );
+    assert!(adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains live")
+        .sent()
+        .await
+        .is_empty());
+}
+
+#[tokio::test]
+async fn caller_cancellation_before_interrupt_delivery_retires_the_owned_lease() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let svc = service_with_environments(Arc::clone(&store), Arc::clone(&adapter), profiles);
+    let alice = user("cancelled-interrupt-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let input_fence = svc.input_gates.gate(&created.id).write_owned().await;
+    let caller = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move { svc.interrupt_turn(&alice, &id).await }
+    });
+    let held = wait_for_conversation_interaction(&store, &created.id).await;
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        store.active_session_lease(&created.id).await,
+        Some(held),
+        "the owned interrupt retains its lease while the local gate is blocked"
+    );
+
+    drop(input_fence);
+    wait_for_conversation_interaction_release(&store, &created.id).await;
+    assert!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the conversation remains live")
+            .sent()
+            .await
+            .is_empty(),
+        "cancellation before the final authority check reaches no sender"
+    );
+
+    svc.interrupt_turn(&alice, &created.id)
+        .await
+        .expect("a successor interrupt proceeds after owned cleanup");
+    assert!(matches!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the conversation remains live")
+            .sent()
+            .await
+            .as_slice(),
+        [ConversationInput::Cancel]
+    ));
+}
+
+#[tokio::test]
+async fn every_conversation_input_is_refused_while_rotating_and_reusable_afterward() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let svc = service_with_environments(Arc::clone(&store), Arc::clone(&adapter), profiles);
+    let alice = user("rotating-conversation-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.status = SessionStatus::Rotating;
+    record.revision = store
+        .commit_session_idempotent("conversation-test-mark-rotating", &record, &[])
+        .await
+        .expect("rotation is durable");
+    {
+        let mut entries = svc.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("live entry");
+        entry.session.status = SessionStatus::Rotating;
+        entry.pending_approvals.insert("approval-1".into(), None);
+    }
+
+    assert_eq!(
+        svc.send_prompt(&alice, &created.id, "must wait".into())
+            .await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&alice, &created.id).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &alice,
+            &created.id,
+            "approval-1".into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("conversation is open")
+            .sent()
+            .await
+            .is_empty(),
+        "nothing may reach the outgoing conversation"
+    );
+
+    record.session.status = SessionStatus::Ready;
+    record.revision = store
+        .commit_session_idempotent("conversation-test-finish-rotation", &record, &[])
+        .await
+        .expect("handover completed");
+    {
+        let mut entries = svc.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("replacement entry");
+        entry.session.status = SessionStatus::Ready;
+        entry.pending_approvals.clear();
+    }
+
+    svc.send_prompt(&alice, &created.id, "retry now".into())
+        .await
+        .expect("the same prompt succeeds after rotation");
+    svc.interrupt_turn(&alice, &created.id)
+        .await
+        .expect("the same interrupt succeeds after rotation");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("replacement entry")
+        .pending_approvals
+        .insert("approval-1".into(), None);
+    svc.resolve_approval(
+        &alice,
+        &created.id,
+        "approval-1".into(),
+        ApprovalDecision::Allow,
+    )
+    .await
+    .expect("the same approval succeeds after rotation");
+
+    let sent = until_sent(&adapter, |input| {
+        matches!(input, ConversationInput::PermissionAnswer { .. })
+    })
+    .await;
+    assert!(sent
+        .iter()
+        .any(|input| matches!(input, ConversationInput::Prompt(_))));
+    assert!(sent
+        .iter()
+        .any(|input| matches!(input, ConversationInput::Cancel)));
+    assert!(sent
+        .iter()
+        .any(|input| matches!(input, ConversationInput::PermissionAnswer { .. })));
+
+    record.session.status = SessionStatus::Terminated;
+    store.seed(&record).await.expect("termination is durable");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("terminal entry")
+        .session
+        .status = SessionStatus::Terminated;
+    assert_eq!(
+        svc.send_prompt(&alice, &created.id, "cannot retry".into())
+            .await,
+        Err(crate::error::CoreError::SessionTerminated)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&alice, &created.id).await,
+        Err(crate::error::CoreError::SessionTerminated)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &alice,
+            &created.id,
+            "approval-1".into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::SessionTerminated)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn conversation_input_crosses_a_real_rotation_only_after_replacement() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let svc = service_with_environments_on_version(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        profiles,
+        "runtime:2",
+    );
+    let alice = user("real-rotating-conversation-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let outgoing = adapter
+        .conversation
+        .lock()
+        .await
+        .take()
+        .expect("the outgoing conversation is open");
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.runtime_version = Some("runtime:1".into());
+    store.seed(&record).await.expect("old version is durable");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("outgoing entry")
+        .session
+        .runtime_version = Some("runtime:1".into());
+
+    adapter.pause_next_provision();
+    svc.pause_next_live_install();
+    let reconciling = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        async move { svc.reconcile().await }
+    });
+    adapter.wait_until_provision_paused().await;
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the authoritative outgoing entry remains installed")
+            .session
+            .status,
+        SessionStatus::Rotating,
+        "the outgoing entry remains present but cannot accept input"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("rotation is readable")
+            .expect("session remains durable")
+            .session
+            .status,
+        SessionStatus::Rotating
+    );
+
+    const PROMPT: &str = "retry this exact prompt";
+    const APPROVAL: &str = "approval-1";
+    assert_eq!(
+        svc.send_prompt(&alice, &created.id, PROMPT.into()).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&alice, &created.id).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &alice,
+            &created.id,
+            APPROVAL.into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    let foreign = user("foreign-conversation-observer");
+    assert_eq!(
+        svc.send_prompt(&foreign, &created.id, PROMPT.into()).await,
+        Err(crate::error::CoreError::Forbidden)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&foreign, &created.id).await,
+        Err(crate::error::CoreError::Forbidden)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &foreign,
+            &created.id,
+            APPROVAL.into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::Forbidden)
+    );
+    assert!(
+        outgoing.sent().await.is_empty(),
+        "nothing may reach the outgoing conversation"
+    );
+
+    adapter.resume_provision();
+    svc.wait_until_live_install_paused().await;
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the outgoing entry remains until replacement installation")
+            .session
+            .status,
+        SessionStatus::Rotating,
+        "durable readiness alone must not make the outgoing entry interactive"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("readiness is readable")
+            .expect("session remains durable")
+            .session
+            .status,
+        SessionStatus::Ready
+    );
+    assert_eq!(
+        svc.send_prompt(&alice, &created.id, PROMPT.into()).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&alice, &created.id).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &alice,
+            &created.id,
+            APPROVAL.into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert!(
+        outgoing.sent().await.is_empty(),
+        "the durable readiness boundary still cannot reach the outgoing conversation"
+    );
+    svc.resume_live_install();
+    assert_eq!(
+        reconciling
+            .await
+            .expect("reconciliation task completes")
+            .rotated_sessions,
+        1
+    );
+    let settled = await_settled(&svc, &alice, &created.id).await;
+    assert_eq!(settled.runtime_version.as_deref(), Some("runtime:2"));
+    let replacement = adapter
+        .conversation
+        .lock()
+        .await
+        .take()
+        .expect("the replacement conversation is open");
+
+    svc.send_prompt(&alice, &created.id, PROMPT.into())
+        .await
+        .expect("the same prompt succeeds after rotation");
+    svc.interrupt_turn(&alice, &created.id)
+        .await
+        .expect("the same interrupt succeeds after rotation");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("replacement entry")
+        .pending_approvals
+        .insert(APPROVAL.into(), None);
+    svc.resolve_approval(
+        &alice,
+        &created.id,
+        APPROVAL.into(),
+        ApprovalDecision::Allow,
+    )
+    .await
+    .expect("the same approval succeeds after rotation");
+
+    let sent = replacement.sent().await;
+    assert_eq!(sent.len(), 3, "only the three retried inputs are delivered");
+    assert!(matches!(
+        &sent[0],
+        ConversationInput::Prompt(content)
+            if content == &vec![ContentBlock::from(PROMPT)]
+    ));
+    assert!(matches!(sent[1], ConversationInput::Cancel));
+    assert!(matches!(
+        &sent[2],
+        ConversationInput::PermissionAnswer { id, decision, .. }
+            if id == APPROVAL && *decision == PermissionDecision::Allow
+    ));
+    assert!(
+        outgoing.sent().await.is_empty(),
+        "retries are delivered only to the replacement conversation"
     );
 }
 

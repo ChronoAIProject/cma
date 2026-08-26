@@ -47,10 +47,21 @@ The crate retries transport failures according to `RetryPolicy`. It retries HTTP
 without that header is returned immediately. Other API and protocol failures are
 not retried.
 
-Side-effecting REST operations do not yet accept idempotency keys. A transport
-failure after a create or input may therefore hide a completed server action. A
-caller that cannot tolerate automatic replay can use a one-attempt policy and read
-current state before deciding what to repeat:
+An exact `Error::Api { status: 409, code: "session_rotating", .. }` is a
+self-resolving lifecycle refusal. The SDK returns it instead of automatically
+replaying the operation. Re-read the session before a later attempt, inspect its
+current status, and only then decide whether to retry according to the operation's
+side-effect and idempotency semantics. A repeated `session_rotating` refusal means
+the handover still fences interaction even if the stored status has already
+advanced. If the refused input carried a caller-supplied `Idempotency-Key`, use a
+fresh key for the post-rotation attempt: the original key stores and replays its
+`409` response.
+
+The REST service accepts optional idempotency keys for session creation and input,
+but this SDK's high-level methods do not yet expose or automatically supply them. A
+transport failure after a create or input may therefore hide a completed server
+action. A caller that cannot tolerate automatic replay can use a one-attempt policy
+and read current state before deciding what to repeat:
 
 ```rust,no_run
 use std::time::Duration;

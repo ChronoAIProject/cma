@@ -166,7 +166,43 @@ Default startup refuses a writable or unproven partial legacy state before renam
 
 ---
 
-## 6. When it goes wrong
+## 6. One-time MongoDB coordination activation
+
+The release that makes runtime authority and cleanup debt durable moves the writable session collection from `sessions_v2` to `sessions_v3`. It leaves `session_events_v2` in place. This activation cannot overlap any pre-coordination CMA process: an old process can make an external provider call before its database write, and no MongoDB validator can recall that call. `CHRONO_MONGODB_COORDINATION_CUTOVER=drained` is the operator's assertion that both database work and provider work from those processes have permanently stopped.
+
+Run this once for every existing CMA database, after the namespace cutover in section 5 is complete:
+
+1. Take one transaction-consistent backup or snapshot containing `sessions_v3` if it already exists, otherwise `sessions_v2`; `session_events_v2`; `session_coordination_receipts`; `_cma_session_namespace_cutovers`; `session_writes`; and `session_tombstones`. Keep these collections and provenance records as one recovery unit. Do not combine session data from one point in time with receipts or markers from another.
+2. Stop every pre-coordination CMA binary. Wait for every pod/process, outstanding MongoDB operation, and external provider create, delete, or replacement operation to finish. Prevent the old workload from returning. Rotate or revoke its database and provider credentials where the deployment permits that stronger fence.
+3. Set `CHRONO_MONGODB_COORDINATION_CUTOVER` to the exact value `drained`. If section 5 has not yet run, set its separate legacy acknowledgement only after satisfying that section's drain conditions too.
+4. Start exactly one new CMA replica. Do not start another activation candidate and do not restore any old replica while startup is in progress. A crash after the durable in-progress marker may be resumed by the same new binary without reasserting the flag.
+5. Verify directly in MongoDB that `sessions` is a read-only view of `sessions_v2`, `sessions_v2` is a read-only view of `sessions_v3`, and `sessions_v3` is the sole writable session collection. Confirm that the coordination activation and receipt provenance records in `_cma_session_namespace_cutovers` are complete and UUID-bound, then confirm `/ready` returns `200`.
+6. Leave the verified replica running and unset `CHRONO_MONGODB_COORDINATION_CUTOVER`. Start the remaining new replicas without the acknowledgement only after an unflagged replica becomes Ready.
+
+A genuinely empty database activates automatically. Any database that existed before startup requires the exact acknowledgement, even when its session collections happen to be empty. The activation majority-writes intent before fencing and renaming `sessions_v2`; the rename preserves its collection UUID. It then creates `sessions_v2` as a view of `sessions_v3`, establishes and audits the receipt collection, and completes a marker bound to both protected UUIDs. A completed marker authorizes verification only: startup will not recreate a missing session or receipt collection, repair a replacement collection, or infer a new empty store.
+
+### Coordination protocol v1 to v2
+
+The release that adds durable inbound-conversation authority advances the session coordination protocol from 1 to 2 without changing the `sessions_v3` namespace or the activation marker's identity. This is a second one-time use of `CHRONO_MONGODB_COORDINATION_CUTOVER=drained`. Completing the original coordination activation is not proof that its v1 binaries have since stopped, so every established v1 database requires a fresh drain assertion. Coordination receipts remain protocol 1 and are not bulk-rewritten; only the session writer fence advances.
+
+1. Take one transaction-consistent backup of the collections and provenance records listed above. Record the current `sessions_v3` and `session_coordination_receipts` UUIDs and the completed coordination marker before stopping the deployment.
+2. Stop every coordination-v1 CMA replica and wait for all of its MongoDB and provider operations to finish. Prevent those binaries from restarting or receiving work.
+3. Set `CHRONO_MONGODB_COORDINATION_CUTOVER` to the exact value `drained`, then start exactly one coordination-v2 replica. Do not start the rest of the rollout yet.
+4. Startup majority-replaces the existing UUID-bound marker with protocol-2 upgrade-in-progress provenance, installs the strict protocol-2 validator on `sessions_v3`, and updates only `_cma_write_protocol`, `_cma_coordination_protocol`, and a missing revision floor on each stored session. It does not replace the session document or its nested `coordination` state. It audits every session and the protected UUIDs before completing the same marker at protocol 2 and becoming Ready.
+5. Verify the marker is complete at protocol 2, the strict `sessions_v3` validator accepts only session coordination protocol 2, every session document carries protocol 2, the receipt validator still accepts only receipt protocol 1, and `/ready` returns `200`.
+6. Leave the verified replica running, unset `CHRONO_MONGODB_COORDINATION_CUTOVER`, and start the remaining protocol-2 replicas only after an unflagged replica becomes Ready.
+
+A crash after the protocol-2 upgrade-in-progress marker is durable resumes without the flag: startup reinstalls the strict validator, repeats the idempotent field-only update, re-audits, and completes the marker. A crash before that marker requires the drain assertion again because no durable v2 authorization exists. A protocol-2 completed marker paired with a downgraded validator or a protocol-1 session fails startup; CMA does not silently repair a completed contract.
+
+Rollback to coordination v1 is intentionally unsupported. A v1 startup rejects the protocol-2 marker, while an already-running v1 writer explicitly writes session protocol 1 and is rejected by the strict validator. Its coordination, delete, raw-append, and whole-document replacement transactions therefore abort rather than erase protocol-2 conversation authority. Never downgrade the validator or marker to make a v1 process start.
+
+Rollback to a pre-coordination image is intentionally unsupported. Such an image expects `sessions_v2` to be a collection; after activation it is a view, so startup and direct old-style insert, replace, and delete operations must fail. Keep old workloads disabled after the upgrade rather than treating that refusal as a reason to restore one.
+
+If protected data or proof is lost, never create a new `session_coordination_receipts` collection and never synthesize or delete an activation marker to make startup pass. Restore `sessions_v3`, `session_events_v2`, `session_coordination_receipts`, all provenance records in `_cma_session_namespace_cutovers`, `session_writes`, and `session_tombstones` from the same consistent backup. Simultaneous loss of protected data and its durable proof is outside automatic recovery and requires an explicit incident recovery decision.
+
+---
+
+## 7. When it goes wrong
 
 **The publish run failed before the images pushed.** Nothing was released — no tag exists, so nothing consumed the version. Fix the cause and re-run the workflow; it computes the same number again.
 

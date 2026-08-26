@@ -14,7 +14,7 @@ use std::pin::Pin;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, Weak};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -25,6 +25,7 @@ use crate::ids::SessionId;
 use crate::sequence::Sequences;
 use crate::service::{SessionEntry, SessionService};
 use crate::store::{SessionRecord, SessionStore, StoreError};
+use crate::ConversationWriteAuthority;
 
 const FIRST_RETRY_DELAY: Duration = Duration::from_millis(5);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -57,16 +58,18 @@ enum PendingOperation {
         record: Box<SessionRecord>,
         change: Option<Box<RecordChange>>,
         events: Vec<Event>,
+        conversation_authority: Option<ConversationWriteAuthority>,
         target: Option<CommitTarget>,
         progress: CommitProgress,
         /// Set before post-commit work is first polled, so that phase resumes
         /// without replaying a write whose outcome is already known.
-        outcome: Option<Result<SessionRecord, StoreError>>,
+        outcome: Option<Box<Result<SessionRecord, StoreError>>>,
     },
     RestartableCommit {
         write_id: String,
         record: Box<SessionRecord>,
         events: Vec<Event>,
+        conversation_authority: Option<ConversationWriteAuthority>,
         outcome: Option<oneshot::Sender<Result<SessionRecord, StoreError>>>,
         progress: CommitProgress,
     },
@@ -116,6 +119,22 @@ struct DeleteProgress {
 struct RecordChange {
     before: Box<SessionRecord>,
     fields: RecordFields,
+    /// A handover token this change must still own after any rebase.
+    ///
+    /// Kept separately from `before`: rejection repair rebuilds that snapshot
+    /// from the newest durable record, but doing so must never let an obsolete
+    /// finalizer or rollback inherit a newer handover's token.
+    rotation_precondition: Option<RotationPrecondition>,
+}
+
+#[derive(Clone)]
+struct RotationPrecondition {
+    claim: Option<String>,
+    status: crate::session::SessionStatus,
+    /// Exact published runtime, when finalization happens after a switch.
+    runtime_id: Option<Option<String>>,
+    /// Exact compatibility descriptor, when this transition consumes one.
+    pending_handover: Option<Option<crate::store::PendingHandover>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -128,6 +147,29 @@ struct RecordFields {
     runtime: bool,
     context: bool,
     initial_prompt: bool,
+    rotation: bool,
+    handover: bool,
+}
+
+#[derive(Default)]
+struct CommitSemantics {
+    owned_fields: Option<RecordFields>,
+    rotation_precondition: Option<RotationPrecondition>,
+}
+
+struct CommitRequest {
+    mode: CommitMode,
+    record: SessionRecord,
+    events: Vec<Event>,
+    semantics: CommitSemantics,
+    conversation_authority: Option<ConversationWriteAuthority>,
+}
+
+struct CommitContext<'a> {
+    write_id: &'a str,
+    mode: CommitMode,
+    change: Option<&'a RecordChange>,
+    conversation_authority: Option<&'a ConversationWriteAuthority>,
 }
 
 struct EnqueuedCommit {
@@ -446,6 +488,34 @@ type RetainedContinuation<T, H> =
 type RetainedRejection = Box<dyn FnOnce(StoreError) -> RetainedAttempt<'static, ()> + Send>;
 type RetainedUndelivered<T, H> = Box<dyn FnOnce(T, H) + Send>;
 
+fn retained_executor() -> &'static tokio::runtime::Handle {
+    static EXECUTOR: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+    EXECUTOR.get_or_init(|| {
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let _thread = std::thread::Builder::new()
+            .name("cma-retained-work".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("the retained-work runtime builds");
+                ready
+                    .send(runtime.handle().clone())
+                    .expect("the retained-work executor has an initializer");
+                runtime.block_on(std::future::pending::<()>());
+            })
+            .expect("the retained-work executor thread starts");
+        started
+            .recv()
+            .expect("the retained-work executor reports readiness")
+    })
+}
+
+/// Run service-owned cleanup without depending on the dropping thread's runtime.
+pub(crate) fn spawn_retained_work(work: impl Future<Output = ()> + Send + 'static) {
+    let _detached = retained_executor().spawn(work);
+}
+
 /// Type-erased post-commit work kept inside its guarded lane operation.
 trait RetainedCommitWork: Send {
     fn report_error(&mut self, error: StoreError) -> bool;
@@ -464,9 +534,9 @@ struct RetainedCommit<T, H> {
     error_observed: Option<oneshot::Receiver<()>>,
     error_was_observed: bool,
     continuation: Option<RetainedContinuation<T, H>>,
-    continuing: Option<RetainedAttempt<'static, (T, H)>>,
+    continuing: Option<oneshot::Receiver<(T, H)>>,
     on_rejected: Option<RetainedRejection>,
-    rejecting: Option<RetainedAttempt<'static, ()>>,
+    rejecting: Option<oneshot::Receiver<()>>,
     rejection: Option<StoreError>,
     on_undelivered: Option<RetainedUndelivered<T, H>>,
     outcome_prepared: bool,
@@ -519,14 +589,25 @@ where
                     .continuation
                     .take()
                     .expect("a retained continuation is prepared at most once");
-                self.continuing = Some(continuation(record));
+                let (completed, continuing) = oneshot::channel();
+                retained_executor().spawn(async move {
+                    let output = continuation(record).await;
+                    let _ = completed.send(output);
+                });
+                self.continuing = Some(continuing);
             }
             Err(error) => {
                 let on_rejected = self
                     .on_rejected
                     .take()
                     .expect("a retained rejection is prepared at most once");
-                self.rejecting = Some(on_rejected(error.clone()));
+                let (completed, rejecting) = oneshot::channel();
+                let rejection = error.clone();
+                retained_executor().spawn(async move {
+                    on_rejected(rejection).await;
+                    let _ = completed.send(());
+                });
+                self.rejecting = Some(rejecting);
                 self.rejection = Some(error);
             }
         }
@@ -535,8 +616,25 @@ where
     fn finish(&mut self) -> RetainedAttempt<'_, ()> {
         Box::pin(async move {
             if let Some(continuing) = self.continuing.as_mut() {
-                let (output, ownership) = continuing.as_mut().await;
+                let continued = continuing.await;
                 self.continuing.take();
+                let Ok((output, ownership)) = continued else {
+                    let error = StoreError::Unavailable(
+                        "retained session continuation task stopped".into(),
+                    );
+                    if let Some(report) = self.report.take() {
+                        let _ = report.send(Err(error.clone()));
+                    } else {
+                        tracing::error!(
+                            session_id = %self.id,
+                            %error,
+                            "a detached durable session continuation stopped"
+                        );
+                    }
+                    self.on_undelivered.take();
+                    self.lane_keepalive.take();
+                    return;
+                };
                 let on_undelivered = self
                     .on_undelivered
                     .take()
@@ -555,8 +653,24 @@ where
             }
 
             if let Some(rejecting) = self.rejecting.as_mut() {
-                rejecting.as_mut().await;
+                let rejected = rejecting.await;
                 self.rejecting.take();
+                if rejected.is_err() {
+                    let error =
+                        StoreError::Unavailable("retained session rejection task stopped".into());
+                    if let Some(report) = self.report.take() {
+                        let _ = report.send(Err(error.clone()));
+                    } else if !self.error_was_observed {
+                        tracing::error!(
+                            session_id = %self.id,
+                            %error,
+                            "a detached durable session rejection stopped"
+                        );
+                    }
+                    self.rejection.take();
+                    self.lane_keepalive.take();
+                    return;
+                }
                 let error = self
                     .rejection
                     .take()
@@ -585,9 +699,9 @@ where
 
 /// Build post-commit work before its lane operation can start.
 ///
-/// Both the closures and any future already produced from them remain fields of
-/// the guarded operation. Dropping one Tokio runtime therefore requeues the
-/// exact durable/continuation phase for a waiter on another runtime to resume.
+/// Closures remain fields of the guarded operation until durability chooses one.
+/// The selected continuation then runs to completion on the stable retained-work
+/// executor; the lane stores only its runtime-agnostic result receiver.
 fn retain_commit<T, H, F, Fut, R, RFut, U>(
     id: SessionId,
     lane: Arc<SessionLog>,
@@ -888,6 +1002,26 @@ impl SessionLog {
         self.enqueue_commit_with(mode, record, events, None, |_| {})
     }
 
+    fn enqueue_conversation_commit(
+        self: &Arc<Self>,
+        mode: CommitMode,
+        record: SessionRecord,
+        events: Vec<Event>,
+        authority: ConversationWriteAuthority,
+    ) -> EnqueuedCommit {
+        self.enqueue_commit_inner(
+            CommitRequest {
+                mode,
+                record,
+                events,
+                semantics: CommitSemantics::default(),
+                conversation_authority: Some(authority),
+            },
+            None,
+            |_| {},
+        )
+    }
+
     fn enqueue_commit_with<F>(
         self: &Arc<Self>,
         mode: CommitMode,
@@ -899,35 +1033,75 @@ impl SessionLog {
     where
         F: FnOnce(u64),
     {
-        self.enqueue_commit_inner(mode, record, events, owned_fields, None, after_allocation)
+        self.enqueue_commit_inner(
+            CommitRequest {
+                mode,
+                record,
+                events,
+                semantics: CommitSemantics {
+                    owned_fields,
+                    ..CommitSemantics::default()
+                },
+                conversation_authority: None,
+            },
+            None,
+            after_allocation,
+        )
     }
 
-    fn enqueue_retained_commit<F>(
+    fn enqueue_commit_with_rotation<F>(
         self: &Arc<Self>,
         mode: CommitMode,
         record: SessionRecord,
         events: Vec<Event>,
-        owned_fields: Option<RecordFields>,
+        owned_fields: RecordFields,
+        rotation_precondition: RotationPrecondition,
+        after_allocation: F,
+    ) -> EnqueuedCommit
+    where
+        F: FnOnce(u64),
+    {
+        self.enqueue_commit_inner(
+            CommitRequest {
+                mode,
+                record,
+                events,
+                semantics: CommitSemantics {
+                    owned_fields: Some(owned_fields),
+                    rotation_precondition: Some(rotation_precondition),
+                },
+                conversation_authority: None,
+            },
+            None,
+            after_allocation,
+        )
+    }
+
+    fn enqueue_retained_commit<F>(
+        self: &Arc<Self>,
+        request: CommitRequest,
         retained: Box<dyn RetainedCommitWork>,
         after_allocation: F,
     ) where
         F: FnOnce(u64),
     {
-        let enqueued = self.enqueue_commit_inner(
-            mode,
-            record,
-            events,
-            owned_fields,
-            Some(retained),
-            after_allocation,
-        );
+        let enqueued = self.enqueue_commit_inner(request, Some(retained), after_allocation);
         drop(enqueued.complete);
     }
 
     fn enqueue_restartable_commit(
         self: &Arc<Self>,
+        record: SessionRecord,
+        events: Vec<Event>,
+    ) -> RestartableCommit {
+        self.enqueue_restartable_commit_with_authority(record, events, None)
+    }
+
+    fn enqueue_restartable_commit_with_authority(
+        self: &Arc<Self>,
         mut record: SessionRecord,
         mut events: Vec<Event>,
+        conversation_authority: Option<ConversationWriteAuthority>,
     ) -> RestartableCommit {
         let (outcome, receiver) = oneshot::channel();
         if record.session.id != self.id || events.iter().any(|event| event.session_id != self.id) {
@@ -979,6 +1153,7 @@ impl SessionLog {
                 write_id: format!("sesw_{}", uuid::Uuid::new_v4().simple()),
                 record: Box::new(record),
                 events,
+                conversation_authority,
                 outcome: Some(outcome),
                 progress: CommitProgress::default(),
             });
@@ -1000,16 +1175,20 @@ impl SessionLog {
 
     fn enqueue_commit_inner<F>(
         self: &Arc<Self>,
-        mode: CommitMode,
-        mut record: SessionRecord,
-        mut events: Vec<Event>,
-        owned_fields: Option<RecordFields>,
+        request: CommitRequest,
         mut retained: Option<Box<dyn RetainedCommitWork>>,
         after_allocation: F,
     ) -> EnqueuedCommit
     where
         F: FnOnce(u64),
     {
+        let CommitRequest {
+            mode,
+            mut record,
+            mut events,
+            semantics,
+            conversation_authority,
+        } = request;
         let (complete, receiver) = oneshot::channel();
         let (acknowledge_error, observed) = oneshot::channel();
         if record.session.id != self.id || events.iter().any(|event| event.session_id != self.id) {
@@ -1129,9 +1308,14 @@ impl SessionLog {
                     .clone()
                     .or_else(|| state.durable.clone())
                     .map(|before| {
-                        let fields = owned_fields
+                        let fields = semantics
+                            .owned_fields
                             .unwrap_or_else(|| RecordFields::for_commit(&before, &record, &events));
-                        let change = Box::new(RecordChange { before, fields });
+                        let change = Box::new(RecordChange {
+                            before,
+                            fields,
+                            rotation_precondition: semantics.rotation_precondition,
+                        });
                         state.local_tail = Some(Box::new(change.next_local_tail(&record)));
                         change
                     })
@@ -1147,6 +1331,7 @@ impl SessionLog {
                 record: Box::new(record),
                 change,
                 events,
+                conversation_authority,
                 target: Some(match retained.take() {
                     Some(retained) => CommitTarget::Retained(retained),
                     None => CommitTarget::Ordinary {
@@ -1261,6 +1446,7 @@ impl SessionLog {
                     record,
                     change,
                     events,
+                    conversation_authority,
                     target,
                     progress,
                     outcome,
@@ -1276,10 +1462,13 @@ impl SessionLog {
                                 retain_after_cancellation,
                             };
                             self.commit(
-                                write_id,
-                                mode,
+                                CommitContext {
+                                    write_id,
+                                    mode,
+                                    change: change.as_deref(),
+                                    conversation_authority: conversation_authority.as_ref(),
+                                },
                                 record,
-                                change.as_deref(),
                                 events,
                                 &mut reporter,
                             )
@@ -1303,11 +1492,12 @@ impl SessionLog {
                                 retained,
                             );
                         }
-                        *outcome = Some(result);
+                        *outcome = Some(Box::new(result));
                     }
                     let result = outcome
                         .as_ref()
                         .expect("a finished durable commit keeps its outcome")
+                        .as_ref()
                         .clone();
                     if target.is_some() {
                         match target
@@ -1338,6 +1528,7 @@ impl SessionLog {
                     write_id,
                     record,
                     events,
+                    conversation_authority,
                     outcome,
                     progress,
                 } => {
@@ -1348,10 +1539,13 @@ impl SessionLog {
                             retain_after_cancellation: true,
                         };
                         self.commit(
-                            write_id,
-                            CommitMode::UpdateExact,
+                            CommitContext {
+                                write_id,
+                                mode: CommitMode::UpdateExact,
+                                change: None,
+                                conversation_authority: conversation_authority.as_ref(),
+                            },
                             record,
-                            None,
                             events,
                             &mut reporter,
                         )
@@ -1395,13 +1589,17 @@ impl SessionLog {
 
     async fn commit(
         &self,
-        write_id: &str,
-        mode: CommitMode,
+        context: CommitContext<'_>,
         record: &mut SessionRecord,
-        change: Option<&RecordChange>,
         events: &mut [Event],
         reporter: &mut CommitReporter<'_>,
     ) -> Result<(), StoreError> {
+        let CommitContext {
+            write_id,
+            mode,
+            change,
+            conversation_authority,
+        } = context;
         self.resolve_reported_error(reporter).await?;
         if matches!(mode, CommitMode::UpdateInheriting) && !reporter.progress.prepared {
             self.prepare_inheriting_record(record, change)?;
@@ -1414,13 +1612,21 @@ impl SessionLog {
                 record.session.last_seq = last.seq;
             }
 
-            let result = match mode {
-                CommitMode::Create => {
+            let result = match (mode, conversation_authority) {
+                (CommitMode::Create, Some(_)) => Err(StoreError::Malformed(
+                    "a conversation authority cannot create a session".into(),
+                )),
+                (CommitMode::UpdateExact | CommitMode::UpdateInheriting, Some(authority)) => {
+                    self.store
+                        .commit_conversation_idempotent(write_id, authority, record, events)
+                        .await
+                }
+                (CommitMode::Create, None) => {
                     self.store
                         .create_session_idempotent(write_id, record, events)
                         .await
                 }
-                CommitMode::UpdateExact | CommitMode::UpdateInheriting => {
+                (CommitMode::UpdateExact | CommitMode::UpdateInheriting, None) => {
                     self.store
                         .commit_session_idempotent(write_id, record, events)
                         .await
@@ -1701,11 +1907,15 @@ impl SessionLog {
                         local_tail = Some(record.clone());
                         continue;
                     };
-                    let fields = change.as_deref().map_or_else(
-                        || RecordFields::for_commit(&before, record, events),
-                        |change| change.fields,
+                    let (fields, rotation_precondition) = change.as_deref().map_or_else(
+                        || (RecordFields::for_commit(&before, record, events), None),
+                        |change| (change.fields, change.rotation_precondition.clone()),
                     );
-                    let rebuilt = Box::new(RecordChange { before, fields });
+                    let rebuilt = Box::new(RecordChange {
+                        before,
+                        fields,
+                        rotation_precondition,
+                    });
                     local_tail = Some(Box::new(rebuilt.next_local_tail(record)));
                     *change = Some(rebuilt);
                 }
@@ -1905,6 +2115,12 @@ impl EventLogs {
         self.cleanups.drain_at(id, gate).await;
     }
 
+    /// Resume service-owned cleanup before retrying an operation it may fence.
+    pub(crate) async fn drain_retained_cleanups(&self, id: &SessionId) {
+        let gate = self.cleanup_gate(id);
+        self.drain_cleanups_at(id, &gate).await;
+    }
+
     fn cleanup_pending(&self, id: &SessionId) -> bool {
         self.cleanups.has_pending(id)
     }
@@ -2010,6 +2226,272 @@ impl SessionService {
         Ok(())
     }
 
+    /// Persist an exact proposal under one durable conversation predicate.
+    pub(crate) async fn persist_conversation_durably(
+        &self,
+        record: &mut SessionRecord,
+        events: Vec<Event>,
+        authority: ConversationWriteAuthority,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        let result = lane
+            .enqueue_conversation_commit(CommitMode::UpdateExact, record.clone(), events, authority)
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
+    /// Complete a handover while preserving history written after its claim.
+    ///
+    /// The claim itself is the compare precondition. A later handover has a
+    /// different value even when it happens to target the same runtime and
+    /// lifecycle state, so an obsolete task cannot win an ABA race.
+    pub(crate) async fn complete_handover_durably(
+        &self,
+        record: &mut SessionRecord,
+        claimed: &SessionRecord,
+        events: Vec<Event>,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        // A restarted service may not have a predecessor in this process's
+        // lane yet. Seed the exact durable claim before constructing the
+        // inheriting change so conflict rebase cannot drop its authority
+        // predicate and fall back to a generic semantic replacement.
+        lane.observe_record(claimed);
+        let result = lane
+            .enqueue_commit_with_rotation(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                events,
+                RecordFields {
+                    status: true,
+                    geometry: true,
+                    plane: true,
+                    runtime: true,
+                    rotation: true,
+                    ..RecordFields::default()
+                },
+                RotationPrecondition {
+                    claim: claimed.rotation_claim.clone(),
+                    status: claimed.session.status,
+                    runtime_id: None,
+                    pending_handover: None,
+                },
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
+    /// Publish compatibility handover semantics after the old runtime is gone.
+    ///
+    /// Unlike coordinated completion, this stage must never race ahead of H1
+    /// cleanup. The exact empty runtime boundary is therefore part of the same
+    /// strict rotation predicate as the claim and lifecycle status.
+    pub(crate) async fn complete_compatibility_handover_durably(
+        &self,
+        record: &mut SessionRecord,
+        claimed: &SessionRecord,
+        events: Vec<Event>,
+    ) -> Result<(), StoreError> {
+        if !claimed.session.status.is_rotating()
+            || claimed.rotation_claim.is_none()
+            || claimed.runtime_id.is_some()
+            || claimed
+                .pending_handover
+                .as_ref()
+                .map(|pending| pending.claim.as_str())
+                != claimed.rotation_claim.as_deref()
+        {
+            return Err(StoreError::Malformed(
+                "a compatibility handover requires one cleared rotating claim".into(),
+            ));
+        }
+        if record.session.id != claimed.session.id
+            || record.session.status != claimed.session.status
+            || record.rotation_claim != claimed.rotation_claim
+            || record.pending_handover != claimed.pending_handover
+            || record.runtime_id.is_some()
+        {
+            return Err(StoreError::Malformed(
+                "a compatibility handover changed its cleared authority boundary".into(),
+            ));
+        }
+
+        let lane = self.event_logs.lane(&record.session.id);
+        lane.observe_record(claimed);
+        let result = lane
+            .enqueue_commit_with_rotation(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                events,
+                RecordFields {
+                    status: true,
+                    geometry: true,
+                    plane: true,
+                    runtime: true,
+                    rotation: true,
+                    ..RecordFields::default()
+                },
+                RotationPrecondition {
+                    claim: claimed.rotation_claim.clone(),
+                    status: claimed.session.status,
+                    runtime_id: Some(None),
+                    pending_handover: Some(claimed.pending_handover.clone()),
+                },
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
+    /// Clear one published handover's exact durable claim and descriptor.
+    ///
+    /// Publication can happen after history and conversation status advance,
+    /// so this is an inheriting write that owns both private handover fields.
+    /// The claim, descriptor, and freshly read status remain strict
+    /// preconditions: an obsolete task cannot clear a later rotation after an
+    /// ABA transition.
+    pub(crate) async fn clear_rotation_claim_durably(
+        &self,
+        record: &mut SessionRecord,
+        claimed: &SessionRecord,
+    ) -> Result<(), StoreError> {
+        if claimed.rotation_claim.is_none()
+            || claimed.runtime_id.is_none()
+            || claimed.pending_handover.as_ref().is_some_and(|pending| {
+                Some(pending.claim.as_str()) != claimed.rotation_claim.as_deref()
+            })
+            || record.pending_handover.is_some()
+        {
+            return Err(StoreError::Malformed(
+                "a published rotation claim requires an exact runtime".into(),
+            ));
+        }
+        let lane = self.event_logs.lane(&record.session.id);
+        lane.observe_record(claimed);
+        let result = lane
+            .enqueue_commit_with_rotation(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                Vec::new(),
+                RecordFields {
+                    rotation: true,
+                    handover: true,
+                    ..RecordFields::default()
+                },
+                RotationPrecondition {
+                    claim: claimed.rotation_claim.clone(),
+                    status: claimed.session.status,
+                    runtime_id: Some(claimed.runtime_id.clone()),
+                    pending_handover: Some(claimed.pending_handover.clone()),
+                },
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
+    /// Clear one compatibility runtime without replacing unrelated durable state.
+    ///
+    /// Compatibility cleanup has no coordination lease to fence successors, so
+    /// the exact lifecycle state, rotation claim, and runtime observed before
+    /// provider deletion form its authority boundary.
+    pub(crate) async fn clear_compatibility_runtime_durably(
+        &self,
+        intended: &mut SessionRecord,
+        claimed: &SessionRecord,
+    ) -> Result<(), StoreError> {
+        if claimed.runtime_id.is_none() || intended.runtime_id.is_some() {
+            return Err(StoreError::Malformed(
+                "a compatibility runtime clear requires one exact runtime".into(),
+            ));
+        }
+        if intended.session.id != claimed.session.id
+            || intended.session.status != claimed.session.status
+            || intended.rotation_claim != claimed.rotation_claim
+            || intended.pending_handover != claimed.pending_handover
+            || claimed.pending_handover.as_ref().is_some_and(|pending| {
+                Some(pending.claim.as_str()) != claimed.rotation_claim.as_deref()
+            })
+        {
+            return Err(StoreError::Malformed(
+                "a compatibility runtime clear changed its authority boundary".into(),
+            ));
+        }
+
+        let lane = self.event_logs.lane(&intended.session.id);
+        lane.observe_record(claimed);
+        let result = lane
+            .enqueue_commit_with_rotation(
+                CommitMode::UpdateInheriting,
+                intended.clone(),
+                Vec::new(),
+                RecordFields {
+                    runtime: true,
+                    ..RecordFields::default()
+                },
+                RotationPrecondition {
+                    claim: claimed.rotation_claim.clone(),
+                    status: claimed.session.status,
+                    runtime_id: Some(claimed.runtime_id.clone()),
+                    pending_handover: Some(claimed.pending_handover.clone()),
+                },
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *intended = result;
+        Ok(())
+    }
+
+    /// Restore the old runtime only while this task still owns the handover.
+    pub(crate) async fn roll_back_handover_durably(
+        &self,
+        record: &mut SessionRecord,
+        claimed: &SessionRecord,
+        events: Vec<Event>,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        lane.observe_record(claimed);
+        let result = lane
+            .enqueue_commit_with_rotation(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                events,
+                RecordFields {
+                    status: true,
+                    rotation: true,
+                    handover: true,
+                    ..RecordFields::default()
+                },
+                RotationPrecondition {
+                    claim: claimed.rotation_claim.clone(),
+                    status: claimed.session.status,
+                    runtime_id: None,
+                    pending_handover: Some(claimed.pending_handover.clone()),
+                },
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
     /// Persist an exact proposal whose required side effects outlive its waiter.
     pub(crate) fn persist_durably_with<T, H, F, Fut, R, RFut, U>(
         &self,
@@ -2038,10 +2520,13 @@ impl SessionService {
             on_undelivered,
         );
         lane.enqueue_retained_commit(
-            CommitMode::UpdateExact,
-            record,
-            events,
-            None,
+            CommitRequest {
+                mode: CommitMode::UpdateExact,
+                record,
+                events,
+                semantics: CommitSemantics::default(),
+                conversation_authority: None,
+            },
             retained,
             |_| {},
         );
@@ -2148,6 +2633,70 @@ impl SessionService {
             }
         }
     }
+
+    /// Wait for every earlier update from one exact conversation link.
+    ///
+    /// The empty barrier carries the same durable epoch as the events ahead of
+    /// it. A stale replica therefore observes revocation instead of reporting a
+    /// successful flush after all of its event-bearing writes were refused.
+    pub(crate) async fn flush_conversation(
+        &self,
+        id: &SessionId,
+        link: crate::conversation_opening::ConversationLinkId,
+    ) -> bool {
+        let (receiver, authority) = {
+            let entries = self.entries.read().await;
+            let Some(entry) = entries
+                .get(id)
+                .filter(|entry| entry.conversation_link == Some(link))
+            else {
+                return false;
+            };
+            let Some(authority) = entry.conversation_authority.clone() else {
+                return false;
+            };
+            let receiver = entry
+                .event_log
+                .enqueue_conversation_commit(
+                    CommitMode::UpdateInheriting,
+                    record_from_entry(entry),
+                    Vec::new(),
+                    ConversationWriteAuthority::Active(authority.clone()),
+                )
+                .complete;
+            (receiver, authority)
+        };
+        match receiver
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))
+            .and_then(|result| result)
+        {
+            Ok(record) => {
+                if let Some(entry) = self
+                    .entries
+                    .write()
+                    .await
+                    .get_mut(id)
+                    .filter(|entry| entry.conversation_link == Some(link))
+                {
+                    let event_log = Arc::clone(&entry.event_log);
+                    entry.session.last_seq = record.session.last_seq;
+                    event_log.synchronize_tail(&mut entry.session.last_seq);
+                }
+                true
+            }
+            Err(error @ StoreError::ConversationLinkChanged { .. }) => {
+                self.retire_conversation_link(id, link, &authority).await;
+                tracing::debug!(session_id = %id, %error, "stale conversation link write was fenced");
+                false
+            }
+            Err(error) => {
+                self.retire_conversation_link(id, link, &authority).await;
+                tracing::error!(session_id = %id, error = %error, "cannot persist conversation");
+                false
+            }
+        }
+    }
 }
 
 fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
@@ -2203,7 +2752,11 @@ impl RecordFields {
             || before.session.granted_skills != intended.session.granted_skills
             || before.session.pricing != intended.session.pricing
             || before.session.created_at != intended.session.created_at;
-        fields.runtime = before.runtime_id != intended.runtime_id;
+        // Runtime authority belongs only to an event whose semantics name it or
+        // to a workflow that supplies explicit narrow ownership. A queued
+        // history event can carry an old runtime snapshot after termination or
+        // handover; a mere difference from its local predecessor must never let
+        // it resurrect that handle over newer durable authority.
         fields.context = before.context_ref != intended.context_ref;
         fields
     }
@@ -2264,7 +2817,26 @@ impl RecordChange {
             || self.fields.plane
             || self.fields.runtime_loss
             || (self.fields.status && !intended.session.wants_runtime());
-        let mut compatible = true;
+        // A rotation claim is also a strict lifecycle precondition. Unlike an
+        // ordinary selected field, an unchanged Rotating status is meaningful:
+        // another writer that settled the session must invalidate this task
+        // even if an older writer did not know to clear the new claim field.
+        let rotation_before = self
+            .rotation_precondition
+            .as_ref()
+            .map_or(&before.rotation_claim, |required| &required.claim);
+        let mut compatible = self.rotation_precondition.as_ref().is_none_or(|required| {
+            durable.rotation_claim == required.claim
+                && durable.session.status == required.status
+                && required
+                    .runtime_id
+                    .as_ref()
+                    .is_none_or(|runtime| &durable.runtime_id == runtime)
+                && required
+                    .pending_handover
+                    .as_ref()
+                    .is_none_or(|handover| &durable.pending_handover == handover)
+        });
 
         compatible &= rebase_selected(
             plane,
@@ -2380,6 +2952,18 @@ impl RecordChange {
             &before.initial_prompt,
             &intended.initial_prompt,
         );
+        compatible &= rebase_selected(
+            self.fields.rotation,
+            &mut durable.rotation_claim,
+            rotation_before,
+            &intended.rotation_claim,
+        );
+        compatible &= rebase_selected(
+            self.fields.handover,
+            &mut durable.pending_handover,
+            &before.pending_handover,
+            &intended.pending_handover,
+        );
 
         if !compatible {
             return Err(StoreError::RevisionConflict { expected, actual });
@@ -2487,6 +3071,16 @@ impl RecordChange {
             self.fields.initial_prompt,
             &mut target.initial_prompt,
             &intended.initial_prompt,
+        );
+        copy_selected(
+            self.fields.rotation,
+            &mut target.rotation_claim,
+            &intended.rotation_claim,
+        );
+        copy_selected(
+            self.fields.handover,
+            &mut target.pending_handover,
+            &intended.pending_handover,
         );
     }
 }
@@ -2648,6 +3242,45 @@ fn observed_initial_prompt_state(
     None
 }
 
+/// Record an inbound conversation event under the entry's durable link epoch.
+pub(crate) fn append_conversation(entry: &mut SessionEntry, kind: EventKind) {
+    let Some(authority) = entry.conversation_authority.clone() else {
+        tracing::error!(
+            session_id = %entry.session.id,
+            "conversation entry has no durable link authority"
+        );
+        return;
+    };
+    let mut kinds = vec![kind];
+    if let Some(state) = observed_initial_prompt_state(entry, &kinds[0]) {
+        let initial = entry
+            .initial_prompt
+            .as_mut()
+            .expect("an observed initial prompt state has a durable outbox");
+        initial.delivery.state = state;
+        initial.delivery.updated_at = crate::clock::now_rfc3339();
+        kinds.push(EventKind::InitialPromptDeliveryChanged { state });
+    }
+    let events = kinds
+        .into_iter()
+        .map(|kind| Event {
+            session_id: entry.session.id.clone(),
+            seq: 0,
+            kind,
+            appended_at: String::new(),
+        })
+        .collect();
+    let record = record_from_entry(entry);
+    let enqueued = entry.event_log.enqueue_conversation_commit(
+        CommitMode::UpdateInheriting,
+        record,
+        events,
+        ConversationWriteAuthority::Active(authority),
+    );
+    entry.session.last_seq = enqueued.last_seq;
+    drop(enqueued.complete);
+}
+
 /// Record one indivisible event unit and return its durable completion.
 ///
 /// Some public operations need both properties at once: their related events
@@ -2702,10 +3335,11 @@ where
     RFut: Future<Output = ()> + Send + 'static,
     U: FnOnce(T, H) + Send + 'static,
 {
-    append_batch_with(
+    append_batch_with_authority(
         entry,
         [kind],
         change,
+        AppendPredicate::unconstrained(),
         continuation,
         on_rejected,
         on_undelivered,
@@ -2730,6 +3364,140 @@ where
     RFut: Future<Output = ()> + Send + 'static,
     U: FnOnce(T, H) + Send + 'static,
 {
+    append_batch_with_authority(
+        entry,
+        kinds,
+        change,
+        AppendPredicate::unconstrained(),
+        continuation,
+        on_rejected,
+        on_undelivered,
+    )
+}
+
+/// Queue a lifecycle event that atomically settles an observed rotation claim.
+///
+/// A live entry deliberately carries no private durable claim. The caller's
+/// fresh record supplies that exact token and runtime boundary so stopping or
+/// terminating a published replacement clears only the handover it observed,
+/// never a later replica's claim.
+pub(crate) fn append_with_rotation_claim<T, H, F, Fut, R, RFut, U>(
+    entry: &mut SessionEntry,
+    claimed: Option<&SessionRecord>,
+    kind: EventKind,
+    change: impl FnOnce(&mut SessionRecord),
+    continuation: F,
+    on_rejected: R,
+    on_undelivered: U,
+) -> CommitReceiver<T>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+    F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+    Fut: Future<Output = (T, H)> + Send + 'static,
+    R: FnOnce(StoreError) -> RFut + Send + 'static,
+    RFut: Future<Output = ()> + Send + 'static,
+    U: FnOnce(T, H) + Send + 'static,
+{
+    append_batch_with_authority(
+        entry,
+        [kind],
+        change,
+        claimed.map_or_else(AppendPredicate::unconstrained, AppendPredicate::rotation),
+        continuation,
+        on_rejected,
+        on_undelivered,
+    )
+}
+
+/// Queue a semantic conversation event under its exact durable link fence.
+///
+/// The proposed record participates in inheriting lineage immediately, while
+/// retained completion keeps it out of live state until durability. If the
+/// link or lifecycle changes first, rejection rebuilds that lineage before a
+/// later producer can enqueue behind it. Compatibility stores pass no durable
+/// authority and retain the same process-local ordering behavior.
+pub(crate) fn append_conversation_with<T, H, F, Fut, R, RFut, U>(
+    entry: &mut SessionEntry,
+    kind: EventKind,
+    change: impl FnOnce(&mut SessionRecord),
+    authority: Option<crate::coordination::ConversationLink>,
+    continuation: F,
+    on_rejected: R,
+    on_undelivered: U,
+) -> CommitReceiver<T>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+    F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+    Fut: Future<Output = (T, H)> + Send + 'static,
+    R: FnOnce(StoreError) -> RFut + Send + 'static,
+    RFut: Future<Output = ()> + Send + 'static,
+    U: FnOnce(T, H) + Send + 'static,
+{
+    append_batch_with_authority(
+        entry,
+        [kind],
+        change,
+        authority.map_or_else(AppendPredicate::unconstrained, |authority| {
+            AppendPredicate::conversation(ConversationWriteAuthority::Active(authority))
+        }),
+        continuation,
+        on_rejected,
+        on_undelivered,
+    )
+}
+
+struct AppendPredicate<'a> {
+    authority: Option<ConversationWriteAuthority>,
+    claimed_rotation: Option<&'a SessionRecord>,
+}
+
+impl<'a> AppendPredicate<'a> {
+    fn unconstrained() -> Self {
+        Self {
+            authority: None,
+            claimed_rotation: None,
+        }
+    }
+
+    fn conversation(authority: ConversationWriteAuthority) -> Self {
+        Self {
+            authority: Some(authority),
+            claimed_rotation: None,
+        }
+    }
+
+    fn rotation(claimed: &'a SessionRecord) -> Self {
+        Self {
+            authority: None,
+            claimed_rotation: Some(claimed),
+        }
+    }
+}
+
+fn append_batch_with_authority<T, H, F, Fut, R, RFut, U>(
+    entry: &mut SessionEntry,
+    kinds: impl IntoIterator<Item = EventKind>,
+    change: impl FnOnce(&mut SessionRecord),
+    predicate: AppendPredicate<'_>,
+    continuation: F,
+    on_rejected: R,
+    on_undelivered: U,
+) -> CommitReceiver<T>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+    F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+    Fut: Future<Output = (T, H)> + Send + 'static,
+    R: FnOnce(StoreError) -> RFut + Send + 'static,
+    RFut: Future<Output = ()> + Send + 'static,
+    U: FnOnce(T, H) + Send + 'static,
+{
+    let AppendPredicate {
+        authority,
+        claimed_rotation,
+    } = predicate;
     let events = kinds
         .into_iter()
         .map(|kind| Event {
@@ -2745,6 +3513,25 @@ where
     );
     let event_count = u64::try_from(events.len()).unwrap_or(u64::MAX);
     let mut record = record_from_entry(entry);
+    let rotation_precondition = claimed_rotation.map(|claimed| {
+        // The live entry may predate a claim written by another replica. Start
+        // this proposal at the exact revision just read by the lifecycle
+        // caller; the entry still supplies its lane-authoritative sequence and
+        // context state. Any write after that observation conflicts normally
+        // and is then judged by the strict claim/status/runtime predicate below.
+        record.revision = claimed.revision;
+        record.rotation_claim.clone_from(&claimed.rotation_claim);
+        record
+            .pending_handover
+            .clone_from(&claimed.pending_handover);
+        record.runtime_id.clone_from(&claimed.runtime_id);
+        RotationPrecondition {
+            claim: claimed.rotation_claim.clone(),
+            status: claimed.session.status,
+            runtime_id: Some(claimed.runtime_id.clone()),
+            pending_handover: Some(claimed.pending_handover.clone()),
+        }
+    });
     change(&mut record);
     let id = entry.session.id.clone();
     let event_log = Arc::clone(&entry.event_log);
@@ -2755,12 +3542,36 @@ where
         on_rejected,
         on_undelivered,
     );
+    if let Some(claimed) = claimed_rotation {
+        // A claim may have been written by another replica after this live
+        // entry was published. Put the exact durable snapshot in the lane
+        // immediately before the lifecycle proposal so its semantic change is
+        // measured from the claim it must settle, not from the stale entry.
+        // Older queued work still runs first and a newer durable revision is
+        // handled by the normal strict-precondition rebase.
+        event_log.observe_record(claimed);
+    }
     let mut live_tail = None;
     event_log.enqueue_retained_commit(
-        CommitMode::UpdateInheriting,
-        record,
-        events,
-        None,
+        CommitRequest {
+            mode: CommitMode::UpdateInheriting,
+            record,
+            events,
+            semantics: match rotation_precondition {
+                Some(rotation_precondition) => CommitSemantics {
+                    owned_fields: Some(RecordFields {
+                        status: true,
+                        context: true,
+                        rotation: true,
+                        handover: true,
+                        ..RecordFields::default()
+                    }),
+                    rotation_precondition: Some(rotation_precondition),
+                },
+                None => CommitSemantics::default(),
+            },
+            conversation_authority: authority,
+        },
         retained,
         |last_seq| live_tail = Some(last_seq.saturating_sub(event_count)),
     );

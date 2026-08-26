@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use layer3_adapter::ConversationUpdate;
 use layer3_adapter::{KernelAdapter, RuntimeSpec, TermSize, TerminalInput};
 use sha2::{Digest, Sha256};
 use tokio::sync::{broadcast, watch, Mutex};
@@ -22,6 +23,7 @@ use tokio::sync::{broadcast, watch, Mutex};
 /// streaming; this is the slack that keeps a fast turn from blocking on it.
 pub(crate) const CONVERSATION_BUFFER: usize = 64;
 
+use crate::coordination::{SessionBoundary, SessionLease};
 use crate::event::{Event, EventKind};
 use crate::provision_failure::StartFailure;
 pub(crate) use crate::provision_support::{runtime_capacity, runtime_options};
@@ -46,6 +48,16 @@ pub(crate) const PROVISION_ATTEMPTS: u32 = 4;
 /// rather than like it stalled.
 pub(crate) const DEFAULT_RETRY_BACKOFF_MS: u64 = 3_000;
 
+/// Immutable inputs shared by every attempt to start one runtime.
+#[derive(Clone, Copy)]
+pub(crate) struct RuntimeStartContext<'a> {
+    pub(crate) geometry: TerminalGeometry,
+    pub(crate) restore: Option<&'a Vec<u8>>,
+    pub(crate) platform_briefing: &'a str,
+    pub(crate) handover: Option<&'a crate::rotate::CoordinatedHandover>,
+    pub(crate) publication_token: &'a str,
+}
+
 impl SessionService {
     /// What becomes of the session if this cannot be done.
     ///
@@ -59,10 +71,16 @@ impl SessionService {
         session: &Session,
         spec: &SessionSpec,
         adapter: &Arc<dyn KernelAdapter>,
-        geometry: TerminalGeometry,
-        restore: Option<&Vec<u8>>,
-        platform_briefing: &str,
+        context: RuntimeStartContext<'_>,
+        lease: &mut Option<SessionLease>,
     ) -> Result<(), StartFailure> {
+        let RuntimeStartContext {
+            geometry,
+            restore,
+            platform_briefing,
+            handover,
+            publication_token,
+        } = context;
         let id = session.id.clone();
         // Checked again, because this also runs for a session being revived or
         // carried onto a replacement runtime — long after it was created, and
@@ -204,15 +222,46 @@ impl SessionService {
                 "provisioning at this session's own size"
             );
         }
+        self.renew_runtime_lease(lease.as_ref())
+            .await
+            .map_err(|error| {
+                StartFailure::transient(format!(
+                    "runtime authority expired before provider create: {error}"
+                ))
+            })?;
+        // New for every provider-create attempt. A failed attempt may already
+        // be visible at the provider, so a retry must reserve a later
+        // generation rather than reusing an identity recovery may have seen.
+        let reservation = match lease.as_ref() {
+            Some(held) => {
+                let token = format!("rres_{}", uuid::Uuid::new_v4().simple());
+                Some(
+                    self.store
+                        .reserve_runtime_generation(held, &token)
+                        .await
+                        .map_err(|error| {
+                            StartFailure::transient(format!(
+                                "a runtime generation could not be reserved: {error}"
+                            ))
+                        })?,
+                )
+            }
+            None => None,
+        };
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
+                generation: reservation.as_ref().map(|reserved| reserved.generation),
+                reservation_token: reservation.as_ref().map(|reserved| reserved.token.clone()),
                 size: TermSize {
                     cols: geometry.columns(),
                     rows: geometry.rows(),
                 },
                 capacity: runtime_capacity(spec.options.size),
-                subject_credential: spec.runtime_credential.clone(),
+                // The provider request predates the exact runtime target, so a
+                // credential selected here could be superseded by a late H1
+                // acknowledgement. Delivery happens after authority switches.
+                subject_credential: None,
                 options: options.clone(),
                 restore_from: restore.cloned(),
                 workspace,
@@ -232,9 +281,43 @@ impl SessionService {
             .await
             .map_err(StartFailure::from_provisioning)?;
 
-        // Recorded before anything else is attempted. From here a runtime
-        // exists, and a record that does not name it is one nothing can reclaim.
-        self.remember_runtime(&id, &handle).await;
+        let candidate = match (lease.as_ref(), reservation.as_ref()) {
+            (Some(held), Some(reserved)) => {
+                self.renew_runtime_lease(Some(held))
+                    .await
+                    .map_err(|error| {
+                        StartFailure::transient(format!(
+                            "runtime authority expired before candidate registration: {error}"
+                        ))
+                    })?;
+                Some(
+                    self.store
+                        .register_runtime_candidate(held, reserved, &handle.0)
+                        .await
+                        .map_err(|error| {
+                            StartFailure::transient(format!(
+                                "the provisioned runtime could not be registered durably: {error}"
+                            ))
+                        })?,
+                )
+            }
+            (None, None) => None,
+            _ => {
+                return Err(StartFailure::transient(
+                    "runtime reservation state did not match its operation lease".into(),
+                ))
+            }
+        };
+        let runtime_generation = candidate
+            .as_ref()
+            .map_or(0, |candidate| candidate.generation.get());
+
+        // Compatibility stores still name the handle immediately. Coordinated
+        // stores keep it as uncommitted-candidate cleanup debt until attach
+        // succeeds and the store switches authority atomically.
+        if lease.is_none() {
+            self.remember_runtime(&id, &handle).await;
+        }
         // And what it actually has, which is not always what it asked for.
         self.remember_skills(&id, &skills).await;
         self.note_progress(&id, ProvisioningStage::RuntimeCreated)
@@ -254,6 +337,13 @@ impl SessionService {
         // attaches no terminal: the two are exclusive by construction, and
         // opening both would put a kernel on two planes for one session.
         let conversing = session.capabilities.conversation;
+        self.renew_runtime_lease(lease.as_ref())
+            .await
+            .map_err(|error| {
+                StartFailure::transient(format!(
+                    "runtime authority expired before attachment: {error}"
+                ))
+            })?;
         let terminal = match conversing {
             false => Some(adapter.attach_terminal(&handle).await.map_err(|e| {
                 StartFailure::transient(format!("could not attach to the runtime: {e}"))
@@ -261,41 +351,123 @@ impl SessionService {
             true => None,
         };
         /*
-         * Folding starts before the conversation is open, not after it.
+         * Layer 2 owns the receiver until opening succeeds.
          *
-         * Opening one is not instantaneous and is not silent: an own-account
-         * session stops inside the open to ask its owner to sign in, and waits
-         * there for as long as a person takes. Draining only afterwards meant
-         * that request reached the log after the sign-in it was asking for,
-         * which is to say never — the session simply sat in `provisioning`
-         * with nothing to show for it.
-         *
-         * Nothing is lost if the open then fails: the sender drops, the folder
-         * closes the session's open turn and ends, and what it recorded on the
-         * way is what actually happened.
+         * An adapter can replay more than one channel's capacity before it
+         * returns, so opening and receiving must be polled together. Ordinary
+         * updates stay process-local until the candidate becomes authoritative;
+         * sign-in is the explicit exception because the adapter may wait inside
+         * `open_conversation` for its owner to act on that prompt.
          */
-        let conversation = match conversing {
+        let (conversation, mut conversation_opening) = match conversing {
             true => {
-                let (updates_tx, updates_rx) = tokio::sync::mpsc::channel(CONVERSATION_BUFFER);
-                crate::conversation_log::spawn_folder(
-                    Arc::clone(self),
-                    session.id.clone(),
-                    updates_rx,
-                );
-                Some(
-                    adapter
-                        .open_conversation(&handle, &options, updates_tx)
-                        .await
-                        .map_err(|e| {
-                            // A kernel that advertised a conversation and cannot open one
-                            // will not start being able to. Refused permanently so the
-                            // owner is told now rather than after the backoff.
-                            StartFailure::permanent(format!("could not open the conversation: {e}"))
-                        })?,
-                )
+                self.renew_runtime_lease(lease.as_ref())
+                    .await
+                    .map_err(|error| {
+                        StartFailure::transient(format!(
+                            "runtime authority expired before opening its conversation: {error}"
+                        ))
+                    })?;
+                let opening_authority = self
+                    .acquire_conversation_opening(
+                        &id,
+                        &handle.0,
+                        runtime_generation,
+                        candidate.as_ref(),
+                        lease.as_ref(),
+                    )
+                    .await
+                    .map_err(|error| {
+                        StartFailure::transient(format!(
+                            "durable conversation opening authority could not be acquired: {error}"
+                        ))
+                    })?;
+                let (updates_tx, mut opening) =
+                    crate::conversation_opening::ConversationOpening::channel(
+                        CONVERSATION_BUFFER,
+                        opening_authority,
+                        Arc::clone(&self.store),
+                    );
+                let renewal_authority = opening.authority().clone();
+                let opening_result: Result<_, StartFailure> = {
+                    let open = adapter.open_conversation(&handle, &options, updates_tx);
+                    tokio::pin!(open);
+                    let renewal = tokio::time::sleep(
+                        crate::provision_support::CONVERSATION_OPENING_RENEW_INTERVAL,
+                    );
+                    tokio::pin!(renewal);
+                    let mut receiving = true;
+                    loop {
+                        tokio::select! {
+                            result = &mut open => break Ok(result),
+                            () = &mut renewal => {
+                                if let Err(error) = self
+                                    .renew_conversation_opening(
+                                        &renewal_authority,
+                                        lease.as_ref(),
+                                    )
+                                    .await
+                                {
+                                    break Err(StartFailure::transient(format!(
+                                        "durable conversation opening authority could not be renewed: {error}"
+                                    )));
+                                }
+                                renewal.as_mut().reset(
+                                    tokio::time::Instant::now()
+                                        + crate::provision_support::CONVERSATION_OPENING_RENEW_INTERVAL,
+                                );
+                            }
+                            update = opening.receive(), if receiving => match update {
+                                Some(ConversationUpdate::SignInRequired { url, code, message }) => {
+                                    if !opening.can_publish_sign_in() {
+                                        break Err(StartFailure::permanent(
+                                            "the runtime emitted an ordinary conversation update before its opening sign-in prompt".into(),
+                                        ));
+                                    }
+                                    if let Err(error) = self
+                                        .persist_opening_sign_in(
+                                            &id,
+                                            &renewal_authority,
+                                            lease.as_ref(),
+                                            url,
+                                            code,
+                                            message,
+                                        )
+                                        .await
+                                    {
+                                        break Err(StartFailure::transient(format!(
+                                            "the opening sign-in prompt could not be recorded: {error}"
+                                        )));
+                                    }
+                                }
+                                Some(update) => opening.hold(update),
+                                None => receiving = false,
+                            }
+                        }
+                    }
+                };
+                match opening_result {
+                    Ok(Ok(channel)) => (Some(channel), Some(opening)),
+                    Ok(Err(error)) => {
+                        self.revoke_conversation_opening(&id, opening).await;
+                        // A kernel that advertised a conversation and cannot open one
+                        // will not start being able to. Refused permanently so the
+                        // owner is told now rather than after the backoff.
+                        return Err(StartFailure::permanent(format!(
+                            "could not open the conversation: {error}"
+                        )));
+                    }
+                    Err(error) => {
+                        self.revoke_conversation_opening(&id, opening).await;
+                        return Err(error);
+                    }
+                }
             }
-            false => None,
+            false => (None, None),
         };
+
+        let mut conversation_publication = None;
+        let result = async {
 
         let named_conversation = conversation
             .as_ref()
@@ -347,45 +519,164 @@ impl SessionService {
             Some(channel) => (Some(channel.input), Some(channel.output)),
             None => (None, None),
         };
-
         // Preparing a runtime takes long enough for its owner to stop, end, or
         // delete the session meanwhile. The store is the authority at the
         // installation boundary: publishing a live entry from the snapshot
         // passed to this task would otherwise revive a session after the
         // lifecycle operation had completed.
         let installation = self.lock_lifecycle(&id).await;
-        let current = match self.store.get(&id).await {
-            Ok(Some(record))
-                if record.session.wants_runtime()
-                    && record.session.kernel == session.kernel
-                    && record.runtime_id.as_deref() == Some(handle.0.as_str()) =>
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+        let ordering = self.conversation_order_gates.gate(&id);
+        let ordered_installation = ordering.lock().await;
+        let observed = self.store.get(&id).await.map_err(|error| {
+            StartFailure::transient(format!(
+                "the session could not be checked before its runtime was installed: {error}"
+            ))
+        })?;
+        let current = if lease.is_some() {
+            let Some(record) = observed else {
+                drop(installation);
+                return Err(StartFailure::transient(
+                    "the session disappeared before its candidate could become authoritative"
+                        .into(),
+                ));
+            };
+            let expected = lease
+                .as_ref()
+                .expect("the coordinated lease is present")
+                .boundary
+                .clone();
+            let owns_rotation = handover
+                .is_none_or(|handover| record.rotation_claim == handover.rotating.rotation_claim);
+            if !record.session.wants_runtime()
+                || record.session.kernel != session.kernel
+                || record.session.status != expected.status
+                || record.runtime_id != expected.authority.runtime_id
+                || !owns_rotation
             {
-                record
+                drop(installation);
+                return Err(StartFailure::transient(
+                    "the session changed before its candidate could become authoritative".into(),
+                ));
             }
-            Ok(current) => {
-                if let Some(mut record) = current {
-                    if record.runtime_id.as_deref() == Some(handle.0.as_str()) {
-                        record.runtime_id = None;
-                        self.persist_durably(&mut record, Vec::new())
+            self.renew_runtime_lease(lease.as_ref())
+                .await
+                .map_err(|error| {
+                    StartFailure::transient(format!(
+                        "runtime authority expired before the candidate switch: {error}"
+                    ))
+                })?;
+            let candidate = candidate.as_ref().ok_or_else(|| {
+                StartFailure::transient(
+                    "a coordinated runtime reached installation without a candidate".into(),
+                )
+            })?;
+            let first_switch = self
+                .store
+                .switch_runtime_authority(
+                    lease.as_mut().expect("the coordinated lease is present"),
+                    candidate,
+                )
+                .await;
+            // An unavailable response can hide a committed switch. The same
+            // candidate and lease token are an idempotent receipt; retry them
+            // exactly before considering another generation.
+            match first_switch {
+                Ok(_) => {}
+                Err(crate::store::StoreError::Unavailable(_)) => {
+                    self.store
+                        .switch_runtime_authority(
+                            lease.as_mut().expect("the coordinated lease is present"),
+                            candidate,
+                        )
+                        .await
+                        .map_err(|error| {
+                            StartFailure::transient(format!(
+                                "the runtime authority switch could not be confirmed: {error}"
+                            ))
+                        })?;
+                }
+                Err(error) => {
+                    drop(installation);
+                    return Err(StartFailure::transient(format!(
+                        "the runtime candidate could not become authoritative: {error}"
+                    )));
+                }
+            }
+            let switched_status = lease
+                .as_ref()
+                .expect("the switched lease is present")
+                .boundary
+                .status;
+            self.store
+                .get(&id)
+                .await
+                .map_err(|error| {
+                    StartFailure::transient(format!(
+                        "the switched runtime authority could not be reloaded: {error}"
+                    ))
+                })?
+                .filter(|record| {
+                    record.runtime_id.as_deref() == Some(handle.0.as_str())
+                        && record.session.status == switched_status
+                        && handover.is_none_or(|handover| {
+                            record.rotation_claim == handover.rotating.rotation_claim
+                        })
+                })
+                .ok_or_else(|| {
+                    StartFailure::transient(
+                        "the switched runtime no longer owns its installation boundary".into(),
+                    )
+                })?
+        } else {
+            match observed {
+                Some(record)
+                    if record.session.wants_runtime()
+                        && record.session.kernel == session.kernel
+                        && record.runtime_id.as_deref() == Some(handle.0.as_str()) =>
+                {
+                    record
+                }
+                current => {
+                    // The lifecycle gate keeps local publication, stop, and
+                    // readoption behind this cleanup. Input and conversation
+                    // ordering are already fenced by it and must not be held
+                    // across a slow provider call.
+                    drop(ordered_installation);
+                    drop(input_fence);
+                    let teardown = match current {
+                        Some(record)
+                            if record.runtime_id.as_deref() == Some(handle.0.as_str()) =>
+                        {
+                            self.teardown_compatibility_runtime(
+                                adapter,
+                                &record,
+                                "superseded runtime cleanup",
+                            )
                             .await
+                            .map(|_| ())
                             .map_err(|error| {
                                 StartFailure::transient(format!(
-                                    "the superseded runtime reference could not be cleared: {error}"
+                                    "the superseded runtime could not be settled safely: {error}"
                                 ))
-                            })?;
-                    }
+                            })
+                        }
+                        // This candidate is still owned by the in-flight create
+                        // that produced `handle`; it was never published as the
+                        // current row's authority. A delete or successor row
+                        // must therefore not prevent its stack owner from
+                        // reclaiming it.
+                        _ => adapter.terminate(&handle).await.map_err(|error| {
+                            StartFailure::unverified_attempt(format!(
+                                "the superseded runtime {} could not be torn down: {error}",
+                                handle.0
+                            ))
+                        }),
+                    };
+                    drop(installation);
+                    teardown?;
+                    return Ok(());
                 }
-                drop(installation);
-                if let Err(error) = adapter.terminate(&handle).await {
-                    tracing::warn!(session_id = %id, %error, "could not tear down a superseded runtime");
-                }
-                return Ok(());
-            }
-            Err(error) => {
-                drop(installation);
-                return Err(StartFailure::transient(format!(
-                    "the session could not be checked before its runtime was installed: {error}"
-                )));
             }
         };
         let mut ready = current;
@@ -395,7 +686,27 @@ impl SessionService {
         // `recovering` would be a state a replacement session never leaves.
         ready.session.recovery_state = RecoveryState::Normal;
         ready.session.stop_reason = None;
-        let mut ready_events = vec![Event {
+        ready.session.runtime_version = match ready.pending_handover.as_ref().map(|pending| {
+            &pending.target
+        }) {
+            Some(crate::store::PendingHandoverTarget::RuntimeVersion {
+                runtime_version,
+                ..
+            }) => {
+                Some(runtime_version.clone())
+            }
+            _ => self.runtime_version.clone(),
+        };
+        let mut ready_events = handover
+            .map(|handover| handover.completion_events.clone())
+            .unwrap_or_default();
+        if handover.is_some() {
+            ready.session.options = session.options.clone();
+            ready.session.capabilities = session.capabilities;
+            ready.session.rotations = session.rotations;
+            ready.session.rotated_at.clone_from(&session.rotated_at);
+        }
+        ready_events.push(Event {
             session_id: id.clone(),
             seq: 0,
             kind: EventKind::StatusChanged {
@@ -405,7 +716,7 @@ impl SessionService {
                 capability: None,
             },
             appended_at: String::new(),
-        }];
+        });
         if let Some(conversation_id) = named_conversation {
             ready_events.push(Event {
                 session_id: id.clone(),
@@ -414,13 +725,73 @@ impl SessionService {
                 appended_at: String::new(),
             });
         }
-        self.persist_durably(&mut ready, ready_events)
-            .await
-            .map_err(|error| {
-                StartFailure::transient(format!(
-                    "the runtime became usable but readiness could not be recorded: {error}"
-                ))
-            })?;
+        let readiness = match handover {
+            Some(handover) => {
+                self.complete_handover_durably(&mut ready, &handover.rotating, ready_events)
+                    .await
+            }
+            None => self.persist_durably(&mut ready, ready_events).await,
+        };
+        readiness.map_err(|error| {
+            StartFailure::transient(format!(
+                "the runtime became usable but readiness could not be recorded: {error}"
+            ))
+        })?;
+        if let Some(held) = lease.as_mut() {
+            let boundary = SessionBoundary::for_record(
+                &ready,
+                candidate
+                    .as_ref()
+                    .expect("a coordinated runtime has a candidate")
+                    .generation
+                    .get(),
+            );
+            self.advance_runtime_lease(held, &boundary)
+                .await
+                .map_err(|error| {
+                    StartFailure::transient(format!(
+                        "readiness committed but its runtime lease could not advance: {error}"
+                    ))
+                })?;
+        }
+        #[cfg(test)]
+        self.pause_live_install_if_armed().await;
+
+        // Reconstruct from the final ready record. Provisioning can revive a
+        // session that already had an unanswered request, and the opening FIFO
+        // may add another one immediately after this snapshot.
+        let final_history = self.readoption_history(&ready).await.map_err(|error| {
+            StartFailure::transient(format!(
+                "the runtime became usable but its conversation state could not be rebuilt: {error}"
+            ))
+        })?;
+
+        // Publication is the durable cross-replica handover. It happens only
+        // after readiness and final history are known, but before any buffered
+        // frame can be folded or the process-local entry becomes visible.
+        let (conversation_link, conversation_authority, opening_updates, conversation_updates) =
+            match conversation_opening.take() {
+                Some(opening) => {
+                    if let Err(error) = self
+                        .renew_conversation_opening(opening.authority(), lease.as_ref())
+                        .await
+                    {
+                        opening.revoke().await;
+                        return Err(StartFailure::transient(format!(
+                            "conversation opening authority expired before publication: {error}"
+                        )));
+                    }
+                    let (link, durable, held, updates, publication) =
+                        opening.publish(lease.as_ref()).await.map_err(|error| {
+                            StartFailure::transient(format!(
+                                "the conversation link could not be published durably: {error}"
+                            ))
+                        })?;
+                    conversation_publication = Some(publication);
+                    (Some(link), Some(durable), Some(held), Some(updates))
+                }
+                None => (None, None, None, None),
+            };
 
         let durable = ready.clone();
         let seeded = ready.session;
@@ -439,6 +810,11 @@ impl SessionService {
             environment_values,
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
+            runtime_generation,
+            publication_token: publication_token.to_string(),
+            publication_complete: false,
+            conversation_link,
+            conversation_authority,
             input: terminal_input.clone(),
             live: Some(live.clone()),
             terminal_ending: terminal_ending.clone(),
@@ -448,8 +824,8 @@ impl SessionService {
             memory_pressure: Default::default(),
             readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),
-            pending_approvals: Default::default(),
-            approval_locators: Default::default(),
+            pending_approvals: final_history.pending_approvals,
+            approval_locators: final_history.approval_locators,
             assembling: None,
             context_reading: None,
             attached: None,
@@ -457,20 +833,61 @@ impl SessionService {
             context_ref,
             captured_len,
         };
-        self.entries.write().await.insert(id.clone(), entry);
+        let replaced = self.entries.write().await.insert(id.clone(), entry);
+        if let (Some(handover), Some(replaced)) = (handover, replaced) {
+            if let Some(attached) = replaced.attached.as_ref() {
+                let _ = attached.supersede.send(handover.detached);
+            }
+        }
+        if let (Some(link), Some(updates)) = (conversation_link, opening_updates) {
+            if !self.fold_opening_updates_locked(&id, link, updates).await {
+                return Err(StartFailure::transient(
+                    "the conversation link was superseded during opening replay".into(),
+                ));
+            }
+        }
+        if let Some(held) = lease.as_mut() {
+            let replayed = self
+                .store
+                .get(&id)
+                .await
+                .map_err(|error| {
+                    StartFailure::transient(format!(
+                        "opening replay committed but its runtime boundary could not be reloaded: {error}"
+                    ))
+                })?
+                .ok_or_else(|| {
+                    StartFailure::transient(
+                        "the session disappeared while its opening replay was published".into(),
+                    )
+                })?;
+            let boundary = SessionBoundary::for_record(&replayed, runtime_generation);
+            if boundary != held.boundary {
+                self.advance_runtime_lease(held, &boundary)
+                    .await
+                    .map_err(|error| {
+                        StartFailure::transient(format!(
+                            "opening replay committed but its runtime lease could not advance: {error}"
+                        ))
+                    })?;
+            }
+        }
 
-        // The installation gate fences this exact runtime from stop, rotation,
-        // and replacement until acknowledgement and evidence recording finish.
+        // The durable provider-operation lease fences this exact runtime from
+        // another replica until acknowledgement and evidence recording finish.
+        // The local installation, input, and conversation-order gates keep this
+        // process from crossing the same unacknowledged credential boundary.
         // Refusal is not fatal: the runtime remains usable and the top-up sweep
         // retries while the marker stays empty.
-        if let Some(credential) = spec.runtime_credential.as_deref() {
+        if self.credentials.is_some() {
             match self
-                .install_credential_while_lifecycle_locked(
-                    &installation,
-                    &id,
-                    &handle,
-                    credential,
-                    || async { Ok::<bool, crate::store::StoreError>(true) },
+                    .install_prepared_credential_while_lifecycle_locked(
+                        &installation,
+                        session,
+                        spec.caller_credential.as_ref(),
+                        &handle,
+                    runtime_generation,
+                    lease.as_ref(),
                 )
                 .await
             {
@@ -490,28 +907,6 @@ impl SessionService {
                 }
             }
         }
-        drop(installation);
-        crate::resources::spawn_resource_watch(
-            Arc::clone(self),
-            id.clone(),
-            Arc::clone(adapter),
-            handle.clone(),
-        );
-
-        // Both run for the session's life, independent of any client. A
-        // session nobody is watching still paints its screen and still records
-        // what its agent did, which is what makes the log a record rather than
-        // a broadcast.
-        if let Some(output) = terminal_output {
-            spawn_relay(
-                Arc::clone(self),
-                id.clone(),
-                output,
-                screen,
-                live,
-                terminal_ending,
-            );
-        }
         if let Some(input) = &terminal_input {
             let _ = input
                 .send(TerminalInput::Resize(TermSize {
@@ -522,8 +917,74 @@ impl SessionService {
         }
 
         self.note_progress(&id, ProvisioningStage::Ready).await;
+        {
+            // This lock acquisition is the final cancellation point before
+            // publication. Every consumer is spawned and the entry is marked
+            // complete synchronously under one exact identity guard, so cleanup
+            // can never remove the entry while orphan tasks keep its channels.
+            let mut entries = self.entries.write().await;
+            let exact = entries.get(&id).is_some_and(|entry| {
+                entry.runtime.as_ref() == Some(&handle)
+                    && entry.runtime_generation == runtime_generation
+                    && entry.publication_token == publication_token
+                    && Arc::ptr_eq(&entry.screen, &screen)
+            });
+            if !exact {
+                return Err(StartFailure::transient(
+                    "the runtime entry changed before publication completed".into(),
+                ));
+            }
+            if let (Some(link), Some(updates)) = (conversation_link, conversation_updates) {
+                crate::conversation_log::spawn_folder(
+                    Arc::clone(self),
+                    id.clone(),
+                    link,
+                    runtime_generation,
+                    updates,
+                );
+                conversation_publication
+                    .take()
+                    .expect("a published conversation receiver retains its cleanup guard")
+                    .disarm();
+            }
+            crate::resources::spawn_resource_watch(
+                Arc::clone(self),
+                id.clone(),
+                Arc::clone(adapter),
+                handle.clone(),
+            );
+            // Both consumers run for the session's life, independent of any
+            // client. A session nobody is watching still paints its screen and
+            // records what its agent did.
+            if let Some(output) = terminal_output {
+                spawn_relay(
+                    Arc::clone(self),
+                    id.clone(),
+                    output,
+                    Arc::clone(&screen),
+                    live,
+                    terminal_ending,
+                );
+            }
+            entries
+                .get_mut(&id)
+                .expect("the exact entry remains locked")
+                .publication_complete = true;
+        }
+        drop(ordered_installation);
+        drop(input_fence);
+        drop(installation);
         tracing::info!(session_id = %id, "runtime ready");
         Ok(())
+        }
+        .await;
+        if let Some(publication) = conversation_publication.take() {
+            self.revoke_conversation_publication(&id, publication).await;
+        }
+        if let Some(opening) = conversation_opening.take() {
+            self.revoke_conversation_opening(&id, opening).await;
+        }
+        result
     }
 }
 

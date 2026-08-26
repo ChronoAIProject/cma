@@ -1560,5 +1560,9 @@ async fn kernels(
 mod tests;
 
 #[cfg(test)]
+#[path = "lifecycle_precedence_tests.rs"]
+mod lifecycle_precedence_tests;
+
+#[cfg(test)]
 #[path = "skill_description_tests.rs"]
 mod skill_description_tests;
