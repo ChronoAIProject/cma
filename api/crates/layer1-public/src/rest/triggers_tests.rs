@@ -165,6 +165,64 @@ fn launch_projection_excludes_credential_and_worker_internals() {
     }
 }
 
+#[tokio::test]
+async fn authority_failures_keep_auth_drift_rate_limit_and_outage_distinct() {
+    use layer2_core::TriggerAuthorityError as Authority;
+
+    for (error, status, code) in [
+        (
+            Authority::OwnerCredentialUnavailable,
+            StatusCode::UNAUTHORIZED,
+            "trigger_owner_credential_unavailable",
+        ),
+        (
+            Authority::ConnectionInactive,
+            StatusCode::CONFLICT,
+            "trigger_connection_inactive",
+        ),
+        (
+            Authority::AuthorityDrift,
+            StatusCode::CONFLICT,
+            "trigger_authority_drift",
+        ),
+        (
+            Authority::Transient,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "trigger_provider_unavailable",
+        ),
+        (
+            Authority::MalformedEvidence,
+            StatusCode::BAD_GATEWAY,
+            "trigger_provider_response_invalid",
+        ),
+        (
+            Authority::UpstreamNotForkable,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "upstream_not_forkable",
+        ),
+        (
+            Authority::ForkNetworkOccupied,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "fork_network_occupied",
+        ),
+    ] {
+        let response = TriggerProblem(TriggerServiceError::Authority(error)).into_response();
+        assert_eq!(response.status(), status);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["code"],
+            code
+        );
+    }
+
+    let response = TriggerProblem(TriggerServiceError::Authority(Authority::RateLimited {
+        retry_after: Some("17".into()),
+    }))
+    .into_response();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers().get(header::RETRY_AFTER).unwrap(), "17");
+}
+
 async fn send(
     app: &axum::Router,
     method: Method,
@@ -484,6 +542,7 @@ impl TriggerAuthorityVerifier for StaticAuthority {
             connection: selected,
             provenance: authority,
             source_sha: "a".repeat(40),
+            workflow_paths: Vec::new(),
         })
     }
 }

@@ -17,6 +17,8 @@ pub struct LaunchAuthority {
     pub provenance: AuthorityProvenance,
     /// Exact commit selected at the Start boundary.
     pub source_sha: String,
+    /// Publisher-authored GitHub Actions files visible at the exact source.
+    pub workflow_paths: Vec<String>,
 }
 
 #[async_trait]
@@ -103,6 +105,42 @@ pub trait TriggerConnectionManager: Send + Sync {
     ) -> Result<TriggerRepositorySelection, TriggerServiceError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TriggerAuthorityError {
+    #[error("the CMA sign-in no longer has usable delegated authority")]
+    OwnerCredentialUnavailable,
+    #[error("the selected connection does not exist or is unavailable to this subject")]
+    ConnectionNotFound,
+    #[error("the public workflow requires a personal GitHub connection")]
+    ConnectionNotPersonal,
+    #[error("the selected connection is inactive")]
+    ConnectionInactive,
+    #[error("the selected connection must be reauthorized")]
+    ReauthorizationRequired,
+    #[error("the selected connection does not satisfy required scope class {required}")]
+    InsufficientScope { required: String },
+    #[error("the selected authority changed since the retained preflight")]
+    AuthorityDrift,
+    #[error("the provider refused this subject or exact connection")]
+    Forbidden,
+    #[error("the requested provider resource no longer exists")]
+    ResourceNotFound,
+    #[error("the provider rate limit was reached")]
+    RateLimited { retry_after: Option<String> },
+    #[error("the provider is temporarily unavailable")]
+    Transient,
+    #[error("the provider rejected the typed operation")]
+    ProviderRejected,
+    #[error("the upstream repository currently does not permit this fork workflow")]
+    UpstreamNotForkable,
+    #[error("the connected account already uses an incompatible fork in this network")]
+    ForkNetworkOccupied,
+    #[error("the provider returned malformed authority evidence")]
+    MalformedEvidence,
+    #[error("GitHub connections require provider-backed CMA authentication")]
+    ProviderAuthenticationUnavailable,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TriggerServiceError {
     #[error("trigger resource was not found")]
@@ -113,8 +151,8 @@ pub enum TriggerServiceError {
     Validation(#[from] TriggerValidationError),
     #[error("trigger persistence failed: {0}")]
     Store(#[from] TriggerStoreError),
-    #[error("publisher authority could not be verified: {0}")]
-    Authority(String),
+    #[error("trigger authority could not be verified: {0}")]
+    Authority(#[from] TriggerAuthorityError),
 }
 
 pub struct TriggerService {
@@ -403,6 +441,38 @@ impl TriggerService {
             .collect())
     }
 
+    /// Internal bounded inventory for the in-process Launch worker.
+    ///
+    /// The store remains authoritative; callers must still acquire each
+    /// candidate's lease because this page can be stale immediately.
+    pub async fn worker_candidates(
+        &self,
+        updated_before: Option<String>,
+        page: TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
+        Ok(self
+            .launches
+            .list_launches(&LaunchQuery {
+                owner: None,
+                states: vec![
+                    super::LaunchState::Preflight,
+                    super::LaunchState::ForkPending,
+                    super::LaunchState::ForkReady,
+                    super::LaunchState::BranchPending,
+                    super::LaunchState::WorkspacePending,
+                    super::LaunchState::SandboxPending,
+                    super::LaunchState::SessionPending,
+                    super::LaunchState::PromptPending,
+                    super::LaunchState::Contributing,
+                    super::LaunchState::PrPending,
+                    super::LaunchState::FailedRetryable,
+                ],
+                updated_before,
+                page,
+            })
+            .await?)
+    }
+
     pub async fn update_overrides(
         &self,
         owner: &SubjectId,
@@ -433,6 +503,9 @@ impl TriggerService {
             .await?;
         launch.select_connection(verified.connection, now, correlation_id)?;
         launch.authority = Some(verified.provenance);
+        launch.source_sha = verified.source_sha;
+        launch.workflow_paths = verified.workflow_paths;
+        launch.workflow_risk_acknowledged = false;
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
     }
 
@@ -442,6 +515,7 @@ impl TriggerService {
         id: &LaunchId,
         expected_revision: u64,
         confirmation: Confirmation,
+        acknowledge_workflow_risk: bool,
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<Launch, TriggerServiceError> {
@@ -460,15 +534,25 @@ impl TriggerService {
             .await?;
         if verified.connection.service_id != connection.service_id
             || verified.connection.account.account_id != connection.account.account_id
+            || verified.source_sha != launch.source_sha
+            || verified.workflow_paths != launch.workflow_paths
         {
-            return Err(TriggerServiceError::Authority(
-                "the selected GitHub connection changed identity".into(),
-            ));
+            return Err(TriggerAuthorityError::AuthorityDrift.into());
         }
         launch.connection = Some(verified.connection);
         launch.authority = Some(verified.provenance);
         launch.source_sha = verified.source_sha;
-        launch.start(confirmation, now, correlation_id)?;
+        launch.workflow_paths = verified.workflow_paths;
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        if acknowledge_workflow_risk && !launch.workflow_paths.is_empty() {
+            let mut workflow_confirmation = confirmation.clone();
+            workflow_confirmation.action = super::ConfirmationAction::WorkflowRisk;
+            launch.acknowledge_workflow_risk(workflow_confirmation, correlation_id.clone())?;
+            launch.start(confirmation, now, correlation_id)?;
+        } else {
+            launch.start(confirmation, now, correlation_id)?;
+        }
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
     }
 
@@ -586,9 +670,7 @@ fn verify_authoritative_identity(
         || expected.canonical_name != verified.repository.canonical_name
         || verified.connection.service_id.trim().is_empty()
     {
-        return Err(TriggerServiceError::Authority(
-            "the authoritative repository identity does not match the draft".into(),
-        ));
+        return Err(TriggerAuthorityError::AuthorityDrift.into());
     }
     Ok(())
 }
