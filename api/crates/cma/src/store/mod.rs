@@ -74,6 +74,7 @@ pub async fn connect(
     database: &str,
     activity_retention: Duration,
     legacy_cutover_confirmed: bool,
+    coordination_cutover_confirmed: bool,
     deployment: &str,
     auth_encryption_key: &AuthEncryptionKey,
 ) -> Result<MongoStores, StoreError> {
@@ -81,7 +82,13 @@ pub async fn connect(
         .await
         .map_err(|e| StoreError::Unavailable(format!("connect: {e}")))?;
     Ok(MongoStores {
-        sessions: MongoSessionStore::open(&client, database, legacy_cutover_confirmed).await?,
+        sessions: MongoSessionStore::open(
+            &client,
+            database,
+            legacy_cutover_confirmed,
+            coordination_cutover_confirmed,
+        )
+        .await?,
         profiles: MongoEnvironmentProfileStore::open(&client, database).await?,
         activity: MongoActivityStore::open(&client, database, activity_retention).await?,
         users: MongoUserDirectoryStore::open(&client, database).await?,

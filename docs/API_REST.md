@@ -139,6 +139,11 @@ performing the operation again. Per-request transport headers, including
 `X-Request-Id` and CORS headers, are generated for the retry rather than copied
 from the first request.
 
+A completed refusal is an outcome too. In particular, if session input records
+`409 session_rotating`, the same key and body continue to replay that refusal
+after the handover finishes. Wait until the session is usable, then mint a new
+key for the intended post-rotation attempt.
+
 Three refusals make ambiguous retries explicit:
 
 | Status and code | Meaning |
@@ -841,7 +846,7 @@ Content-Type: application/json
 
 **It is a rotation.** The session's conversation is captured, its sandbox is released, a replacement is started under the other front-end, and the agent resumes from the capture. The session keeps its identifier, its history, its configuration and its place in its owner's list; `rotations` and `rotated_at` move exactly as they do for a runtime upgrade, and `rotated_at` is the moment the conversation was taken — anything the agent did after it did not travel.
 
-**`200 OK`** returns the session mid-handover, `status: "rotating"`. That is the window in which a client must refuse input rather than accept and lose it; the session becomes usable again on its own, and the event stream says when.
+**`200 OK`** returns the session mid-handover, `status: "rotating"`. During that window the server refuses prompts, approvals, interrupts, terminal input, resize, signals, and terminal attachment with `409 session-rotating`; the intended operation may be attempted after the session becomes usable again on its own. A keyed session-input refusal is a completed idempotent outcome, so that later attempt needs a fresh `Idempotency-Key`; reusing the refused key replays its original `409`. A client that needs to time the retry can re-read this session until its status is no longer `rotating`, then act on the status it receives. Clients should disable input during that window for experience, but correctness does not depend on them doing so.
 
 The response still carries the session's creator, granted `reach`, and recorded
 installed skills, with catalogue names whenever available. A handover changes
@@ -1397,7 +1402,7 @@ X-Request-Id: 94ea38a2-c2cb-4a43-9fe2-d25a60b59ec5
 | `403` | Authenticated, but the session belongs to another subject |
 | `404` | No matching REST path (`code: "not_found"`), or no such session/resource visible to this subject |
 | `405` | The REST path exists but does not accept this method (`code: "method_not_allowed"`) |
-| `409` | Conflicts with current state — session terminated, live-session limit reached, quoted rate card changed, or an operation with this key is still running (`code: "idempotency_in_flight"`) |
+| `409` | Conflicts with current state - session rotating, session terminated, live-session limit reached, quoted rate card changed, or an operation with this key is still running (`code: "idempotency_in_flight"`) |
 | `413` | The request body exceeds 2 MiB / 2,097,152 bytes (`code: "request_too_large"`) |
 | `415` | A JSON route was sent another media type (`code: "unsupported_media_type"`) |
 | `422` | Well-formed but semantically invalid — zero terminal dimension, invalid session size, or an operation key reused with another body (`code: "idempotency_key_reused"`) |
@@ -1409,6 +1414,14 @@ Every error response includes a non-empty `code` and uses
 `Content-Type: application/problem+json`. Clients tell failures apart by that
 code and by status, never by prose. `501` responses name the missing capability
 in `detail`, so a client learns what is unavailable rather than guessing.
+
+### Session rotation
+
+`session_rotating` is a retryable, self-resolving `409` response with problem
+type `session-rotating`. The server refuses every conversation and terminal
+input operation until the handover completes, preventing accepted input from
+reaching the outgoing runtime. It is distinct from `session_terminated`, which
+is final and cannot become usable through waiting.
 
 ### The three service refusals
 

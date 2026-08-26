@@ -37,6 +37,12 @@ axum = { version = "0.8", features = ["ws", "macros"] }
 futures-util = "0.3"
 governor = { version = "0.10", default-features = false, features = ["std", "dashmap"] }
 ipnet = "2.12"
+k8s-openapi = { version = "0.28", features = ["earliest"] }
+kube = { version = "4.2", default-features = false, features = [
+    "client",
+    "ring",
+    "rustls-tls",
+] }
 libc = "0.2"
 mongodb = { version = "3", default-features = false, features = [
     "bson-3",

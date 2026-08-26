@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::store::StoreError;
-use layer2_core::{CallerCredential, ServiceId, SessionId, SubjectId};
+use layer2_core::{CallerCredential, CredentialDeliveryTarget, ServiceId, SessionId, SubjectId};
 use sha2::{Digest, Sha256};
 
 use super::persistence::{
@@ -15,13 +15,53 @@ use super::persistence::{
 #[cfg(test)]
 use super::AUTH_SWEEP_TWO_LANE_BATCH_SIZE;
 use super::{
-    finish_sweep_page, random_token, AuthOperationBudget, AuthState, OrphanOwnerSweep, SweepEpoch,
+    credential_replace_before, finish_sweep_page, random_token, AuthOperationBudget, AuthState,
+    CredentialDeliveryAttempt, OrphanOwnerSweep, SweepEpoch, CREDENTIAL_EXPIRY_MARGIN,
 };
 
 /// Longer than the issuer's HTTP deadline, so an ordinary slow response never
 /// allows a second worker to overlap the first provider mint.
 const MINT_LEASE_LIFETIME: Duration = Duration::from_secs(45);
 const LEASE_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+fn credential_is_deliverable(credential: &DurableCredential, replace_before: SystemTime) -> bool {
+    credential
+        .expires_at
+        .is_none_or(|expires_at| expires_at > replace_before)
+}
+
+#[derive(Clone, Copy)]
+enum BoundPendingPolicy<'a> {
+    /// Observation carries bound B into runtime coordination without mutating it.
+    Defer,
+    /// The exact runtime interaction holder fences any abandoned prior attempt.
+    FenceWith(&'a CredentialDeliveryTarget),
+    /// An exact ACK may finish a bound value until its hard provider expiry.
+    FinishAcknowledged,
+}
+
+fn pending_must_be_preserved(
+    state: &SessionCredentialState,
+    replace_before: SystemTime,
+    bound_policy: BoundPendingPolicy<'_>,
+) -> bool {
+    let Some(pending) = state.pending.as_ref() else {
+        return false;
+    };
+    credential_is_deliverable(pending, replace_before)
+        || state
+            .pending_target
+            .as_ref()
+            .is_some_and(|bound_target| match bound_policy {
+                BoundPendingPolicy::Defer => true,
+                BoundPendingPolicy::FenceWith(target) => {
+                    bound_target == target && credential_is_deliverable(pending, SystemTime::now())
+                }
+                BoundPendingPolicy::FinishAcknowledged => {
+                    credential_is_deliverable(pending, SystemTime::now())
+                }
+            })
+}
 
 fn remember_pass_error(slot: &mut Option<StoreError>, error: StoreError, operation: &str) {
     tracing::warn!(error = %error, operation, "bounded credential reconciliation item failed");
@@ -50,6 +90,7 @@ fn empty_state(session: &SessionId) -> SessionCredentialState {
         request_bound_credential: None,
         current: None,
         pending: None,
+        pending_target: None,
         revoke_debt: Vec::new(),
         lease: None,
         retired: false,
@@ -217,6 +258,42 @@ async fn replace_state(
     store.replace_credential(current.generation, next).await
 }
 
+/// Move an observed stale pending value into revocation debt with one custody CAS.
+///
+/// `true` means this snapshot's pending value was eligible for retirement under
+/// the caller's runtime authority. The CAS may have lost to another replica;
+/// callers must reread in either case. An ambiguous store error is propagated
+/// so no value from this snapshot leaves custody. Current remains untouched
+/// until an exact replacement is delivered, acknowledged, and promoted.
+async fn retire_nondeliverable_pending(
+    store: &Arc<dyn AuthStore>,
+    current: &SessionCredentialState,
+    replace_before: SystemTime,
+    bound_policy: BoundPendingPolicy<'_>,
+    budget: Option<&AuthOperationBudget>,
+) -> Result<bool, StoreError> {
+    if current.pending.is_none() {
+        return Ok(false);
+    }
+    // Once B is bound, only the exact runtime authority can prove that an
+    // abandoned attempt is fenced. Ordinary sweep observation therefore
+    // preserves B between installation and its ACK. Conversely, preparation
+    // for a different fenced runtime may replace stale B before sending there.
+    if pending_must_be_preserved(current, replace_before, bound_policy) {
+        return Ok(false);
+    }
+
+    let mut next = current.clone();
+    let pending = next
+        .pending
+        .take()
+        .expect("the observed pending credential remains in the cloned snapshot");
+    next.pending_target = None;
+    queue_debt(&mut next, &pending);
+    let _ = replace_state(store, current, next, budget).await?;
+    Ok(true)
+}
+
 async fn clear_owned_lease(
     store: &Arc<dyn AuthStore>,
     session: &SessionId,
@@ -288,6 +365,7 @@ async fn queue_uncommitted(
             if let Some(held) = current.pending.take() {
                 queue_debt(&mut current, &held);
             }
+            current.pending_target = None;
             retain_request_bound_revocation_authority(&mut current);
             current.request_bound_credential = None;
             current.lease = None;
@@ -346,6 +424,7 @@ async fn commit_mint(
             if let Some(displaced) = current.pending.take() {
                 queue_debt(&mut current, &displaced);
             }
+            current.pending_target = None;
             current.pending = Some(credential.clone());
         } else if current.current.is_none() {
             current.current = Some(credential.clone());
@@ -490,6 +569,7 @@ async fn retire_state(store: Arc<dyn AuthStore>, session: SessionId) -> Result<(
         if let Some(held) = current.pending.take() {
             queue_debt(&mut current, &held);
         }
+        current.pending_target = None;
         retain_request_bound_revocation_authority(&mut current);
         current.request_bound_credential = None;
         current.lease = None;
@@ -511,6 +591,7 @@ async fn retire_reconciled_state_once(
     if let Some(held) = current.pending.take() {
         queue_debt(&mut current, &held);
     }
+    current.pending_target = None;
     retain_request_bound_revocation_authority(&mut current);
     current.request_bound_credential = None;
     current.lease = None;
@@ -889,8 +970,16 @@ impl AuthState {
         services: &[ServiceId],
         replacement: bool,
     ) -> Result<Option<String>, StoreError> {
-        self.mint_session_credential_inner(session, subject, services, None, replacement, None)
-            .await
+        self.mint_session_credential_inner(
+            session,
+            subject,
+            services,
+            None,
+            replacement,
+            credential_replace_before(),
+            None,
+        )
+        .await
     }
 
     async fn mint_session_credential_for_request(
@@ -906,6 +995,7 @@ impl AuthState {
             services,
             caller_credential,
             false,
+            credential_replace_before(),
             None,
         )
         .await
@@ -917,6 +1007,7 @@ impl AuthState {
         subject: &SubjectId,
         services: &[ServiceId],
         replacement: bool,
+        replace_before: SystemTime,
         budget: AuthOperationBudget,
     ) -> Result<Option<String>, StoreError> {
         self.mint_session_credential_inner(
@@ -925,11 +1016,13 @@ impl AuthState {
             services,
             None,
             replacement,
+            replace_before,
             Some(budget),
         )
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn mint_session_credential_inner(
         &self,
         session: &SessionId,
@@ -937,9 +1030,11 @@ impl AuthState {
         services: &[ServiceId],
         caller_credential: Option<&CallerCredential>,
         replacement: bool,
+        replace_before: SystemTime,
         budget: Option<AuthOperationBudget>,
     ) -> Result<Option<String>, StoreError> {
         let fingerprint = scope_fingerprint(services);
+        let mut replacement = replacement;
         let Some(issuer) = self.issuer.read().await.clone() else {
             loop {
                 let current = ensure_state(&self.store, session, budget.as_ref()).await?;
@@ -952,12 +1047,32 @@ impl AuthState {
                     };
                     validate_credential_grant(held, subject, &fingerprint)?;
                     validate_credential_grant(pending, subject, &fingerprint)?;
+                    if retire_nondeliverable_pending(
+                        &self.store,
+                        &current,
+                        replace_before,
+                        BoundPendingPolicy::Defer,
+                        budget.as_ref(),
+                    )
+                    .await?
+                    {
+                        continue;
+                    }
                     let effective = if replacement { pending } else { held };
-                    return Ok(Some(effective.value.expose().to_owned()));
+                    let selected = if replacement {
+                        pending_must_be_preserved(
+                            &current,
+                            replace_before,
+                            BoundPendingPolicy::Defer,
+                        )
+                    } else {
+                        credential_is_deliverable(effective, replace_before)
+                    };
+                    return Ok(selected.then(|| effective.value.expose().to_owned()));
                 }
                 if let Some(held) = current.current.as_ref() {
                     validate_credential_grant(held, subject, &fingerprint)?;
-                    if replacement {
+                    if replacement || !credential_is_deliverable(held, replace_before) {
                         // Without an issuer there is no way to create a new
                         // replacement. A recorded pending value is handled above.
                         return Ok(None);
@@ -1029,8 +1144,25 @@ impl AuthState {
                 };
                 validate_credential_grant(held, subject, &fingerprint)?;
                 validate_credential_grant(pending, subject, &fingerprint)?;
+                if retire_nondeliverable_pending(
+                    &self.store,
+                    &current,
+                    replace_before,
+                    BoundPendingPolicy::Defer,
+                    budget.as_ref(),
+                )
+                .await?
+                {
+                    replacement = true;
+                    continue;
+                }
                 let effective = if replacement { pending } else { held };
-                return Ok(Some(effective.value.expose().to_owned()));
+                let selected = if replacement {
+                    pending_must_be_preserved(&current, replace_before, BoundPendingPolicy::Defer)
+                } else {
+                    credential_is_deliverable(effective, replace_before)
+                };
+                return Ok(selected.then(|| effective.value.expose().to_owned()));
             }
             if replacement {
                 let Some(held) = current.current.as_ref() else {
@@ -1039,7 +1171,12 @@ impl AuthState {
                 validate_credential_grant(held, subject, &fingerprint)?;
             } else if let Some(held) = current.current.as_ref() {
                 validate_credential_grant(held, subject, &fingerprint)?;
-                return Ok(Some(held.value.expose().to_owned()));
+                if credential_is_deliverable(held, replace_before) {
+                    return Ok(Some(held.value.expose().to_owned()));
+                }
+                // The expired value remains current evidence until the fresh
+                // replacement is acknowledged and promoted.
+                replacement = true;
             }
 
             if current
@@ -1112,7 +1249,220 @@ impl AuthState {
         self.promote_pending_credential_inner(session, None).await
     }
 
-    /// Promote only the exact pending value a runtime acknowledged installing.
+    /// Bind only the exact pending value to one runtime delivery target.
+    ///
+    /// A retry may retarget the same value after its prior replica or runtime
+    /// disappeared without producing a promotable acknowledgement. The caller
+    /// holds the exact runtime interaction lease, so the target CAS is also the
+    /// ordering point against a late acknowledgement from the previous attempt.
+    pub(super) async fn bind_pending_credential_delivery_with_budget(
+        &self,
+        session: &SessionId,
+        delivered_value: &str,
+        target: &CredentialDeliveryTarget,
+        replace_before: SystemTime,
+        budget: &AuthOperationBudget,
+    ) -> Result<bool, StoreError> {
+        loop {
+            take_operation(Some(budget), 1, "pending credential target binding read")?;
+            let Some(mut current) = self.store.credential(session).await? else {
+                return Ok(false);
+            };
+            if current.retired {
+                return Ok(false);
+            }
+            let Some(pending) = current.pending.as_ref() else {
+                return Ok(false);
+            };
+            let Some(held) = current.current.as_ref() else {
+                return Ok(false);
+            };
+            if pending.value.expose() != delivered_value {
+                return Ok(false);
+            }
+            validate_credential_grant(pending, &held.owner, &held.scope_fingerprint)?;
+            if retire_nondeliverable_pending(
+                &self.store,
+                &current,
+                replace_before,
+                BoundPendingPolicy::FenceWith(target),
+                Some(budget),
+            )
+            .await?
+            {
+                continue;
+            }
+            if current.pending_target.as_ref() == Some(target) {
+                return Ok(true);
+            }
+
+            let before = current.clone();
+            current.pending_target = Some(target.clone());
+            if replace_state(&self.store, &before, current, Some(budget)).await? {
+                return Ok(true);
+            }
+        }
+    }
+
+    async fn remember_credential_delivery_cutoff(
+        &self,
+        session: &SessionId,
+        target: &CredentialDeliveryTarget,
+        replace_before: SystemTime,
+    ) {
+        let key = CredentialDeliveryAttempt::new(session, target);
+        let mut cutoffs = self.credential_delivery_cutoffs.lock().await;
+        let now = SystemTime::now();
+        cutoffs.retain(|attempt, cutoff| attempt.session != *session && *cutoff > now);
+        cutoffs.insert(key, replace_before);
+    }
+
+    async fn credential_delivery_cutoff(
+        &self,
+        session: &SessionId,
+        target: &CredentialDeliveryTarget,
+    ) -> Option<SystemTime> {
+        let key = CredentialDeliveryAttempt::new(session, target);
+        let mut cutoffs = self.credential_delivery_cutoffs.lock().await;
+        let now = SystemTime::now();
+        cutoffs.retain(|_, cutoff| *cutoff > now);
+        cutoffs.get(&key).copied()
+    }
+
+    async fn forget_credential_delivery_cutoff(
+        &self,
+        session: &SessionId,
+        target: &CredentialDeliveryTarget,
+    ) {
+        self.credential_delivery_cutoffs
+            .lock()
+            .await
+            .remove(&CredentialDeliveryAttempt::new(session, target));
+    }
+
+    /// Select the value for an exact runtime and bind pending custody before send.
+    ///
+    /// Ordinary credential lookup returns current A while replacement B is
+    /// pending, because A remains the value authorized for an already-running
+    /// runtime. A new or recovered runtime is different: it must install B and
+    /// become the acknowledgement that promotes it. This generation-CAS loop is
+    /// also the ordering point against an expired H1 finalizer. Whichever CAS
+    /// wins makes the other worker retry against either current B or H2's target.
+    async fn prepare_runtime_credential_delivery(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        caller_credential: Option<&CallerCredential>,
+        target: &CredentialDeliveryTarget,
+    ) -> Result<Option<String>, StoreError> {
+        let fingerprint = scope_fingerprint(services);
+        let replace_before = SystemTime::now() + CREDENTIAL_EXPIRY_MARGIN;
+        let mut replace_after_cleanup = false;
+
+        loop {
+            let mut current = ensure_state(&self.store, session, None).await?;
+            if current.retired {
+                return Ok(None);
+            }
+            if let Some(pending) = current.pending.as_ref() {
+                let Some(held) = current.current.as_ref() else {
+                    return Ok(None);
+                };
+                validate_credential_grant(held, subject, &fingerprint)?;
+                validate_credential_grant(pending, subject, &fingerprint)?;
+                if retire_nondeliverable_pending(
+                    &self.store,
+                    &current,
+                    replace_before,
+                    BoundPendingPolicy::FenceWith(target),
+                    None,
+                )
+                .await?
+                {
+                    replace_after_cleanup = true;
+                    continue;
+                }
+                let selected = pending.value.expose().to_owned();
+                if current.pending_target.as_ref() == Some(target) {
+                    self.remember_credential_delivery_cutoff(session, target, replace_before)
+                        .await;
+                    return Ok(Some(selected));
+                }
+
+                let before = current.clone();
+                current.pending_target = Some(target.clone());
+                if replace_state(&self.store, &before, current, None).await? {
+                    self.remember_credential_delivery_cutoff(session, target, replace_before)
+                        .await;
+                    return Ok(Some(selected));
+                }
+                continue;
+            }
+            if let Some(held) = current.current.as_ref() {
+                validate_credential_grant(held, subject, &fingerprint)?;
+                let held_is_deliverable = credential_is_deliverable(held, replace_before);
+                let held_value = held.value.expose().to_owned();
+                if replace_after_cleanup || !held_is_deliverable {
+                    let replacement = self
+                        .mint_session_credential_inner(
+                            session,
+                            subject,
+                            services,
+                            caller_credential,
+                            true,
+                            replace_before,
+                            None,
+                        )
+                        .await?;
+                    if replacement.is_none() {
+                        if held_is_deliverable {
+                            self.remember_credential_delivery_cutoff(
+                                session,
+                                target,
+                                replace_before,
+                            )
+                            .await;
+                            return Ok(Some(held_value));
+                        }
+                        return Ok(None);
+                    }
+                    replace_after_cleanup = false;
+                    continue;
+                }
+                self.remember_credential_delivery_cutoff(session, target, replace_before)
+                    .await;
+                return Ok(Some(held_value));
+            }
+            let selected = self
+                .mint_session_credential_inner(
+                    session,
+                    subject,
+                    services,
+                    caller_credential,
+                    false,
+                    replace_before,
+                    None,
+                )
+                .await?;
+            let Some(selected) = selected else {
+                return Ok(None);
+            };
+            if self.store.credential(session).await?.is_some_and(|state| {
+                state.retired
+                    || state.current.is_some()
+                    || state.pending.is_some()
+                    || state.lease.is_some()
+            }) {
+                continue;
+            }
+            // Request-bound and subject-token fallbacks have no expiring
+            // current/pending custody generation to confirm under this cutoff.
+            return Ok(Some(selected));
+        }
+    }
+
+    /// Promote only the exact pending value and runtime target acknowledged.
     ///
     /// Comparing the opaque value closes the response-loss race: a retry for B
     /// cannot accidentally promote a newer pending C, and an acknowledgement
@@ -1121,27 +1471,65 @@ impl AuthState {
         &self,
         session: &SessionId,
         delivered_value: &str,
+        target: &CredentialDeliveryTarget,
+        replace_before: SystemTime,
         budget: &AuthOperationBudget,
     ) -> Result<bool, StoreError> {
+        self.promote_delivered_credential_inner(
+            session,
+            delivered_value,
+            target,
+            replace_before,
+            Some(budget),
+        )
+        .await
+    }
+
+    async fn promote_delivered_credential_inner(
+        &self,
+        session: &SessionId,
+        delivered_value: &str,
+        target: &CredentialDeliveryTarget,
+        replace_before: SystemTime,
+        budget: Option<&AuthOperationBudget>,
+    ) -> Result<bool, StoreError> {
         loop {
-            take_operation(Some(budget), 1, "delivered credential promotion read")?;
+            take_operation(budget, 1, "delivered credential promotion read")?;
             let Some(mut current) = self.store.credential(session).await? else {
                 return Ok(false);
             };
             if current.retired {
                 return Ok(false);
             }
-            if current
+            if let Some(held) = current
                 .current
                 .as_ref()
-                .is_some_and(|held| held.value.expose() == delivered_value)
+                .filter(|held| held.value.expose() == delivered_value)
             {
-                return Ok(true);
+                return Ok(credential_is_deliverable(held, replace_before));
             }
             let Some(replacement) = current.pending.as_ref() else {
                 return Ok(false);
             };
+            let Some(held) = current.current.as_ref() else {
+                return Ok(false);
+            };
             if replacement.value.expose() != delivered_value {
+                return Ok(false);
+            }
+            validate_credential_grant(replacement, &held.owner, &held.scope_fingerprint)?;
+            if retire_nondeliverable_pending(
+                &self.store,
+                &current,
+                replace_before,
+                BoundPendingPolicy::FinishAcknowledged,
+                budget,
+            )
+            .await?
+            {
+                continue;
+            }
+            if current.pending_target.as_ref() != Some(target) {
                 return Ok(false);
             }
 
@@ -1150,10 +1538,11 @@ impl AuthState {
                 .pending
                 .take()
                 .expect("the exact pending credential was checked above");
+            current.pending_target = None;
             if let Some(displaced) = current.current.replace(replacement) {
                 queue_debt(&mut current, &displaced);
             }
-            if replace_state(&self.store, &before, current, Some(budget)).await? {
+            if replace_state(&self.store, &before, current, budget).await? {
                 return Ok(true);
             }
         }
@@ -1173,6 +1562,7 @@ impl AuthState {
             let Some(replacement) = current.pending.take() else {
                 return Ok(false);
             };
+            current.pending_target = None;
             let before = current.clone();
             if current.retired {
                 queue_debt(&mut current, &replacement);
@@ -1389,6 +1779,70 @@ impl layer2_core::CredentialSource for AuthState {
     ) -> Result<Option<String>, StoreError> {
         self.mint_session_credential_for_request(session, subject, services, caller_credential)
             .await
+    }
+
+    async fn prepare_credential_delivery(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        caller_credential: Option<&CallerCredential>,
+        target: &CredentialDeliveryTarget,
+    ) -> Result<Option<String>, StoreError> {
+        self.prepare_runtime_credential_delivery(
+            session,
+            subject,
+            services,
+            caller_credential,
+            target,
+        )
+        .await
+    }
+
+    async fn confirm_credential_delivery(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        delivered_value: &str,
+        target: &CredentialDeliveryTarget,
+    ) -> Result<bool, StoreError> {
+        let replace_before = self
+            .credential_delivery_cutoff(session, target)
+            .await
+            .unwrap_or_else(credential_replace_before);
+        let promotion = self
+            .promote_delivered_credential_inner(
+                session,
+                delivered_value,
+                target,
+                replace_before,
+                None,
+            )
+            .await;
+        if promotion.is_ok() {
+            self.forget_credential_delivery_cutoff(session, target)
+                .await;
+        }
+        if promotion? {
+            return Ok(true);
+        }
+
+        // Deployments without a per-session issuer can legitimately have no
+        // current/pending custody value: their session presents a pinned request
+        // credential or the subject's current access token. Re-read that source
+        // before recording local evidence. Durable current/pending custody, when
+        // present, already failed exact confirmation above and must stay closed.
+        if self.store.credential(session).await?.is_some_and(|state| {
+            state.retired || state.current.is_some() || state.pending.is_some()
+        }) {
+            return Ok(false);
+        }
+        Ok(self
+            .mint_session_credential_for_request(session, subject, services, None)
+            .await?
+            .as_deref()
+            == Some(delivered_value))
     }
 
     async fn tracks_subject_credential(&self, session: &SessionId) -> Result<bool, StoreError> {

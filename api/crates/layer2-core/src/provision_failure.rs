@@ -15,13 +15,14 @@ use std::time::Duration;
 
 use layer3_adapter::{AdapterError, KernelAdapter, RuntimeHandle};
 
+use crate::coordination::SessionLease;
+use crate::error::CoreError;
 use crate::event::EventKind;
 use crate::ids::SessionId;
-use crate::provision::PROVISION_ATTEMPTS;
-use crate::service::SessionService;
+use crate::provision::{RuntimeStartContext, PROVISION_ATTEMPTS};
+use crate::service::{store_failed, SessionService};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus, StopReason};
-use crate::store::StoreError;
-use crate::terminal::TerminalGeometry;
+use crate::store::{SessionRecord, StoreError};
 
 const AT_CAPACITY_REASON: &str = "This deployment has no room for a session this size right now. Nothing is wrong with your session or your request — stop a session, or ask for a smaller one, and try again.";
 
@@ -43,6 +44,16 @@ pub(crate) struct StartFailure {
     /// arrived at typed, and a caller downstream can act on a name where it
     /// can do nothing with a sentence that happens to contain one.
     pub(crate) capability: Option<String>,
+    /// Which runtime identity this failure is allowed to clean up.
+    cleanup: StartFailureCleanup,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StartFailureCleanup {
+    /// The failed attempt still agrees with the current durable row.
+    DurableRecord,
+    /// Cancellation or a concurrent successor made row-derived cleanup unsafe.
+    UnverifiedAttempt,
 }
 
 impl StartFailure {
@@ -52,6 +63,7 @@ impl StartFailure {
             reason,
             retryable: true,
             capability: None,
+            cleanup: StartFailureCleanup::DurableRecord,
         }
     }
 
@@ -61,7 +73,29 @@ impl StartFailure {
             reason,
             retryable: false,
             capability: None,
+            cleanup: StartFailureCleanup::DurableRecord,
         }
+    }
+
+    /// A transient failure whose exact runtime authority cannot be re-established.
+    ///
+    /// Retrying may strand an existing candidate and create another; deriving
+    /// cleanup from the current row could instead delete a successor.
+    pub(crate) fn unverified_attempt(reason: String) -> Self {
+        Self {
+            reason,
+            retryable: true,
+            capability: None,
+            cleanup: StartFailureCleanup::UnverifiedAttempt,
+        }
+    }
+
+    fn may_retry_start(&self) -> bool {
+        self.retryable && self.cleanup == StartFailureCleanup::DurableRecord
+    }
+
+    fn may_clean_up_durable_record(&self) -> bool {
+        self.cleanup == StartFailureCleanup::DurableRecord
     }
 
     /// Name the ability this failure was about.
@@ -114,8 +148,9 @@ pub(crate) enum Abandonment {
     /// owner's list, and — for a rotation — a snapshot taken precisely so it
     /// could be carried. `CLAUDE.md` §5 makes losing that as severe as losing
     /// the data, and a rotation is something a *deployment* caused rather than
-    /// anything its owner asked for. So it goes back to resting, keeps
-    /// everything, and is left for the next sweep to try again.
+    /// anything its owner asked for. An ordinary revival goes back to resting;
+    /// a descriptor-backed handover remains rotating so reconciliation retries
+    /// it without waiting for its owner.
     Keep,
 }
 
@@ -130,9 +165,8 @@ impl SessionService {
         session: &Session,
         spec: &SessionSpec,
         adapter: &Arc<dyn KernelAdapter>,
-        geometry: TerminalGeometry,
-        restore: Option<&Vec<u8>>,
-        platform_briefing: &str,
+        context: RuntimeStartContext<'_>,
+        lease: &mut Option<SessionLease>,
     ) -> Result<(), StartFailure> {
         let mut backoff = Duration::from_millis(
             self.retry_backoff_ms
@@ -145,7 +179,7 @@ impl SessionService {
 
         for attempt in 1..=PROVISION_ATTEMPTS {
             match self
-                .start_runtime(session, spec, adapter, geometry, restore, platform_briefing)
+                .start_runtime(session, spec, adapter, context, lease)
                 .await
             {
                 Ok(()) => {
@@ -158,18 +192,22 @@ impl SessionService {
                     }
                     return Ok(());
                 }
-                Err(failure) if !failure.retryable => {
-                    // The answer will not change, so waiting out the backoff
-                    // only delays telling the owner something already known.
+                Err(failure) if !failure.may_retry_start() => {
+                    // A permanent answer cannot improve with backoff. An
+                    // unverified attempt cannot be retried either: the next
+                    // attempt could strand a candidate, while cleanup
+                    // derived from the row could delete a concurrent successor.
                     tracing::warn!(
                         session_id = %session.id,
                         reason = %failure.reason,
-                        "this session cannot be started at all; not retrying"
+                        "this runtime start cannot be retried safely"
                     );
-                    if let Err(error) = self.discard_runtime(&session.id, adapter).await {
-                        return Err(StartFailure::transient(format!(
-                            "the failed runtime could not be discarded safely: {error}"
-                        )));
+                    if lease.is_none() && failure.may_clean_up_durable_record() {
+                        if let Err(error) = self.discard_runtime(&session.id, adapter).await {
+                            return Err(StartFailure::unverified_attempt(format!(
+                                "the failed runtime could not be discarded safely: {error}"
+                            )));
+                        }
                     }
                     return Err(failure);
                 }
@@ -181,10 +219,12 @@ impl SessionService {
                         reason = %failure.reason,
                         "could not start the runtime; trying again"
                     );
-                    if let Err(error) = self.discard_runtime(&session.id, adapter).await {
-                        return Err(StartFailure::transient(format!(
-                            "the failed runtime could not be discarded safely: {error}"
-                        )));
+                    if lease.is_none() {
+                        if let Err(error) = self.discard_runtime(&session.id, adapter).await {
+                            return Err(StartFailure::unverified_attempt(format!(
+                                "the failed runtime could not be discarded safely: {error}"
+                            )));
+                        }
                     }
                     last = failure;
                 }
@@ -214,20 +254,55 @@ impl SessionService {
         &self,
         id: &SessionId,
         adapter: &Arc<dyn KernelAdapter>,
-    ) -> Result<(), StoreError> {
-        let Some(mut record) = self.store.get(id).await? else {
+    ) -> Result<(), CoreError> {
+        let Some(record) = self.store.get(id).await.map_err(store_failed)? else {
             return Ok(());
         };
-        let Some(handle) = record.runtime_id.clone().map(RuntimeHandle) else {
+        if record.runtime_id.is_none() {
             return Ok(());
-        };
-        record.runtime_id = None;
-        self.persist_durably(&mut record, Vec::new()).await?;
-        self.entries.write().await.remove(id);
-        if let Err(e) = adapter.terminate(&handle).await {
-            tracing::warn!(session_id = %id, error = %e, "could not discard a failed runtime");
         }
+        self.teardown_compatibility_runtime(adapter, &record, "failed runtime cleanup")
+            .await?;
+        self.entries.write().await.remove(id);
         Ok(())
+    }
+
+    /// Delete one compatibility runtime before conditionally clearing its record.
+    ///
+    /// Keeping the handle durable through provider success makes a transient
+    /// teardown failure retryable. A successful delete followed by a failed
+    /// clear is safe too: provider deletion is idempotent, and the semantic
+    /// clear refuses a changed lifecycle, claim, or successor runtime.
+    pub(crate) async fn teardown_compatibility_runtime(
+        &self,
+        adapter: &Arc<dyn KernelAdapter>,
+        claimed: &SessionRecord,
+        operation: &str,
+    ) -> Result<SessionRecord, CoreError> {
+        let handle = claimed
+            .runtime_id
+            .clone()
+            .map(RuntimeHandle)
+            .ok_or_else(|| {
+                CoreError::RuntimeUnavailable(format!(
+                    "{operation} requires one durable compatibility runtime"
+                ))
+            })?;
+        self.require_compatibility_provider_mutation(&claimed.session.id, operation)
+            .await?;
+        adapter.terminate(&handle).await.map_err(|error| {
+            CoreError::RuntimeUnavailable(format!(
+                "{operation} could not tear down runtime {}: {error}",
+                handle.0
+            ))
+        })?;
+
+        let mut cleared = claimed.clone();
+        cleared.runtime_id = None;
+        self.clear_compatibility_runtime_durably(&mut cleared, claimed)
+            .await
+            .map_err(store_failed)?;
+        Ok(cleared)
     }
 
     /// Give up on a session, saying why, and take any runtime down with it.
@@ -241,8 +316,17 @@ impl SessionService {
         adapter: &Arc<dyn KernelAdapter>,
         failure: &StartFailure,
         outcome: Abandonment,
-    ) -> Result<(), StoreError> {
+        rotation_claim: Option<&str>,
+    ) -> Result<Option<SessionRecord>, CoreError> {
         let reason = failure.reason.as_str();
+        if !failure.may_clean_up_durable_record() {
+            tracing::error!(
+                session_id = %id,
+                reason,
+                "runtime cleanup authority is unverified; leaving durable authority unchanged"
+            );
+            return self.store.get(id).await.map_err(store_failed);
+        }
         // A session that already existed survives this. Its runtime could not
         // be replaced, which is a fact about a provider at a moment, and
         // retiring it would discard an identifier, a history, a place in its
@@ -267,23 +351,63 @@ impl SessionService {
             keeping = keep,
             "a runtime could not be brought up"
         );
-        let (status, stop_reason, recovery) = match keep {
-            false => (
-                SessionStatus::Terminated,
-                StopReason::Error,
-                RecoveryState::Retired,
-            ),
-            // Reclaimed and revivable, which is exactly what it is: the
-            // attempt has ended, so `Recovering` would claim one is still in
-            // flight and nothing would ever correct it.
-            true => (SessionStatus::Idle, StopReason::Error, RecoveryState::Idle),
-        };
-
-        let runtime = match self.store.get(id).await? {
+        let committed = match self.store.get(id).await.map_err(store_failed)? {
             Some(mut record) => {
-                let handle = record.runtime_id.take().map(RuntimeHandle);
+                let descriptor_handover = match (rotation_claim, record.rotation_claim.as_deref()) {
+                    (Some(expected), Some(current)) if expected == current => {
+                        match record.pending_handover.as_ref() {
+                            Some(pending) if pending.claim == expected => true,
+                            None => false,
+                            Some(_) => {
+                                return Err(store_failed(StoreError::SessionAuthorityChanged {
+                                    id: id.clone(),
+                                }));
+                            }
+                        }
+                    }
+                    (None, None) if record.pending_handover.is_none() => false,
+                    (None, None) => {
+                        // Only an explicit owner stop may leave an unconsumed
+                        // descriptor idle without its active claim. A generic
+                        // failure path cannot silently convert that recovery
+                        // boundary into an ordinary revival.
+                        return Err(store_failed(StoreError::SessionAuthorityChanged {
+                            id: id.clone(),
+                        }));
+                    }
+                    _ => {
+                        return Err(store_failed(StoreError::SessionAuthorityChanged {
+                            id: id.clone(),
+                        }));
+                    }
+                };
+                let retry_handover = keep && descriptor_handover;
+                let (status, stop_reason, recovery) = if retry_handover {
+                    // H1 is already gone and this descriptor is the only
+                    // authoritative source for H2. Preserve the exact claim
+                    // and descriptor, and keep the public lifecycle fenced so
+                    // the ordinary reconciliation sweep retries it.
+                    (SessionStatus::Rotating, None, record.session.recovery_state)
+                } else if keep {
+                    // Reclaimed and owner-revivable. No automatic attempt is
+                    // in flight, so `Recovering` would overstate its state.
+                    record.rotation_claim = None;
+                    (
+                        SessionStatus::Idle,
+                        Some(StopReason::Error),
+                        RecoveryState::Idle,
+                    )
+                } else {
+                    record.rotation_claim = None;
+                    record.pending_handover = None;
+                    (
+                        SessionStatus::Terminated,
+                        Some(StopReason::Error),
+                        RecoveryState::Retired,
+                    )
+                };
                 record.session.status = status;
-                record.session.stop_reason = Some(stop_reason);
+                record.session.stop_reason = stop_reason;
                 record.session.recovery_state = recovery;
                 let session_id = record.session.id.clone();
                 self.persist_durably(
@@ -293,16 +417,19 @@ impl SessionService {
                         seq: 0,
                         kind: EventKind::StatusChanged {
                             status,
-                            stop_reason: Some(stop_reason),
+                            stop_reason,
                             // The reason travels with the event so the person
                             // watching learns what the log already knew —
                             // and, where the session survives, that it
                             // survived, because a stop reason of `error`
                             // otherwise reads as the end of it.
-                            detail: Some(match keep {
-                                false => reason.to_string(),
-                                true => format!(
-                                    "{reason}. This session was not lost: it is                                          resting and will be tried again."
+                            detail: Some(match (keep, retry_handover) {
+                                (false, _) => reason.to_string(),
+                                (true, true) => format!(
+                                    "{reason}. This session was not lost: its stored handover remains fenced and will be retried automatically."
+                                ),
+                                (true, false) => format!(
+                                    "{reason}. This session was not lost: it is resting and can be revived."
                                 ),
                             }),
                             // Named where there is a name. This is the
@@ -314,8 +441,9 @@ impl SessionService {
                         appended_at: String::new(),
                     }],
                 )
-                .await?;
-                handle
+                .await
+                .map_err(store_failed)?;
+                Some(record)
             }
             None => None,
         };
@@ -325,11 +453,25 @@ impl SessionService {
         // A runtime may exist even though the session failed — provisioning can
         // succeed and attaching still fail. Leaving it running would be the
         // leak this design exists to prevent.
-        if let Some(handle) = runtime {
-            if let Err(e) = adapter.terminate(&handle).await {
-                tracing::warn!(session_id = %id, error = %e, "could not tear down the runtime");
+        let settled = match committed {
+            Some(record) if record.runtime_id.is_some() => self
+                .teardown_compatibility_runtime(adapter, &record, "runtime abandonment")
+                .await
+                .map(Some),
+            committed => Ok(committed),
+        }?;
+
+        if !keep {
+            if let Some(source) = self.credentials.as_ref() {
+                if let Err(error) = source.release(id).await {
+                    tracing::error!(
+                        session_id = %id,
+                        %error,
+                        "could not retire the abandoned session's credential custody"
+                    );
+                }
             }
         }
-        Ok(())
+        Ok(settled)
     }
 }

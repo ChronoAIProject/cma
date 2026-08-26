@@ -53,8 +53,8 @@ response `X-Request-Id` is reported to the observer as `undefined`.
 
 ## Reconnect policy
 
-- Transport failures, `429`, and server failures are retried with bounded
-  exponential delay and jitter.
+- Transport failures, exact `409 session_rotating` refusals, `429`, and server
+  failures are retried with bounded exponential delay and jitter.
 - An SSE `retry` value takes precedence after a connected stream closes.
 - Repeated connections that deliver no event are bounded by `maxEmptyConnections`
   (four by default).
