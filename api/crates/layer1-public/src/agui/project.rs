@@ -296,19 +296,47 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             request_id,
             action,
             detail,
-        } => Projected {
+        } => {
+            let reason = reason_for(action.as_deref());
+            let message = detail.clone().or_else(|| action.clone());
+            Projected {
+                events: vec![
+                    make(
+                        "RUN_FINISHED",
+                        serde_json::json!({ "outcome": {
+                            "type": "interrupt",
+                            "interrupts": [{
+                                "id": request_id,
+                                "reason": reason,
+                                "message": message,
+                            }],
+                        }}),
+                    ),
+                    make(
+                        "STATE_DELTA",
+                        serde_json::json!({ "delta": [{
+                            "op": "add",
+                            "path": pending_approval_path(request_id),
+                            "value": {
+                                "id": request_id,
+                                "reason": reason,
+                                "message": message,
+                            },
+                        }] }),
+                    ),
+                ],
+                ending: Some(Ending::Interrupted),
+            }
+        }
+        EventKind::ApprovalResolved { request_id, .. } => Projected {
             events: vec![make(
-                "RUN_FINISHED",
-                serde_json::json!({ "outcome": {
-                    "type": "interrupt",
-                    "interrupts": [{
-                        "id": request_id,
-                        "reason": reason_for(action.as_deref()),
-                        "message": detail.clone().or_else(|| action.clone()),
-                    }],
-                }}),
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "remove",
+                    "path": pending_approval_path(request_id),
+                }] }),
             )],
-            ending: Some(Ending::Interrupted),
+            ending: None,
         },
         EventKind::TurnCompleted => Projected {
             events: vec![make(
@@ -493,8 +521,7 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             ending: None,
         },
         // Recorded for the log's own sake and carried by other interfaces. No
-        // honest AG-UI shape exists for a resize or an attachment, and an
-        // approval's resolution is already known to whoever sent it.
+        // honest AG-UI shape exists for a resize or an attachment.
         _ => Projected::nothing(),
     };
     projected.with_final_cursor(event.seq)
@@ -518,6 +545,19 @@ fn reason_for(action: Option<&str>) -> String {
         Some(action) => format!("cma:{action}"),
         None => "confirmation".to_string(),
     }
+}
+
+/// The dynamic state member owned by one approval request.
+fn pending_approval_path(request_id: &str) -> String {
+    format!(
+        "/pendingApprovals/{}",
+        escape_json_pointer_token(request_id)
+    )
+}
+
+/// Encode one RFC 6901 reference token, in the order the RFC requires.
+fn escape_json_pointer_token(token: &str) -> String {
+    token.replace('~', "~0").replace('/', "~1")
 }
 
 #[cfg(test)]
