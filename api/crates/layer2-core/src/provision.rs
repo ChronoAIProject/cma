@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use layer3_adapter::{KernelAdapter, RuntimeSpec, TermSize, TerminalInput};
+use sha2::{Digest, Sha256};
 use tokio::sync::{broadcast, watch, Mutex};
 
 /// How many updates may queue between a kernel and the folder.
@@ -185,6 +186,7 @@ impl SessionService {
             .into_iter()
             .map(|service| service.0)
             .collect();
+        let workspace = self.workspace_for(&id).await?;
         // Kept for redaction: a tool body must not carry a value the session
         // was handed, and these are exactly those values.
         let environment_values: Vec<String> = environment.variables.values().cloned().collect();
@@ -207,7 +209,7 @@ impl SessionService {
                 subject_credential: spec.runtime_credential.clone(),
                 options: options.clone(),
                 restore_from: restore.cloned(),
-                workspace: None,
+                workspace,
                 skills: skills
                     .iter()
                     .map(|pack| layer3_adapter::SkillPackage {
@@ -421,6 +423,7 @@ impl SessionService {
         event_log.observe_record(&durable);
         let entry = SessionEntry {
             session: seeded,
+            trigger_origin: durable.trigger_origin.clone(),
             event_log,
             // Evidence means the adapter acknowledged this exact value, not
             // merely that provisioning intends to send it.
@@ -513,5 +516,62 @@ impl SessionService {
         self.note_progress(&id, ProvisioningStage::Ready).await;
         tracing::info!(session_id = %id, "runtime ready");
         Ok(())
+    }
+}
+
+impl SessionService {
+    /// Resolve and integrity-check the repository package for this generation.
+    pub(crate) async fn workspace_for(
+        &self,
+        id: &crate::SessionId,
+    ) -> Result<Option<layer3_adapter::WorkspacePackage>, StartFailure> {
+        let record = self.store.get(id).await.map_err(|error| {
+            StartFailure::transient(format!(
+                "this session's workspace authority could not be read: {error}"
+            ))
+        })?;
+        let Some(record) = record else {
+            return Err(StartFailure::permanent(
+                "this Trigger session no longer exists".to_string(),
+            ));
+        };
+        let Some(origin) = record.trigger_origin else {
+            return Ok(None);
+        };
+        let source = self.workspaces.as_ref().ok_or_else(|| {
+            StartFailure::permanent(
+                "this Trigger session has no configured workspace source".to_string(),
+            )
+        })?;
+        let archive = source
+            .load_workspace(&record.session.owner, &origin)
+            .await
+            .map_err(|error| match error {
+                crate::store::StoreError::Unavailable(detail) => StartFailure::transient(format!(
+                    "this Trigger session's workspace could not be loaded: {detail}"
+                )),
+                other => StartFailure::permanent(format!(
+                    "this Trigger session's workspace authority is malformed: {other}"
+                )),
+            })?
+            .ok_or_else(|| {
+                StartFailure::permanent(
+                    "this Trigger session's repository workspace is missing".to_string(),
+                )
+            })?;
+        let digest = format!("{:x}", Sha256::digest(&archive));
+        if digest != origin.archive_sha256 {
+            return Err(StartFailure::permanent(
+                "this Trigger session's repository workspace failed integrity verification"
+                    .to_string(),
+            ));
+        }
+        Ok(Some(layer3_adapter::WorkspacePackage {
+            epoch: origin.workspace_epoch,
+            source_revision: origin.source_revision,
+            manifest_digest: origin.manifest_digest,
+            archive_sha256: origin.archive_sha256,
+            archive,
+        }))
     }
 }

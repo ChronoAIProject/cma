@@ -6,9 +6,10 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use layer2_core::{
-    rfc3339_at, seconds_from_rfc3339, BaselineObjectStore, EffectClaim, FailureClass, Launch,
-    LaunchAuthority, LaunchEffectKind, LaunchEffectResult, LaunchFailure, TriggerAuthorityError,
-    TriggerAuthorityVerifier, TriggerServiceError, TriggerStoreError, WorkspaceRecord,
+    rfc3339_at, seconds_from_rfc3339, BaselineObjectStore, CoreError, EffectClaim, FailureClass,
+    Launch, LaunchAuthority, LaunchEffectKind, LaunchEffectResult, LaunchFailure, Session,
+    SessionLink, SessionService, SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier,
+    TriggerServiceError, TriggerStoreError, WorkspaceRecord,
 };
 
 use super::github::{
@@ -49,6 +50,31 @@ trait GithubEffectPort: Send + Sync {
         &self,
         context: &WorkspaceContext,
     ) -> Result<ImportedWorkspace, GithubBrokerError>;
+}
+
+#[derive(Debug, Clone)]
+struct TriggerSessionEvidence {
+    session: Session,
+    credential_ready: bool,
+}
+
+#[async_trait]
+trait TriggerSessionEffectPort: Send + Sync {
+    async fn ensure_session(&self, launch: &Launch) -> Result<TriggerSessionEvidence, CoreError>;
+}
+
+struct SessionServiceEffectPort(Arc<SessionService>);
+
+#[async_trait]
+impl TriggerSessionEffectPort for SessionServiceEffectPort {
+    async fn ensure_session(&self, launch: &Launch) -> Result<TriggerSessionEvidence, CoreError> {
+        let session = self.0.ensure_trigger_session(launch).await?;
+        let credential_ready = self.0.trigger_credential_ready(&session.id).await;
+        Ok(TriggerSessionEvidence {
+            session,
+            credential_ready,
+        })
+    }
 }
 
 #[async_trait]
@@ -112,6 +138,7 @@ impl GithubEffectPort for GithubBroker {
 pub(crate) struct GithubEffectExecutor {
     github: Arc<dyn GithubEffectPort>,
     workspace_store: Option<Arc<dyn BaselineObjectStore>>,
+    sessions: Option<Arc<dyn TriggerSessionEffectPort>>,
     fork_readiness_timeout: Duration,
 }
 
@@ -120,17 +147,20 @@ impl GithubEffectExecutor {
         Self {
             github,
             workspace_store: None,
+            sessions: None,
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         }
     }
 
-    pub(crate) fn with_workspace_store(
+    pub(crate) fn with_runtime(
         github: Arc<GithubBroker>,
         workspace_store: Arc<dyn BaselineObjectStore>,
+        sessions: Arc<SessionService>,
     ) -> Self {
         Self {
             github,
             workspace_store: Some(workspace_store),
+            sessions: Some(Arc::new(SessionServiceEffectPort(sessions))),
             fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         }
     }
@@ -140,7 +170,21 @@ impl GithubEffectExecutor {
         Self {
             github,
             workspace_store: None,
+            sessions: None,
             fork_readiness_timeout,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_session_port(
+        github: Arc<dyn GithubEffectPort>,
+        sessions: Arc<dyn TriggerSessionEffectPort>,
+    ) -> Self {
+        Self {
+            github,
+            workspace_store: None,
+            sessions: Some(sessions),
+            fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
         }
     }
 
@@ -422,6 +466,101 @@ impl GithubEffectExecutor {
             external_resource_ids: resources,
         }
     }
+
+    async fn run_sandbox(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let evidence = match self.ensure_trigger_session(launch, claim).await {
+            Ok(evidence) => evidence,
+            Err(execution) => return execution,
+        };
+        let resources = session_resources(launch, claim, &evidence.session);
+        match evidence.session.status {
+            SessionStatus::Ready | SessionStatus::Running if evidence.credential_ready => {
+                EffectExecution::Completed {
+                    result: LaunchEffectResult::Sandbox,
+                    safe_detail: "The repository runtime is ready with scoped delegated access."
+                        .into(),
+                    external_resource_ids: resources,
+                }
+            }
+            SessionStatus::Provisioning
+            | SessionStatus::Rotating
+            | SessionStatus::Ready
+            | SessionStatus::Running => session_reconcile_later(
+                claim,
+                "trigger_runtime_pending",
+                "The repository runtime is still establishing its scoped access.",
+                resources,
+            ),
+            SessionStatus::Idle | SessionStatus::Terminated => EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::RecoveryRequired,
+                    "trigger_runtime_not_live",
+                    "The deterministic Trigger session stopped before it became ready.",
+                    "Review the retained session failure before authorizing recovery.",
+                    claim,
+                    None,
+                ),
+            },
+        }
+    }
+
+    async fn run_session(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let evidence = match self.ensure_trigger_session(launch, claim).await {
+            Ok(evidence) => evidence,
+            Err(execution) => return execution,
+        };
+        let resources = session_resources(launch, claim, &evidence.session);
+        if !matches!(
+            evidence.session.status,
+            SessionStatus::Ready | SessionStatus::Running
+        ) || !evidence.credential_ready
+        {
+            return session_reconcile_later(
+                claim,
+                "trigger_session_attachment_pending",
+                "The deterministic session is not yet safe to attach to this Launch.",
+                resources,
+            );
+        }
+        let Some(environment_profile_id) = evidence.session.environment_profile.as_ref() else {
+            return EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::TerminalSecurity,
+                    "trigger_session_profile_missing",
+                    "The deterministic session has no frozen Trigger environment profile.",
+                    "Contact support; CMA will not dispatch a prompt into an unscoped session.",
+                    claim,
+                    None,
+                ),
+            };
+        };
+        EffectExecution::Completed {
+            result: LaunchEffectResult::Session {
+                session: SessionLink {
+                    session_id: evidence.session.id,
+                    environment_profile_id: environment_profile_id.0.clone(),
+                    runtime_generation: u64::from(evidence.session.rotations).saturating_add(1),
+                    created_at: evidence.session.created_at,
+                },
+            },
+            safe_detail: "The Codex session is attached to this Launch.".into(),
+            external_resource_ids: resources,
+        }
+    }
+
+    async fn ensure_trigger_session(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+    ) -> Result<TriggerSessionEvidence, EffectExecution> {
+        let Some(sessions) = self.sessions.as_ref() else {
+            return Err(unsupported_effect(claim));
+        };
+        sessions
+            .ensure_session(launch)
+            .await
+            .map_err(|error| session_failure(error, claim))
+    }
 }
 
 #[async_trait]
@@ -432,6 +571,8 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Fork => self.run_fork(launch, claim, false).await,
             LaunchEffectKind::Branch => self.run_branch(launch, claim, false).await,
             LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
+            LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
+            LaunchEffectKind::Session => self.run_session(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -444,7 +585,102 @@ impl EffectExecutor for GithubEffectExecutor {
             // Every provider call is a read or an idempotent write to the
             // Launch's stable object key; repeating it reconciles the same bytes.
             LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
+            LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
+            LaunchEffectKind::Session => self.run_session(launch, claim).await,
             _ => unsupported_effect(claim),
+        }
+    }
+}
+
+fn session_resources(
+    launch: &Launch,
+    claim: &EffectClaim,
+    session: &Session,
+) -> BTreeMap<String, String> {
+    let mut resources = retained_resources(launch, claim);
+    resources.insert("session_id".into(), session.id.0.clone());
+    if let Some(profile) = session.environment_profile.as_ref() {
+        resources.insert("environment_profile_id".into(), profile.0.clone());
+    }
+    resources.insert(
+        "runtime_generation".into(),
+        u64::from(session.rotations).saturating_add(1).to_string(),
+    );
+    resources
+}
+
+fn session_reconcile_later(
+    claim: &EffectClaim,
+    code: &'static str,
+    detail: &'static str,
+    external_resource_ids: BTreeMap<String, String>,
+) -> EffectExecution {
+    let reconcile_at = rfc3339_at(SystemTime::now() + Duration::from_secs(2));
+    EffectExecution::ReconcileLater {
+        failure: failure(
+            FailureClass::RetryableTransient,
+            code,
+            detail,
+            "CMA will reconcile the same deterministic session without creating another one.",
+            claim,
+            Some(reconcile_at.clone()),
+        ),
+        reconcile_at,
+        external_resource_ids,
+    }
+}
+
+fn session_failure(error: CoreError, claim: &EffectClaim) -> EffectExecution {
+    let (class, code, detail, remediation) = match error {
+        CoreError::SessionLimitReached { .. } | CoreError::DeploymentAtCapacity { .. } => (
+            FailureClass::ResourceQuota,
+            "trigger_session_quota",
+            "The Trigger session cannot currently reserve the requested capacity.",
+            "Stop unused work or wait for deployment capacity, then retry this Launch.",
+        ),
+        CoreError::ServiceNotGranted(_) => (
+            FailureClass::AuthRequired,
+            "github_service_not_granted",
+            "The exact GitHub connection is no longer granted to this contributor.",
+            "Reconnect the same GitHub service, then resume this Launch.",
+        ),
+        CoreError::RuntimeUnavailable(_)
+        | CoreError::ServiceCatalogUnavailable(_)
+        | CoreError::SettingsUnavailable(_) => (
+            FailureClass::RetryableTransient,
+            "trigger_session_temporarily_unavailable",
+            "The deterministic Trigger session could not be reconciled yet.",
+            "CMA will retry this exact session identity after a bounded backoff.",
+        ),
+        CoreError::SizeOutOfBounds(_) | CoreError::CapabilityUnsupported(_) => (
+            FailureClass::TerminalValidation,
+            "trigger_runtime_contract_unsupported",
+            "The selected Trigger runtime configuration is not supported by this deployment.",
+            "Choose a supported Trigger configuration or update the eligible runtime cohort.",
+        ),
+        _ => (
+            FailureClass::TerminalSecurity,
+            "trigger_session_authority_mismatch",
+            "The deterministic Trigger session did not match its frozen Launch authority.",
+            "Contact support; CMA will not overwrite or replace the conflicting resource.",
+        ),
+    };
+    if class == FailureClass::RetryableTransient || class == FailureClass::ResourceQuota {
+        let retry_at = rfc3339_at(SystemTime::now() + retry_delay(claim, None));
+        EffectExecution::RetryLater {
+            failure: failure(
+                class,
+                code,
+                detail,
+                remediation,
+                claim,
+                Some(retry_at.clone()),
+            ),
+            retry_at,
+        }
+    } else {
+        EffectExecution::Failed {
+            failure: failure(class, code, detail, remediation, claim, None),
         }
     }
 }
@@ -866,6 +1102,52 @@ mod tests {
         Transient,
     }
 
+    enum SessionAnswer {
+        Evidence {
+            status: SessionStatus,
+            credential_ready: bool,
+            rotations: u32,
+        },
+        AuthorityMismatch,
+    }
+
+    struct FakeSessions {
+        answers: Mutex<VecDeque<SessionAnswer>>,
+        calls: AtomicUsize,
+    }
+
+    impl FakeSessions {
+        fn new(answers: impl IntoIterator<Item = SessionAnswer>) -> Self {
+            Self {
+                answers: Mutex::new(answers.into_iter().collect()),
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TriggerSessionEffectPort for FakeSessions {
+        async fn ensure_session(
+            &self,
+            launch: &Launch,
+        ) -> Result<TriggerSessionEvidence, CoreError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            match self.answers.lock().unwrap().pop_front().unwrap() {
+                SessionAnswer::Evidence {
+                    status,
+                    credential_ready,
+                    rotations,
+                } => Ok(TriggerSessionEvidence {
+                    session: trigger_session(launch, status, rotations),
+                    credential_ready,
+                }),
+                SessionAnswer::AuthorityMismatch => Err(CoreError::InvalidRequest(
+                    "the deterministic session is occupied by different authority".into(),
+                )),
+            }
+        }
+    }
+
     struct FakeGithub {
         answers: Mutex<VecDeque<ForkAnswer>>,
         create_calls: AtomicUsize,
@@ -1051,6 +1333,162 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn sandbox_provisioning_is_reconciled_without_another_identity() {
+        let sessions = Arc::new(FakeSessions::new([SessionAnswer::Evidence {
+            status: SessionStatus::Provisioning,
+            credential_ready: false,
+            rotations: 0,
+        }]));
+        let executor = session_executor(sessions.clone());
+        let launch = super::super::worker::tests::launch_fixture();
+
+        let result = executor
+            .execute(
+                &launch,
+                &claim_for(LaunchEffectKind::Sandbox, EffectClaimMode::Execute),
+            )
+            .await;
+
+        assert!(matches!(result, EffectExecution::ReconcileLater { .. }));
+        assert_eq!(sessions.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn ready_runtime_without_acknowledged_credential_remains_pending() {
+        let sessions = Arc::new(FakeSessions::new([SessionAnswer::Evidence {
+            status: SessionStatus::Ready,
+            credential_ready: false,
+            rotations: 0,
+        }]));
+        let executor = session_executor(sessions);
+        let launch = super::super::worker::tests::launch_fixture();
+
+        let result = executor
+            .reconcile(
+                &launch,
+                &claim_for(LaunchEffectKind::Sandbox, EffectClaimMode::Reconcile),
+            )
+            .await;
+
+        assert!(matches!(result, EffectExecution::ReconcileLater { .. }));
+    }
+
+    #[tokio::test]
+    async fn acknowledged_ready_runtime_completes_the_sandbox_effect() {
+        let sessions = Arc::new(FakeSessions::new([SessionAnswer::Evidence {
+            status: SessionStatus::Ready,
+            credential_ready: true,
+            rotations: 0,
+        }]));
+        let executor = session_executor(sessions);
+        let launch = super::super::worker::tests::launch_fixture();
+
+        let result = executor
+            .reconcile(
+                &launch,
+                &claim_for(LaunchEffectKind::Sandbox, EffectClaimMode::Reconcile),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            EffectExecution::Completed {
+                result: LaunchEffectResult::Sandbox,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn session_effect_returns_the_exact_stable_attachment() {
+        let sessions = Arc::new(FakeSessions::new([SessionAnswer::Evidence {
+            status: SessionStatus::Running,
+            credential_ready: true,
+            rotations: 2,
+        }]));
+        let executor = session_executor(sessions);
+        let launch = super::super::worker::tests::launch_fixture();
+
+        let result = executor
+            .execute(
+                &launch,
+                &claim_for(LaunchEffectKind::Session, EffectClaimMode::Execute),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            EffectExecution::Completed {
+                result: LaunchEffectResult::Session {
+                    session: SessionLink {
+                        ref session_id,
+                        ref environment_profile_id,
+                        runtime_generation: 3,
+                        ref created_at,
+                    }
+                },
+                ..
+            } if session_id.0 == "sesn_trigger_effect"
+                && environment_profile_id == "envp_trigger_effect"
+                && created_at == "2026-08-27T00:00:00Z"
+        ));
+    }
+
+    #[tokio::test]
+    async fn stopped_deterministic_session_requires_explicit_recovery() {
+        for status in [SessionStatus::Idle, SessionStatus::Terminated] {
+            let sessions = Arc::new(FakeSessions::new([SessionAnswer::Evidence {
+                status,
+                credential_ready: true,
+                rotations: 0,
+            }]));
+            let executor = session_executor(sessions);
+            let launch = super::super::worker::tests::launch_fixture();
+
+            let result = executor
+                .execute(
+                    &launch,
+                    &claim_for(LaunchEffectKind::Sandbox, EffectClaimMode::Execute),
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                EffectExecution::Failed {
+                    failure: LaunchFailure {
+                        class: FailureClass::RecoveryRequired,
+                        ..
+                    }
+                }
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn mismatched_session_authority_is_a_terminal_security_failure() {
+        let sessions = Arc::new(FakeSessions::new([SessionAnswer::AuthorityMismatch]));
+        let executor = session_executor(sessions);
+        let launch = super::super::worker::tests::launch_fixture();
+
+        let result = executor
+            .execute(
+                &launch,
+                &claim_for(LaunchEffectKind::Session, EffectClaimMode::Execute),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            EffectExecution::Failed {
+                failure: LaunchFailure {
+                    class: FailureClass::TerminalSecurity,
+                    ..
+                }
+            }
+        ));
+    }
+
     fn fork_launch() -> Launch {
         let mut launch = super::super::worker::tests::launch_fixture();
         launch.state = LaunchState::ForkPending;
@@ -1058,13 +1496,49 @@ mod tests {
     }
 
     fn claim(mode: EffectClaimMode) -> EffectClaim {
+        claim_for(LaunchEffectKind::Fork, mode)
+    }
+
+    fn claim_for(kind: LaunchEffectKind, mode: EffectClaimMode) -> EffectClaim {
         EffectClaim {
-            kind: LaunchEffectKind::Fork,
+            kind,
             mode,
-            intent_key: "cma-trigger:test:fork:1".into(),
+            intent_key: "cma-trigger:test:effect:1".into(),
             attempt: 1,
             reconciliation_attempt: u32::from(mode == EffectClaimMode::Reconcile),
             fence: 1,
+        }
+    }
+
+    fn session_executor(sessions: Arc<FakeSessions>) -> GithubEffectExecutor {
+        GithubEffectExecutor::with_session_port(
+            Arc::new(FakeGithub::new([])),
+            sessions as Arc<dyn TriggerSessionEffectPort>,
+        )
+    }
+
+    fn trigger_session(launch: &Launch, status: SessionStatus, rotations: u32) -> Session {
+        Session {
+            options: Default::default(),
+            id: layer2_core::SessionId("sesn_trigger_effect".into()),
+            owner: launch.owner.clone(),
+            kernel: layer2_core::KernelId::new("codex"),
+            status,
+            recovery_state: layer2_core::RecoveryState::Normal,
+            stop_reason: None,
+            geometry: Default::default(),
+            last_seq: 0,
+            environment_profile: Some(layer2_core::EnvironmentProfileId(
+                "envp_trigger_effect".into(),
+            )),
+            runtime_version: Some("trigger-runtime-v1".into()),
+            rotations,
+            rotated_at: None,
+            capabilities: Default::default(),
+            granted_services: Some(Vec::new()),
+            granted_skills: Some(Vec::new()),
+            pricing: None,
+            created_at: "2026-08-27T00:00:00Z".into(),
         }
     }
 

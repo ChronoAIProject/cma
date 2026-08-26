@@ -411,7 +411,7 @@ async fn main() {
             }
         };
 
-    let trigger_workspace_store: Option<Arc<dyn layer2_core::BaselineObjectStore>> =
+    let trigger_workspace_store: Option<Arc<crate::store::ChronoStorageTriggerWorkspaceStore>> =
         match identity_for_trigger_workspace
             .filter(|_| !config.trigger_workspace_bucket.trim().is_empty())
         {
@@ -448,10 +448,10 @@ async fn main() {
         }),
         auth_store,
     );
-    let (trigger_authority, trigger_connections, _trigger_effect_executor): (
+    let (trigger_authority, trigger_connections, trigger_github): (
         Arc<dyn TriggerAuthorityVerifier>,
         Arc<dyn TriggerConnectionManager>,
-        Option<Arc<trigger::github_effects::GithubEffectExecutor>>,
+        Option<Arc<trigger::github::GithubBroker>>,
     ) = match &config.auth_mode {
         auth::AuthMode::Provider { base_url, .. } => {
             let broker = match trigger::github::GithubBroker::new(base_url, Arc::clone(&auth_state))
@@ -462,15 +462,7 @@ async fn main() {
                     std::process::exit(2);
                 }
             };
-            let executor = trigger_workspace_store.map(|workspace_store| {
-                Arc::new(
-                    trigger::github_effects::GithubEffectExecutor::with_workspace_store(
-                        Arc::clone(&broker),
-                        workspace_store,
-                    ),
-                )
-            });
-            (broker.clone(), broker, executor)
+            (broker.clone(), broker.clone(), Some(broker))
         }
         auth::AuthMode::Trusted { .. } => {
             let unavailable = Arc::new(trigger::UnavailableGithub);
@@ -563,6 +555,9 @@ async fn main() {
             skills: catalog
                 .clone()
                 .map(|c| c as Arc<dyn layer2_core::SkillSource>),
+            workspaces: trigger_workspace_store
+                .clone()
+                .map(|store| store as Arc<dyn layer2_core::SessionWorkspaceSource>),
             settings: Some(Arc::clone(&settings)),
         },
         Arc::clone(&environments),
@@ -582,6 +577,22 @@ async fn main() {
         adopts_untagged = config.adopts_untagged_runtimes,
         "sessions on any other runtime will be moved onto this one"
     );
+
+    // Assembled only after the session service exists: Sandbox is the single
+    // creator of the deterministic Trigger session, and Session is its
+    // read-only attachment check. Scheduler activation remains gated on the
+    // rest of the closed effect vocabulary.
+    let _trigger_effect_executor = trigger_github.and_then(|github| {
+        trigger_workspace_store.as_ref().map(|workspace_store| {
+            let workspace_store: Arc<dyn layer2_core::BaselineObjectStore> =
+                Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
+            Arc::new(trigger::github_effects::GithubEffectExecutor::with_runtime(
+                github,
+                workspace_store,
+                Arc::clone(&service),
+            ))
+        })
+    });
 
     // Keeps delegated credentials valid underneath running sessions, and pushes
     // each renewal into the runtimes already using the old value.

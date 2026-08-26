@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use futures_util::StreamExt as _;
 use layer2_core::{
-    BaselineObjectStore, LaunchId, SubjectId, TriggerStoreError, WorkspaceManifest,
-    MAX_REPOSITORY_BYTES,
+    BaselineObjectStore, LaunchId, SessionWorkspaceSource, StoreError, SubjectId,
+    TriggerSessionOrigin, TriggerStoreError, WorkspaceManifest, MAX_REPOSITORY_BYTES,
 };
 use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
@@ -231,6 +231,27 @@ impl BaselineObjectStore for ChronoStorageTriggerWorkspaceStore {
             "workspace delete returned {}",
             response.status()
         )))
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionWorkspaceSource for ChronoStorageTriggerWorkspaceStore {
+    async fn load_workspace(
+        &self,
+        owner: &SubjectId,
+        origin: &TriggerSessionOrigin,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.get_baseline(
+            owner,
+            &origin.launch_id,
+            &origin.object_reference,
+            &origin.archive_sha256,
+        )
+        .await
+        .map_err(|error| match error {
+            TriggerStoreError::Unavailable(detail) => StoreError::Unavailable(detail),
+            other => StoreError::Malformed(other.to_string()),
+        })
     }
 }
 

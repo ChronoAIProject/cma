@@ -6,6 +6,99 @@ use crate::ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
 use crate::options::AgentOptions;
 use crate::terminal::TerminalGeometry;
 
+/// Durable provenance for a session created by one CMA Trigger Launch.
+///
+/// This is control-plane state, not part of the public [`Session`] projection.
+/// It carries only identities and integrity metadata; the object reference is
+/// never a credential and is resolved through an owner- and Launch-scoped
+/// machine port before each runtime is provisioned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TriggerSessionOrigin {
+    pub launch_id: crate::trigger::LaunchId,
+    pub revision_digest: String,
+    pub sandbox_profile: String,
+    pub github_service_id: String,
+    pub workspace_epoch: u64,
+    pub source_revision: String,
+    pub manifest_digest: String,
+    pub object_reference: String,
+    pub archive_sha256: String,
+}
+
+impl TriggerSessionOrigin {
+    /// Stable session identity for this Launch, shared by every retry.
+    pub fn session_id(&self) -> Result<SessionId, crate::TriggerValidationError> {
+        Ok(SessionId(format!(
+            "sesn_trg_{}",
+            self.launch_uuid()?.simple()
+        )))
+    }
+
+    /// Stable contributor-owned environment profile for this Launch.
+    pub fn environment_profile_id(
+        &self,
+    ) -> Result<EnvironmentProfileId, crate::TriggerValidationError> {
+        Ok(EnvironmentProfileId(format!(
+            "envp_trg_{}",
+            self.launch_uuid()?.simple()
+        )))
+    }
+
+    pub fn validate(&self) -> Result<(), crate::TriggerValidationError> {
+        self.launch_uuid()?;
+        require_hex("revision_digest", &self.revision_digest, 64)?;
+        require_text("sandbox_profile", &self.sandbox_profile, 128)?;
+        require_text("github_service_id", &self.github_service_id, 255)?;
+        if self.workspace_epoch == 0 {
+            return Err(crate::TriggerValidationError::field(
+                "workspace_epoch",
+                "must be positive",
+            ));
+        }
+        require_hex("source_revision", &self.source_revision, 40)?;
+        require_hex("manifest_digest", &self.manifest_digest, 64)?;
+        require_text("object_reference", &self.object_reference, 2_048)?;
+        require_hex("archive_sha256", &self.archive_sha256, 64)
+    }
+
+    fn launch_uuid(&self) -> Result<uuid::Uuid, crate::TriggerValidationError> {
+        uuid::Uuid::parse_str(&self.launch_id.0)
+            .map_err(|_| crate::TriggerValidationError::field("launch_id", "is not a UUID"))
+    }
+}
+
+fn require_text(
+    field: &'static str,
+    value: &str,
+    maximum: usize,
+) -> Result<(), crate::TriggerValidationError> {
+    if value.trim().is_empty() || value.len() > maximum {
+        return Err(crate::TriggerValidationError::field(
+            field,
+            format!("must contain between 1 and {maximum} bytes"),
+        ));
+    }
+    Ok(())
+}
+
+fn require_hex(
+    field: &'static str,
+    value: &str,
+    length: usize,
+) -> Result<(), crate::TriggerValidationError> {
+    if value.len() != length
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(crate::TriggerValidationError::field(
+            field,
+            format!("must be {length} lowercase hexadecimal characters"),
+        ));
+    }
+    Ok(())
+}
+
 /// A named step in bringing a session up.
 ///
 /// Ordered, and each knows its position, so a client can show how far along
