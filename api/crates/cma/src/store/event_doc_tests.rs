@@ -96,6 +96,9 @@ fn every_current_variant_survives_the_round_trip() {
             request_id: "req-1".into(),
             action: Some("run a command".into()),
             detail: None,
+            locator: Some(layer3_adapter::PermissionLocator::new(
+                r#"{"version":1,"call":7}"#,
+            )),
         },
         EventKind::MessageCommitted {
             content: "hello".into(),
