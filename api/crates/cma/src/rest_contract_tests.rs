@@ -1131,6 +1131,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         tickets: Arc::clone(&tickets),
         environments: Arc::clone(&environments),
         operations: Arc::clone(&operations) as Arc<dyn OperationStore>,
+        triggers: None,
     };
     let rest = rest_api_router(
         public_state.clone(),

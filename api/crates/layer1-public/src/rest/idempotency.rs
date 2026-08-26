@@ -77,6 +77,29 @@ fn is_json_content_type(headers: &HeaderMap) -> bool {
 /// A validated optional operation key.
 pub(super) struct IdempotencyKey(Option<String>);
 
+impl IdempotencyKey {
+    pub(super) fn required(self) -> Result<Self, IdempotencyProblem> {
+        if self.0.is_some() {
+            Ok(self)
+        } else {
+            Err(IdempotencyProblem::Missing)
+        }
+    }
+
+    /// Stable evidence for a confirmation record without retaining the HTTP
+    /// operation key itself.
+    pub(super) fn confirmation_hash(&self, domain: &str) -> Option<String> {
+        self.0.as_ref().map(|key| {
+            let mut digest = Sha256::new();
+            digest.update(domain.as_bytes());
+            digest.update([0]);
+            digest.update(key.as_bytes());
+            let digest = digest.finalize();
+            digest.iter().map(|byte| format!("{byte:02x}")).collect()
+        })
+    }
+}
+
 impl<S> FromRequestParts<S> for IdempotencyKey
 where
     S: Send + Sync,
@@ -107,6 +130,7 @@ where
 
 /// A refusal specific to operation-key handling.
 pub enum IdempotencyProblem {
+    Missing,
     Invalid,
     Pending,
     Reused,
@@ -115,6 +139,12 @@ pub enum IdempotencyProblem {
 impl IntoResponse for IdempotencyProblem {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match self {
+            Self::Missing => (
+                StatusCode::BAD_REQUEST,
+                "missing-idempotency-key",
+                "missing_idempotency_key",
+                "This operation requires an Idempotency-Key header.",
+            ),
             Self::Invalid => (
                 StatusCode::BAD_REQUEST,
                 "invalid-idempotency-key",

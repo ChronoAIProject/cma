@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 // Deliberately no `Default`: `None` means the deployment's own reservation, and
 // a default value here would let a later `unwrap_or_default()` invent a size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionSize {
     /// Processor time, in thousandths of one core.
     pub cpu_millis: NonZeroU32,

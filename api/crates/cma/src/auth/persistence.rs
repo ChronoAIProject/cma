@@ -102,6 +102,11 @@ pub struct LoginAttempt {
     pub id: SecretDigest,
     /// PKCE verifier, encrypted by the concrete durable store.
     pub verifier: SecretValue,
+    /// Validated relative application path restored after sign-in.
+    ///
+    /// This is never a caller-controlled origin. The login handler admits only
+    /// the stable Trigger preview path and stores it with the single-use state.
+    pub return_to: Option<String>,
     /// Absolute application expiry.
     pub expires_at: SystemTime,
 }
