@@ -325,3 +325,67 @@ Re-run this record when any of these change:
 
 Do not turn a new provider word into a capability, capacity refusal, or loss
 reason until its request and lifecycle have been driven and recorded again.
+
+## 7. Workspace capture transport discovery
+
+Issue #662 asks whether the pinned provider can capture and restore a complete
+repository workspace without adding a new Layer 4 wire lane. This section
+records the bounded discovery result as of 2026-08-26. It does not extend the
+production capability claims above.
+
+### Pinned-source result
+
+The exact server tag deployed in the production record is OpenSandbox
+`server/v0.1.2`, commit
+`ecb1b5b012cb14a7289c5c565cc379b17a828699`. Its lifecycle schema and router:
+
+- have no sandbox snapshot resource and no snapshot restore field;
+- create sandboxes from an image only;
+- expose `GET /v1/sandboxes/{id}/endpoints/{port}`; and
+- expose a provider-authenticated HTTP proxy to that sandbox endpoint.
+
+The production record also pins Execd `v1.0.20`, commit
+`ae452d4af7b6415b5074fd7e075b97ff7a5ac236`. The server injects Execd into the
+sandbox, and that exact Execd source listens on port 44772 and exposes typed
+command, file metadata, directory listing, file download, and multipart file
+upload operations. These source facts identify a possible transport, but do
+not prove that the production endpoint is reachable or that an archive round
+trip is safe under the deployed runtime and proxy configuration.
+
+### Exploratory local protocol result
+
+The local `kind-shining-local-cluster` deployment runs OpenSandbox server
+`0.2.2` with Execd `v1.0.21`. Two disposable, explicitly tagged sandboxes were
+used to test the candidate protocol:
+
+1. Execd created a workspace containing text, binary content, an executable,
+   a nested directory, and a relative symlink, then produced a POSIX archive.
+2. The archive was downloaded through the provider's server proxy. Its SHA-256
+   matched the in-sandbox value.
+3. The same archive was uploaded through Execd into a fresh sandbox and
+   extracted.
+4. All three file-content hashes, executable mode `755`, and symlink target
+   matched the source.
+5. Both sandboxes were deleted through the provider and returned HTTP 204; no
+   matching probe objects remained.
+
+This establishes that the proposed archive/download/upload/restore protocol is
+workable on the newer local provider. It is not evidence for production's
+older pinned versions.
+
+### Decision gate
+
+Before #662 implementation, repeat the archive round trip against the pinned
+production provider and runtime, including quiescing the workspace writer,
+size/time bounds, partial transfer, integrity failure, and capture-before-
+teardown ordering. Never print the provider key or archive content.
+
+- If it succeeds, select the provider Execd archive transport and record the
+  exact route, version, limits, consistency protocol, and restore proof here.
+- If the route is absent, unreachable, unbounded, or cannot provide a
+  consistent capture, record that negative result and select a versioned Layer
+  4 workspace lane with a staged runtime-image rollout.
+
+The existence of OpenSandbox snapshot routes in local server `0.2.2` is not a
+shortcut: production server `0.1.2` does not expose them, and no implementation
+may advertise snapshot/restore on that basis.
