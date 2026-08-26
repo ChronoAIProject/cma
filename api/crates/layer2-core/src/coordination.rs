@@ -121,7 +121,9 @@ pub struct SessionInteractionLeaseRequest {
     ///
     /// Unlike a provider-operation token, this is retained only while the
     /// interaction lease is active. The store returns its own monotonic token
-    /// as part of [`SessionLease`].
+    /// as part of [`SessionLease`]. A successful same-nonce retry must resolve
+    /// every earlier overlapping invocation before its returned lease can be
+    /// released; see [`crate::store::SessionStore::acquire_interaction_lease`].
     pub nonce: String,
     /// Exact authority and status the caller read before asking.
     pub boundary: SessionBoundary,

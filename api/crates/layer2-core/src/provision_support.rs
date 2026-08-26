@@ -107,6 +107,24 @@ struct DeferredRuntimeInteractionRelease {
     state: Arc<RetainedRuntimeInteractionState>,
 }
 
+enum UnknownInteractionAcquisitionPhase {
+    Acquire,
+    Release(SessionLease),
+}
+
+struct DeferredUnknownInteractionAcquisition {
+    store: Arc<dyn crate::store::SessionStore>,
+    request: SessionInteractionLeaseRequest,
+    phase: UnknownInteractionAcquisitionPhase,
+}
+
+struct RuntimeInteractionAcquisitionGuard {
+    event_logs: Arc<crate::log::EventLogs>,
+    store: Arc<dyn crate::store::SessionStore>,
+    request: Option<SessionInteractionLeaseRequest>,
+    attempted: bool,
+}
+
 impl RetainedRuntimeInteraction {
     fn new(
         service: &Arc<SessionService>,
@@ -303,6 +321,108 @@ impl DeferredCleanup for DeferredRuntimeInteractionRelease {
     }
 }
 
+impl DeferredCleanup for DeferredUnknownInteractionAcquisition {
+    fn session_id(&self) -> &SessionId {
+        &self.request.session_id
+    }
+
+    fn attempt(&mut self) -> CleanupAttempt<'_> {
+        Box::pin(async move {
+            loop {
+                match &self.phase {
+                    UnknownInteractionAcquisitionPhase::Acquire => {
+                        match self.store.acquire_interaction_lease(&self.request).await {
+                            Ok(lease) => {
+                                // Record exact ownership before another await so
+                                // interruption can only retry its exact release.
+                                self.phase = UnknownInteractionAcquisitionPhase::Release(lease);
+                            }
+                            Err(StoreError::Unavailable(error)) => {
+                                tracing::debug!(
+                                    session_id = %self.request.session_id,
+                                    %error,
+                                    "unknown interaction acquisition recovery is temporarily unavailable"
+                                );
+                                tokio::time::sleep(INTERACTION_LEASE_RETRY_INTERVAL).await;
+                            }
+                            Err(error) => {
+                                tracing::debug!(
+                                    session_id = %self.request.session_id,
+                                    %error,
+                                    "unknown interaction acquisition no longer owns an exact lease"
+                                );
+                                return;
+                            }
+                        }
+                    }
+                    UnknownInteractionAcquisitionPhase::Release(lease) => {
+                        match self.store.release_session_lease(lease).await {
+                            Ok(()) => return,
+                            Err(StoreError::Unavailable(error)) => {
+                                tracing::debug!(
+                                    session_id = %self.request.session_id,
+                                    %error,
+                                    "unknown interaction acquisition release is temporarily unavailable"
+                                );
+                                tokio::time::sleep(INTERACTION_LEASE_RETRY_INTERVAL).await;
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    session_id = %self.request.session_id,
+                                    %error,
+                                    "unknown interaction acquisition exact release was rejected"
+                                );
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+}
+
+impl RuntimeInteractionAcquisitionGuard {
+    fn new(service: &Arc<SessionService>, request: SessionInteractionLeaseRequest) -> Self {
+        Self {
+            event_logs: Arc::clone(&service.event_logs),
+            store: Arc::clone(&service.store),
+            request: Some(request),
+            attempted: false,
+        }
+    }
+
+    fn attempted(&mut self) {
+        self.attempted = true;
+    }
+
+    fn definitive(&mut self) {
+        self.attempted = false;
+    }
+
+    fn disarm(&mut self) {
+        self.request.take();
+        self.attempted = false;
+    }
+}
+
+impl Drop for RuntimeInteractionAcquisitionGuard {
+    fn drop(&mut self) {
+        if !self.attempted {
+            return;
+        }
+        let Some(request) = self.request.take() else {
+            return;
+        };
+        self.event_logs
+            .retain_cleanup(DeferredUnknownInteractionAcquisition {
+                store: Arc::clone(&self.store),
+                request,
+                phase: UnknownInteractionAcquisitionPhase::Acquire,
+            });
+    }
+}
+
 type RuntimeInteractionUndelivered<T> = Box<
     dyn FnOnce(RuntimeInteractionDeliveryLoss, Result<T, CoreError>, RetainedRuntimeInteraction)
         + Send,
@@ -371,7 +491,14 @@ impl<T> Drop for RetainedRuntimeInteractionDelivery<T> {
 /// only makes its next delivery-boundary check fail, so an external send that
 /// already returned a receipt can still finish its mandatory local work.
 struct RuntimeInteractionCallerGuard {
-    authority: Option<RuntimeInteractionAuthority>,
+    state: Arc<RuntimeInteractionCallerState>,
+    completed: bool,
+}
+
+struct RuntimeInteractionCallerState {
+    active: AtomicBool,
+    authority: std::sync::Mutex<Option<RuntimeInteractionAuthority>>,
+    stopped: tokio::sync::Notify,
 }
 
 /// Tracks whether an in-flight renewal's outcome is known.
@@ -385,22 +512,83 @@ struct RuntimeInteractionRenewalGuard {
 }
 
 impl RuntimeInteractionCallerGuard {
-    fn new(authority: RuntimeInteractionAuthority) -> Self {
+    fn new() -> Self {
         Self {
-            authority: Some(authority),
+            state: Arc::new(RuntimeInteractionCallerState {
+                active: AtomicBool::new(true),
+                authority: std::sync::Mutex::new(None),
+                stopped: tokio::sync::Notify::new(),
+            }),
+            completed: false,
         }
     }
 
+    fn state(&self) -> Arc<RuntimeInteractionCallerState> {
+        Arc::clone(&self.state)
+    }
+
     fn complete(&mut self) {
-        self.authority = None;
+        self.completed = true;
+        let mut authority = self
+            .state
+            .authority
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.state.active.store(false, Ordering::Release);
+        authority.take();
+        drop(authority);
+        self.state.stopped.notify_waiters();
     }
 }
 
 impl Drop for RuntimeInteractionCallerGuard {
     fn drop(&mut self) {
-        if let Some(authority) = self.authority.take() {
+        if self.completed {
+            return;
+        }
+        let mut registered = self
+            .state
+            .authority
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.state.active.store(false, Ordering::Release);
+        if let Some(authority) = registered.take() {
             authority
                 .invalidate("the interaction caller stopped before delivery could begin".into());
+        }
+        drop(registered);
+        self.state.stopped.notify_waiters();
+    }
+}
+
+impl RuntimeInteractionCallerState {
+    fn is_active(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+    }
+
+    fn register_authority(&self, authority: RuntimeInteractionAuthority) -> bool {
+        let mut registered = self
+            .authority
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.is_active() {
+            authority
+                .invalidate("the interaction caller stopped before delivery could begin".into());
+            return false;
+        }
+        *registered = Some(authority);
+        true
+    }
+
+    async fn stopped(&self) {
+        loop {
+            let stopped = self.stopped.notified();
+            tokio::pin!(stopped);
+            stopped.as_mut().enable();
+            if !self.is_active() {
+                return;
+            }
+            stopped.await;
         }
     }
 }
@@ -557,6 +745,18 @@ impl RuntimeInteractionAuthority {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         validity.invalid_reason.get_or_insert(reason);
     }
+}
+
+enum RuntimeInteractionAcquisition {
+    Acquired {
+        lease: Option<SessionLease>,
+        started: tokio::time::Instant,
+        completed: tokio::time::Instant,
+    },
+    CallerGone,
+    Unknown {
+        report: Option<CoreError>,
+    },
 }
 
 impl SessionService {
@@ -895,6 +1095,16 @@ impl SessionService {
         record: &crate::store::SessionRecord,
         operation: SessionOperation,
     ) -> Result<Option<SessionLease>, StoreError> {
+        if operation == SessionOperation::Interact {
+            let Some(request) = self.interaction_lease_request_at(record).await? else {
+                return Ok(None);
+            };
+            return self
+                .store
+                .acquire_interaction_lease(&request)
+                .await
+                .map(Some);
+        }
         let id = &record.session.id;
         let authority = match self.store.runtime_authority(id).await {
             Ok(Some(authority)) => authority,
@@ -903,27 +1113,33 @@ impl SessionService {
             Err(error) => return Err(error),
         };
         let boundary = SessionBoundary::for_record(record, authority.generation);
-        if operation == SessionOperation::Interact {
-            let request = SessionInteractionLeaseRequest::new(
-                id.clone(),
-                self.coordination_holder.clone(),
-                boundary,
-                INTERACTION_LEASE_TTL,
-            );
-            self.store
-                .acquire_interaction_lease(&request)
-                .await
-                .map(Some)
-        } else {
-            let request = SessionLeaseRequest::new(
-                id.clone(),
-                self.coordination_holder.clone(),
-                boundary,
-                operation,
-                RUNTIME_OPERATION_LEASE_TTL,
-            );
-            self.store.acquire_session_lease(&request).await.map(Some)
-        }
+        let request = SessionLeaseRequest::new(
+            id.clone(),
+            self.coordination_holder.clone(),
+            boundary,
+            operation,
+            RUNTIME_OPERATION_LEASE_TTL,
+        );
+        self.store.acquire_session_lease(&request).await.map(Some)
+    }
+
+    async fn interaction_lease_request_at(
+        &self,
+        record: &crate::store::SessionRecord,
+    ) -> Result<Option<SessionInteractionLeaseRequest>, StoreError> {
+        let id = &record.session.id;
+        let authority = match self.store.runtime_authority(id).await {
+            Ok(Some(authority)) => authority,
+            Ok(None) => return Err(StoreError::SessionDeleted { id: id.clone() }),
+            Err(StoreError::CoordinationDisabled) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        Ok(Some(SessionInteractionLeaseRequest::new(
+            id.clone(),
+            self.coordination_holder.clone(),
+            SessionBoundary::for_record(record, authority.generation),
+            INTERACTION_LEASE_TTL,
+        )))
     }
 
     /// Run one interaction while its exact runtime authority remains fenced.
@@ -979,31 +1195,60 @@ impl SessionService {
             + Send
             + 'static,
     {
-        let (lease, acquisition_started) = self.acquire_interaction_for(record).await?;
-        let acquisition_completed = tokio::time::Instant::now();
-
-        let boundary = lease.as_ref().map_or_else(
-            || SessionBoundary::for_record(record, 0),
-            |lease| lease.boundary.clone(),
-        );
-        let lease_deadline = lease
-            .as_ref()
-            .map(|_| acquisition_started + INTERACTION_LEASE_TTL);
-        let lease_expiry_bound = lease
-            .as_ref()
-            .map(|_| acquisition_completed + INTERACTION_LEASE_TTL);
-        let authority =
-            RuntimeInteractionAuthority::new(boundary, lease_deadline, lease_expiry_bound);
-        let interaction = RetainedRuntimeInteraction::new(
-            self,
-            record.session.id.clone(),
-            lease,
-            authority.clone(),
-        );
-        let mut caller = RuntimeInteractionCallerGuard::new(authority.clone());
+        let mut caller = RuntimeInteractionCallerGuard::new();
+        let caller_state = caller.state();
         let (finished, result) = tokio::sync::oneshot::channel();
         let service = Arc::clone(self);
+        let record = record.clone();
         tokio::spawn(async move {
+            let acquisition = service
+                .acquire_interaction_for(&record, &caller_state)
+                .await;
+            let (lease, acquisition_started, acquisition_completed) = match acquisition {
+                Ok(RuntimeInteractionAcquisition::Acquired {
+                    lease,
+                    started,
+                    completed,
+                }) => (lease, started, completed),
+                Ok(RuntimeInteractionAcquisition::CallerGone) => return,
+                Ok(RuntimeInteractionAcquisition::Unknown { report }) => {
+                    if let Some(error) = report {
+                        let _ = finished.send(Err(error));
+                    }
+                    drop(action);
+                    drop(on_undelivered);
+                    return;
+                }
+                Err(error) => {
+                    let _ = finished.send(Err(error));
+                    return;
+                }
+            };
+
+            let boundary = lease.as_ref().map_or_else(
+                || SessionBoundary::for_record(&record, 0),
+                |lease| lease.boundary.clone(),
+            );
+            let lease_deadline = lease
+                .as_ref()
+                .map(|_| acquisition_started + INTERACTION_LEASE_TTL);
+            let lease_expiry_bound = lease
+                .as_ref()
+                .map(|_| acquisition_completed + INTERACTION_LEASE_TTL);
+            let authority =
+                RuntimeInteractionAuthority::new(boundary, lease_deadline, lease_expiry_bound);
+            let interaction = RetainedRuntimeInteraction::new(
+                &service,
+                record.session.id.clone(),
+                lease,
+                authority.clone(),
+            );
+            if !caller_state.register_authority(authority.clone()) {
+                drop(action);
+                drop(on_undelivered);
+                drop(interaction);
+                return;
+            }
             let action_interaction = interaction.clone();
             let action_result = service
                 .run_owned_runtime_interaction(
@@ -1014,7 +1259,7 @@ impl SessionService {
                 .await;
             let delivery =
                 RetainedRuntimeInteractionDelivery::new(action_result, interaction, on_undelivered);
-            if let Err(mut undelivered) = finished.send(delivery) {
+            if let Err(Ok(mut undelivered)) = finished.send(Ok(delivery)) {
                 undelivered.report_undelivered(RuntimeInteractionDeliveryLoss::SendFailed);
             }
         });
@@ -1023,29 +1268,71 @@ impl SessionService {
         delivery
             .map_err(|_| {
                 CoreError::RuntimeUnavailable("this session's interaction task stopped".into())
-            })?
+            })??
             .observed()
     }
 
-    /// Acquire after giving an orphaned exact release one chance to resume.
+    /// Acquire once under service ownership after giving local cleanup one chance.
     async fn acquire_interaction_for(
         self: &Arc<Self>,
         record: &crate::store::SessionRecord,
-    ) -> Result<(Option<SessionLease>, tokio::time::Instant), CoreError> {
+        caller: &RuntimeInteractionCallerState,
+    ) -> Result<RuntimeInteractionAcquisition, CoreError> {
+        let request_started = tokio::time::Instant::now();
+        let request = self
+            .interaction_lease_request_at(record)
+            .await
+            .map_err(store_failed)?;
+        let Some(request) = request else {
+            return Ok(if caller.is_active() {
+                RuntimeInteractionAcquisition::Acquired {
+                    lease: None,
+                    started: request_started,
+                    completed: tokio::time::Instant::now(),
+                }
+            } else {
+                RuntimeInteractionAcquisition::CallerGone
+            });
+        };
+        let mut acquisition_guard = RuntimeInteractionAcquisitionGuard::new(self, request.clone());
         let mut resumed_local_cleanup = false;
         loop {
+            if !caller.is_active() {
+                acquisition_guard.definitive();
+                return Ok(RuntimeInteractionAcquisition::CallerGone);
+            }
             // This is a conservative lower bound for the store's authoritative
             // acquisition time and is reset if cleanup makes a retry necessary.
             let acquisition_started = tokio::time::Instant::now();
-            match self
-                .acquire_runtime_lease_at(record, SessionOperation::Interact)
-                .await
-            {
-                Ok(lease) => return Ok((lease, acquisition_started)),
+            acquisition_guard.attempted();
+            let acquisition = self.store.acquire_interaction_lease(&request);
+            tokio::pin!(acquisition);
+            let outcome = tokio::select! {
+                biased;
+                () = caller.stopped() => {
+                    return Ok(RuntimeInteractionAcquisition::Unknown { report: None });
+                }
+                outcome = &mut acquisition => outcome,
+            };
+            match outcome {
+                Ok(lease) => {
+                    acquisition_guard.disarm();
+                    return Ok(RuntimeInteractionAcquisition::Acquired {
+                        lease: Some(lease),
+                        started: acquisition_started,
+                        completed: tokio::time::Instant::now(),
+                    });
+                }
+                Err(error @ StoreError::Unavailable(_)) => {
+                    return Ok(RuntimeInteractionAcquisition::Unknown {
+                        report: Some(store_failed(error)),
+                    });
+                }
                 Err(StoreError::SessionInteractionBlocked {
                     operation: SessionOperation::Interact,
                     ..
                 }) if !resumed_local_cleanup => {
+                    acquisition_guard.definitive();
                     resumed_local_cleanup = true;
                     self.event_logs
                         .drain_retained_cleanups(&record.session.id)
@@ -1054,8 +1341,12 @@ impl SessionService {
                 Err(StoreError::SessionInteractionBlocked {
                     operation: SessionOperation::Handover,
                     ..
-                }) => return Err(CoreError::SessionRotating),
+                }) => {
+                    acquisition_guard.disarm();
+                    return Err(CoreError::SessionRotating);
+                }
                 Err(StoreError::SessionAuthorityChanged { .. }) => {
+                    acquisition_guard.disarm();
                     let current = self
                         .store
                         .get(&record.session.id)
@@ -1074,7 +1365,10 @@ impl SessionService {
                         )),
                     };
                 }
-                Err(error) => return Err(store_failed(error)),
+                Err(error) => {
+                    acquisition_guard.disarm();
+                    return Err(store_failed(error));
+                }
             }
         }
     }
