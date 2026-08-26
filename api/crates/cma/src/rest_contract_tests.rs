@@ -6,6 +6,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
+    time::SystemTime,
 };
 
 use axum::{
@@ -20,12 +21,13 @@ use layer2_core::{
     ActivityQuery, ActivityRecord, ActivityService, AgentConfiguration, AgentOptions,
     Authorization, Baseline, Caller, Capability, CatalogError, CatalogService, CatalogSkill,
     EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService, EnvironmentProfileSpec,
-    EnvironmentProfileStore, Event, EventKind, KernelId, Page, PageCursor, PageRequest,
-    PlatformSettingsService, RecoveryState, RegisteredUser, Reserved, ScreenFactory, ScreenModel,
-    ScreenSnapshot, ServiceCatalog, ServiceId, Session, SessionId, SessionListQuery, SessionMode,
-    SessionPorts, SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore,
-    SkillCatalog, SkillId, SkillPack, SkillSource, StoreError, StoredEvent, SubjectId,
-    TerminalGeometry, UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
+    EnvironmentProfileStore, Event, EventKind, KernelId, OperationClaim, OperationReservation,
+    OperationStore, Page, PageCursor, PageRequest, PlatformSettingsService, RecoveryState,
+    RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
+    ServiceId, Session, SessionId, SessionListQuery, SessionMode, SessionPorts, SessionRecord,
+    SessionService, SessionSpec, SessionStatus, SessionStore, SkillCatalog, SkillId, SkillPack,
+    SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
+    UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -44,10 +46,165 @@ const TEST_SERVICE_ID: &str = "api-github";
 const TEST_SKILL_NAME: &str = "repository-review";
 const TEST_DELEGATED_CREDENTIAL: &str = "contract-delegated-credential";
 
+type OperationIdentity = (String, String, String);
+type HeldOperation = ([u8; 32], Option<Vec<u8>>, SystemTime);
+
+#[derive(Default)]
+struct MemoryOperations {
+    state: Mutex<HashMap<OperationIdentity, HeldOperation>>,
+    unavailable: AtomicBool,
+    completions_unavailable: AtomicBool,
+}
+
+impl MemoryOperations {
+    fn identity(claim: &OperationClaim) -> OperationIdentity {
+        (
+            claim.subject().0.clone(),
+            claim.operation().to_string(),
+            claim.key().to_string(),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl OperationStore for MemoryOperations {
+    async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(StoreError::Unavailable(
+                "test operation store is down".into(),
+            ));
+        }
+        let identity = Self::identity(claim);
+        let now = SystemTime::now();
+        let mut state = self.state.lock().await;
+        if state
+            .get(&identity)
+            .is_some_and(|(_, _, expires_at)| *expires_at <= now)
+        {
+            state.remove(&identity);
+        }
+        let Some((fingerprint, outcome, _)) = state.get(&identity) else {
+            state.insert(identity, (*claim.fingerprint(), None, claim.expires_at()));
+            return Ok(OperationReservation::Acquired);
+        };
+        if fingerprint != claim.fingerprint() {
+            return Ok(OperationReservation::FingerprintMismatch);
+        }
+        Ok(match outcome {
+            Some(outcome) => OperationReservation::Complete(outcome.clone()),
+            None => OperationReservation::Pending,
+        })
+    }
+
+    async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError> {
+        if self.unavailable.load(Ordering::SeqCst)
+            || self.completions_unavailable.load(Ordering::SeqCst)
+        {
+            return Err(StoreError::Unavailable(
+                "test operation store is down".into(),
+            ));
+        }
+        let mut state = self.state.lock().await;
+        let held = state
+            .get_mut(&Self::identity(claim))
+            .ok_or_else(|| StoreError::Malformed("test operation claim is missing".into()))?;
+        if held.2 != claim.expires_at() {
+            return Err(StoreError::Malformed(
+                "test operation claim was replaced".into(),
+            ));
+        }
+        if &held.0 != claim.fingerprint() {
+            return Err(StoreError::Malformed(
+                "test operation fingerprint changed".into(),
+            ));
+        }
+        match held.1.as_ref() {
+            Some(recorded) if recorded != &outcome => Err(StoreError::Malformed(
+                "test operation outcome changed".into(),
+            )),
+            Some(_) => Ok(()),
+            None if held.2 <= SystemTime::now() => Err(StoreError::Malformed(
+                "test operation claim expired before completion".into(),
+            )),
+            None => {
+                held.1 = Some(outcome);
+                Ok(())
+            }
+        }
+    }
+}
+
+struct StorePause {
+    reached: Semaphore,
+    resume: Semaphore,
+}
+
+impl StorePause {
+    fn new() -> Self {
+        Self {
+            reached: Semaphore::new(0),
+            resume: Semaphore::new(0),
+        }
+    }
+
+    async fn wait_until_reached(&self) {
+        self.reached
+            .acquire()
+            .await
+            .expect("the store barrier remains open")
+            .forget();
+    }
+
+    fn release(&self) {
+        self.resume.add_permits(1);
+    }
+
+    async fn hold_after_snapshot(&self) {
+        self.reached.add_permits(1);
+        self.resume
+            .acquire()
+            .await
+            .expect("the store barrier remains open")
+            .forget();
+    }
+}
+
 #[derive(Default)]
 struct MemorySessions {
     state: Mutex<MemorySessionState>,
     fail_lists: AtomicBool,
+    sequence_taken_errors: AtomicUsize,
+    record_read_pause: Mutex<Option<(usize, Arc<StorePause>)>>,
+    event_commit_pause: Mutex<Option<Arc<StorePause>>>,
+}
+
+impl MemorySessions {
+    async fn pause_nth_record_read(&self, nth: usize) -> Arc<StorePause> {
+        assert!(nth > 0, "a record-read pause needs a positive position");
+        let pause = Arc::new(StorePause::new());
+        assert!(
+            self.record_read_pause
+                .lock()
+                .await
+                .replace((nth, Arc::clone(&pause)))
+                .is_none(),
+            "only one record read may be paused at a time"
+        );
+        pause
+    }
+
+    async fn pause_next_event_commit(&self) -> Arc<StorePause> {
+        let pause = Arc::new(StorePause::new());
+        assert!(
+            self.event_commit_pause
+                .lock()
+                .await
+                .replace(Arc::clone(&pause))
+                .is_none(),
+            "only one event commit may be paused at a time"
+        );
+        pause
+    }
 }
 
 #[derive(Default)]
@@ -182,7 +339,22 @@ impl SessionStore for MemorySessions {
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        Ok(self.state.lock().await.records.get(&id.0).cloned())
+        let record = self.state.lock().await.records.get(&id.0).cloned();
+        let pause = {
+            let mut armed = self.record_read_pause.lock().await;
+            if let Some((remaining, _)) = armed.as_mut() {
+                *remaining -= 1;
+            }
+            if armed.as_ref().is_some_and(|(remaining, _)| *remaining == 0) {
+                armed.take().map(|(_, pause)| pause)
+            } else {
+                None
+            }
+        };
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
+        }
+        Ok(record)
     }
 
     async fn list_for(
@@ -254,10 +426,23 @@ impl SessionStore for MemorySessions {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.state
+        let pause = if events.is_empty() {
+            None
+        } else {
+            self.event_commit_pause.lock().await.take()
+        };
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
+        }
+        let result = self
+            .state
             .lock()
             .await
-            .commit(write_id, record, events, false)
+            .commit(write_id, record, events, false);
+        if matches!(&result, Err(StoreError::SequenceTaken { .. })) {
+            self.sequence_taken_errors.fetch_add(1, Ordering::SeqCst);
+        }
+        result
     }
 
     async fn create_session_idempotent(
@@ -639,6 +824,8 @@ impl ScreenModel for EmptyScreen {
 struct TestKernel {
     conversation_updates: Mutex<Option<mpsc::Sender<layer3_adapter::ConversationUpdate>>>,
     resource_samples: Mutex<Option<mpsc::Sender<layer3_adapter::ResourceSample>>>,
+    provisions: AtomicUsize,
+    conversation_inputs: Arc<AtomicUsize>,
 }
 
 impl TestKernel {
@@ -654,6 +841,70 @@ impl TestKernel {
                 layer3_adapter::SessionUpdate::AgentMessageChunk(
                     layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(text)),
                 ),
+            ))
+            .await
+            .expect("the conversation fixture is listening");
+    }
+
+    async fn emit_available_commands(&self) {
+        let updates = self
+            .conversation_updates
+            .lock()
+            .await
+            .clone()
+            .expect("the conversation fixture is connected");
+        updates
+            .send(layer3_adapter::ConversationUpdate::Said(
+                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(
+                    layer3_adapter::AvailableCommandsUpdate::new(vec![
+                        layer3_adapter::AvailableCommand::new("inspect", "Inspect the workspace"),
+                    ]),
+                ),
+            ))
+            .await
+            .expect("the conversation fixture is listening");
+    }
+
+    async fn emit_permission_request(&self, request_id: &str) {
+        let updates = self
+            .conversation_updates
+            .lock()
+            .await
+            .clone()
+            .expect("the conversation fixture is connected");
+        updates
+            .send(layer3_adapter::ConversationUpdate::Asked(
+                layer3_adapter::PermissionRequest {
+                    id: request_id.to_string(),
+                    request: layer3_adapter::RequestPermissionRequest::new(
+                        layer3_adapter::ConversationId::new("rest-contract-conversation"),
+                        layer3_adapter::ToolCallUpdate::new(
+                            layer3_adapter::ToolCallId::new("contract-call"),
+                            layer3_adapter::ToolCallUpdateFields::new()
+                                .title("run the contract command".to_string()),
+                        ),
+                        vec![layer3_adapter::PermissionOption::new(
+                            layer3_adapter::PermissionOptionId::new("allow-once"),
+                            "Allow once".to_string(),
+                            layer3_adapter::PermissionOptionKind::AllowOnce,
+                        )],
+                    ),
+                },
+            ))
+            .await
+            .expect("the conversation fixture is listening");
+    }
+
+    async fn emit_turn_ended(&self) {
+        let updates = self
+            .conversation_updates
+            .lock()
+            .await
+            .clone()
+            .expect("the conversation fixture is connected");
+        updates
+            .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
             ))
             .await
             .expect("the conversation fixture is listening");
@@ -690,6 +941,7 @@ impl KernelAdapter for TestKernel {
     }
 
     async fn provision(&self, spec: &RuntimeSpec) -> Result<RuntimeHandle, AdapterError> {
+        self.provisions.fetch_add(1, Ordering::SeqCst);
         Ok(RuntimeHandle(format!("runtime-{}", spec.session_id)))
     }
 
@@ -716,8 +968,15 @@ impl KernelAdapter for TestKernel {
         updates: mpsc::Sender<layer3_adapter::ConversationUpdate>,
     ) -> Result<layer3_adapter::ConversationChannel, AdapterError> {
         *self.conversation_updates.lock().await = Some(updates);
+        let received = Arc::clone(&self.conversation_inputs);
         Ok(layer3_adapter::ConversationChannel {
-            input: layer3_adapter::ConversationInputSender::spawn(8, |_input| async { Ok(()) }),
+            input: layer3_adapter::ConversationInputSender::spawn(8, move |_input| {
+                let received = Arc::clone(&received);
+                async move {
+                    received.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            }),
             conversation_id: Some("rest-contract-conversation".into()),
         })
     }
@@ -764,6 +1023,7 @@ struct TestSurface {
     tickets: Arc<TerminalTickets>,
     kernel: Arc<TestKernel>,
     store: Arc<MemorySessions>,
+    operations: Arc<MemoryOperations>,
     profiles: Arc<MemoryProfiles>,
     catalogue: Arc<TestCatalogue>,
     directory: Arc<TestDirectory>,
@@ -797,6 +1057,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
     );
     let factory: ScreenFactory = Arc::new(|geometry| Box::new(EmptyScreen(geometry)));
     let store = Arc::new(MemorySessions::default());
+    let operations = Arc::new(MemoryOperations::default());
     let sessions = SessionService::new(
         adapters,
         factory,
@@ -831,6 +1092,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         users: Arc::clone(&users),
         tickets: Arc::clone(&tickets),
         environments: Arc::clone(&environments),
+        operations: Arc::clone(&operations) as Arc<dyn OperationStore>,
     };
     let rest = rest_api_router(
         public_state.clone(),
@@ -863,6 +1125,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         tickets,
         kernel,
         store,
+        operations,
         profiles,
         catalogue,
         directory,
@@ -875,6 +1138,21 @@ fn json_request(method: Method, uri: &str, body: impl Into<Body>) -> Request<Bod
         .method(method)
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
+        .body(body.into())
+        .expect("request builds")
+}
+
+fn keyed_json_request(
+    method: Method,
+    uri: &str,
+    key: &str,
+    body: impl Into<Body>,
+) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", key)
         .body(body.into())
         .expect("request builds")
 }
@@ -972,17 +1250,26 @@ async fn create_session(app: &Router) -> (SessionId, serde_json::Value) {
 }
 
 async fn wait_until_ready(sessions: &SessionService, caller: &Caller, id: &SessionId) {
+    wait_until_status(sessions, caller, id, SessionStatus::Ready).await;
+}
+
+async fn wait_until_status(
+    sessions: &SessionService,
+    caller: &Caller,
+    id: &SessionId,
+    wanted: SessionStatus,
+) {
     for _ in 0..200 {
         let session = sessions
             .get_session(caller, id)
             .await
             .expect("the created session is readable");
-        if session.status == SessionStatus::Ready {
+        if session.status == wanted {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    panic!("the in-memory runtime did not become ready");
+    panic!("the in-memory runtime did not become {wanted:?}");
 }
 
 async fn create_ready_session(
@@ -1062,6 +1349,10 @@ async fn create_ready_conversation_session(
 mod agui_auth_contract_tests;
 
 async fn next_agui_frame(body: &mut BodyDataStream) -> serde_json::Value {
+    next_agui_frame_and_wire(body).await.0
+}
+
+async fn next_agui_frame_and_wire(body: &mut BodyDataStream) -> (serde_json::Value, String) {
     loop {
         let bytes = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
             .await
@@ -1082,8 +1373,9 @@ async fn next_agui_frame(body: &mut BodyDataStream) -> serde_json::Value {
             !data.is_empty(),
             "an AG-UI event frame must carry SSE data: {raw:?}"
         );
-        return serde_json::from_str(&data)
+        let frame = serde_json::from_str(&data)
             .unwrap_or_else(|error| panic!("AG-UI data is JSON ({error}): {raw:?}"));
+        return (frame, raw);
     }
 }
 
@@ -1332,7 +1624,7 @@ async fn replay_frames_use_the_session_id_for_initial_history_and_the_followed_t
     let mut body = response.into_body().into_data_stream();
 
     let mut initial_types = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         let frame = next_agui_frame(&mut body).await;
         assert_agui_ids(&frame, &id.0, &id);
         initial_types.push(
@@ -1345,12 +1637,13 @@ async fn replay_frames_use_the_session_id_for_initial_history_and_the_followed_t
     assert_eq!(
         initial_types,
         [
+            "RUN_STARTED",
             "TEXT_MESSAGE_START",
             "TEXT_MESSAGE_CONTENT",
             "TEXT_MESSAGE_END",
-            "RUN_STARTED",
+            "STATE_DELTA",
         ],
-        "the initial read must exercise the already-recorded turn"
+        "a newly written turn replays its boundary before the owner message"
     );
 
     sessions
@@ -1434,10 +1727,185 @@ async fn followed_live_and_resource_frames_use_the_session_id_for_both_contexts(
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn run_frames_echo_the_explicit_client_run_id_instead_of_the_session_id() {
+async fn a_prompt_run_starts_at_its_own_boundary_after_a_racing_runtime_event() {
     let TestSurface {
         app,
         sessions,
+        kernel,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    // The run route reads the session once, then prompt admission reads it
+    // again. Pause that second snapshot so a durable runtime update lands in
+    // the exact window that an earlier route-level cursor snapshot exposed.
+    let pause = store.pause_nth_record_read(2).await;
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": id.0,
+            "runId": "run_racing_history",
+            "messages": [{ "role": "user", "content": "start after my boundary" }]
+        })
+        .to_string(),
+    );
+    let response =
+        tokio::spawn(async move { app.oneshot(request).await.expect("the run route answers") });
+    pause.wait_until_reached().await;
+
+    kernel.emit_available_commands().await;
+    let mut unrelated_seq = None;
+    for _ in 0..200 {
+        unrelated_seq = sessions
+            .events_since(&caller, &id, None)
+            .await
+            .expect("history remains readable")
+            .into_iter()
+            .find(|event| matches!(event.kind, EventKind::AvailableCommandsSet { .. }))
+            .map(|event| event.seq);
+        if unrelated_seq.is_some() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let unrelated_seq = unrelated_seq.expect("the racing runtime event becomes durable");
+    pause.release();
+
+    let response = response.await.expect("the run task completes");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let (first, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(first["type"], "RUN_STARTED");
+    assert_agui_ids(&first, "run_racing_history", &id);
+    let first_id = wire
+        .lines()
+        .find_map(|line| line.strip_prefix("id:"))
+        .map(str::trim)
+        .expect("a prompt boundary carries an SSE id")
+        .parse::<u64>()
+        .expect("the prompt boundary id is a sequence");
+    assert!(
+        first_id > unrelated_seq,
+        "the response must start at its own prompt boundary, after the racing event: {wire:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_prompt_run_uses_its_committed_boundary_after_cross_replica_resequencing() {
+    let TestSurface {
+        app,
+        sessions,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let original_tail = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("the owner can read the session")
+        .last()
+        .expect("creation records events")
+        .seq;
+
+    // Hold the already allocated three-event prompt unit immediately before
+    // its store CAS. A competing event append then takes its first sequence,
+    // forcing the real lane through SequenceTaken before it can report the
+    // boundary used by the POST response.
+    let pause = store.pause_next_event_commit().await;
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": id.0,
+            "runId": "run_resequenced_prompt",
+            "messages": [{ "role": "user", "content": "use the committed boundary" }]
+        })
+        .to_string(),
+    );
+    let response =
+        tokio::spawn(async move { app.oneshot(request).await.expect("the run route answers") });
+    pause.wait_until_reached().await;
+
+    let rival_seq = original_tail + 1;
+    let rival_event = Event {
+        session_id: id.clone(),
+        seq: rival_seq,
+        kind: EventKind::AvailableCommandsSet {
+            commands: Vec::new(),
+        },
+        appended_at: "2026-08-26T00:00:00Z".into(),
+    };
+    store
+        .append_events(&[rival_event])
+        .await
+        .expect("the competing replica takes the prompt unit's first sequence");
+    pause.release();
+
+    let response = response.await.expect("the run task completes");
+    assert_eq!(
+        store.sequence_taken_errors.load(Ordering::SeqCst),
+        1,
+        "the prompt commit must exercise the normal cross-replica sequence rebase"
+    );
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let (first, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(
+        first["type"], "RUN_STARTED",
+        "the rival projection is excluded"
+    );
+    assert_agui_ids(&first, "run_resequenced_prompt", &id);
+    let first_id = wire
+        .lines()
+        .find_map(|line| line.strip_prefix("id:"))
+        .map(str::trim)
+        .expect("the committed prompt boundary carries an SSE id")
+        .parse::<u64>()
+        .expect("the prompt boundary id is a sequence");
+    assert_eq!(
+        first_id,
+        rival_seq + 1,
+        "the response starts at the prompt unit's rebased TurnStarted"
+    );
+
+    let committed = sessions
+        .events_since(&caller, &id, Some(original_tail))
+        .await
+        .expect("the resequenced history is readable");
+    assert!(matches!(
+        committed.as_slice(),
+        [
+            Event {
+                seq,
+                kind: EventKind::AvailableCommandsSet { .. },
+                ..
+            },
+            Event {
+                seq: turn_seq,
+                kind: EventKind::TurnStarted,
+                ..
+            },
+            Event {
+                kind: EventKind::OwnerMessage { .. },
+                ..
+            },
+            Event {
+                kind: EventKind::StatusChanged { .. },
+                ..
+            }
+        ] if *seq == rival_seq && *turn_seq == first_id
+    ));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_prompt_run_starts_before_every_frame_and_finishes_after_the_user_echo() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
         caller,
         ..
     } = test_surface(true);
@@ -1461,10 +1929,229 @@ async fn run_frames_echo_the_explicit_client_run_id_instead_of_the_session_id() 
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body().into_data_stream();
 
-    for _ in 0..4 {
+    // Force the live lane to wake the stream before its first durable poll. The
+    // already-recorded boundary must still win that race.
+    kernel.emit_message_chunk("already answering").await;
+    let first = next_agui_frame(&mut body).await;
+    assert_eq!(first["type"], "RUN_STARTED");
+    assert_agui_ids(&first, run_id, &id);
+
+    kernel.emit_turn_ended().await;
+    let mut emitted = vec![first];
+    for _ in 1..10 {
         let frame = next_agui_frame(&mut body).await;
         assert_agui_ids(&frame, run_id, &id);
+        emitted.push(frame);
     }
+    assert_eq!(
+        emitted
+            .iter()
+            .map(|frame| frame["type"].as_str().expect("every frame names its type"))
+            .collect::<Vec<_>>(),
+        [
+            "RUN_STARTED",
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
+            "STATE_DELTA",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
+            "RUN_FINISHED",
+        ],
+        "the complete run is bracketed before the user echo and after the response"
+    );
+    assert!(
+        body.next().await.is_none(),
+        "RUN_FINISHED is the stream's final frame"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_resume_run_starts_unnumbered_and_still_finishes() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    sessions
+        .send_prompt(&caller, &id, "ask before continuing".into())
+        .await
+        .expect("the opening turn is accepted");
+    kernel.emit_permission_request("approval-contract").await;
+    wait_until_status(&sessions, &caller, &id, SessionStatus::Idle).await;
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0,
+                "runId": "run_resume_contract",
+                "resume": [{
+                    "interruptId": "approval-contract",
+                    "status": "resolved",
+                    "payload": { "decision": "allow" }
+                }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+
+    let (started, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(started["type"], "RUN_STARTED");
+    assert_agui_ids(&started, "run_resume_contract", &id);
+    assert!(
+        !wire.lines().any(|line| line.starts_with("id:")),
+        "the synthetic continuation boundary must not advance the durable cursor: {wire:?}"
+    );
+
+    loop {
+        let (frame, wire) = next_agui_frame_and_wire(&mut body).await;
+        assert_agui_ids(&frame, "run_resume_contract", &id);
+        assert!(
+            wire.lines().any(|line| line.starts_with("id:")),
+            "every durable continuation projection must advance the cursor: {wire:?}"
+        );
+        assert_ne!(
+            frame["type"], "RUN_FINISHED",
+            "the continuation must clear the answered approval before it finishes"
+        );
+        if frame["type"] == "STATE_DELTA"
+            && frame["delta"]
+                == serde_json::json!([{
+                    "op": "remove",
+                    "path": "/pendingApprovals/approval-contract"
+                }])
+        {
+            break;
+        }
+    }
+
+    kernel.emit_turn_ended().await;
+    let (finished, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(finished["type"], "RUN_FINISHED");
+    assert_agui_ids(&finished, "run_resume_contract", &id);
+    assert!(
+        wire.lines().any(|line| line.starts_with("id:")),
+        "the durable turn completion remains the resume point: {wire:?}"
+    );
+    assert!(body.next().await.is_none());
+}
+
+#[tokio::test]
+async fn a_bad_run_request_is_a_problem_without_a_started_run() {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let before = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("history is readable before the refusal")
+        .last()
+        .map(|event| event.seq);
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0,
+                "runId": "run_without_work"
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("router answers");
+    let problem = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "invalid_request");
+    assert!(
+        !problem.to_string().contains("RUN_STARTED"),
+        "a pre-stream refusal is only a problem document: {problem}"
+    );
+
+    let after = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("history is readable after the refusal")
+        .last()
+        .map(|event| event.seq);
+    assert_eq!(after, before, "a bad request must not open a durable turn");
+}
+
+#[tokio::test]
+async fn a_capability_refusal_is_a_problem_without_a_started_run() {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        ..
+    } = test_surface(true);
+    let session = sessions
+        .create_session(
+            &caller,
+            SessionSpec {
+                options: Default::default(),
+                geometry: None,
+                environment_profile: None,
+                caller_credential: Some(TEST_DELEGATED_CREDENTIAL.into()),
+                runtime_credential: None,
+                requested_mode: Some(SessionMode::Terminal),
+                quoted_rate_card: None,
+            },
+        )
+        .await
+        .expect("the terminal session is accepted");
+    wait_until_ready(&sessions, &caller, &session.id).await;
+    let before = sessions
+        .events_since(&caller, &session.id, None)
+        .await
+        .expect("history is readable before the refusal")
+        .last()
+        .map(|event| event.seq);
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": session.id.0,
+                "runId": "run_on_terminal",
+                "messages": [{ "role": "user", "content": "cannot be sent" }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("router answers");
+    let problem = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "capability_unsupported");
+    assert_eq!(problem["capability"], "conversation");
+    assert!(
+        !problem.to_string().contains("RUN_STARTED"),
+        "a capability refusal must not open a partial stream: {problem}"
+    );
+
+    let after = sessions
+        .events_since(&caller, &session.id, None)
+        .await
+        .expect("history is readable after the refusal")
+        .last()
+        .map(|event| event.seq);
+    assert_eq!(
+        after, before,
+        "a capability refusal must not open a durable turn"
+    );
 }
 
 async fn assert_server_defaulted_run_id(explicit_null: bool) {
@@ -1620,7 +2307,7 @@ async fn listed_origin_completes_an_authorized_http_cors_sequence() {
         .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
         .header(
             header::ACCESS_CONTROL_REQUEST_HEADERS,
-            "authorization,content-type",
+            "authorization,content-type,idempotency-key",
         )
         .send()
         .await
@@ -1651,6 +2338,11 @@ async fn listed_origin_completes_an_authorized_http_cors_sequence() {
         header::ACCESS_CONTROL_ALLOW_HEADERS,
         "content-type",
     );
+    assert_header_list_contains(
+        &headers,
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        "idempotency-key",
+    );
     assert_header_list_contains(&headers, header::ACCESS_CONTROL_ALLOW_METHODS, "POST");
     assert_eq!(
         headers
@@ -1664,6 +2356,7 @@ async fn listed_origin_completes_an_authorized_http_cors_sequence() {
         .header(header::ORIGIN, LISTED_ORIGIN)
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::AUTHORIZATION, "Bearer browser-fixture")
+        .header("idempotency-key", "browser-create")
         .body("{}")
         .send()
         .await
@@ -2310,6 +3003,27 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             .iter()
             .all(|parameter| parameter["name"] != "after"),
         "the compatibility cursor alias must not be advertised: {event_parameters:?}"
+    );
+
+    let mut keyed_operations = Vec::new();
+    for (path, path_item) in paths {
+        for method in ["get", "post", "put", "patch", "delete"] {
+            let Some(parameters) = path_item[method]["parameters"].as_array() else {
+                continue;
+            };
+            if parameters
+                .iter()
+                .any(|parameter| parameter["name"] == "Idempotency-Key")
+            {
+                keyed_operations.push(format!("{method} {path}"));
+            }
+        }
+    }
+    keyed_operations.sort();
+    assert_eq!(
+        keyed_operations,
+        ["post /api/v1/sessions", "post /api/v1/sessions/{id}/input",],
+        "only the two deduplicated operations may advertise Idempotency-Key"
     );
 
     let discovery_schema =
@@ -3587,6 +4301,28 @@ async fn unbuffered_json_and_optional_body_limits_return_the_same_coded_413() {
 }
 
 #[tokio::test]
+async fn oversized_unkeyed_input_checks_media_type_before_reading_the_body() {
+    let app = test_surface(true).app;
+    for content_type in [None, Some("text/plain")] {
+        let mut request = Request::post("/api/v1/sessions/sesn_bad/input");
+        if let Some(content_type) = content_type {
+            request = request.header(header::CONTENT_TYPE, content_type);
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                request
+                    .body(Body::from(vec![b' '; OVERSIZED_BODY_LEN]))
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        let body = assert_problem(response, StatusCode::UNSUPPORTED_MEDIA_TYPE).await;
+        assert_eq!(body["code"], "unsupported_media_type");
+    }
+}
+
+#[tokio::test]
 async fn rest_routing_failures_are_scoped_problem_documents() {
     let app = test_surface(true).app;
 
@@ -3660,4 +4396,422 @@ async fn well_formed_create_and_input_keep_their_success_statuses() {
         .await
         .expect("router answers");
     assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn one_create_key_returns_the_first_bytes_and_provisions_once() {
+    let TestSurface {
+        app, store, kernel, ..
+    } = test_surface(true);
+
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "create-retry-a",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let first_status = first.status();
+    let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+
+    let replay = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "create-retry-a",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let replay_status = replay.status();
+    let replay_body = to_bytes(replay.into_body(), usize::MAX).await.unwrap();
+
+    assert_eq!(first_status, StatusCode::CREATED);
+    assert_eq!(replay_status, first_status);
+    assert_eq!(
+        replay_body, first_body,
+        "the response body must replay verbatim"
+    );
+    assert_eq!(store.state.lock().await.records.len(), 1);
+    for _ in 0..100 {
+        if kernel.provisions.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn one_input_key_delivers_one_prompt() {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        kernel,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    kernel.conversation_inputs.store(0, Ordering::SeqCst);
+    let uri = format!("/api/v1/sessions/{}/input", id.0);
+
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(keyed_json_request(
+                Method::POST,
+                &uri,
+                "prompt-retry-a",
+                r#"{"text":"act once"}"#,
+            ))
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert!(to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    for _ in 0..100 {
+        if kernel.conversation_inputs.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(kernel.conversation_inputs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn different_create_keys_create_two_sessions() {
+    let TestSurface { app, store, .. } = test_surface(true);
+    for key in ["create-a", "create-b"] {
+        let response = app
+            .clone()
+            .oneshot(keyed_json_request(
+                Method::POST,
+                "/api/v1/sessions",
+                key,
+                "{}",
+            ))
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    assert_eq!(store.state.lock().await.records.len(), 2);
+}
+
+#[tokio::test]
+async fn malformed_operation_keys_are_named_bad_requests() {
+    let app = test_surface(true).app;
+    for key in ["", "contains space"] {
+        let response = app
+            .clone()
+            .oneshot(keyed_json_request(
+                Method::POST,
+                "/api/v1/sessions",
+                key,
+                "{}",
+            ))
+            .await
+            .expect("router answers");
+        let body = assert_problem(response, StatusCode::BAD_REQUEST).await;
+        assert_eq!(body["code"], "invalid_idempotency_key");
+    }
+}
+
+#[tokio::test]
+async fn an_in_flight_duplicate_is_a_named_conflict() {
+    use sha2::{Digest as _, Sha256};
+
+    let TestSurface {
+        app,
+        operations,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let fingerprint: [u8; 32] = Sha256::digest(b"{}").into();
+    let claim = OperationClaim::new(
+        caller.subject.clone(),
+        "session-create",
+        "still-running",
+        fingerprint,
+        SystemTime::now() + std::time::Duration::from_secs(86_400),
+    );
+    assert_eq!(
+        operations.reserve(&claim).await.unwrap(),
+        OperationReservation::Acquired
+    );
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "still-running",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::CONFLICT).await;
+    assert_eq!(body["code"], "idempotency_in_flight");
+    assert!(store.state.lock().await.records.is_empty());
+}
+
+#[tokio::test]
+async fn reusing_a_key_for_different_input_is_unprocessable() {
+    let TestSurface { app, store, .. } = test_surface(true);
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "changed-create",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(first.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "changed-create",
+            r#"{"cols":100,"rows":40}"#,
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "idempotency_key_reused");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+}
+
+#[tokio::test]
+async fn byte_different_bodies_do_not_replay_even_when_the_json_value_matches() {
+    let TestSurface { app, store, .. } = test_surface(true);
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "body-bytes",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(first.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "body-bytes",
+            "{ }",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "idempotency_key_reused");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+}
+
+#[tokio::test]
+async fn malformed_bytes_cannot_bypass_a_completed_keys_fingerprint() {
+    let TestSurface { app, store, .. } = test_surface(true);
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-retry",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(first.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-retry",
+            "{",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "idempotency_key_reused");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+}
+
+#[tokio::test]
+async fn a_keyed_body_refusal_replays_and_retains_its_raw_fingerprint() {
+    let TestSurface {
+        app,
+        operations,
+        store,
+        ..
+    } = test_surface(true);
+
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-first",
+            "{",
+        ))
+        .await
+        .expect("router answers");
+    let first_status = first.status();
+    let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+
+    let replay = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-first",
+            "{",
+        ))
+        .await
+        .expect("router answers");
+    let replay_status = replay.status();
+    let replay_body = to_bytes(replay.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(first_status, StatusCode::BAD_REQUEST);
+    assert_eq!(replay_status, first_status);
+    assert_eq!(replay_body, first_body);
+
+    let mismatch = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "malformed-first",
+            "[",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(mismatch, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(body["code"], "idempotency_key_reused");
+    assert!(store.state.lock().await.records.is_empty());
+    assert_eq!(operations.state.lock().await.len(), 1);
+}
+
+#[tokio::test]
+async fn an_expired_key_is_reusable_and_a_stale_completion_cannot_replace_it() {
+    use sha2::{Digest as _, Sha256};
+
+    let operations = MemoryOperations::default();
+    let fingerprint: [u8; 32] = Sha256::digest(b"{}").into();
+    let expired = OperationClaim::new(
+        SubjectId("subject-a".into()),
+        "session-create",
+        "expired",
+        fingerprint,
+        SystemTime::UNIX_EPOCH,
+    );
+    assert_eq!(
+        operations.reserve(&expired).await.unwrap(),
+        OperationReservation::Acquired
+    );
+    let current = OperationClaim::new(
+        SubjectId("subject-a".into()),
+        "session-create",
+        "expired",
+        fingerprint,
+        SystemTime::now() + std::time::Duration::from_secs(86_400),
+    );
+    assert_eq!(
+        operations.reserve(&current).await.unwrap(),
+        OperationReservation::Acquired
+    );
+    assert!(operations
+        .complete(&expired, b"stale".to_vec())
+        .await
+        .is_err());
+    assert_eq!(
+        operations.reserve(&current).await.unwrap(),
+        OperationReservation::Pending
+    );
+}
+
+#[tokio::test]
+async fn an_unavailable_operation_store_fails_closed_before_creation() {
+    let TestSurface {
+        app,
+        operations,
+        store,
+        kernel,
+        ..
+    } = test_surface(true);
+    operations.unavailable.store(true, Ordering::SeqCst);
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "store-down",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::SERVICE_UNAVAILABLE).await;
+    assert_eq!(body["code"], "store_failed");
+    assert!(store.state.lock().await.records.is_empty());
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_failed_completion_keeps_the_claim_pending_and_prevents_a_second_create() {
+    let TestSurface {
+        app,
+        operations,
+        store,
+        kernel,
+        ..
+    } = test_surface(true);
+    operations
+        .completions_unavailable
+        .store(true, Ordering::SeqCst);
+
+    let first = app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "completion-down",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(first, StatusCode::SERVICE_UNAVAILABLE).await;
+    assert_eq!(body["code"], "store_failed");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+
+    operations
+        .completions_unavailable
+        .store(false, Ordering::SeqCst);
+    let retry = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "completion-down",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(retry, StatusCode::CONFLICT).await;
+    assert_eq!(body["code"], "idempotency_in_flight");
+    assert_eq!(store.state.lock().await.records.len(), 1);
+    for _ in 0..100 {
+        if kernel.provisions.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(kernel.provisions.load(Ordering::SeqCst), 1);
 }

@@ -591,6 +591,37 @@ describe('liveness is not history', () => {
   });
 });
 
+describe('a cursorless interface boundary', () => {
+  it('fails the GET connection permanently without moving its cursor', async () => {
+    const fake = new Fake();
+    fake.onOpen = [
+      { type: 'RUN_STARTED', threadId: 'sesn_1', runId: 'run_resume', seq: 0 },
+      {
+        type: 'TEXT_MESSAGE_CONTENT',
+        threadId: 'sesn_1',
+        runId: 'run_resume',
+        seq: 0,
+        messageId: 'msg_live',
+        delta: 'continuing',
+        'cma:live': true,
+      },
+      { type: 'RUN_FINISHED', threadId: 'sesn_1', runId: 'run_resume', seq: 7 },
+    ];
+    fake.responses = [[]];
+    const { connection, errors, seen, statuses, stop } = connect(fake);
+
+    await vi.waitFor(() => expect(statuses).toContain('failed'));
+    stop();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(ProtocolError);
+    expect(errors[0]?.message).toContain('reserved for POST run responses');
+    expect(seen).toEqual([]);
+    expect(connection.cursor).toBe(0);
+    expect(fake.opens).toBe(1);
+  });
+});
+
 describe('a durable event that projects to several frames', () => {
   it('delivers every frame and advances only on the final one', async () => {
     const fake = new Fake();

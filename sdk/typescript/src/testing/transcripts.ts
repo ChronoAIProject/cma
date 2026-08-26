@@ -177,7 +177,7 @@ export const APPROVAL_GRANTED: Transcript = {
         ],
       },
     }),
-    frame(900, { type: 'RUN_STARTED', runId: 'run_5', seq: 3 }),
+    frame(900, { type: 'RUN_STARTED', runId: 'run_5', seq: 0 }),
     frame(120, {
       type: 'TEXT_MESSAGE_START',
       runId: 'run_5',
@@ -224,7 +224,7 @@ export const APPROVAL_DENIED: Transcript = {
         ],
       },
     }),
-    frame(700, { type: 'RUN_STARTED', runId: 'run_7', seq: 3 }),
+    frame(700, { type: 'RUN_STARTED', runId: 'run_7', seq: 0 }),
     frame(180, {
       type: 'TEXT_MESSAGE_START',
       runId: 'run_7',

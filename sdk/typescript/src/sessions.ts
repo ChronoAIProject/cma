@@ -29,7 +29,7 @@ import {
   type PageRequest,
   type PageWalkOptions,
 } from './http.js';
-import { PRICING_WIRE } from './wire.js';
+import { PRICING_WIRE, SESSION_STATUSES, type SessionStatus } from './wire.js';
 import type {
   CredentialMode,
   Kernel,
@@ -62,14 +62,7 @@ const REASONING_EFFORTS: readonly ReasoningEffort[] = [
 ];
 const CREDENTIAL_MODES: readonly CredentialMode[] = ['delegated', 'own'];
 
-const LIFECYCLES: readonly SessionLifecycle[] = [
-  'provisioning',
-  'ready',
-  'running',
-  'rotating',
-  'idle',
-  'terminated',
-];
+const LIFECYCLES: readonly Exclude<SessionLifecycle, 'unknown'>[] = SESSION_STATUSES;
 
 const SESSION_COLLECTION = '/api/v1/sessions';
 
@@ -140,11 +133,11 @@ export function toSession(raw: unknown): Session {
   // The wire carries RFC 3339; consumers count age in milliseconds. An
   // unparseable date falls back to now rather than propagating NaN.
   const parsed = typeof p.created_at === 'string' ? Date.parse(p.created_at) : Number.NaN;
-  const knownLifecycle = LIFECYCLES.includes(p.status as SessionLifecycle);
+  const knownLifecycle = LIFECYCLES.includes(p.status as SessionStatus);
   return {
     id: p.id,
     kernel: p.kernel as Kernel,
-    lifecycle: knownLifecycle ? (p.status as SessionLifecycle) : 'unknown',
+    lifecycle: knownLifecycle ? (p.status as SessionStatus) : 'unknown',
     ...(knownLifecycle ? {} : { reportedStatus: p.status }),
     recoveryState:
       typeof p.recovery_state === 'string' && p.recovery_state !== ''
