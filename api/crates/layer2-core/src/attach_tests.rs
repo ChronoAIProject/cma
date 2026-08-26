@@ -9,12 +9,14 @@ use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
+use std::time::Duration;
 
-use layer3_adapter::{TermSize, TerminalInput, TerminalOutput};
+use layer3_adapter::{AdapterError, TermSize, TerminalInput, TerminalOutput};
 
 use crate::attach::AttachmentClaim;
 use crate::commit_fault_support::CommitFaultStore;
 use crate::conversation::ApprovalDecision;
+use crate::coordination::{SessionLease, SessionOperation};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::store::SessionStore;
@@ -65,6 +67,33 @@ async fn attached_session() -> (
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
     (svc, alice, created.id)
+}
+
+async fn wait_for_interaction_lease(store: &FakeStore, id: &crate::ids::SessionId) -> SessionLease {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(lease) = store
+                .active_session_lease(id)
+                .await
+                .filter(|lease| lease.operation == SessionOperation::Interact)
+            {
+                return lease;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the interaction lease is acquired")
+}
+
+async fn wait_for_interaction_release(store: &FakeStore, id: &crate::ids::SessionId) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while store.active_session_lease(id).await.is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the interaction lease is released");
 }
 
 #[tokio::test]
@@ -1144,6 +1173,190 @@ async fn the_client_holding_the_terminal_can_still_type_into_it() {
     svc.send_signal(&alice, &id, "INT".to_string())
         .await
         .expect("and can stop what it started");
+}
+
+#[tokio::test]
+async fn a_second_service_readopts_before_fenced_terminal_delivery() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("terminal-readoption-owner");
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let second = service(Arc::clone(&store), Arc::clone(&adapter));
+    assert!(!second.entries.read().await.contains_key(&created.id));
+    adapter.terminal_inputs.lock().await.clear();
+
+    second
+        .send_input(&alice, &created.id, b"from replica two".to_vec())
+        .await
+        .expect("the second service readopts and delivers bytes");
+    wait_for_interaction_release(&store, &created.id).await;
+    second
+        .send_signal(&alice, &created.id, "INT".into())
+        .await
+        .expect("the readopted service delivers a signal");
+
+    let delivered = adapter.terminal_inputs.lock().await;
+    assert_eq!(delivered.len(), 2);
+    assert!(matches!(
+        &delivered[0].1,
+        TerminalInput::Bytes(bytes) if bytes == b"from replica two"
+    ));
+    assert!(matches!(
+        &delivered[1].1,
+        TerminalInput::Signal(signal) if signal == "INT"
+    ));
+    assert!(second.entries.read().await.contains_key(&created.id));
+}
+
+#[tokio::test]
+async fn a_stale_terminal_generation_reaches_no_sender() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("stale-terminal-generation-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    adapter.terminal_inputs.lock().await.clear();
+    let mut entries = svc.entries.write().await;
+    let entry = entries.get_mut(&created.id).expect("the session is live");
+    entry.runtime_generation = entry
+        .runtime_generation
+        .checked_add(1)
+        .expect("test generations remain bounded");
+    drop(entries);
+
+    assert_eq!(
+        svc.send_input(&alice, &created.id, b"stale".to_vec()).await,
+        Err(CoreError::RuntimeUnavailable(
+            "the live terminal belongs to another runtime generation".into()
+        ))
+    );
+    assert!(adapter.terminal_inputs.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn terminal_delivery_reports_missing_and_rejected_senders() {
+    let store = Arc::new(FakeStore::default());
+    let svc = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
+    let alice = user("terminal-sender-errors-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("the session is live")
+        .input = None;
+
+    assert_eq!(
+        svc.send_input(&alice, &created.id, b"missing".to_vec())
+            .await,
+        Err(CoreError::RuntimeUnavailable(
+            "this session holds no terminal input sender".into()
+        ))
+    );
+    wait_for_interaction_release(&store, &created.id).await;
+
+    let rejected = layer3_adapter::TerminalInputSender::spawn(1, |_input| async {
+        Err(AdapterError::Rejected(
+            "the runtime refused terminal input".into(),
+        ))
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("the session is live")
+        .input = Some(rejected);
+    assert_eq!(
+        svc.send_signal(&alice, &created.id, "INT".into()).await,
+        Err(CoreError::RuntimeRefused(
+            "the runtime refused terminal input".into()
+        ))
+    );
+}
+
+#[tokio::test]
+async fn caller_cancellation_before_terminal_delivery_retires_the_owned_lease() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("cancelled-terminal-delivery-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    adapter.terminal_inputs.lock().await.clear();
+
+    let input_fence = svc.input_gates.gate(&created.id).write_owned().await;
+    let caller = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move { svc.send_input(&alice, &id, b"cancelled".to_vec()).await }
+    });
+    let held = wait_for_interaction_lease(&store, &created.id).await;
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        store.active_session_lease(&created.id).await,
+        Some(held),
+        "the owned action retains its lease while its local gate is blocked"
+    );
+
+    drop(input_fence);
+    wait_for_interaction_release(&store, &created.id).await;
+    assert!(
+        adapter.terminal_inputs.lock().await.is_empty(),
+        "cancellation before the final authority check reaches no sender"
+    );
+
+    svc.send_signal(&alice, &created.id, "INT".into())
+        .await
+        .expect("a successor proceeds after owned cleanup");
+    assert!(matches!(
+        adapter.terminal_inputs.lock().await.as_slice(),
+        [(_, TerminalInput::Signal(signal))] if signal == "INT"
+    ));
+}
+
+#[tokio::test]
+async fn caller_cancellation_after_terminal_admission_finishes_its_receipt() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let alice = user("cancelled-admitted-terminal-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    adapter.terminal_inputs.lock().await.clear();
+    adapter.pause_next_terminal_input();
+
+    let caller = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move {
+            svc.send_input(&alice, &id, b"already admitted".to_vec())
+                .await
+        }
+    });
+    adapter.wait_until_terminal_input_paused().await;
+    let held = wait_for_interaction_lease(&store, &created.id).await;
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        store.active_session_lease(&created.id).await,
+        Some(held),
+        "an admitted sender retains the lease through its receipt"
+    );
+
+    adapter.resume_terminal_input();
+    wait_for_interaction_release(&store, &created.id).await;
+    assert!(matches!(
+        adapter.terminal_inputs.lock().await.as_slice(),
+        [(_, TerminalInput::Bytes(bytes))] if bytes == b"already admitted"
+    ));
 }
 
 const ROTATION_BYTES: &[u8] = b"retry after rotation";

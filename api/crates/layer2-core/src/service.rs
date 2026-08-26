@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use layer3_adapter::{KernelAdapter, TerminalInput};
+use layer3_adapter::{AdapterError, KernelAdapter, TerminalInput, TerminalInputSender};
 #[cfg(test)]
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::sync::{OwnedMutexGuard, RwLock};
@@ -650,16 +650,21 @@ impl SessionService {
         CoreError::SessionNotFound
     }
 
-    pub(crate) async fn forward_input(&self, id: &SessionId, input: TerminalInput) {
-        let sender = {
-            let entries = self.entries.read().await;
-            entries.get(id).and_then(|e| e.input.clone())
-        };
-        if let Some(tx) = sender {
-            if tx.send(input).await.is_err() {
-                tracing::warn!(session_id = %id, "runtime input channel closed");
+    pub(crate) async fn forward_input(
+        &self,
+        id: &SessionId,
+        sender: &TerminalInputSender,
+        input: TerminalInput,
+    ) -> Result<(), CoreError> {
+        sender.send(input).await.map_err(|error| {
+            tracing::warn!(session_id = %id, %error, "terminal input was not delivered");
+            match error {
+                AdapterError::Unavailable(detail) => CoreError::RuntimeUnavailable(detail),
+                AdapterError::Rejected(detail)
+                | AdapterError::AtCapacity(detail)
+                | AdapterError::Unsupported(detail) => CoreError::RuntimeRefused(detail),
             }
-        }
+        })
     }
 }
 

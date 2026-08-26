@@ -351,31 +351,69 @@ impl SessionService {
         caller: &Caller,
         id: &SessionId,
     ) -> Result<(), CoreError> {
+        // Authorization and any readoption happen before durable interaction
+        // acquisition. Re-read afterwards so the lease names the exact record
+        // boundary produced by that work rather than its stale input snapshot.
         self.conversation_input(caller, id, Capability::Interrupt)
             .await?;
-        let input_fence = self.input_gates.gate(id).read_owned().await;
-        let input = {
-            let entries = self.entries.read().await;
-            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-            if !entry.session.is_owned_by(&caller.subject) {
-                return Err(CoreError::Forbidden);
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if record.session.status.is_rotating() {
+            return Err(CoreError::SessionRotating);
+        }
+        record.session.capabilities.require(Capability::Interrupt)?;
+
+        let service = Arc::clone(self);
+        let owner = caller.subject.clone();
+        let id = id.clone();
+        self.run_runtime_interaction_at(&record, move |authority| async move {
+            let _lifecycle = if authority.is_durably_fenced() {
+                None
+            } else {
+                Some(service.lock_lifecycle(&id).await)
+            };
+            let _input_fence = service.input_gates.gate(&id).read_owned().await;
+            let (runtime_generation, input) = {
+                let entries = service.entries.read().await;
+                let entry = entries.get(&id).ok_or_else(|| {
+                    CoreError::RuntimeUnavailable(
+                        "this session has no live conversation entry".into(),
+                    )
+                })?;
+                if !entry.session.is_owned_by(&owner) {
+                    return Err(CoreError::Forbidden);
+                }
+                if entry.session.status.is_terminal() {
+                    return Err(CoreError::SessionTerminated);
+                }
+                if entry.session.status.is_rotating() {
+                    return Err(CoreError::SessionRotating);
+                }
+                entry.session.capabilities.require(Capability::Interrupt)?;
+                let input = entry.conversation.clone().ok_or_else(|| {
+                    CoreError::RuntimeUnavailable(
+                        "this session holds no conversation input sender".into(),
+                    )
+                })?;
+                (entry.runtime_generation, input)
+            };
+
+            if !authority.fences_runtime_generation(runtime_generation) {
+                return Err(CoreError::RuntimeUnavailable(
+                    "the live conversation belongs to another runtime generation".into(),
+                ));
             }
-            if entry.session.status.is_terminal() {
-                return Err(CoreError::SessionTerminated);
-            }
-            if entry.session.status.is_rotating() {
-                return Err(CoreError::SessionRotating);
-            }
-            entry.session.capabilities.require(Capability::Interrupt)?;
-            entry.conversation.clone().ok_or_else(|| {
-                CoreError::RuntimeUnavailable("this session holds no conversation".into())
-            })?
-        };
-        let delivered = self
-            .toward_runtime(id, &input, ConversationInput::Cancel)
-            .await;
-        drop(input_fence);
-        delivered
+            authority.ensure_delivery_allowed()?;
+            service
+                .toward_runtime(&id, &input, ConversationInput::Cancel)
+                .await
+        })
+        .await
     }
 
     /// Answer something the runtime is blocked on.
