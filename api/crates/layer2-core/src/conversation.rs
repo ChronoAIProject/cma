@@ -199,10 +199,6 @@ impl SessionService {
         caller
             .authorization
             .require(AuthorizationCapability::UseOwnSessions)?;
-        // One prompt must publish its Running transition before the next one
-        // decides whether it is steering. This gate is deliberately separate
-        // from the lifecycle gate `conversation_input` may acquire in readoption.
-        let _admission = self.prompt_gates.gate(id).lock_owned().await;
         // A recorded running conversation can be refused before recovery is
         // attempted, so unsupported mid-turn input reaches neither a runtime
         // nor the log. An older record may still carry an unrecorded grant;
@@ -230,85 +226,118 @@ impl SessionService {
         // foldable while lifecycle recovery runs.
         self.conversation_input(caller, id, Capability::Conversation)
             .await?;
-        let input_fence = self.input_gates.gate(id).read_owned().await;
-        let ordering = self.conversation_order_gates.gate(id);
-        let ordered_turn = ordering.lock().await;
-        // The live entry may have changed during readoption. Recheck both prompt
-        // capabilities and drive the sender that is current under the same gate
-        // its folder takes before recording delivery effects.
-        let input = {
-            let entries = self.entries.read().await;
-            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-            if !entry.session.is_owned_by(&caller.subject) {
-                return Err(CoreError::Forbidden);
-            }
-            if entry.session.status.is_terminal() {
-                return Err(CoreError::SessionTerminated);
-            }
-            if entry.session.status.is_rotating() {
-                return Err(CoreError::SessionRotating);
-            }
-            entry
-                .session
-                .capabilities
-                .require(Capability::Conversation)?;
-            if entry.session.status == SessionStatus::Running {
-                entry.session.capabilities.require(Capability::Steer)?;
-            }
-            if !entry.pending_approvals.is_empty() {
-                return Err(CoreError::InvalidState);
-            }
-            entry.conversation.clone().ok_or_else(|| {
-                CoreError::RuntimeUnavailable("this session holds no conversation".into())
-            })?
-        };
-        // The boundary comes first so every projection can establish the turn
-        // before it receives the message that opened it. The owner's message
-        // still carries its own durable time, which is what §18.1 labels that
-        // side of the conversation with.
-        let owner_text = text.clone();
-        self.toward_runtime(
-            id,
-            &input,
-            ConversationInput::Prompt(vec![ContentBlock::from(text)]),
-        )
-        .await?;
-        let committed = {
-            let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return Err(CoreError::SessionNotFound);
+        // Serialize this process's prompts before acquiring distributed
+        // interaction authority. This gate participates in no lifecycle path;
+        // it only preserves the established rule that a second idle prompt
+        // waits to observe whether the first made steering necessary.
+        let admission = self.prompt_gates.gate(id).lock_owned().await;
+        let durable = self.record(id).await?;
+        let service = Arc::clone(self);
+        let id = id.clone();
+        let owner = caller.subject.clone();
+        self.run_runtime_interaction_at(&durable, move |authority| async move {
+            // Compatibility stores have no durable exclusion, so retain the
+            // established lifecycle-before-input order. A coordinated lease
+            // already excludes lifecycle work across every replica.
+            let lifecycle = if authority.is_durably_fenced() {
+                None
+            } else {
+                Some(service.lock_lifecycle(&id).await)
             };
-            entry.pending_approvals.clear();
-            entry.approval_locators.clear();
-            entry.session.status = SessionStatus::Running;
-            entry.session.stop_reason = None;
-            append_batch(
-                entry,
-                [
-                    EventKind::TurnStarted,
-                    EventKind::OwnerMessage {
-                        content: owner_text,
-                    },
-                    EventKind::StatusChanged {
-                        status: SessionStatus::Running,
-                        stop_reason: None,
-                        detail: None,
-                        capability: None,
-                    },
-                ],
-            )
-        };
-        // The lane owns the complete prompt unit in its required order. Let the
-        // folder enqueue immediate runtime effects behind it while persistence
-        // settles; the completion below still cannot pass those earlier events.
-        drop(ordered_turn);
-        drop(input_fence);
-        let record = committed.committed().await.map_err(store_failed)?;
-        record.session.last_seq.checked_sub(2).ok_or_else(|| {
-            CoreError::RuntimeUnavailable(
-                "session store: committed prompt boundary had no valid sequence".into(),
-            )
+            let input_fence = service.input_gates.gate(&id).read_owned().await;
+            let ordering = service.conversation_order_gates.gate(&id);
+            let ordered_turn = ordering.lock().await;
+
+            // Recheck the exact live generation while holding the same gates its
+            // folder and lifecycle replacement use. The authority check is the
+            // final synchronous step before the external delivery.
+            let (input, runtime_generation) = {
+                let entries = service.entries.read().await;
+                let entry = entries.get(&id).ok_or(CoreError::SessionNotFound)?;
+                if !entry.session.is_owned_by(&owner) {
+                    return Err(CoreError::Forbidden);
+                }
+                if entry.session.status.is_terminal() {
+                    return Err(CoreError::SessionTerminated);
+                }
+                if entry.session.status.is_rotating() {
+                    return Err(CoreError::SessionRotating);
+                }
+                entry
+                    .session
+                    .capabilities
+                    .require(Capability::Conversation)?;
+                if entry.session.status == SessionStatus::Running {
+                    entry.session.capabilities.require(Capability::Steer)?;
+                }
+                if !entry.pending_approvals.is_empty() {
+                    return Err(CoreError::InvalidState);
+                }
+                let boundary = authority.ensure_delivery_allowed()?;
+                if entry.runtime_generation != boundary.authority.generation {
+                    return Err(CoreError::RuntimeUnavailable(
+                        "the live conversation belongs to another runtime generation".into(),
+                    ));
+                }
+                let input = entry.conversation.clone().ok_or_else(|| {
+                    CoreError::RuntimeUnavailable("this session holds no conversation".into())
+                })?;
+                (input, entry.runtime_generation)
+            };
+
+            // A successful receipt makes the complete prompt boundary mandatory
+            // finalization. Do not recheck an expiring interaction deadline
+            // between delivery and enqueueing this state.
+            service
+                .toward_runtime(
+                    &id,
+                    &input,
+                    ConversationInput::Prompt(vec![ContentBlock::from(text.clone())]),
+                )
+                .await?;
+            let committed = {
+                let mut entries = service.entries.write().await;
+                let entry = entries
+                    .get_mut(&id)
+                    .filter(|entry| entry.runtime_generation == runtime_generation)
+                    .ok_or_else(|| {
+                        CoreError::RuntimeUnavailable(
+                            "the delivered prompt's runtime generation is no longer live".into(),
+                        )
+                    })?;
+                entry.pending_approvals.clear();
+                entry.approval_locators.clear();
+                entry.session.status = SessionStatus::Running;
+                entry.session.stop_reason = None;
+                append_batch(
+                    entry,
+                    [
+                        EventKind::TurnStarted,
+                        EventKind::OwnerMessage { content: text },
+                        EventKind::StatusChanged {
+                            status: SessionStatus::Running,
+                            stop_reason: None,
+                            detail: None,
+                            capability: None,
+                        },
+                    ],
+                )
+            };
+            // Immediate runtime updates may now enter the same lane behind this
+            // prompt unit. The service-owned runner retains durable authority
+            // while its mandatory commit settles.
+            drop(ordered_turn);
+            drop(admission);
+            drop(input_fence);
+            let record = committed.committed().await.map_err(store_failed)?;
+            drop(lifecycle);
+            record.session.last_seq.checked_sub(2).ok_or_else(|| {
+                CoreError::RuntimeUnavailable(
+                    "session store: committed prompt boundary had no valid sequence".into(),
+                )
+            })
         })
+        .await
     }
 
     /// Abandon the turn in flight, leaving the conversation open.
@@ -386,125 +415,154 @@ impl SessionService {
         // under that gate rather than using the sender snapshot returned here.
         self.conversation_input(caller, id, Capability::Conversation)
             .await?;
-        let input_fence = self.input_gates.gate(id).read_owned().await;
-        let ordering = self.conversation_order_gates.gate(id);
-        let ordered_resolution = ordering.lock().await;
-        let (input, locators) = {
-            let entries = self.entries.read().await;
-            let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-            if !entry.session.is_owned_by(&caller.subject) {
-                return Err(CoreError::Forbidden);
-            }
-            if entry.session.status.is_terminal() {
-                return Err(CoreError::SessionTerminated);
-            }
-            if entry.session.status.is_rotating() {
-                return Err(CoreError::SessionRotating);
-            }
-            entry
-                .session
-                .capabilities
-                .require(Capability::Conversation)?;
+        let durable = self.record(id).await?;
+        let service = Arc::clone(self);
+        let id = id.clone();
+        let owner = caller.subject.clone();
+        let resolutions = resolutions.to_vec();
+        self.run_runtime_interaction_at(&durable, move |authority| async move {
+            let lifecycle = if authority.is_durably_fenced() {
+                None
+            } else {
+                Some(service.lock_lifecycle(&id).await)
+            };
+            let input_fence = service.input_gates.gate(&id).read_owned().await;
+            let ordering = service.conversation_order_gates.gate(&id);
+            let ordered_resolution = ordering.lock().await;
+            let (input, locators, runtime_generation) = {
+                let entries = service.entries.read().await;
+                let entry = entries.get(&id).ok_or(CoreError::SessionNotFound)?;
+                if !entry.session.is_owned_by(&owner) {
+                    return Err(CoreError::Forbidden);
+                }
+                if entry.session.status.is_terminal() {
+                    return Err(CoreError::SessionTerminated);
+                }
+                if entry.session.status.is_rotating() {
+                    return Err(CoreError::SessionRotating);
+                }
+                entry
+                    .session
+                    .capabilities
+                    .require(Capability::Conversation)?;
 
-            let mut unique = HashSet::with_capacity(resolutions.len());
-            if resolutions.iter().any(|resolution| {
-                !unique.insert(resolution.request_id.as_str())
-                    || !entry.pending_approvals.contains_key(&resolution.request_id)
-            }) {
-                // Refused before delivery. A runtime handed an answer to
-                // something it is not waiting for may ignore it or act on the
-                // wrong request, and a partially validated batch cannot retry.
-                return Err(CoreError::InvalidState);
-            }
-            let input = entry.conversation.clone().ok_or_else(|| {
-                CoreError::RuntimeUnavailable("this session holds no conversation".into())
-            })?;
-            let locators = resolutions
-                .iter()
-                .map(|resolution| {
-                    entry
-                        .pending_approvals
-                        .get(&resolution.request_id)
-                        .cloned()
-                        .expect("the batch was validated against this map")
-                })
-                .collect::<Vec<_>>();
-            (input, locators)
-        };
+                let mut unique = HashSet::with_capacity(resolutions.len());
+                if resolutions.iter().any(|resolution| {
+                    !unique.insert(resolution.request_id.as_str())
+                        || !entry.pending_approvals.contains_key(&resolution.request_id)
+                }) {
+                    return Err(CoreError::InvalidState);
+                }
+                let input = entry.conversation.clone().ok_or_else(|| {
+                    CoreError::RuntimeUnavailable("this session holds no conversation".into())
+                })?;
+                let locators = resolutions
+                    .iter()
+                    .map(|resolution| {
+                        entry
+                            .pending_approvals
+                            .get(&resolution.request_id)
+                            .cloned()
+                            .expect("the batch was validated against this map")
+                    })
+                    .collect::<Vec<_>>();
+                (input, locators, entry.runtime_generation)
+            };
 
-        let mut delivered: usize = 0;
-        let mut delivery_error = None;
-        for (resolution, locator) in resolutions.iter().zip(locators) {
-            match self
-                .toward_runtime(
-                    id,
-                    &input,
-                    ConversationInput::PermissionAnswer {
-                        id: resolution.request_id.clone(),
-                        locator,
-                        decision: intent_for(resolution.decision),
-                    },
-                )
-                .await
-            {
-                Ok(()) => delivered += 1,
-                Err(error) => {
-                    delivery_error = Some(error);
-                    break;
+            let mut delivered: usize = 0;
+            let mut delivery_error = None;
+            for (resolution, locator) in resolutions.iter().zip(locators) {
+                let allowed = authority.ensure_delivery_allowed().and_then(|boundary| {
+                    if boundary.authority.generation == runtime_generation {
+                        Ok(())
+                    } else {
+                        Err(CoreError::RuntimeUnavailable(
+                            "the live conversation belongs to another runtime generation".into(),
+                        ))
+                    }
+                });
+                let result = match allowed {
+                    Ok(()) => {
+                        service
+                            .toward_runtime(
+                                &id,
+                                &input,
+                                ConversationInput::PermissionAnswer {
+                                    id: resolution.request_id.clone(),
+                                    locator,
+                                    decision: intent_for(resolution.decision),
+                                },
+                            )
+                            .await
+                    }
+                    Err(error) => Err(error),
+                };
+                match result {
+                    Ok(()) => delivered += 1,
+                    Err(error) => {
+                        delivery_error = Some(error);
+                        break;
+                    }
                 }
             }
-        }
 
-        let commit = if delivered == 0 {
-            None
-        } else {
-            let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return Err(CoreError::SessionNotFound);
-            };
-            let mut events = Vec::with_capacity(delivered.saturating_add(1));
-            for resolution in &resolutions[..delivered] {
-                let removed = entry.pending_approvals.remove(&resolution.request_id);
-                debug_assert!(
-                    removed.is_some(),
-                    "a prevalidated approval remains outstanding"
-                );
-                // Answered, so the session is no longer waiting on a person. It
-                // goes back to running rather than ready: the interrupted turn
-                // is still in flight. Preserve the singular operation's order
-                // by placing this transition immediately before the final
-                // resolution that empties the outstanding set.
-                if entry.pending_approvals.is_empty() && entry.session.status == SessionStatus::Idle
-                {
-                    entry.session.status = SessionStatus::Running;
-                    entry.session.stop_reason = None;
-                    events.push(EventKind::StatusChanged {
-                        status: SessionStatus::Running,
-                        stop_reason: None,
-                        detail: None,
-                        capability: None,
+            // Whatever prefix returned receipts is mandatory finalization, even
+            // when a later answer could not start because renewal authority was
+            // lost. Never leave a delivered answer outstanding in the log.
+            let commit = if delivered == 0 {
+                None
+            } else {
+                let mut entries = service.entries.write().await;
+                let entry = entries
+                    .get_mut(&id)
+                    .filter(|entry| entry.runtime_generation == runtime_generation)
+                    .ok_or_else(|| {
+                        CoreError::RuntimeUnavailable(
+                            "the delivered approvals' runtime generation is no longer live".into(),
+                        )
+                    })?;
+                let mut events = Vec::with_capacity(delivered.saturating_add(1));
+                for resolution in &resolutions[..delivered] {
+                    let removed = entry.pending_approvals.remove(&resolution.request_id);
+                    debug_assert!(
+                        removed.is_some(),
+                        "a prevalidated approval remains outstanding"
+                    );
+                    if entry.pending_approvals.is_empty()
+                        && entry.session.status == SessionStatus::Idle
+                    {
+                        entry.session.status = SessionStatus::Running;
+                        entry.session.stop_reason = None;
+                        events.push(EventKind::StatusChanged {
+                            status: SessionStatus::Running,
+                            stop_reason: None,
+                            detail: None,
+                            capability: None,
+                        });
+                    }
+                    events.push(EventKind::ApprovalResolved {
+                        request_id: resolution.request_id.clone(),
+                        allowed: matches!(resolution.decision, ApprovalDecision::Allow),
                     });
                 }
-                events.push(EventKind::ApprovalResolved {
-                    request_id: resolution.request_id.clone(),
-                    allowed: matches!(resolution.decision, ApprovalDecision::Allow),
-                });
-            }
-            Some(append_batch(entry, events))
-        };
+                Some(append_batch(entry, events))
+            };
 
-        // Immediate TurnEnded updates emitted by a permission sender may now be
-        // folded, but their commits enter the same lane behind the accepted
-        // prefix above. Storage waiting must never retain the folder's gate.
-        drop(ordered_resolution);
-        drop(input_fence);
-        if let Some(commit) = commit {
-            commit.committed().await.map_err(store_failed)?;
-        }
-        if let Some(error) = delivery_error {
-            return Err(error);
-        }
-        Ok(())
+            // Immediate runtime updates can now follow the accepted prefix in
+            // the same lane. The durable interaction itself remains service-owned
+            // until the prefix commit settles.
+            drop(ordered_resolution);
+            drop(input_fence);
+            if let Some(commit) = commit {
+                commit.committed().await.map_err(store_failed)?;
+            }
+            drop(lifecycle);
+            if let Some(error) = delivery_error {
+                return Err(error);
+            }
+            Ok(())
+        })
+        .await
     }
 
     /// What this session has used.
