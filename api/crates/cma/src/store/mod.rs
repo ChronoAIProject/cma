@@ -13,6 +13,7 @@ mod encryption;
 pub mod environment;
 mod event_doc;
 pub mod mongo;
+pub mod operation;
 pub mod settings;
 pub mod tickets;
 pub mod token;
@@ -28,6 +29,7 @@ pub use context::ChronoStorageContextStore;
 pub use directory::MongoUserDirectoryStore;
 pub use environment::MongoEnvironmentProfileStore;
 pub use mongo::MongoSessionStore;
+pub use operation::MongoOperationStore;
 pub use settings::MongoPlatformSettingsStore;
 pub use tickets::MongoTerminalTicketStore;
 
@@ -53,6 +55,8 @@ pub struct MongoStores {
     pub tickets: MongoTerminalTicketStore,
     /// Browser, OAuth, provider-token, and session-credential authority.
     pub auth: MongoAuthStore,
+    /// Subject-scoped operation claims and their replay outcomes.
+    pub operations: MongoOperationStore,
 }
 
 /// Open every MongoDB-backed store over one connection.
@@ -84,5 +88,6 @@ pub async fn connect(
         settings: MongoPlatformSettingsStore::open(&client, database).await?,
         tickets: MongoTerminalTicketStore::open(&client, database).await?,
         auth: MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
+        operations: MongoOperationStore::open(&client, database).await?,
     })
 }
