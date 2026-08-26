@@ -79,6 +79,13 @@ pub struct SessionRecord {
     /// after H2 is published.
     #[doc(hidden)]
     pub pending_handover: Option<PendingHandover>,
+    /// Durable custody of the exact skill bytes this session was granted.
+    ///
+    /// This is internal work state, not part of the caller-visible session.
+    /// [`SkillPackState::Staged`] closes the gap between the atomic session
+    /// create and the separate object store: until the latter confirms its
+    /// write, the database still carries the exact bytes reconciliation needs.
+    pub skill_packs: SkillPackState,
     /// Store-owned optimistic revision.
     ///
     /// Zero means the record has not been created yet. Stores increment this
@@ -98,6 +105,7 @@ impl SessionRecord {
             context_ref: None,
             rotation_claim: None,
             pending_handover: None,
+            skill_packs: SkillPackState::Legacy,
             revision: 0,
         }
     }
@@ -159,6 +167,50 @@ pub struct HandoverSnapshot {
     pub snapshot_at: String,
     /// Opaque adapter state, when the envelope contains a captured snapshot.
     pub restore: Option<Vec<u8>>,
+}
+
+/// Where the exact skill bytes belonging to a session can be recovered.
+///
+/// The database remains the authority throughout the object-store handoff.
+/// Every transition is an optimistic session-record write, and external writes
+/// use a deterministic per-session key so replaying a committed intent is safe.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub enum SkillPackState {
+    /// No custody state was recorded by the version that wrote this session.
+    #[default]
+    Legacy,
+    /// Exact bytes remain in the session record until external custody lands.
+    Staged(Vec<SkillPack>),
+    /// The deterministic object-store key holds the exact bytes.
+    Stored,
+    /// The session is terminal but its external bytes have not been removed.
+    CleanupPending,
+    /// Cleanup completed; no skill bytes remain for this session.
+    Cleaned,
+}
+
+impl std::fmt::Debug for SkillPackState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Legacy => f.write_str("Legacy"),
+            Self::Staged(packs) => {
+                let files = packs.iter().map(|pack| pack.files.len()).sum::<usize>();
+                let bytes = packs
+                    .iter()
+                    .flat_map(|pack| &pack.files)
+                    .map(|(_, body)| body.len())
+                    .sum::<usize>();
+                f.debug_struct("Staged")
+                    .field("packs", &packs.len())
+                    .field("files", &files)
+                    .field("bytes", &bytes)
+                    .finish()
+            }
+            Self::Stored => f.write_str("Stored"),
+            Self::CleanupPending => f.write_str("CleanupPending"),
+            Self::Cleaned => f.write_str("Cleaned"),
+        }
+    }
 }
 
 /// The stable position after which a newest-first listing continues.
@@ -1255,6 +1307,7 @@ mod tests {
         let r = SessionRecord::new(session());
         assert!(r.runtime_id.is_none());
         assert!(r.context_ref.is_none());
+        assert_eq!(r.skill_packs, SkillPackState::Legacy);
     }
 
     #[test]
@@ -1263,6 +1316,25 @@ mod tests {
         let r = SessionRecord::new(s.clone());
         assert_eq!(r.session.id, s.id);
         assert_eq!(r.session.owner, s.owner);
+    }
+
+    #[test]
+    fn staged_skill_bytes_are_redacted_from_debug_output() {
+        let pack = SkillPack {
+            name: "private-review".into(),
+            version: Some("1".into()),
+            files: vec![("SKILL.md".into(), b"private-body-marker".to_vec())],
+        };
+
+        let pack_debug = format!("{pack:?}");
+        assert!(
+            pack_debug.contains("19"),
+            "body length is useful: {pack_debug}"
+        );
+        assert!(!pack_debug.contains("112, 114, 105, 118, 97, 116, 101"));
+
+        let staged_debug = format!("{:?}", SkillPackState::Staged(vec![pack]));
+        assert_eq!(staged_debug, "Staged { packs: 1, files: 1, bytes: 19 }");
     }
 }
 
@@ -1322,7 +1394,7 @@ pub struct StoredSettings {
 }
 
 /// One skill, fetched and ready to be written.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SkillPack {
     /// The directory it occupies, which is the name the agent invokes.
     pub name: String,
@@ -1335,6 +1407,21 @@ pub struct SkillPack {
     pub version: Option<String>,
     /// Each file, relative to that directory, exactly as the registry names it.
     pub files: Vec<(String, Vec<u8>)>,
+}
+
+impl std::fmt::Debug for SkillPack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let files = self
+            .files
+            .iter()
+            .map(|(path, body)| (path, body.len()))
+            .collect::<Vec<_>>();
+        f.debug_struct("SkillPack")
+            .field("name", &self.name)
+            .field("version", &self.version)
+            .field("files", &files)
+            .finish()
+    }
 }
 
 /// Durable custody for the exact skill packs a session was given.

@@ -85,6 +85,8 @@ pub(crate) struct SessionEntry {
     pub(crate) input: Option<TerminalInputSender>,
     /// Where this session's stored context lives, once any has been captured.
     pub(crate) context_ref: Option<String>,
+    /// Durable location of this session's exact resolved skill bytes.
+    pub(crate) skill_packs: crate::store::SkillPackState,
     /// Transcript length at the last capture, so an unchanged one is not rewritten.
     pub(crate) captured_len: usize,
     /// Current runtime output. `None` after that channel ends; receivers on the

@@ -16,7 +16,7 @@ use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
     store::{
         Page, PageCursor, PendingHandover, SessionListQuery, SessionRecord, SessionStore,
-        StoreError,
+        SkillPack, SkillPackState, StoreError,
     },
     ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
     ConversationWriteAuthority, Event, EventKind, Rate, RateCardId, Reserved, RuntimeAuthority,
@@ -81,6 +81,13 @@ pub(super) const SESSION_COORDINATION_PROTOCOL: i32 = 3;
 pub(super) const LEGACY_COORDINATION_RECEIPT_PROTOCOL: i32 = 1;
 pub(super) const COORDINATION_RECEIPT_PROTOCOL: i32 = 2;
 const COORDINATION_PROTOCOL_FIELD: &str = "_cma_coordination_protocol";
+/// Maximum BSON document containing temporary resolved skill bytes.
+///
+/// This is deliberately one quarter of MongoDB's 16-MiB document ceiling. The
+/// staged state is a recovery bridge, not a second blob store, and the margin
+/// covers the rest of the session plus BSON framing without relying on an
+/// estimate of how binary values are encoded.
+const MAX_STAGED_SESSION_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 
 /// A granted skill as it is stored.
 ///
@@ -150,6 +157,52 @@ impl StoredSkill {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum SkillPackStateDoc {
+    Staged { packs: Vec<SkillPackDoc> },
+    Stored,
+    CleanupPending,
+    Cleaned,
+}
+
+impl std::fmt::Debug for SkillPackStateDoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Staged { packs } => {
+                let files = packs.iter().map(|pack| pack.files.len()).sum::<usize>();
+                let bytes = packs
+                    .iter()
+                    .flat_map(|pack| &pack.files)
+                    .map(|file| file.body.bytes.len())
+                    .sum::<usize>();
+                f.debug_struct("Staged")
+                    .field("packs", &packs.len())
+                    .field("files", &files)
+                    .field("bytes", &bytes)
+                    .finish()
+            }
+            Self::Stored => f.write_str("Stored"),
+            Self::CleanupPending => f.write_str("CleanupPending"),
+            Self::Cleaned => f.write_str("Cleaned"),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SkillPackDoc {
+    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+    files: Vec<SkillPackFileDoc>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SkillPackFileDoc {
+    path: String,
+    body: Binary,
+}
+
 /// How a session record is shaped on the wire.
 ///
 /// A distinct type from the core's record on purpose: the core owns its model,
@@ -199,6 +252,12 @@ struct SessionDoc {
     /// retain the snapshot for a later revive after its live claim is cleared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pending_handover: Option<PendingHandover>,
+    /// Exact resolved skill bytes and their object-store handoff state.
+    ///
+    /// Absent means the session predates durable custody. An explicit empty
+    /// staged list remains distinct: it is the exact grant of no skills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    skill_packs: Option<SkillPackStateDoc>,
     /// Runtime version, rotation count and snapshot time.
     ///
     /// All optional so documents written before rotation existed still load. A
@@ -4217,9 +4276,75 @@ fn stored_event_cursor(after: u64) -> Option<i64> {
     i64::try_from(after).ok()
 }
 
+fn skill_pack_state_to_doc(state: &SkillPackState) -> Option<SkillPackStateDoc> {
+    match state {
+        SkillPackState::Legacy => None,
+        SkillPackState::Staged(packs) => Some(SkillPackStateDoc::Staged {
+            packs: packs
+                .iter()
+                .map(|pack| SkillPackDoc {
+                    name: pack.name.clone(),
+                    version: pack.version.clone(),
+                    files: pack
+                        .files
+                        .iter()
+                        .map(|(path, body)| SkillPackFileDoc {
+                            path: path.clone(),
+                            body: Binary {
+                                subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                                bytes: body.clone(),
+                            },
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }),
+        SkillPackState::Stored => Some(SkillPackStateDoc::Stored),
+        SkillPackState::CleanupPending => Some(SkillPackStateDoc::CleanupPending),
+        SkillPackState::Cleaned => Some(SkillPackStateDoc::Cleaned),
+    }
+}
+
+fn skill_pack_state_from_doc(
+    state: Option<SkillPackStateDoc>,
+) -> Result<SkillPackState, StoreError> {
+    match state {
+        None => Ok(SkillPackState::Legacy),
+        Some(SkillPackStateDoc::Staged { packs }) => Ok(SkillPackState::Staged(
+            packs
+                .into_iter()
+                .map(|pack| {
+                    let files = pack
+                        .files
+                        .into_iter()
+                        .map(|file| {
+                            if file.body.subtype != mongodb::bson::spec::BinarySubtype::Generic {
+                                return Err(StoreError::Malformed(format!(
+                                    "staged skill file {} is not generic binary data",
+                                    file.path
+                                )));
+                            }
+                            Ok((file.path, file.body.bytes))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(SkillPack {
+                        name: pack.name,
+                        version: pack.version,
+                        files,
+                    })
+                })
+                .collect::<Result<Vec<_>, StoreError>>()?,
+        )),
+        Some(SkillPackStateDoc::Stored) => Ok(SkillPackState::Stored),
+        Some(SkillPackStateDoc::CleanupPending) => Ok(SkillPackState::CleanupPending),
+        Some(SkillPackStateDoc::Cleaned) => Ok(SkillPackState::Cleaned),
+    }
+}
+
 fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
     let s = &r.session;
-    Ok(SessionDoc {
+    let contains_staged_skills = matches!(&r.skill_packs, SkillPackState::Staged(_));
+    let document = SessionDoc {
         id: s.id.0.clone(),
         write_protocol: WRITE_PROTOCOL,
         coordination_protocol: SESSION_COORDINATION_PROTOCOL,
@@ -4249,6 +4374,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         context_ref: r.context_ref.clone(),
         rotation_claim: r.rotation_claim.clone(),
         pending_handover: r.pending_handover.clone(),
+        skill_packs: skill_pack_state_to_doc(&r.skill_packs),
         runtime_version: s.runtime_version.clone(),
         rotations: Some(i64::from(s.rotations)),
         rotated_at: s.rotated_at.clone(),
@@ -4274,7 +4400,17 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
             StoreError::Malformed(format!("session revision {} cannot be stored", r.revision))
         })?,
         coordination: Some(CoordinationDoc::default()),
-    })
+    };
+    if contains_staged_skills {
+        let encoded = mongodb::bson::serialize_to_vec(&document)
+            .map_err(|error| StoreError::Malformed(format!("session BSON: {error}")))?;
+        if encoded.len() > MAX_STAGED_SESSION_DOCUMENT_BYTES {
+            return Err(StoreError::Malformed(format!(
+                "session BSON with staged skills exceeds the {MAX_STAGED_SESSION_DOCUMENT_BYTES}-byte limit"
+            )));
+        }
+    }
+    Ok(document)
 }
 
 fn pricing_to_doc(pricing: &SessionPricing) -> Result<PricingDoc, StoreError> {
@@ -4471,6 +4607,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
     validate_coordination_state(&d)?;
     let geometry = TerminalGeometry::new(d.columns as u16, d.rows as u16)
         .map_err(|e| StoreError::Malformed(e.to_string()))?;
+    let skill_packs = skill_pack_state_from_doc(d.skill_packs)?;
     Ok(SessionRecord {
         session: Session {
             id: SessionId(d.id),
@@ -4511,6 +4648,7 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
         context_ref: d.context_ref,
         rotation_claim: d.rotation_claim,
         pending_handover: d.pending_handover,
+        skill_packs,
         revision: u64::try_from(d.revision)
             .map_err(|_| StoreError::Malformed("session revision must not be negative".into()))?,
     })
