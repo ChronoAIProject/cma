@@ -40,6 +40,11 @@ where
 
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
         let is_json = is_json_content_type(request.headers());
+        // Unkeyed requests retain Axum's content-type-first rejection. A keyed
+        // refusal still needs the raw bytes so its fingerprint can be replayed.
+        if !is_json && !request.headers().contains_key(IDEMPOTENCY_KEY) {
+            return Err(BodyProblem::missing_json_content_type());
+        }
         let bytes = Bytes::from_request(request, state).await.map_err(|error| {
             BodyProblem::from(axum::extract::rejection::JsonRejection::from(error))
         })?;
