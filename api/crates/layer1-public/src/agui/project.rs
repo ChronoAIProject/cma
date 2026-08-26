@@ -345,6 +345,20 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             )],
             ending: Some(Ending::Finished),
         },
+        // Provisioning is durable, including while a rotation's replacement
+        // runtime starts. Project the Layer 2 value itself so AG-UI and REST
+        // cannot acquire two spellings for the same stage.
+        EventKind::Progress { stage } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "replace",
+                    "path": "/progress",
+                    "value": stage,
+                }] }),
+            )],
+            ending: None,
+        },
         // A session that failed or was stopped ends the run saying so. A
         // client left waiting on a stream that simply stops cannot tell that
         // from a slow agent.
@@ -381,7 +395,20 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                 )],
                 ending: Some(Ending::Failed),
             },
-            false => Projected::nothing(),
+            // The Layer 2 value is the REST value too. Serializing it here,
+            // rather than mapping variants to local strings, keeps one status
+            // vocabulary across both interfaces.
+            false => Projected {
+                events: vec![make(
+                    "STATE_DELTA",
+                    serde_json::json!({ "delta": [{
+                        "op": "replace",
+                        "path": "/status",
+                        "value": status,
+                    }] }),
+                )],
+                ending: None,
+            },
         },
         /*
          * The agent is waiting for its owner to sign in to their own account.

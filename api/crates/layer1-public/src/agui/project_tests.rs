@@ -6,7 +6,7 @@
 //! stream fills with things that mean nothing to it.
 
 use super::*;
-use layer2_core::StopReason;
+use layer2_core::{session::ProvisioningStage, StopReason};
 
 /// A durable event as the log holds it.
 fn logged(seq: u64, kind: EventKind) -> Event {
@@ -373,6 +373,82 @@ fn a_completed_turn_ends_the_run() {
 }
 
 #[test]
+fn every_provisioning_stage_replaces_progress_with_its_layer_2_wire_value() {
+    let expected = [
+        "accepted",
+        "runtime_requested",
+        "runtime_created",
+        "skills_installed",
+        "attaching",
+        "ready",
+    ];
+
+    for (stage, expected) in ProvisioningStage::ALL.into_iter().zip(expected) {
+        let p = projected(EventKind::Progress { stage });
+        assert_eq!(kinds(&p), vec!["STATE_DELTA"], "for {stage:?}");
+        assert!(p.ending.is_none(), "for {stage:?}");
+        assert_eq!(p.events[0].seq, Some(7), "for {stage:?}");
+        assert_eq!(
+            p.events[0].body,
+            serde_json::json!({ "delta": [{
+                "op": "replace",
+                "path": "/progress",
+                "value": expected,
+            }] }),
+            "for {stage:?}"
+        );
+    }
+}
+
+#[test]
+fn every_session_status_keeps_the_layer_2_wire_spelling() {
+    for (status, expected) in [
+        (SessionStatus::Provisioning, "provisioning"),
+        (SessionStatus::Ready, "ready"),
+        (SessionStatus::Running, "running"),
+        (SessionStatus::Rotating, "rotating"),
+        (SessionStatus::Idle, "idle"),
+        (SessionStatus::Terminated, "terminated"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(status).expect("a session status serializes"),
+            serde_json::json!(expected),
+            "for {status:?}"
+        );
+    }
+}
+
+#[test]
+fn every_non_ending_status_change_replaces_status_once() {
+    for (status, expected) in [
+        (SessionStatus::Provisioning, "provisioning"),
+        (SessionStatus::Ready, "ready"),
+        (SessionStatus::Running, "running"),
+        (SessionStatus::Idle, "idle"),
+    ] {
+        let p = projected(EventKind::StatusChanged {
+            status,
+            stop_reason: (status == SessionStatus::Idle).then_some(StopReason::RequiresAction),
+            detail: None,
+            capability: None,
+        });
+
+        assert_eq!(kinds(&p), vec!["STATE_DELTA"], "for {status:?}");
+        assert!(p.ending.is_none(), "for {status:?}");
+        assert_eq!(p.events[0].seq, Some(7), "for {status:?}");
+        assert_eq!(
+            p.events[0].body,
+            serde_json::json!({ "delta": [{
+                "op": "replace",
+                "path": "/status",
+                "value": expected,
+            }] }),
+            "for {status:?}"
+        );
+    }
+}
+
+#[test]
 fn a_session_that_stops_working_says_so_rather_than_going_quiet() {
     // A client left on a stream that simply stops cannot tell that from an
     // agent taking a long time.
@@ -390,6 +466,10 @@ fn a_session_that_stops_working_says_so_rather_than_going_quiet() {
         assert_eq!(kinds(&p), vec!["RUN_ERROR"], "for {reason:?}");
         assert_eq!(p.ending, Some(Ending::Failed), "for {reason:?}");
         assert_eq!(p.events[0].body["message"], "the model endpoint refused");
+        assert!(
+            p.events.iter().all(|event| event.kind != "STATE_DELTA"),
+            "an ending idle transition must not also replace /status for {reason:?}"
+        );
     }
 }
 
@@ -469,8 +549,12 @@ fn going_idle_to_wait_for_a_person_does_not_end_the_run_twice() {
         detail: None,
         capability: None,
     });
-    assert!(p.events.is_empty(), "got {:?}", kinds(&p));
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
     assert!(p.ending.is_none());
+    assert_eq!(
+        p.events[0].body["delta"][0],
+        serde_json::json!({ "op": "replace", "path": "/status", "value": "idle" })
+    );
 }
 
 #[test]
