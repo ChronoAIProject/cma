@@ -39,8 +39,9 @@ const BROWSER_SESSION_DOMAIN: &str = "browser-session";
 const BROWSER_SESSION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 /// Maximum actionable authentication records selected by one renewal lane.
 pub(super) const AUTH_SWEEP_BATCH_SIZE: usize = 100;
-/// Five independently fair lanes share this explicit top-level pass ceiling.
-pub(super) const AUTH_RENEWAL_PASS_BUDGET: usize = 5 * AUTH_SWEEP_BATCH_SIZE;
+/// Existing custody lanes plus one independently reserved authorization lane.
+pub(super) const AUTH_RENEWAL_PASS_BUDGET: usize =
+    5 * AUTH_SWEEP_BATCH_SIZE + AUTHORIZATION_CHECK_LANE_BUDGET;
 pub(super) const AUTH_SWEEP_TWO_LANE_BATCH_SIZE: usize = AUTH_SWEEP_BATCH_SIZE / 2;
 const AUTH_SWEEP_THREE_LANE_BATCH_SIZE: usize = AUTH_SWEEP_BATCH_SIZE / 3;
 #[cfg(test)]
@@ -54,6 +55,18 @@ const AUTH_SWEEP_LEASE_LANE_BATCH_SIZE: usize =
 pub(super) const AUTH_REISSUE_ATTEMPT_BUDGET: usize = 15;
 /// Maximum external operations available to one selected recurring refresh.
 pub(super) const AUTH_REFRESH_ATTEMPT_BUDGET: usize = 10;
+/// One selected authorization check can resolve twice around one CAS loss.
+///
+/// The first attempt spends metadata, userinfo, optional introspection, and a
+/// two-operation durable replacement. A contended retry additionally rereads
+/// the winner before resolving against its token generation.
+pub(super) const AUTHORIZATION_CHECK_ATTEMPT_BUDGET: usize = 11;
+/// One hundred work pages plus one terminating/backlog-probe query (10,000 subjects).
+pub(super) const AUTHORIZATION_CHECK_PAGE_BUDGET: usize = 101;
+pub(super) const AUTHORIZATION_CHECK_LANE_BUDGET: usize = AUTHORIZATION_CHECK_PAGE_BUDGET
+    + (AUTHORIZATION_CHECK_PAGE_BUDGET - 1)
+        * AUTH_SWEEP_BATCH_SIZE
+        * AUTHORIZATION_CHECK_ATTEMPT_BUDGET;
 
 struct AuthPassBudgetState {
     remaining: AtomicUsize,
@@ -957,6 +970,7 @@ impl AuthState {
                 tokens: None,
                 refresh_lease: None,
                 authorization: Authorization::none(),
+                authorization_check_after: SystemTime::UNIX_EPOCH,
                 profile: profile::Profile::default(),
             });
             update(&mut next)?;
@@ -990,6 +1004,10 @@ impl AuthState {
             state.tokens = Some(tokens.clone());
             state.refresh_lease = None;
             state.authorization = authorization.clone();
+            // The sweep ticker is globally aligned, not relative to sign-in.
+            // Due-now guarantees this complete answer is checked on the next
+            // tick rather than narrowly missing it and waiting two periods.
+            state.authorization_check_after = SystemTime::now();
             state.profile = profile.clone();
             Ok(())
         })
@@ -1397,6 +1415,11 @@ mod delegation;
 pub(crate) use delegation::empty_session_service;
 mod identity;
 mod middleware;
+mod reconciliation;
+#[cfg(test)]
+pub(crate) use reconciliation::AuthorizationCheckOutcome;
+#[cfg(test)]
+mod reconciliation_tests;
 mod tokens;
 
 pub use middleware::attach_subject;

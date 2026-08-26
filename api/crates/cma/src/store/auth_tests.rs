@@ -162,6 +162,7 @@ fn subject_state() -> SubjectAuthState {
             Capability::CreateSession,
             Capability::ReadAllSessions,
         ]),
+        authorization_check_after: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_120),
         profile: Profile {
             display_name: Some("Example Person".into()),
             email: Some("person@example.test".into()),
@@ -256,6 +257,11 @@ fn recurring_auth_queries_have_named_supporting_indexes() {
                 "tokens": { "$type": "object" },
                 "sweep_sequence": { "$type": "long" },
             },
+        ),
+        (
+            doc! { "authorization_check_after": 1, "_id": 1 },
+            SUBJECT_AUTHORIZATION_INDEX,
+            doc! { "tokens": { "$type": "object" } },
         ),
         (
             doc! { "current.issued_at": 1, "sweep_sequence": 1, "_id": 1 },
@@ -395,6 +401,90 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
     let expired = expired_subject_refresh_lease_filter(second_time, Some(&subject_cursor), 99);
     assert_eq!(expired.get_array("$or").unwrap().len(), 3);
 
+    let legacy_authorization_cursor = SubjectAuthorizationCursor {
+        ready_at: None,
+        subject: SubjectId("subject-m".into()),
+    };
+    let legacy_authorization =
+        subject_authorization_filter(second_time, Some(&legacy_authorization_cursor));
+    let legacy_position = legacy_authorization.get_array("$and").unwrap()[2]
+        .as_document()
+        .unwrap()
+        .get_array("$or")
+        .unwrap();
+    assert_eq!(legacy_position.len(), 2);
+    assert_eq!(
+        legacy_position[0]
+            .as_document()
+            .unwrap()
+            .get_document("authorization_check_after")
+            .unwrap()
+            .get_bool("$exists")
+            .unwrap(),
+        false
+    );
+    assert_eq!(
+        legacy_position[0]
+            .as_document()
+            .unwrap()
+            .get_document("_id")
+            .unwrap()
+            .get_str("$gt")
+            .unwrap(),
+        "subject-m"
+    );
+
+    let scheduled_authorization_cursor = SubjectAuthorizationCursor {
+        ready_at: Some(first_time),
+        subject: SubjectId("subject-m".into()),
+    };
+    let scheduled_authorization =
+        subject_authorization_filter(second_time, Some(&scheduled_authorization_cursor));
+    let scheduled_position = scheduled_authorization.get_array("$and").unwrap()[2]
+        .as_document()
+        .unwrap();
+    assert_eq!(
+        scheduled_position
+            .get_document("authorization_check_after")
+            .unwrap()
+            .get_datetime("$lte")
+            .unwrap()
+            .to_system_time(),
+        second_time
+    );
+    let scheduled_branches = scheduled_position.get_array("$or").unwrap();
+    assert_eq!(scheduled_branches.len(), 2);
+    assert_eq!(
+        scheduled_branches[0]
+            .as_document()
+            .unwrap()
+            .get_document("authorization_check_after")
+            .unwrap()
+            .get_datetime("$gt")
+            .unwrap()
+            .to_system_time(),
+        first_time
+    );
+    assert_eq!(
+        scheduled_branches[1]
+            .as_document()
+            .unwrap()
+            .get_datetime("authorization_check_after")
+            .unwrap()
+            .to_system_time(),
+        first_time
+    );
+    assert_eq!(
+        scheduled_branches[1]
+            .as_document()
+            .unwrap()
+            .get_document("_id")
+            .unwrap()
+            .get_str("$gt")
+            .unwrap(),
+        "subject-m"
+    );
+
     let credential_cursor = CredentialReissueCursor {
         issued_at: first_time,
         sweep_sequence: 42,
@@ -443,7 +533,7 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, AUTH_SCHEMA_VERSION] } },
             ],
             "revoke_debt.0": { "$exists": true },
             "revoke_debt_ordered": { "$ne": true },
@@ -569,6 +659,10 @@ fn subject_secrets_are_encrypted_and_round_trip() {
     );
     assert!(restored.authorization.allows(Capability::ReadAllSessions));
     assert_eq!(
+        restored.authorization_check_after,
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_120)
+    );
+    assert_eq!(
         restored.profile.display_name.as_deref(),
         Some("Example Person")
     );
@@ -582,16 +676,19 @@ fn legacy_subject_bson_defaults_incarnation_generation_and_retention() {
     document.remove("incarnation");
     document.remove("token_generation");
     document.remove("delete_after");
+    document.remove("authorization_check_after");
     document.remove("auth_schema_version");
 
     let legacy: SubjectAuthDoc = mongodb::bson::deserialize_from_document(document).unwrap();
     assert!(legacy.incarnation.is_empty());
     assert_eq!(legacy.token_generation, 0);
     assert_eq!(legacy.delete_after, None);
+    assert_eq!(legacy.authorization_check_after, None);
     assert_eq!(legacy.auth_schema_version, 0);
     let restored = subject_from_doc(legacy, &cipher).unwrap();
     assert!(restored.incarnation.is_empty());
     assert_eq!(restored.token_generation, 0);
+    assert_eq!(restored.authorization_check_after, SystemTime::UNIX_EPOCH);
     assert_eq!(
         restored.tokens.unwrap().access_token.expose(),
         "access-plaintext"
@@ -599,12 +696,16 @@ fn legacy_subject_bson_defaults_incarnation_generation_and_retention() {
 }
 
 #[test]
-fn schema_compatibility_accepts_v1_and_rejects_future_documents() {
+fn schema_compatibility_accepts_v1_v2_and_rejects_future_documents() {
     let cipher = cipher();
 
     let mut legacy_subject = subject_to_doc(subject_state(), &cipher).unwrap();
     legacy_subject.auth_schema_version = 1;
     assert!(subject_from_doc(legacy_subject, &cipher).is_ok());
+    let mut v2_subject = subject_to_doc(subject_state(), &cipher).unwrap();
+    v2_subject.auth_schema_version = 2;
+    v2_subject.authorization_check_after = None;
+    assert!(subject_from_doc(v2_subject, &cipher).is_ok());
     let mut future_subject = subject_to_doc(subject_state(), &cipher).unwrap();
     future_subject.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -615,6 +716,9 @@ fn schema_compatibility_accepts_v1_and_rejects_future_documents() {
     let mut legacy_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
     legacy_credential.auth_schema_version = 1;
     assert!(credential_state_from_doc(legacy_credential, &cipher).is_ok());
+    let mut v2_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    v2_credential.auth_schema_version = 2;
+    assert!(credential_state_from_doc(v2_credential, &cipher).is_ok());
     let mut future_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
     future_credential.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -627,7 +731,7 @@ fn schema_compatibility_accepts_v1_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": 1_i64 },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64] } },
             ]
         }
     );
@@ -636,7 +740,7 @@ fn schema_compatibility_accepts_v1_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, AUTH_SCHEMA_VERSION] } },
             ]
         }
     );
@@ -1144,6 +1248,23 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
         CREDENTIAL_RECONCILIATION_INDEX,
     );
 
+    let execution = explain_find(
+        &client,
+        &database_name,
+        SUBJECTS,
+        subject_authorization_filter(now, None),
+        doc! { "authorization_check_after": 1, "_id": 1 },
+        SUBJECT_AUTHORIZATION_INDEX,
+        PAGE_SIZE,
+    )
+    .await;
+    assert_explain_is_page_bounded(
+        &execution,
+        PAGE_SIZE,
+        PAGE_SIZE,
+        SUBJECT_AUTHORIZATION_INDEX,
+    );
+
     let subject_cursor = SubjectRefreshCursor {
         ready_at: old,
         sweep_sequence: 1,
@@ -1424,6 +1545,7 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_cutover_safe() {
     let mut credentials = Vec::with_capacity(LEGACY_RECORDS);
     for number in 0..LEGACY_RECORDS {
         let is_v1 = number == LEGACY_RECORDS - 1;
+        let is_v2 = number == LEGACY_RECORDS - 2;
         let mut subject = subject_state();
         subject.subject = SubjectId(format!("legacy-subject-{number:03}"));
         subject.revision = 0;
@@ -1432,11 +1554,14 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_cutover_safe() {
                 .unwrap();
         if is_v1 {
             subject.insert("auth_schema_version", 1_i64);
+        } else if is_v2 {
+            subject.insert("auth_schema_version", 2_i64);
         } else {
             subject.remove("auth_schema_version");
             subject.remove("incarnation");
         }
         subject.remove("delete_after");
+        subject.remove("authorization_check_after");
         subjects.push(subject);
 
         let mut credential = credential_state();
@@ -1457,6 +1582,8 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_cutover_safe() {
         .unwrap();
         if is_v1 {
             credential.insert("auth_schema_version", 1_i64);
+        } else if is_v2 {
+            credential.insert("auth_schema_version", 2_i64);
         } else {
             credential.remove("auth_schema_version");
         }
@@ -1500,6 +1627,19 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_cutover_safe() {
         "legacy-subject-{:03}",
         AUTH_MIGRATION_LANE_BATCH_SIZE
     ));
+    let due_with_legacy = store
+        .subjects_due_for_authorization_check(SystemTime::now(), None, LEGACY_RECORDS)
+        .await
+        .expect("legacy authorization deadlines are queryable before migration reaches them");
+    let legacy_due = due_with_legacy
+        .iter()
+        .find(|item| item.cursor.subject == backlog_subject_id)
+        .expect("missing legacy deadline is immediately due through the named index");
+    assert_eq!(legacy_due.cursor.ready_at, None);
+    assert_eq!(
+        legacy_due.state.as_ref().unwrap().authorization_check_after,
+        SystemTime::UNIX_EPOCH
+    );
     let mut backlog_subject = store
         .subject(&backlog_subject_id)
         .await
@@ -1619,6 +1759,7 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_cutover_safe() {
                     "delete_after": "",
                     "incarnation": "",
                     "token_generation": "",
+                    "authorization_check_after": "",
                 }
             },
         )
@@ -1667,6 +1808,7 @@ async fn real_mongo_schema_maintenance_is_bounded_resumable_and_cutover_safe() {
         AUTH_SCHEMA_VERSION
     );
     assert!(rewritten_subject.contains_key("delete_after"));
+    assert!(rewritten_subject.contains_key("authorization_check_after"));
     assert!(!rewritten_subject
         .get_str("incarnation")
         .expect("migration restores a subject incarnation")
@@ -2483,6 +2625,7 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     legacy_subject.remove("incarnation");
     legacy_subject.remove("token_generation");
     legacy_subject.remove("delete_after");
+    legacy_subject.remove("authorization_check_after");
     legacy_subject.remove("auth_schema_version");
     client
         .database(&database_name)
@@ -2554,6 +2697,7 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     );
     assert_eq!(stored_integer(&raw_legacy_subject, "revision"), 1);
     assert_eq!(stored_integer(&raw_legacy_subject, "token_generation"), 1);
+    assert!(raw_legacy_subject.contains_key("authorization_check_after"));
     assert!(!raw_legacy_subject
         .get_str("incarnation")
         .expect("migration supplies an incarnation")
@@ -2566,6 +2710,7 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     assert!(!restored_legacy_subject.incarnation.is_empty());
     assert_eq!(restored_legacy_subject.revision, 1);
     assert_eq!(restored_legacy_subject.token_generation, 1);
+    assert!(restored_legacy_subject.authorization_check_after <= SystemTime::now());
     let raw_legacy_credential = client
         .database(&database_name)
         .collection::<Document>(CREDENTIALS)
@@ -2649,6 +2794,12 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
                 "tokens": { "$type": "object" },
                 "sweep_sequence": { "$type": "long" },
             },
+        ),
+        (
+            SUBJECTS,
+            SUBJECT_AUTHORIZATION_INDEX,
+            doc! { "authorization_check_after": 1, "_id": 1 },
+            doc! { "tokens": { "$type": "object" } },
         ),
         (
             CREDENTIALS,
