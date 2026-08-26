@@ -5,7 +5,7 @@
 //! differ per request, so every case here is about matching an intent against
 //! what was actually on offer rather than against a fixed set.
 
-use super::{outcome_for, sign_in_from};
+use super::{blocked_from_locator, outcome_for, permission_id, permission_locator, sign_in_from};
 use crate::{PermissionDecision, PermissionOption, PermissionOptionId, PermissionOptionKind};
 
 fn offering(kinds: &[PermissionOptionKind]) -> Vec<PermissionOption> {
@@ -94,6 +94,60 @@ fn allowing_with_no_option_to_allow_with_also_stops_the_turn() {
         &offering(&[PermissionOptionKind::RejectOnce]),
     );
     assert_eq!(outcome["outcome"], "cancelled");
+}
+
+#[test]
+fn duplicate_delivery_has_one_stable_public_id() {
+    let call = serde_json::json!(73);
+    let first = vec![PermissionOption::new(
+        PermissionOptionId::new("allow-once"),
+        "Allow this command".to_string(),
+        PermissionOptionKind::AllowOnce,
+    )];
+    let replayed = vec![PermissionOption::new(
+        PermissionOptionId::new("allow-once"),
+        "A reworded label".to_string(),
+        PermissionOptionKind::AllowOnce,
+    )];
+
+    let first_locator = permission_locator("conversation-1", &call, &first);
+    let replayed_locator = permission_locator("conversation-1", &call, &replayed);
+    assert_eq!(
+        permission_id(&first_locator),
+        permission_id(&replayed_locator)
+    );
+    assert_eq!(first_locator, replayed_locator);
+    assert!(
+        !first_locator.as_str().contains("command") && !first_locator.as_str().contains("reworded"),
+        "option labels are not delivery metadata"
+    );
+}
+
+#[test]
+fn a_locator_cannot_be_reused_under_another_public_id() {
+    let locator = permission_locator(
+        "conversation-1",
+        &serde_json::json!(91),
+        &offering(&[PermissionOptionKind::AllowOnce]),
+    );
+    let Err(error) = blocked_from_locator("a-different-request", &locator, "conversation-1") else {
+        panic!("the fingerprint must bind the locator to its public id");
+    };
+    assert!(matches!(error, crate::AdapterError::Rejected(_)));
+}
+
+#[test]
+fn a_locator_cannot_be_routed_on_another_conversation() {
+    let locator = permission_locator(
+        "conversation-1",
+        &serde_json::json!(92),
+        &offering(&[PermissionOptionKind::AllowOnce]),
+    );
+    let id = permission_id(&locator);
+    let Err(error) = blocked_from_locator(&id, &locator, "conversation-2") else {
+        panic!("the locator's conversation scope must be enforced");
+    };
+    assert!(matches!(error, crate::AdapterError::Rejected(_)));
 }
 
 /// Reading a sign-in the agent is waiting on.

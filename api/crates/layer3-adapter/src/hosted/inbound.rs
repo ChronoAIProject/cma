@@ -8,6 +8,9 @@
 
 use tokio::sync::mpsc;
 
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
 use super::acp::{Blocked, Bridge};
 use crate::{
     ConversationUpdate, PermissionDecision, PermissionOption, PermissionOptionKind,
@@ -137,10 +140,18 @@ impl Bridge {
         let Some(call) = frame.get("id").cloned() else {
             return;
         };
-        // Ours rather than the protocol's, because the protocol keeps this at
-        // the JSON-RPC layer and the core needs something durable to record
-        // against an approval event and accept back minutes later.
-        let id = uuid::Uuid::new_v4().simple().to_string();
+        let locator =
+            permission_locator(&request.session_id.0.to_string(), &call, &request.options);
+        // Stable across delivery of the same blocked call on a replacement
+        // socket. The locator carries only the conversation scope, call id and
+        // normalized offered choices; hashing it avoids exposing them in the
+        // public id.
+        let id = permission_id(&locator);
+        let repeated_answer = self.answered.lock().await.get(&id).cloned();
+        if let Some(answer) = repeated_answer {
+            let _ = self.send(&answer).await;
+            return;
+        }
         self.blocked.lock().await.insert(
             id.clone(),
             Blocked {
@@ -149,18 +160,145 @@ impl Bridge {
             },
         );
         let _ = updates
-            .send(ConversationUpdate::Asked(PermissionRequest { id, request }))
+            .send(ConversationUpdate::Asked(PermissionRequest {
+                id,
+                locator: Some(locator),
+                request,
+            }))
             .await;
     }
 }
 
-/// Render an owner's intent into one of the options a bridge offered.
-///
-/// The options are the bridge's own and differ per request, so the intent is
-/// matched against what was actually on offer rather than against a fixed set.
-/// An intent with nothing to match is cancelled, which every ACP agent
-/// understands and which stops the turn rather than letting it proceed — the
-/// safe direction when the answer was "no" and we cannot say which kind.
+const PERMISSION_LOCATOR_VERSION: u8 = 1;
+const PERMISSION_ID_DOMAIN: &[u8] = b"chrono-hosted-permission-v1\0";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredPermissionKind {
+    AllowOnce,
+    AllowAlways,
+    RejectOnce,
+    RejectAlways,
+}
+
+impl StoredPermissionKind {
+    fn from_option(kind: PermissionOptionKind) -> Option<Self> {
+        match kind {
+            PermissionOptionKind::AllowOnce => Some(Self::AllowOnce),
+            PermissionOptionKind::AllowAlways => Some(Self::AllowAlways),
+            PermissionOptionKind::RejectOnce => Some(Self::RejectOnce),
+            PermissionOptionKind::RejectAlways => Some(Self::RejectAlways),
+            // A future intent this build cannot express is not a route it can
+            // select. Omitting it produces the same safe cancellation as the
+            // live matcher when no known option fits.
+            _ => None,
+        }
+    }
+}
+
+impl From<StoredPermissionKind> for PermissionOptionKind {
+    fn from(kind: StoredPermissionKind) -> Self {
+        match kind {
+            StoredPermissionKind::AllowOnce => Self::AllowOnce,
+            StoredPermissionKind::AllowAlways => Self::AllowAlways,
+            StoredPermissionKind::RejectOnce => Self::RejectOnce,
+            StoredPermissionKind::RejectAlways => Self::RejectAlways,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredPermissionOption {
+    id: String,
+    kind: StoredPermissionKind,
+}
+
+#[derive(Serialize, Deserialize)]
+struct HostedPermissionLocator {
+    version: u8,
+    session: String,
+    call: serde_json::Value,
+    options: Vec<StoredPermissionOption>,
+}
+
+fn permission_locator(
+    session: &str,
+    call: &serde_json::Value,
+    options: &[PermissionOption],
+) -> crate::PermissionLocator {
+    let locator = HostedPermissionLocator {
+        version: PERMISSION_LOCATOR_VERSION,
+        session: session.to_string(),
+        call: call.clone(),
+        options: options
+            .iter()
+            .filter_map(|option| {
+                Some(StoredPermissionOption {
+                    id: option.option_id.0.to_string(),
+                    kind: StoredPermissionKind::from_option(option.kind)?,
+                })
+            })
+            .collect(),
+    };
+    crate::PermissionLocator::new(
+        serde_json::to_string(&locator).expect("a permission locator is always serializable"),
+    )
+}
+
+pub(super) fn permission_id(locator: &crate::PermissionLocator) -> String {
+    let mut digest = Sha256::new();
+    digest.update(PERMISSION_ID_DOMAIN);
+    digest.update(locator.as_str().as_bytes());
+    digest
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut rendered, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(&mut rendered, "{byte:02x}");
+            rendered
+        })
+}
+
+pub(super) fn blocked_from_locator(
+    id: &str,
+    locator: &crate::PermissionLocator,
+    session: &str,
+) -> Result<super::acp::Blocked, crate::AdapterError> {
+    if permission_id(locator) != id {
+        return Err(crate::AdapterError::Rejected(
+            "the permission locator does not belong to this request".to_string(),
+        ));
+    }
+    let stored: HostedPermissionLocator = serde_json::from_str(locator.as_str()).map_err(|_| {
+        crate::AdapterError::Rejected("the permission locator is not readable".to_string())
+    })?;
+    if stored.version != PERMISSION_LOCATOR_VERSION {
+        return Err(crate::AdapterError::Rejected(format!(
+            "permission locator version {} is not supported",
+            stored.version
+        )));
+    }
+    if stored.session != session {
+        return Err(crate::AdapterError::Rejected(
+            "the permission locator belongs to a different conversation".to_string(),
+        ));
+    }
+    Ok(super::acp::Blocked {
+        call: stored.call,
+        options: stored
+            .options
+            .into_iter()
+            .map(|option| {
+                PermissionOption::new(
+                    crate::PermissionOptionId::new(option.id),
+                    String::new(),
+                    option.kind.into(),
+                )
+            })
+            .collect(),
+    })
+}
+
 /// Read a sign-in request into the three things a person needs.
 ///
 /// Separated from the sending so it can be tested without a bridge: what a
@@ -186,6 +324,13 @@ pub(crate) fn sign_in_from(
     Some((url, code, text("message")))
 }
 
+/// Render an owner's intent into one of the options a bridge offered.
+///
+/// The options are the bridge's own and differ per request, so the intent is
+/// matched against what was actually on offer rather than against a fixed set.
+/// An intent with nothing to match is cancelled, which every ACP agent
+/// understands and which stops the turn rather than letting it proceed — the
+/// safe direction when the answer was "no" and we cannot say which kind.
 pub(crate) fn outcome_for(
     decision: PermissionDecision,
     options: &[PermissionOption],

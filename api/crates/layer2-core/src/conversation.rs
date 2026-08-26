@@ -34,7 +34,7 @@ use layer3_adapter::{
     AdapterError, ContentBlock, ConversationInput, ConversationInputSender, PermissionDecision,
 };
 
-use crate::authz::Caller;
+use crate::authz::{Caller, Capability as AuthorizationCapability};
 use crate::capabilities::Capability;
 use crate::error::CoreError;
 use crate::event::EventKind;
@@ -107,6 +107,9 @@ impl SessionService {
         id: &SessionId,
         text: String,
     ) -> Result<u64, CoreError> {
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
         // One prompt must publish its Running transition before the next one
         // decides whether it is steering. This gate is deliberately separate
         // from the lifecycle gate `conversation_input` may acquire in readoption.
@@ -153,6 +156,9 @@ impl SessionService {
             if entry.session.status == SessionStatus::Running {
                 entry.session.capabilities.require(Capability::Steer)?;
             }
+            if !entry.pending_approvals.is_empty() {
+                return Err(CoreError::InvalidState);
+            }
             entry.conversation.clone().ok_or_else(|| {
                 CoreError::RuntimeUnavailable("this session holds no conversation".into())
             })?
@@ -173,6 +179,8 @@ impl SessionService {
             let Some(entry) = entries.get_mut(id) else {
                 return Err(CoreError::SessionNotFound);
             };
+            entry.pending_approvals.clear();
+            entry.approval_locators.clear();
             entry.session.status = SessionStatus::Running;
             entry.session.stop_reason = None;
             append_batch(
@@ -260,7 +268,7 @@ impl SessionService {
             .await?;
         let ordering = self.conversation_order_gates.gate(id);
         let ordered_resolution = ordering.lock().await;
-        let input = {
+        let (input, locators) = {
             let entries = self.entries.read().await;
             let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
             if !entry.session.is_owned_by(&caller.subject) {
@@ -277,27 +285,39 @@ impl SessionService {
             let mut unique = HashSet::with_capacity(resolutions.len());
             if resolutions.iter().any(|resolution| {
                 !unique.insert(resolution.request_id.as_str())
-                    || !entry.pending_approvals.contains(&resolution.request_id)
+                    || !entry.pending_approvals.contains_key(&resolution.request_id)
             }) {
                 // Refused before delivery. A runtime handed an answer to
                 // something it is not waiting for may ignore it or act on the
                 // wrong request, and a partially validated batch cannot retry.
                 return Err(CoreError::InvalidState);
             }
-            entry.conversation.clone().ok_or_else(|| {
+            let input = entry.conversation.clone().ok_or_else(|| {
                 CoreError::RuntimeUnavailable("this session holds no conversation".into())
-            })?
+            })?;
+            let locators = resolutions
+                .iter()
+                .map(|resolution| {
+                    entry
+                        .pending_approvals
+                        .get(&resolution.request_id)
+                        .cloned()
+                        .expect("the batch was validated against this map")
+                })
+                .collect::<Vec<_>>();
+            (input, locators)
         };
 
         let mut delivered: usize = 0;
         let mut delivery_error = None;
-        for resolution in resolutions {
+        for (resolution, locator) in resolutions.iter().zip(locators) {
             match self
                 .toward_runtime(
                     id,
                     &input,
                     ConversationInput::PermissionAnswer {
                         id: resolution.request_id.clone(),
+                        locator,
                         decision: intent_for(resolution.decision),
                     },
                 )
@@ -321,7 +341,10 @@ impl SessionService {
             let mut events = Vec::with_capacity(delivered.saturating_add(1));
             for resolution in &resolutions[..delivered] {
                 let removed = entry.pending_approvals.remove(&resolution.request_id);
-                debug_assert!(removed, "a prevalidated approval remains outstanding");
+                debug_assert!(
+                    removed.is_some(),
+                    "a prevalidated approval remains outstanding"
+                );
                 // Answered, so the session is no longer waiting on a person. It
                 // goes back to running rather than ready: the interrupted turn
                 // is still in flight. Preserve the singular operation's order
@@ -415,6 +438,9 @@ impl SessionService {
         id: &SessionId,
         capability: Capability,
     ) -> Result<ConversationInputSender, CoreError> {
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
         // Read from the record rather than from what this process happens to
         // hold, because after a restart it holds nothing — and a session it has
         // never seen is not a session that does not exist.

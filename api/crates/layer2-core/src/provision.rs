@@ -435,6 +435,7 @@ impl SessionService {
             readings_unreported: false,
             conversation: conversation.as_ref().map(|c| c.input.clone()),
             pending_approvals: Default::default(),
+            approval_locators: Default::default(),
             assembling: None,
             context_reading: None,
             attached: None,
