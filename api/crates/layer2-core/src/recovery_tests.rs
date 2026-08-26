@@ -11,10 +11,14 @@
 //! process in every way that matters here.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use layer3_adapter::RuntimeLossReason;
 
 use crate::commit_fault_support::CommitFaultStore;
+use crate::coordination::{
+    RuntimeCandidate, SessionBoundary, SessionLeaseRequest, SessionOperation,
+};
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::service::Deployment;
@@ -42,6 +46,79 @@ async fn runtime_losses(
             }
         })
         .collect()
+}
+
+async fn switch_to_test_candidate(
+    store: &FakeStore,
+    adapter: &FakeAdapter,
+    id: &SessionId,
+    token: &str,
+) -> RuntimeCandidate {
+    let record = store.get(id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(id).await.unwrap().unwrap();
+    let request = SessionLeaseRequest::new(
+        id.clone(),
+        format!("test-holder-{token}"),
+        SessionBoundary {
+            status: record.session.status,
+            authority,
+        },
+        SessionOperation::Handover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store.acquire_session_lease(&request).await.unwrap();
+    let reservation = store
+        .reserve_runtime_generation(&lease, token)
+        .await
+        .unwrap();
+    let runtime_id = format!("runtime-{token}");
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(runtime_id.clone(), Some(id.0.clone()));
+    adapter
+        .generations
+        .lock()
+        .await
+        .insert(runtime_id.clone(), reservation.generation);
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, &runtime_id)
+        .await
+        .unwrap();
+    store
+        .switch_runtime_authority(&mut lease, &candidate)
+        .await
+        .unwrap();
+    store.release_session_lease(&lease).await.unwrap();
+    candidate
+}
+
+async fn retire_for_interrupted_recovery(
+    store: &FakeStore,
+    id: &SessionId,
+) -> (
+    crate::coordination::SessionLease,
+    crate::coordination::RuntimeAuthorityRetirement,
+) {
+    let record = store.get(id).await.unwrap().unwrap();
+    let authority = store.runtime_authority(id).await.unwrap().unwrap();
+    let request = SessionLeaseRequest::new(
+        id.clone(),
+        "interrupted-recovery-holder",
+        SessionBoundary {
+            status: record.session.status,
+            authority,
+        },
+        SessionOperation::Recover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store.acquire_session_lease(&request).await.unwrap();
+    let retired = store
+        .retire_runtime_authority(&mut lease, "interrupted-recovery-retirement")
+        .await
+        .unwrap();
+    (lease, retired)
 }
 
 fn is_runtime_lost(_record: &SessionRecord, events: &[Event]) -> bool {
@@ -207,6 +284,108 @@ async fn a_runtime_lost_under_the_process_serving_it_is_recorded_too() {
     assert_eq!(losses.len(), 1);
     assert_eq!(losses[0].1, dead);
     assert_eq!(losses[0].2, Some(RuntimeLossCause::Failed));
+}
+
+#[tokio::test]
+async fn recovery_resumes_when_a_process_dies_immediately_after_authority_retirement() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("retirement-crash-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .unwrap();
+    adapter.lose(&dead).await;
+    drop(first);
+
+    let (lease, retired) = retire_for_interrupted_recovery(&store, &created.id).await;
+    assert_eq!(retired.cleanup.runtime_id, dead);
+    store.release_session_lease(&lease).await.unwrap();
+    assert!(store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .is_none());
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let moved = restarted.reconcile().await;
+    assert_eq!(moved.lost_runtimes, 1);
+    assert_eq!(moved.reprovisioned_sessions, 1);
+    let losses = runtime_losses(&store, &created.id).await;
+    assert_eq!(losses.len(), 1);
+    assert_eq!(losses[0].1, dead);
+    assert_eq!(
+        await_settled(&restarted, &alice, &created.id).await.status,
+        SessionStatus::Ready
+    );
+}
+
+#[tokio::test]
+async fn recovery_resumes_when_a_process_dies_after_recording_provisioning() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("provisioning-crash-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let dead = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .unwrap();
+    adapter.lose(&dead).await;
+    drop(first);
+
+    let (mut lease, retired) = retire_for_interrupted_recovery(&store, &created.id).await;
+    let mut provisioning = store.get(&created.id).await.unwrap().unwrap();
+    provisioning.session.status = SessionStatus::Provisioning;
+    provisioning.session.recovery_state = RecoveryState::Recovering;
+    provisioning.session.stop_reason = None;
+    let loss_seq = provisioning.session.last_seq + 1;
+    provisioning.session.last_seq = loss_seq;
+    store
+        .commit_session_idempotent(
+            "interrupted-recovery-loss",
+            &provisioning,
+            &[Event {
+                session_id: created.id.clone(),
+                seq: loss_seq,
+                kind: EventKind::RuntimeLost {
+                    runtime_id: dead.clone(),
+                    cause: None,
+                },
+                appended_at: String::new(),
+            }],
+        )
+        .await
+        .unwrap();
+    provisioning = store.get(&created.id).await.unwrap().unwrap();
+    let boundary = SessionBoundary::for_record(&provisioning, retired.cleanup.generation);
+    store
+        .advance_session_lease(&mut lease, &boundary)
+        .await
+        .unwrap();
+    store.release_session_lease(&lease).await.unwrap();
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let moved = restarted.reconcile().await;
+    assert_eq!(moved.lost_runtimes, 0, "the loss was already recorded");
+    assert_eq!(moved.reprovisioned_sessions, 1);
+    assert_eq!(runtime_losses(&store, &created.id).await.len(), 1);
+    assert_eq!(
+        await_settled(&restarted, &alice, &created.id).await.status,
+        SessionStatus::Ready
+    );
 }
 
 #[tokio::test]
@@ -643,10 +822,10 @@ async fn a_secondary_control_plane_leaves_unnamed_runtimes_alone() {
 }
 
 #[tokio::test]
-async fn the_deployment_that_owns_the_provider_still_reclaims_orphans() {
-    // The other half of the rule: scoping reclamation must not stop the primary
-    // deployment cleaning up after itself, or a sandbox created moments before
-    // a crash would never be released.
+async fn an_unversioned_orphan_is_not_deleted_by_handle_alone() {
+    // Ownership of the provider is not identity proof. A legacy runtime has no
+    // generation to compare atomically, and its opaque handle may have been
+    // reused since the census was taken.
     let store = Arc::new(FakeStore::default());
     let provider = Arc::new(FakeAdapter::default());
     provider
@@ -667,9 +846,160 @@ async fn the_deployment_that_owns_the_provider_still_reclaims_orphans() {
     let recovered = primary.reconcile().await;
 
     assert_eq!(
-        recovered.orphaned_runtimes, 1,
-        "a runtime no session refers to is still reclaimed"
+        recovered.orphaned_runtimes, 0,
+        "legacy metadata cannot authorise a destructive provider mutation"
     );
+    assert!(provider.running.lock().await.contains_key("stray"));
+    assert!(provider.terminated.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_recorded_cleanup_debt_is_reclaimed_under_fresh_authority() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    drop(first);
+
+    let retired = switch_to_test_candidate(&store, &adapter, &created.id, "generation-one").await;
+    let current = switch_to_test_candidate(&store, &adapter, &created.id, "generation-two").await;
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+
+    assert_eq!(recovered.orphaned_runtimes, 1);
+    assert!(!adapter
+        .running
+        .lock()
+        .await
+        .contains_key(&retired.runtime_id));
+    assert!(adapter
+        .running
+        .lock()
+        .await
+        .contains_key(&current.runtime_id));
+    let debts = store.runtime_cleanup_debts(&created.id).await.unwrap();
+    assert_eq!(debts.len(), 1, "only the unverifiable legacy debt remains");
+    assert_eq!(debts[0].generation, 0);
+}
+
+#[tokio::test]
+async fn coordinated_readoption_refuses_to_attach_without_a_durable_lease() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    drop(first);
+
+    let current = switch_to_test_candidate(&store, &adapter, &created.id, "generation-one").await;
+    let channels_before = adapter.senders.lock().await.len();
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+
+    assert_eq!(recovered.readopted_sessions, 0);
+    assert_eq!(recovered.reprovisioned_sessions, 0);
+    assert_eq!(recovered.deferred_sessions, 1);
+    assert_eq!(adapter.senders.lock().await.len(), channels_before);
+    assert!(adapter
+        .running
+        .lock()
+        .await
+        .contains_key(&current.runtime_id));
+    assert_eq!(
+        store
+            .runtime_authority(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation,
+        current.generation.get()
+    );
+}
+
+#[tokio::test]
+async fn legacy_cleanup_requires_the_irreversible_old_writer_drain_proof() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let legacy_runtime = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .unwrap();
+    drop(first);
+
+    let current = switch_to_test_candidate(&store, &adapter, &created.id, "generation-one").await;
+    let before_gate = service(Arc::clone(&store), Arc::clone(&adapter));
+    assert_eq!(before_gate.reconcile().await.orphaned_runtimes, 0);
+    assert!(adapter.running.lock().await.contains_key(&legacy_runtime));
+    assert_eq!(
+        store.runtime_cleanup_debts(&created.id).await.unwrap()[0].generation,
+        0
+    );
+
+    store.authorize_legacy_cleanup();
+    let after_gate = service(Arc::clone(&store), Arc::clone(&adapter));
+    assert_eq!(after_gate.reconcile().await.orphaned_runtimes, 1);
+    assert!(!adapter.running.lock().await.contains_key(&legacy_runtime));
+    assert!(adapter
+        .running
+        .lock()
+        .await
+        .contains_key(&current.runtime_id));
+    assert!(store
+        .runtime_cleanup_debts(&created.id)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn delayed_cleanup_cannot_delete_a_handle_reused_at_the_same_generation() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("alice");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    drop(first);
+
+    let retired = switch_to_test_candidate(&store, &adapter, &created.id, "generation-one").await;
+    let current = switch_to_test_candidate(&store, &adapter, &created.id, "generation-two").await;
+    adapter
+        .running
+        .lock()
+        .await
+        .insert(retired.runtime_id.clone(), Some("sesn_other".into()));
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let recovered = restarted.reconcile().await;
+
+    assert_eq!(recovered.orphaned_runtimes, 0);
+    assert!(adapter
+        .running
+        .lock()
+        .await
+        .contains_key(&retired.runtime_id));
+    assert!(adapter
+        .running
+        .lock()
+        .await
+        .contains_key(&current.runtime_id));
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(store
+        .runtime_cleanup_debts(&created.id)
+        .await
+        .unwrap()
+        .iter()
+        .any(|debt| debt.runtime_id == retired.runtime_id && debt.generation == 1));
 }
 
 #[tokio::test]

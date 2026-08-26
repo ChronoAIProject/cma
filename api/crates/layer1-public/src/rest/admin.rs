@@ -255,6 +255,25 @@ pub enum RuntimeGenerationView {
     Malformed,
 }
 
+/// Whether provider metadata agrees with the durable runtime authority.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAuthorityView {
+    Unaccounted,
+    CoordinationDisabled,
+    Legacy,
+    Matches,
+    Mismatch,
+}
+
+/// Why an exact runtime remains durably scheduled for cleanup.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeCleanupView {
+    UncommittedCandidate,
+    RetiredAuthority,
+}
+
 /// One runtime in service, as this interface renders it.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RuntimeView {
@@ -262,6 +281,13 @@ pub struct RuntimeView {
     #[serde(skip_serializing_if = "Option::is_none")]
     generation: Option<u64>,
     generation_state: RuntimeGenerationView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    durable_runtime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    durable_generation: Option<u64>,
+    authority_state: RuntimeAuthorityView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cleanup_reason: Option<RuntimeCleanupView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     created_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -337,6 +363,40 @@ impl InventoryView {
                                         runtime: r.runtime,
                                         generation,
                                         generation_state,
+                                        durable_runtime: r
+                                            .durable_authority
+                                            .as_ref()
+                                            .and_then(|authority| authority.runtime_id.clone()),
+                                        durable_generation: r
+                                            .durable_authority
+                                            .as_ref()
+                                            .filter(|authority| authority.generation != 0)
+                                            .map(|authority| authority.generation),
+                                        authority_state: match r.authority_comparison {
+                                            layer2_core::RuntimeAuthorityComparison::Unaccounted => {
+                                                RuntimeAuthorityView::Unaccounted
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::CoordinationDisabled => {
+                                                RuntimeAuthorityView::CoordinationDisabled
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::Legacy => {
+                                                RuntimeAuthorityView::Legacy
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::Matches => {
+                                                RuntimeAuthorityView::Matches
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::Mismatch => {
+                                                RuntimeAuthorityView::Mismatch
+                                            }
+                                        },
+                                        cleanup_reason: r.cleanup_reason.map(|reason| match reason {
+                                            layer2_core::RuntimeCleanupReason::UncommittedCandidate => {
+                                                RuntimeCleanupView::UncommittedCandidate
+                                            }
+                                            layer2_core::RuntimeCleanupReason::RetiredAuthority => {
+                                                RuntimeCleanupView::RetiredAuthority
+                                            }
+                                        }),
                                         created_by: r.created_by,
                                         session: r.session.map(|s| s.0),
                                         owner: r.owner.map(|o| o.0),

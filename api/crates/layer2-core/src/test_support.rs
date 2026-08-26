@@ -5,7 +5,7 @@
 //! service code. The store is deliberately shareable between service
 //! instances: that is what makes "restart" expressible as a test.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use layer3_adapter::KernelAdapter;
@@ -13,7 +13,9 @@ use tokio::sync::Mutex;
 
 use crate::authz::{Authorization, Caller, Capability};
 use crate::coordination::{
-    RuntimeAuthority, RuntimeReservation, SessionBoundary, SessionLease, SessionLeaseRequest,
+    RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
+    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionLease,
+    SessionLeaseRequest, SessionOperation,
 };
 use crate::environment_service::EnvironmentProfileService;
 use crate::event::{Event, StoredEvent};
@@ -44,6 +46,8 @@ pub(crate) struct FakeStore {
     /// When set, every operation fails, so callers can be checked against a
     /// store that is down rather than merely empty.
     pub(crate) broken: Mutex<bool>,
+    /// Monotonic stand-in for promotion after the exact old-writer-drain proof.
+    legacy_cleanup_authorized: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug, Clone)]
@@ -59,11 +63,37 @@ struct FakeReservation {
 }
 
 #[derive(Debug, Clone)]
+struct FakeCandidate {
+    candidate: RuntimeCandidate,
+    lease_token: String,
+}
+
+#[derive(Debug, Clone)]
+struct FakeSwitch {
+    candidate: RuntimeCandidate,
+    lease_token: String,
+    outcome: RuntimeAuthoritySwitch,
+}
+
+#[derive(Debug, Clone)]
+struct FakeRetirement {
+    lease_token: String,
+    original_boundary: SessionBoundary,
+    outcome: RuntimeAuthorityRetirement,
+}
+
+#[derive(Debug, Clone)]
 struct FakeCoordination {
     authority: RuntimeAuthority,
     lease: Option<FakeLease>,
+    retired_lease_tokens: HashSet<String>,
     next_generation: u64,
     reservations: HashMap<String, FakeReservation>,
+    candidates: HashMap<String, FakeCandidate>,
+    cleanups: HashMap<String, RuntimeCleanup>,
+    completed_cleanups: HashMap<String, RuntimeCleanup>,
+    switches: HashMap<String, FakeSwitch>,
+    retirements: HashMap<String, FakeRetirement>,
 }
 
 impl FakeCoordination {
@@ -74,8 +104,14 @@ impl FakeCoordination {
                 runtime_id: record.runtime_id.clone(),
             },
             lease: None,
+            retired_lease_tokens: HashSet::new(),
             next_generation: 0,
             reservations: HashMap::new(),
+            candidates: HashMap::new(),
+            cleanups: HashMap::new(),
+            completed_cleanups: HashMap::new(),
+            switches: HashMap::new(),
+            retirements: HashMap::new(),
         }
     }
 
@@ -85,7 +121,8 @@ impl FakeCoordination {
             .as_ref()
             .is_some_and(|held| held.expires_at <= now)
         {
-            self.lease = None;
+            let expired = self.lease.take().expect("the expired lease was present");
+            self.retired_lease_tokens.insert(expired.lease.token);
         }
     }
 }
@@ -110,6 +147,12 @@ impl FakeStore {
 
     pub(crate) async fn fail_everything(&self) {
         *self.broken.lock().await = true;
+    }
+
+    /// Model the one-way promotion that permanently fences legacy writers.
+    pub(crate) fn authorize_legacy_cleanup(&self) {
+        self.legacy_cleanup_authorized
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     async fn guard(&self) -> Result<(), StoreError> {
@@ -240,7 +283,17 @@ impl FakeStore {
         durable.revision = revision;
         durable.session.last_seq = durable_tail;
         held.extend(events.iter().cloned().map(StoredEvent::from));
-        sessions.insert(record.session.id.0.clone(), durable);
+        sessions.insert(record.session.id.0.clone(), durable.clone());
+        let mut coordination = self.coordination.lock().await;
+        let state = coordination
+            .entry(record.session.id.0.clone())
+            .or_insert_with(|| FakeCoordination::legacy(&durable));
+        if state.authority.generation == 0 && state.lease.is_none() {
+            // Compatibility-stage writers have no separate authority switch.
+            // Once a recorded generation exists, ordinary record/event commits
+            // must never be allowed to move runtime ownership.
+            state.authority.runtime_id = durable.runtime_id.clone();
+        }
         receipts.insert(write_id.to_string(), (record.session.id.clone(), revision));
         self.upserts
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -328,6 +381,11 @@ impl SessionStore for FakeStore {
                 .checked_add(request.ttl)
                 .ok_or_else(|| StoreError::Malformed("session lease expiry overflow".into()))?;
             return Ok(held.lease.clone());
+        }
+        if state.retired_lease_tokens.contains(&lease.token) {
+            return Err(StoreError::SessionLeaseLost {
+                id: request.session_id.clone(),
+            });
         }
         state.lease = Some(FakeLease {
             lease: lease.clone(),
@@ -435,6 +493,7 @@ impl SessionStore for FakeStore {
             });
         }
         state.lease = None;
+        state.retired_lease_tokens.insert(lease.token.clone());
         Ok(())
     }
 
@@ -496,6 +555,418 @@ impl SessionStore for FakeStore {
         Ok(reservation)
     }
 
+    async fn register_runtime_candidate(
+        &self,
+        lease: &SessionLease,
+        reservation: &RuntimeReservation,
+        runtime_id: &str,
+    ) -> Result<RuntimeCandidate, StoreError> {
+        self.guard().await?;
+        if runtime_id.is_empty() {
+            return Err(StoreError::Malformed(
+                "runtime candidate handle must not be empty".into(),
+            ));
+        }
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
+            return Err(StoreError::SessionDeleted {
+                id: lease.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        let current = SessionBoundary::for_record(&record, state.authority.generation);
+        if state.lease.as_ref().map(|held| &held.lease) != Some(lease) || current != lease.boundary
+        {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        }
+        if reservation.session_id != lease.session_id {
+            return Err(StoreError::RuntimeReservationChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+        let Some(stored) = state.reservations.get(&reservation.token) else {
+            return Err(StoreError::RuntimeReservationChanged {
+                id: lease.session_id.clone(),
+            });
+        };
+        if stored.lease_token != lease.token || stored.reservation != *reservation {
+            return Err(StoreError::RuntimeReservationChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+        let candidate = RuntimeCandidate {
+            session_id: lease.session_id.clone(),
+            generation: reservation.generation,
+            runtime_id: runtime_id.to_string(),
+            token: reservation.token.clone(),
+        };
+        if let Some(existing) = state.candidates.get(&reservation.token) {
+            if existing.lease_token == lease.token && existing.candidate == candidate {
+                return Ok(existing.candidate.clone());
+            }
+            return Err(StoreError::RuntimeCandidateChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+        if state.authority.runtime_id.as_deref() == Some(runtime_id) {
+            return Err(StoreError::RuntimeCandidateChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+
+        let cleanup = RuntimeCleanup {
+            session_id: lease.session_id.clone(),
+            generation: candidate.generation.get(),
+            runtime_id: candidate.runtime_id.clone(),
+            token: format!("candidate:{}", candidate.token),
+            reason: RuntimeCleanupReason::UncommittedCandidate,
+        };
+        state.cleanups.insert(cleanup.token.clone(), cleanup);
+        state.candidates.insert(
+            reservation.token.clone(),
+            FakeCandidate {
+                candidate: candidate.clone(),
+                lease_token: lease.token.clone(),
+            },
+        );
+        Ok(candidate)
+    }
+
+    async fn switch_runtime_authority(
+        &self,
+        lease: &mut SessionLease,
+        candidate: &RuntimeCandidate,
+    ) -> Result<RuntimeAuthoritySwitch, StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let mut sessions = self.sessions.lock().await;
+        let Some(record) = sessions.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionDeleted {
+                id: lease.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+
+        let held_by_this_token = state
+            .lease
+            .as_ref()
+            .is_some_and(|held| held.lease.token == lease.token);
+        if let Some(completed) = state.switches.get(&candidate.token) {
+            let current = SessionBoundary::for_record(record, state.authority.generation);
+            let held_at_completed_boundary = state
+                .lease
+                .as_ref()
+                .is_some_and(|held| held.lease.boundary == completed.outcome.boundary);
+            if held_by_this_token
+                && held_at_completed_boundary
+                && completed.lease_token == lease.token
+                && completed.candidate == *candidate
+                && current == completed.outcome.boundary
+            {
+                lease.boundary = completed.outcome.boundary.clone();
+                return Ok(completed.outcome.clone());
+            }
+            return Err(StoreError::RuntimeCandidateChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+
+        let current = SessionBoundary::for_record(record, state.authority.generation);
+        if state.lease.as_ref().map(|held| &held.lease) != Some(lease) || current != lease.boundary
+        {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        }
+        let Some(stored_candidate) = state.candidates.get(&candidate.token).cloned() else {
+            return Err(StoreError::RuntimeCandidateChanged {
+                id: lease.session_id.clone(),
+            });
+        };
+        if stored_candidate.lease_token != lease.token
+            || stored_candidate.candidate != *candidate
+            || candidate.session_id != lease.session_id
+            || candidate.generation.get() <= state.authority.generation
+        {
+            return Err(StoreError::RuntimeCandidateChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+
+        let previous = state.authority.clone();
+        let cleanup = previous
+            .runtime_id
+            .as_ref()
+            .map(|runtime_id| RuntimeCleanup {
+                session_id: lease.session_id.clone(),
+                generation: previous.generation,
+                runtime_id: runtime_id.clone(),
+                token: format!("retired:{}", candidate.token),
+                reason: RuntimeCleanupReason::RetiredAuthority,
+            });
+        let revision = record
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+        record.revision = revision;
+        record.runtime_id = Some(candidate.runtime_id.clone());
+        state.authority = RuntimeAuthority {
+            generation: candidate.generation.get(),
+            runtime_id: Some(candidate.runtime_id.clone()),
+        };
+        state.next_generation = state.next_generation.max(candidate.generation.get());
+        state
+            .cleanups
+            .remove(&format!("candidate:{}", candidate.token));
+        if let Some(cleanup) = cleanup.as_ref() {
+            state
+                .cleanups
+                .insert(cleanup.token.clone(), cleanup.clone());
+        }
+        let boundary = SessionBoundary {
+            status: record.session.status,
+            authority: state.authority.clone(),
+        };
+        let Some(held) = state.lease.as_mut() else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        held.lease.boundary = boundary.clone();
+        lease.boundary = boundary.clone();
+        let outcome = RuntimeAuthoritySwitch {
+            revision,
+            boundary,
+            cleanup,
+        };
+        state.switches.insert(
+            candidate.token.clone(),
+            FakeSwitch {
+                candidate: candidate.clone(),
+                lease_token: lease.token.clone(),
+                outcome: outcome.clone(),
+            },
+        );
+        Ok(outcome)
+    }
+
+    async fn retire_runtime_authority(
+        &self,
+        lease: &mut SessionLease,
+        retirement_token: &str,
+    ) -> Result<RuntimeAuthorityRetirement, StoreError> {
+        self.guard().await?;
+        if retirement_token.is_empty() {
+            return Err(StoreError::Malformed(
+                "runtime retirement token must not be empty".into(),
+            ));
+        }
+        let _transaction = self.transaction.lock().await;
+        let mut sessions = self.sessions.lock().await;
+        let Some(record) = sessions.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionDeleted {
+                id: lease.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+
+        let held_by_this_token = state
+            .lease
+            .as_ref()
+            .is_some_and(|held| held.lease.token == lease.token);
+        if let Some(completed) = state.retirements.get(retirement_token) {
+            let current = SessionBoundary::for_record(record, state.authority.generation);
+            let held_at_completed_boundary = state
+                .lease
+                .as_ref()
+                .is_some_and(|held| held.lease.boundary == completed.outcome.boundary);
+            if held_by_this_token
+                && held_at_completed_boundary
+                && completed.lease_token == lease.token
+                && (completed.original_boundary == lease.boundary
+                    || completed.outcome.boundary == lease.boundary)
+                && current == completed.outcome.boundary
+            {
+                lease.boundary = completed.outcome.boundary.clone();
+                return Ok(completed.outcome.clone());
+            }
+            return Err(StoreError::RuntimeCleanupChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+
+        let current = SessionBoundary::for_record(record, state.authority.generation);
+        if !matches!(
+            lease.operation,
+            SessionOperation::Recover | SessionOperation::Lifecycle
+        ) || state.lease.as_ref().map(|held| &held.lease) != Some(lease)
+            || current != lease.boundary
+        {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        }
+        let Some(runtime_id) = state.authority.runtime_id.clone() else {
+            return Err(StoreError::RuntimeCleanupChanged {
+                id: lease.session_id.clone(),
+            });
+        };
+        let original_boundary = lease.boundary.clone();
+        let cleanup = RuntimeCleanup {
+            session_id: lease.session_id.clone(),
+            generation: state.authority.generation,
+            runtime_id,
+            token: format!("retired:{retirement_token}"),
+            reason: RuntimeCleanupReason::RetiredAuthority,
+        };
+        if state.cleanups.contains_key(&cleanup.token) {
+            return Err(StoreError::RuntimeCleanupChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+        let revision = record
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+        record.revision = revision;
+        record.runtime_id = None;
+        state.authority.runtime_id = None;
+        state.cleanups.insert(cleanup.token.clone(), cleanup.clone());
+        let boundary = SessionBoundary {
+            status: record.session.status,
+            authority: state.authority.clone(),
+        };
+        let Some(held) = state.lease.as_mut() else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        held.lease.boundary = boundary.clone();
+        lease.boundary = boundary.clone();
+        let outcome = RuntimeAuthorityRetirement {
+            revision,
+            boundary,
+            cleanup,
+        };
+        state.retirements.insert(
+            retirement_token.to_string(),
+            FakeRetirement {
+                lease_token: lease.token.clone(),
+                original_boundary,
+                outcome: outcome.clone(),
+            },
+        );
+        Ok(outcome)
+    }
+
+    async fn runtime_cleanup_debts(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<RuntimeCleanup>, StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(state) = self.coordination.lock().await.get(&id.0).cloned() else {
+            return Ok(Vec::new());
+        };
+        let mut cleanups = state.cleanups.into_values().collect::<Vec<_>>();
+        cleanups.sort_by(|a, b| a.token.cmp(&b.token));
+        Ok(cleanups)
+    }
+
+    async fn legacy_runtime_cleanup_authorized(&self) -> Result<bool, StoreError> {
+        self.guard().await?;
+        Ok(self
+            .legacy_cleanup_authorized
+            .load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    async fn acknowledge_runtime_cleanup(
+        &self,
+        lease: &SessionLease,
+        cleanup: &RuntimeCleanup,
+    ) -> Result<(), StoreError> {
+        self.guard().await?;
+        let _transaction = self.transaction.lock().await;
+        let Some(record) = self.sessions.lock().await.get(&lease.session_id.0).cloned() else {
+            return Err(StoreError::SessionDeleted {
+                id: lease.session_id.clone(),
+            });
+        };
+        let mut coordination = self.coordination.lock().await;
+        let Some(state) = coordination.get_mut(&lease.session_id.0) else {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        };
+        let now = tokio::time::Instant::now();
+        state.expire_lease(now);
+        let current = SessionBoundary::for_record(&record, state.authority.generation);
+        if !matches!(
+            lease.operation,
+            SessionOperation::Reclaim | SessionOperation::Recover | SessionOperation::Lifecycle
+        )
+            || cleanup.session_id != lease.session_id
+            || state.lease.as_ref().map(|held| &held.lease) != Some(lease)
+            || current != lease.boundary
+        {
+            return Err(StoreError::SessionLeaseLost {
+                id: lease.session_id.clone(),
+            });
+        }
+        if state.authority.generation == cleanup.generation
+            && state.authority.runtime_id.as_deref() == Some(cleanup.runtime_id.as_str())
+        {
+            return Err(StoreError::RuntimeCleanupChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+        if let Some(completed) = state.completed_cleanups.get(&cleanup.token) {
+            return if completed == cleanup {
+                Ok(())
+            } else {
+                Err(StoreError::RuntimeCleanupChanged {
+                    id: lease.session_id.clone(),
+                })
+            };
+        }
+        if state.cleanups.get(&cleanup.token) != Some(cleanup) {
+            return Err(StoreError::RuntimeCleanupChanged {
+                id: lease.session_id.clone(),
+            });
+        }
+        let completed = state
+            .cleanups
+            .remove(&cleanup.token)
+            .expect("the exact cleanup was present");
+        state
+            .completed_cleanups
+            .insert(cleanup.token.clone(), completed);
+        Ok(())
+    }
+
     async fn list_for(
         &self,
         owner: &SubjectId,
@@ -539,9 +1010,20 @@ impl SessionStore for FakeStore {
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
+        let mut coordination = self.coordination.lock().await;
+        if let Some(state) = coordination.get(&id.0).filter(|state| {
+            (state.authority.generation != 0 && state.authority.runtime_id.is_some())
+                || !state.cleanups.is_empty()
+        }) {
+            return Err(StoreError::SessionCleanupPending {
+                id: id.clone(),
+                runtime_id: state.authority.runtime_id.clone(),
+                cleanup_debts: state.cleanups.len(),
+            });
+        }
         self.sessions.lock().await.remove(&id.0);
         self.events.lock().await.retain(|e| &e.session_id != id);
-        self.coordination.lock().await.remove(&id.0);
+        coordination.remove(&id.0);
         self.write_receipts
             .lock()
             .await

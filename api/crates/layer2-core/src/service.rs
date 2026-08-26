@@ -81,6 +81,7 @@ impl SessionService {
             deployment_capacity_guard: Default::default(),
             runtime_version: deployment.runtime_version,
             identity: deployment.identity,
+            coordination_holder: format!("cma_{}", uuid::Uuid::new_v4().simple()),
             adopts_untagged: deployment.adopts_untagged,
             retry_backoff_ms: std::sync::atomic::AtomicU64::new(
                 crate::provision::DEFAULT_RETRY_BACKOFF_MS,
@@ -111,6 +112,30 @@ impl SessionService {
 
     pub(crate) async fn rotation_in_progress(&self, id: &SessionId) -> bool {
         self.rotations_in_progress.read().await.contains(id)
+    }
+
+    /// Keep legacy provider mutations from bypassing durable coordination.
+    ///
+    /// Compatibility stores and generation-zero sessions still use the old
+    /// lifecycle while the coordinated implementations are rolled out. Once a
+    /// non-zero authority exists, every provider mutation must arrive through a
+    /// lease-aware path; callers without one fail closed instead of falling back
+    /// to a handle-only adapter call.
+    pub(crate) async fn require_compatibility_provider_mutation(
+        &self,
+        id: &SessionId,
+        operation: &str,
+    ) -> Result<(), CoreError> {
+        match self.store.runtime_authority(id).await {
+            Ok(Some(authority)) if authority.generation != 0 => {
+                Err(CoreError::RuntimeUnavailable(format!(
+                    "{operation} requires a durable session lease for coordinated runtime authority"
+                )))
+            }
+            Ok(Some(_)) | Err(StoreError::CoordinationDisabled) => Ok(()),
+            Ok(None) => Err(CoreError::SessionNotFound),
+            Err(error) => Err(store_failed(error)),
+        }
     }
 
     #[cfg(test)]

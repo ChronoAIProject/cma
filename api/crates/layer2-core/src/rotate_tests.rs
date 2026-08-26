@@ -268,9 +268,20 @@ async fn the_old_sandbox_is_released() {
     new.reconcile().await;
     await_usable(&new, &alice, &created.id).await;
 
+    let debts = store.runtime_cleanup_debts(&created.id).await.unwrap();
+    assert_eq!(debts.len(), 1);
+    assert_eq!(debts[0].runtime_id, first);
+    assert_eq!(debts[0].generation, 1);
+    assert!(
+        adapter.terminated.lock().await.is_empty(),
+        "rotation records exact retired-authority debt instead of deleting by handle"
+    );
+
+    new.reconcile().await;
+
     assert!(
         adapter.terminated.lock().await.contains(&first),
-        "the runtime being replaced must actually be released"
+        "the next cleanup pass conditionally releases the retired authority"
     );
     assert_eq!(
         adapter.running_count().await,
@@ -780,6 +791,11 @@ async fn a_session_moves_between_planes_and_stays_the_same_session() {
         assert!(entry.input.is_none());
         assert!(entry.conversation.is_some());
     }
+    let debts = store.runtime_cleanup_debts(&created.id).await.unwrap();
+    assert_eq!(debts.len(), 1);
+    assert_eq!(debts[0].runtime_id.as_str(), runtime.as_str());
+    assert!(adapter.terminated.lock().await.is_empty());
+    svc.reconcile().await;
     assert_eq!(
         adapter.terminated.lock().await.as_slice(),
         std::slice::from_ref(&runtime)
@@ -1856,12 +1872,11 @@ async fn a_rotation_whose_replacement_cannot_start_does_not_end_the_session() {
 }
 
 #[tokio::test]
-async fn a_rotation_refused_for_good_still_ends_the_session() {
-    // Keeping a session only makes sense while another attempt could go
-    // differently. A kernel that no longer offers what this session *is* will
-    // not start offering it, so a session kept against that answer would rest
-    // forever, be retried forever by the sweep, and tell its owner it was
-    // coming back when it was not.
+async fn a_permanently_refused_replacement_preserves_the_old_authority() {
+    // A permanent refusal says this replacement can never serve the session;
+    // it does not authorize destroying the old runtime that still can. Until
+    // an operator chooses otherwise, the exact pre-switch rollback keeps the
+    // existing session usable on its older runtime.
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
     let alice = user("alice");
@@ -1869,6 +1884,13 @@ async fn a_rotation_refused_for_good_still_ends_the_session() {
     let old = service_on_version(Arc::clone(&store), Arc::clone(&adapter), "runtime:1");
     let created = old.create_session(&alice, spec()).await.expect("created");
     await_settled(&old, &alice, &created.id).await;
+    let original = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .runtime_id
+        .expect("the old runtime is authoritative");
     drop(old);
 
     // The same kernel, rebuilt without the ability this session was granted.
@@ -1880,11 +1902,18 @@ async fn a_rotation_refused_for_good_still_ends_the_session() {
     new.reconcile().await;
     let settled = await_settled(&new, &alice, &created.id).await;
 
+    assert_eq!(settled.status, SessionStatus::Ready);
     assert_eq!(
-        settled.status,
-        SessionStatus::Terminated,
-        "an answer that cannot change is told, not retried"
+        store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .runtime_id
+            .as_deref(),
+        Some(original.as_str())
     );
+    assert_eq!(lesser.provision_calls.load(Ordering::SeqCst), 0);
 }
 
 /// A source that refuses, the way the registry refuses this service's own

@@ -30,9 +30,12 @@ use std::collections::BTreeMap;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
+use crate::sandbox_reclaimer::{
+    CREATOR_METADATA_KEY, GENERATION_METADATA_KEY, RESERVATION_METADATA_KEY, SESSION_METADATA_KEY,
+};
 use crate::{
-    AdapterError, RuntimeCapacity, RuntimeGeneration, RuntimeHandle, RuntimeListing, RuntimeSpec,
-    SkillPackage, TerminalInput,
+    AdapterError, RuntimeCapacity, RuntimeGeneration, RuntimeHandle, RuntimeIdentity,
+    RuntimeListing, RuntimeReservationIdentity, RuntimeSpec, SkillPackage, TerminalInput,
 };
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
@@ -45,8 +48,6 @@ pub(crate) const SUPERVISOR_PORT: u16 = 9090;
 /// Written at provisioning and read by reconciliation, so a provider shared
 /// between control planes can be told apart. Absent on sandboxes created before
 /// this was recorded, which reconciliation treats as its own business to decide.
-const CREATOR_METADATA_KEY: &str = "cma/control-plane";
-
 /// Historical control-plane key, kept while old-only sandboxes remain live.
 const LEGACY_CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 
@@ -54,13 +55,8 @@ const LEGACY_CREATOR_METADATA_KEY: &str = "chrono-bot/control-plane";
 ///
 /// Written at provisioning and read by reconciliation, so the two must agree;
 /// naming it once is what keeps them in step.
-const SESSION_METADATA_KEY: &str = "cma/session";
-
 /// Historical session key, kept while old-only sandboxes remain live.
 const LEGACY_SESSION_METADATA_KEY: &str = "chrono-bot/session";
-
-/// Durable runtime generation used to fence stale provider census rows.
-const GENERATION_METADATA_KEY: &str = "cma/runtime-generation";
 
 /// Canonical metadata key naming which kernel a sandbox is running.
 const KERNEL_METADATA_KEY: &str = "cma/kernel";
@@ -105,6 +101,9 @@ fn provisioning_metadata(spec: &RuntimeSpec, kernel: &str) -> BTreeMap<String, S
     ]);
     if let Some(generation) = spec.generation {
         metadata.insert(GENERATION_METADATA_KEY.to_string(), generation.to_string());
+    }
+    if let Some(reservation) = spec.reservation_token.as_ref() {
+        metadata.insert(RESERVATION_METADATA_KEY.to_string(), reservation.clone());
     }
     if let Some(creator) = spec.created_by.as_ref() {
         metadata.insert(CREATOR_METADATA_KEY.to_string(), creator.clone());
@@ -167,6 +166,8 @@ impl From<SandboxError> for AdapterError {
             SandboxError::Rejected { status, detail } => {
                 AdapterError::Rejected(format!("{status}: {detail}"))
             }
+            SandboxError::IdentityMismatch(detail) => AdapterError::Rejected(detail),
+            SandboxError::Unsupported(detail) => AdapterError::Unsupported(detail),
             other => AdapterError::Unavailable(other.to_string()),
         }
     }
@@ -436,6 +437,12 @@ impl HostedKernel {
         spec: &RuntimeSpec,
         env: BTreeMap<String, String>,
     ) -> Result<RuntimeHandle, AdapterError> {
+        if spec.generation.is_some() != spec.reservation_token.is_some() {
+            return Err(AdapterError::Rejected(
+                "coordinated provisioning requires both a runtime generation and its reservation token"
+                    .into(),
+            ));
+        }
         let resource_limits = self.shape.limits_for(spec.capacity);
         let request = SandboxRequest {
             image: ImageSpec {
@@ -664,6 +671,36 @@ impl HostedKernel {
         self.client.delete(&handle.0).await?;
         tracing::info!(sandbox = %handle.0, "sandbox deleted");
         Ok(())
+    }
+
+    /// Tear down only the exact provider object carrying this identity.
+    pub async fn terminate_if_identity(
+        &self,
+        identity: &RuntimeIdentity,
+    ) -> Result<(), AdapterError> {
+        self.client.delete_if_identity(identity).await?;
+        let link = self.links.lock().await.remove(&identity.handle.0);
+        if let Some(link) = link {
+            self.switch_waiters.forget(&identity.handle.0, &link).await;
+        }
+        tracing::info!(
+            sandbox = %identity.handle.0,
+            session_id = %identity.session,
+            generation = ?identity.generation,
+            "sandbox identity deleted with Kubernetes preconditions"
+        );
+        Ok(())
+    }
+
+    /// Find every sandbox produced for one durable reservation.
+    pub async fn discover_runtime_candidates(
+        &self,
+        reservation: &RuntimeReservationIdentity,
+    ) -> Result<Vec<RuntimeHandle>, AdapterError> {
+        self.client
+            .discover_runtime_candidates(reservation)
+            .await
+            .map_err(AdapterError::from)
     }
 
     /// Give a new sandbox the conversation it is taking over.

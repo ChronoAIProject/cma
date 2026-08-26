@@ -5,12 +5,16 @@
 //! running" apart from "nobody could be asked".
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::authz::{Authorization, Caller, Capability};
+use crate::coordination::{SessionBoundary, SessionLeaseRequest, SessionOperation};
 use crate::error::CoreError;
 use crate::ids::SubjectId;
-use crate::inventory::ProviderView;
+use crate::inventory::{ProviderView, RuntimeAuthorityComparison};
+use crate::store::SessionStore;
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+use crate::RuntimeCleanupReason;
 
 fn operator() -> Caller {
     Caller::new(
@@ -46,6 +50,83 @@ async fn a_running_session_appears_with_its_owner() {
         Some("alice")
     );
     assert!(!runtimes[0].is_unaccounted());
+    assert_eq!(
+        runtimes[0].durable_authority.as_ref().unwrap().runtime_id,
+        Some(runtimes[0].runtime.clone())
+    );
+    assert_eq!(
+        runtimes[0].authority_comparison,
+        RuntimeAuthorityComparison::Legacy,
+        "compatibility provisioning has no non-zero generation to compare"
+    );
+}
+
+#[tokio::test]
+async fn a_provider_runtime_is_labelled_with_its_exact_cleanup_debt() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let owner = user("alice");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&owner, spec()).await.expect("created");
+    await_settled(&svc, &owner, &created.id).await;
+    let record = store.get(&created.id).await.unwrap().unwrap();
+    let legacy_runtime = record.runtime_id.clone().unwrap();
+    let authority = store.runtime_authority(&created.id).await.unwrap().unwrap();
+    let request = SessionLeaseRequest::new(
+        created.id.clone(),
+        "inventory-test",
+        SessionBoundary {
+            status: record.session.status,
+            authority,
+        },
+        SessionOperation::Handover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store.acquire_session_lease(&request).await.unwrap();
+    let reservation = store
+        .reserve_runtime_generation(&lease, "inventory-candidate")
+        .await
+        .unwrap();
+    adapter
+        .running
+        .lock()
+        .await
+        .insert("runtime-current".into(), Some(created.id.0.clone()));
+    adapter
+        .generations
+        .lock()
+        .await
+        .insert("runtime-current".into(), reservation.generation);
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, "runtime-current")
+        .await
+        .unwrap();
+    store
+        .switch_runtime_authority(&mut lease, &candidate)
+        .await
+        .unwrap();
+
+    let inventory = svc.runtime_inventory(&operator()).await.unwrap();
+    let ProviderView::Observed(runtimes) = &inventory.providers[0].view else {
+        panic!("the fake provider is observable")
+    };
+    let retired = runtimes
+        .iter()
+        .find(|runtime| runtime.runtime == legacy_runtime)
+        .unwrap();
+    assert_eq!(
+        retired.cleanup_reason,
+        Some(RuntimeCleanupReason::RetiredAuthority)
+    );
+    let current = runtimes
+        .iter()
+        .find(|runtime| runtime.runtime == candidate.runtime_id)
+        .unwrap();
+    assert_eq!(current.cleanup_reason, None);
+    assert_eq!(
+        current.authority_comparison,
+        RuntimeAuthorityComparison::Matches
+    );
 }
 
 #[tokio::test]
@@ -93,7 +174,7 @@ async fn a_provider_running_nothing_is_reported_as_running_nothing() {
 async fn a_runtime_no_session_accounts_for_is_visible_as_such() {
     // What is left behind when a process died between provisioning a sandbox
     // and recording it. It is running, it belongs to nobody, and an operator
-    // should be able to see it before the sweep reclaims it.
+    // must see it even though census data alone cannot authorise reclamation.
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
     adapter
@@ -110,6 +191,10 @@ async fn a_runtime_no_session_accounts_for_is_visible_as_such() {
     assert_eq!(stray[0].runtime, "runtime-stray");
     assert!(stray[0].owner.is_none());
     assert!(stray[0].status.is_none());
+    assert_eq!(
+        stray[0].authority_comparison,
+        RuntimeAuthorityComparison::Unaccounted
+    );
 }
 
 #[tokio::test]

@@ -2071,6 +2071,8 @@ impl SessionService {
                 record.clone(),
                 events,
                 RecordFields {
+                    status: true,
+                    geometry: true,
                     plane: true,
                     runtime: true,
                     rotation: true,
@@ -2311,7 +2313,11 @@ impl RecordFields {
             || before.session.granted_skills != intended.session.granted_skills
             || before.session.pricing != intended.session.pricing
             || before.session.created_at != intended.session.created_at;
-        fields.runtime = before.runtime_id != intended.runtime_id;
+        // Runtime authority belongs only to an event whose semantics name it or
+        // to a workflow that supplies explicit narrow ownership. A queued
+        // history event can carry an old runtime snapshot after termination or
+        // handover; a mere difference from its local predecessor must never let
+        // it resurrect that handle over newer durable authority.
         fields.context = before.context_ref != intended.context_ref;
         fields
     }
