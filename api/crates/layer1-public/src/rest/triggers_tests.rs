@@ -171,6 +171,133 @@ async fn repeated_diff_review_is_idempotent_and_only_records_read_only_work() {
 }
 
 #[tokio::test]
+async fn explicit_branch_publication_is_digest_bound_idempotent_and_projection_safe() {
+    let mut fixture = Fixture::new();
+    fixture.make_ready();
+    let artifact = fixture.install_diff(b"canonical retained review".to_vec());
+    let launch_id = fixture.launch.id.0.clone();
+    let uri = format!("/api/v1/launches/{launch_id}/contributions/publish");
+    let body = json!({
+        "expected_revision": fixture.launch.revision_number,
+        "snapshot_digest": artifact.digest,
+    });
+
+    let first = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        body.clone(),
+        "one-branch-publication",
+    )
+    .await;
+    let replay = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        body,
+        "one-branch-publication",
+    )
+    .await;
+
+    assert_eq!(first.0, StatusCode::ACCEPTED);
+    assert_eq!(replay.0, StatusCode::ACCEPTED);
+    assert_eq!(first.1, replay.1);
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    let response: Value = serde_json::from_slice(&first.1).unwrap();
+    assert_eq!(response["state"], "pr_pending");
+    assert_eq!(response["contribution"]["state"], "intent_recorded");
+    assert_eq!(
+        response["contribution"]["confirmation_snapshot_digest"],
+        artifact.digest
+    );
+    assert!(response["pull_request"].is_null());
+    let wire = String::from_utf8(first.1).unwrap();
+    for forbidden in [
+        "object_reference",
+        "baseline_object_reference",
+        "backing_key_id",
+        "idempotency_key_hash",
+        "intent_key",
+        "provider_request_id",
+    ] {
+        assert!(!wire.contains(forbidden), "leaked {forbidden}");
+    }
+
+    let retained = fixture.store.launch.lock().unwrap().clone().unwrap();
+    assert_eq!(retained.state, LaunchState::PrPending);
+    assert_eq!(
+        retained.contribution.as_ref().unwrap().state,
+        layer2_core::PublicationState::IntentRecorded
+    );
+    assert!(retained.effects.iter().all(|effect| {
+        effect.kind != layer2_core::LaunchEffectKind::BranchPublication
+            && effect.kind != layer2_core::LaunchEffectKind::PullRequest
+    }));
+}
+
+#[tokio::test]
+async fn branch_publication_refuses_wrong_owner_stale_revision_and_changed_review() {
+    let mut fixture = Fixture::new();
+    fixture.make_ready();
+    let artifact = fixture.install_diff(b"canonical retained review".to_vec());
+    let uri = format!(
+        "/api/v1/launches/{}/contributions/publish",
+        fixture.launch.id.0
+    );
+    let base = json!({
+        "expected_revision": fixture.launch.revision_number,
+        "snapshot_digest": artifact.digest,
+    });
+
+    let wrong_owner = send_as(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        base.clone(),
+        "wrong-owner-publication",
+        "another-subject",
+    )
+    .await;
+    assert_eq!(wrong_owner.0, StatusCode::NOT_FOUND);
+
+    let stale = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        json!({
+            "expected_revision": fixture.launch.revision_number + 1,
+            "snapshot_digest": artifact.digest,
+        }),
+        "stale-publication",
+    )
+    .await;
+    assert_eq!(stale.0, StatusCode::CONFLICT);
+
+    let changed = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        json!({
+            "expected_revision": fixture.launch.revision_number,
+            "snapshot_digest": "f".repeat(64),
+        }),
+        "changed-review-publication",
+    )
+    .await;
+    assert_eq!(changed.0, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+    assert!(fixture
+        .store
+        .launch
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .contribution
+        .is_none());
+}
+
+#[tokio::test]
 async fn diff_download_is_tenant_isolated_integrity_checked_and_hardened() {
     let mut fixture = Fixture::new();
     let bytes = br#"{"cma_trigger_diff":1,"safe":"review"}"#.to_vec();
@@ -292,6 +419,7 @@ fn trigger_openapi_paths_exist_and_only_preview_is_declared_anonymous() {
     assert!(paths.contains_key("/api/v1/triggers/public/{public_id}"));
     assert!(paths.contains_key("/api/v1/launches/{launch_id}/start"));
     assert!(paths.contains_key("/api/v1/launches/{launch_id}/contributions/review"));
+    assert!(paths.contains_key("/api/v1/launches/{launch_id}/contributions/publish"));
     assert!(
         paths.contains_key("/api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download")
     );
@@ -307,7 +435,9 @@ fn trigger_openapi_paths_exist_and_only_preview_is_declared_anonymous() {
 
 #[test]
 fn launch_projection_excludes_credential_and_worker_internals() {
-    let fixture = Fixture::new();
+    let mut fixture = Fixture::new();
+    fixture.make_ready();
+    fixture.install_diff(b"retained review".to_vec());
     let wire = serde_json::to_string(&LaunchView::from(fixture.launch.clone())).unwrap();
     for forbidden in [
         "backing_key_id",
@@ -317,6 +447,8 @@ fn launch_projection_excludes_credential_and_worker_internals() {
         "session_credential_generation",
         "idempotency_key_hash",
         "provider_request_id",
+        "object_reference",
+        "baseline_object_reference",
     ] {
         assert!(!wire.contains(forbidden), "leaked {forbidden}");
     }
@@ -387,6 +519,17 @@ async fn send(
     body: Value,
     idempotency_key: &str,
 ) -> (StatusCode, Vec<u8>) {
+    send_as(app, method, uri, body, idempotency_key, OWNER).await
+}
+
+async fn send_as(
+    app: &axum::Router,
+    method: Method,
+    uri: &str,
+    body: Value,
+    idempotency_key: &str,
+    subject: &str,
+) -> (StatusCode, Vec<u8>) {
     let mut request = Request::builder()
         .method(method)
         .uri(uri)
@@ -396,7 +539,7 @@ async fn send(
         .unwrap();
     request
         .extensions_mut()
-        .insert(AuthenticatedSubject(SubjectId(OWNER.into())));
+        .insert(AuthenticatedSubject(SubjectId(subject.into())));
     request
         .extensions_mut()
         .insert(Authorization::from_capabilities([

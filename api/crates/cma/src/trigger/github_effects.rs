@@ -9,12 +9,12 @@ use layer2_core::{
     rfc3339_at, seconds_from_rfc3339, AuthorityProvenance, BaselineObjectStore, BranchRecord,
     CapabilityOperation, CapabilityRevocationState, CheckpointId, CheckpointIntegrity,
     CheckpointObjectStore, ConnectionSnapshot, CoreError, DelegationState, DiffArtifactObjectStore,
-    DiffValidationOutcome, EffectClaim, FailureClass, Launch, LaunchAuthority, LaunchCapability,
-    LaunchEffectKind, LaunchEffectResult, LaunchFailure, RepositoryIdentity, Session, SessionId,
-    SessionLink, SessionService, SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier,
-    TriggerServiceError, TriggerStoreError, WorkspaceCheckpoint, WorkspaceEntry,
-    WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord, CAPABILITY_MAX_LIFETIME_SECONDS,
-    CAPABILITY_POLICY_VERSION,
+    DiffValidationOutcome, EffectClaim, EffectClaimMode, FailureClass, Launch, LaunchAuthority,
+    LaunchCapability, LaunchEffectKind, LaunchEffectResult, LaunchFailure, RepositoryIdentity,
+    Session, SessionId, SessionLink, SessionService, SessionStatus, TriggerAuthorityError,
+    TriggerAuthorityVerifier, TriggerServiceError, TriggerStoreError, WorkspaceCheckpoint,
+    WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord,
+    CAPABILITY_MAX_LIFETIME_SECONDS, CAPABILITY_POLICY_VERSION,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -79,6 +79,17 @@ trait GithubEffectPort: Send + Sync {
         &self,
         launch: &Launch,
     ) -> Result<CapabilityAuthorityEvidence, GithubBrokerError>;
+
+    async fn publish_branch(
+        &self,
+        context: &super::github::PublicationContext,
+        plan: &super::workspace_diff::PublicationPlan,
+    ) -> Result<super::github::PublicationAdvance, GithubBrokerError> {
+        let _ = (context, plan);
+        Err(GithubBrokerError::Malformed(
+            "the Git Data publication adapter is unavailable".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -356,6 +367,14 @@ impl GithubEffectPort for GithubBroker {
             fork: fork.identity,
             branch: observed_branch,
         })
+    }
+
+    async fn publish_branch(
+        &self,
+        context: &super::github::PublicationContext,
+        plan: &super::workspace_diff::PublicationPlan,
+    ) -> Result<super::github::PublicationAdvance, GithubBrokerError> {
+        GithubBroker::publish_branch(self, context, plan).await
     }
 }
 
@@ -1641,6 +1660,235 @@ impl GithubEffectExecutor {
             external_resource_ids: resources,
         }
     }
+
+    async fn run_publication(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let (Some(checkpoint_store), Some(diff_store)) =
+            (self.checkpoint_store.as_ref(), self.diff_store.as_ref())
+        else {
+            return unsupported_effect(claim);
+        };
+        let Some(diff) = launch.diff.as_ref() else {
+            return publication_failure(
+                claim,
+                FailureClass::TerminalValidation,
+                "publication_diff_missing",
+                "The Launch has no reviewed diff to publish.",
+                "Request a fresh contribution review before publishing.",
+            );
+        };
+        let Some(contribution) = launch.contribution.as_ref() else {
+            return publication_failure(
+                claim,
+                FailureClass::TerminalSecurity,
+                "publication_confirmation_missing",
+                "The Launch has no explicit publication authority.",
+                "Confirm the exact reviewed diff before any GitHub write.",
+            );
+        };
+        if contribution.diff_artifact_id != diff.id
+            || contribution.diff_digest != diff.digest
+            || contribution.confirmation.snapshot_digest != diff.digest
+            || diff.validate_for_publication(launch).is_err()
+        {
+            return publication_failure(
+                claim,
+                FailureClass::TerminalSecurity,
+                "publication_authority_mismatch",
+                "The publication intent does not match the exact reviewed diff.",
+                "Request a fresh review; CMA will not infer publication authority.",
+            );
+        }
+        let Some(checkpoint) = launch
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.latest_checkpoint.as_ref())
+            .filter(|checkpoint| checkpoint.id == diff.checkpoint_id)
+        else {
+            return publication_failure(
+                claim,
+                FailureClass::RecoveryRequired,
+                "publication_checkpoint_missing",
+                "The exact reviewed checkpoint is no longer retained.",
+                "Request a fresh contribution review from the recoverable session.",
+            );
+        };
+
+        let authority = match self.github.preflight_capability(launch).await {
+            Ok(authority) => authority,
+            Err(error) => {
+                return broker_failure(error, claim, claim.mode == EffectClaimMode::Reconcile)
+            }
+        };
+        if authority.branch.current_head != contribution.expected_head
+            && contribution
+                .commit_id
+                .as_ref()
+                .is_none_or(|commit| authority.branch.current_head != *commit)
+        {
+            return broker_failure(GithubBrokerError::BranchHeadConflict, claim, false);
+        }
+        let artifact_object = match diff_store.get_diff_artifact(&launch.owner, diff).await {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                return publication_failure(
+                    claim,
+                    FailureClass::RecoveryRequired,
+                    "publication_artifact_missing",
+                    "The exact reviewed artifact is no longer retained.",
+                    "Request a fresh contribution review before publishing.",
+                )
+            }
+            Err(TriggerStoreError::Unavailable(_)) => {
+                return transient_failure(
+                    claim,
+                    claim.mode == EffectClaimMode::Reconcile,
+                    "publication_artifact_temporarily_unavailable",
+                    "The immutable review artifact is temporarily unavailable.",
+                    None,
+                )
+            }
+            Err(_) => {
+                return publication_failure(
+                    claim,
+                    FailureClass::TerminalSecurity,
+                    "publication_artifact_integrity_failed",
+                    "The retained review artifact failed its storage boundary.",
+                    "Contact support; CMA will not publish unverified bytes.",
+                )
+            }
+        };
+        let checkpoint_archive = match checkpoint_store
+            .get_checkpoint(&launch.owner, checkpoint)
+            .await
+        {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                return publication_failure(
+                    claim,
+                    FailureClass::RecoveryRequired,
+                    "publication_checkpoint_object_missing",
+                    "The exact reviewed checkpoint object is no longer retained.",
+                    "Request a fresh contribution review from the recoverable session.",
+                )
+            }
+            Err(TriggerStoreError::Unavailable(_)) => {
+                return transient_failure(
+                    claim,
+                    claim.mode == EffectClaimMode::Reconcile,
+                    "publication_checkpoint_temporarily_unavailable",
+                    "The exact reviewed checkpoint is temporarily unavailable.",
+                    None,
+                )
+            }
+            Err(_) => {
+                return publication_failure(
+                    claim,
+                    FailureClass::TerminalSecurity,
+                    "publication_checkpoint_integrity_failed",
+                    "The retained checkpoint failed its storage boundary.",
+                    "Contact support; CMA will not publish unverified workspace bytes.",
+                )
+            }
+        };
+        let plan = match super::workspace_diff::build_publication_plan(
+            launch,
+            diff,
+            &artifact_object,
+            &checkpoint_archive,
+        ) {
+            Ok(plan) => plan,
+            Err(_) => return publication_failure(
+                claim,
+                FailureClass::TerminalSecurity,
+                "publication_plan_invalid",
+                "The reviewed artifact and checkpoint no longer produce the same publication plan.",
+                "Request a fresh review; CMA will not publish mismatched bytes.",
+            ),
+        };
+        let context = match super::github::PublicationContext::try_from(launch) {
+            Ok(context) => context,
+            Err(error) => return broker_failure(error, claim, false),
+        };
+        let advance = match self.github.publish_branch(&context, &plan).await {
+            Ok(advance) => advance,
+            Err(error) => {
+                return broker_failure(error, claim, claim.mode == EffectClaimMode::Reconcile)
+            }
+        };
+        let mut contribution = contribution.clone();
+        let now = rfc3339_at(SystemTime::now());
+        let published = match advance {
+            super::github::PublicationAdvance::ObjectsWritten(prepared) => {
+                contribution.state = layer2_core::PublicationState::ObjectsWritten;
+                contribution.base_tree_id = Some(prepared.base_tree_id);
+                contribution.tree_id = Some(prepared.tree_id);
+                contribution.commit_id = Some(prepared.commit_id);
+                contribution.object_ids = prepared.object_ids;
+                contribution.updated_at = now;
+                if contribution.validate_intent(&launch.id).is_err() {
+                    return publication_failure(
+                        claim,
+                        FailureClass::TerminalSecurity,
+                        "publication_object_evidence_invalid",
+                        "GitHub object evidence did not satisfy the durable publication intent.",
+                        "Contact support; CMA will not advance the launch ref.",
+                    );
+                }
+                return EffectExecution::Progressed {
+                    result: LaunchEffectResult::BranchPublication { contribution },
+                };
+            }
+            super::github::PublicationAdvance::RefUpdatePending(prepared) => {
+                contribution.state = layer2_core::PublicationState::RefUpdatePending;
+                contribution.base_tree_id = Some(prepared.base_tree_id);
+                contribution.tree_id = Some(prepared.tree_id);
+                contribution.commit_id = Some(prepared.commit_id);
+                contribution.object_ids = prepared.object_ids;
+                contribution.updated_at = now;
+                if contribution.validate_intent(&launch.id).is_err() {
+                    return publication_failure(
+                        claim,
+                        FailureClass::TerminalSecurity,
+                        "publication_ref_intent_invalid",
+                        "The guarded ref intent did not retain complete Git object evidence.",
+                        "Contact support; CMA will not advance the launch ref.",
+                    );
+                }
+                return EffectExecution::Progressed {
+                    result: LaunchEffectResult::BranchPublication { contribution },
+                };
+            }
+            super::github::PublicationAdvance::Published(published) => published,
+        };
+        contribution.state = layer2_core::PublicationState::Published;
+        contribution.base_tree_id = Some(published.base_tree_id.clone());
+        contribution.tree_id = Some(published.tree_id.clone());
+        contribution.commit_id = Some(published.commit_id.clone());
+        contribution.resulting_head = Some(published.resulting_head.clone());
+        contribution.object_ids = published.object_ids.clone();
+        contribution.updated_at = now;
+        if contribution.validate_intent(&launch.id).is_err() {
+            return publication_failure(
+                claim,
+                FailureClass::TerminalSecurity,
+                "publication_result_invalid",
+                "GitHub publication evidence did not satisfy the durable intent.",
+                "Contact support; CMA will not infer a successful branch update.",
+            );
+        }
+        let mut resources = retained_resources(launch, claim);
+        resources.insert("base_tree_id".into(), published.base_tree_id);
+        resources.insert("tree_id".into(), published.tree_id);
+        resources.insert("commit_id".into(), published.commit_id.clone());
+        resources.insert("resulting_head".into(), published.resulting_head);
+        EffectExecution::Completed {
+            result: LaunchEffectResult::BranchPublication { contribution },
+            safe_detail:
+                "The reviewed bytes were committed and the launch branch advanced without force."
+                    .into(),
+            external_resource_ids: resources,
+        }
+    }
 }
 
 #[async_trait]
@@ -1657,6 +1905,7 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
             LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
             LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
+            LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -1678,6 +1927,7 @@ impl EffectExecutor for GithubEffectExecutor {
             // content-addressed object write, so the same intent is safely
             // repeatable during reconciliation.
             LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
+            LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -1706,6 +1956,18 @@ fn checkpoint_failure(
 }
 
 fn diff_failure(
+    claim: &EffectClaim,
+    class: FailureClass,
+    code: &'static str,
+    detail: &'static str,
+    remediation: &'static str,
+) -> EffectExecution {
+    EffectExecution::Failed {
+        failure: failure(class, code, detail, remediation, claim, None),
+    }
+}
+
+fn publication_failure(
     claim: &EffectClaim,
     class: FailureClass,
     code: &'static str,
@@ -1790,7 +2052,7 @@ fn execution_failure(execution: EffectExecution) -> LaunchFailure {
         | EffectExecution::ReconcileWithProgress { failure, .. }
         | EffectExecution::FailedWithProgress { failure, .. }
         | EffectExecution::Failed { failure } => failure,
-        EffectExecution::Completed { .. } => LaunchFailure {
+        EffectExecution::Completed { .. } | EffectExecution::Progressed { .. } => LaunchFailure {
             class: FailureClass::TerminalSecurity,
             code: "trigger_capability_result_mismatch".into(),
             detail: "The capability adapter returned an unexpected result.".into(),
@@ -1936,13 +2198,26 @@ fn broker_failure(
             "GitHub did not confirm whether it accepted the request.",
             BTreeMap::new(),
         ),
-        Error::RateLimited { retry_after } => transient_failure(
-            claim,
-            reconcile_only,
-            "github_rate_limited",
-            "GitHub temporarily rate-limited this step.",
-            retry_after.as_deref(),
-        ),
+        Error::RateLimited { retry_after } => {
+            let retry_at = rfc3339_at(SystemTime::now() + retry_delay(claim, retry_after.as_deref()));
+            let failure = failure(
+                FailureClass::ResourceQuota,
+                "github_rate_limited",
+                "GitHub temporarily rate-limited this step.",
+                "CMA will retry after the persisted provider backoff.",
+                claim,
+                Some(retry_at.clone()),
+            );
+            if reconcile_only {
+                EffectExecution::ReconcileLater {
+                    failure,
+                    reconcile_at: retry_at,
+                    external_resource_ids: BTreeMap::new(),
+                }
+            } else {
+                EffectExecution::RetryLater { failure, retry_at }
+            }
+        }
         Error::Transient { status } => transient_failure(
             claim,
             reconcile_only,
@@ -2058,6 +2333,26 @@ fn broker_failure(
                 ),
             }
         }
+        Error::Rejected {
+            status,
+            kind: super::github::GithubRejectionKind::WorkflowScope,
+            ..
+        } => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::PolicyUserAction,
+                "github_workflow_scope_refused",
+                format!(
+                    "GitHub refused the workflow-file update at the guarded ref boundary (HTTP {status})."
+                ),
+                "Reconnect GitHub with workflow authority or remove the workflow content change, then review again.",
+                claim,
+                None,
+            ),
+        },
+        Error::Rejected {
+            kind: super::github::GithubRejectionKind::NonFastForward,
+            ..
+        } => broker_failure(Error::BranchHeadConflict, claim, reconcile_only),
         Error::ConnectionNotPersonal | Error::Forbidden | Error::Rejected { .. } => {
             EffectExecution::Failed {
                 failure: failure(
@@ -2147,9 +2442,15 @@ fn service_failure(error: TriggerServiceError, claim: &EffectClaim) -> EffectExe
             TriggerAuthorityError::Transient => {
                 broker_failure(GithubBrokerError::Transient { status: None }, claim, false)
             }
-            TriggerAuthorityError::ProviderRejected => {
-                broker_failure(GithubBrokerError::Rejected { status: 0 }, claim, false)
-            }
+            TriggerAuthorityError::ProviderRejected => broker_failure(
+                GithubBrokerError::Rejected {
+                    status: 0,
+                    kind: super::github::GithubRejectionKind::Unknown,
+                    provider_code: None,
+                },
+                claim,
+                false,
+            ),
             TriggerAuthorityError::UpstreamNotForkable => {
                 broker_failure(GithubBrokerError::ForkingDisabled, claim, false)
             }
@@ -2300,8 +2601,9 @@ mod tests {
 
     use base64::Engine as _;
     use layer2_core::{
-        BranchRecord, EffectClaimMode, ForkRecord, LaunchState, RepositoryIdentity,
-        RepositoryVisibility, SubjectId,
+        BranchRecord, Confirmation, ConfirmationAction, DiffArtifactId, EffectClaimMode,
+        ForkRecord, LaunchState, PublicationState, RepositoryIdentity, RepositoryVisibility,
+        SubjectId,
     };
     use ring::rand::SystemRandom;
     use ring::signature::Ed25519KeyPair;
@@ -2526,6 +2828,7 @@ mod tests {
     struct FakeReviewStore {
         baseline_reads: Mutex<VecDeque<Result<Option<Vec<u8>>, TriggerStoreError>>>,
         checkpoint_reads: Mutex<VecDeque<Result<Option<Vec<u8>>, TriggerStoreError>>>,
+        diff_reads: Mutex<VecDeque<Result<Option<Vec<u8>>, TriggerStoreError>>>,
         diff_answers: Mutex<VecDeque<Result<String, TriggerStoreError>>>,
         diff_writes: Mutex<Vec<Vec<u8>>>,
     }
@@ -2539,7 +2842,21 @@ mod tests {
             Self {
                 baseline_reads: Mutex::new(baseline_reads.into_iter().collect()),
                 checkpoint_reads: Mutex::new(checkpoint_reads.into_iter().collect()),
+                diff_reads: Mutex::new(VecDeque::new()),
                 diff_answers: Mutex::new(diff_answers.into_iter().collect()),
+                diff_writes: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn with_publication_reads(
+            checkpoint_reads: impl IntoIterator<Item = Result<Option<Vec<u8>>, TriggerStoreError>>,
+            diff_reads: impl IntoIterator<Item = Result<Option<Vec<u8>>, TriggerStoreError>>,
+        ) -> Self {
+            Self {
+                baseline_reads: Mutex::new(VecDeque::new()),
+                checkpoint_reads: Mutex::new(checkpoint_reads.into_iter().collect()),
+                diff_reads: Mutex::new(diff_reads.into_iter().collect()),
+                diff_answers: Mutex::new(VecDeque::new()),
                 diff_writes: Mutex::new(Vec::new()),
             }
         }
@@ -2641,7 +2958,11 @@ mod tests {
             _owner: &SubjectId,
             _artifact: &layer2_core::DiffArtifact,
         ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
-            Ok(None)
+            self.diff_reads
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a diff read answer was configured")
         }
 
         async fn delete_diff_artifact(
@@ -2691,16 +3012,35 @@ mod tests {
 
     struct FakeGithub {
         answers: Mutex<VecDeque<ForkAnswer>>,
+        publication_answers:
+            Mutex<VecDeque<Result<super::super::github::PublicationAdvance, GithubBrokerError>>>,
         create_calls: AtomicUsize,
         reconcile_calls: AtomicUsize,
+        publication_calls: AtomicUsize,
     }
 
     impl FakeGithub {
         fn new(answers: impl IntoIterator<Item = ForkAnswer>) -> Self {
             Self {
                 answers: Mutex::new(answers.into_iter().collect()),
+                publication_answers: Mutex::new(VecDeque::new()),
                 create_calls: AtomicUsize::new(0),
                 reconcile_calls: AtomicUsize::new(0),
+                publication_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn with_publication_answers(
+            answers: impl IntoIterator<
+                Item = Result<super::super::github::PublicationAdvance, GithubBrokerError>,
+            >,
+        ) -> Self {
+            Self {
+                answers: Mutex::new(VecDeque::new()),
+                publication_answers: Mutex::new(answers.into_iter().collect()),
+                create_calls: AtomicUsize::new(0),
+                reconcile_calls: AtomicUsize::new(0),
+                publication_calls: AtomicUsize::new(0),
             }
         }
 
@@ -2780,6 +3120,19 @@ mod tests {
                 fork: launch.fork.as_ref().unwrap().repository.clone(),
                 branch: launch.branch.clone().unwrap(),
             })
+        }
+
+        async fn publish_branch(
+            &self,
+            _context: &super::super::github::PublicationContext,
+            _plan: &super::super::workspace_diff::PublicationPlan,
+        ) -> Result<super::super::github::PublicationAdvance, GithubBrokerError> {
+            self.publication_calls.fetch_add(1, Ordering::SeqCst);
+            self.publication_answers
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a publication answer was configured")
         }
     }
 
@@ -3473,6 +3826,286 @@ mod tests {
         assert_eq!(github.reconcile_calls.load(Ordering::SeqCst), 0);
     }
 
+    #[tokio::test]
+    async fn publication_executor_requires_confirmation_before_any_github_or_storage_call() {
+        let mut fixture = publication_launch();
+        fixture.launch.contribution = None;
+        let github = Arc::new(FakeGithub::new([]));
+        let store = Arc::new(FakeReviewStore::with_publication_reads([], []));
+        let executor = publication_executor(github.clone(), store);
+
+        assert!(matches!(
+            executor
+                .execute(
+                    &fixture.launch,
+                    &claim_for(
+                        LaunchEffectKind::BranchPublication,
+                        EffectClaimMode::Execute,
+                    ),
+                )
+                .await,
+            EffectExecution::Failed {
+                failure: LaunchFailure {
+                    class: FailureClass::TerminalSecurity,
+                    ref code,
+                    ..
+                }
+            } if code == "publication_confirmation_missing"
+        ));
+        assert_eq!(github.publication_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn publication_storage_outages_and_missing_objects_have_named_boundaries() {
+        let fixture = publication_launch();
+        let github = Arc::new(FakeGithub::new([]));
+        let claim = claim_for(
+            LaunchEffectKind::BranchPublication,
+            EffectClaimMode::Execute,
+        );
+
+        let artifact_outage = Arc::new(FakeReviewStore::with_publication_reads(
+            [],
+            [Err(TriggerStoreError::Unavailable(
+                "artifact outage".into(),
+            ))],
+        ));
+        assert!(matches!(
+            publication_executor(github.clone(), artifact_outage)
+                .execute(&fixture.launch, &claim)
+                .await,
+            EffectExecution::RetryLater {
+                failure: LaunchFailure {
+                    class: FailureClass::RetryableTransient,
+                    ref code,
+                    ..
+                },
+                ..
+            } if code == "publication_artifact_temporarily_unavailable"
+        ));
+
+        let checkpoint_outage = Arc::new(FakeReviewStore::with_publication_reads(
+            [Err(TriggerStoreError::Unavailable(
+                "checkpoint outage".into(),
+            ))],
+            [Ok(Some(fixture.artifact_object.clone()))],
+        ));
+        assert!(matches!(
+            publication_executor(github.clone(), checkpoint_outage)
+                .execute(&fixture.launch, &claim)
+                .await,
+            EffectExecution::RetryLater {
+                failure: LaunchFailure {
+                    class: FailureClass::RetryableTransient,
+                    ref code,
+                    ..
+                },
+                ..
+            } if code == "publication_checkpoint_temporarily_unavailable"
+        ));
+
+        let missing = Arc::new(FakeReviewStore::with_publication_reads([], [Ok(None)]));
+        assert!(matches!(
+            publication_executor(github.clone(), missing)
+                .execute(&fixture.launch, &claim)
+                .await,
+            EffectExecution::Failed {
+                failure: LaunchFailure {
+                    class: FailureClass::RecoveryRequired,
+                    ref code,
+                    ..
+                }
+            } if code == "publication_artifact_missing"
+        ));
+        assert_eq!(github.publication_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn publication_executor_maps_all_durable_phases_without_changing_authority() {
+        let fixture = publication_launch();
+        let blob_id = fixture.launch.diff.as_ref().unwrap().files[0]
+            .new_provider_object_id
+            .clone()
+            .unwrap();
+        let prepared = super::super::github::PreparedGitData {
+            base_tree_id: "b".repeat(40),
+            tree_id: "c".repeat(40),
+            commit_id: "d".repeat(40),
+            object_ids: vec![blob_id],
+        };
+        let published = super::super::github::PublishedGitData {
+            base_tree_id: prepared.base_tree_id.clone(),
+            tree_id: prepared.tree_id.clone(),
+            commit_id: prepared.commit_id.clone(),
+            resulting_head: prepared.commit_id.clone(),
+            object_ids: prepared.object_ids.clone(),
+        };
+        let github = Arc::new(FakeGithub::with_publication_answers([
+            Ok(super::super::github::PublicationAdvance::ObjectsWritten(
+                prepared.clone(),
+            )),
+            Ok(super::super::github::PublicationAdvance::RefUpdatePending(
+                prepared.clone(),
+            )),
+            Ok(super::super::github::PublicationAdvance::Published(
+                published.clone(),
+            )),
+        ]));
+        let store = Arc::new(FakeReviewStore::with_publication_reads(
+            [
+                Ok(Some(fixture.checkpoint_archive.clone())),
+                Ok(Some(fixture.checkpoint_archive.clone())),
+                Ok(Some(fixture.checkpoint_archive.clone())),
+            ],
+            [
+                Ok(Some(fixture.artifact_object.clone())),
+                Ok(Some(fixture.artifact_object.clone())),
+                Ok(Some(fixture.artifact_object.clone())),
+            ],
+        ));
+        let executor = publication_executor(github.clone(), store);
+        let mut launch = fixture.launch;
+        let immutable = launch.contribution.clone().unwrap();
+
+        let EffectExecution::Progressed {
+            result: LaunchEffectResult::BranchPublication { contribution },
+        } = executor
+            .execute(
+                &launch,
+                &claim_for(
+                    LaunchEffectKind::BranchPublication,
+                    EffectClaimMode::Execute,
+                ),
+            )
+            .await
+        else {
+            panic!("object creation must yield durable progress");
+        };
+        assert_eq!(contribution.state, PublicationState::ObjectsWritten);
+        assert_publication_authority_unchanged(&immutable, &contribution);
+        launch.contribution = Some(contribution);
+
+        let EffectExecution::Progressed {
+            result: LaunchEffectResult::BranchPublication { contribution },
+        } = executor
+            .reconcile(
+                &launch,
+                &claim_for(
+                    LaunchEffectKind::BranchPublication,
+                    EffectClaimMode::Reconcile,
+                ),
+            )
+            .await
+        else {
+            panic!("object verification must yield a durable ref intent");
+        };
+        assert_eq!(contribution.state, PublicationState::RefUpdatePending);
+        assert_publication_authority_unchanged(&immutable, &contribution);
+        launch.contribution = Some(contribution);
+
+        let EffectExecution::Completed {
+            result: LaunchEffectResult::BranchPublication { contribution },
+            external_resource_ids,
+            ..
+        } = executor
+            .reconcile(
+                &launch,
+                &claim_for(
+                    LaunchEffectKind::BranchPublication,
+                    EffectClaimMode::Reconcile,
+                ),
+            )
+            .await
+        else {
+            panic!("verified ref must complete publication");
+        };
+        assert_eq!(contribution.state, PublicationState::Published);
+        assert_eq!(
+            contribution.resulting_head,
+            Some(published.commit_id.clone())
+        );
+        assert_publication_authority_unchanged(&immutable, &contribution);
+        assert_eq!(external_resource_ids["commit_id"], published.commit_id);
+        assert_eq!(github.publication_calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn publication_executor_keeps_ambiguous_stale_scope_and_quota_distinct() {
+        let cases = [
+            (
+                GithubBrokerError::AmbiguousWrite,
+                FailureClass::AmbiguousExternal,
+                "github_write_ambiguous",
+            ),
+            (
+                GithubBrokerError::BranchHeadConflict,
+                FailureClass::ConflictStaleHead,
+                "conflict_stale_head",
+            ),
+            (
+                GithubBrokerError::Rejected {
+                    status: 403,
+                    kind: super::super::github::GithubRejectionKind::WorkflowScope,
+                    provider_code: Some("missing_workflow_scope".into()),
+                },
+                FailureClass::PolicyUserAction,
+                "github_workflow_scope_refused",
+            ),
+            (
+                GithubBrokerError::RateLimited {
+                    retry_after: Some("17".into()),
+                },
+                FailureClass::ResourceQuota,
+                "github_rate_limited",
+            ),
+        ];
+        for (error, class, code) in cases {
+            let fixture = publication_launch();
+            let github = Arc::new(FakeGithub::with_publication_answers([Err(error)]));
+            let store = Arc::new(FakeReviewStore::with_publication_reads(
+                [Ok(Some(fixture.checkpoint_archive.clone()))],
+                [Ok(Some(fixture.artifact_object.clone()))],
+            ));
+            let execution = publication_executor(github, store)
+                .execute(
+                    &fixture.launch,
+                    &claim_for(
+                        LaunchEffectKind::BranchPublication,
+                        EffectClaimMode::Execute,
+                    ),
+                )
+                .await;
+            match execution {
+                EffectExecution::RetryLater { failure, .. }
+                | EffectExecution::ReconcileLater { failure, .. }
+                | EffectExecution::Failed { failure } => {
+                    assert_eq!(failure.class, class);
+                    assert_eq!(failure.code, code);
+                }
+                other => panic!("unexpected failure projection: {other:?}"),
+            }
+        }
+    }
+
+    fn assert_publication_authority_unchanged(
+        expected: &layer2_core::ContributionRecord,
+        actual: &layer2_core::ContributionRecord,
+    ) {
+        assert_eq!(actual.id, expected.id);
+        assert_eq!(actual.launch_id, expected.launch_id);
+        assert_eq!(actual.diff_artifact_id, expected.diff_artifact_id);
+        assert_eq!(actual.revision_digest, expected.revision_digest);
+        assert_eq!(actual.baseline_digest, expected.baseline_digest);
+        assert_eq!(actual.checkpoint_digest, expected.checkpoint_digest);
+        assert_eq!(actual.diff_digest, expected.diff_digest);
+        assert_eq!(actual.branch_name, expected.branch_name);
+        assert_eq!(actual.expected_head, expected.expected_head);
+        assert_eq!(actual.author, expected.author);
+        assert_eq!(actual.committer, expected.committer);
+        assert_eq!(actual.confirmation, expected.confirmation);
+        assert_eq!(actual.intent_key, expected.intent_key);
+    }
+
     fn fork_launch() -> Launch {
         let mut launch = super::super::worker::tests::launch_fixture();
         launch.state = LaunchState::ForkPending;
@@ -3538,6 +4171,151 @@ mod tests {
         });
         launch.contribution_checkpoint_version = Some(1);
         launch
+    }
+
+    struct PublicationLaunchFixture {
+        launch: Launch,
+        artifact_object: Vec<u8>,
+        checkpoint_archive: Vec<u8>,
+    }
+
+    fn publication_launch() -> PublicationLaunchFixture {
+        let mut launch = checkpoint_launch();
+        let source = launch.source_sha.clone();
+        let baseline = WorkspaceManifest::seal(source.clone(), Vec::new()).unwrap();
+        let baseline_archive = test_archive(&baseline, &[], 0, 0);
+        let content = b"published review\n".to_vec();
+        let content_sha256 = format!("{:x}", Sha256::digest(&content));
+        let blob_id = super::super::workspace_diff::git_blob_id(&content);
+        let entry = WorkspaceEntry {
+            path: "README.md".into(),
+            kind: WorkspaceEntryKind::Regular,
+            mode: 0o100644,
+            size: content.len() as u64,
+            content_sha256,
+            provider_object_id: Some(blob_id),
+            symlink_target: None,
+        };
+        let checkpoint_manifest =
+            WorkspaceManifest::seal(source.clone(), vec![entry.clone()]).unwrap();
+        let checkpoint_archive = test_archive(&checkpoint_manifest, &[(entry, content)], 1, 1);
+        let checkpoint = WorkspaceCheckpoint {
+            id: CheckpointId::new(),
+            launch_id: launch.id.clone(),
+            version: 1,
+            workspace_epoch: 1,
+            session_id: launch.session.as_ref().unwrap().session_id.clone(),
+            runtime_generation: 1,
+            object_reference: "trigger-test/publication-checkpoint.pack".into(),
+            archive_sha256: format!("{:x}", Sha256::digest(&checkpoint_archive)),
+            manifest: checkpoint_manifest,
+            integrity: CheckpointIntegrity::Complete,
+            created_at: "2026-08-27T00:00:00Z".into(),
+            delete_after: Some("2026-09-27T00:00:00Z".into()),
+        };
+        launch.workspace = Some(WorkspaceRecord {
+            baseline: baseline.clone(),
+            baseline_object_reference: "trigger-test/publication-baseline.pack".into(),
+            baseline_archive_sha256: format!("{:x}", Sha256::digest(&baseline_archive)),
+            latest_checkpoint: Some(checkpoint.clone()),
+            previous_checkpoint: None,
+            workspace_epoch: 1,
+            retention_policy_id: "trigger-test-retention".into(),
+            delete_after: "2026-09-27T00:00:00Z".into(),
+        });
+        launch.contribution_checkpoint_version = Some(1);
+        launch.reach = Some(layer2_core::ReachStatus {
+            service_id: launch.connection.as_ref().unwrap().service_id.clone(),
+            state: CapabilityRevocationState::Active,
+            policy_generation: 1,
+            policy_fence: 1,
+            runtime_audience: "runtime-publication".into(),
+            expires_at_epoch_seconds: 4_000_000_000,
+            numeric_binding_observed_at: "2026-08-27T00:00:00Z".into(),
+            refreshed_at: "2026-08-27T00:00:00Z".into(),
+            revocation_requested_at: None,
+            revocation_effective_at: None,
+            last_refusal: None,
+            tombstone_acknowledged: false,
+            agent_key_revocation_confirmed: false,
+        });
+        launch.delivery = Some(prompt_delivery(
+            &launch,
+            layer2_core::PromptDeliveryState::Completed,
+        ));
+        let mut built = build_diff_artifact(
+            &launch,
+            &checkpoint,
+            &baseline_archive,
+            &checkpoint_archive,
+            &launch.branch.as_ref().unwrap().current_head,
+            PROVISIONAL_CHANGED_FILE_LIMIT,
+            DiffArtifactId::new(),
+            "2026-08-27T00:00:01Z".into(),
+        )
+        .unwrap();
+        built.artifact.object_reference = "trigger-test/publication-diff.json".into();
+        launch.diff = Some(built.artifact.clone());
+        launch
+            .confirm_branch_publication(
+                Confirmation {
+                    action: ConfirmationAction::PublishBranch,
+                    subject: launch.owner.clone(),
+                    snapshot_digest: built.artifact.digest.clone(),
+                    confirmed_at: "2026-08-27T00:00:02Z".into(),
+                    idempotency_key_hash: "publication-confirmation".into(),
+                },
+                "2026-08-27T00:00:02Z",
+                "confirm-publication",
+            )
+            .unwrap();
+        PublicationLaunchFixture {
+            launch,
+            artifact_object: built.object,
+            checkpoint_archive,
+        }
+    }
+
+    fn test_archive(
+        manifest: &WorkspaceManifest,
+        entries: &[(WorkspaceEntry, Vec<u8>)],
+        checkpoint_version: u64,
+        quiesced_writers: u32,
+    ) -> Vec<u8> {
+        let mut offset = 0_u64;
+        let header_entries = entries
+            .iter()
+            .map(|(entry, _)| {
+                let value = serde_json::json!({
+                    "path": entry.path,
+                    "kind": entry.kind,
+                    "mode": entry.mode,
+                    "size": entry.size,
+                    "content_sha256": entry.content_sha256,
+                    "provider_object_id": entry.provider_object_id,
+                    "offset": offset,
+                });
+                offset += entry.size;
+                value
+            })
+            .collect::<Vec<_>>();
+        let header = serde_json::to_vec(&serde_json::json!({
+            "cma_workspace": 1,
+            "workspace_epoch": 1,
+            "checkpoint_version": checkpoint_version,
+            "quiesced_writers": quiesced_writers,
+            "source_revision": manifest.source_revision,
+            "manifest_digest": manifest.digest,
+            "entries": header_entries,
+        }))
+        .unwrap();
+        let mut archive = Vec::new();
+        archive.extend_from_slice(&(header.len() as u64).to_be_bytes());
+        archive.extend_from_slice(&header);
+        for (_, bytes) in entries {
+            archive.extend_from_slice(bytes);
+        }
+        archive
     }
 
     fn checkpoint_package(launch: &Launch) -> layer3_adapter::WorkspaceCheckpointPackage {
@@ -3636,6 +4414,22 @@ mod tests {
         GithubEffectExecutor {
             github,
             workspace_store: Some(store.clone() as Arc<dyn BaselineObjectStore>),
+            checkpoint_store: Some(store.clone() as Arc<dyn CheckpointObjectStore>),
+            diff_store: Some(store as Arc<dyn DiffArtifactObjectStore>),
+            sessions: None,
+            capability_signer: None,
+            fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+            changed_file_limit: PROVISIONAL_CHANGED_FILE_LIMIT,
+        }
+    }
+
+    fn publication_executor(
+        github: Arc<FakeGithub>,
+        store: Arc<FakeReviewStore>,
+    ) -> GithubEffectExecutor {
+        GithubEffectExecutor {
+            github,
+            workspace_store: None,
             checkpoint_store: Some(store.clone() as Arc<dyn CheckpointObjectStore>),
             diff_store: Some(store as Arc<dyn DiffArtifactObjectStore>),
             sessions: None,

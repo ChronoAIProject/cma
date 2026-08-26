@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use serde_json::json;
+use sha2::Digest as _;
 
 use super::*;
 use crate::{seconds_from_rfc3339, PermissionMode, SessionId, SessionSize, SubjectId};
@@ -485,6 +486,362 @@ fn prompt_delivery(launch: &Launch, state: PromptDeliveryState, attempt: u32) ->
         queued_at: crate::clock::now_rfc3339(),
         updated_at: crate::clock::now_rfc3339(),
     }
+}
+
+#[test]
+fn branch_publication_requires_the_exact_valid_review_and_records_intent_first() {
+    let mut invalid = reviewed_launch();
+    invalid.diff.as_mut().unwrap().validation = DiffValidationOutcome::NoChanges;
+    let invalid_confirmation = confirmation(
+        ConfirmationAction::PublishBranch,
+        &invalid.owner,
+        &invalid.diff.as_ref().unwrap().digest,
+    );
+    assert!(invalid
+        .confirm_branch_publication(invalid_confirmation, NOW, "invalid-review")
+        .is_err());
+    assert_eq!(invalid.state, LaunchState::Contributing);
+    assert!(invalid.contribution.is_none());
+
+    let mut launch = reviewed_launch();
+    let wrong = confirmation(
+        ConfirmationAction::PublishBranch,
+        &launch.owner,
+        &"e".repeat(64),
+    );
+    assert!(launch
+        .confirm_branch_publication(wrong, NOW, "wrong-snapshot")
+        .is_err());
+    assert!(launch.contribution.is_none());
+
+    let diff = launch.diff.clone().unwrap();
+    launch
+        .confirm_branch_publication(
+            confirmation(
+                ConfirmationAction::PublishBranch,
+                &launch.owner,
+                &diff.digest,
+            ),
+            NOW,
+            "confirm-publication",
+        )
+        .unwrap();
+    let intent = launch.contribution.as_ref().unwrap();
+    assert_eq!(launch.state, LaunchState::PrPending);
+    assert_eq!(intent.state, PublicationState::IntentRecorded);
+    assert_eq!(intent.diff_artifact_id, diff.id);
+    assert_eq!(intent.diff_digest, diff.digest);
+    assert_eq!(intent.checkpoint_digest, diff.checkpoint_digest);
+    assert_eq!(intent.expected_head, diff.expected_branch_head);
+    assert!(intent.commit_id.is_none());
+
+    let lease = WorkerLease {
+        holder: "publication-worker".into(),
+        fencing_token: 1,
+        acquired_at: NOW.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = 1;
+    launch.lease = Some(lease.clone());
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "claim-publication")
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.kind, LaunchEffectKind::BranchPublication);
+    assert!(launch.contribution.is_some(), "intent precedes the claim");
+}
+
+#[test]
+fn publication_progress_is_monotonic_and_does_not_authorize_a_pull_request() {
+    let mut launch = reviewed_launch();
+    let diff_digest = launch.diff.as_ref().unwrap().digest.clone();
+    launch
+        .confirm_branch_publication(
+            confirmation(
+                ConfirmationAction::PublishBranch,
+                &launch.owner,
+                &diff_digest,
+            ),
+            NOW,
+            "confirm-publication",
+        )
+        .unwrap();
+    let lease = WorkerLease {
+        holder: "publication-worker".into(),
+        fencing_token: 1,
+        acquired_at: NOW.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = 1;
+    launch.lease = Some(lease.clone());
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "claim-publication")
+        .unwrap()
+        .unwrap();
+    let mut objects = launch.contribution.clone().unwrap();
+    objects.state = PublicationState::ObjectsWritten;
+    objects.base_tree_id = Some("b".repeat(40));
+    objects.tree_id = Some("c".repeat(40));
+    objects.commit_id = Some("d".repeat(40));
+    objects.object_ids = vec!["e".repeat(40)];
+    objects.updated_at = LATER.into();
+    launch
+        .observe_effect_progress(
+            &lease,
+            &claim,
+            LaunchEffectResult::BranchPublication {
+                contribution: objects.clone(),
+            },
+            LATER,
+            "objects-written",
+        )
+        .unwrap();
+    assert_eq!(
+        launch.contribution.as_ref().unwrap().state,
+        PublicationState::ObjectsWritten
+    );
+
+    let mut changed_objects = objects.clone();
+    changed_objects.state = PublicationState::RefUpdatePending;
+    changed_objects.commit_id = Some("f".repeat(40));
+    let before = launch.clone();
+    assert!(launch
+        .observe_effect_progress(
+            &lease,
+            &claim,
+            LaunchEffectResult::BranchPublication {
+                contribution: changed_objects,
+            },
+            LATER,
+            "changed-evidence",
+        )
+        .is_err());
+    assert_eq!(launch, before, "rejected progress is atomic");
+
+    let mut pending = objects;
+    pending.state = PublicationState::RefUpdatePending;
+    launch
+        .observe_effect_progress(
+            &lease,
+            &claim,
+            LaunchEffectResult::BranchPublication {
+                contribution: pending.clone(),
+            },
+            LATER,
+            "ref-pending",
+        )
+        .unwrap();
+    let mut published = pending;
+    published.state = PublicationState::Published;
+    published.resulting_head = published.commit_id.clone();
+    let mut replaced_intent = published.clone();
+    replaced_intent.id = ContributionId::new();
+    let before = launch.clone();
+    assert!(launch
+        .complete_effect(
+            &lease,
+            &claim,
+            LaunchEffectResult::BranchPublication {
+                contribution: replaced_intent,
+            },
+            "branch published",
+            BTreeMap::from([
+                ("base_tree_id".into(), "b".repeat(40)),
+                ("tree_id".into(), "c".repeat(40)),
+                ("commit_id".into(), "d".repeat(40)),
+                ("resulting_head".into(), "d".repeat(40)),
+            ]),
+            LATER,
+            "replaced-publication-intent",
+        )
+        .is_err());
+    assert_eq!(launch, before, "publication completion is intent-bound");
+    launch
+        .complete_effect(
+            &lease,
+            &claim,
+            LaunchEffectResult::BranchPublication {
+                contribution: published.clone(),
+            },
+            "branch published",
+            BTreeMap::from([
+                ("base_tree_id".into(), "b".repeat(40)),
+                ("tree_id".into(), "c".repeat(40)),
+                ("commit_id".into(), "d".repeat(40)),
+                ("resulting_head".into(), "d".repeat(40)),
+            ]),
+            LATER,
+            "publication-complete",
+        )
+        .unwrap();
+    assert_eq!(launch.contribution, Some(published));
+    assert_eq!(launch.branch.as_ref().unwrap().current_head, "d".repeat(40));
+    assert!(launch.pull_request.is_none());
+
+    launch.lease = None;
+    launch.fencing_counter = 2;
+    let next_lease = WorkerLease {
+        holder: "next-worker".into(),
+        fencing_token: 2,
+        acquired_at: NOW.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.lease = Some(next_lease.clone());
+    assert!(launch
+        .claim_next_effect(&next_lease, LATER, "no-implicit-pr")
+        .unwrap()
+        .is_none());
+}
+
+fn reviewed_launch() -> Launch {
+    let owner = SubjectId("contributor".into());
+    let mut launch = Launch::new(owner.clone(), revision(owner), NOW, "reviewed-launch").unwrap();
+    launch
+        .select_connection(connection(), NOW, "select-connection")
+        .unwrap();
+    launch.fork = Some(ForkRecord {
+        repository: fork(),
+        reused: false,
+        source_revision: launch.source_sha.clone(),
+        canonical_url: "https://github.com/contributor/project".into(),
+        ready_at: NOW.into(),
+    });
+    launch.branch = Some(BranchRecord {
+        name: format!("cma/{}", launch.id.0),
+        expected_head: launch.source_sha.clone(),
+        current_head: launch.source_sha.clone(),
+        canonical_url: format!(
+            "https://github.com/contributor/project/tree/cma/{}",
+            launch.id.0
+        ),
+        created_at: NOW.into(),
+    });
+    let baseline = WorkspaceManifest::seal(launch.source_sha.clone(), Vec::new()).unwrap();
+    let bytes = b"reviewed change\n";
+    let content_sha = format!("{:x}", sha2::Sha256::digest(bytes));
+    let checkpoint_manifest = WorkspaceManifest::seal(
+        launch.source_sha.clone(),
+        vec![WorkspaceEntry {
+            path: "README.md".into(),
+            kind: WorkspaceEntryKind::Regular,
+            mode: 0o100644,
+            size: bytes.len() as u64,
+            content_sha256: content_sha.clone(),
+            provider_object_id: None,
+            symlink_target: None,
+        }],
+    )
+    .unwrap();
+    let checkpoint = WorkspaceCheckpoint {
+        id: CheckpointId::new(),
+        launch_id: launch.id.clone(),
+        version: 1,
+        workspace_epoch: 1,
+        session_id: SessionId("sesn_publication".into()),
+        runtime_generation: 1,
+        object_reference: "trigger-test/checkpoint.pack".into(),
+        archive_sha256: "a".repeat(64),
+        manifest: checkpoint_manifest,
+        integrity: CheckpointIntegrity::Complete,
+        created_at: NOW.into(),
+        delete_after: Some("2026-09-26T12:00:00Z".into()),
+    };
+    launch.workspace = Some(WorkspaceRecord {
+        baseline: baseline.clone(),
+        baseline_object_reference: "trigger-test/baseline.pack".into(),
+        baseline_archive_sha256: "b".repeat(64),
+        latest_checkpoint: Some(checkpoint.clone()),
+        previous_checkpoint: None,
+        workspace_epoch: 1,
+        retention_policy_id: "trigger-test-retention".into(),
+        delete_after: "2026-09-26T12:00:00Z".into(),
+    });
+    let session_id = SessionId("sesn_publication".into());
+    launch.session = Some(SessionLink {
+        session_id: session_id.clone(),
+        environment_profile_id: "envp_publication".into(),
+        runtime_generation: 1,
+        created_at: NOW.into(),
+    });
+    launch.reach = Some(ReachStatus {
+        service_id: "service-1".into(),
+        state: CapabilityRevocationState::Active,
+        policy_generation: 1,
+        policy_fence: 1,
+        runtime_audience: "runtime-publication".into(),
+        expires_at_epoch_seconds: 4_000_000_000,
+        numeric_binding_observed_at: NOW.into(),
+        refreshed_at: NOW.into(),
+        revocation_requested_at: None,
+        revocation_effective_at: None,
+        last_refusal: None,
+        tombstone_acknowledged: false,
+        agent_key_revocation_confirmed: false,
+    });
+    launch.delivery = Some(PromptDelivery {
+        launch_id: launch.id.clone(),
+        session_id,
+        revision_digest: launch.revision_digest.clone(),
+        origin_key: format!("cma-trigger:{}:initial", launch.id.0),
+        payload_hash: "f".repeat(64),
+        state: PromptDeliveryState::Completed,
+        attempt: 1,
+        dispatch_fence_sequence: Some(1),
+        queued_at: NOW.into(),
+        updated_at: NOW.into(),
+    });
+    launch.diff = Some(DiffArtifact {
+        id: DiffArtifactId::new(),
+        launch_id: launch.id.clone(),
+        checkpoint_id: checkpoint.id,
+        baseline_digest: baseline.digest,
+        checkpoint_digest: checkpoint.manifest.digest,
+        expected_branch_head: launch.source_sha.clone(),
+        observed_branch_head: launch.source_sha.clone(),
+        changed_file_limit: 1_000,
+        total_changed_files: 1,
+        files: vec![DiffFile {
+            path: "README.md".into(),
+            change: DiffChangeKind::Added,
+            binary: false,
+            old_mode: None,
+            new_mode: Some(0o100644),
+            old_sha256: None,
+            new_sha256: Some(content_sha),
+            old_provider_object_id: None,
+            new_provider_object_id: None,
+            old_bytes: 0,
+            new_bytes: bytes.len() as u64,
+            patch: Some("--- baseline\n+++ checkpoint\n@@ -0,0 +1 @@\n+reviewed change\n".into()),
+            patch_complete: true,
+        }],
+        changed_bytes: bytes.len() as u64,
+        digest: "c".repeat(64),
+        object_reference: "trigger-test/diff.json".into(),
+        object_sha256: "c".repeat(64),
+        object_bytes: 1,
+        author: CommitIdentity {
+            name: "contributor".into(),
+            email: "21+contributor@users.noreply.github.com".into(),
+        },
+        committer: CommitIdentity {
+            name: "CMA".into(),
+            email: "cma@chrono.ai".into(),
+        },
+        workflow_paths: Vec::new(),
+        validation: DiffValidationOutcome::Valid,
+        checks: Vec::new(),
+        created_at: NOW.into(),
+        delete_after: "2026-09-26T12:00:00Z".into(),
+    });
+    launch.state = LaunchState::Contributing;
+    launch
+        .diff
+        .as_ref()
+        .unwrap()
+        .validate_for_publication(&launch)
+        .unwrap();
+    launch
 }
 
 #[test]

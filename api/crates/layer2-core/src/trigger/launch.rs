@@ -999,6 +999,85 @@ impl Launch {
         Ok(())
     }
 
+    /// Record the explicit authority to publish exactly one reviewed diff.
+    ///
+    /// This creates the durable write intent before a worker can make any Git
+    /// Data request. Pull-request creation remains a separate confirmation and
+    /// therefore has no required effect after branch publication completes.
+    pub fn confirm_branch_publication(
+        &mut self,
+        confirmation: Confirmation,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        if self.state != LaunchState::Contributing {
+            return Err(TriggerValidationError::new(
+                "a branch can be published only after contribution review",
+            ));
+        }
+        let diff = self.diff.as_ref().ok_or_else(|| {
+            TriggerValidationError::field("diff", "must be reviewed before publication")
+        })?;
+        diff.validate_for_publication(self)?;
+        if confirmation.action != ConfirmationAction::PublishBranch
+            || confirmation.subject != self.owner
+            || confirmation.snapshot_digest != diff.digest
+        {
+            return Err(TriggerValidationError::field(
+                "confirmation",
+                "does not authorize publication of this exact reviewed diff",
+            ));
+        }
+        if self.contribution.is_some() {
+            return Err(TriggerValidationError::field(
+                "contribution",
+                "already has a publication intent",
+            ));
+        }
+        let branch = self.branch.as_ref().ok_or_else(|| {
+            TriggerValidationError::field("branch", "is missing from the reviewed Launch")
+        })?;
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        self.contribution = Some(super::ContributionRecord {
+            id: super::ContributionId::new(),
+            launch_id: self.id.clone(),
+            diff_artifact_id: diff.id.clone(),
+            revision_digest: self.revision_digest.clone(),
+            baseline_digest: diff.baseline_digest.clone(),
+            checkpoint_digest: diff.checkpoint_digest.clone(),
+            diff_digest: diff.digest.clone(),
+            branch_name: branch.name.clone(),
+            state: super::PublicationState::IntentRecorded,
+            expected_head: diff.expected_branch_head.clone(),
+            base_tree_id: None,
+            tree_id: None,
+            commit_id: None,
+            resulting_head: None,
+            object_ids: Vec::new(),
+            author: diff.author.clone(),
+            committer: diff.committer.clone(),
+            confirmation: confirmation.clone(),
+            intent_key: format!("cma-trigger:{}:publish:{}", self.id.0, diff.id.0),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        });
+        self.contribution
+            .as_ref()
+            .expect("created above")
+            .validate_intent(&self.id)?;
+        self.confirmations.push(confirmation);
+        self.updated_at = now.clone();
+        self.push_event(
+            now.clone(),
+            correlation_id.clone(),
+            LaunchEventKind::ConfirmationRecorded {
+                action: ConfirmationAction::PublishBranch,
+            },
+        )?;
+        self.transition(LaunchState::PrPending, now, correlation_id)
+    }
+
     pub fn events_after(&self, cursor: u64) -> Vec<LaunchEvent> {
         self.events
             .iter()

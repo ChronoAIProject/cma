@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::{seconds_from_rfc3339, CapabilityRevocationState};
+use crate::{
+    seconds_from_rfc3339, CapabilityRevocationState, ContributionRecord, PublicationState,
+    PullRequestState,
+};
 
 const INITIAL_PROMPT_TERMINAL_EVIDENCE_GRACE_SECONDS: u64 = 300;
 
@@ -30,10 +33,22 @@ pub(super) fn required_effect(launch: &Launch) -> Option<LaunchEffectKind> {
             Some(LaunchEffectKind::Checkpoint)
         }
         LaunchState::Contributing if launch.diff.is_none() => Some(LaunchEffectKind::Diff),
-        LaunchState::PrPending if launch.contribution.is_none() => {
+        LaunchState::PrPending
+            if launch
+                .contribution
+                .as_ref()
+                .is_some_and(|record| record.state != PublicationState::Published) =>
+        {
             Some(LaunchEffectKind::BranchPublication)
         }
-        LaunchState::PrPending if launch.pull_request.is_none() => {
+        LaunchState::PrPending
+            if launch.pull_request.as_ref().is_some_and(|record| {
+                matches!(
+                    record.state,
+                    PullRequestState::Creating | PullRequestState::RecoveryRequired
+                )
+            }) =>
+        {
             Some(LaunchEffectKind::PullRequest)
         }
         _ => None,
@@ -251,8 +266,8 @@ impl Launch {
 
     /// Attach a nonterminal typed result while the same effect remains claimed.
     ///
-    /// Initial prompt delivery is session-authoritative and can span several
-    /// short worker leases. No other effect may publish partial result state.
+    /// Initial prompt delivery and guarded branch publication can span several
+    /// short worker leases. Both expose a closed, monotonic progress contract.
     pub fn observe_effect_progress(
         &mut self,
         lease: &WorkerLease,
@@ -266,19 +281,24 @@ impl Launch {
         let correlation_id = correlation_id.into();
         candidate.validate_worker_lease(lease, &now)?;
         candidate.claimed_effect_index(claim)?;
-        if claim.kind != LaunchEffectKind::InitialDispatch {
-            return Err(TriggerValidationError::field(
-                "effect_progress",
-                "only initial prompt delivery has a partial result contract",
-            ));
+        match (claim.kind, result) {
+            (
+                LaunchEffectKind::InitialDispatch,
+                LaunchEffectResult::InitialDispatch { delivery },
+            ) => candidate.observe_prompt_delivery(delivery, now, correlation_id)?,
+            (
+                LaunchEffectKind::BranchPublication,
+                LaunchEffectResult::BranchPublication { contribution },
+            ) => {
+                candidate.observe_publication_progress(claim, contribution, now, correlation_id)?
+            }
+            _ => {
+                return Err(TriggerValidationError::field(
+                    "effect_progress",
+                    "does not match a supported partial-result contract",
+                ))
+            }
         }
-        let LaunchEffectResult::InitialDispatch { delivery } = result else {
-            return Err(TriggerValidationError::field(
-                "effect_progress",
-                "does not match initial prompt delivery",
-            ));
-        };
-        candidate.observe_prompt_delivery(delivery, now, correlation_id)?;
         *self = candidate;
         Ok(())
     }
@@ -617,7 +637,41 @@ impl Launch {
             (
                 LaunchEffectKind::BranchPublication,
                 LaunchEffectResult::BranchPublication { contribution },
-            ) => self.contribution = Some(contribution),
+            ) => {
+                let previous = self.contribution.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "contribution",
+                        "publication completion has no durable write intent",
+                    )
+                })?;
+                if !same_publication_intent(previous, &contribution)
+                    || !matches!(
+                        (previous.state, contribution.state),
+                        (
+                            PublicationState::ObjectsWritten,
+                            PublicationState::Published
+                        ) | (
+                            PublicationState::RefUpdatePending,
+                            PublicationState::Published
+                        )
+                    )
+                    || previous.base_tree_id != contribution.base_tree_id
+                    || previous.tree_id != contribution.tree_id
+                    || previous.commit_id != contribution.commit_id
+                    || previous.object_ids != contribution.object_ids
+                {
+                    return Err(TriggerValidationError::field(
+                        "contribution",
+                        "does not complete the retained publication intent",
+                    ));
+                }
+                let resulting_head = contribution.resulting_head.clone();
+                self.contribution = Some(contribution);
+                if let (Some(branch), Some(resulting_head)) = (self.branch.as_mut(), resulting_head)
+                {
+                    branch.current_head = resulting_head;
+                }
+            }
             (LaunchEffectKind::PullRequest, LaunchEffectResult::PullRequest { pull_request }) => {
                 self.pull_request = Some(pull_request)
             }
@@ -630,6 +684,85 @@ impl Launch {
             }
         }
         Ok(())
+    }
+
+    fn observe_publication_progress(
+        &mut self,
+        claim: &EffectClaim,
+        contribution: ContributionRecord,
+        now: String,
+        correlation_id: String,
+    ) -> Result<(), TriggerValidationError> {
+        contribution.validate_intent(&self.id)?;
+        let previous = self.contribution.as_ref().ok_or_else(|| {
+            TriggerValidationError::field(
+                "contribution",
+                "publication progress has no durable write intent",
+            )
+        })?;
+        if !same_publication_intent(previous, &contribution)
+            || !matches!(
+                (previous.state, contribution.state),
+                (
+                    PublicationState::IntentRecorded,
+                    PublicationState::ObjectsWritten
+                ) | (
+                    PublicationState::ObjectsWritten,
+                    PublicationState::RefUpdatePending
+                ) | (
+                    PublicationState::ObjectsWritten,
+                    PublicationState::ObjectsWritten
+                ) | (
+                    PublicationState::RefUpdatePending,
+                    PublicationState::RefUpdatePending
+                )
+            )
+            || (previous.state != PublicationState::IntentRecorded
+                && (previous.base_tree_id != contribution.base_tree_id
+                    || previous.tree_id != contribution.tree_id
+                    || previous.commit_id != contribution.commit_id
+                    || previous.object_ids != contribution.object_ids))
+        {
+            return Err(TriggerValidationError::field(
+                "contribution",
+                "does not continue the retained publication state machine",
+            ));
+        }
+        let state = contribution.state;
+        let mut resources = BTreeMap::new();
+        for (key, value) in [
+            ("base_tree_id", contribution.base_tree_id.as_ref()),
+            ("tree_id", contribution.tree_id.as_ref()),
+            ("commit_id", contribution.commit_id.as_ref()),
+        ] {
+            if let Some(value) = value {
+                resources.insert(key.to_string(), value.clone());
+            }
+        }
+        validate_external_resource_ids(&resources)?;
+        self.contribution = Some(contribution);
+        self.updated_at = now.clone();
+        let index = self.claimed_effect_index(claim)?;
+        self.effects[index]
+            .external_resource_ids
+            .extend(resources.clone());
+        self.effects[index].updated_at = now.clone();
+        let step = self.step_mut(LaunchEffectKind::BranchPublication)?;
+        step.status = LaunchStepStatus::Running;
+        step.safe_detail = match state {
+            PublicationState::ObjectsWritten => {
+                "The reviewed Git objects are retained; the launch ref has not been changed.".into()
+            }
+            PublicationState::RefUpdatePending => {
+                "The exact Git objects are verified and the guarded ref update is pending.".into()
+            }
+            _ => unreachable!("progress admits only nonterminal publication states"),
+        };
+        step.external_resource_ids = resources;
+        step.worker_fencing_token = claim.fence;
+        step.correlation_id = correlation_id.clone();
+        let step = step.clone();
+        self.push_event(now, correlation_id, LaunchEventKind::StepChanged { step })
     }
 
     /// Persist a classified effect failure. Unknown external outcomes must be
@@ -927,10 +1060,18 @@ impl Launch {
                     )
                 })?;
                 contribution.validate_intent(&self.id)?;
-                if contribution.resulting_head.is_none() {
+                if contribution.state != PublicationState::Published
+                    || contribution.resulting_head.is_none()
+                    || self.diff.as_ref().is_none_or(|diff| {
+                        contribution.diff_artifact_id != diff.id
+                            || contribution.diff_digest != diff.digest
+                            || contribution.baseline_digest != diff.baseline_digest
+                            || contribution.checkpoint_digest != diff.checkpoint_digest
+                    })
+                {
                     return Err(TriggerValidationError::field(
-                        "contribution.resulting_head",
-                        "publication has not reached the guarded ref",
+                        "contribution",
+                        "publication has not proven the exact reviewed artifact at the guarded ref",
                     ));
                 }
             }
@@ -1146,6 +1287,23 @@ fn same_prompt_identity(left: &PromptDelivery, right: &PromptDelivery) -> bool {
         && left.origin_key == right.origin_key
         && left.payload_hash == right.payload_hash
         && left.queued_at == right.queued_at
+}
+
+fn same_publication_intent(left: &ContributionRecord, right: &ContributionRecord) -> bool {
+    left.id == right.id
+        && left.launch_id == right.launch_id
+        && left.diff_artifact_id == right.diff_artifact_id
+        && left.revision_digest == right.revision_digest
+        && left.baseline_digest == right.baseline_digest
+        && left.checkpoint_digest == right.checkpoint_digest
+        && left.diff_digest == right.diff_digest
+        && left.branch_name == right.branch_name
+        && left.expected_head == right.expected_head
+        && left.author == right.author
+        && left.committer == right.committer
+        && left.confirmation == right.confirmation
+        && left.intent_key == right.intent_key
+        && left.created_at == right.created_at
 }
 
 fn legal_prompt_delivery_transition(from: PromptDeliveryState, to: PromptDeliveryState) -> bool {

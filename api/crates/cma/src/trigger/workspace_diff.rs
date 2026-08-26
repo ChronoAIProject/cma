@@ -38,26 +38,52 @@ pub(crate) struct BuiltDiffArtifact {
     pub(crate) object: Vec<u8>,
 }
 
-#[derive(Debug, Serialize)]
-struct ReviewDocument<'a> {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewDocument {
     cma_trigger_diff: u32,
-    artifact_id: &'a DiffArtifactId,
-    launch_id: &'a layer2_core::LaunchId,
-    checkpoint_id: &'a layer2_core::CheckpointId,
-    baseline_digest: &'a str,
-    checkpoint_digest: &'a str,
-    expected_branch_head: &'a str,
-    observed_branch_head: &'a str,
+    artifact_id: DiffArtifactId,
+    launch_id: layer2_core::LaunchId,
+    checkpoint_id: layer2_core::CheckpointId,
+    baseline_digest: String,
+    checkpoint_digest: String,
+    expected_branch_head: String,
+    observed_branch_head: String,
     changed_file_limit: u32,
     total_changed_files: u32,
     changed_bytes: u64,
     validation: DiffValidationOutcome,
-    author: &'a CommitIdentity,
-    committer: &'a CommitIdentity,
-    workflow_paths: &'a [String],
-    files: &'a [DiffFile],
-    created_at: &'a str,
-    delete_after: &'a str,
+    author: CommitIdentity,
+    committer: CommitIdentity,
+    workflow_paths: Vec<String>,
+    files: Vec<DiffFile>,
+    created_at: String,
+    delete_after: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PublicationPlan {
+    pub(crate) launch_id: layer2_core::LaunchId,
+    pub(crate) artifact_id: DiffArtifactId,
+    pub(crate) revision_digest: String,
+    pub(crate) baseline_digest: String,
+    pub(crate) checkpoint_digest: String,
+    pub(crate) diff_digest: String,
+    pub(crate) expected_head: String,
+    pub(crate) author: CommitIdentity,
+    pub(crate) committer: CommitIdentity,
+    pub(crate) files: Vec<PublicationFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PublicationFile {
+    pub(crate) path: String,
+    pub(crate) change: DiffChangeKind,
+    pub(crate) binary: bool,
+    pub(crate) mode: String,
+    pub(crate) content_sha256: Option<String>,
+    pub(crate) blob_id: Option<String>,
+    pub(crate) content: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,6 +124,169 @@ pub(crate) fn deterministic_diff_id(intent_key: &str) -> DiffArtifactId {
     bytes[6] = (bytes[6] & 0x0f) | 0x50;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     DiffArtifactId(uuid::Uuid::from_bytes(bytes).to_string())
+}
+
+pub(crate) fn build_publication_plan(
+    launch: &Launch,
+    artifact: &DiffArtifact,
+    artifact_object: &[u8],
+    checkpoint_archive: &[u8],
+) -> Result<PublicationPlan, DiffBuildError> {
+    artifact
+        .validate_for_review(launch)
+        .map_err(|error| DiffBuildError::Invalid(error.to_string()))?;
+    if usize::try_from(artifact.changed_file_limit).unwrap_or(usize::MAX) > MAX_DIFF_SUMMARY_FILES {
+        return Err(DiffBuildError::Invalid(
+            "the measured deployment publication ceiling exceeds the complete validation bound"
+                .into(),
+        ));
+    }
+    if u64::try_from(artifact_object.len()).unwrap_or(u64::MAX) != artifact.object_bytes
+        || hex(&Sha256::digest(artifact_object)) != artifact.object_sha256
+    {
+        return Err(DiffBuildError::Corrupt(
+            "the retained review object failed its size or SHA-256".into(),
+        ));
+    }
+    let document: ReviewDocument = serde_json::from_slice(artifact_object)
+        .map_err(|_| DiffBuildError::Corrupt("the review object is malformed".into()))?;
+    if serde_json::to_vec(&document).ok().as_deref() != Some(artifact_object) {
+        return Err(DiffBuildError::Corrupt(
+            "the review object is not in its canonical byte form".into(),
+        ));
+    }
+    if document.cma_trigger_diff != 1
+        || document.artifact_id != artifact.id
+        || document.launch_id != artifact.launch_id
+        || document.checkpoint_id != artifact.checkpoint_id
+        || document.baseline_digest != artifact.baseline_digest
+        || document.checkpoint_digest != artifact.checkpoint_digest
+        || document.expected_branch_head != artifact.expected_branch_head
+        || document.observed_branch_head != artifact.observed_branch_head
+        || document.changed_file_limit != artifact.changed_file_limit
+        || document.total_changed_files != artifact.total_changed_files
+        || document.changed_bytes != artifact.changed_bytes
+        || document.validation != artifact.validation
+        || document.author != artifact.author
+        || document.committer != artifact.committer
+        || document.workflow_paths != artifact.workflow_paths
+        || document.created_at != artifact.created_at
+        || document.delete_after != artifact.delete_after
+        || usize::try_from(document.total_changed_files).ok() != Some(document.files.len())
+    {
+        return Err(DiffBuildError::Corrupt(
+            "the review object disagrees with its retained Launch summary".into(),
+        ));
+    }
+    let mut complete = artifact.clone();
+    complete.files = document.files.clone();
+    complete
+        .validate_for_publication(launch)
+        .map_err(|error| DiffBuildError::Invalid(error.to_string()))?;
+
+    let workspace = launch
+        .workspace
+        .as_ref()
+        .ok_or_else(|| DiffBuildError::Invalid("Launch workspace is missing".into()))?;
+    let checkpoint = workspace
+        .latest_checkpoint
+        .as_ref()
+        .filter(|checkpoint| checkpoint.id == artifact.checkpoint_id)
+        .ok_or_else(|| DiffBuildError::Invalid("review checkpoint is missing".into()))?;
+    workspace
+        .baseline
+        .validate()
+        .map_err(|error| DiffBuildError::Corrupt(error.to_string()))?;
+    checkpoint
+        .validate_complete(&launch.id)
+        .map_err(|error| DiffBuildError::Corrupt(error.to_string()))?;
+    let current = open_archive(
+        checkpoint_archive,
+        &checkpoint.manifest,
+        checkpoint.workspace_epoch,
+        checkpoint.version,
+        &checkpoint.archive_sha256,
+    )?;
+
+    let mut files = Vec::with_capacity(document.files.len());
+    for reviewed in document.files {
+        let current_entry = current.get(reviewed.path.as_str());
+        let publication = match reviewed.new_sha256.as_deref() {
+            Some(new_sha256) => {
+                let current_entry = current_entry.ok_or_else(|| {
+                    DiffBuildError::Corrupt(format!(
+                        "reviewed path {} is absent from the checkpoint",
+                        reviewed.path
+                    ))
+                })?;
+                if current_entry.metadata.content_sha256 != new_sha256
+                    || Some(current_entry.metadata.mode) != reviewed.new_mode
+                    || current_entry.metadata.size != reviewed.new_bytes
+                    || current_entry.metadata.provider_object_id != reviewed.new_provider_object_id
+                {
+                    return Err(DiffBuildError::Corrupt(format!(
+                        "reviewed path {} disagrees with the checkpoint",
+                        reviewed.path
+                    )));
+                }
+                let blob_id = git_blob_id(current_entry.bytes);
+                if current_entry
+                    .metadata
+                    .provider_object_id
+                    .as_ref()
+                    .is_some_and(|provider| !provider.eq_ignore_ascii_case(&blob_id))
+                {
+                    return Err(DiffBuildError::Corrupt(format!(
+                        "reviewed path {} has a mismatched Git blob identity",
+                        reviewed.path
+                    )));
+                }
+                PublicationFile {
+                    path: reviewed.path,
+                    change: reviewed.change,
+                    binary: reviewed.binary,
+                    mode: git_mode(current_entry.metadata.mode)?.into(),
+                    content_sha256: Some(new_sha256.to_string()),
+                    blob_id: Some(blob_id),
+                    content: Some(current_entry.bytes.to_vec()),
+                }
+            }
+            None => {
+                if current_entry.is_some() || reviewed.change != DiffChangeKind::Deleted {
+                    return Err(DiffBuildError::Corrupt(format!(
+                        "reviewed deletion {} disagrees with the checkpoint",
+                        reviewed.path
+                    )));
+                }
+                PublicationFile {
+                    path: reviewed.path,
+                    change: reviewed.change,
+                    binary: reviewed.binary,
+                    mode: git_mode(reviewed.old_mode.ok_or_else(|| {
+                        DiffBuildError::Corrupt("a reviewed deletion has no prior mode".into())
+                    })?)?
+                    .into(),
+                    content_sha256: None,
+                    blob_id: None,
+                    content: None,
+                }
+            }
+        };
+        files.push(publication);
+    }
+
+    Ok(PublicationPlan {
+        launch_id: launch.id.clone(),
+        artifact_id: artifact.id.clone(),
+        revision_digest: launch.revision_digest.clone(),
+        baseline_digest: artifact.baseline_digest.clone(),
+        checkpoint_digest: artifact.checkpoint_digest.clone(),
+        diff_digest: artifact.digest.clone(),
+        expected_head: artifact.expected_branch_head.clone(),
+        author: artifact.author.clone(),
+        committer: artifact.committer.clone(),
+        files,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -348,23 +537,23 @@ fn seal_diff_artifact(
 
     let document = ReviewDocument {
         cma_trigger_diff: 1,
-        artifact_id: &artifact_id,
-        launch_id: &launch.id,
-        checkpoint_id: &checkpoint.id,
-        baseline_digest: &workspace.baseline.digest,
-        checkpoint_digest: &checkpoint.manifest.digest,
-        expected_branch_head,
-        observed_branch_head,
+        artifact_id: artifact_id.clone(),
+        launch_id: launch.id.clone(),
+        checkpoint_id: checkpoint.id.clone(),
+        baseline_digest: workspace.baseline.digest.clone(),
+        checkpoint_digest: checkpoint.manifest.digest.clone(),
+        expected_branch_head: expected_branch_head.clone(),
+        observed_branch_head: observed_branch_head.to_string(),
         changed_file_limit,
         total_changed_files,
         changed_bytes,
         validation,
-        author: &author,
-        committer: &committer,
-        workflow_paths: &workflow_paths,
-        files: &files,
-        created_at: &created_at,
-        delete_after: &workspace.delete_after,
+        author: author.clone(),
+        committer: committer.clone(),
+        workflow_paths: workflow_paths.clone(),
+        files: files.clone(),
+        created_at: created_at.clone(),
+        delete_after: workspace.delete_after.clone(),
     };
     let object = serde_json::to_vec(&document)
         .map_err(|error| DiffBuildError::Invalid(format!("encode review artifact: {error}")))?;
@@ -553,7 +742,7 @@ fn bounded_summary(files: &[DiffFile]) -> Vec<DiffFile> {
     retained
 }
 
-fn is_binary(bytes: &[u8]) -> bool {
+pub(crate) fn is_binary(bytes: &[u8]) -> bool {
     bytes.contains(&0) || std::str::from_utf8(bytes).is_err()
 }
 
@@ -666,11 +855,22 @@ fn open_archive<'a>(
     Ok(result)
 }
 
-fn git_blob_id(bytes: &[u8]) -> String {
+pub(crate) fn git_blob_id(bytes: &[u8]) -> String {
     let mut digest = Sha1::new();
     digest.update(format!("blob {}\0", bytes.len()).as_bytes());
     digest.update(bytes);
     hex(&digest.finalize())
+}
+
+fn git_mode(mode: u32) -> Result<&'static str, DiffBuildError> {
+    match mode {
+        0o100644 => Ok("100644"),
+        0o100755 => Ok("100755"),
+        0o120000 => Ok("120000"),
+        _ => Err(DiffBuildError::Invalid(
+            "the publication plan contains an unsupported Git mode".into(),
+        )),
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
