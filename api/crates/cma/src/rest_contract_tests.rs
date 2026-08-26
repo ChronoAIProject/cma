@@ -44,10 +44,77 @@ const TEST_SERVICE_ID: &str = "api-github";
 const TEST_SKILL_NAME: &str = "repository-review";
 const TEST_DELEGATED_CREDENTIAL: &str = "contract-delegated-credential";
 
+struct StorePause {
+    reached: Semaphore,
+    resume: Semaphore,
+}
+
+impl StorePause {
+    fn new() -> Self {
+        Self {
+            reached: Semaphore::new(0),
+            resume: Semaphore::new(0),
+        }
+    }
+
+    async fn wait_until_reached(&self) {
+        self.reached
+            .acquire()
+            .await
+            .expect("the store barrier remains open")
+            .forget();
+    }
+
+    fn release(&self) {
+        self.resume.add_permits(1);
+    }
+
+    async fn hold_after_snapshot(&self) {
+        self.reached.add_permits(1);
+        self.resume
+            .acquire()
+            .await
+            .expect("the store barrier remains open")
+            .forget();
+    }
+}
+
 #[derive(Default)]
 struct MemorySessions {
     state: Mutex<MemorySessionState>,
     fail_lists: AtomicBool,
+    sequence_taken_errors: AtomicUsize,
+    record_read_pause: Mutex<Option<(usize, Arc<StorePause>)>>,
+    event_commit_pause: Mutex<Option<Arc<StorePause>>>,
+}
+
+impl MemorySessions {
+    async fn pause_nth_record_read(&self, nth: usize) -> Arc<StorePause> {
+        assert!(nth > 0, "a record-read pause needs a positive position");
+        let pause = Arc::new(StorePause::new());
+        assert!(
+            self.record_read_pause
+                .lock()
+                .await
+                .replace((nth, Arc::clone(&pause)))
+                .is_none(),
+            "only one record read may be paused at a time"
+        );
+        pause
+    }
+
+    async fn pause_next_event_commit(&self) -> Arc<StorePause> {
+        let pause = Arc::new(StorePause::new());
+        assert!(
+            self.event_commit_pause
+                .lock()
+                .await
+                .replace(Arc::clone(&pause))
+                .is_none(),
+            "only one event commit may be paused at a time"
+        );
+        pause
+    }
 }
 
 #[derive(Default)]
@@ -182,7 +249,22 @@ impl SessionStore for MemorySessions {
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        Ok(self.state.lock().await.records.get(&id.0).cloned())
+        let record = self.state.lock().await.records.get(&id.0).cloned();
+        let pause = {
+            let mut armed = self.record_read_pause.lock().await;
+            if let Some((remaining, _)) = armed.as_mut() {
+                *remaining -= 1;
+            }
+            if armed.as_ref().is_some_and(|(remaining, _)| *remaining == 0) {
+                armed.take().map(|(_, pause)| pause)
+            } else {
+                None
+            }
+        };
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
+        }
+        Ok(record)
     }
 
     async fn list_for(
@@ -254,10 +336,23 @@ impl SessionStore for MemorySessions {
         record: &SessionRecord,
         events: &[Event],
     ) -> Result<u64, StoreError> {
-        self.state
+        let pause = if events.is_empty() {
+            None
+        } else {
+            self.event_commit_pause.lock().await.take()
+        };
+        if let Some(pause) = pause {
+            pause.hold_after_snapshot().await;
+        }
+        let result = self
+            .state
             .lock()
             .await
-            .commit(write_id, record, events, false)
+            .commit(write_id, record, events, false);
+        if matches!(&result, Err(StoreError::SequenceTaken { .. })) {
+            self.sequence_taken_errors.fetch_add(1, Ordering::SeqCst);
+        }
+        result
     }
 
     async fn create_session_idempotent(
@@ -659,6 +754,70 @@ impl TestKernel {
             .expect("the conversation fixture is listening");
     }
 
+    async fn emit_available_commands(&self) {
+        let updates = self
+            .conversation_updates
+            .lock()
+            .await
+            .clone()
+            .expect("the conversation fixture is connected");
+        updates
+            .send(layer3_adapter::ConversationUpdate::Said(
+                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(
+                    layer3_adapter::AvailableCommandsUpdate::new(vec![
+                        layer3_adapter::AvailableCommand::new("inspect", "Inspect the workspace"),
+                    ]),
+                ),
+            ))
+            .await
+            .expect("the conversation fixture is listening");
+    }
+
+    async fn emit_permission_request(&self, request_id: &str) {
+        let updates = self
+            .conversation_updates
+            .lock()
+            .await
+            .clone()
+            .expect("the conversation fixture is connected");
+        updates
+            .send(layer3_adapter::ConversationUpdate::Asked(
+                layer3_adapter::PermissionRequest {
+                    id: request_id.to_string(),
+                    request: layer3_adapter::RequestPermissionRequest::new(
+                        layer3_adapter::ConversationId::new("rest-contract-conversation"),
+                        layer3_adapter::ToolCallUpdate::new(
+                            layer3_adapter::ToolCallId::new("contract-call"),
+                            layer3_adapter::ToolCallUpdateFields::new()
+                                .title("run the contract command".to_string()),
+                        ),
+                        vec![layer3_adapter::PermissionOption::new(
+                            layer3_adapter::PermissionOptionId::new("allow-once"),
+                            "Allow once".to_string(),
+                            layer3_adapter::PermissionOptionKind::AllowOnce,
+                        )],
+                    ),
+                },
+            ))
+            .await
+            .expect("the conversation fixture is listening");
+    }
+
+    async fn emit_turn_ended(&self) {
+        let updates = self
+            .conversation_updates
+            .lock()
+            .await
+            .clone()
+            .expect("the conversation fixture is connected");
+        updates
+            .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+            ))
+            .await
+            .expect("the conversation fixture is listening");
+    }
+
     async fn emit_resource_sample(&self, sample: layer3_adapter::ResourceSample) {
         let readings = self
             .resource_samples
@@ -972,17 +1131,26 @@ async fn create_session(app: &Router) -> (SessionId, serde_json::Value) {
 }
 
 async fn wait_until_ready(sessions: &SessionService, caller: &Caller, id: &SessionId) {
+    wait_until_status(sessions, caller, id, SessionStatus::Ready).await;
+}
+
+async fn wait_until_status(
+    sessions: &SessionService,
+    caller: &Caller,
+    id: &SessionId,
+    wanted: SessionStatus,
+) {
     for _ in 0..200 {
         let session = sessions
             .get_session(caller, id)
             .await
             .expect("the created session is readable");
-        if session.status == SessionStatus::Ready {
+        if session.status == wanted {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    panic!("the in-memory runtime did not become ready");
+    panic!("the in-memory runtime did not become {wanted:?}");
 }
 
 async fn create_ready_session(
@@ -1062,6 +1230,10 @@ async fn create_ready_conversation_session(
 mod agui_auth_contract_tests;
 
 async fn next_agui_frame(body: &mut BodyDataStream) -> serde_json::Value {
+    next_agui_frame_and_wire(body).await.0
+}
+
+async fn next_agui_frame_and_wire(body: &mut BodyDataStream) -> (serde_json::Value, String) {
     loop {
         let bytes = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
             .await
@@ -1082,8 +1254,9 @@ async fn next_agui_frame(body: &mut BodyDataStream) -> serde_json::Value {
             !data.is_empty(),
             "an AG-UI event frame must carry SSE data: {raw:?}"
         );
-        return serde_json::from_str(&data)
+        let frame = serde_json::from_str(&data)
             .unwrap_or_else(|error| panic!("AG-UI data is JSON ({error}): {raw:?}"));
+        return (frame, raw);
     }
 }
 
@@ -1345,12 +1518,12 @@ async fn replay_frames_use_the_session_id_for_initial_history_and_the_followed_t
     assert_eq!(
         initial_types,
         [
+            "RUN_STARTED",
             "TEXT_MESSAGE_START",
             "TEXT_MESSAGE_CONTENT",
             "TEXT_MESSAGE_END",
-            "RUN_STARTED",
         ],
-        "the initial read must exercise the already-recorded turn"
+        "a newly written turn replays its boundary before the owner message"
     );
 
     sessions
@@ -1434,10 +1607,185 @@ async fn followed_live_and_resource_frames_use_the_session_id_for_both_contexts(
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn run_frames_echo_the_explicit_client_run_id_instead_of_the_session_id() {
+async fn a_prompt_run_starts_at_its_own_boundary_after_a_racing_runtime_event() {
     let TestSurface {
         app,
         sessions,
+        kernel,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    // The run route reads the session once, then prompt admission reads it
+    // again. Pause that second snapshot so a durable runtime update lands in
+    // the exact window that an earlier route-level cursor snapshot exposed.
+    let pause = store.pause_nth_record_read(2).await;
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": id.0,
+            "runId": "run_racing_history",
+            "messages": [{ "role": "user", "content": "start after my boundary" }]
+        })
+        .to_string(),
+    );
+    let response =
+        tokio::spawn(async move { app.oneshot(request).await.expect("the run route answers") });
+    pause.wait_until_reached().await;
+
+    kernel.emit_available_commands().await;
+    let mut unrelated_seq = None;
+    for _ in 0..200 {
+        unrelated_seq = sessions
+            .events_since(&caller, &id, None)
+            .await
+            .expect("history remains readable")
+            .into_iter()
+            .find(|event| matches!(event.kind, EventKind::AvailableCommandsSet { .. }))
+            .map(|event| event.seq);
+        if unrelated_seq.is_some() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let unrelated_seq = unrelated_seq.expect("the racing runtime event becomes durable");
+    pause.release();
+
+    let response = response.await.expect("the run task completes");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let (first, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(first["type"], "RUN_STARTED");
+    assert_agui_ids(&first, "run_racing_history", &id);
+    let first_id = wire
+        .lines()
+        .find_map(|line| line.strip_prefix("id:"))
+        .map(str::trim)
+        .expect("a prompt boundary carries an SSE id")
+        .parse::<u64>()
+        .expect("the prompt boundary id is a sequence");
+    assert!(
+        first_id > unrelated_seq,
+        "the response must start at its own prompt boundary, after the racing event: {wire:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_prompt_run_uses_its_committed_boundary_after_cross_replica_resequencing() {
+    let TestSurface {
+        app,
+        sessions,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let original_tail = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("the owner can read the session")
+        .last()
+        .expect("creation records events")
+        .seq;
+
+    // Hold the already allocated three-event prompt unit immediately before
+    // its store CAS. A competing event append then takes its first sequence,
+    // forcing the real lane through SequenceTaken before it can report the
+    // boundary used by the POST response.
+    let pause = store.pause_next_event_commit().await;
+    let request = json_request(
+        Method::POST,
+        "/api/v1/agui/run",
+        serde_json::json!({
+            "threadId": id.0,
+            "runId": "run_resequenced_prompt",
+            "messages": [{ "role": "user", "content": "use the committed boundary" }]
+        })
+        .to_string(),
+    );
+    let response =
+        tokio::spawn(async move { app.oneshot(request).await.expect("the run route answers") });
+    pause.wait_until_reached().await;
+
+    let rival_seq = original_tail + 1;
+    let rival_event = Event {
+        session_id: id.clone(),
+        seq: rival_seq,
+        kind: EventKind::AvailableCommandsSet {
+            commands: Vec::new(),
+        },
+        appended_at: "2026-08-26T00:00:00Z".into(),
+    };
+    store
+        .append_events(&[rival_event])
+        .await
+        .expect("the competing replica takes the prompt unit's first sequence");
+    pause.release();
+
+    let response = response.await.expect("the run task completes");
+    assert_eq!(
+        store.sequence_taken_errors.load(Ordering::SeqCst),
+        1,
+        "the prompt commit must exercise the normal cross-replica sequence rebase"
+    );
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let (first, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(
+        first["type"], "RUN_STARTED",
+        "the rival projection is excluded"
+    );
+    assert_agui_ids(&first, "run_resequenced_prompt", &id);
+    let first_id = wire
+        .lines()
+        .find_map(|line| line.strip_prefix("id:"))
+        .map(str::trim)
+        .expect("the committed prompt boundary carries an SSE id")
+        .parse::<u64>()
+        .expect("the prompt boundary id is a sequence");
+    assert_eq!(
+        first_id,
+        rival_seq + 1,
+        "the response starts at the prompt unit's rebased TurnStarted"
+    );
+
+    let committed = sessions
+        .events_since(&caller, &id, Some(original_tail))
+        .await
+        .expect("the resequenced history is readable");
+    assert!(matches!(
+        committed.as_slice(),
+        [
+            Event {
+                seq,
+                kind: EventKind::AvailableCommandsSet { .. },
+                ..
+            },
+            Event {
+                seq: turn_seq,
+                kind: EventKind::TurnStarted,
+                ..
+            },
+            Event {
+                kind: EventKind::OwnerMessage { .. },
+                ..
+            },
+            Event {
+                kind: EventKind::StatusChanged { .. },
+                ..
+            }
+        ] if *seq == rival_seq && *turn_seq == first_id
+    ));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_prompt_run_starts_before_every_frame_and_finishes_after_the_user_echo() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
         caller,
         ..
     } = test_surface(true);
@@ -1461,10 +1809,228 @@ async fn run_frames_echo_the_explicit_client_run_id_instead_of_the_session_id() 
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body().into_data_stream();
 
-    for _ in 0..4 {
+    // Force the live lane to wake the stream before its first durable poll. The
+    // already-recorded boundary must still win that race.
+    kernel.emit_message_chunk("already answering").await;
+    let first = next_agui_frame(&mut body).await;
+    assert_eq!(first["type"], "RUN_STARTED");
+    assert_agui_ids(&first, run_id, &id);
+
+    kernel.emit_turn_ended().await;
+    let mut emitted = vec![first];
+    for _ in 1..9 {
         let frame = next_agui_frame(&mut body).await;
         assert_agui_ids(&frame, run_id, &id);
+        emitted.push(frame);
     }
+    assert_eq!(
+        emitted
+            .iter()
+            .map(|frame| frame["type"].as_str().expect("every frame names its type"))
+            .collect::<Vec<_>>(),
+        [
+            "RUN_STARTED",
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
+            "RUN_FINISHED",
+        ],
+        "the complete run is bracketed before the user echo and after the response"
+    );
+    assert!(
+        body.next().await.is_none(),
+        "RUN_FINISHED is the stream's final frame"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_resume_run_starts_unnumbered_and_still_finishes() {
+    let TestSurface {
+        app,
+        sessions,
+        kernel,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    sessions
+        .send_prompt(&caller, &id, "ask before continuing".into())
+        .await
+        .expect("the opening turn is accepted");
+    kernel.emit_permission_request("approval-contract").await;
+    wait_until_status(&sessions, &caller, &id, SessionStatus::Idle).await;
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0,
+                "runId": "run_resume_contract",
+                "resume": [{
+                    "interruptId": "approval-contract",
+                    "status": "resolved",
+                    "payload": { "decision": "allow" }
+                }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+
+    let (started, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(started["type"], "RUN_STARTED");
+    assert_agui_ids(&started, "run_resume_contract", &id);
+    assert!(
+        !wire.lines().any(|line| line.starts_with("id:")),
+        "the synthetic continuation boundary must not advance the durable cursor: {wire:?}"
+    );
+
+    loop {
+        let (frame, wire) = next_agui_frame_and_wire(&mut body).await;
+        assert_agui_ids(&frame, "run_resume_contract", &id);
+        assert!(
+            wire.lines().any(|line| line.starts_with("id:")),
+            "every durable continuation projection must advance the cursor: {wire:?}"
+        );
+        assert_ne!(
+            frame["type"], "RUN_FINISHED",
+            "the continuation must clear the answered approval before it finishes"
+        );
+        if frame["type"] == "STATE_DELTA"
+            && frame["delta"]
+                == serde_json::json!([{
+                    "op": "remove",
+                    "path": "/pendingApprovals/approval-contract"
+                }])
+        {
+            break;
+        }
+    }
+
+    kernel.emit_turn_ended().await;
+    let (finished, wire) = next_agui_frame_and_wire(&mut body).await;
+    assert_eq!(finished["type"], "RUN_FINISHED");
+    assert_agui_ids(&finished, "run_resume_contract", &id);
+    assert!(
+        wire.lines().any(|line| line.starts_with("id:")),
+        "the durable turn completion remains the resume point: {wire:?}"
+    );
+    assert!(body.next().await.is_none());
+}
+
+#[tokio::test]
+async fn a_bad_run_request_is_a_problem_without_a_started_run() {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        ..
+    } = test_surface(true);
+    let id = create_ready_conversation_session(&sessions, &caller).await;
+    let before = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("history is readable before the refusal")
+        .last()
+        .map(|event| event.seq);
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": id.0,
+                "runId": "run_without_work"
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("router answers");
+    let problem = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "invalid_request");
+    assert!(
+        !problem.to_string().contains("RUN_STARTED"),
+        "a pre-stream refusal is only a problem document: {problem}"
+    );
+
+    let after = sessions
+        .events_since(&caller, &id, None)
+        .await
+        .expect("history is readable after the refusal")
+        .last()
+        .map(|event| event.seq);
+    assert_eq!(after, before, "a bad request must not open a durable turn");
+}
+
+#[tokio::test]
+async fn a_capability_refusal_is_a_problem_without_a_started_run() {
+    let TestSurface {
+        app,
+        sessions,
+        caller,
+        ..
+    } = test_surface(true);
+    let session = sessions
+        .create_session(
+            &caller,
+            SessionSpec {
+                options: Default::default(),
+                geometry: None,
+                environment_profile: None,
+                caller_credential: Some(TEST_DELEGATED_CREDENTIAL.into()),
+                runtime_credential: None,
+                requested_mode: Some(SessionMode::Terminal),
+                quoted_rate_card: None,
+            },
+        )
+        .await
+        .expect("the terminal session is accepted");
+    wait_until_ready(&sessions, &caller, &session.id).await;
+    let before = sessions
+        .events_since(&caller, &session.id, None)
+        .await
+        .expect("history is readable before the refusal")
+        .last()
+        .map(|event| event.seq);
+
+    let response = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/agui/run",
+            serde_json::json!({
+                "threadId": session.id.0,
+                "runId": "run_on_terminal",
+                "messages": [{ "role": "user", "content": "cannot be sent" }]
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("router answers");
+    let problem = assert_problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_eq!(problem["code"], "capability_unsupported");
+    assert_eq!(problem["capability"], "conversation");
+    assert!(
+        !problem.to_string().contains("RUN_STARTED"),
+        "a capability refusal must not open a partial stream: {problem}"
+    );
+
+    let after = sessions
+        .events_since(&caller, &session.id, None)
+        .await
+        .expect("history is readable after the refusal")
+        .last()
+        .map(|event| event.seq);
+    assert_eq!(
+        after, before,
+        "a capability refusal must not open a durable turn"
+    );
 }
 
 async fn assert_server_defaulted_run_id(explicit_null: bool) {
