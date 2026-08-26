@@ -285,19 +285,14 @@ async fn connect(
 }
 
 /// Send one framed JSON-RPC value from a fixture bridge.
-async fn send_rpc(
-    ws: &mut WebSocketStream<tokio::net::TcpStream>,
-    value: serde_json::Value,
-) {
+async fn send_rpc(ws: &mut WebSocketStream<tokio::net::TcpStream>, value: serde_json::Value) {
     let body = value.to_string();
     let framed = supervisor::frame(supervisor::LANE_CONVERSATION, body.as_bytes());
     ws.send(Message::Binary(framed)).await.expect("frame sent");
 }
 
 /// Receive one framed JSON-RPC value at a fixture bridge.
-async fn receive_rpc(
-    ws: &mut WebSocketStream<tokio::net::TcpStream>,
-) -> serde_json::Value {
+async fn receive_rpc(ws: &mut WebSocketStream<tokio::net::TcpStream>) -> serde_json::Value {
     loop {
         let frame = ws.next().await.expect("a frame").expect("a valid frame");
         let Message::Binary(bytes) = frame else {
@@ -1212,10 +1207,7 @@ async fn a_reused_json_rpc_permission_id_is_new_in_a_later_turn() {
     ));
 
     let (first_answer, second_answer) = served.await.expect("the fixture completes");
-    assert_eq!(
-        first_answer["result"]["outcome"]["optionId"],
-        "allow-once"
-    );
+    assert_eq!(first_answer["result"]["outcome"]["optionId"], "allow-once");
     assert_eq!(
         second_answer["result"]["outcome"]["optionId"],
         "reject-once"
