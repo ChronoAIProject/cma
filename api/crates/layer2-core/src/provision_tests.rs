@@ -103,6 +103,123 @@ async fn a_session_becomes_ready_once_its_runtime_is_up() {
 }
 
 #[tokio::test]
+async fn coordinated_provisioning_switches_the_reserved_generation_into_authority() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let caller = user("coordinated-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    let authority = store
+        .runtime_authority(&created.id)
+        .await
+        .unwrap()
+        .expect("the session has coordinated authority");
+    let provisioned = adapter
+        .last_spec
+        .lock()
+        .await
+        .clone()
+        .expect("the provider received a runtime spec");
+
+    assert_eq!(authority.generation, 1);
+    assert_eq!(authority.runtime_id, durable.runtime_id);
+    assert_eq!(
+        provisioned.generation.map(|generation| generation.get()),
+        Some(1)
+    );
+    assert!(provisioned
+        .reservation_token
+        .as_deref()
+        .is_some_and(|token| token.starts_with("rres_")));
+    assert!(store
+        .runtime_cleanup_debts(&created.id)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn coordinated_retries_never_reuse_a_provider_visible_generation() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        fail_first: std::sync::atomic::AtomicUsize::new(2),
+        ..FakeAdapter::default()
+    });
+    let caller = user("generation-retry-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert_eq!(
+        adapter
+            .last_spec
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|spec| spec.generation)
+            .map(|generation| generation.get()),
+        Some(3),
+        "two failed creates consume generations before the successful retry"
+    );
+    assert_eq!(
+        store
+            .runtime_authority(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation,
+        3
+    );
+}
+
+#[tokio::test]
+async fn failed_coordinated_candidates_remain_debt_and_are_never_terminated_by_handle() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        refuse_attach: true,
+        ..FakeAdapter::default()
+    });
+    let caller = user("candidate-debt-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if !svc.starting.read().await.contains(&created.id)
+                && adapter
+                    .provision_calls
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    == crate::provision::PROVISION_ATTEMPTS as usize
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("all coordinated attempts finish");
+
+    assert!(adapter.terminated.lock().await.is_empty());
+    let debts = store.runtime_cleanup_debts(&created.id).await.unwrap();
+    assert_eq!(debts.len(), crate::provision::PROVISION_ATTEMPTS as usize);
+    assert_eq!(
+        debts
+            .iter()
+            .map(|debt| debt.generation)
+            .collect::<std::collections::BTreeSet<_>>(),
+        (1..=u64::from(crate::provision::PROVISION_ATTEMPTS)).collect()
+    );
+    let authority = store.runtime_authority(&created.id).await.unwrap().unwrap();
+    assert_eq!(authority.generation, 0);
+    assert!(authority.runtime_id.is_none());
+}
+
+#[tokio::test]
 async fn awaiting_settlement_spans_durable_readiness_and_live_publication() {
     let inner = Arc::new(FakeStore::default());
     let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), is_ready_commit));
@@ -492,7 +609,7 @@ async fn a_late_capacity_refusal_is_not_retried_and_is_recorded_for_the_owner() 
 }
 
 #[tokio::test]
-async fn a_runtime_that_cannot_be_attached_to_is_torn_down() {
+async fn a_runtime_that_cannot_be_attached_to_is_reclaimed_from_exact_debt() {
     // The leak this design exists to prevent: provisioning succeeded, so a
     // runtime is running, and the session it belongs to has failed.
     let store = Arc::new(FakeStore::default());
@@ -506,11 +623,28 @@ async fn a_runtime_that_cannot_be_attached_to_is_torn_down() {
 
     let settled = await_settled(&svc, &caller, &created.id).await;
     assert_eq!(settled.status, SessionStatus::Terminated);
+    let debts = store.runtime_cleanup_debts(&created.id).await.unwrap();
+    assert_eq!(
+        debts.len(),
+        crate::provision::PROVISION_ATTEMPTS as usize,
+        "every created candidate is durably reclaimable"
+    );
+    assert!(
+        adapter.terminated.lock().await.is_empty(),
+        "a handle alone never authorizes teardown"
+    );
+
+    svc.reconcile().await;
     let torn_down = adapter.terminated.lock().await.clone();
     assert!(
         !torn_down.is_empty() && torn_down.iter().all(|r| r.contains(&created.id.0)),
-        "every runtime the attempts created must be torn down, got {torn_down:?}"
+        "a fresh reclaim lease tears down every exact candidate, got {torn_down:?}"
     );
+    assert!(store
+        .runtime_cleanup_debts(&created.id)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -619,9 +753,9 @@ async fn a_transient_provider_failure_is_retried_rather_than_reported() {
 }
 
 #[tokio::test]
-async fn a_failed_attempt_does_not_leave_a_runtime_behind() {
-    // Each retry starts clean. Without discarding what the previous attempt
-    // created, a session that eventually succeeds costs several sandboxes.
+async fn failed_attempts_are_reclaimed_without_handle_only_deletion() {
+    // Each retry registers exact cleanup debt. The next reclaim pass deletes
+    // it only after comparing session and generation at the provider.
     let store = Arc::new(FakeStore::default());
     let caller = user("alice");
     let adapter = Arc::new(FakeAdapter {
@@ -634,10 +768,21 @@ async fn a_failed_attempt_does_not_leave_a_runtime_behind() {
     let created = svc.create_session(&caller, spec()).await.expect("created");
     await_settled(&svc, &caller, &created.id).await;
 
+    assert_eq!(
+        store
+            .runtime_cleanup_debts(&created.id)
+            .await
+            .unwrap()
+            .len(),
+        crate::provision::PROVISION_ATTEMPTS as usize
+    );
+    assert!(adapter.terminated.lock().await.is_empty());
+    svc.reconcile().await;
     let torn_down = adapter.terminated.lock().await.len();
-    assert!(
-        torn_down >= 2,
-        "every runtime a failed attempt created must be torn down, got {torn_down}"
+    assert_eq!(
+        torn_down,
+        crate::provision::PROVISION_ATTEMPTS as usize,
+        "every exact failed candidate is eventually reclaimed"
     );
 }
 

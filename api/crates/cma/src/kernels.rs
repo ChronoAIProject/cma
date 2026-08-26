@@ -15,14 +15,40 @@ use layer3_adapter::{
     codex::{CodexAdapter, CodexSandboxSpec},
     dsh::{DshAdapter, DshSandboxSpec},
     hosted::Deployment,
-    sandbox::SandboxClient,
+    sandbox::{BatchSandboxReclaimer, SandboxClient},
     KernelAdapter,
 };
 
 use crate::config::Config;
 
 /// Every kernel this deployment offers, by the identifier a session names.
-pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
+pub async fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
+    let reclaimer = match BatchSandboxReclaimer::infer().await {
+        Ok(reclaimer) => {
+            tracing::info!(
+                "namespaced Kubernetes sandbox discovery and fenced cleanup are available"
+            );
+            Some(reclaimer)
+        }
+        Err(error) => {
+            // Local development and compatibility-stage deployments need no
+            // Kubernetes identity. Exact cleanup remains fail-closed until a
+            // namespaced client is available; it never falls back to the
+            // provider's handle-only DELETE.
+            tracing::warn!(
+                %error,
+                "namespaced Kubernetes sandbox cleanup is unavailable; coordinated cleanup will remain pending"
+            );
+            None
+        }
+    };
+    registry_with_reclaimer(config, reclaimer.as_ref())
+}
+
+fn registry_with_reclaimer(
+    config: &Config,
+    reclaimer: Option<&BatchSandboxReclaimer>,
+) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     // The only place a concrete runtime implementation is named. Everything
     // upstream of here selects by opaque identifier, which is what lets a
@@ -34,13 +60,7 @@ pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
     codex.deployment.upstream_wire_api = config.upstream_wire_api.clone();
     adapters.insert(
         KernelId::new("codex"),
-        Arc::new(CodexAdapter::new(
-            SandboxClient::new(
-                config.sandbox_base_url.clone(),
-                config.sandbox_api_key.clone(),
-            ),
-            codex,
-        )),
+        Arc::new(CodexAdapter::new(sandbox_client(config, reclaimer), codex)),
     );
 
     // The request shape this one speaks is its own rather than a deployment's
@@ -52,10 +72,7 @@ pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
     adapters.insert(
         KernelId::new("claude_code"),
         Arc::new(ClaudeCodeAdapter::new(
-            SandboxClient::new(
-                config.sandbox_base_url.clone(),
-                config.sandbox_api_key.clone(),
-            ),
+            sandbox_client(config, reclaimer),
             claude_code,
         )),
     );
@@ -68,13 +85,7 @@ pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
     dsh.deployment.upstream_model = config.dsh_upstream_model.clone();
     adapters.insert(
         KernelId::new("dsh"),
-        Arc::new(DshAdapter::new(
-            SandboxClient::new(
-                config.sandbox_base_url.clone(),
-                config.sandbox_api_key.clone(),
-            ),
-            dsh,
-        )),
+        Arc::new(DshAdapter::new(sandbox_client(config, reclaimer), dsh)),
     );
 
     for (id, adapter) in adapters.iter() {
@@ -90,6 +101,17 @@ pub fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
         );
     }
     adapters
+}
+
+fn sandbox_client(config: &Config, reclaimer: Option<&BatchSandboxReclaimer>) -> SandboxClient {
+    let client = SandboxClient::new(
+        config.sandbox_base_url.clone(),
+        config.sandbox_api_key.clone(),
+    );
+    match reclaimer {
+        Some(reclaimer) => client.with_reclaimer(reclaimer.clone()),
+        None => client,
+    }
 }
 
 /// Apply what this deployment configures onto a kernel's own defaults.
@@ -228,7 +250,7 @@ mod tests {
         // request and here checks that the two agree. They must, or a session
         // asking for a kernel this deployment runs is told there is no such
         // kernel.
-        for (id, adapter) in registry(&Config::sample()) {
+        for (id, adapter) in registry_with_reclaimer(&Config::sample(), None) {
             assert_eq!(id.0, adapter.kernel_name(), "registered under the wrong id");
         }
     }
@@ -237,7 +259,7 @@ mod tests {
     fn every_kernel_can_do_at_least_one_thing() {
         // A kernel that declares nothing is the stub this milestone replaced.
         // Registering one would offer a session that cannot be started.
-        for (id, adapter) in registry(&Config::sample()) {
+        for (id, adapter) in registry_with_reclaimer(&Config::sample(), None) {
             let c = adapter.capabilities();
             assert!(
                 c.conversation || c.terminal,

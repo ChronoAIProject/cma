@@ -34,6 +34,7 @@ use layer3_adapter::RuntimeHandle;
 use crate::authz::Caller;
 use crate::capabilities::SessionCapabilities;
 use crate::clock::now_rfc3339;
+use crate::coordination::{SessionBoundary, SessionLease, SessionOperation};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
@@ -57,6 +58,19 @@ enum Handover {
         /// down so the move cannot get halfway and find out it is impossible.
         capabilities: SessionCapabilities,
     },
+}
+
+/// Durable handover state carried through replacement provisioning.
+///
+/// The old authority remains live while the candidate is prepared. These
+/// exact records let the successful path clear only its own rotation claim and
+/// let a pre-switch failure restore only the claim it actually acquired.
+pub(crate) struct CoordinatedHandover {
+    pub(crate) original: SessionRecord,
+    pub(crate) rotating: SessionRecord,
+    pub(crate) rotating_boundary: SessionBoundary,
+    pub(crate) completion_events: Vec<Event>,
+    pub(crate) detached: crate::lease::Detached,
 }
 
 impl Handover {
@@ -265,6 +279,24 @@ impl SessionService {
             return Err(CoreError::InvalidState);
         };
 
+        let lease = match self
+            .acquire_runtime_lease_at(&record, SessionOperation::Handover)
+            .await
+        {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(format!(
+                    "this session's handover authority could not be acquired: {error}"
+                )));
+            }
+        };
+        if let Some(lease) = lease {
+            return self
+                .carry_over_coordinated(record, change, adapter, old, lease)
+                .await;
+        }
+
         // Tried before anything is announced, because capturing changes
         // nothing and failing to capture means the move is off. Announcing
         // first would show every session an "updating" state it then backs out
@@ -357,7 +389,7 @@ impl SessionService {
             .await
         {
             tracing::error!(session_id = %id, error = %e, "cannot record the move");
-            self.restore_after_failed_move(&record, &rotating).await;
+            let _ = self.restore_after_failed_move(&record, &rotating).await;
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
                 "this session's move could not be recorded".into(),
@@ -412,13 +444,189 @@ impl SessionService {
         Ok(moved.session)
     }
 
+    /// Replace a runtime without surrendering the old authority first.
+    ///
+    /// The lease is acquired by the caller before the first snapshot. The old
+    /// handle and live entry remain authoritative through provider create and
+    /// attachment; `start_runtime` alone can switch them after the candidate is
+    /// usable. A pre-switch failure can therefore return to this exact record.
+    async fn carry_over_coordinated(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        change: Handover,
+        adapter: Arc<dyn layer3_adapter::KernelAdapter>,
+        old: RuntimeHandle,
+        mut lease: SessionLease,
+    ) -> Result<Session, CoreError> {
+        let id = record.session.id.clone();
+        if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
+            let _ = self.store.release_session_lease(&lease).await;
+            self.finish_start(&id).await;
+            return Err(CoreError::RuntimeUnavailable(format!(
+                "the handover lease expired before capture: {error}"
+            )));
+        }
+        let rehearsal = match adapter.snapshot(&old).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "cannot move this session; leaving it in place");
+                self.rotation_refused.write().await.insert(id.clone());
+                let _ = self.store.release_session_lease(&lease).await;
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(format!(
+                    "this session's conversation could not be captured, so it has not been moved: {error}"
+                )));
+            }
+        };
+
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+        let marked = self.mark_rotating(&record, &change).await;
+        drop(input_fence);
+        let Some(rotating) = marked else {
+            let _ = self.store.release_session_lease(&lease).await;
+            self.finish_start(&id).await;
+            return Err(CoreError::RuntimeUnavailable(
+                "this session's handover could not be recorded, so it has not been moved".into(),
+            ));
+        };
+        let rotating_boundary =
+            SessionBoundary::for_record(&rotating, lease.boundary.authority.generation);
+        if let Err(error) = self
+            .store
+            .advance_session_lease(&mut lease, &rotating_boundary)
+            .await
+        {
+            tracing::error!(session_id = %id, %error, "cannot advance the handover lease");
+            let _ = self.restore_after_failed_move(&record, &rotating).await;
+            let _ = self.store.release_session_lease(&lease).await;
+            self.finish_start(&id).await;
+            return Err(CoreError::RuntimeUnavailable(
+                "this session's handover authority changed while it was being recorded".into(),
+            ));
+        }
+        self.rotations_in_progress.write().await.insert(id.clone());
+
+        if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
+            self.rollback_coordinated_handover(&record, &rotating, &mut lease)
+                .await;
+            return Err(CoreError::RuntimeUnavailable(format!(
+                "the handover lease expired before final capture: {error}"
+            )));
+        }
+        let taken_at = now_rfc3339();
+        let restore = match adapter.snapshot(&old).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "carrying the conversation captured a moment earlier");
+                rehearsal
+            }
+        };
+
+        let mut moved = rotating.clone();
+        let detached = match &change {
+            Handover::Version(wanted) => {
+                moved.session.runtime_version = Some(wanted.clone());
+                crate::lease::Detached::RuntimeReplaced
+            }
+            Handover::Plane { mode, capabilities } => {
+                moved.session.options.mode = *mode;
+                moved.session.capabilities = *capabilities;
+                crate::lease::Detached::PlaneChanged
+            }
+        };
+        moved.session.rotations = moved.session.rotations.saturating_add(1);
+        moved.session.rotated_at = Some(taken_at.clone());
+        let completion_events = if let Handover::Plane { mode, .. } = &change {
+            vec![Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::PlaneChanged {
+                    from: record.session.options.mode,
+                    to: *mode,
+                    snapshot_at: taken_at,
+                },
+                appended_at: String::new(),
+            }]
+        } else {
+            Vec::new()
+        };
+        let handover = CoordinatedHandover {
+            original: record,
+            rotating: rotating.clone(),
+            rotating_boundary,
+            completion_events,
+            detached,
+        };
+        let geometry = moved.session.geometry;
+        let spec = SessionSpec {
+            geometry: Some(geometry),
+            options: moved.session.options.clone(),
+            environment_profile: moved.session.environment_profile.clone(),
+            caller_credential: None,
+            runtime_credential: None,
+            requested_mode: None,
+            quoted_rate_card: None,
+        };
+        let service = Arc::clone(self);
+        let session = moved.session.clone();
+        tokio::spawn(async move {
+            service
+                .bring_up_with_lease(
+                    session,
+                    adapter,
+                    spec,
+                    geometry,
+                    restore,
+                    crate::provision_failure::Abandonment::Keep,
+                    Some(lease),
+                    Some(handover),
+                )
+                .await;
+        });
+        Ok(moved.session)
+    }
+
+    /// Restore a coordinated rotation while its old authority still matches.
+    pub(crate) async fn rollback_coordinated_handover(
+        &self,
+        original: &SessionRecord,
+        rotating: &SessionRecord,
+        lease: &mut SessionLease,
+    ) {
+        if let Some(restored) = self.restore_after_failed_move(original, rotating).await {
+            let boundary =
+                SessionBoundary::for_record(&restored, lease.boundary.authority.generation);
+            if boundary != lease.boundary {
+                if let Err(error) = self.store.advance_session_lease(lease, &boundary).await {
+                    tracing::warn!(
+                        session_id = %lease.session_id,
+                        %error,
+                        "the restored handover lease could not advance"
+                    );
+                }
+            }
+        }
+        if let Err(error) = self.store.release_session_lease(lease).await {
+            tracing::debug!(
+                session_id = %lease.session_id,
+                %error,
+                "the failed handover lease ended before explicit release"
+            );
+        }
+        self.finish_start(&lease.session_id).await;
+    }
+
     /// Put a handover back on its original runtime after the final move failed.
     ///
     /// The old runtime and its entry have not been touched yet. Restoring the
     /// status makes their existing channels usable again; if this compensating
     /// write is also unavailable, leaving both sides `Rotating` is coherent and
     /// recoverable, while tearing anything down would not be.
-    async fn restore_after_failed_move(&self, original: &SessionRecord, rotating: &SessionRecord) {
+    pub(crate) async fn restore_after_failed_move(
+        &self,
+        original: &SessionRecord,
+        rotating: &SessionRecord,
+    ) -> Option<SessionRecord> {
         let id = &original.session.id;
         // Roll back only the exact durable rotation claim made by this task.
         // Reloading by status and runtime would let a stale task erase a newer
@@ -448,6 +656,7 @@ impl SessionService {
             Ok(()) => {
                 self.mark_entry(id, original.session.status, restored.session.last_seq)
                     .await;
+                Some(restored)
             }
             Err(error) => {
                 tracing::error!(
@@ -455,6 +664,7 @@ impl SessionService {
                     %error,
                     "cannot restore the handover status; leaving the old runtime intact"
                 );
+                None
             }
         }
     }

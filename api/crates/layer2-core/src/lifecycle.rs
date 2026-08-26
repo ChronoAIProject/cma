@@ -16,7 +16,7 @@ use crate::ids::{SessionId, SubjectId};
 use crate::log::{append_with, drop_undelivered, ignore_rejected};
 use crate::service::{store_failed, SessionService};
 use crate::session::{RecoveryState, SessionStatus, StopReason};
-use crate::store::SessionRecord;
+use crate::store::{SessionRecord, StoreError};
 
 impl SessionService {
     /// Fail unless this caller may end or pause this particular session.
@@ -100,6 +100,8 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Ok(owner);
         }
+        self.require_compatibility_provider_mutation(id, "termination")
+            .await?;
         let adapter = self.adapters.get(&record.session.kernel).cloned();
 
         // A live entry is the fast path; a record alone is the post-restart
@@ -272,6 +274,18 @@ impl SessionService {
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
+        let lease = self
+            .acquire_runtime_lease_at(
+                &record,
+                crate::coordination::SessionOperation::Lifecycle,
+            )
+            .await
+            .map_err(store_failed)?;
+        if let Some(lease) = lease {
+            return self
+                .rest_session_coordinated(record, lease, lifecycle)
+                .await;
+        }
         let owner = record.session.owner.clone();
 
         let adapter = self.adapters.get(&record.session.kernel).cloned();
@@ -400,6 +414,109 @@ impl SessionService {
         .map_err(store_failed)
     }
 
+    /// Stop a coordinated runtime by retiring exact authority before deletion.
+    async fn rest_session_coordinated(
+        self: &Arc<Self>,
+        record: SessionRecord,
+        mut lease: crate::coordination::SessionLease,
+        lifecycle: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<SubjectId, CoreError> {
+        let id = record.session.id.clone();
+        let owner = record.session.owner.clone();
+        let adapter = self.adapters.get(&record.session.kernel).cloned();
+        if self.entries.read().await.contains_key(&id) {
+            self.capture_transcript(&id).await;
+        }
+        let input_fence = self.input_gates.gate(&id).write_owned().await;
+
+        let retired = if record.runtime_id.is_some() {
+            match self.retire_current_runtime(&mut lease).await {
+                Ok(retired) => Some(retired),
+                Err(error) => {
+                    drop(input_fence);
+                    let _ = self.store.release_session_lease(&lease).await;
+                    return Err(store_failed(error));
+                }
+            }
+        } else {
+            None
+        };
+        let mut resting = match self.store.get(&id).await {
+            Ok(Some(resting)) => resting,
+            Ok(None) => {
+                drop(input_fence);
+                let _ = self.store.release_session_lease(&lease).await;
+                drop(lifecycle);
+                return Err(CoreError::SessionNotFound);
+            }
+            Err(error) => {
+                drop(input_fence);
+                let _ = self.store.release_session_lease(&lease).await;
+                drop(lifecycle);
+                return Err(store_failed(error));
+            }
+        };
+        resting.session.status = SessionStatus::Idle;
+        resting.session.stop_reason = Some(StopReason::UserTerminated);
+        resting.session.recovery_state = RecoveryState::Idle;
+        let persisted = self
+            .persist_durably(
+                &mut resting,
+                vec![Event {
+                    session_id: id.clone(),
+                    seq: 0,
+                    kind: EventKind::StatusChanged {
+                        status: SessionStatus::Idle,
+                        stop_reason: Some(StopReason::UserTerminated),
+                        detail: None,
+                        capability: None,
+                    },
+                    appended_at: String::new(),
+                }],
+            )
+            .await;
+        if let Err(error) = persisted {
+            self.entries.write().await.remove(&id);
+            drop(input_fence);
+            let _ = self.store.release_session_lease(&lease).await;
+            drop(lifecycle);
+            return Err(store_failed(error));
+        }
+        let boundary = crate::coordination::SessionBoundary::for_record(
+            &resting,
+            lease.boundary.authority.generation,
+        );
+        if let Err(error) = self.store.advance_session_lease(&mut lease, &boundary).await {
+            self.entries.write().await.remove(&id);
+            drop(input_fence);
+            let _ = self.store.release_session_lease(&lease).await;
+            drop(lifecycle);
+            return Err(store_failed(error));
+        }
+        self.entries.write().await.remove(&id);
+        drop(input_fence);
+
+        if let (Some(adapter), Some(retired)) = (adapter, retired) {
+            if let Err(error) = self
+                .reclaim_runtime_with_lease(&adapter, &lease, &retired.cleanup)
+                .await
+            {
+                tracing::warn!(
+                    session_id = %id,
+                    runtime = %retired.cleanup.runtime_id,
+                    %error,
+                    "stopped runtime cleanup remains durable for retry"
+                );
+            }
+        }
+        if let Err(error) = self.store.release_session_lease(&lease).await {
+            tracing::debug!(session_id = %id, %error, "stop lease ended before explicit release");
+        }
+        drop(lifecycle);
+        tracing::info!(session_id = %id, "session stopped");
+        Ok(owner)
+    }
+
     /// Remove a session permanently.
     ///
     /// Distinct from ending one. Terminating stops the runtime and leaves the
@@ -430,7 +547,23 @@ impl SessionService {
             self.terminate_session(caller, id).await?;
         }
         self.entries.write().await.remove(id);
-        self.delete_durably(id).await.map_err(store_failed)?;
+        loop {
+            match self.delete_durably(id).await {
+                Ok(()) => break,
+                Err(StoreError::SessionCleanupPending { .. })
+                    if self.starting.read().await.contains(id) =>
+                {
+                    // A bring-up that began before termination can briefly
+                    // record its handle before its installation boundary sees
+                    // the terminal state and tears that exact runtime down.
+                    // Keep the session row as cleanup authority until the
+                    // locally tracked task finishes; unrelated durable debt is
+                    // returned to the caller instead of being polled away.
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                Err(error) => return Err(store_failed(error)),
+            }
+        }
         // The events go with the session, so the position kept for it is a
         // number held for something nothing can read. Only here: a session
         // that merely stopped keeps its position, because it can be revived

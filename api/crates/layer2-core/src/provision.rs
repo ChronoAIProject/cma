@@ -21,6 +21,7 @@ use tokio::sync::{broadcast, watch, Mutex};
 /// streaming; this is the slack that keeps a fast turn from blocking on it.
 pub(crate) const CONVERSATION_BUFFER: usize = 64;
 
+use crate::coordination::{SessionBoundary, SessionLease};
 use crate::event::{Event, EventKind};
 use crate::provision_failure::StartFailure;
 pub(crate) use crate::provision_support::{runtime_capacity, runtime_options};
@@ -61,6 +62,8 @@ impl SessionService {
         geometry: TerminalGeometry,
         restore: Option<&Vec<u8>>,
         platform_briefing: &str,
+        lease: &mut Option<SessionLease>,
+        handover: Option<&crate::rotate::CoordinatedHandover>,
     ) -> Result<(), StartFailure> {
         let id = session.id.clone();
         // Checked again, because this also runs for a session being revived or
@@ -196,12 +199,37 @@ impl SessionService {
                 "provisioning at this session's own size"
             );
         }
+        self.renew_runtime_lease(lease.as_ref())
+            .await
+            .map_err(|error| {
+                StartFailure::transient(format!(
+                    "runtime authority expired before provider create: {error}"
+                ))
+            })?;
+        // New for every provider-create attempt. A failed attempt may already
+        // be visible at the provider, so a retry must reserve a later
+        // generation rather than reusing an identity recovery may have seen.
+        let reservation = match lease.as_ref() {
+            Some(held) => {
+                let token = format!("rres_{}", uuid::Uuid::new_v4().simple());
+                Some(
+                    self.store
+                        .reserve_runtime_generation(held, &token)
+                        .await
+                        .map_err(|error| {
+                            StartFailure::transient(format!(
+                                "a runtime generation could not be reserved: {error}"
+                            ))
+                        })?,
+                )
+            }
+            None => None,
+        };
         let handle = adapter
             .provision(&RuntimeSpec {
                 session_id: id.0.clone(),
-                // Compatibility-stage provisioning carries no invented
-                // generation. Coordinated provisioning supplies a reservation.
-                generation: None,
+                generation: reservation.as_ref().map(|reserved| reserved.generation),
+                reservation_token: reservation.as_ref().map(|reserved| reserved.token.clone()),
                 size: TermSize {
                     cols: geometry.columns(),
                     rows: geometry.rows(),
@@ -225,9 +253,40 @@ impl SessionService {
             .await
             .map_err(StartFailure::from_provisioning)?;
 
-        // Recorded before anything else is attempted. From here a runtime
-        // exists, and a record that does not name it is one nothing can reclaim.
-        self.remember_runtime(&id, &handle).await;
+        let candidate = match (lease.as_ref(), reservation.as_ref()) {
+            (Some(held), Some(reserved)) => {
+                self.renew_runtime_lease(Some(held))
+                    .await
+                    .map_err(|error| {
+                        StartFailure::transient(format!(
+                            "runtime authority expired before candidate registration: {error}"
+                        ))
+                    })?;
+                Some(
+                    self.store
+                        .register_runtime_candidate(held, reserved, &handle.0)
+                        .await
+                        .map_err(|error| {
+                            StartFailure::transient(format!(
+                                "the provisioned runtime could not be registered durably: {error}"
+                            ))
+                        })?,
+                )
+            }
+            (None, None) => None,
+            _ => {
+                return Err(StartFailure::transient(
+                    "runtime reservation state did not match its operation lease".into(),
+                ))
+            }
+        };
+
+        // Compatibility stores still name the handle immediately. Coordinated
+        // stores keep it as uncommitted-candidate cleanup debt until attach
+        // succeeds and the store switches authority atomically.
+        if lease.is_none() {
+            self.remember_runtime(&id, &handle).await;
+        }
         // And what it actually has, which is not always what it asked for.
         self.remember_skills(&id, &skills).await;
         self.note_progress(&id, ProvisioningStage::RuntimeCreated)
@@ -247,6 +306,13 @@ impl SessionService {
         // attaches no terminal: the two are exclusive by construction, and
         // opening both would put a kernel on two planes for one session.
         let conversing = session.capabilities.conversation;
+        self.renew_runtime_lease(lease.as_ref())
+            .await
+            .map_err(|error| {
+                StartFailure::transient(format!(
+                    "runtime authority expired before attachment: {error}"
+                ))
+            })?;
         let terminal = match conversing {
             false => Some(adapter.attach_terminal(&handle).await.map_err(|e| {
                 StartFailure::transient(format!("could not attach to the runtime: {e}"))
@@ -269,6 +335,13 @@ impl SessionService {
          */
         let conversation = match conversing {
             true => {
+                self.renew_runtime_lease(lease.as_ref())
+                    .await
+                    .map_err(|error| {
+                        StartFailure::transient(format!(
+                            "runtime authority expired before opening its conversation: {error}"
+                        ))
+                    })?;
                 let (updates_tx, updates_rx) = tokio::sync::mpsc::channel(CONVERSATION_BUFFER);
                 crate::conversation_log::spawn_folder(
                     Arc::clone(self),
@@ -347,38 +420,134 @@ impl SessionService {
         // passed to this task would otherwise revive a session after the
         // lifecycle operation had completed.
         let installation = self.lock_lifecycle(&id).await;
-        let current = match self.store.get(&id).await {
-            Ok(Some(record))
-                if record.session.status.wants_runtime()
-                    && record.session.kernel == session.kernel
-                    && record.runtime_id.as_deref() == Some(handle.0.as_str()) =>
+        let observed = self.store.get(&id).await.map_err(|error| {
+            StartFailure::transient(format!(
+                "the session could not be checked before its runtime was installed: {error}"
+            ))
+        })?;
+        let current = if lease.is_some() {
+            let Some(record) = observed else {
+                drop(installation);
+                return Err(StartFailure::transient(
+                    "the session disappeared before its candidate could become authoritative"
+                        .into(),
+                ));
+            };
+            let expected = lease
+                .as_ref()
+                .expect("the coordinated lease is present")
+                .boundary
+                .clone();
+            let owns_rotation = handover
+                .is_none_or(|handover| record.rotation_claim == handover.rotating.rotation_claim);
+            if !record.session.status.wants_runtime()
+                || record.session.kernel != session.kernel
+                || record.session.status != expected.status
+                || record.runtime_id != expected.authority.runtime_id
+                || !owns_rotation
             {
-                record
+                drop(installation);
+                return Err(StartFailure::transient(
+                    "the session changed before its candidate could become authoritative".into(),
+                ));
             }
-            Ok(current) => {
-                if let Some(mut record) = current {
-                    if record.runtime_id.as_deref() == Some(handle.0.as_str()) {
-                        record.runtime_id = None;
-                        self.persist_durably(&mut record, Vec::new())
-                            .await
-                            .map_err(|error| {
-                                StartFailure::transient(format!(
-                                    "the superseded runtime reference could not be cleared: {error}"
-                                ))
-                            })?;
+            self.renew_runtime_lease(lease.as_ref())
+                .await
+                .map_err(|error| {
+                    StartFailure::transient(format!(
+                        "runtime authority expired before the candidate switch: {error}"
+                    ))
+                })?;
+            let candidate = candidate.as_ref().ok_or_else(|| {
+                StartFailure::transient(
+                    "a coordinated runtime reached installation without a candidate".into(),
+                )
+            })?;
+            let first_switch = self
+                .store
+                .switch_runtime_authority(
+                    lease.as_mut().expect("the coordinated lease is present"),
+                    candidate,
+                )
+                .await;
+            // An unavailable response can hide a committed switch. The same
+            // candidate and lease token are an idempotent receipt; retry them
+            // exactly before considering another generation.
+            match first_switch {
+                Ok(_) => {}
+                Err(crate::store::StoreError::Unavailable(_)) => {
+                    self.store
+                        .switch_runtime_authority(
+                            lease.as_mut().expect("the coordinated lease is present"),
+                            candidate,
+                        )
+                        .await
+                        .map_err(|error| {
+                            StartFailure::transient(format!(
+                                "the runtime authority switch could not be confirmed: {error}"
+                            ))
+                        })?;
+                }
+                Err(error) => {
+                    drop(installation);
+                    return Err(StartFailure::transient(format!(
+                        "the runtime candidate could not become authoritative: {error}"
+                    )));
+                }
+            }
+            let switched_status = lease
+                .as_ref()
+                .expect("the switched lease is present")
+                .boundary
+                .status;
+            self.store
+                .get(&id)
+                .await
+                .map_err(|error| {
+                    StartFailure::transient(format!(
+                        "the switched runtime authority could not be reloaded: {error}"
+                    ))
+                })?
+                .filter(|record| {
+                    record.runtime_id.as_deref() == Some(handle.0.as_str())
+                        && record.session.status == switched_status
+                        && handover.is_none_or(|handover| {
+                            record.rotation_claim == handover.rotating.rotation_claim
+                        })
+                })
+                .ok_or_else(|| {
+                    StartFailure::transient(
+                        "the switched runtime no longer owns its installation boundary".into(),
+                    )
+                })?
+        } else {
+            match observed {
+                Some(record)
+                    if record.session.status.wants_runtime()
+                        && record.session.kernel == session.kernel
+                        && record.runtime_id.as_deref() == Some(handle.0.as_str()) =>
+                {
+                    record
+                }
+                current => {
+                    if let Some(mut record) = current {
+                        if record.runtime_id.as_deref() == Some(handle.0.as_str()) {
+                            record.runtime_id = None;
+                            self.persist_durably(&mut record, Vec::new())
+                                .await
+                                .map_err(|error| {
+                                    StartFailure::transient(format!(
+                                        "the superseded runtime reference could not be cleared: {error}"
+                                    ))
+                                })?;
+                        }
                     }
+                    drop(installation);
+                    if let Err(error) = adapter.terminate(&handle).await {
+                        tracing::warn!(session_id = %id, %error, "could not tear down a superseded runtime");
+                    }
+                    return Ok(());
                 }
-                drop(installation);
-                if let Err(error) = adapter.terminate(&handle).await {
-                    tracing::warn!(session_id = %id, %error, "could not tear down a superseded runtime");
-                }
-                return Ok(());
-            }
-            Err(error) => {
-                drop(installation);
-                return Err(StartFailure::transient(format!(
-                    "the session could not be checked before its runtime was installed: {error}"
-                )));
             }
         };
         let mut ready = current;
@@ -388,7 +557,18 @@ impl SessionService {
         // `recovering` would be a state a replacement session never leaves.
         ready.session.recovery_state = RecoveryState::Normal;
         ready.session.stop_reason = None;
-        let mut ready_events = vec![Event {
+        ready.session.runtime_version = self.runtime_version.clone();
+        let mut ready_events = handover
+            .map(|handover| handover.completion_events.clone())
+            .unwrap_or_default();
+        if handover.is_some() {
+            ready.session.options = session.options.clone();
+            ready.session.capabilities = session.capabilities;
+            ready.session.rotations = session.rotations;
+            ready.session.rotated_at.clone_from(&session.rotated_at);
+            ready.rotation_claim = None;
+        }
+        ready_events.push(Event {
             session_id: id.clone(),
             seq: 0,
             kind: EventKind::StatusChanged {
@@ -398,7 +578,7 @@ impl SessionService {
                 capability: None,
             },
             appended_at: String::new(),
-        }];
+        });
         if let Some(conversation_id) = named_conversation {
             ready_events.push(Event {
                 session_id: id.clone(),
@@ -407,13 +587,36 @@ impl SessionService {
                 appended_at: String::new(),
             });
         }
-        self.persist_durably(&mut ready, ready_events)
-            .await
-            .map_err(|error| {
-                StartFailure::transient(format!(
-                    "the runtime became usable but readiness could not be recorded: {error}"
-                ))
-            })?;
+        let readiness = match handover {
+            Some(handover) => {
+                self.complete_handover_durably(&mut ready, &handover.rotating, ready_events)
+                    .await
+            }
+            None => self.persist_durably(&mut ready, ready_events).await,
+        };
+        readiness.map_err(|error| {
+            StartFailure::transient(format!(
+                "the runtime became usable but readiness could not be recorded: {error}"
+            ))
+        })?;
+        if let Some(held) = lease.as_mut() {
+            let boundary = SessionBoundary::for_record(
+                &ready,
+                candidate
+                    .as_ref()
+                    .expect("a coordinated runtime has a candidate")
+                    .generation
+                    .get(),
+            );
+            self.store
+                .advance_session_lease(held, &boundary)
+                .await
+                .map_err(|error| {
+                    StartFailure::transient(format!(
+                        "readiness committed but its runtime lease could not advance: {error}"
+                    ))
+                })?;
+        }
         #[cfg(test)]
         self.pause_live_install_if_armed().await;
 
@@ -447,7 +650,12 @@ impl SessionService {
             context_ref,
             captured_len,
         };
-        self.entries.write().await.insert(id.clone(), entry);
+        let replaced = self.entries.write().await.insert(id.clone(), entry);
+        if let (Some(handover), Some(replaced)) = (handover, replaced) {
+            if let Some(attached) = replaced.attached.as_ref() {
+                let _ = attached.supersede.send(handover.detached);
+            }
+        }
         drop(installation);
         crate::resources::spawn_resource_watch(
             Arc::clone(self),

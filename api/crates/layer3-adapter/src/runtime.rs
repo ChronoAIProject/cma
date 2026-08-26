@@ -188,6 +188,16 @@ pub struct RuntimeSpec {
     /// `None` is used only by a compatibility-stage control plane. A
     /// generation-aware provision must reserve a non-zero value first.
     pub generation: Option<NonZeroU64>,
+    /// Durable reservation that authorised this provider create.
+    ///
+    /// Written beside the session and generation in provider-visible metadata.
+    /// A process that dies after the provider accepted the create but before it
+    /// registered the returned handle can therefore discover every sandbox
+    /// created for the exact reservation, choose one candidate, and schedule
+    /// any duplicate creates for fenced cleanup. Coordinated provisioning
+    /// always supplies both this and `generation`; compatibility provisioning
+    /// supplies neither.
+    pub reservation_token: Option<String>,
     /// Geometry to allocate the terminal at.
     pub size: TermSize,
     /// How much this runtime should reserve, or `None` for the deployment's.
@@ -331,6 +341,42 @@ pub enum RuntimePermission {
 /// and return it; they must never parse it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeHandle(pub String);
+
+/// Exact provider identity required for a fenced destructive operation.
+///
+/// Handles are opaque and generations are only monotonic within one session,
+/// so neither is globally unique. Pairing both with the provider-visible
+/// session owner lets an adapter refuse a stale teardown atomically instead of
+/// deleting whichever runtime owns the handle now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeIdentity {
+    /// Opaque provider handle.
+    pub handle: RuntimeHandle,
+    /// Session ownership expected in provider-visible metadata.
+    pub session: String,
+    /// Durable generation expected in provider-visible metadata.
+    ///
+    /// `None` means the generation metadata must be absent. It is an exact
+    /// legacy comparison, never permission to ignore recorded metadata. A
+    /// caller may request it only after a monotonic protocol promotion proves
+    /// that no legacy writer can create another absent-generation runtime.
+    pub generation: Option<NonZeroU64>,
+}
+
+/// Provider-visible identity of one durable runtime reservation.
+///
+/// A provider create is not transactional with the session store. This key is
+/// consequently written at create time and used after a crash to find every
+/// sandbox that may have been produced before a handle was registered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeReservationIdentity {
+    /// Session for which the generation was reserved.
+    pub session: String,
+    /// Never-reused generation reserved before provider creation.
+    pub generation: NonZeroU64,
+    /// Exact reservation token stored durably before provider creation.
+    pub token: String,
+}
 
 /// Something sent toward the runtime's terminal.
 #[derive(Debug, Clone)]

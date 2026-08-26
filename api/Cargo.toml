@@ -35,6 +35,12 @@ agent-client-protocol-schema = { version = "1.5", features = [
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
 futures-util = "0.3"
+k8s-openapi = { version = "0.28", features = ["earliest"] }
+kube = { version = "4.2", default-features = false, features = [
+    "client",
+    "ring",
+    "rustls-tls",
+] }
 libc = "0.2"
 mongodb = { version = "3", default-features = false, features = [
     "bson-3",

@@ -14,6 +14,7 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
         environment,
         session_id: "sesn_x".into(),
         generation: None,
+        reservation_token: None,
         size: TermSize {
             cols: 120,
             rows: 40,

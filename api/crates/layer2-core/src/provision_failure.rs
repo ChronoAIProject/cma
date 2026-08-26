@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use layer3_adapter::{AdapterError, KernelAdapter, RuntimeHandle};
 
+use crate::coordination::SessionLease;
 use crate::event::EventKind;
 use crate::ids::SessionId;
 use crate::provision::PROVISION_ATTEMPTS;
@@ -133,6 +134,8 @@ impl SessionService {
         geometry: TerminalGeometry,
         restore: Option<&Vec<u8>>,
         platform_briefing: &str,
+        lease: &mut Option<SessionLease>,
+        handover: Option<&crate::rotate::CoordinatedHandover>,
     ) -> Result<(), StartFailure> {
         let mut backoff = Duration::from_millis(
             self.retry_backoff_ms
@@ -145,7 +148,16 @@ impl SessionService {
 
         for attempt in 1..=PROVISION_ATTEMPTS {
             match self
-                .start_runtime(session, spec, adapter, geometry, restore, platform_briefing)
+                .start_runtime(
+                    session,
+                    spec,
+                    adapter,
+                    geometry,
+                    restore,
+                    platform_briefing,
+                    lease,
+                    handover,
+                )
                 .await
             {
                 Ok(()) => {
@@ -166,10 +178,12 @@ impl SessionService {
                         reason = %failure.reason,
                         "this session cannot be started at all; not retrying"
                     );
-                    if let Err(error) = self.discard_runtime(&session.id, adapter).await {
-                        return Err(StartFailure::transient(format!(
-                            "the failed runtime could not be discarded safely: {error}"
-                        )));
+                    if lease.is_none() {
+                        if let Err(error) = self.discard_runtime(&session.id, adapter).await {
+                            return Err(StartFailure::transient(format!(
+                                "the failed runtime could not be discarded safely: {error}"
+                            )));
+                        }
                     }
                     return Err(failure);
                 }
@@ -181,10 +195,12 @@ impl SessionService {
                         reason = %failure.reason,
                         "could not start the runtime; trying again"
                     );
-                    if let Err(error) = self.discard_runtime(&session.id, adapter).await {
-                        return Err(StartFailure::transient(format!(
-                            "the failed runtime could not be discarded safely: {error}"
-                        )));
+                    if lease.is_none() {
+                        if let Err(error) = self.discard_runtime(&session.id, adapter).await {
+                            return Err(StartFailure::transient(format!(
+                                "the failed runtime could not be discarded safely: {error}"
+                            )));
+                        }
                     }
                     last = failure;
                 }
