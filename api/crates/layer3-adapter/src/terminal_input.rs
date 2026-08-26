@@ -147,7 +147,11 @@ impl TerminalInputSender {
         result
     }
 
-    pub(crate) fn same_channel(&self, other: &Self) -> bool {
+    /// Whether both handles write through the same runtime-link task.
+    ///
+    /// Channel identity alone grants no delivery authority. Callers must still
+    /// fence the runtime generation and validate their delivery permission.
+    pub fn same_channel(&self, other: &Self) -> bool {
         self.inner.same_channel(&other.inner)
     }
 
