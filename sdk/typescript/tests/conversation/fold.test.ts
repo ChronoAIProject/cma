@@ -530,7 +530,7 @@ describe('a session being carried onto another runtime is not a failure', () => 
       patch: [{ op: 'replace', path, value }],
     });
 
-    let state = reduce(initialConversation(), replace(1, '/status', 'running'));
+    let state = reduce(initialConversation(), replace(1, '/status', 'ready'));
     expect(state.sessionInteractive).toBe(true);
 
     state = reduce(
@@ -540,6 +540,7 @@ describe('a session being carried onto another runtime is not a failure', () => 
     expect(state.sessionInteractive).toBe(false);
 
     state = reduce(state, replace(3, '/progress', 'runtime_requested'));
+    expect(state.aguiState.status).toBe('ready');
     expect(state.aguiState.progress).toBe('runtime_requested');
     expect(state.sessionInteractive).toBe(false);
 
