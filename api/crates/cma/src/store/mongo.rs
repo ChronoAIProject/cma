@@ -4205,6 +4205,11 @@ impl SessionStore for MongoSessionStore {
         lease: &SessionLease,
         ttl: Duration,
     ) -> Result<(), StoreError> {
+        if lease.operation == layer2_core::SessionOperation::Interact {
+            return Err(StoreError::Malformed(
+                "interaction leases require interaction renewal".into(),
+            ));
+        }
         match self
             .run_coordination_command(CoordinationCommand::Renew {
                 lease: lease.clone(),
@@ -4214,6 +4219,28 @@ impl SessionStore for MongoSessionStore {
         {
             CoordinationOutcome::Unit => Ok(()),
             _ => unreachable!("renew command returns no value"),
+        }
+    }
+
+    async fn renew_interaction_lease(
+        &self,
+        lease: &SessionLease,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        if lease.operation != layer2_core::SessionOperation::Interact {
+            return Err(StoreError::Malformed(
+                "provider-operation leases require provider renewal".into(),
+            ));
+        }
+        match self
+            .run_coordination_command(CoordinationCommand::RenewInteraction {
+                lease: lease.clone(),
+                ttl,
+            })
+            .await?
+        {
+            CoordinationOutcome::Unit => Ok(()),
+            _ => unreachable!("interaction renew command returns no value"),
         }
     }
 

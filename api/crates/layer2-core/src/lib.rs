@@ -94,6 +94,8 @@ mod pricing_service_tests;
 #[cfg(test)]
 mod resources_tests;
 #[cfg(test)]
+mod runtime_interaction_tests;
+#[cfg(test)]
 mod spend_tests;
 
 #[cfg(test)]
