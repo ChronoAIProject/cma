@@ -1,9 +1,12 @@
 //! Tests for delegated-credential renewal.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use layer3_adapter::KernelAdapter;
+use tokio::sync::Notify;
 
 use crate::authz::{Authorization, Caller, Capability};
 use crate::ids::{KernelId, SessionId, SubjectId};
@@ -21,7 +24,7 @@ use crate::test_support::{await_settled, FakeStore, NullScreen};
 /// share a channel with keystrokes.
 struct RecordingAdapter {
     sent: Arc<tokio::sync::Mutex<Vec<String>>>,
-    refuse: Arc<std::sync::atomic::AtomicBool>,
+    refuse: Arc<AtomicBool>,
 }
 
 #[async_trait::async_trait]
@@ -67,12 +70,96 @@ impl KernelAdapter for RecordingAdapter {
         _handle: &layer3_adapter::RuntimeHandle,
         credential: &str,
     ) -> Result<(), layer3_adapter::AdapterError> {
-        if self.refuse.load(std::sync::atomic::Ordering::SeqCst) {
+        if self.refuse.load(Ordering::SeqCst) {
             return Err(layer3_adapter::AdapterError::Unavailable(
                 "the runtime did not take the credential".into(),
             ));
         }
         self.sent.lock().await.push(credential.to_string());
+        Ok(())
+    }
+
+    async fn terminate(
+        &self,
+        _handle: &layer3_adapter::RuntimeHandle,
+    ) -> Result<(), layer3_adapter::AdapterError> {
+        Ok(())
+    }
+}
+
+/// An adapter whose next acknowledgement can be held while another lifecycle
+/// operation contends for the same session gate.
+#[derive(Default)]
+struct BlockingAdapter {
+    sent: tokio::sync::Mutex<Vec<(String, String)>>,
+    block_next: AtomicBool,
+    entered: Notify,
+    release: Notify,
+}
+
+impl BlockingAdapter {
+    fn arm(&self) {
+        assert!(!self.block_next.swap(true, Ordering::SeqCst));
+    }
+
+    async fn wait_until_entered(&self) {
+        tokio::time::timeout(Duration::from_secs(2), self.entered.notified())
+            .await
+            .expect("credential delivery reached the adapter");
+    }
+
+    fn acknowledge(&self) {
+        self.release.notify_one();
+    }
+}
+
+#[async_trait::async_trait]
+impl KernelAdapter for BlockingAdapter {
+    fn kernel_name(&self) -> &'static str {
+        "recording"
+    }
+
+    fn capabilities(&self) -> layer3_adapter::KernelCapabilities {
+        layer3_adapter::KernelCapabilities {
+            terminal: true,
+            snapshot: true,
+            ..Default::default()
+        }
+    }
+
+    async fn provision(
+        &self,
+        spec: &layer3_adapter::RuntimeSpec,
+    ) -> Result<layer3_adapter::RuntimeHandle, layer3_adapter::AdapterError> {
+        Ok(layer3_adapter::RuntimeHandle(spec.session_id.clone()))
+    }
+
+    async fn attach_terminal(
+        &self,
+        _handle: &layer3_adapter::RuntimeHandle,
+    ) -> Result<layer3_adapter::TerminalChannel, layer3_adapter::AdapterError> {
+        let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<layer3_adapter::TerminalInput>(16);
+        let (_out_tx, out_rx) = tokio::sync::mpsc::channel::<layer3_adapter::TerminalOutput>(16);
+        tokio::spawn(async move { while in_rx.recv().await.is_some() {} });
+        Ok(layer3_adapter::TerminalChannel {
+            output: out_rx,
+            input: in_tx,
+        })
+    }
+
+    async fn refresh_credential(
+        &self,
+        handle: &layer3_adapter::RuntimeHandle,
+        credential: &str,
+    ) -> Result<(), layer3_adapter::AdapterError> {
+        if self.block_next.swap(false, Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        self.sent
+            .lock()
+            .await
+            .push((handle.0.clone(), credential.to_string()));
         Ok(())
     }
 
@@ -162,13 +249,24 @@ fn service_with_store_and_refusal(
     store: Arc<FakeStore>,
     observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
     tracks_subject: bool,
-    refuse: Arc<std::sync::atomic::AtomicBool>,
+    refuse: Arc<AtomicBool>,
+) -> Arc<SessionService> {
+    service_with_adapter(
+        Arc::new(RecordingAdapter { sent, refuse }),
+        store,
+        observed_callers,
+        tracks_subject,
+    )
+}
+
+fn service_with_adapter(
+    adapter: Arc<dyn KernelAdapter>,
+    store: Arc<FakeStore>,
+    observed_callers: Option<Arc<tokio::sync::Mutex<Vec<Option<String>>>>>,
+    tracks_subject: bool,
 ) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
-    adapters.insert(
-        KernelId::new("recording"),
-        Arc::new(RecordingAdapter { sent, refuse }),
-    );
+    adapters.insert(KernelId::new("recording"), adapter);
     // A real store rather than a stub: these tests care that a credential
     // reaches the runtime, and that path now runs through persistence.
     SessionService::new(
@@ -199,8 +297,8 @@ fn service_with_store_and_refusal(
 
 fn service_with_delivery_switch(
     sent: Arc<tokio::sync::Mutex<Vec<String>>>,
-) -> (Arc<SessionService>, Arc<std::sync::atomic::AtomicBool>) {
-    let refuse = Arc::new(std::sync::atomic::AtomicBool::new(false));
+) -> (Arc<SessionService>, Arc<AtomicBool>) {
+    let refuse = Arc::new(AtomicBool::new(false));
     let service = service_with_store_and_refusal(
         sent,
         Arc::new(FakeStore::default()),
@@ -499,6 +597,45 @@ async fn a_refused_credential_is_neither_recorded_nor_evidence_for_reclaim() {
 }
 
 #[tokio::test]
+async fn a_refused_subject_refresh_retains_the_runtime_s_prior_evidence() {
+    let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (svc, refuse) = service_with_delivery_switch(sent);
+    let owner = caller("subject-refresh-owner");
+    let session = svc
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("session is created");
+    await_settled(&svc, &owner, &session.id).await;
+    let working = svc
+        .credential_held(&session.id)
+        .await
+        .expect("initial credential was acknowledged");
+
+    refuse.store(true, Ordering::SeqCst);
+    assert_eq!(
+        svc.refresh_subject_credential(&owner.subject, "refused-renewal".into())
+            .await,
+        0
+    );
+    assert_eq!(
+        svc.credential_held(&session.id).await.as_deref(),
+        Some(working.as_str()),
+        "refusal must retain evidence for the value the runtime still holds"
+    );
+
+    refuse.store(false, Ordering::SeqCst);
+    assert_eq!(
+        svc.refresh_subject_credential(&owner.subject, "accepted-renewal".into())
+            .await,
+        1
+    );
+    assert_eq!(
+        svc.credential_held(&session.id).await.as_deref(),
+        Some("accepted-renewal")
+    );
+}
+
+#[tokio::test]
 async fn a_delivered_credential_is_recorded_as_reclaim_evidence() {
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let (svc, _refuse) = service_with_delivery_switch(sent);
@@ -524,9 +661,204 @@ async fn a_delivered_credential_is_recorded_as_reclaim_evidence() {
 }
 
 #[tokio::test]
+async fn a_durable_commit_failure_after_acknowledgement_keeps_prior_entry_evidence() {
+    let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (svc, _refuse) = service_with_delivery_switch(Arc::clone(&sent));
+    let owner = caller("commit-failure-owner");
+    let session = svc
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("session is created");
+    await_settled(&svc, &owner, &session.id).await;
+    let working = svc
+        .credential_held(&session.id)
+        .await
+        .expect("initial credential was acknowledged");
+
+    assert!(matches!(
+        svc.push_session_credential_with(&session.id, "pending-b", || async {
+            Err(crate::store::StoreError::Unavailable(
+                "injected promotion failure".into(),
+            ))
+        })
+        .await,
+        Err(crate::store::StoreError::Unavailable(_))
+    ));
+    assert!(credentials_seen(&sent)
+        .await
+        .contains(&"pending-b".to_string()));
+    assert_eq!(
+        svc.credential_held(&session.id).await.as_deref(),
+        Some(working.as_str()),
+        "entry evidence changes only after the durable callback succeeds"
+    );
+}
+
+#[tokio::test]
+async fn acknowledged_delivery_finishes_before_exact_h1_can_be_replaced() {
+    let adapter = Arc::new(BlockingAdapter::default());
+    let svc = service_with_adapter(adapter.clone(), Arc::new(FakeStore::default()), None, true);
+    let owner = caller("credential-first-owner");
+    let session = svc
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("session is created");
+    await_settled(&svc, &owner, &session.id).await;
+    let h1 = svc
+        .entries
+        .read()
+        .await
+        .get(&session.id)
+        .and_then(|entry| entry.runtime.clone())
+        .expect("H1 is installed");
+
+    adapter.arm();
+    let committed = Arc::new(AtomicBool::new(false));
+    let delivery = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let id = session.id.clone();
+        let committed = Arc::clone(&committed);
+        async move {
+            svc.push_session_credential_with(&id, "pending-b", move || {
+                let committed = Arc::clone(&committed);
+                async move {
+                    committed.store(true, Ordering::SeqCst);
+                    Ok::<bool, crate::store::StoreError>(true)
+                }
+            })
+            .await
+        }
+    });
+    adapter.wait_until_entered().await;
+    assert!(
+        !committed.load(Ordering::SeqCst),
+        "durable promotion cannot precede adapter acknowledgement"
+    );
+
+    let (attempting_tx, attempting_rx) = tokio::sync::oneshot::channel();
+    let (replaced_tx, mut replaced_rx) = tokio::sync::oneshot::channel();
+    let replacement = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let id = session.id.clone();
+        let h1 = h1.clone();
+        async move {
+            let _ = attempting_tx.send(());
+            let lifecycle = svc.lock_lifecycle(&id).await;
+            let mut entries = svc.entries.write().await;
+            let entry = entries.get_mut(&id).expect("H1 remains installed");
+            assert_eq!(entry.runtime.as_ref(), Some(&h1));
+            assert_eq!(entry.subject_credential.as_deref(), Some("pending-b"));
+            entry.runtime = Some(layer3_adapter::RuntimeHandle("runtime-h2".into()));
+            entry.subject_credential = None;
+            drop(entries);
+            drop(lifecycle);
+            let _ = replaced_tx.send(());
+        }
+    });
+    attempting_rx
+        .await
+        .expect("replacement task is contending for the lifecycle gate");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(25), &mut replaced_rx)
+            .await
+            .is_err(),
+        "replacement must wait while H1 acknowledgement is outstanding"
+    );
+
+    adapter.acknowledge();
+    assert!(matches!(
+        delivery.await.expect("delivery task joins"),
+        Ok(true)
+    ));
+    replaced_rx
+        .await
+        .expect("replacement acquires the gate after evidence is recorded");
+    replacement.await.expect("replacement task joins");
+    assert!(committed.load(Ordering::SeqCst));
+    assert!(adapter
+        .sent
+        .lock()
+        .await
+        .iter()
+        .any(|(runtime, value)| runtime == &h1.0 && value == "pending-b"));
+}
+
+#[tokio::test]
+async fn h1_removal_winning_the_gate_prevents_delivery_and_promotion_on_stale_h1() {
+    let adapter = Arc::new(BlockingAdapter::default());
+    let svc = service_with_adapter(adapter.clone(), Arc::new(FakeStore::default()), None, true);
+    let owner = caller("rotation-first-owner");
+    let session = svc
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("session is created");
+    await_settled(&svc, &owner, &session.id).await;
+    let sent_before = adapter.sent.lock().await.len();
+
+    let lifecycle = svc.lock_lifecycle(&session.id).await;
+    let mut h1_entry = svc
+        .entries
+        .write()
+        .await
+        .remove(&session.id)
+        .expect("H1 is removed while holding the lifecycle gate");
+    let current_a = h1_entry
+        .subject_credential
+        .clone()
+        .expect("H1 acknowledged current A before removal");
+    let promoted = Arc::new(AtomicBool::new(false));
+    let delivery = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let id = session.id.clone();
+        let promoted = Arc::clone(&promoted);
+        async move {
+            svc.push_session_credential_with(&id, "pending-b", move || {
+                let promoted = Arc::clone(&promoted);
+                async move {
+                    promoted.store(true, Ordering::SeqCst);
+                    Ok::<bool, crate::store::StoreError>(true)
+                }
+            })
+            .await
+        }
+    });
+    tokio::task::yield_now().await;
+    assert!(!delivery.is_finished(), "delivery waits for H1 removal");
+    drop(lifecycle);
+
+    assert!(matches!(
+        delivery.await.expect("delivery task joins"),
+        Ok(false)
+    ));
+    assert!(!promoted.load(Ordering::SeqCst));
+    assert_eq!(adapter.sent.lock().await.len(), sent_before);
+
+    let lifecycle = svc.lock_lifecycle(&session.id).await;
+    h1_entry.runtime = Some(layer3_adapter::RuntimeHandle("runtime-h2".into()));
+    h1_entry.subject_credential = Some(current_a.clone());
+    svc.entries
+        .write()
+        .await
+        .insert(session.id.clone(), h1_entry);
+    drop(lifecycle);
+    assert_eq!(
+        svc.credential_held(&session.id).await,
+        Some(current_a),
+        "H2 retains the durable current value when B was never promoted"
+    );
+}
+
+#[tokio::test]
 async fn a_failed_top_up_stays_missing_until_delivery_can_be_retried() {
     let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let (svc, refuse) = service_with_delivery_switch(sent);
+    let refuse = Arc::new(AtomicBool::new(true));
+    let svc = service_with_store_and_refusal(
+        Arc::clone(&sent),
+        Arc::new(FakeStore::default()),
+        None,
+        true,
+        Arc::clone(&refuse),
+    );
     let owner = caller("recovered-owner");
     let session = svc
         .create_session(&owner, crate::test_support::spec())
@@ -534,14 +866,11 @@ async fn a_failed_top_up_stays_missing_until_delivery_can_be_retried() {
         .expect("session is created");
     await_settled(&svc, &owner, &session.id).await;
 
-    svc.entries
-        .write()
-        .await
-        .get_mut(&session.id)
-        .expect("the running session has an entry")
-        .subject_credential = None;
-    refuse.store(true, std::sync::atomic::Ordering::SeqCst);
-
+    assert_eq!(svc.credential_held(&session.id).await, None);
+    assert!(
+        credentials_seen(&sent).await.is_empty(),
+        "an intended initial value is not evidence when the adapter refuses it"
+    );
     assert_eq!(svc.top_up_credentials().await, 0);
     assert_eq!(svc.credential_held(&session.id).await, None);
     let recovered = format!("minted-for-{}", session.id);
@@ -550,9 +879,41 @@ async fn a_failed_top_up_stays_missing_until_delivery_can_be_retried() {
         .await
         .expect("session store works"));
 
-    refuse.store(false, std::sync::atomic::Ordering::SeqCst);
+    refuse.store(false, Ordering::SeqCst);
     assert_eq!(svc.top_up_credentials().await, 1);
     assert_eq!(svc.credential_held(&session.id).await, Some(recovered));
+}
+
+#[tokio::test]
+async fn readoption_records_no_credential_until_the_reconnected_runtime_acknowledges_one() {
+    let sent = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (svc, refuse) = service_with_delivery_switch(Arc::clone(&sent));
+    let owner = caller("readoption-owner");
+    let session = svc
+        .create_session(&owner, crate::test_support::spec())
+        .await
+        .expect("session is created");
+    await_settled(&svc, &owner, &session.id).await;
+    let record = svc
+        .record(&session.id)
+        .await
+        .expect("record remains durable");
+    svc.entries.write().await.remove(&session.id);
+    sent.lock().await.clear();
+    refuse.store(true, Ordering::SeqCst);
+
+    svc.readopt(&record)
+        .await
+        .expect("the existing runtime is reconnected");
+    assert_eq!(svc.credential_held(&session.id).await, None);
+    assert!(credentials_seen(&sent).await.is_empty());
+
+    refuse.store(false, Ordering::SeqCst);
+    assert_eq!(svc.top_up_credentials().await, 1);
+    assert_eq!(
+        svc.credential_held(&session.id).await,
+        Some(format!("minted-for-{}", session.id))
+    );
 }
 
 /// Which sessions still have a claim on the credential minted for them.
