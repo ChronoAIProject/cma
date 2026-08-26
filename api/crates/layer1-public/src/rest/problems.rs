@@ -453,6 +453,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_invalid_state_is_a_typed_conflict() {
+        let (status, body) = rendered(CoreError::InvalidState).await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            body["type"],
+            "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-state"
+        );
+        assert_eq!(body["code"], "invalid_state");
+    }
+
+    #[tokio::test]
     async fn price_card_fields_are_absent_from_every_other_problem() {
         for error in every_variant() {
             if matches!(error, CoreError::PriceChanged { .. }) {
