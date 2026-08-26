@@ -406,7 +406,14 @@ impl SessionService {
                  */
                 let (updates_tx, updates_rx) =
                     tokio::sync::mpsc::channel(crate::provision::CONVERSATION_BUFFER);
-                crate::conversation_log::spawn_folder(Arc::clone(self), id.clone(), updates_rx);
+                crate::conversation_log::spawn_folder(
+                    Arc::clone(self),
+                    id.clone(),
+                    lease
+                        .as_ref()
+                        .map_or(0, |held| held.boundary.authority.generation),
+                    updates_rx,
+                );
                 Some(
                     adapter
                         .open_conversation(&handle, &options, updates_tx)
@@ -588,6 +595,9 @@ impl SessionService {
             environment_values,
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
+            runtime_generation: lease
+                .as_ref()
+                .map_or(0, |held| held.boundary.authority.generation),
             input: terminal.as_ref().map(|c| c.input.clone()),
             live: Some(live.clone()),
             terminal_ending: terminal_ending.clone(),

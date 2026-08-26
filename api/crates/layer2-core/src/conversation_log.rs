@@ -908,6 +908,7 @@ fn plain_text(content: &ContentBlock) -> Option<String> {
 pub(crate) fn spawn_folder(
     service: Arc<SessionService>,
     id: SessionId,
+    runtime_generation: u64,
     mut updates: mpsc::Receiver<ConversationUpdate>,
 ) {
     // Kept alive for the folder's lifetime so every prompt and every update
@@ -926,7 +927,7 @@ pub(crate) fn spawn_folder(
         // open would sit in the log forever looking like work still in
         // progress, so it is closed with the reason it actually stopped for.
         service.close_open_turn(&id, &ordering).await;
-        tracing::info!(session_id = %id, "conversation folding ended");
+        tracing::info!(session_id = %id, runtime_generation, "conversation folding ended");
     });
 }
 
