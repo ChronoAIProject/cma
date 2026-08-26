@@ -9,6 +9,7 @@
  */
 
 import type { SessionCapabilities } from './agui/index.js';
+import type { SessionStatus } from './wire.js';
 
 /**
  * Lifecycle: provisioning -> ready -> running <-> idle -> terminated.
@@ -18,8 +19,7 @@ import type { SessionCapabilities } from './agui/index.js';
  * usable nor stopped while it happens, and calling it either would be a lie
  * the owner acts on.
  */
-export type SessionLifecycle =
-  'provisioning' | 'ready' | 'running' | 'rotating' | 'idle' | 'terminated' | 'unknown';
+export type SessionLifecycle = SessionStatus | 'unknown';
 
 /**
  * Why a session stopped, where the control plane says.

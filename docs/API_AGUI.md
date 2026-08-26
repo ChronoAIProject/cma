@@ -94,6 +94,13 @@ The same-origin cookie clients that can use native `EventSource` do not receive 
 
 **The sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The sequence is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
 
+Every accepted run stream begins with `RUN_STARTED`. For an ordinary prompt it
+projects the durable `turn_started` boundary and carries that event's SSE `id`.
+For a continuation opened by `resume`, it is an interface-only boundary with no
+SSE `id`: it starts the new run around the turn already in progress and does not
+record or imply a second turn. A request refused before a stream opens returns
+an `application/problem+json` response and emits no `RUN_STARTED`.
+
 ### Running a turn
 
 ```http
@@ -150,6 +157,12 @@ document says what this interface can emit for some session; the session's
 environment decides whether these optional bodies are recorded for that
 session.
 
+`RUN_STARTED` is the first event on every run response. The owner's projected
+`TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END` echo follows
+it on a prompt run. On a continuation the opening event is synthetic and
+unnumbered, because the durable log already contains the turn boundary; it
+brackets the run without advancing a replay cursor.
+
 ### Canonical initial state
 
 ```json
@@ -160,6 +173,8 @@ session.
     "contextUsed": null,
     "contextWindow": null
   },
+  "status": null,
+  "progress": null,
   "mode": null,
   "plan": null,
   "configOptions": null,
@@ -186,6 +201,8 @@ unknown. `/usage/contextUsed` is different only at the core event boundary:
 zero there is the established "no context reading" sentinel, so its projection
 omits that operation and preserves the canonical `null` or last positive value.
 For `/memoryPressure`, `null` means no pressure episode is currently open.
+For `/status` and `/progress`, `null` means that no durable lifecycle or
+provisioning value has reached this stream yet.
 
 ### `STATE_DELTA` paths
 
@@ -204,9 +221,11 @@ of the current contract.
 | `/pendingApprovals/{requestId}` | `add` or `remove` | on `add`, `{id: string, reason: string, message: string or null}`; `remove` carries no value | an approval is requested or resolved |
 | `/plan` | `replace` | array of `{title: string, status: string}` | the agent reports a complete plan revision |
 | `/planeChanges/-` | `add` | `{from: string, to: string, snapshotAt: string}` | the owner moves the session between terminal and conversation planes |
+| `/progress` | `replace` | `accepted`, `runtime_requested`, `runtime_created`, `skills_installed`, `attaching`, or `ready` | initial provisioning or a replacement runtime advances to another named stage |
 | `/resources` | `replace` | object containing all fourteen numeric-or-null resource fields shown below | a resource reading arrives on the cursorless live lane |
 | `/runtimeLosses/-` | `add` | `{runtime: string, cause: string or null, noticedAt: string or null}` | reconciliation establishes that a runtime was lost |
 | `/signIn` | `replace` | `{url: string, code: string or null, message: string or null}` | the agent needs its owner to complete an own-account sign-in |
+| `/status` | `replace` | `provisioning`, `ready`, `running`, `rotating`, `idle`, or `terminated` | a lifecycle transition does not already end the AG-UI run |
 | `/usage/contextUsed` | `replace` | positive integer token count | a usage report carries a positive context reading; the zero sentinel emits no operation |
 | `/usage/contextWindow` | `replace` | non-negative integer token count | a usage report states the context ceiling; omission preserves the prior value |
 | `/usage/inputTokens` | `replace` | non-negative integer token count | any usage report arrives, including a zero count |
@@ -225,6 +244,29 @@ one narrow fold exception: a remove whose decoded pointer is exactly
 `["pendingApprovals", requestId]` is **remove-if-present**, and is a no-op when
 that own member is absent. This is not strict RFC 6902. No other missing remove
 is relaxed, and malformed pointers or missing parents remain protocol errors.
+
+#### `/status` and `/progress` report runtime availability
+
+The `/status` vocabulary is the Layer 2 session status serialized with the same
+spelling REST uses: `provisioning`, `ready`, `running`, `rotating`, `idle`, and
+`terminated`. This build emits the state delta only for a status transition that
+does not already end the AG-UI run. In particular, `rotating`, `terminated`, and
+an `idle` transition caused by `error`, `revoked`, or `budget_reached` remain a
+single `RUN_ERROR`; that same durable event never also emits a `/status` frame.
+
+At the lifecycle level, `ready` accepts an ordinary new run. `running` is also
+interactive, but mid-turn input is steer: it requires the session's granted
+`steer` capability and is then governed by its `concurrent_input` policy.
+`provisioning`, `rotating`, `idle`, and `terminated` are not interactive. An
+`idle` session remains revivable, but a client must revive it before enabling
+ordinary input.
+
+`/progress` uses the Layer 2 provisioning stages in order: `accepted`,
+`runtime_requested`, `runtime_created`, `skills_installed`, `attaching`, and
+`ready`. It is detail about bringing up a runtime, not permission to send a
+run. In particular, `/progress=ready` does not change composer admission in
+either direction. Only `/status=ready` makes the session lifecycle interactive;
+the final progress record may be adjacent to that transition on either side.
 
 #### `/signIn` is the own-account prompt
 
@@ -390,7 +432,7 @@ A stretch of conversation the runtime had to drop also arrives as a state patch,
 
 `cause` is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`, and is `null` where the service could establish no reason. `noticedAt` is when the service established that the runtime was lost, up to one reconciliation sweep after it actually stopped; it is not a claimed time of death. Do not draw the loss as the session having failed: a replacement runtime is started. The agent's conversation does **not** cross a runtime it lost, however, so it begins again from the terminal context that was captured rather than resuming that conversation.
 
-**The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Start a new run when the session is usable again — the same session, the same conversation, resumed.
+**The move ends the run.** A session being carried onto another runtime, whether onto a newer image or onto the other plane, goes `rotating`, and a `RUN_ERROR` is emitted. Nothing is being lost: the run is over because its runtime is being torn down, and a stream that simply stopped could not be told apart from an agent taking its time. Keep following the session stream: optional `/progress` deltas describe the replacement starting, and `/status=ready` says the same session can accept a new run with the same conversation resumed.
 
 ### `RUN_ERROR` covers two different things, and says which
 
@@ -414,6 +456,21 @@ The protocol has one event for a run ending badly, and two things end one: the a
 | `cma:returns` | **`true` when the session is coming back.** This is a handover, not a fault: the run ended because the runtime behind it is being torn down, and a new run starts on the same session once it is usable. Draw it as a boundary, not as a failure. |
 
 A client that ignores `cma:returns` draws every rotation as a fault, and under §5 of `CLAUDE.md` a rotation is a routine consequence of a deployment. Treat its absence as `false`: that is the safer of the two to be wrong about, because a failure drawn as a handover tells somebody their session is returning when it is not.
+
+The complete handover is visible on one followed session stream, without a REST
+status poll:
+
+```text
+RUN_ERROR   { "cma:returns": true, ... }
+STATE_DELTA { "delta": [{ "op": "replace", "path": "/progress", "value": "runtime_requested" }] }  # optional, may repeat with later stages
+STATE_DELTA { "delta": [{ "op": "replace", "path": "/status", "value": "ready" }] }
+```
+
+Disable ordinary input when the returning `RUN_ERROR` arrives, keep it disabled
+through every progress update, and enable it only after `/status=ready`. A
+transient replacement failure may be retried, so a later successful attempt can
+still reach `ready`; within a failed attempt, its ending failure is not followed
+by a fabricated ready delta.
 
 ### Tool kinds are the runtime's own word
 
@@ -455,8 +512,23 @@ AG-UI **ends the run to ask, and starts a new run to resume.** An approval is no
      "resume": [{ "interruptId": "apr_7Q2", "status": "resolved",
                   "payload": { "decision": "allow" } }] }
 
-5. The session resumes and streams the continuation
+5. The session resumes and streams the continuation. Its first frame is the
+   run boundary, not another durable turn boundary:
+
+   RUN_STARTED { "threadId": "sesn_01JD8Z3K7",
+                 "runId": "run_01JD9A3" }   # no SSE id
+   ...numbered durable continuation state may appear here...
+   STATE_DELTA {
+     delta: [{ "op": "remove",
+               "path": "/pendingApprovals/apr_7Q2" }]
+   }                                           # carries ApprovalResolved SSE id
+   ...continuation events...
+   RUN_FINISHED { ... }
 ```
+
+The approval removal must precede the continuation's terminal frame, but it is
+not required to be adjacent to `RUN_STARTED`. Other numbered durable projection
+frames may describe the session resuming before the removal arrives.
 
 `reason` is `confirmation` where the runtime offered no description of what it wants, and `cma:<what the runtime called it>` where it did — `cma:command_execution`, `cma:file_write`, `cma:network_egress` and whatever else a kernel names. The prefix is what the protocol reserves for a vendor's own values, and the word after it is the runtime's rather than one this service chose: the sets differ per kernel and grow.
 
@@ -563,12 +635,14 @@ The `events` map is the machine-readable form of §3 and is the contract. Read i
 - **Native `EventSource` automatic reconnect replays from its original query cursor.** This endpoint deliberately ignores the browser's `Last-Event-ID` request header, so the retry does not advance `starting_after`. Deduplication of complete durable projections by their SSE `id` is therefore mandatory for this client class, even when the client also closes and reconstructs the source as described below.
 - **An SSE `id` acknowledges a whole durable projection.** Only its final frame carries the event sequence. If the connection drops after an earlier frame, the last id still names the preceding durable event, so replay sends the interrupted projection again from its first frame. Group the prefixes with their next numbered final and deduplicate that complete projection by the final id. Do not deduplicate prefixes only by `messageId`, `toolCallId`, or kind: one tool call can have several distinct durable updates, and future unknown kinds may also be prefixes. Advance the stored cursor only after the complete group was accepted.
 
+  One cursorless interface boundary belongs to the run response rather than this reconnect path. Only an accepted continuation response from `POST /api/v1/agui/run` begins with an unnumbered, non-live `RUN_STARTED`; deliver it immediately without changing the cursor. `GET /api/v1/agui/events` never emits that boundary, whether serving bounded history, a followed stream, or reconnect replay.
+
   A fetch-SSE reader can observe the current frame's actual `id` field and uses this procedure:
 
   1. Keep one acknowledged cursor for replay and deduplication. Put it in the `starting_after` query whenever constructing the followed stream; the query is authoritative even when the SDK also sends `Last-Event-ID`.
   2. Open that followed stream before requesting bounded history with the same cursor and `follow=false`. Queue followed frames until history has been accepted, then drain the queue. This closes the gap in which an event could otherwise be committed after the history read but before the live connection opened.
   3. Deliver a `cma:live` frame without putting it in the durable projection buffer and without changing the cursor. It has no durable position to acknowledge.
-  4. For any other frame with no `id`, buffer it as a projection prefix. An explicit id must be a positive safe integer and marks the projection's final frame. Combine that final with the buffered prefixes, deduplicate the complete group by the final id, and clear the buffer.
+  4. For any other frame with no `id`, buffer it as a projection prefix. This includes the `RUN_FINISHED` interrupt that precedes a pending-approval `STATE_DELTA`. An explicit id must be a positive safe integer and marks the projection's final frame. Combine that final with the buffered prefixes, deduplicate the complete group by the final id, and clear the buffer.
   5. Advance the cursor only after the application accepts every frame in the complete group, and never move it backwards. On a drop, discard any incomplete prefix buffer, retain completed-projection deduplication state, and construct a new fetch from the latest acknowledged cursor. Never retry the POSTed run.
 
   Parsing the raw fields removes the inherited-`lastEventId` ambiguity native `EventSource` creates. The SDK's fetch transport reconstructs each request with its current cursor, while `AguiConnection` performs the open-stream-before-history ordering, projection grouping, acknowledgement, deduplication, and retry policy.

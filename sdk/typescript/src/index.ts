@@ -190,11 +190,15 @@ export {
   LIVE_MARKER,
   PATHS,
   PRICING_WIRE,
+  PROVISIONING_STAGES,
+  SESSION_STATUSES,
   STATE_DELTA_PATCHES,
   frameKey,
   initialState,
   type AguiState,
   type PendingApprovalState,
+  type ProvisioningStage,
+  type SessionStatus,
 } from './wire.js';
 
 /*
