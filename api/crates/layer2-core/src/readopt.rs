@@ -216,14 +216,29 @@ impl SessionService {
     /// is what they come back to. Without that the session would be alive and
     /// usable but visibly empty, which reads as lost work.
     pub(crate) async fn readopt(self: &Arc<Self>, record: &SessionRecord) -> Result<(), CoreError> {
-        let Some(readoption) = self
-            .prepare_readoption(record)
-            .await
-            .map_err(store_failed)?
-        else {
-            return Ok(());
-        };
-        self.readopt_prepared(record, readoption).await
+        let service = Arc::clone(self);
+        let record = record.clone();
+        let task_id = record.session.id.clone();
+        let readoption = tokio::spawn(async move {
+            // The task owns the complete operation once it starts. A caller
+            // whose wait is cancelled detaches instead of abandoning durable
+            // preparation or an adapter channel halfway through opening it.
+            let Some(readoption) = service
+                .prepare_readoption(&record)
+                .await
+                .map_err(store_failed)?
+            else {
+                return Ok(());
+            };
+            service.readopt_prepared(&record, readoption).await
+        });
+
+        readoption.await.map_err(|error| {
+            tracing::error!(session_id = %task_id, %error, "session readoption task failed");
+            CoreError::RuntimeUnavailable(
+                "session readoption stopped before it could complete".into(),
+            )
+        })?
     }
 
     pub(crate) async fn readopt_prepared(
