@@ -1624,7 +1624,7 @@ async fn replay_frames_use_the_session_id_for_initial_history_and_the_followed_t
     let mut body = response.into_body().into_data_stream();
 
     let mut initial_types = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         let frame = next_agui_frame(&mut body).await;
         assert_agui_ids(&frame, &id.0, &id);
         initial_types.push(
@@ -1641,6 +1641,7 @@ async fn replay_frames_use_the_session_id_for_initial_history_and_the_followed_t
             "TEXT_MESSAGE_START",
             "TEXT_MESSAGE_CONTENT",
             "TEXT_MESSAGE_END",
+            "STATE_DELTA",
         ],
         "a newly written turn replays its boundary before the owner message"
     );
@@ -1937,7 +1938,7 @@ async fn a_prompt_run_starts_before_every_frame_and_finishes_after_the_user_echo
 
     kernel.emit_turn_ended().await;
     let mut emitted = vec![first];
-    for _ in 1..9 {
+    for _ in 1..10 {
         let frame = next_agui_frame(&mut body).await;
         assert_agui_ids(&frame, run_id, &id);
         emitted.push(frame);
@@ -1952,6 +1953,7 @@ async fn a_prompt_run_starts_before_every_frame_and_finishes_after_the_user_echo
             "TEXT_MESSAGE_START",
             "TEXT_MESSAGE_CONTENT",
             "TEXT_MESSAGE_END",
+            "STATE_DELTA",
             "TEXT_MESSAGE_CONTENT",
             "TEXT_MESSAGE_START",
             "TEXT_MESSAGE_CONTENT",
