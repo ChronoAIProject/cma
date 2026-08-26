@@ -293,6 +293,10 @@ pub(super) async fn input(
         Ok(guard) => guard,
         Err(response) => return response,
     };
+    let body = match body {
+        Ok(body) => body,
+        Err(error) => return guard.finish(Err(RequestFailure::from(error))).await,
+    };
     let result = input_once(&service, &caller, &id, body)
         .await
         .map(IntoResponse::into_response);
