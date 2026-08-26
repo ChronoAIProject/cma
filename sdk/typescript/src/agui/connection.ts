@@ -8,6 +8,7 @@ import {
   ValidationError,
 } from '../errors.js';
 import type { OperationOptions } from '../http.js';
+import { isCursorlessInterfaceBoundary } from './cursor.js';
 import { toEvent, type AguiEvent } from './events.js';
 import { ProjectionAssembler } from './projection.js';
 
@@ -429,19 +430,21 @@ export class AguiConnection {
     if (this.#closed) {
       return;
     }
-    const events = assembler.accept(toEvent(raw));
+    const event = toEvent(raw);
+    const eventKind = event.type === 'UNKNOWN' ? event.kind : event.type;
+    if (isCursorlessInterfaceBoundary(eventKind, event.seq, event.ephemeral)) {
+      throw new ProtocolError(
+        'AG-UI GET event stream returned a cursorless RUN_STARTED reserved for POST run responses',
+      );
+    }
+    const events = assembler.accept(event);
     if (events.length === 0) {
       return;
     }
     const first = events[0] as AguiEvent;
-    /*
-     * Liveness passes straight through, touching neither the cursor nor the
-     * seen-set. It has no sequence — what it arrives with is whatever id the
-     * last durable frame carried — so recording it would mark a durable
-     * event as already delivered and drop the real one when it comes, and
-     * every piece of a message after the first would collide with the piece
-     * before it and be dropped in silence.
-     */
+    // Liveness passes straight through without turning its non-cursor into
+    // reconnect state. Cursorless interface boundaries were rejected above:
+    // this connection consumes GET history/tail, never a POST run response.
     if (first.ephemeral === true) {
       onEvent(first);
       return;
