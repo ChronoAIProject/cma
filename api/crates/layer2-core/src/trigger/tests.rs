@@ -10,6 +10,33 @@ use crate::{PermissionMode, SessionSize, SubjectId};
 const NOW: &str = "2026-08-26T12:00:00Z";
 const LATER: &str = "2026-08-26T12:01:00Z";
 
+pub(crate) fn session_launch(archive_sha256: &str) -> Launch {
+    let owner = SubjectId("trigger-contributor".into());
+    let mut launch = Launch::new(
+        owner,
+        revision(SubjectId("trigger-publisher".into())),
+        NOW,
+        "create-session-fixture",
+    )
+    .unwrap();
+    launch
+        .select_connection(connection(), NOW, "select-session-connection")
+        .unwrap();
+    let baseline = WorkspaceManifest::seal(launch.source_sha.clone(), Vec::new()).unwrap();
+    launch.workspace = Some(WorkspaceRecord {
+        baseline,
+        baseline_object_reference: "trigger-test/baseline.pack".into(),
+        baseline_archive_sha256: archive_sha256.into(),
+        latest_checkpoint: None,
+        previous_checkpoint: None,
+        workspace_epoch: 1,
+        retention_policy_id: "trigger-test-retention".into(),
+        delete_after: "2026-09-26T12:00:00Z".into(),
+    });
+    launch.state = LaunchState::SandboxPending;
+    launch
+}
+
 #[test]
 fn public_identifiers_are_opaque_and_type_checked() {
     let id = PublicTriggerId::new();

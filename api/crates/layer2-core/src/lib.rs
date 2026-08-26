@@ -172,15 +172,15 @@ pub use service::{
 };
 pub use session::{
     CallerCredential, RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus,
-    StopReason,
+    StopReason, TriggerSessionOrigin,
 };
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
 pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, OperationClaim,
     OperationReservation, OperationStore, Page, PageCursor, PageRequest, SessionListQuery,
-    SessionRecord, SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
-    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    SessionRecord, SessionStore, SessionWorkspaceSource, SkillPack, SkillSource, StoreError,
+    UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

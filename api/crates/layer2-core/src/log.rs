@@ -2133,6 +2133,7 @@ fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
     let mut record = SessionRecord::new(session);
     record.runtime_id = entry.runtime.as_ref().map(|handle| handle.0.clone());
     record.context_ref = entry.context_ref.clone();
+    record.trigger_origin = entry.trigger_origin.clone();
     record.revision = entry.event_log.revision.load(Ordering::Acquire);
     record
 }

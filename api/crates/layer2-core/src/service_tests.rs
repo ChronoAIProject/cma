@@ -7,7 +7,11 @@ use super::*;
 use crate::terminal::{ScreenSnapshot, TerminalGeometry};
 use crate::terminal_io::spawn_relay;
 use crate::test_support::{service, spec, user, FakeAdapter, FakeStore};
+use crate::SubjectId;
+use async_trait::async_trait;
 use layer3_adapter::TerminalOutput;
+use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A screen model that records what it was fed, so the relay's behaviour
 /// can be observed without a real terminal parser.
@@ -217,6 +221,362 @@ async fn a_runtime_is_advertised_as_what_it_says_it_can_be() {
             vec![SessionMode::Terminal, SessionMode::Conversation]
         )],
     );
+}
+
+struct TriggerWorkspaceBytes {
+    archive: Vec<u8>,
+    reads: AtomicUsize,
+}
+
+struct MalformedTriggerWorkspace;
+
+#[async_trait]
+impl crate::SessionWorkspaceSource for MalformedTriggerWorkspace {
+    async fn load_workspace(
+        &self,
+        _owner: &SubjectId,
+        _origin: &crate::TriggerSessionOrigin,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        Err(StoreError::Malformed(
+            "the workspace manifest did not match its object".into(),
+        ))
+    }
+}
+
+#[async_trait]
+impl crate::SessionWorkspaceSource for TriggerWorkspaceBytes {
+    async fn load_workspace(
+        &self,
+        _owner: &SubjectId,
+        _origin: &crate::TriggerSessionOrigin,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(self.archive.clone()))
+    }
+}
+
+struct TriggerCredential;
+
+#[async_trait]
+impl crate::CredentialSource for TriggerCredential {
+    async fn credential_for(
+        &self,
+        _session: &SessionId,
+        _subject: &SubjectId,
+        _services: &[crate::ServiceId],
+        _caller_credential: Option<&crate::CallerCredential>,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(Some("session-scoped-test-key".into()))
+    }
+
+    async fn release(&self, _session: &SessionId) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
+
+fn trigger_session_service(
+    archive: Vec<u8>,
+) -> (
+    Arc<SessionService>,
+    Arc<FakeStore>,
+    Arc<FakeAdapter>,
+    Arc<crate::test_support::FakeProfileStore>,
+    Arc<TriggerWorkspaceBytes>,
+) {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities {
+            conversation: true,
+            ..FakeAdapter::default().capabilities
+        },
+        ..FakeAdapter::default()
+    });
+    let profiles = Arc::new(crate::test_support::FakeProfileStore::default());
+    let workspaces = Arc::new(TriggerWorkspaceBytes {
+        archive,
+        reads: AtomicUsize::new(0),
+    });
+    let service = build_trigger_session_service(
+        store.clone(),
+        adapter.clone(),
+        profiles.clone(),
+        workspaces.clone(),
+    );
+    (service, store, adapter, profiles, workspaces)
+}
+
+fn build_trigger_session_service(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    profiles: Arc<crate::test_support::FakeProfileStore>,
+    workspaces: Arc<dyn crate::SessionWorkspaceSource>,
+) -> Arc<SessionService> {
+    let environments = EnvironmentProfileService::new(
+        profiles,
+        crate::Baseline::default(),
+        None,
+        None,
+        crate::AgentConfiguration {
+            kernel: KernelId::new("codex"),
+            mode: SessionMode::Conversation,
+            ..Default::default()
+        },
+        crate::test_support::unconfigured_settings(),
+    );
+    let mut adapters: HashMap<KernelId, Arc<dyn layer3_adapter::KernelAdapter>> = HashMap::new();
+    adapters.insert(KernelId::new("codex"), adapter.clone());
+    let factory: ScreenFactory = Arc::new(|geometry| {
+        Box::new(RecordingScreen {
+            geometry,
+            seen: Vec::new(),
+        })
+    });
+    let service = SessionService::new(
+        adapters,
+        factory,
+        store.clone(),
+        SessionPorts {
+            context: None,
+            credentials: Some(Arc::new(TriggerCredential)),
+            skills: None,
+            workspaces: Some(workspaces),
+            settings: None,
+        },
+        environments,
+        crate::test_support::owned(),
+    );
+    service
+        .retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    service
+}
+
+#[tokio::test]
+async fn trigger_session_creation_is_deterministic_and_hands_over_exact_workspace_bytes() {
+    let archive = b"versioned repository archive\0binary".to_vec();
+    let archive_sha256 = format!("{:x}", Sha256::digest(&archive));
+    let launch = crate::trigger::tests::session_launch(&archive_sha256);
+    let (service, store, adapter, profiles, workspaces) = trigger_session_service(archive.clone());
+
+    let (first, concurrent_retry) = tokio::join!(
+        service.ensure_trigger_session(&launch),
+        service.ensure_trigger_session(&launch)
+    );
+    let created = first.expect("the Trigger session is durably created");
+    assert_eq!(
+        concurrent_retry
+            .expect("a concurrent retry reconciles the same session")
+            .id,
+        created.id
+    );
+    let expected_id = format!("sesn_trg_{}", launch.id.0.replace('-', ""));
+    assert_eq!(created.id.0, expected_id);
+    assert_eq!(created.kernel, KernelId::new("codex"));
+    assert_eq!(created.options.mode, SessionMode::Conversation);
+    assert_eq!(
+        created.options.permission,
+        crate::PermissionMode::Autonomous
+    );
+    assert_eq!(created.options.credential, crate::CredentialMode::Delegated);
+    assert_eq!(created.options.size, Some(launch.effective.resource_size));
+    assert_eq!(
+        created.granted_services,
+        Some(vec![crate::ServiceId::new("service-1")])
+    );
+
+    for _ in 0..400 {
+        let ready = store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .is_some_and(|record| record.session.status == SessionStatus::Ready);
+        if ready && service.trigger_credential_ready(&created.id).await {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(service.trigger_credential_ready(&created.id).await);
+    let provisioned = adapter.last_spec.lock().await.clone().unwrap();
+    let workspace = provisioned.workspace.expect("workspace was handed over");
+    assert_eq!(workspace.archive, archive);
+    assert_eq!(workspace.archive_sha256, archive_sha256);
+    assert_eq!(workspace.source_revision, launch.source_sha);
+    assert_eq!(workspace.epoch, 1);
+
+    let public = serde_json::to_string(&created).unwrap();
+    assert!(!public.contains("trigger_origin"));
+    assert!(!public.contains("trigger-test/baseline.pack"));
+    assert!(!public.contains("session-scoped-test-key"));
+
+    let reconciled = service
+        .ensure_trigger_session(&launch)
+        .await
+        .expect("the exact durable session is reusable");
+    assert_eq!(reconciled.id, created.id);
+    assert_eq!(adapter.provision_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(profiles.profiles.lock().await.len(), 1);
+
+    let loaded_again = match service.workspace_for(&created.id).await {
+        Ok(Some(workspace)) => workspace,
+        Ok(None) => panic!("Trigger workspace remains required"),
+        Err(error) => panic!(
+            "replacement workspace source remains usable: {}",
+            error.reason
+        ),
+    };
+    assert_eq!(loaded_again.archive, workspace.archive);
+    assert!(workspaces.reads.load(Ordering::SeqCst) >= 2);
+
+    service.flush(&created.id).await;
+    let durable_origin = store
+        .get(&created.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .trigger_origin
+        .expect("a live-entry flush preserves internal Trigger provenance");
+    assert_eq!(durable_origin.launch_id, launch.id);
+
+    let restarted = build_trigger_session_service(
+        store.clone(),
+        adapter.clone(),
+        profiles.clone(),
+        workspaces.clone(),
+    );
+    let reclaimed = restarted.reconcile().await;
+    assert_eq!(reclaimed.readopted_sessions, 1);
+    let readopted_origin = restarted
+        .entries
+        .read()
+        .await
+        .get(&created.id)
+        .and_then(|entry| entry.trigger_origin.clone())
+        .expect("readoption restores internal Trigger provenance");
+    assert_eq!(readopted_origin, durable_origin);
+    restarted.flush(&created.id).await;
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .trigger_origin
+            .unwrap(),
+        durable_origin
+    );
+}
+
+#[tokio::test]
+async fn trigger_managed_profiles_and_occupied_session_identities_fail_closed() {
+    let archive = b"archive".to_vec();
+    let archive_sha256 = format!("{:x}", Sha256::digest(&archive));
+    let launch = crate::trigger::tests::session_launch(&archive_sha256);
+    let (service, store, _adapter, profiles, _workspaces) = trigger_session_service(archive);
+    let created = service.ensure_trigger_session(&launch).await.unwrap();
+    let profile_id = created.environment_profile.clone().unwrap();
+    let owner = user("trigger-contributor");
+
+    assert_eq!(
+        service
+            .environments()
+            .delete(&owner, &profile_id)
+            .await
+            .unwrap_err(),
+        CoreError::Forbidden
+    );
+
+    let original_profile = profiles
+        .profiles
+        .lock()
+        .await
+        .get(&profile_id.0)
+        .cloned()
+        .unwrap();
+    profiles
+        .profiles
+        .lock()
+        .await
+        .get_mut(&profile_id.0)
+        .unwrap()
+        .name = "occupied by different configuration".into();
+    let profile_error = service
+        .ensure_trigger_session(&launch)
+        .await
+        .expect_err("a changed deterministic profile is never overwritten");
+    assert!(matches!(profile_error, CoreError::InvalidRequest(_)));
+    assert_eq!(
+        profiles
+            .profiles
+            .lock()
+            .await
+            .get(&profile_id.0)
+            .unwrap()
+            .name,
+        "occupied by different configuration"
+    );
+    profiles
+        .profiles
+        .lock()
+        .await
+        .insert(profile_id.0.clone(), original_profile);
+    let current = service
+        .environments()
+        .get(&owner, &profile_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .environments()
+            .update(&owner, &profile_id, current.to_spec())
+            .await
+            .unwrap_err(),
+        CoreError::Forbidden
+    );
+
+    let mut corrupted = store.get(&created.id).await.unwrap().unwrap();
+    corrupted.trigger_origin.as_mut().unwrap().revision_digest = "f".repeat(64);
+    store
+        .commit_session_idempotent("corrupt-trigger-origin", &corrupted, &[])
+        .await
+        .unwrap();
+    let error = service
+        .ensure_trigger_session(&launch)
+        .await
+        .expect_err("an occupied different identity is never overwritten");
+    assert!(matches!(error, CoreError::InvalidRequest(_)));
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .trigger_origin
+            .unwrap()
+            .revision_digest,
+        "f".repeat(64)
+    );
+}
+
+#[tokio::test]
+async fn malformed_trigger_workspace_authority_is_not_retried() {
+    let archive = b"archive".to_vec();
+    let archive_sha256 = format!("{:x}", Sha256::digest(&archive));
+    let launch = crate::trigger::tests::session_launch(&archive_sha256);
+    let (service, store, adapter, profiles, _workspaces) = trigger_session_service(archive);
+    let created = service.ensure_trigger_session(&launch).await.unwrap();
+    let malformed = build_trigger_session_service(
+        store,
+        adapter,
+        profiles,
+        Arc::new(MalformedTriggerWorkspace),
+    );
+
+    let error = malformed
+        .workspace_for(&created.id)
+        .await
+        .expect_err("malformed durable authority is a permanent integrity failure");
+    assert!(!error.retryable);
+    assert!(error.reason.contains("malformed"));
 }
 
 #[tokio::test]

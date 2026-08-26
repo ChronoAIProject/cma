@@ -53,6 +53,7 @@ impl SessionService {
             context,
             credentials,
             skills,
+            workspaces,
             settings,
         } = ports;
         let sequences = Arc::new(crate::sequence::Sequences::default());
@@ -67,6 +68,7 @@ impl SessionService {
             conversation_order_gates: Default::default(),
             prompt_gates: Default::default(),
             skills,
+            workspaces,
             sequences,
             event_logs,
             starting: RwLock::new(HashSet::new()),
@@ -279,6 +281,17 @@ impl SessionService {
         caller: &Caller,
         spec: SessionSpec,
     ) -> Result<Session, CoreError> {
+        self.create_session_with_identity(caller, spec, SessionId::generate(), None)
+            .await
+    }
+
+    async fn create_session_with_identity(
+        self: &Arc<Self>,
+        caller: &Caller,
+        spec: SessionSpec,
+        id: SessionId,
+        trigger_origin: Option<crate::TriggerSessionOrigin>,
+    ) -> Result<Session, CoreError> {
         caller.authorization.require(Capability::CreateSession)?;
         // Checked before anything is recorded: a selection this caller may not
         // use, or a store that cannot be read, must fail the request rather
@@ -409,7 +422,6 @@ impl SessionService {
             .await?;
 
         let geometry = spec.geometry.unwrap_or_default();
-        let id = SessionId::generate();
         let session = Session {
             id: id.clone(),
             owner: caller.subject.clone(),
@@ -446,6 +458,7 @@ impl SessionService {
         };
 
         let mut record = SessionRecord::new(session.clone());
+        record.trigger_origin = trigger_origin;
         if let Err(error) = self
             .create_durably(
                 &mut record,
@@ -517,6 +530,142 @@ impl SessionService {
         Ok(record.session)
     }
 
+    /// Ensure the one deterministic Codex session owned by a Trigger Launch.
+    ///
+    /// The durable Launch is the authority. No browser credential is retained
+    /// or forwarded: credential custody resolves the owner's current token when
+    /// detached provisioning mints the session-scoped NyxID key.
+    pub async fn ensure_trigger_session(
+        self: &Arc<Self>,
+        launch: &crate::Launch,
+    ) -> Result<Session, CoreError> {
+        let workspace = launch.workspace.as_ref().ok_or_else(|| {
+            CoreError::InvalidRequest("the Launch workspace has not been imported".into())
+        })?;
+        workspace
+            .baseline
+            .validate()
+            .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+        let connection = launch.connection.as_ref().ok_or_else(|| {
+            CoreError::InvalidRequest("the Launch GitHub connection is not frozen".into())
+        })?;
+        let origin = crate::TriggerSessionOrigin {
+            launch_id: launch.id.clone(),
+            revision_digest: launch.revision_digest.clone(),
+            sandbox_profile: launch.revision.content.session.sandbox_profile.clone(),
+            github_service_id: connection.service_id.clone(),
+            workspace_epoch: workspace.workspace_epoch,
+            source_revision: launch.source_sha.clone(),
+            manifest_digest: workspace.baseline.digest.clone(),
+            object_reference: workspace.baseline_object_reference.clone(),
+            archive_sha256: workspace.baseline_archive_sha256.clone(),
+        };
+        origin
+            .validate()
+            .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+        if launch.effective.permission == crate::PermissionMode::Unrestricted {
+            return Err(CoreError::InvalidRequest(
+                "unrestricted permission is not allowed for a Trigger session".into(),
+            ));
+        }
+
+        let mut agent = self.environments.default_agent().clone();
+        agent.kernel = KernelId::new("codex");
+        agent.mode = SessionMode::Conversation;
+        agent.permission = launch.effective.permission;
+        agent.credential = crate::CredentialMode::Delegated;
+        agent.size = Some(launch.effective.resource_size);
+        agent.record_tool_bodies = false;
+        let profile_spec = crate::EnvironmentProfileSpec {
+            name: format!("CMA Trigger {}", launch.id),
+            agent,
+            variables: Vec::new(),
+            packages: Vec::new(),
+            services: vec![crate::ServiceId::new(connection.service_id.clone())],
+            agent_notes: String::new(),
+        };
+        let profile = self
+            .environments
+            .ensure_trigger_profile(&launch.owner, &origin, profile_spec)
+            .await?;
+        let id = origin
+            .session_id()
+            .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+        let expected_services = self
+            .environments
+            .services_for(&launch.owner, Some(&profile.id))
+            .await;
+        let expected_options = AgentOptions {
+            mode: profile.agent.mode,
+            model: profile.agent.model.clone(),
+            reasoning_effort: profile.agent.reasoning_effort,
+            permission: profile.agent.permission,
+            credential: profile.agent.credential,
+            size: profile.agent.size,
+            record_tool_bodies: profile.agent.record_tool_bodies,
+        };
+
+        // One process cannot race itself. Mongo's create-only transaction is
+        // the cross-process fence; a losing replica rereads and verifies below.
+        let creation = self.lock_lifecycle(&id).await;
+        if let Some(record) = self.store.get(&id).await.map_err(store_failed)? {
+            let session = verify_trigger_session_record(
+                &record,
+                &origin,
+                &launch.owner,
+                &profile.id,
+                &expected_options,
+                &expected_services,
+            )?;
+            drop(creation);
+            return Ok(session);
+        }
+
+        let caller = Caller::new(
+            launch.owner.clone(),
+            crate::Authorization::from_capabilities([
+                Capability::CreateSession,
+                Capability::ManageOwnEnvironmentProfiles,
+            ]),
+        );
+        let spec = SessionSpec {
+            options: AgentOptions::default(),
+            geometry: None,
+            environment_profile: Some(profile.id.clone()),
+            caller_credential: None,
+            runtime_credential: None,
+            requested_mode: Some(SessionMode::Conversation),
+            quoted_rate_card: None,
+        };
+        let attempted = self
+            .create_session_with_identity(&caller, spec, id.clone(), Some(origin.clone()))
+            .await;
+        drop(creation);
+        match attempted {
+            Ok(session) => Ok(session),
+            Err(original) => match self.store.get(&id).await {
+                Ok(Some(record)) => verify_trigger_session_record(
+                    &record,
+                    &origin,
+                    &launch.owner,
+                    &profile.id,
+                    &expected_options,
+                    &expected_services,
+                ),
+                _ => Err(original),
+            },
+        }
+    }
+
+    /// Whether the current runtime acknowledged its session-scoped credential.
+    pub async fn trigger_credential_ready(&self, id: &SessionId) -> bool {
+        self.entries
+            .read()
+            .await
+            .get(id)
+            .is_some_and(|entry| entry.subject_credential.is_some())
+    }
+
     /// Fail unless the caller owns this live session and it is still running.
     ///
     /// Scoped to live sessions on purpose: this guards the terminal-driving
@@ -544,6 +693,35 @@ impl SessionService {
             }
         }
     }
+}
+
+fn verify_trigger_session_record(
+    record: &SessionRecord,
+    origin: &crate::TriggerSessionOrigin,
+    owner: &crate::SubjectId,
+    profile_id: &crate::EnvironmentProfileId,
+    expected_options: &AgentOptions,
+    expected_services: &[crate::ServiceId],
+) -> Result<Session, CoreError> {
+    let session = &record.session;
+    let exact = record.trigger_origin.as_ref() == Some(origin)
+        && session.id
+            == origin
+                .session_id()
+                .map_err(|error| CoreError::InvalidRequest(error.to_string()))?
+        && &session.owner == owner
+        && session.environment_profile.as_ref() == Some(profile_id)
+        && session.kernel == KernelId::new("codex")
+        && &session.options == expected_options
+        && session.capabilities.conversation
+        && session.granted_services.as_deref() == Some(expected_services);
+    if !exact {
+        return Err(CoreError::InvalidRequest(
+            "the deterministic Trigger session identity is occupied by different authority or configuration"
+                .into(),
+        ));
+    }
+    Ok(session.clone())
 }
 
 /// Render a storage failure as a core error.
