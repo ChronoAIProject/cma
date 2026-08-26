@@ -6,10 +6,10 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use layer2_core::{
-    AuthorityProvenance, ConnectedAccount, ConnectionSnapshot, ConnectionState, DelegationState,
-    ForkRecord, Launch, LaunchAuthority, PublisherAuthority, PublisherRepositoryRole,
-    RepositoryIdentity, RepositoryVisibility, ScopeClass, SourceMode, SubjectId,
-    TriggerAuthorityVerifier, TriggerConnection, TriggerConnectionAuthorization,
+    AuthorityProvenance, BranchRecord, ConnectedAccount, ConnectionSnapshot, ConnectionState,
+    DelegationState, ForkRecord, Launch, LaunchAuthority, PublisherAuthority,
+    PublisherRepositoryRole, RepositoryIdentity, RepositoryVisibility, ScopeClass, SourceMode,
+    SubjectId, TriggerAuthorityVerifier, TriggerConnection, TriggerConnectionAuthorization,
     TriggerConnectionManager, TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent,
     TriggerServiceError,
 };
@@ -19,6 +19,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::auth::AuthState;
+
+mod workspace;
+pub(crate) use workspace::{ImportedWorkspace, WorkspaceContext, WorkspaceUnsupported};
 
 const GITHUB_SERVICE_SLUG: &str = "api-github";
 const GITHUB_PROVIDER_ID: &str = "github";
@@ -59,6 +62,10 @@ pub(crate) enum GithubBrokerError {
     ForkingDisabled,
     #[error("the connected account's fork-network slot is occupied")]
     ForkNetworkOccupied,
+    #[error("the launch branch already points at a different commit")]
+    BranchHeadConflict,
+    #[error("the repository workspace is unsupported: {0}")]
+    UnsupportedWorkspace(WorkspaceUnsupported),
     #[error("the provider rejected the typed request with HTTP {status}")]
     Rejected { status: u16 },
     #[error("provider data is malformed: {0}")]
@@ -87,6 +94,8 @@ impl From<GithubBrokerError> for TriggerServiceError {
             GithubBrokerError::AmbiguousWrite => Authority::Transient,
             GithubBrokerError::ForkingDisabled => Authority::UpstreamNotForkable,
             GithubBrokerError::ForkNetworkOccupied => Authority::ForkNetworkOccupied,
+            GithubBrokerError::BranchHeadConflict => Authority::ProviderRejected,
+            GithubBrokerError::UnsupportedWorkspace(_) => Authority::ProviderRejected,
             GithubBrokerError::Rejected { .. } => Authority::ProviderRejected,
             GithubBrokerError::Malformed(_) => Authority::MalformedEvidence,
         };
@@ -174,6 +183,12 @@ pub(crate) enum ForkReconciliation {
     Ready(ForkRecord),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BranchReconciliation {
+    Absent,
+    Ready(BranchRecord),
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ForkContext {
     pub owner: SubjectId,
@@ -194,6 +209,42 @@ impl TryFrom<&Launch> for ForkContext {
             upstream: launch.revision.content.upstream.repository.clone(),
             source_sha: launch.source_sha.clone(),
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BranchContext {
+    pub owner: SubjectId,
+    pub launch_id: String,
+    pub connection: ConnectionSnapshot,
+    pub fork: ForkRecord,
+    pub source_sha: String,
+}
+
+impl BranchContext {
+    pub(crate) fn branch_name(&self) -> String {
+        format!("cma/{}", self.launch_id)
+    }
+}
+
+impl TryFrom<&Launch> for BranchContext {
+    type Error = GithubBrokerError;
+
+    fn try_from(launch: &Launch) -> Result<Self, Self::Error> {
+        let context = Self {
+            owner: launch.owner.clone(),
+            launch_id: launch.id.0.clone(),
+            connection: launch.connection.clone().ok_or_else(|| {
+                GithubBrokerError::Malformed("the Launch has no selected connection".into())
+            })?,
+            fork: launch.fork.clone().ok_or_else(|| {
+                GithubBrokerError::Malformed("the Launch has no reconciled fork".into())
+            })?,
+            source_sha: launch.source_sha.clone(),
+        };
+        repository_ref_components(&context.branch_name())?;
+        validate_commit_sha(&context.source_sha)?;
+        Ok(context)
     }
 }
 
@@ -712,6 +763,139 @@ impl GithubBroker {
             canonical_url: fork.html_url,
             ready_at: layer2_core::rfc3339_at(SystemTime::now()),
         }))
+    }
+
+    /// Read the launch ref without ever changing it.
+    ///
+    /// The fork is first re-resolved by numeric repository identity. A stored
+    /// owner/name pair is display data, not authority, and must not steer a
+    /// later write after a rename or ownership change.
+    pub(crate) async fn reconcile_branch(
+        &self,
+        context: &BranchContext,
+    ) -> Result<BranchReconciliation, GithubBrokerError> {
+        let repository = self.current_branch_fork(context).await?;
+        let branch = context.branch_name();
+        match self
+            .resolve_branch_sha(
+                &context.owner,
+                &context.connection.service_id,
+                &repository,
+                &branch,
+            )
+            .await
+        {
+            Ok(head) if head == context.source_sha.to_ascii_lowercase() => Ok(
+                BranchReconciliation::Ready(branch_record(context, &repository, head)?),
+            ),
+            Ok(_) => Err(GithubBrokerError::BranchHeadConflict),
+            Err(GithubBrokerError::NotFound) => Ok(BranchReconciliation::Absent),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Create the stable launch ref after a read-only absence proof.
+    ///
+    /// An unknown POST result is deliberately collapsed to `AmbiguousWrite`.
+    /// The worker may only call `reconcile_branch` after that; it never earns a
+    /// second write merely because the first response was lost.
+    pub(crate) async fn create_branch(
+        &self,
+        context: &BranchContext,
+    ) -> Result<BranchReconciliation, GithubBrokerError> {
+        match self.reconcile_branch(context).await? {
+            BranchReconciliation::Absent => {}
+            ready => return Ok(ready),
+        }
+
+        let repository = self.current_branch_fork(context).await?;
+        self.require_commit(
+            &context.owner,
+            &context.connection.service_id,
+            &repository,
+            &context.source_sha,
+        )
+        .await?;
+
+        // Last call before the provider write: ordinary token refresh is fine,
+        // but service/key/account/scope drift invalidates the retained grant.
+        let fresh = self
+            .preflight_connection(&context.owner, &context.connection.service_id)
+            .await?;
+        if connection_drifted(&context.connection, &fresh.snapshot) {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+
+        let branch = context.branch_name();
+        let response: Observed<GithubRefWire> = self
+            .github_json(
+                &context.owner,
+                &context.connection.service_id,
+                Method::POST,
+                &[
+                    "repos",
+                    repository.canonical_owner.as_str(),
+                    repository.canonical_name.as_str(),
+                    "git",
+                    "refs",
+                ],
+                &[],
+                Some(serde_json::json!({
+                    "ref": format!("refs/heads/{branch}"),
+                    "sha": context.source_sha,
+                })),
+            )
+            .await
+            .map_err(|error| {
+                if matches!(
+                    error,
+                    GithubBrokerError::Transient { .. }
+                        | GithubBrokerError::Malformed(_)
+                        | GithubBrokerError::AmbiguousWrite
+                ) {
+                    GithubBrokerError::AmbiguousWrite
+                } else {
+                    error
+                }
+            })?;
+        if response.value.reference != format!("refs/heads/{branch}")
+            || response.value.object.kind != "commit"
+            || response.value.object.sha.to_ascii_lowercase()
+                != context.source_sha.to_ascii_lowercase()
+        {
+            return Err(GithubBrokerError::AmbiguousWrite);
+        }
+        Ok(BranchReconciliation::Ready(branch_record(
+            context,
+            &repository,
+            response.value.object.sha.to_ascii_lowercase(),
+        )?))
+    }
+
+    async fn current_branch_fork(
+        &self,
+        context: &BranchContext,
+    ) -> Result<RepositoryIdentity, GithubBrokerError> {
+        let expected = &context.fork.repository;
+        let mut observed = self
+            .repository_by_id(
+                &context.owner,
+                &context.connection.service_id,
+                expected.repository_id,
+            )
+            .await?;
+        observed.identity.selected_ref = expected.selected_ref.clone();
+        if observed.identity != *expected
+            || observed.archived
+            || observed.disabled
+            || observed.html_url != context.fork.canonical_url
+            || observed.identity.owner_id != context.connection.account.account_id
+            || observed.identity.owner_node_id != context.connection.account.account_node_id
+        {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        validate_repository_url(&observed.html_url, &observed.identity)?;
+        Ok(observed.identity)
     }
 
     async fn require_commit(
@@ -1391,6 +1575,12 @@ struct GithubTreeEntryWire {
     path: String,
     #[serde(rename = "type")]
     kind: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    sha: Option<String>,
+    #[serde(default)]
+    size: Option<u64>,
 }
 
 fn connection_state(service: &UserServiceWire, evidence: &KeyAuthorizationWire) -> ConnectionState {
@@ -1469,6 +1659,34 @@ fn validate_repository_url(
         ));
     }
     Ok(())
+}
+
+fn branch_record(
+    context: &BranchContext,
+    repository: &RepositoryIdentity,
+    current_head: String,
+) -> Result<BranchRecord, GithubBrokerError> {
+    let branch = context.branch_name();
+    let mut url = Url::parse(&context.fork.canonical_url)
+        .map_err(|_| GithubBrokerError::Malformed("the fork URL is invalid".into()))?;
+    validate_repository_url(url.as_str(), repository)?;
+    {
+        let mut segments = url.path_segments_mut().map_err(|_| {
+            GithubBrokerError::Malformed("the fork URL cannot carry a branch path".into())
+        })?;
+        segments.pop_if_empty();
+        segments.push("tree");
+        for component in repository_ref_components(&branch)? {
+            segments.push(component);
+        }
+    }
+    Ok(BranchRecord {
+        name: branch,
+        expected_head: context.source_sha.to_ascii_lowercase(),
+        current_head,
+        canonical_url: url.into(),
+        created_at: layer2_core::rfc3339_at(SystemTime::now()),
+    })
 }
 
 fn normalize_scopes(scopes: Vec<String>) -> Result<Vec<String>, GithubBrokerError> {
@@ -1658,6 +1876,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
+    use sha2::Digest as _;
 
     const NONCE: &str = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -1695,9 +1914,15 @@ mod tests {
         fork_parent_id: Option<u64>,
         allow_forking: bool,
         tree_truncated: bool,
+        workspace_tree: bool,
+        workspace_lfs: bool,
         ambiguous_fork_post: bool,
         fork_appears_after_post: bool,
         post_seen: Arc<AtomicBool>,
+        branch_head: Option<String>,
+        ambiguous_branch_post: bool,
+        branch_appears_after_post: bool,
+        branch_post_seen: Arc<AtomicBool>,
     }
 
     impl Default for Fixture {
@@ -1712,9 +1937,15 @@ mod tests {
                 fork_parent_id: Some(10),
                 allow_forking: true,
                 tree_truncated: false,
+                workspace_tree: false,
+                workspace_lfs: false,
                 ambiguous_fork_post: false,
                 fork_appears_after_post: false,
                 post_seen: Arc::new(AtomicBool::new(false)),
+                branch_head: None,
+                ambiguous_branch_post: false,
+                branch_appears_after_post: false,
+                branch_post_seen: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -1805,6 +2036,87 @@ mod tests {
                     { "path": ".github/workflows", "type": "tree", "sha": "directory" }
                 ]
             }),
+            (
+                "GET",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ) if fixture.workspace_tree => {
+                let tree = if fixture.workspace_lfs {
+                    vec![json!({
+                        "path": ".gitattributes",
+                        "type": "blob",
+                        "mode": "100644",
+                        "sha": "2d1978c67ec2de07e3a068b676596fb7902535e8",
+                        "size": 26
+                    })]
+                } else {
+                    vec![
+                        json!({
+                            "path": "README.md",
+                            "type": "blob",
+                            "mode": "100755",
+                            "sha": "ce013625030ba8dba906f756967f9e9ca394464a",
+                            "size": 6
+                        }),
+                        json!({
+                            "path": "bin",
+                            "type": "tree",
+                            "mode": "040000",
+                            "sha": "1111111111111111111111111111111111111111"
+                        }),
+                        json!({
+                            "path": "bin/data.bin",
+                            "type": "blob",
+                            "mode": "100644",
+                            "sha": "046f393ee9d8a6a0754b8ddadce727b4ce35f272",
+                            "size": 3
+                        }),
+                        json!({
+                            "path": "readme-link",
+                            "type": "blob",
+                            "mode": "120000",
+                            "sha": "42061c01a1c70097d1e4579f29a5adf40abdec95",
+                            "size": 9
+                        }),
+                    ]
+                };
+                json!({ "truncated": fixture.tree_truncated, "tree": tree })
+            }
+            (
+                "GET",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/blobs/ce013625030ba8dba906f756967f9e9ca394464a",
+            ) => json!({
+                "sha": "ce013625030ba8dba906f756967f9e9ca394464a",
+                "size": 6,
+                "encoding": "base64",
+                "content": "aGVsbG8K\n"
+            }),
+            (
+                "GET",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/blobs/046f393ee9d8a6a0754b8ddadce727b4ce35f272",
+            ) => json!({
+                "sha": "046f393ee9d8a6a0754b8ddadce727b4ce35f272",
+                "size": 3,
+                "encoding": "base64",
+                "content": "AP8B"
+            }),
+            (
+                "GET",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/blobs/42061c01a1c70097d1e4579f29a5adf40abdec95",
+            ) => json!({
+                "sha": "42061c01a1c70097d1e4579f29a5adf40abdec95",
+                "size": 9,
+                "encoding": "base64",
+                "content": "UkVBRE1FLm1k"
+            }),
+            (
+                "GET",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/blobs/2d1978c67ec2de07e3a068b676596fb7902535e8",
+            ) => json!({
+                "sha": "2d1978c67ec2de07e3a068b676596fb7902535e8",
+                "size": 26,
+                "encoding": "base64",
+                "content": "Ki5iaW4gZmlsdGVyPWxmcyBkaWZmPWxmcwo="
+            }),
             ("GET", "/api/v1/proxy/s/api-github/user/repos") => fixture
                 .fork_parent_id
                 .or_else(|| {
@@ -1828,6 +2140,42 @@ mod tests {
             }
             ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") => {
                 json!({ "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })
+            }
+            (
+                "GET",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test",
+            ) => {
+                let head = fixture.branch_head.clone().or_else(|| {
+                    (fixture.branch_appears_after_post
+                        && fixture.branch_post_seen.load(Ordering::SeqCst))
+                    .then(|| "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string())
+                });
+                let Some(head) = head else {
+                    return (StatusCode::NOT_FOUND, Json(json!({ "message": "not found" })));
+                };
+                json!({
+                    "ref": "refs/heads/cma/lnch_test",
+                    "object": { "sha": head, "type": "commit" }
+                })
+            }
+            (
+                "POST",
+                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/refs",
+            ) => {
+                fixture.branch_post_seen.store(true, Ordering::SeqCst);
+                if fixture.ambiguous_branch_post {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "response lost after ref create" })),
+                    );
+                }
+                json!({
+                    "ref": "refs/heads/cma/lnch_test",
+                    "object": {
+                        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "type": "commit"
+                    }
+                })
             }
             ("POST", "/api/v1/proxy/s/api-github/repos/owner/upstream/forks") => {
                 fixture.post_seen.store(true, Ordering::SeqCst);
@@ -1951,6 +2299,36 @@ mod tests {
                 fork_source_id: None,
             },
             source_sha: "a".repeat(40),
+        }
+    }
+
+    fn branch_context() -> BranchContext {
+        let fork = fork_context();
+        BranchContext {
+            owner: fork.owner.clone(),
+            launch_id: "lnch_test".into(),
+            connection: fork.connection.clone(),
+            fork: ForkRecord {
+                repository: RepositoryIdentity {
+                    repository_id: 30,
+                    repository_node_id: "R_fork".into(),
+                    owner_id: 21,
+                    owner_node_id: "U_kgDOBQ".into(),
+                    canonical_owner: "contributor".into(),
+                    canonical_name: "upstream".into(),
+                    visibility: RepositoryVisibility::Public,
+                    allow_forking: true,
+                    default_branch: "main".into(),
+                    selected_ref: "main".into(),
+                    fork_parent_id: Some(10),
+                    fork_source_id: Some(10),
+                },
+                reused: true,
+                source_revision: fork.source_sha.clone(),
+                canonical_url: "https://github.com/contributor/upstream".into(),
+                ready_at: "2026-08-26T01:02:05Z".into(),
+            },
+            source_sha: fork.source_sha,
         }
     }
 
@@ -2366,6 +2744,213 @@ mod tests {
             1
         );
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn launch_branch_is_created_once_at_the_exact_source_without_force() {
+        let (base_url, requests, server) = fixture_server(Fixture::default()).await;
+        let result = broker(&base_url, true)
+            .create_branch(&branch_context())
+            .await
+            .expect("create branch");
+        server.abort();
+
+        let BranchReconciliation::Ready(branch) = result else {
+            panic!("expected a ready branch");
+        };
+        assert_eq!(branch.name, "cma/lnch_test");
+        assert_eq!(branch.expected_head, "a".repeat(40));
+        assert_eq!(branch.current_head, "a".repeat(40));
+        assert_eq!(
+            branch.canonical_url,
+            "https://github.com/contributor/upstream/tree/cma/lnch_test"
+        );
+        let requests = requests.lock().await;
+        let posts: Vec<_> = requests
+            .iter()
+            .filter(|request| request.method == "POST")
+            .collect();
+        assert_eq!(posts.len(), 1);
+        assert_eq!(
+            posts[0].uri,
+            "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/refs?_nyxid_via=service-1"
+        );
+        assert_eq!(
+            posts[0].body,
+            Some(json!({
+                "ref": "refs/heads/cma/lnch_test",
+                "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }))
+        );
+        assert!(posts[0]
+            .body
+            .as_ref()
+            .is_some_and(|body| body.get("force").is_none()));
+    }
+
+    #[tokio::test]
+    async fn ambiguous_branch_create_is_reconciled_without_a_second_post() {
+        let fixture = Fixture {
+            ambiguous_branch_post: true,
+            branch_appears_after_post: true,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let broker = broker(&base_url, true);
+        let context = branch_context();
+
+        assert!(matches!(
+            broker.create_branch(&context).await,
+            Err(GithubBrokerError::AmbiguousWrite)
+        ));
+        assert!(matches!(
+            broker.reconcile_branch(&context).await,
+            Ok(BranchReconciliation::Ready(_))
+        ));
+        server.abort();
+
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.method == "POST")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn occupied_launch_ref_is_never_reset_or_recreated() {
+        let fixture = Fixture {
+            branch_head: Some("b".repeat(40)),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, true)
+            .create_branch(&branch_context())
+            .await;
+        server.abort();
+
+        assert!(matches!(result, Err(GithubBrokerError::BranchHeadConflict)));
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
+    async fn workspace_import_preserves_binary_executable_and_symlink_identity() {
+        let fixture = Fixture {
+            branch_head: Some("a".repeat(40)),
+            workspace_tree: true,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let imported = broker(&base_url, true)
+            .import_workspace(&WorkspaceContext {
+                branch: branch_context(),
+            })
+            .await
+            .expect("import workspace");
+        server.abort();
+
+        imported.manifest.validate().expect("sealed manifest");
+        assert_eq!(imported.manifest.source_revision, "a".repeat(40));
+        assert_eq!(imported.manifest.entries.len(), 3);
+        assert_eq!(imported.manifest.total_bytes, 18);
+        let executable = imported
+            .manifest
+            .entries
+            .iter()
+            .find(|entry| entry.path == "README.md")
+            .unwrap();
+        assert_eq!(executable.mode, 0o100755);
+        let binary = imported
+            .manifest
+            .entries
+            .iter()
+            .find(|entry| entry.path == "bin/data.bin")
+            .unwrap();
+        assert_eq!(
+            binary.provider_object_id.as_deref(),
+            Some("046f393ee9d8a6a0754b8ddadce727b4ce35f272")
+        );
+        let symlink = imported
+            .manifest
+            .entries
+            .iter()
+            .find(|entry| entry.path == "readme-link")
+            .unwrap();
+        assert_eq!(symlink.kind, layer2_core::WorkspaceEntryKind::Symlink);
+        assert_eq!(symlink.symlink_target.as_deref(), Some("README.md"));
+        assert_eq!(
+            imported.archive_sha256,
+            format!("{:x}", sha2::Sha256::digest(&imported.archive))
+        );
+        let requests = requests.lock().await;
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.uri.contains("/git/blobs/"))
+                .count(),
+            3
+        );
+        assert!(requests.iter().all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
+    async fn workspace_import_refuses_truncated_tree_before_any_blob_read() {
+        let fixture = Fixture {
+            branch_head: Some("a".repeat(40)),
+            workspace_tree: true,
+            tree_truncated: true,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, true)
+            .import_workspace(&WorkspaceContext {
+                branch: branch_context(),
+            })
+            .await;
+        server.abort();
+
+        assert!(matches!(
+            result,
+            Err(GithubBrokerError::UnsupportedWorkspace(
+                WorkspaceUnsupported::TreeIncomplete
+            ))
+        ));
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| !request.uri.contains("/git/blobs/")));
+    }
+
+    #[tokio::test]
+    async fn workspace_import_refuses_lfs_attributes() {
+        let fixture = Fixture {
+            branch_head: Some("a".repeat(40)),
+            workspace_tree: true,
+            workspace_lfs: true,
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let result = broker(&base_url, true)
+            .import_workspace(&WorkspaceContext {
+                branch: branch_context(),
+            })
+            .await;
+        server.abort();
+
+        assert!(matches!(
+            result,
+            Err(GithubBrokerError::UnsupportedWorkspace(
+                WorkspaceUnsupported::LargeFileStorage
+            ))
+        ));
     }
 
     #[tokio::test]

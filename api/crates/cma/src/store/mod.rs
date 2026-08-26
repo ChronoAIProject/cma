@@ -18,6 +18,7 @@ pub mod settings;
 pub mod tickets;
 pub mod token;
 pub mod trigger;
+pub mod trigger_workspace;
 
 use std::time::Duration;
 
@@ -34,6 +35,7 @@ pub use operation::MongoOperationStore;
 pub use settings::MongoPlatformSettingsStore;
 pub use tickets::MongoTerminalTicketStore;
 pub use trigger::MongoTriggerStore;
+pub use trigger_workspace::ChronoStorageTriggerWorkspaceStore;
 
 pub(crate) use encryption::AuthEncryptionKey;
 

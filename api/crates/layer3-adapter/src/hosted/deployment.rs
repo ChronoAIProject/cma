@@ -167,6 +167,10 @@ impl Deployment {
                 "CHRONO_RUNTIME_ROWS".to_string(),
                 spec.size.rows.to_string(),
             ),
+            (
+                "CHRONO_RUNTIME_WORKSPACE".to_string(),
+                self.shape.workspace.clone(),
+            ),
         ])
     }
 
