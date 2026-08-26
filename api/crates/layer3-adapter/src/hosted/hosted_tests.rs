@@ -32,6 +32,111 @@ async fn credential_waiter_count(kernel: &HostedKernel) -> usize {
     kernel.credential_waiters.0.lock().await.len()
 }
 
+struct WorkspaceFixture {
+    base_url: String,
+    server: tokio::task::JoinHandle<Vec<(String, Vec<u8>)>>,
+}
+
+impl WorkspaceFixture {
+    async fn finish(self) -> Vec<(String, Vec<u8>)> {
+        tokio::time::timeout(std::time::Duration::from_secs(2), self.server)
+            .await
+            .expect("the workspace fixture received every request")
+            .expect("the workspace fixture did not panic")
+    }
+}
+
+async fn read_http_request(stream: &mut tokio::net::TcpStream) -> (String, Vec<u8>) {
+    let mut received = Vec::new();
+    let header_end = loop {
+        if let Some(position) = received.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position + 4;
+        }
+        let mut chunk = [0_u8; 4096];
+        let read = stream.read(&mut chunk).await.expect("fixture reads");
+        assert!(read > 0, "request ended before its headers");
+        received.extend_from_slice(&chunk[..read]);
+    };
+    let headers = String::from_utf8(received[..header_end].to_vec()).expect("headers are text");
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length").then(|| {
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .expect("content length is numeric")
+            })
+        })
+        .unwrap_or_default();
+    while received.len() - header_end < content_length {
+        let mut chunk = [0_u8; 4096];
+        let read = stream.read(&mut chunk).await.expect("fixture reads body");
+        assert!(read > 0, "request ended before its body");
+        received.extend_from_slice(&chunk[..read]);
+    }
+    (
+        headers,
+        received[header_end..header_end + content_length].to_vec(),
+    )
+}
+
+async fn write_json(stream: &mut tokio::net::TcpStream, body: serde_json::Value) {
+    let body = body.to_string();
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .expect("fixture responds");
+    stream.shutdown().await.expect("fixture closes");
+}
+
+async fn workspace_fixture(
+    readiness: serde_json::Value,
+    acknowledgement: Option<serde_json::Value>,
+) -> WorkspaceFixture {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("workspace fixture binds");
+    let address = listener
+        .local_addr()
+        .expect("workspace fixture has address");
+    let expected = if acknowledgement.is_some() { 3 } else { 2 };
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for ordinal in 0..expected {
+            let (mut stream, _) = listener.accept().await.expect("fixture accepts");
+            requests.push(read_http_request(&mut stream).await);
+            let response = match ordinal {
+                0 => serde_json::json!({ "endpoint": address.to_string() }),
+                1 => readiness.clone(),
+                2 => acknowledgement.clone().expect("a restore response exists"),
+                _ => unreachable!(),
+            };
+            write_json(&mut stream, response).await;
+        }
+        requests
+    });
+    WorkspaceFixture {
+        base_url: format!("http://{address}"),
+        server,
+    }
+}
+
+fn workspace_package() -> WorkspacePackage {
+    WorkspacePackage {
+        epoch: 7,
+        source_revision: "a".repeat(40),
+        manifest_digest: "b".repeat(64),
+        archive_sha256: "c".repeat(64),
+        archive: vec![0, 1, 2, 3, 255],
+    }
+}
+
 /// Serve one provider listing response and then stop.
 async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -66,6 +171,7 @@ async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::Join
 fn spec() -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
         platform_briefing: String::new(),
@@ -84,6 +190,81 @@ fn capacity() -> RuntimeCapacity {
         cpu_millis: NonZeroU32::new(1500).expect("the test capacity is non-zero"),
         memory_mib: NonZeroU32::new(3072).expect("the test capacity is non-zero"),
     }
+}
+
+#[tokio::test]
+async fn an_old_runtime_image_is_refused_without_sending_workspace_bytes() {
+    let fixture = workspace_fixture(serde_json::json!({ "status": "ready" }), None).await;
+    let kernel = hosted(&fixture.base_url);
+
+    let error = kernel
+        .hand_over_workspace("sbx-old", &workspace_package())
+        .await
+        .expect_err("an old image cannot take a trigger workspace");
+    assert!(matches!(error, AdapterError::Unsupported(_)));
+
+    let requests = fixture.finish().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0]
+        .0
+        .starts_with("GET /v1/sandboxes/sbx-old/endpoints/9090?"));
+    assert!(requests[1].0.starts_with("GET /readyz "));
+    assert!(requests.iter().all(|(_, body)| body.is_empty()));
+}
+
+#[tokio::test]
+async fn workspace_handover_sends_exact_bytes_and_requires_an_exact_acknowledgement() {
+    let package = workspace_package();
+    let fixture = workspace_fixture(
+        serde_json::json!({ "workspaceCheckpoint": { "version": 1 } }),
+        Some(serde_json::json!({
+            "workspace_epoch": package.epoch,
+            "source_revision": package.source_revision,
+            "manifest_digest": package.manifest_digest,
+            "entries": 0,
+            "bytes": 0
+        })),
+    )
+    .await;
+    let kernel = hosted(&fixture.base_url);
+
+    kernel
+        .hand_over_workspace("sbx-v1", &package)
+        .await
+        .expect("the exact acknowledgement is accepted");
+
+    let requests = fixture.finish().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests[2].0.starts_with(&format!(
+        "POST /runtime/workspace?epoch=7&source={}&manifest={}&archive={} ",
+        package.source_revision, package.manifest_digest, package.archive_sha256
+    )));
+    assert_eq!(requests[2].1, package.archive);
+}
+
+#[tokio::test]
+async fn workspace_handover_rejects_a_mismatched_success_acknowledgement() {
+    let package = workspace_package();
+    let fixture = workspace_fixture(
+        serde_json::json!({ "workspaceCheckpoint": { "version": 1 } }),
+        Some(serde_json::json!({
+            "workspace_epoch": package.epoch + 1,
+            "source_revision": package.source_revision,
+            "manifest_digest": package.manifest_digest,
+            "entries": 1,
+            "bytes": 5
+        })),
+    )
+    .await;
+    let kernel = hosted(&fixture.base_url);
+
+    let error = kernel
+        .hand_over_workspace("sbx-wrong", &package)
+        .await
+        .expect_err("a different workspace was not acknowledged");
+    assert!(matches!(error, AdapterError::Rejected(_)));
+
+    assert_eq!(fixture.finish().await.len(), 3);
 }
 
 #[test]

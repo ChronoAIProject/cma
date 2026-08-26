@@ -33,7 +33,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::{
     AdapterError, RuntimeCapacity, RuntimeHandle, RuntimeListing, RuntimeSpec, SkillPackage,
-    TerminalInput,
+    TerminalInput, WorkspacePackage,
 };
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
@@ -101,6 +101,10 @@ const CONVERSATION_PATH: &str = "/runtime/conversation";
 
 /// Where a pod takes the files its kernel needs before starting.
 const PRELUDE_PATH: &str = "/runtime/prelude";
+
+/// Versioned repository workspace restore/checkpoint endpoint.
+const WORKSPACE_PATH: &str = "/runtime/workspace";
+const WORKSPACE_VERSION: u64 = 1;
 
 /// Where a pod says what it is and what it can take.
 const READY_PATH: &str = "/readyz";
@@ -224,7 +228,7 @@ impl Default for SandboxShape {
             // Slow enough not to dominate an idle session's traffic, while
             // bounding the last reading before a kill to two seconds of age.
             telemetry_interval_ms: Some(2_000),
-            workspace: "/home/chrono".into(),
+            workspace: "/home/chrono/workspace".into(),
         }
     }
 }
@@ -569,6 +573,10 @@ impl HostedKernel {
         );
         let sandbox = self.await_running(&sandbox.id).await?;
 
+        if let Some(workspace) = spec.workspace.as_ref() {
+            self.hand_over_workspace(&sandbox.id, workspace).await?;
+        }
+
         // Handed over before anything attaches, which is what makes this
         // possible at all: the supervisor does not start the agent until the
         // first attachment, so a conversation delivered now is in place before
@@ -707,6 +715,73 @@ impl HostedKernel {
             .unwrap_or(false)
     }
 
+    async fn hand_over_workspace(
+        &self,
+        sandbox: &str,
+        workspace: &WorkspacePackage,
+    ) -> Result<(), AdapterError> {
+        let endpoint = self.client.endpoint(sandbox, SUPERVISOR_PORT).await?;
+        let ready = self
+            .client
+            .get_from_sandbox(&endpoint.endpoint, READY_PATH)
+            .await?
+            .unwrap_or_default();
+        let supported = serde_json::from_slice::<serde_json::Value>(&ready)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("workspaceCheckpoint")
+                    .and_then(|capability| capability.get("version"))
+                    .and_then(serde_json::Value::as_u64)
+            })
+            == Some(WORKSPACE_VERSION);
+        if !supported {
+            return Err(AdapterError::Unsupported(
+                "this runtime image does not advertise workspace checkpoint v1".into(),
+            ));
+        }
+        if workspace.epoch == 0
+            || workspace.source_revision.len() != 40
+            || workspace.manifest_digest.len() != 64
+            || workspace.archive_sha256.len() != 64
+        {
+            return Err(AdapterError::Rejected(
+                "workspace handover metadata is invalid".into(),
+            ));
+        }
+        let path = format!(
+            "{WORKSPACE_PATH}?epoch={}&source={}&manifest={}&archive={}",
+            workspace.epoch,
+            workspace.source_revision,
+            workspace.manifest_digest,
+            workspace.archive_sha256
+        );
+        let acknowledgement = self
+            .client
+            .post_to_sandbox_with_response(&endpoint.endpoint, &path, workspace.archive.clone())
+            .await?;
+        let acknowledgement: WorkspaceAcknowledgement = serde_json::from_slice(&acknowledgement)
+            .map_err(|_| {
+                AdapterError::Rejected("runtime did not acknowledge the restored workspace".into())
+            })?;
+        if acknowledgement.workspace_epoch != workspace.epoch
+            || acknowledgement.source_revision != workspace.source_revision
+            || acknowledgement.manifest_digest != workspace.manifest_digest
+        {
+            return Err(AdapterError::Rejected(
+                "runtime acknowledged a different workspace".into(),
+            ));
+        }
+        tracing::info!(
+            %sandbox,
+            epoch = workspace.epoch,
+            files = acknowledgement.entries,
+            bytes = acknowledgement.bytes,
+            "verified this session's repository workspace"
+        );
+        Ok(())
+    }
+
     /// Capture the agent's conversation so it can be resumed elsewhere.
     pub async fn snapshot(&self, handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
         let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
@@ -842,6 +917,15 @@ impl HostedKernel {
             tokio::time::sleep(READY_POLL).await;
         }
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WorkspaceAcknowledgement {
+    workspace_epoch: u64,
+    source_revision: String,
+    manifest_digest: String,
+    entries: usize,
+    bytes: u64,
 }
 
 #[cfg(test)]

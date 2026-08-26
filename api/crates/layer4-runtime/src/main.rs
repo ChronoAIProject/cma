@@ -15,16 +15,17 @@ mod pty;
 mod resources;
 mod telemetry;
 mod upstream;
+mod workspace;
 
 use std::net::SocketAddr;
 
 use axum::{
-    extract::State,
+    extract::{DefaultBodyLimit, Query, State},
     response::IntoResponse,
     routing::{get, post},
     Router,
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::bridge::Bridge;
 use crate::pty::PtyRegistry;
@@ -44,6 +45,13 @@ pub(crate) struct AppState {
     credential: CredentialHolder,
     /// This pod's home directory, where the agent keeps its conversation.
     home: std::path::PathBuf,
+    /// The repository workspace, kept outside the agent's configuration and
+    /// conversation directories.
+    workspace_root: std::path::PathBuf,
+    /// Serializes pre-start filesystem mutations against the first process
+    /// start. Readers may start an agent; writers must finish before any
+    /// agent process can observe the filesystem.
+    startup_gate: std::sync::Arc<RwLock<()>>,
     /// Where under home this kernel records its conversation, if it records
     /// one at all.
     ///
@@ -108,6 +116,8 @@ impl AppState {
             commands: commands.iter().map(|c| (*c).to_string()).collect(),
             credential: CredentialHolder::new(),
             home: std::path::PathBuf::from("/home/chrono"),
+            workspace_root: std::path::PathBuf::from("/home/chrono/workspace"),
+            startup_gate: std::sync::Arc::new(RwLock::new(())),
             snapshot_dir: None,
             resume_args: None,
             snapshot_named: false,
@@ -130,6 +140,7 @@ impl AppState {
     /// bridge started eagerly would be a kernel process on the model endpoint
     /// for a session that was only ever going to be a terminal.
     async fn conversation_bridge(&self) -> std::io::Result<std::sync::Arc<Bridge>> {
+        let _startup = self.startup_gate.read().await;
         let mut held = self.conversation.lock().await;
         if let Some(running) = held.as_ref() {
             // A cached bridge whose process has gone is not a bridge. Handing
@@ -228,6 +239,9 @@ async fn main() {
 
     let home: std::path::PathBuf = std::env::var("HOME")
         .unwrap_or_else(|_| "/home/chrono".to_string())
+        .into();
+    let workspace_root: std::path::PathBuf = std::env::var("CHRONO_RUNTIME_WORKSPACE")
+        .unwrap_or_else(|_| "/home/chrono/workspace".to_string())
         .into();
 
     // Which agent to supervise. Configurable so the same binary can host any
@@ -338,6 +352,8 @@ async fn main() {
         commands,
         credential,
         home: home.clone(),
+        workspace_root,
+        startup_gate: std::sync::Arc::new(RwLock::new(())),
         snapshot_dir,
         resume_args,
         snapshot_named,
@@ -361,6 +377,10 @@ async fn main() {
         // there: one skill alone is larger than a single environment string
         // may be, and the pod would fail to start with nothing naming why.
         .route("/runtime/prelude", post(prelude_write))
+        .route(
+            "/runtime/workspace",
+            post(workspace_restore).layer(DefaultBodyLimit::max(workspace::MAX_ARCHIVE_BYTES)),
+        )
         .with_state(state);
 
     tracing::info!(%bind, %command, "runtime supervisor listening");
@@ -382,6 +402,7 @@ async fn conversation_restore(
     State(state): State<AppState>,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    let _startup = state.startup_gate.write().await;
     if body.is_empty() {
         return (
             axum::http::StatusCode::BAD_REQUEST,
@@ -389,7 +410,7 @@ async fn conversation_restore(
         )
             .into_response();
     }
-    if state.registry.is_running().await {
+    if agent_started(&state).await {
         return (
             axum::http::StatusCode::CONFLICT,
             "this runtime has already started its agent",
@@ -551,7 +572,8 @@ async fn prelude_write(
     State(state): State<AppState>,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
-    if state.registry.is_running().await || state.conversation.lock().await.is_some() {
+    let _startup = state.startup_gate.write().await;
+    if agent_started(&state).await {
         return (
             axum::http::StatusCode::CONFLICT,
             "this runtime has already started its agent",
@@ -575,6 +597,75 @@ async fn prelude_write(
     }
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceRestoreParams {
+    epoch: u64,
+    source: String,
+    manifest: String,
+    archive: String,
+}
+
+/// Restore one complete repository tree before this runtime starts its agent.
+///
+/// Metadata is repeated outside the archive so neither side can acknowledge a
+/// different object than the control plane selected. The archive is verified
+/// and materialized in a staging directory before its final path is visible.
+async fn workspace_restore(
+    State(state): State<AppState>,
+    Query(params): Query<WorkspaceRestoreParams>,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    let _startup = state.startup_gate.write().await;
+    if agent_started(&state).await {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            "this runtime has already started its agent",
+        )
+            .into_response();
+    }
+    if body.is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "a workspace archive was expected",
+        )
+            .into_response();
+    }
+
+    let target = state.workspace_root.clone();
+    let archive = body.to_vec();
+    let restored = tokio::task::spawn_blocking(move || {
+        workspace::restore(
+            &target,
+            &archive,
+            params.epoch,
+            &params.source,
+            &params.manifest,
+            &params.archive,
+        )
+    })
+    .await;
+    match restored {
+        Ok(Ok(restored)) => (axum::http::StatusCode::OK, axum::Json(restored)).into_response(),
+        Ok(Err(why)) => {
+            tracing::warn!(reason = %why, "workspace restore refused");
+            (axum::http::StatusCode::UNPROCESSABLE_ENTITY, why).into_response()
+        }
+        Err(error) => {
+            tracing::error!(%error, "workspace restore task failed");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "workspace restore failed",
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn agent_started(state: &AppState) -> bool {
+    state.registry.is_running().await || state.conversation.lock().await.is_some()
+}
+
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     let live = state.registry.len().await;
     let reports_resources = state
@@ -593,6 +684,7 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // to a router without the route answers 404 — which the adapter reads
         // as a sandbox that is gone and replaces a healthy one.
         "prelude": true,
+        "workspaceCheckpoint": { "version": workspace::VERSION },
         // Declared only when this pod has observed something useful. The route
         // existing proves a wire version, not that this guest exposes any
         // counter. A control plane must still never open the link on a guess:

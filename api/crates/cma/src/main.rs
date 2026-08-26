@@ -385,6 +385,7 @@ async fn main() {
     // both act as this service against the same platform, and two machine
     // identities for one process is two things to rotate.
     let identity_for_catalog = identity.clone();
+    let identity_for_trigger_workspace = identity.clone();
     // The bucket is as load-bearing as the identity: this service writes only
     // into the one it is given and creates none, so an unnamed bucket is not a
     // default to fall back on.
@@ -410,6 +411,32 @@ async fn main() {
             }
         };
 
+    let trigger_workspace_store: Option<Arc<dyn layer2_core::BaselineObjectStore>> =
+        match identity_for_trigger_workspace
+            .filter(|_| !config.trigger_workspace_bucket.trim().is_empty())
+        {
+            Some(tokens) => Some(Arc::new(
+                crate::store::ChronoStorageTriggerWorkspaceStore::new(
+                    format!(
+                        "{}/api/v1/proxy/s/chrono-storage-service",
+                        config.platform_base_url.trim_end_matches('/')
+                    ),
+                    config.trigger_workspace_bucket.clone(),
+                    tokens,
+                ),
+            )),
+            None => {
+                tracing::warn!(
+                    "Trigger repository workspaces cannot be persisted. \
+                     CHRONO_PLATFORM_BASE_URL, CHRONO_STORAGE_CLIENT_ID, \
+                     CHRONO_STORAGE_CLIENT_SECRET and CHRONO_TRIGGER_WORKSPACE_BUCKET \
+                     are all required. No Trigger worker will be started without \
+                     this durable store."
+                );
+                None
+            }
+        };
+
     // Built before the service because the service asks it for an owner's
     // credential whenever it has to put a runtime back under a session that
     // nobody is currently watching.
@@ -421,9 +448,10 @@ async fn main() {
         }),
         auth_store,
     );
-    let (trigger_authority, trigger_connections): (
+    let (trigger_authority, trigger_connections, _trigger_effect_executor): (
         Arc<dyn TriggerAuthorityVerifier>,
         Arc<dyn TriggerConnectionManager>,
+        Option<Arc<trigger::github_effects::GithubEffectExecutor>>,
     ) = match &config.auth_mode {
         auth::AuthMode::Provider { base_url, .. } => {
             let broker = match trigger::github::GithubBroker::new(base_url, Arc::clone(&auth_state))
@@ -434,11 +462,19 @@ async fn main() {
                     std::process::exit(2);
                 }
             };
-            (broker.clone(), broker)
+            let executor = trigger_workspace_store.map(|workspace_store| {
+                Arc::new(
+                    trigger::github_effects::GithubEffectExecutor::with_workspace_store(
+                        Arc::clone(&broker),
+                        workspace_store,
+                    ),
+                )
+            });
+            (broker.clone(), broker, executor)
         }
         auth::AuthMode::Trusted { .. } => {
             let unavailable = Arc::new(trigger::UnavailableGithub);
-            (unavailable.clone(), unavailable)
+            (unavailable.clone(), unavailable, None)
         }
     };
     let trigger_service = Arc::new(TriggerService::new(

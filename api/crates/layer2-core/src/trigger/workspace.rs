@@ -152,9 +152,54 @@ fn manifest_digest(
     source_revision: &str,
     entries: &[WorkspaceEntry],
 ) -> Result<String, TriggerValidationError> {
-    let bytes = serde_json::to_vec(&(WORKSPACE_MANIFEST_VERSION, source_revision, entries))
-        .map_err(|_| TriggerValidationError::new("workspace manifest cannot be encoded"))?;
-    Ok(hex(&Sha256::digest(bytes)))
+    let mut digest = Sha256::new();
+    digest.update(b"cma-workspace-manifest-v1\0");
+    hash_text(&mut digest, source_revision)?;
+    digest.update(
+        u64::try_from(entries.len())
+            .map_err(|_| TriggerValidationError::new("workspace manifest is too large"))?
+            .to_be_bytes(),
+    );
+    for entry in entries {
+        hash_text(&mut digest, &entry.path)?;
+        digest.update([match entry.kind {
+            WorkspaceEntryKind::Regular => 1,
+            WorkspaceEntryKind::Symlink => 2,
+            WorkspaceEntryKind::Submodule => 3,
+        }]);
+        digest.update(entry.mode.to_be_bytes());
+        digest.update(entry.size.to_be_bytes());
+        hash_text(&mut digest, &entry.content_sha256)?;
+        hash_optional_text(&mut digest, entry.provider_object_id.as_deref())?;
+        hash_optional_text(&mut digest, entry.symlink_target.as_deref())?;
+    }
+    Ok(hex(&digest.finalize()))
+}
+
+fn hash_text(digest: &mut Sha256, value: &str) -> Result<(), TriggerValidationError> {
+    digest.update(
+        u64::try_from(value.len())
+            .map_err(|_| TriggerValidationError::new("workspace manifest value is too large"))?
+            .to_be_bytes(),
+    );
+    digest.update(value.as_bytes());
+    Ok(())
+}
+
+fn hash_optional_text(
+    digest: &mut Sha256,
+    value: Option<&str>,
+) -> Result<(), TriggerValidationError> {
+    match value {
+        Some(value) => {
+            digest.update([1]);
+            hash_text(digest, value)
+        }
+        None => {
+            digest.update([0]);
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -315,9 +360,12 @@ pub fn validate_workspace_path(path: &str) -> Result<(), TriggerValidationError>
         || path.starts_with('/')
         || path.contains('\\')
         || path.contains('\0')
-        || path
-            .split('/')
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        || path.split('/').any(|segment| {
+            segment.is_empty()
+                || segment == "."
+                || segment == ".."
+                || segment.eq_ignore_ascii_case(".git")
+        })
     {
         return Err(TriggerValidationError::field(
             "workspace.path",

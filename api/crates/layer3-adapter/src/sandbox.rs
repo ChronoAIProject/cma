@@ -294,6 +294,18 @@ impl SandboxClient {
         path: &str,
         body: Vec<u8>,
     ) -> Result<(), SandboxError> {
+        self.post_to_sandbox_with_response(endpoint, path, body)
+            .await
+            .map(|_| ())
+    }
+
+    /// Post bytes and retain the bounded acknowledgement body.
+    pub async fn post_to_sandbox_with_response(
+        &self,
+        endpoint: &str,
+        path: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, SandboxError> {
         let url = self.sandbox_url(endpoint, path);
         let resp = self
             .http
@@ -310,7 +322,16 @@ impl SandboxClient {
                 detail: format!("{path} on the sandbox refused the request"),
             });
         }
-        Ok(())
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|error| SandboxError::Unreachable(error.to_string()))?;
+        if bytes.len() > 64 * 1024 {
+            return Err(SandboxError::Malformed(
+                "sandbox acknowledgement exceeds its bound".into(),
+            ));
+        }
+        Ok(bytes.to_vec())
     }
 
     /// Every sandbox this key can see.
