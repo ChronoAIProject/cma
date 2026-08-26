@@ -505,11 +505,13 @@ stateDiagram-v2
     session_pending --> prompt_pending
     prompt_pending --> ready
     ready --> contributing
+    contributing --> ready: abandon review
     contributing --> pr_pending
     pr_pending --> pr_open
     pr_open --> contributing: reviewed update
     pr_open --> completed
     draft --> cancelled
+    auth_required --> cancelled
     preflight --> cancelled
     fork_pending --> cancelled
     fork_ready --> cancelled
@@ -520,7 +522,22 @@ stateDiagram-v2
     prompt_pending --> cancelled
     ready --> cancelled
     contributing --> cancelled
+    pr_pending --> cancelled: after reconciliation
+    pr_open --> cancelled: leave PR open
 ```
+
+Returning from `contributing` to `ready` abandons only the current diff-review
+attempt; it leaves the session, workspace, fork, and branch available for more
+work. Cancellation during `pr_pending` first reconciles the external effect: if
+no PR exists it may settle as `cancelled`, and if a PR was created it records
+`pr_open` before cancellation. Cancelling from `pr_open` ends CMA orchestration
+and reach but leaves the user-owned branch and open PR untouched.
+
+`completed` is intentionally reachable only through `pr_open`. In this MVP it
+means CMA published the contribution and handed an open PR to its maintainers.
+A Launch whose contributor never publishes remains usable at `ready` or
+`contributing` until they cancel it or its retention policy creates a fenced
+cleanup intent; it is never silently reclassified as completed.
 
 Any active state may enter `failed_retryable`, `failed_terminal`, or an
 explicit blocked/recovery reason according to the taxonomy below. A successful
@@ -876,6 +893,13 @@ After the first checklist is approved, the dependency order is:
 #672 and #673 are the rollout/release gates.
 #671 is post-MVP.
 ```
+
+Section 17 gates the chain on the evidence and approved decisions owned by
+#675/#676; the entries above are their remaining integration work after that
+gate. In particular, #675 still implements the typed Launch authority-recovery
+states, while #676 implements and rolls out the signed Layer 4 evaluator. Their
+issue-level acceptance edges continue to gate downstream claims even when that
+work runs alongside another branch of the compact order.
 
 The epic's numbered dependency graph remains authoritative where this compact
 view omits an edge. No implementation issue may weaken an approval, credential,
