@@ -153,10 +153,17 @@ fn to_sse(event: &layer2_core::Event) -> SseEvent {
 
 /// The JSON object carried in an SSE frame.
 fn event_payload(event: &layer2_core::Event) -> serde_json::Value {
+    let mut kind = serde_json::to_value(&event.kind)
+        .expect("the core event vocabulary is always JSON serializable");
+    // Delivery locators are durable adapter state, not part of the owner-facing
+    // event contract. The public request id is the only value a client returns.
+    if let Some(object) = kind.as_object_mut() {
+        object.remove("locator");
+    }
     serde_json::json!({
         "seq": event.seq,
         "session_id": event.session_id.0,
-        "event": event.kind,
+        "event": kind,
     })
 }
 
@@ -242,10 +249,32 @@ mod tests {
                 request_id: "req_fixture".into(),
                 action: Some("Run the release command".into()),
                 detail: Some("This command writes a release tag".into()),
+                locator: None,
             },
             appended_at: "2026-08-24T08:01:00Z".into(),
         };
 
         assert_eq!(event_payload(&event), fixture);
+    }
+
+    #[test]
+    fn adapter_delivery_locators_never_enter_the_public_event_stream() {
+        let event = Event {
+            session_id: SessionId("sesn_locator_private".into()),
+            seq: 9,
+            kind: EventKind::ApprovalRequested {
+                request_id: "req_public".into(),
+                action: Some("run a command".into()),
+                detail: None,
+                locator: Some(layer2_core::PermissionLocator::new(
+                    "private-json-rpc-call-and-options",
+                )),
+            },
+            appended_at: "2026-08-26T08:00:00Z".into(),
+        };
+
+        let payload = event_payload(&event);
+        assert!(payload["event"].get("locator").is_none());
+        assert!(!payload.to_string().contains("private-json-rpc"));
     }
 }
