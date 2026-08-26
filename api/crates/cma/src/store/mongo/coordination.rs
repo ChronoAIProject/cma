@@ -13,8 +13,8 @@ use std::{
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
     RuntimeAuthority, RuntimeAuthorityRetirement, RuntimeAuthoritySwitch, RuntimeCandidate,
-    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary, SessionLease,
-    SessionLeaseRequest, SessionOperation,
+    RuntimeCleanup, RuntimeCleanupReason, RuntimeReservation, SessionBoundary,
+    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionOperation,
 };
 use mongodb::bson::{doc, Bson, DateTime, Document};
 use mongodb::options::{ReadConcern, ReplaceOptions, WriteConcern};
@@ -37,6 +37,9 @@ pub(super) struct CoordinationDoc {
     next_generation: i64,
     #[serde(default)]
     receipt_count: i64,
+    /// Monotonic source of bounded interaction fencing tokens.
+    #[serde(default)]
+    interaction_epoch: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lease: Option<LeaseDoc>,
     /// Refreshed with MongoDB's `$currentDate` at the start of every command.
@@ -56,6 +59,9 @@ struct BoundaryDoc {
 struct LeaseDoc {
     holder: String,
     token: String,
+    /// Retry nonce retained only for the one active bounded interaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    interaction_nonce: Option<String>,
     boundary: BoundaryDoc,
     operation: String,
     expires_at: DateTime,
@@ -150,6 +156,7 @@ pub(super) struct CoordinationReceiptDoc {
 #[derive(Debug, Clone)]
 pub(super) enum CoordinationCommand {
     Acquire(SessionLeaseRequest),
+    AcquireInteraction(SessionInteractionLeaseRequest),
     Renew {
         lease: SessionLease,
         ttl: std::time::Duration,
@@ -232,8 +239,29 @@ impl LeaseDoc {
         Ok(Self {
             holder: request.holder.clone(),
             token: request.token.clone(),
+            interaction_nonce: None,
             boundary: BoundaryDoc::from_core(&request.boundary)?,
             operation: operation_name(request.operation).into(),
+            expires_at,
+        })
+    }
+
+    fn from_interaction(
+        request: &SessionInteractionLeaseRequest,
+        token: String,
+        expires_at: DateTime,
+    ) -> Result<Self, StoreError> {
+        if request.holder.is_empty() || request.nonce.is_empty() {
+            return Err(StoreError::Malformed(
+                "session interaction lease holder and nonce must not be empty".into(),
+            ));
+        }
+        Ok(Self {
+            holder: request.holder.clone(),
+            token,
+            interaction_nonce: Some(request.nonce.clone()),
+            boundary: BoundaryDoc::from_core(&request.boundary)?,
+            operation: operation_name(SessionOperation::Interact).into(),
             expires_at,
         })
     }
@@ -244,12 +272,23 @@ impl LeaseDoc {
                 "stored session lease holder and token must not be empty".into(),
             ));
         }
+        let operation = parse_operation(&self.operation)?;
+        if (operation == SessionOperation::Interact) != self.interaction_nonce.is_some() {
+            return Err(StoreError::Malformed(
+                "stored interaction lease nonce and operation disagree".into(),
+            ));
+        }
+        if self.interaction_nonce.as_deref().is_some_and(str::is_empty) {
+            return Err(StoreError::Malformed(
+                "stored interaction lease nonce must not be empty".into(),
+            ));
+        }
         Ok(SessionLease {
             session_id: id.clone(),
             holder: self.holder.clone(),
             token: self.token.clone(),
             boundary: self.boundary.to_core()?,
-            operation: parse_operation(&self.operation)?,
+            operation,
         })
     }
 
@@ -265,6 +304,16 @@ impl LeaseDoc {
             && self.token == lease.token
             && self.boundary == BoundaryDoc::from_core(&lease.boundary)?
             && parse_operation(&self.operation)? == lease.operation)
+    }
+
+    fn matches_interaction_request(
+        &self,
+        request: &SessionInteractionLeaseRequest,
+    ) -> Result<bool, StoreError> {
+        Ok(self.holder == request.holder
+            && self.interaction_nonce.as_deref() == Some(request.nonce.as_str())
+            && self.boundary == BoundaryDoc::from_core(&request.boundary)?
+            && parse_operation(&self.operation)? == SessionOperation::Interact)
     }
 
     fn same_identity(&self, lease: &SessionLease) -> Result<bool, StoreError> {
@@ -484,6 +533,7 @@ impl CoordinationCommand {
     fn id(&self) -> &layer2_core::SessionId {
         match self {
             Self::Acquire(request) => &request.session_id,
+            Self::AcquireInteraction(request) => &request.session_id,
             Self::Renew { lease, .. }
             | Self::Advance { lease, .. }
             | Self::Release(lease)
@@ -498,6 +548,7 @@ impl CoordinationCommand {
     fn name(&self) -> &'static str {
         match self {
             Self::Acquire(_) => "acquire session lease",
+            Self::AcquireInteraction(_) => "acquire interaction lease",
             Self::Renew { .. } => "renew session lease",
             Self::Advance { .. } => "advance session lease",
             Self::Release(_) => "release session lease",
@@ -556,12 +607,17 @@ impl CoordinationCommand {
                 RECEIPT_CLEANUP,
                 &cleanup.token,
             )],
-            Self::Release(lease) => vec![CoordinationReceiptIdDoc::new(
-                id,
-                RECEIPT_LEASE,
-                &lease.token,
-            )],
-            Self::Renew { .. } | Self::Advance { .. } => Vec::new(),
+            Self::Release(lease) if lease.operation != SessionOperation::Interact => {
+                vec![CoordinationReceiptIdDoc::new(
+                    id,
+                    RECEIPT_LEASE,
+                    &lease.token,
+                )]
+            }
+            Self::AcquireInteraction(_)
+            | Self::Release(_)
+            | Self::Renew { .. }
+            | Self::Advance { .. } => Vec::new(),
         }
     }
 }
@@ -595,6 +651,7 @@ pub(super) fn validate_coordination_state(session: &SessionDoc) -> Result<(), St
     let generation = loaded_generation(state.authority_generation)?;
     let next = loaded_generation(state.next_generation)?;
     loaded_generation(state.receipt_count)?;
+    let interaction_epoch = loaded_generation(state.interaction_epoch)?;
     if next < generation {
         return Err(StoreError::Malformed(format!(
             "session {} runtime generation floor is behind current authority",
@@ -602,17 +659,32 @@ pub(super) fn validate_coordination_state(session: &SessionDoc) -> Result<(), St
         )));
     }
     if let Some(lease) = state.lease.as_ref() {
-        lease.to_core(&layer2_core::SessionId(session.id.clone()))?;
+        let lease = lease.to_core(&layer2_core::SessionId(session.id.clone()))?;
+        if lease.operation == SessionOperation::Interact {
+            let lease_epoch = interaction_token_epoch(&lease.token)?;
+            if lease_epoch == 0 || lease_epoch != interaction_epoch {
+                return Err(StoreError::Malformed(format!(
+                    "session {} interaction lease has an invalid epoch",
+                    session.id
+                )));
+            }
+        }
     }
     Ok(())
 }
 
 pub(super) fn has_session_lease(session: &SessionDoc) -> Result<bool, StoreError> {
     validate_coordination_state(session)?;
-    Ok(session
-        .coordination
-        .as_ref()
-        .is_some_and(|state| state.lease.is_some()))
+    let Some(state) = session.coordination.as_ref() else {
+        return Ok(false);
+    };
+    let Some(lease) = state.lease.as_ref() else {
+        return Ok(false);
+    };
+    let now = state.server_now.ok_or_else(|| {
+        StoreError::Malformed("MongoDB coordination clock is absent during lease check".into())
+    })?;
+    Ok(lease.expires_at.timestamp_millis() > now.timestamp_millis())
 }
 
 fn current_boundary(session: &SessionDoc) -> Result<SessionBoundary, StoreError> {
@@ -630,6 +702,13 @@ fn stored_generation(generation: u64) -> Result<i64, StoreError> {
 fn loaded_generation(generation: i64) -> Result<u64, StoreError> {
     u64::try_from(generation)
         .map_err(|_| StoreError::Malformed("runtime generation must not be negative".into()))
+}
+
+fn interaction_token_epoch(token: &str) -> Result<u64, StoreError> {
+    token
+        .strip_prefix("interaction:")
+        .and_then(|epoch| epoch.parse().ok())
+        .ok_or_else(|| StoreError::Malformed("invalid bounded interaction lease token".into()))
 }
 
 fn operation_name(operation: SessionOperation) -> &'static str {
@@ -725,6 +804,20 @@ fn require_current_lease(
     now: DateTime,
 ) -> Result<(), StoreError> {
     let current = current_boundary(session)?;
+    require_current_lease_identity(session, lease, now)?;
+    if current != lease.boundary {
+        return Err(StoreError::SessionLeaseLost {
+            id: lease.session_id.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn require_current_lease_identity(
+    session: &mut SessionDoc,
+    lease: &SessionLease,
+    now: DateTime,
+) -> Result<(), StoreError> {
     let state = session
         .coordination
         .get_or_insert_with(CoordinationDoc::default);
@@ -734,7 +827,7 @@ fn require_current_lease(
             id: lease.session_id.clone(),
         });
     };
-    if !stored.matches_lease(lease)? || current != lease.boundary {
+    if !stored.matches_lease(lease)? {
         return Err(StoreError::SessionLeaseLost {
             id: lease.session_id.clone(),
         });
@@ -905,11 +998,13 @@ pub(super) fn validate_coordination_receipt_set(
             .and_then(|state| state.lease.as_ref())
         {
             let id = layer2_core::SessionId(session.id.clone());
-            let stored = require_lease_receipt(receipts, &id, &lease.token)?;
-            if stored.released.is_some() {
-                return Err(StoreError::Malformed(format!(
-                    "MongoDB session {id} has an active lease whose receipt is released"
-                )));
+            if parse_operation(&lease.operation)? != SessionOperation::Interact {
+                let stored = require_lease_receipt(receipts, &id, &lease.token)?;
+                if stored.released.is_some() {
+                    return Err(StoreError::Malformed(format!(
+                        "MongoDB session {id} has an active lease whose receipt is released"
+                    )));
+                }
             }
         }
     }
@@ -1032,7 +1127,7 @@ pub(super) fn validate_session_coordination_receipts(
         .count())
 }
 
-fn coordination_clock_update() -> Document {
+pub(super) fn coordination_clock_update() -> Document {
     doc! {
         "$set": {
             super::WRITE_PROTOCOL_FIELD: super::WRITE_PROTOCOL,
@@ -1098,6 +1193,11 @@ fn apply_command_transition(
 
     match command {
         CoordinationCommand::Acquire(request) => {
+            if request.operation == SessionOperation::Interact {
+                return Err(StoreError::Malformed(
+                    "interaction leases require bounded interaction acquisition".into(),
+                ));
+            }
             let current = current_boundary(session)?;
             if current != request.boundary {
                 return Err(StoreError::SessionAuthorityChanged {
@@ -1155,6 +1255,46 @@ fn apply_command_transition(
                 ))],
             ))
         }
+        CoordinationCommand::AcquireInteraction(request) => {
+            if request.holder.is_empty() || request.nonce.is_empty() {
+                return Err(StoreError::Malformed(
+                    "session interaction lease holder and nonce must not be empty".into(),
+                ));
+            }
+            let current = current_boundary(session)?;
+            if current != request.boundary {
+                return Err(StoreError::SessionAuthorityChanged {
+                    id: request.session_id.clone(),
+                });
+            }
+            let state = session
+                .coordination
+                .get_or_insert_with(CoordinationDoc::default);
+            expire_lease(state, now);
+            let expires_at = expiry(now, request.ttl)?;
+            if let Some(held) = state.lease.as_mut() {
+                if held.matches_interaction_request(request)? {
+                    held.expires_at = expires_at;
+                    return Ok((
+                        CoordinationOutcome::Lease(held.to_core(&request.session_id)?),
+                        Vec::new(),
+                    ));
+                }
+                return Err(StoreError::SessionInteractionBlocked {
+                    id: request.session_id.clone(),
+                    operation: parse_operation(&held.operation)?,
+                });
+            }
+            let epoch = loaded_generation(state.interaction_epoch)?
+                .checked_add(1)
+                .ok_or_else(|| StoreError::Malformed("interaction lease epoch overflow".into()))?;
+            state.interaction_epoch = stored_generation(epoch)?;
+            let lease =
+                LeaseDoc::from_interaction(request, format!("interaction:{epoch}"), expires_at)?;
+            let outcome = lease.to_core(&request.session_id)?;
+            state.lease = Some(lease);
+            Ok((CoordinationOutcome::Lease(outcome), Vec::new()))
+        }
         CoordinationCommand::Renew { lease, ttl } => {
             require_current_lease(session, lease, now)?;
             session
@@ -1192,6 +1332,32 @@ fn apply_command_transition(
             Ok((CoordinationOutcome::Unit, Vec::new()))
         }
         CoordinationCommand::Release(lease) => {
+            if lease.operation == SessionOperation::Interact {
+                let lease_epoch = interaction_token_epoch(&lease.token)?;
+                let state = session
+                    .coordination
+                    .get_or_insert_with(CoordinationDoc::default);
+                expire_lease(state, now);
+                let current_epoch = loaded_generation(state.interaction_epoch)?;
+                if lease_epoch == 0 || lease_epoch > current_epoch {
+                    return Err(StoreError::SessionLeaseLost {
+                        id: lease.session_id.clone(),
+                    });
+                }
+                if let Some(active) = state.lease.as_ref() {
+                    if parse_operation(&active.operation)? == SessionOperation::Interact
+                        && lease_epoch == current_epoch
+                    {
+                        if !active.matches_lease(lease)? {
+                            return Err(StoreError::SessionLeaseLost {
+                                id: lease.session_id.clone(),
+                            });
+                        }
+                        state.lease = None;
+                    }
+                }
+                return Ok((CoordinationOutcome::Unit, Vec::new()));
+            }
             let receipt_id =
                 CoordinationReceiptIdDoc::new(&lease.session_id, RECEIPT_LEASE, &lease.token);
             let existing = receipt(receipts, &receipt_id)?.ok_or_else(|| {
@@ -2053,6 +2219,7 @@ mod tests {
             authority_generation: 1,
             next_generation: 1,
             receipt_count: 0,
+            interaction_epoch: 0,
             lease: None,
             server_now: Some(DateTime::from_millis(NOW)),
         });
@@ -2066,6 +2233,19 @@ mod tests {
             token: token.into(),
             boundary: current_boundary(session).expect("boundary is valid"),
             operation: SessionOperation::Lifecycle,
+            ttl: std::time::Duration::from_secs(30),
+        }
+    }
+
+    fn interaction_request(
+        session: &SessionDoc,
+        nonce: impl Into<String>,
+    ) -> SessionInteractionLeaseRequest {
+        SessionInteractionLeaseRequest {
+            session_id: SessionId(session.id.clone()),
+            holder: "mongo-interaction-holder".into(),
+            nonce: nonce.into(),
+            boundary: current_boundary(session).expect("boundary is valid"),
             ttl: std::time::Duration::from_secs(30),
         }
     }
@@ -2431,6 +2611,307 @@ mod tests {
             ),
             Err(StoreError::SessionLeaseLost { .. })
         ));
+    }
+
+    #[test]
+    fn bounded_interaction_acquire_and_release_replay_unknown_results() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let request = interaction_request(&session, "interaction-nonce-replay");
+        let command = CoordinationCommand::AcquireInteraction(request);
+        let first = match run(&mut session, &mut receipts, command.clone()).unwrap() {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("interaction lease expected"),
+        };
+        let replay = match run(&mut session, &mut receipts, command).unwrap() {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("replayed interaction lease expected"),
+        };
+        assert_eq!(replay, first);
+        assert_eq!(session.coordination.as_ref().unwrap().interaction_epoch, 1);
+        assert!(receipts.is_empty());
+        assert_eq!(session.coordination.as_ref().unwrap().receipt_count, 0);
+
+        let release = CoordinationCommand::Release(first.clone());
+        run(&mut session, &mut receipts, release.clone()).unwrap();
+        run(&mut session, &mut receipts, release.clone())
+            .expect("an unknown successful interaction release replays");
+
+        let successor_request = interaction_request(&session, "interaction-nonce-successor");
+        let successor = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::AcquireInteraction(successor_request),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("successor interaction lease expected"),
+        };
+        run(&mut session, &mut receipts, release)
+            .expect("replaying an old release cannot disturb its successor");
+        assert_eq!(
+            session
+                .coordination
+                .as_ref()
+                .and_then(|state| state.lease.as_ref())
+                .unwrap()
+                .to_core(&successor.session_id)
+                .unwrap(),
+            successor
+        );
+        run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Release(successor),
+        )
+        .unwrap();
+        run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Release(first),
+        )
+        .expect("an old unknown-success release replays after its successor also released");
+    }
+
+    #[test]
+    fn bounded_interactions_do_not_grow_receipt_state() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        for index in 0..512 {
+            let request = interaction_request(&session, format!("interaction-nonce-{index}"));
+            let lease = match run(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::AcquireInteraction(request),
+            )
+            .unwrap()
+            {
+                CoordinationOutcome::Lease(lease) => lease,
+                _ => panic!("interaction lease expected"),
+            };
+            run(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::Release(lease),
+            )
+            .unwrap();
+        }
+
+        let state = session.coordination.as_ref().unwrap();
+        assert_eq!(state.interaction_epoch, 512);
+        assert!(state.lease.is_none());
+        assert_eq!(state.receipt_count, 0);
+        assert!(receipts.is_empty());
+        validate_test_receipts(&session, &receipts).unwrap();
+    }
+
+    #[test]
+    fn expired_interaction_release_is_a_no_op_beside_a_provider_lease() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let interaction = interaction_request(&session, "interaction-nonce-expired-release");
+        let expired = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::AcquireInteraction(interaction),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("interaction lease expected"),
+        };
+
+        session.coordination.as_mut().unwrap().server_now =
+            Some(DateTime::from_millis(NOW + 31_000));
+        run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Release(expired.clone()),
+        )
+        .expect("releasing the expired current interaction succeeds");
+        assert!(session.coordination.as_ref().unwrap().lease.is_none());
+
+        let provider_request = request(&session, "provider-after-interaction");
+        let provider = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Acquire(provider_request),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("provider lease expected"),
+        };
+        run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Release(expired),
+        )
+        .expect("an old interaction release cannot disturb a provider lease");
+        assert_eq!(
+            session
+                .coordination
+                .as_ref()
+                .and_then(|state| state.lease.as_ref())
+                .unwrap()
+                .to_core(&provider.session_id)
+                .unwrap(),
+            provider
+        );
+    }
+
+    #[test]
+    fn forged_identity_at_the_current_interaction_epoch_cannot_release_it() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let request = interaction_request(&session, "interaction-nonce-forged-release");
+        let lease = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::AcquireInteraction(request),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("interaction lease expected"),
+        };
+        let mut forged = lease.clone();
+        forged.holder = "forged-holder".into();
+
+        assert!(matches!(
+            run(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::Release(forged),
+            ),
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        assert_eq!(
+            session
+                .coordination
+                .as_ref()
+                .and_then(|state| state.lease.as_ref())
+                .unwrap()
+                .to_core(&lease.session_id)
+                .unwrap(),
+            lease
+        );
+    }
+
+    #[test]
+    fn interaction_renewal_requires_boundary_but_exact_release_allows_drift() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let request = interaction_request(&session, "interaction-nonce-drift");
+        let lease = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::AcquireInteraction(request),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("interaction lease expected"),
+        };
+        session.status = serde_plain_string(&SessionStatus::Idle).unwrap();
+
+        assert!(matches!(
+            run(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::Renew {
+                    lease: lease.clone(),
+                    ttl: std::time::Duration::from_secs(30),
+                },
+            ),
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::Release(lease),
+        )
+        .expect("the exact bounded token can be cleared after status drift");
+    }
+
+    #[test]
+    fn interaction_nonce_is_validated_at_the_mongo_transition_boundary() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let mut request = interaction_request(&session, "interaction-nonce-invalid");
+        request.nonce.clear();
+
+        assert!(matches!(
+            run(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::AcquireInteraction(request),
+            ),
+            Err(StoreError::Malformed(message)) if message.contains("nonce")
+        ));
+    }
+
+    #[test]
+    fn expired_interaction_replay_gets_a_new_epoch_and_cannot_clear_its_successor() {
+        let mut session = session_doc();
+        let mut receipts = Vec::new();
+        let request = interaction_request(&session, "interaction-nonce-expiry");
+        let old = match run(
+            &mut session,
+            &mut receipts,
+            CoordinationCommand::AcquireInteraction(request.clone()),
+        )
+        .unwrap()
+        {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("interaction lease expected"),
+        };
+        assert!(has_session_lease(&session).unwrap());
+
+        session.coordination.as_mut().unwrap().server_now =
+            Some(DateTime::from_millis(NOW + 31_000));
+        assert!(!has_session_lease(&session).unwrap());
+        let (outcome, mutations) = apply_command(
+            &mut session,
+            &CoordinationCommand::AcquireInteraction(request),
+            &receipts,
+        )
+        .unwrap();
+        apply_mutations(&mut receipts, mutations);
+        let successor = match outcome {
+            CoordinationOutcome::Lease(lease) => lease,
+            _ => panic!("successor interaction lease expected"),
+        };
+        assert_ne!(old.token, successor.token);
+        assert_eq!(session.coordination.as_ref().unwrap().interaction_epoch, 2);
+        assert!(has_session_lease(&session).unwrap());
+
+        assert!(matches!(
+            apply_command(
+                &mut session,
+                &CoordinationCommand::Renew {
+                    lease: old.clone(),
+                    ttl: std::time::Duration::from_secs(30),
+                },
+                &receipts,
+            ),
+            Err(StoreError::SessionLeaseLost { .. })
+        ));
+        apply_command(&mut session, &CoordinationCommand::Release(old), &receipts)
+            .expect("an older interaction release is a no-op beside its successor");
+        assert_eq!(
+            session
+                .coordination
+                .as_ref()
+                .and_then(|state| state.lease.as_ref())
+                .unwrap()
+                .to_core(&successor.session_id)
+                .unwrap(),
+            successor
+        );
+        assert!(receipts.is_empty());
+        assert_eq!(session.coordination.as_ref().unwrap().receipt_count, 0);
     }
 
     #[test]

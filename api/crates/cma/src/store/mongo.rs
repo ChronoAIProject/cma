@@ -17,8 +17,8 @@ use layer2_core::{
     store::{Page, PageCursor, SessionListQuery, SessionRecord, SessionStore, StoreError},
     Event, Rate, RateCardId, Reserved, RuntimeAuthority, RuntimeAuthorityRetirement,
     RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeReservation, SessionBoundary,
-    SessionId, SessionLease, SessionLeaseRequest, SessionPricing, SessionStatus, StopReason,
-    StoredEvent, SubjectId,
+    SessionId, SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest, SessionPricing,
+    SessionStatus, StopReason, StoredEvent, SubjectId,
 };
 use mongodb::bson::{doc, Binary, Bson, Document};
 use mongodb::options::{
@@ -34,9 +34,10 @@ use super::event_doc;
 mod coordination;
 
 use coordination::{
-    all_session_receipts_filter, has_session_lease, runtime_authority_from_doc,
-    validate_coordination_state, validate_session_coordination_receipts, CoordinationCommand,
-    CoordinationDoc, CoordinationOutcome, CoordinationReceiptDoc, COORDINATION_RECEIPTS,
+    all_session_receipts_filter, coordination_clock_update, has_session_lease,
+    runtime_authority_from_doc, validate_coordination_state,
+    validate_session_coordination_receipts, CoordinationCommand, CoordinationDoc,
+    CoordinationOutcome, CoordinationReceiptDoc, COORDINATION_RECEIPTS,
 };
 
 const LEGACY_SESSIONS: &str = "sessions";
@@ -4186,6 +4187,19 @@ impl SessionStore for MongoSessionStore {
         }
     }
 
+    async fn acquire_interaction_lease(
+        &self,
+        request: &SessionInteractionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        match self
+            .run_coordination_command(CoordinationCommand::AcquireInteraction(request.clone()))
+            .await?
+        {
+            CoordinationOutcome::Lease(lease) => Ok(lease),
+            _ => unreachable!("interaction acquisition returns a lease"),
+        }
+    }
+
     async fn renew_session_lease(
         &self,
         lease: &SessionLease,
@@ -4848,6 +4862,10 @@ impl MongoSessionStore {
                 context,
                 |session, (sessions, events, writes, tombstones, receipts, id)| {
                     async move {
+                        sessions
+                            .update_one(doc! { "_id": &id.0 }, coordination_clock_update())
+                            .session(&mut *session)
+                            .await?;
                         let stored = sessions
                             .find_one(doc! { "_id": &id.0 })
                             .session(&mut *session)
