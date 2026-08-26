@@ -441,13 +441,20 @@ async fn the_default_store_count_uses_recorded_desired_state_and_owner() {
 
     let mut records = store.sessions.lock().await;
     records.clear();
-    for (index, status) in [
-        SessionStatus::Provisioning,
-        SessionStatus::Ready,
-        SessionStatus::Running,
-        SessionStatus::Rotating,
-        SessionStatus::Idle,
-        SessionStatus::Terminated,
+    for (index, (status, stop_reason)) in [
+        (SessionStatus::Provisioning, None),
+        (SessionStatus::Ready, None),
+        (SessionStatus::Running, None),
+        (SessionStatus::Rotating, None),
+        (SessionStatus::Idle, None),
+        (
+            SessionStatus::Idle,
+            Some(crate::session::StopReason::RequiresAction),
+        ),
+        (
+            SessionStatus::Terminated,
+            Some(crate::session::StopReason::UserTerminated),
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -455,6 +462,7 @@ async fn the_default_store_count_uses_recorded_desired_state_and_owner() {
         let mut record = template.clone();
         record.session.id = SessionId(format!("sesn_owner_{index}"));
         record.session.status = status;
+        record.session.stop_reason = stop_reason;
         records.insert(record.session.id.0.clone(), record);
     }
     let mut other = template;
@@ -464,7 +472,7 @@ async fn the_default_store_count_uses_recorded_desired_state_and_owner() {
     records.insert(other.session.id.0.clone(), other);
     drop(records);
 
-    assert_eq!(store.count_live_for(&owner.subject).await.unwrap(), 4);
+    assert_eq!(store.count_live_for(&owner.subject).await.unwrap(), 5);
 }
 
 #[tokio::test]
