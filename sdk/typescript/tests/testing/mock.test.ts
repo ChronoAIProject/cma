@@ -19,7 +19,7 @@ import type { Transcript } from '../../src/testing/types.js';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function replay(session: MockSession) {
+async function replay(session: MockSession, inspect?: (event: AguiEvent, cursor: number) => void) {
   const seen: AguiEvent[] = [];
   const statuses: string[] = [];
   const connection = new AguiConnection(session.transport, session.id, {
@@ -28,7 +28,10 @@ async function replay(session: MockSession) {
     sleep: () => Promise.resolve(),
   });
   const stop = connection.subscribe(
-    (event) => seen.push(event),
+    (event) => {
+      seen.push(event);
+      inspect?.(event, connection.cursor);
+    },
     (status) => statuses.push(status),
   );
   for (let i = 0; i < 30; i += 1) {
@@ -388,6 +391,38 @@ describe('the mock drives the real client', () => {
     expect(cursor).toBe(1);
     expect(history).toEqual([transcript.frames[2]?.event]);
   });
+
+  it.each([
+    ['approval-granted', 'run_5'],
+    ['approval-denied', 'run_7'],
+  ] as const)(
+    'keeps the authored %s continuation boundary ordered and outside replay state',
+    async (name, runId) => {
+      const session = new MockSession(transcriptNamed(name));
+      let cursorAtBoundary: number | undefined;
+      const { cursor, seen } = await replay(session, (event, currentCursor) => {
+        if (event.type === 'RUN_STARTED' && event.runId === runId) {
+          cursorAtBoundary = currentCursor;
+        }
+      });
+      const history = await session.transport.history(session.id, 0);
+
+      expect(
+        seen.filter((event) => event.runId === runId).map((event) => [event.type, event.seq]),
+      ).toEqual([
+        ['RUN_STARTED', 0],
+        ['TEXT_MESSAGE_START', 0],
+        ['TEXT_MESSAGE_CONTENT', 0],
+        ['TEXT_MESSAGE_END', 4],
+        ['RUN_FINISHED', 5],
+      ]);
+      expect(cursorAtBoundary).toBe(2);
+      expect(cursor).toBe(5);
+      expect(history).not.toContainEqual(
+        expect.objectContaining({ type: 'RUN_STARTED', runId, seq: 0 }),
+      );
+    },
+  );
 
   it('records what the operations sent, without answering for the control plane', async () => {
     // A mock that refused would be asserting something about the control
