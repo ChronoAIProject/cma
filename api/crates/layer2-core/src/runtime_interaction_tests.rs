@@ -17,14 +17,14 @@ use crate::environment::AgentConfiguration;
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::options::SessionMode;
-use crate::provision_support::RuntimeInteractionDeliveryLoss;
+use crate::provision_support::{RetainedRuntimeInteraction, RuntimeInteractionDeliveryLoss};
 use crate::session::{RecoveryState, Session, SessionStatus};
 use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
     await_settled, environments_defaulting_to, kernel, service_over,
     service_over_with_environments, spec, user, FakeAdapter, FakeStore,
 };
-use crate::{AgentOptions, CoreError, Reserved, TerminalGeometry};
+use crate::{AgentOptions, CoreError, Reserved, SessionService, TerminalGeometry};
 
 struct WakeFlag(AtomicBool);
 
@@ -373,6 +373,28 @@ async fn wait_for_releases(store: &InteractionStore, expected: usize) {
     .expect("interaction release attempts completed");
 }
 
+async fn completed_retained_interaction(
+    service: &Arc<SessionService>,
+    durable: &SessionRecord,
+) -> RetainedRuntimeInteraction {
+    let (retained, is_retained) = tokio::sync::oneshot::channel();
+    service
+        .run_retained_runtime_interaction_at(
+            durable,
+            move |authority, interaction| async move {
+                authority.ensure_delivery_allowed()?;
+                let _ = retained.send(interaction);
+                Ok::<_, CoreError>(())
+            },
+            |_reason, _result, _interaction| panic!("an observed result is not undelivered"),
+        )
+        .await
+        .expect("the retained interaction action completes");
+    is_retained
+        .await
+        .expect("the completed action preserves one retained owner")
+}
+
 async fn cancellation_keeps_action_owned(store: Arc<InteractionStore>) {
     store.inner.seed(&record()).await.unwrap();
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
@@ -540,6 +562,54 @@ async fn retained_owner_clones_queue_one_exact_release() {
     assert_eq!(releases[0].operation, SessionOperation::Interact);
 }
 
+#[tokio::test]
+async fn final_retained_owner_invalidates_detached_authority_before_a_successor() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+
+    let interaction = service
+        .run_retained_runtime_interaction_at(
+            &durable,
+            |authority, interaction| async move {
+                authority.ensure_delivery_allowed()?;
+                Ok::<_, CoreError>(interaction)
+            },
+            |_reason, _result, _interaction| panic!("an observed result is not undelivered"),
+        )
+        .await
+        .expect("the retained owner is delivered");
+    let stale_authority = interaction.authority();
+    stale_authority
+        .ensure_delivery_allowed()
+        .expect("the final retained owner still carries delivery authority");
+
+    drop(interaction);
+    assert!(
+        matches!(
+            stale_authority.ensure_delivery_allowed(),
+            Err(CoreError::RuntimeUnavailable(_))
+        ),
+        "final-owner drop invalidates detached authority synchronously"
+    );
+
+    service
+        .run_runtime_interaction_at(&durable, |authority| async move {
+            authority.ensure_delivery_allowed()?;
+            Ok::<_, CoreError>(())
+        })
+        .await
+        .expect("the exact release lets a successor acquire");
+    assert!(matches!(
+        stale_authority.ensure_delivery_allowed(),
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    wait_for_releases(&store, 2).await;
+    let releases = store.releases.lock().await;
+    assert_ne!(releases[0].token, releases[1].token);
+}
+
 #[test]
 fn retained_owner_resumes_and_releases_after_origin_runtime_replacement() {
     let origin = tokio::runtime::Builder::new_current_thread()
@@ -631,6 +701,156 @@ fn retained_owner_resumes_and_releases_after_origin_runtime_replacement() {
     assert_eq!(releases.len(), 2);
     assert_eq!(releases[0], held);
     assert_ne!(releases[0].token, releases[1].token);
+}
+
+#[tokio::test(start_paused = true)]
+async fn retained_resume_retries_transient_renewal_until_the_store_recovers() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let interaction = completed_retained_interaction(&service, &durable).await;
+    store.fail_renewals(2);
+
+    let resumed = tokio::spawn({
+        let interaction = interaction.clone();
+        async move { interaction.resume_before_delivery().await }
+    });
+    while store.renewals.lock().await.is_empty() {
+        tokio::task::yield_now().await;
+    }
+    for expected_attempts in 2..=3 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        while store.renewals.lock().await.len() < expected_attempts {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    resumed
+        .await
+        .unwrap()
+        .expect("the exact retained lease renews after recovery")
+        .ensure_delivery_allowed()
+        .expect("renewal restores a full delivery window");
+    let renewals = store.renewals.lock().await;
+    assert_eq!(renewals.len(), 3);
+    assert_eq!(renewals[0].0, renewals[1].0);
+    assert_eq!(renewals[1].0, renewals[2].0);
+    drop(renewals);
+
+    drop(interaction);
+    wait_for_releases(&store, 1).await;
+}
+
+#[tokio::test]
+async fn retained_resume_rejects_a_confirmed_exact_lease_replacement() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let interaction = completed_retained_interaction(&service, &durable).await;
+    let old_lease = store
+        .inner
+        .active_session_lease(&durable.session.id)
+        .await
+        .expect("the retained owner keeps its exact lease");
+    store.inner.release_session_lease(&old_lease).await.unwrap();
+    let successor_lease = service
+        .acquire_runtime_lease_at(&durable, SessionOperation::Interact)
+        .await
+        .unwrap()
+        .expect("a replacement interaction lease is acquired");
+    assert_ne!(old_lease.token, successor_lease.token);
+
+    assert!(matches!(
+        interaction.resume_before_delivery().await,
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    assert!(matches!(
+        interaction.authority().ensure_delivery_allowed(),
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    assert_eq!(store.renewals.lock().await.len(), 1);
+
+    drop(interaction);
+    wait_for_releases(&store, 1).await;
+    assert_eq!(
+        store.inner.active_session_lease(&durable.session.id).await,
+        Some(successor_lease.clone()),
+        "cleanup of the confirmed old lease cannot clear its replacement"
+    );
+    store
+        .inner
+        .release_session_lease(&successor_lease)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn retained_resume_refuses_an_expired_delivery_without_renewing() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let interaction = completed_retained_interaction(&service, &durable).await;
+
+    tokio::time::advance(Duration::from_secs(30)).await;
+    assert!(matches!(
+        interaction.resume_before_delivery().await,
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    assert!(store.renewals.lock().await.is_empty());
+    drop(interaction);
+
+    service
+        .run_runtime_interaction_at(&durable, |authority| async move {
+            authority.ensure_delivery_allowed()?;
+            Ok::<_, CoreError>(())
+        })
+        .await
+        .expect("the store expires the old lease before admitting a successor");
+}
+
+#[tokio::test]
+async fn retained_resume_observes_caller_invalidation_before_renewing() {
+    let store = Arc::new(InteractionStore::default());
+    store.inner.seed(&record()).await.unwrap();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = store.get(&record().session.id).await.unwrap().unwrap();
+    let (retained, is_retained) = tokio::sync::oneshot::channel();
+    let (finish, may_finish) = tokio::sync::oneshot::channel();
+    let caller = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move {
+            service
+                .run_retained_runtime_interaction_at(
+                    &durable,
+                    move |authority, interaction| async move {
+                        authority.ensure_delivery_allowed()?;
+                        let _ = retained.send(interaction);
+                        let _ = may_finish.await;
+                        Ok::<_, CoreError>(())
+                    },
+                    |_reason, _result, _interaction| {},
+                )
+                .await
+        }
+    });
+    let interaction = is_retained
+        .await
+        .expect("the running action preserves one retained owner");
+
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    assert!(matches!(
+        interaction.resume_before_delivery().await,
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
+    assert!(store.renewals.lock().await.is_empty());
+
+    finish.send(()).unwrap();
+    drop(interaction);
+    wait_for_releases(&store, 1).await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -766,25 +986,58 @@ async fn action_success_survives_an_unknown_release_and_retries_the_exact_lease(
     assert_eq!(releases[0], releases[1]);
 }
 
-#[tokio::test]
-async fn action_success_survives_an_unavailable_release() {
+#[tokio::test(start_paused = true)]
+async fn transient_release_outage_retains_cleanup_until_a_successor_can_proceed() {
     let store = Arc::new(InteractionStore::default());
     store.inner.seed(&record()).await.unwrap();
-    store.fail_releases(2);
+    store.fail_releases(3);
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let durable = store.get(&record().session.id).await.unwrap().unwrap();
 
-    let result = service
+    let first = service
         .run_runtime_interaction_at(&durable, |authority| async move {
             authority.ensure_delivery_allowed()?;
             Ok::<_, CoreError>("known-success")
         })
-        .await;
+        .await
+        .expect("the known result precedes release recovery");
+    assert_eq!(first, "known-success");
+    while store.releases.lock().await.is_empty() {
+        tokio::task::yield_now().await;
+    }
 
-    assert_eq!(result.unwrap(), "known-success");
-    wait_for_releases(&store, 2).await;
+    let successor = tokio::spawn({
+        let service = Arc::clone(&service);
+        let durable = durable.clone();
+        async move {
+            service
+                .run_runtime_interaction_at(&durable, |authority| async move {
+                    authority.ensure_delivery_allowed()?;
+                    Ok::<_, CoreError>("successor")
+                })
+                .await
+        }
+    });
+
+    for expected_attempts in 2..=3 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        while store.releases.lock().await.len() < expected_attempts {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !successor.is_finished(),
+            "the exact old lease remains fenced while release is unavailable"
+        );
+    }
+    tokio::time::advance(Duration::from_secs(1)).await;
+
+    assert_eq!(successor.await.unwrap().unwrap(), "successor");
+    wait_for_releases(&store, 5).await;
     let releases = store.releases.lock().await;
     assert_eq!(releases[0], releases[1]);
+    assert_eq!(releases[1], releases[2]);
+    assert_eq!(releases[2], releases[3]);
+    assert_ne!(releases[3].token, releases[4].token);
 }
 
 #[tokio::test]
@@ -852,6 +1105,101 @@ async fn known_result_precedes_a_stalled_release_and_a_successor_can_proceed() {
     })
     .await
     .expect("the first release response resumes");
+}
+
+#[test]
+fn release_interrupted_after_commit_restarts_without_releasing_a_successor() {
+    let origin = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("origin runtime builds");
+    let store = Arc::new(InteractionStore::default());
+    origin.block_on(store.inner.seed(&record())).unwrap();
+    store.stall_next_release_after_commit();
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let durable = origin
+        .block_on(store.get(&record().session.id))
+        .unwrap()
+        .unwrap();
+
+    let first = origin
+        .block_on(
+            service.run_runtime_interaction_at(&durable, |authority| async move {
+                authority.ensure_delivery_allowed()?;
+                Ok::<_, CoreError>("first")
+            }),
+        )
+        .expect("the action result is known before release responds");
+    assert_eq!(first, "first");
+    origin.block_on(async {
+        tokio::time::timeout(Duration::from_secs(2), store.release_committed.notified())
+            .await
+            .expect("the exact release commits before its response is lost");
+    });
+    let old_lease = origin.block_on(async {
+        store
+            .releases
+            .lock()
+            .await
+            .first()
+            .cloned()
+            .expect("the old exact release was attempted")
+    });
+    assert!(origin
+        .block_on(store.inner.active_session_lease(&durable.session.id))
+        .is_none());
+
+    drop(origin);
+
+    let replacement = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("replacement runtime builds");
+    replacement.block_on(async {
+        let (started, is_started) = tokio::sync::oneshot::channel();
+        let (finish, may_finish) = tokio::sync::oneshot::channel();
+        let successor = tokio::spawn({
+            let service = Arc::clone(&service);
+            let durable = durable.clone();
+            async move {
+                service
+                    .run_runtime_interaction_at(&durable, move |authority| async move {
+                        authority.ensure_delivery_allowed()?;
+                        let _ = started.send(());
+                        let _ = may_finish.await;
+                        Ok::<_, CoreError>(())
+                    })
+                    .await
+            }
+        });
+        is_started
+            .await
+            .expect("a successor acquires after the old release committed");
+        let successor_lease = store
+            .inner
+            .active_session_lease(&durable.session.id)
+            .await
+            .expect("the successor holds its own exact lease");
+        assert_ne!(old_lease.token, successor_lease.token);
+
+        service
+            .event_logs
+            .drain_retained_cleanups(&durable.session.id)
+            .await;
+        assert_eq!(
+            store.inner.active_session_lease(&durable.session.id).await,
+            Some(successor_lease.clone()),
+            "restarted old cleanup cannot clear a successor lease"
+        );
+
+        finish.send(()).unwrap();
+        successor.await.unwrap().unwrap();
+        wait_for_releases(&store, 3).await;
+        let releases = store.releases.lock().await;
+        assert_eq!(releases[0], old_lease);
+        assert_eq!(releases[1], old_lease);
+        assert_eq!(releases[2], successor_lease);
+    });
 }
 
 #[tokio::test]
