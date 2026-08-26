@@ -248,6 +248,51 @@ describe('the SSE id identifies only a complete durable projection', () => {
     expect(events.map((event) => event.seq)).toEqual([0, 7]);
   });
 
+  it('parses and folds an approval whose kernel supplied no wording', () => {
+    const body = sse([
+      {
+        event: 'RUN_FINISHED',
+        data: {
+          type: 'RUN_FINISHED',
+          runId: 'run_1',
+          threadId: 'sesn_1',
+          outcome: {
+            type: 'interrupt',
+            interrupts: [{ id: 'approval-silent', reason: 'confirmation', message: null }],
+          },
+        },
+      },
+      {
+        id: 8,
+        event: 'STATE_DELTA',
+        data: {
+          type: 'STATE_DELTA',
+          runId: 'run_1',
+          threadId: 'sesn_1',
+          delta: [
+            {
+              op: 'add',
+              path: '/pendingApprovals/approval-silent',
+              value: { id: 'approval-silent', reason: 'confirmation', message: null },
+            },
+          ],
+        },
+      },
+    ]);
+
+    const conversation = fold(parseEventStream(body));
+    expect(conversation.pending).toMatchObject({
+      id: 'approval-silent',
+      reason: 'confirmation',
+      message: null,
+    });
+    expect(conversation.aguiState.pendingApprovals['approval-silent']).toEqual({
+      id: 'approval-silent',
+      reason: 'confirmation',
+      message: null,
+    });
+  });
+
   it.each(durableFinalOrSingletonKinds)(
     'rejects an omitted id for durable final or singleton %s',
     (kind) => {
