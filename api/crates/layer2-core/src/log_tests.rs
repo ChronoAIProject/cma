@@ -712,6 +712,14 @@ fn a_public_resize_continuation_and_lifecycle_survive_store_runtime_replacement(
 
     let replacement = current_thread_runtime();
     replacement.block_on(async {
+        let (replacement_input, _received) = terminal_input_channel(2);
+        service
+            .entries
+            .write()
+            .await
+            .get_mut(&created.id)
+            .expect("the live entry survives the executor")
+            .input = Some(replacement_input);
         let public_successor = TerminalGeometry::new(134, 48).expect("valid geometry");
         tokio::time::timeout(
             Duration::from_secs(2),
