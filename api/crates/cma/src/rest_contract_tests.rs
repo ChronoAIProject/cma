@@ -4299,6 +4299,28 @@ async fn unbuffered_json_and_optional_body_limits_return_the_same_coded_413() {
 }
 
 #[tokio::test]
+async fn oversized_unkeyed_input_checks_media_type_before_reading_the_body() {
+    let app = test_surface(true).app;
+    for content_type in [None, Some("text/plain")] {
+        let mut request = Request::post("/api/v1/sessions/sesn_bad/input");
+        if let Some(content_type) = content_type {
+            request = request.header(header::CONTENT_TYPE, content_type);
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                request
+                    .body(Body::from(vec![b' '; OVERSIZED_BODY_LEN]))
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        let body = assert_problem(response, StatusCode::UNSUPPORTED_MEDIA_TYPE).await;
+        assert_eq!(body["code"], "unsupported_media_type");
+    }
+}
+
+#[tokio::test]
 async fn rest_routing_failures_are_scoped_problem_documents() {
     let app = test_surface(true).app;
 
