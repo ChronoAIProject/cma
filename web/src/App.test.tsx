@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { UserEvent } from '@testing-library/user-event';
 import { App } from './App';
@@ -774,7 +774,7 @@ describe('App', () => {
     // Every session except the first is put ahead of it in the history, so
     // recency alone exhausts the budget once the focused one is gone.
     for (let i = 1; i < MAX_LIVE_NODES + 2; i += 1) {
-      await user.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
+      fireEvent.click(within(canvasNode(`sesn_${i}`)).getByRole('button'));
     }
     // Delete is in the session's lifecycle menu (§12), gated behind an
     // acknowledgement (§7).

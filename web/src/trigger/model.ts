@@ -4,6 +4,8 @@ import type {
   Launch,
   LaunchStepStatus,
   Mergeability,
+  PromptDelivery,
+  PromptDeliveryState,
 } from '@chronoai/cma-sdk';
 
 export function jsonObject(value: JsonValue | undefined): JsonObject | undefined {
@@ -124,8 +126,18 @@ export function reachState(launch: Launch): string | undefined {
     : jsonText(launch.reach.revocation_state ?? launch.reach.state);
 }
 
-export function deliveryState(launch: Launch): string | undefined {
-  return launch.delivery === null ? undefined : jsonText(launch.delivery.state);
+export function deliveryState(launch: Launch): PromptDeliveryState | undefined {
+  return launch.delivery?.state;
+}
+
+export function recoverablePromptDelivery(launch: Launch): PromptDelivery | undefined {
+  const delivery = launch.delivery;
+  return launch.state === 'failed_retryable' &&
+    launch.blocked_reason === 'recovery_required' &&
+    delivery?.state === 'recovery_required' &&
+    delivery.payload_hash !== ''
+    ? delivery
+    : undefined;
 }
 
 const STEP_LABELS: Readonly<Record<string, string>> = {

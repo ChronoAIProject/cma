@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { TransportError, cancelLaunch, createNewLaunch } from '../api/client';
+import { TransportError, cancelLaunch, createNewLaunch, recoverInitialPrompt } from '../api/client';
 import type { AppRouter } from '../routing/routes';
 import { routeClick, routePath } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { RiskConfirmation } from '../ui/RiskConfirmation';
 import {
   IconBranchOutline16,
   IconCheckOutline16,
@@ -20,6 +21,7 @@ import {
   isTerminalLaunch,
   mergeabilityLabel,
   reachState,
+  recoverablePromptDelivery,
   sessionId,
   shortRevision,
   stateLabel,
@@ -66,8 +68,10 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
   const resource = useLaunchResource(launchId);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [confirmingNew, setConfirmingNew] = useState(false);
-  const [busy, setBusy] = useState<'cancel' | 'new' | null>(null);
+  const [confirmingRecovery, setConfirmingRecovery] = useState(false);
+  const [busy, setBusy] = useState<'cancel' | 'new' | 'recover' | null>(null);
   const [actionFailure, setActionFailure] = useState<string | null>(null);
+  const [recoveryFailure, setRecoveryFailure] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const commands = useIdempotentCommand();
 
@@ -137,6 +141,48 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
     }
   }
 
+  async function recoverPrompt(): Promise<void> {
+    const current = resource.launch;
+    if (current === null) return;
+    const slot = `launch:recover-prompt:${current.id}`;
+    const pending = commands.pending?.slot === slot;
+    const delivery = recoverablePromptDelivery(current);
+    if (!pending && delivery === undefined) {
+      setRecoveryFailure('This Launch no longer requires initial-task recovery.');
+      await resource.refresh();
+      return;
+    }
+
+    setBusy('recover');
+    setRecoveryFailure(null);
+    try {
+      let next: typeof current;
+      if (pending) {
+        next = await commands.reconcile<typeof current>(slot, 'initial-task recovery');
+      } else {
+        if (delivery === undefined) return;
+        const expectedRevision = current.revision_number;
+        const payloadHash = delivery.payload_hash;
+        next = await commands.execute(slot, 'initial-task recovery', (idempotencyKey) =>
+          recoverInitialPrompt(current.id, expectedRevision, payloadHash, { idempotencyKey }),
+        );
+      }
+      resource.accept(next);
+      setConfirmingRecovery(false);
+    } catch (cause) {
+      setRecoveryFailure(
+        cause instanceof TransportError
+          ? 'The recovery outcome is unknown. CMA retained the exact authorization; reconcile it before another Launch action.'
+          : cause instanceof Error
+            ? cause.message
+            : String(cause),
+      );
+      await resource.refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (resource.loading && resource.launch === null) {
     return (
       <main className="trigger-workflow" aria-busy="true">
@@ -179,6 +225,16 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
   const terminal = isTerminalLaunch(launch);
   const pendingCancel = commands.pending?.slot === `launch:cancel:${launch.id}`;
   const pendingNew = commands.pending?.slot === `launch:new:${launch.id}`;
+  const pendingRecovery = commands.pending?.slot === `launch:recover-prompt:${launch.id}`;
+  const recoveryAvailable = recoverablePromptDelivery(launch) !== undefined || pendingRecovery;
+  const recoveryStatus =
+    busy === 'recover'
+      ? pendingRecovery
+        ? 'Reconciling the retained recovery authorization.'
+        : 'Submitting the recovery authorization.'
+      : pendingRecovery
+        ? 'CMA has not returned a finite result. Only the retained recovery authorization can be reconciled.'
+        : undefined;
   const contributionRoute = { kind: 'contribute', launchId: launch.id } as const;
   const sessionRoute =
     linkedSession === undefined
@@ -463,6 +519,19 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
         >
           Refresh
         </Button>
+        {recoveryAvailable ? (
+          <Button
+            variant="primary"
+            icon={<IconRefreshOutline16 />}
+            disabled={busy !== null || commands.pending !== null}
+            onClick={() => {
+              setRecoveryFailure(null);
+              setConfirmingRecovery(true);
+            }}
+          >
+            Recover initial task
+          </Button>
+        ) : null}
         {terminal ? (
           <Button
             variant="outline"
@@ -512,6 +581,30 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
             </Button>
           </>
         }
+      />
+      <RiskConfirmation
+        open={confirmingRecovery}
+        title="Authorize another initial task?"
+        description="CMA cannot determine whether the previous initial task started. Authorizing another dispatch may execute the task twice."
+        acknowledgeLabel="I understand that the initial task may execute twice."
+        confirmLabel={
+          busy === 'recover'
+            ? pendingRecovery
+              ? 'Reconciling'
+              : 'Submitting'
+            : pendingRecovery
+              ? 'Reconcile recovery'
+              : 'Authorize another dispatch'
+        }
+        busy={busy === 'recover'}
+        dismissible={busy !== 'recover' && !pendingRecovery}
+        failure={recoveryFailure ?? undefined}
+        status={recoveryStatus}
+        onCancel={() => {
+          setConfirmingRecovery(false);
+          setRecoveryFailure(null);
+        }}
+        onConfirm={() => void recoverPrompt()}
       />
       <Modal
         open={confirmingNew}

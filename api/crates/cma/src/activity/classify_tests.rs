@@ -110,6 +110,58 @@ fn the_operator_surface_is_classified_too() {
 }
 
 #[test]
+fn trigger_recovery_actions_are_distinct_and_target_the_launch() {
+    let owner = classified(
+        Method::POST,
+        "/api/v1/launches/launch-recovery/recover-initial-prompt",
+    );
+    assert_eq!(owner.action, Action::TriggerLaunchPromptRecover);
+    assert_eq!(
+        owner.target,
+        Some(ActivityTarget::Launch(LaunchId("launch-recovery".into())))
+    );
+    assert!(
+        !owner.reads_body,
+        "the retained prompt hash and risk acknowledgement are owner-private confirmation data"
+    );
+
+    let operator = classified(
+        Method::POST,
+        "/api/v1/admin/triggers/launches/launch-recovery/reconcile",
+    );
+    assert_eq!(operator.action, Action::TriggerEffectRecoveryAuthorize);
+    assert_eq!(operator.target, owner.target);
+    assert!(operator.reads_body);
+}
+
+#[test]
+fn effect_recovery_audit_keeps_only_closed_evidence_and_never_provider_material() {
+    let body = br#"{
+        "expected_revision": 17,
+        "effect": "pull_request",
+        "intent_key": "must-not-be-retained",
+        "expected_fence": 9,
+        "evidence_correlation_id": "failure-correlation-9",
+        "provider_body": "must-not-be-retained",
+        "credential": "must-not-be-retained",
+        "raw_object_reference": "must-not-be-retained"
+    }"#;
+    let detail = detail_from_body(Action::TriggerEffectRecoveryAuthorize, body);
+
+    assert_eq!(detail.get(DetailKey::Effect), Some("pull_request"));
+    assert_eq!(detail.get(DetailKey::FencingToken), Some("9"));
+    assert_eq!(detail.get(DetailKey::CorrelationId), None);
+    assert_eq!(detail.iter().count(), 2);
+    let rendered = serde_json::to_string(&detail).unwrap();
+    assert!(!rendered.contains("must-not-be-retained"), "got {rendered}");
+    assert!(
+        !rendered.contains("failure-correlation-9"),
+        "got {rendered}"
+    );
+    assert!(!rendered.contains("expected_revision"), "got {rendered}");
+}
+
+#[test]
 fn every_platform_settings_operation_is_classified_without_reading_its_body() {
     for (method, path, action) in [
         (
