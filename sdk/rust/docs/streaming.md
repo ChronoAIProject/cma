@@ -48,3 +48,22 @@ An unrecognised event discriminator becomes `EventKind::Unknown` with the comple
 JSON payload, so an older client can advance its cursor without pretending it
 understood the event. Known discriminators remain strict. The full vocabulary and
 replay rules are in [REST Events](../../../docs/API_REST.md#5-events).
+
+`EventKind::RuntimeHandoverStarted` is a unit event written immediately before
+every marker-aware handover enters `Rotating`. It permanently enables
+marker-based usage accounting for the session, so rollback and readoption status
+changes do not split the outgoing runtime's cumulative counter. History without
+this discriminator retains its legacy `Rotating` boundaries.
+
+`EventKind::RuntimeIncarnationStarted` is a unit event for compatibility stores
+without durable fencing generations. It is committed atomically with the record
+that names a newly provisioned runtime, and every such marker separates
+cumulative token counters. A provider attempt that never gets a durable handle
+writes none; an idempotently retried commit writes the unit once.
+
+`EventKind::RuntimeStarted` carries a positive durable `generation`. It marks a
+committed runtime-authority change, not a candidate start; duplicate or older
+generations do not begin another incarnation. Usage readers use strictly newer
+markers to separate cumulative token counters that restart on replacement. A
+runtime-start marker also enables exact accounting when no handover marker
+preceded it.

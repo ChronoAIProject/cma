@@ -4,10 +4,15 @@
 //! under test is the decision between "history from a newer writer" and
 //! "damage", and that decision is made entirely on the shape of one document.
 
+use std::num::NonZeroU64;
+
 use layer2_core::{Event, EventKind, RuntimeLossCause, SessionId, StoredEventKind};
 use mongodb::bson::{doc, Bson};
 
-use super::{from_document, from_document_before_context_compaction, to_document};
+use super::{
+    from_document, from_document_before_context_compaction, from_document_before_runtime_markers,
+    to_document,
+};
 
 fn event(seq: u64, kind: EventKind) -> Event {
     Event {
@@ -127,6 +132,11 @@ fn every_current_variant_survives_the_round_trip() {
             was: 198_000,
             now: 42_100,
             window: Some(200_000),
+        },
+        EventKind::RuntimeHandoverStarted,
+        EventKind::RuntimeIncarnationStarted,
+        EventKind::RuntimeStarted {
+            generation: NonZeroU64::new(7).unwrap(),
         },
         EventKind::ConversationGap { frames: 7 },
         EventKind::ApprovalResolved {
@@ -328,6 +338,66 @@ fn a_reader_predating_compaction_skips_the_new_boundary() {
             assert_eq!(tag, "context_compacted");
             assert_eq!(payload["was"], 198_000);
             assert_eq!(payload["now"], 42_100);
+        }
+        other => panic!("expected an unknown future event, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_reader_predating_runtime_markers_skips_the_new_boundary() {
+    let read = from_document_before_runtime_markers(doc! {
+        "session_id": "s-1",
+        "seq": 7_i64,
+        "appended_at": "2026-08-27T04:00:00Z",
+        "kind": {
+            "type": "runtime_started",
+            "generation": 3_i64,
+        },
+    })
+    .expect("a runtime marker from a newer writer is not corruption");
+
+    match read.kind {
+        StoredEventKind::Unknown { tag, payload } => {
+            assert_eq!(tag, "runtime_started");
+            assert_eq!(payload["generation"], 3);
+        }
+        other => panic!("expected an unknown future event, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_reader_predating_handover_markers_skips_the_new_discriminator() {
+    let read = from_document_before_runtime_markers(doc! {
+        "session_id": "s-1",
+        "seq": 7_i64,
+        "appended_at": "2026-08-27T04:00:00Z",
+        "kind": { "type": "runtime_handover_started" },
+    })
+    .expect("a handover marker from a newer writer is not corruption");
+
+    match read.kind {
+        StoredEventKind::Unknown { tag, payload } => {
+            assert_eq!(tag, "runtime_handover_started");
+            assert_eq!(payload, serde_json::json!({}));
+        }
+        other => panic!("expected an unknown future event, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_reader_predating_runtime_markers_skips_the_compatibility_incarnation() {
+    let read = from_document_before_runtime_markers(doc! {
+        "session_id": "s-1",
+        "seq": 7_i64,
+        "appended_at": "2026-08-27T04:00:00Z",
+        "kind": { "type": "runtime_incarnation_started" },
+    })
+    .expect("a compatibility marker from a newer writer is not corruption");
+
+    match read.kind {
+        StoredEventKind::Unknown { tag, payload } => {
+            assert_eq!(tag, "runtime_incarnation_started");
+            assert_eq!(payload, serde_json::json!({}));
         }
         other => panic!("expected an unknown future event, got {other:?}"),
     }
