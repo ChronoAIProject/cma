@@ -579,6 +579,241 @@ fn a_long_initial_turn_uses_its_session_deadline_not_the_generic_poll_budget() {
     );
 }
 
+#[test]
+fn prompt_recovery_is_payload_bound_explicit_and_one_use() {
+    let mut launch = recovery_required_prompt_launch();
+    let before = launch.clone();
+    let mut confirmation = confirmation(
+        ConfirmationAction::RecoverPrompt,
+        &launch.owner,
+        &launch.delivery.as_ref().unwrap().payload_hash,
+    );
+    confirmation.idempotency_key_hash = "recover-prompt-one".into();
+
+    assert!(launch
+        .authorize_initial_prompt_recovery(confirmation.clone(), false, LATER, "missing-risk-ack",)
+        .is_err());
+    assert_eq!(launch, before, "a refused recovery must be atomic");
+
+    let mut wrong_payload = confirmation.clone();
+    wrong_payload.snapshot_digest = "b".repeat(64);
+    assert!(launch
+        .authorize_initial_prompt_recovery(wrong_payload, true, LATER, "wrong-payload")
+        .is_err());
+    assert_eq!(
+        launch, before,
+        "a mismatched payload must not reopen delivery"
+    );
+
+    let intent = launch.effects.last().unwrap().intent_key.clone();
+    let attempt = launch.effects.last().unwrap().attempt;
+    launch
+        .authorize_initial_prompt_recovery(confirmation.clone(), true, LATER, "recover-prompt")
+        .unwrap();
+    assert_eq!(launch.state, LaunchState::PromptPending);
+    assert_eq!(launch.blocked_reason, None);
+    assert_eq!(launch.failure, None);
+    assert_eq!(launch.resume_state, None);
+    assert_eq!(launch.effects.last().unwrap().state, EffectState::Queued);
+    assert_eq!(launch.effects.last().unwrap().intent_key, intent);
+    assert_eq!(launch.effects.last().unwrap().attempt, attempt);
+    assert_eq!(
+        launch.delivery.as_ref().unwrap().state,
+        PromptDeliveryState::RecoveryRequired,
+        "the session outbox, not the browser command, remains final send authority"
+    );
+    assert!(launch.events.iter().any(|event| matches!(
+        event.kind,
+        LaunchEventKind::RecoveryAuthorized {
+            effect: LaunchEffectKind::InitialDispatch
+        }
+    )));
+
+    launch.state = LaunchState::FailedRetryable;
+    launch.blocked_reason = Some(LaunchBlockedReason::RecoveryRequired);
+    launch.resume_state = Some(LaunchState::PromptPending);
+    launch.failure = Some(recovery_failure("second-ambiguity"));
+    launch.effects.last_mut().unwrap().state = EffectState::RecoveryRequired;
+    launch.delivery.as_mut().unwrap().recovery_generation = 1;
+    launch.delivery.as_mut().unwrap().attempt += 1;
+    let before_reuse = launch.clone();
+    assert!(launch
+        .authorize_initial_prompt_recovery(confirmation, true, LATER, "reuse-confirmation",)
+        .is_err());
+    assert_eq!(
+        launch, before_reuse,
+        "one consent cannot authorize two sends"
+    );
+}
+
+#[test]
+fn operator_recovery_can_only_schedule_read_only_reconciliation() {
+    let (mut launch, lease) = leased_started_launch();
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "initial-claim")
+        .unwrap()
+        .unwrap();
+    launch.effects.last_mut().unwrap().state = EffectState::RecoveryRequired;
+    launch.effects.last_mut().unwrap().last_failure = Some(recovery_failure("operator-evidence"));
+    launch.lease = None;
+    launch.state = LaunchState::FailedRetryable;
+    launch.blocked_reason = Some(LaunchBlockedReason::RecoveryRequired);
+    launch.resume_state = Some(LaunchState::Preflight);
+    launch.failure = Some(recovery_failure("operator-evidence"));
+
+    for (intent, fence, evidence) in [
+        ("wrong-intent", claim.fence, "operator-evidence"),
+        (&claim.intent_key, claim.fence + 1, "operator-evidence"),
+        (&claim.intent_key, claim.fence, "wrong-evidence"),
+    ] {
+        let mut candidate = launch.clone();
+        assert!(candidate
+            .authorize_effect_reconciliation(
+                claim.kind,
+                intent,
+                fence,
+                evidence,
+                LATER,
+                "operator-authorize",
+            )
+            .is_err());
+        assert_eq!(candidate, launch, "a mismatched recovery request is atomic");
+    }
+
+    let mut mismatched_failure = launch.clone();
+    mismatched_failure.effects.last_mut().unwrap().last_failure =
+        Some(recovery_failure("another-effect-failure"));
+    let before = mismatched_failure.clone();
+    assert!(mismatched_failure
+        .authorize_effect_reconciliation(
+            claim.kind,
+            &claim.intent_key,
+            claim.fence,
+            "operator-evidence",
+            LATER,
+            "operator-authorize",
+        )
+        .is_err());
+    assert_eq!(mismatched_failure, before);
+
+    let mut wrong_step = launch.clone();
+    wrong_step.effects.push(EffectRecord {
+        kind: LaunchEffectKind::Fork,
+        state: EffectState::RecoveryRequired,
+        intent_key: "wrong-step-intent".into(),
+        attempt: 1,
+        reconciliation_attempt: 1,
+        fence: claim.fence,
+        provider_request_id: None,
+        external_resource_ids: BTreeMap::new(),
+        next_attempt_at: None,
+        last_failure: Some(recovery_failure("operator-evidence")),
+        updated_at: NOW.into(),
+    });
+    let before = wrong_step.clone();
+    assert!(wrong_step
+        .authorize_effect_reconciliation(
+            LaunchEffectKind::Fork,
+            "wrong-step-intent",
+            claim.fence,
+            "operator-evidence",
+            LATER,
+            "operator-authorize",
+        )
+        .is_err());
+    assert_eq!(wrong_step, before);
+
+    launch
+        .authorize_effect_reconciliation(
+            claim.kind,
+            &claim.intent_key,
+            claim.fence,
+            "operator-evidence",
+            LATER,
+            "operator-authorize",
+        )
+        .unwrap();
+    assert_eq!(launch.state, LaunchState::Preflight);
+    assert_eq!(
+        launch.effects.last().unwrap().state,
+        EffectState::Reconciling
+    );
+    assert_eq!(
+        launch.effects.last().unwrap().next_attempt_at.as_deref(),
+        Some(LATER)
+    );
+
+    let replacement = WorkerLease {
+        holder: "operator-reconcile-worker".into(),
+        fencing_token: launch.fencing_counter + 1,
+        acquired_at: LATER.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = replacement.fencing_token;
+    launch.lease = Some(replacement.clone());
+    let recovered = launch
+        .claim_next_effect(&replacement, LATER, "reconcile-after-authorization")
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.mode, EffectClaimMode::Reconcile);
+    assert_eq!(recovered.intent_key, claim.intent_key);
+    assert_eq!(recovered.attempt, claim.attempt);
+}
+
+fn recovery_required_prompt_launch() -> Launch {
+    let session_launch = session_launch(&"d".repeat(64));
+    let session_id = crate::service::trigger_session_origin(&session_launch)
+        .unwrap()
+        .session_id()
+        .unwrap();
+    let session = crate::Session {
+        options: Default::default(),
+        id: session_id,
+        owner: session_launch.owner.clone(),
+        kernel: crate::KernelId::new("codex"),
+        status: crate::SessionStatus::Running,
+        recovery_state: crate::RecoveryState::Normal,
+        stop_reason: None,
+        geometry: Default::default(),
+        last_seq: 0,
+        environment_profile: Some(crate::EnvironmentProfileId("envp-recovery-test".into())),
+        runtime_version: Some("trigger-runtime-test".into()),
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: Some(Vec::new()),
+        granted_skills: Some(Vec::new()),
+        pricing: None,
+        created_at: NOW.into(),
+    };
+    let (mut launch, _) = prompt_launch(session_launch, &session);
+    launch.delivery = Some(prompt_delivery(
+        &launch,
+        PromptDeliveryState::RecoveryRequired,
+        1,
+    ));
+    launch.effects.last_mut().unwrap().state = EffectState::RecoveryRequired;
+    launch.effects.last_mut().unwrap().last_failure = Some(recovery_failure("prompt-ambiguity"));
+    launch.lease = None;
+    launch.state = LaunchState::FailedRetryable;
+    launch.blocked_reason = Some(LaunchBlockedReason::RecoveryRequired);
+    launch.resume_state = Some(LaunchState::PromptPending);
+    launch.failure = Some(recovery_failure("prompt-ambiguity"));
+    launch
+}
+
+fn recovery_failure(correlation_id: &str) -> LaunchFailure {
+    LaunchFailure {
+        class: FailureClass::RecoveryRequired,
+        code: "effect_outcome_unknown".into(),
+        detail: "CMA cannot prove the external outcome.".into(),
+        remediation: "Review retained evidence before authorizing recovery.".into(),
+        correlation_id: correlation_id.into(),
+        retry_at: None,
+        observed_at: NOW.into(),
+    }
+}
+
 fn prompt_delivery(launch: &Launch, state: PromptDeliveryState, attempt: u32) -> PromptDelivery {
     PromptDelivery {
         launch_id: launch.id.clone(),
@@ -591,6 +826,7 @@ fn prompt_delivery(launch: &Launch, state: PromptDeliveryState, attempt: u32) ->
         payload_hash: "a".repeat(64),
         state,
         attempt,
+        recovery_generation: 0,
         dispatch_fence_sequence: (state != PromptDeliveryState::Queued).then_some(42),
         queued_at: crate::clock::now_rfc3339(),
         updated_at: crate::clock::now_rfc3339(),
@@ -1183,6 +1419,7 @@ fn reviewed_launch() -> Launch {
         payload_hash: "f".repeat(64),
         state: PromptDeliveryState::Completed,
         attempt: 1,
+        recovery_generation: 0,
         dispatch_fence_sequence: Some(1),
         queued_at: NOW.into(),
         updated_at: NOW.into(),
@@ -1375,6 +1612,169 @@ fn cancellation_is_idempotent_but_never_skips_ambiguous_pr_reconciliation() {
     assert_eq!(launch.state, LaunchState::Cancelled);
     launch.cancel(cancel, LATER, "cancel-again").unwrap();
     assert_eq!(launch.state, LaunchState::Cancelled);
+}
+
+#[test]
+fn cancellation_settles_pending_work_and_preserves_every_external_record() {
+    use LaunchState as State;
+
+    for state in [
+        State::Draft,
+        State::AuthRequired,
+        State::Preflight,
+        State::ForkPending,
+        State::ForkReady,
+        State::BranchPending,
+        State::WorkspacePending,
+        State::SandboxPending,
+        State::SessionPending,
+        State::PromptPending,
+        State::Ready,
+        State::Contributing,
+        State::PrPending,
+        State::PrOpen,
+        State::FailedRetryable,
+    ] {
+        let mut launch = reviewed_launch();
+        launch.state = state;
+        launch.blocked_reason = None;
+        launch.failure = None;
+        launch.resume_state = None;
+        launch.effects = vec![
+            EffectRecord {
+                kind: LaunchEffectKind::Fork,
+                state: EffectState::Succeeded,
+                intent_key: "completed-fork".into(),
+                attempt: 1,
+                reconciliation_attempt: 0,
+                fence: 3,
+                provider_request_id: Some("provider-fork".into()),
+                external_resource_ids: BTreeMap::from([("fork_repository_id".into(), "20".into())]),
+                next_attempt_at: None,
+                last_failure: None,
+                updated_at: NOW.into(),
+            },
+            EffectRecord {
+                kind: LaunchEffectKind::Checkpoint,
+                state: EffectState::Queued,
+                intent_key: "queued-checkpoint".into(),
+                attempt: 0,
+                reconciliation_attempt: 0,
+                fence: 3,
+                provider_request_id: None,
+                external_resource_ids: BTreeMap::new(),
+                next_attempt_at: Some(LATER.into()),
+                last_failure: None,
+                updated_at: NOW.into(),
+            },
+            EffectRecord {
+                kind: LaunchEffectKind::Diff,
+                state: EffectState::FailedRetryable,
+                intent_key: "retryable-diff".into(),
+                attempt: 1,
+                reconciliation_attempt: 0,
+                fence: 3,
+                provider_request_id: None,
+                external_resource_ids: BTreeMap::new(),
+                next_attempt_at: Some(LATER.into()),
+                last_failure: Some(retryable_failure(NOW)),
+                updated_at: NOW.into(),
+            },
+        ];
+        launch.steps[0].status = LaunchStepStatus::Completed;
+        launch.steps[1].status = LaunchStepStatus::Failed;
+        let retained = (
+            launch.fork.clone(),
+            launch.branch.clone(),
+            launch.workspace.clone(),
+            launch.session.clone(),
+            launch.diff.clone(),
+            launch.contribution.clone(),
+            launch.pull_request.clone(),
+        );
+        let completed_effect = launch.effects[0].clone();
+        let owner = launch.owner.clone();
+        let digest = launch.effective.digest.clone();
+        launch
+            .cancel(
+                confirmation(ConfirmationAction::Cancel, &owner, &digest),
+                LATER,
+                format!("cancel-{state:?}"),
+            )
+            .unwrap();
+
+        assert_eq!(launch.state, State::Cancelled, "state {state:?}");
+        assert_eq!(launch.effects[0], completed_effect, "state {state:?}");
+        assert_eq!(launch.effects[1].state, EffectState::Cancelled);
+        assert_eq!(launch.effects[2].state, EffectState::Cancelled);
+        assert_eq!(launch.effects[1].next_attempt_at, None);
+        assert_eq!(launch.effects[2].next_attempt_at, None);
+        assert_eq!(launch.steps[0].status, LaunchStepStatus::Completed);
+        assert_eq!(launch.steps[1].status, LaunchStepStatus::Failed);
+        assert!(launch.steps[2..]
+            .iter()
+            .all(|step| step.status == LaunchStepStatus::Cancelled));
+        assert_eq!(
+            (
+                launch.fork.clone(),
+                launch.branch.clone(),
+                launch.workspace.clone(),
+                launch.session.clone(),
+                launch.diff.clone(),
+                launch.contribution.clone(),
+                launch.pull_request.clone(),
+            ),
+            retained,
+            "state {state:?} must retain every external record"
+        );
+        let cancelled = launch.clone();
+        launch
+            .cancel(
+                confirmation(ConfirmationAction::Cancel, &owner, &digest),
+                LATER,
+                "cancel-again",
+            )
+            .unwrap();
+        assert_eq!(launch, cancelled, "cancellation is idempotent in {state:?}");
+    }
+}
+
+#[test]
+fn cancellation_refuses_every_unsettled_external_outcome_atomically() {
+    for state in [
+        EffectState::Claimed,
+        EffectState::Reconciling,
+        EffectState::RecoveryRequired,
+    ] {
+        let mut launch = reviewed_launch();
+        launch.effects.push(EffectRecord {
+            kind: LaunchEffectKind::PullRequest,
+            state,
+            intent_key: "unsettled-write".into(),
+            attempt: 1,
+            reconciliation_attempt: 1,
+            fence: 7,
+            provider_request_id: None,
+            external_resource_ids: BTreeMap::new(),
+            next_attempt_at: None,
+            last_failure: None,
+            updated_at: NOW.into(),
+        });
+        let before = launch.clone();
+        let owner = launch.owner.clone();
+        let digest = launch.effective.digest.clone();
+        assert!(launch
+            .cancel(
+                confirmation(ConfirmationAction::Cancel, &owner, &digest),
+                LATER,
+                "unsafe-cancel",
+            )
+            .is_err());
+        assert_eq!(
+            launch, before,
+            "unsettled {state:?} must remain recoverable"
+        );
+    }
 }
 
 #[test]
@@ -1718,6 +2118,126 @@ async fn a_readme_reclick_resumes_current_and_new_launch_explicitly_supersedes_i
             .await
             .unwrap_err(),
         TriggerStoreError::Superseded
+    );
+}
+
+#[tokio::test]
+async fn a_readme_reclick_after_completion_returns_the_exact_summary_without_new_resources() {
+    let publisher = SubjectId("publisher".into());
+    let contributor = SubjectId("contributor".into());
+    let (service, store) = service();
+    let draft = service
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = service
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    let mut completed = service
+        .create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            NOW,
+            "first-click",
+        )
+        .await
+        .unwrap();
+    completed.state = LaunchState::Completed;
+    completed.terminal_at = Some(LATER.into());
+    store
+        .replace_launch(completed.revision_number, None, &completed)
+        .await
+        .unwrap();
+
+    let reclick = service
+        .create_or_resume_launch(
+            contributor,
+            &published.revision.public_id,
+            LATER,
+            "completed-reclick",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(reclick, completed);
+    assert_eq!(store.inner.lock().unwrap().launches.len(), 1);
+    assert!(reclick.fork.is_none());
+    assert!(reclick.branch.is_none());
+    assert!(reclick.workspace.is_none());
+    assert!(reclick.session.is_none());
+    assert!(reclick.delivery.is_none());
+    assert!(reclick.contribution.is_none());
+    assert!(reclick.pull_request.is_none());
+}
+
+#[tokio::test]
+async fn repeated_terminal_cancellation_is_an_exact_no_op_with_a_fresh_command() {
+    let publisher = SubjectId("publisher".into());
+    let contributor = SubjectId("contributor".into());
+    let (service, store) = service();
+    let draft = service
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = service
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    let launch = service
+        .create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            NOW,
+            "first-click",
+        )
+        .await
+        .unwrap();
+    let digest = launch.effective.digest.clone();
+    let cancelled = service
+        .cancel(
+            &contributor,
+            &launch.id,
+            launch.revision_number,
+            confirmation(ConfirmationAction::Cancel, &contributor, &digest),
+            LATER,
+            "first-cancel",
+        )
+        .await
+        .unwrap();
+    let mut repeated_confirmation = confirmation(ConfirmationAction::Cancel, &contributor, &digest);
+    repeated_confirmation.idempotency_key_hash = "fresh-cancel-command".into();
+    let repeated = service
+        .cancel(
+            &contributor,
+            &launch.id,
+            cancelled.revision_number,
+            repeated_confirmation,
+            LATER,
+            "second-cancel",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(repeated, cancelled);
+    assert_eq!(store.inner.lock().unwrap().launches.len(), 1);
+    assert_eq!(
+        repeated
+            .confirmations
+            .iter()
+            .filter(|confirmation| confirmation.action == ConfirmationAction::Cancel)
+            .count(),
+        1
     );
 }
 

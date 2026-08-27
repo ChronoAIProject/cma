@@ -218,7 +218,10 @@ impl Idempotency {
     }
 
     /// Record the result of an acquired operation and return it to the caller.
-    pub(super) async fn finish(self, result: Result<Response, RequestFailure>) -> Response {
+    pub(super) async fn finish<E>(self, result: Result<Response, E>) -> Response
+    where
+        E: IntoResponse,
+    {
         let response = result.unwrap_or_else(IntoResponse::into_response);
         let Self::Acquired { store, claim } = self else {
             return response;
@@ -232,6 +235,31 @@ impl Idempotency {
         }
         response
     }
+}
+
+/// Begin one required, body-fingerprinted command and derive confirmation
+/// evidence from its operation key without retaining the key itself.
+pub(super) async fn required_command<T: DeserializeOwned>(
+    key: IdempotencyKey,
+    store: Arc<dyn OperationStore>,
+    caller: &Caller,
+    operation: String,
+    body: Result<RequestBody<T>, BodyProblem>,
+) -> Result<(Idempotency, Result<T, BodyProblem>, String), Response> {
+    let key = key.required().map_err(IntoResponse::into_response)?;
+    let confirmation_hash = key
+        .confirmation_hash(&operation)
+        .expect("a required operation key has a digest");
+    let (body, fingerprint) = match body {
+        Ok(body) => body.into_parts(),
+        Err(error) => return Err(RequestFailure::from(error).into_response()),
+    };
+    let guard = match Idempotency::begin(key, store, caller, operation, fingerprint).await {
+        Ok(Idempotency::Replay(response)) => return Err(response),
+        Ok(guard) => guard,
+        Err(response) => return Err(response),
+    };
+    Ok((guard, body, confirmation_hash))
 }
 
 #[derive(Serialize, Deserialize)]

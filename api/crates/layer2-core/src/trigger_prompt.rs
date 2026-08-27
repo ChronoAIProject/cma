@@ -101,6 +101,13 @@ impl SessionService {
             }
         };
 
+        let initial = if initial.delivery.state == PromptDeliveryState::RecoveryRequired {
+            self.authorize_replacement_dispatch(&id, launch, initial, &authority)
+                .await?
+        } else {
+            initial
+        };
+
         // A durable non-queued result is useful even if the runtime has since
         // disappeared. Only an actual queued write attempt needs a live link.
         if initial.delivery.state == PromptDeliveryState::Queued {
@@ -127,6 +134,8 @@ impl SessionService {
         match initial.delivery.state {
             PromptDeliveryState::Queued => {
                 authority.require_current()?;
+                let record_owner_turn = initial.delivery.attempt == 0
+                    || initial.recorded_recovery_generation < initial.delivery.recovery_generation;
                 initial.delivery.state = PromptDeliveryState::DispatchFenced;
                 initial.delivery.attempt =
                     initial.delivery.attempt.checked_add(1).ok_or_else(|| {
@@ -136,8 +145,16 @@ impl SessionService {
                     })?;
                 initial.delivery.dispatch_fence_sequence = None;
                 initial.delivery.updated_at = crate::clock::now_rfc3339();
+                if record_owner_turn {
+                    initial.recorded_recovery_generation = initial.delivery.recovery_generation;
+                }
                 let (fenced, outcome) = self
-                    .fence_and_send_initial_prompt(&id, initial, authority.clone())
+                    .fence_and_send_initial_prompt(
+                        &id,
+                        initial,
+                        authority.clone(),
+                        record_owner_turn,
+                    )
                     .await?;
                 match outcome {
                     ConversationSendOutcome::PreWriteFailure(error) => {
@@ -258,11 +275,64 @@ impl SessionService {
         commit.committed().await.map_err(store_failed)?
     }
 
+    async fn authorize_replacement_dispatch(
+        self: &Arc<Self>,
+        id: &SessionId,
+        launch: &Launch,
+        mut initial: InitialPromptDispatch,
+        authority: &DispatchAuthority,
+    ) -> Result<InitialPromptDispatch, CoreError> {
+        let confirmations = launch
+            .confirmations
+            .iter()
+            .filter(|confirmation| {
+                confirmation.action == crate::trigger::ConfirmationAction::RecoverPrompt
+                    && confirmation.subject == launch.owner
+                    && confirmation.snapshot_digest == initial.delivery.payload_hash
+            })
+            .count();
+        let confirmations = u32::try_from(confirmations).map_err(|_| {
+            CoreError::InvalidRequest("initial prompt recovery counter is exhausted".into())
+        })?;
+        if confirmations <= initial.delivery.recovery_generation {
+            return Ok(initial);
+        }
+        if confirmations != initial.delivery.recovery_generation.saturating_add(1) {
+            return Err(CoreError::InvalidRequest(
+                "the retained initial prompt has a non-contiguous recovery authority".into(),
+            ));
+        }
+        authority.require_current()?;
+        initial.delivery.recovery_generation = confirmations;
+        initial.delivery.state = PromptDeliveryState::Queued;
+        initial.delivery.dispatch_fence_sequence = None;
+        initial.delivery.updated_at = crate::clock::now_rfc3339();
+        self.persist_initial_prompt(
+            id,
+            Some(PromptDeliveryState::RecoveryRequired),
+            initial,
+            vec![
+                EventKind::InitialPromptDeliveryChanged {
+                    state: PromptDeliveryState::Queued,
+                },
+                EventKind::StatusChanged {
+                    status: SessionStatus::Ready,
+                    stop_reason: None,
+                    detail: None,
+                    capability: None,
+                },
+            ],
+            Some(SessionStatus::Ready),
+        )
+        .await
+    }
+
     async fn fence_and_send_initial_prompt(
         self: &Arc<Self>,
         id: &SessionId,
         initial: InitialPromptDispatch,
         authority: DispatchAuthority,
+        record_owner_turn: bool,
     ) -> Result<(InitialPromptDispatch, ConversationSendOutcome), CoreError> {
         let commit = {
             let mut entries = self.entries.write().await;
@@ -285,11 +355,10 @@ impl SessionService {
             let rejected_screen = Arc::clone(&screen);
             let intended = initial.clone();
             let owner_text = initial.payload.clone();
-            let first_attempt = initial.delivery.attempt == 1;
             let mut events = vec![EventKind::InitialPromptDeliveryChanged {
                 state: PromptDeliveryState::DispatchFenced,
             }];
-            if first_attempt {
+            if record_owner_turn {
                 events.extend([
                     EventKind::TurnStarted,
                     EventKind::OwnerMessage {
@@ -484,11 +553,13 @@ fn new_dispatch(launch: &Launch, id: &SessionId, payload: String) -> InitialProm
             payload_hash,
             state: PromptDeliveryState::Queued,
             attempt: 0,
+            recovery_generation: 0,
             dispatch_fence_sequence: None,
             queued_at: now.clone(),
             updated_at: now,
         },
         payload,
+        recorded_recovery_generation: 0,
     }
 }
 
@@ -513,6 +584,7 @@ fn validate_existing(
         || seconds_from_rfc3339(&delivery.updated_at).is_none()
         || seconds_from_rfc3339(&delivery.updated_at) < seconds_from_rfc3339(&delivery.queued_at)
         || (delivery.state != PromptDeliveryState::Queued && delivery.attempt == 0)
+        || initial.recorded_recovery_generation > delivery.recovery_generation
         || (delivery.state == PromptDeliveryState::Queued
             && delivery.dispatch_fence_sequence.is_some())
         || (delivery.state != PromptDeliveryState::Queued

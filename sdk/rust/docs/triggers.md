@@ -132,6 +132,44 @@ failure. Never create a duplicate Launch as automatic recovery.
 happen. The fence intentionally prevents blind automatic retry. Cancellation is
 bound to the current effective digest and retains the Launch history.
 
+An ambiguous initial task may be replaced only after the owner is shown that
+CMA cannot determine whether the prior task started and deliberately accepts
+that the task may execute twice. Bind the authorization to the exact retained
+revision and delivery payload hash, and retain one idempotency key across an
+ambiguous transport retry.
+
+```rust,no_run
+use cma_sdk::{Client, Launch, PromptDeliveryState, RecoverInitialPromptRequest};
+
+# async fn recover_initial_task(
+#     client: &Client,
+#     launch: Launch,
+# ) -> Result<Launch, Box<dyn std::error::Error>> {
+let delivery = launch
+    .delivery
+    .as_ref()
+    .filter(|delivery| delivery.state == PromptDeliveryState::RecoveryRequired)
+    .ok_or_else(|| std::io::Error::other("initial-task recovery is not available"))?;
+
+client
+    .recover_initial_prompt(
+        &launch.id,
+        RecoverInitialPromptRequest {
+            expected_revision: launch.revision_number,
+            snapshot_digest: delivery.payload_hash.clone(),
+            acknowledge_duplicate_execution_risk: true,
+        },
+        "one-stable-recovery-key",
+    )
+    .await
+    .map_err(Into::into)
+# }
+```
+
+Acceptance queues one replacement generation. It neither proves the earlier
+generation did not execute nor immediately sends the next owner turn. A second
+ambiguous generation requires a new disclosure and new idempotency key.
+
 ```rust,no_run
 use cma_sdk::Client;
 

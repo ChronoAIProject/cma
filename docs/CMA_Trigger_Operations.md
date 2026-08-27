@@ -280,6 +280,26 @@ Investigate in this order:
    activity entry as an observability incident even when the Launch ledger
    proves the state transition.
 
+For a generic external effect, the only explicit operator action is:
+
+```text
+POST /api/v1/admin/triggers/launches/{launch_id}/reconcile
+```
+
+It requires `control_any_session`, one durable `Idempotency-Key`, and exact
+`expected_revision`, effect kind, retained intent key, effect fence, and failure
+correlation from the support snapshot. Acceptance changes only that effect from
+`recovery_required` to `reconciling`; the next pass is read-only. Wrong or stale
+evidence is refused atomically. For an ambiguous initial prompt it may inspect
+the retained turn evidence, but it cannot authorize a replacement dispatch.
+
+An initial-prompt replacement is authorized only by the Launch owner through
+`POST /api/v1/launches/{launch_id}/recover-initial-prompt`, bound to the retained
+payload hash and an explicit acknowledgement that the task may execute twice.
+An operator must not make that acknowledgement on the owner's behalf. The full
+state, resource-count, cancellation, and recovery procedure is
+[CMA_Trigger_Recovery.md](./CMA_Trigger_Recovery.md).
+
 ## 10. Provider outage and circuit breaking
 
 - Keep public reads, existing session conversation, diff export, support, and

@@ -11,9 +11,10 @@ import './RiskConfirmation.css';
  * person can click as fast as any other; a checkbox is a second, deliberate
  * act, and the confirm key is unavailable until it happens.
  *
- * Used where the consequence is loss rather than merely change — deleting a
- * session and its history. An action that can be repeated or reversed asks in
- * place of the row's own controls instead, which is quieter and enough.
+ * Used where the consequence is loss, plus §12.4's one bounded exception for
+ * an ambiguous initial task that may execute twice. An ordinary action that
+ * can be repeated or reversed asks in place of the row's own controls instead,
+ * which is quieter and enough.
  *
  * The acknowledgement is held here rather than by the caller. Every caller
  * would otherwise reset it themselves on close, and one of them would forget
@@ -33,6 +34,12 @@ interface RiskConfirmationProps {
   readonly onConfirm: () => void;
   /** Something is already in flight; the confirm key waits for it. */
   readonly busy?: boolean;
+  /** An unresolved write cannot be dismissed until its same-key result is known. */
+  readonly dismissible?: boolean;
+  /** A command failure announced without replacing the consequence. */
+  readonly failure?: string;
+  /** Current command state, announced politely and held in the dialog. */
+  readonly status?: string;
 }
 
 export function RiskConfirmation({
@@ -44,10 +51,14 @@ export function RiskConfirmation({
   onCancel,
   onConfirm,
   busy = false,
+  dismissible = true,
+  failure,
+  status,
 }: RiskConfirmationProps) {
   const [acknowledged, setAcknowledged] = useState(false);
 
   const close = () => {
+    if (!dismissible) return;
     setAcknowledged(false);
     onCancel();
   };
@@ -57,10 +68,16 @@ export function RiskConfirmation({
       open={open}
       title={title}
       placement="risk"
+      dismissible={dismissible}
       onClose={close}
       footer={
         <>
-          <Button variant="outline" placement="risk__cancel" onClick={close}>
+          <Button
+            variant="outline"
+            placement="risk__cancel"
+            disabled={busy || !dismissible}
+            onClick={close}
+          >
             Cancel
           </Button>
           <Button
@@ -77,7 +94,7 @@ export function RiskConfirmation({
         </>
       }
     >
-      <div className="risk__warning">
+      <div className="risk__warning" role="alert">
         <IconWarningOutline16 className="risk__icon" />
         <p>{description}</p>
       </div>
@@ -92,6 +109,16 @@ export function RiskConfirmation({
         />
         {acknowledgeLabel}
       </label>
+      {status === undefined ? null : (
+        <p className="risk__status" role="status" aria-live="polite">
+          {status}
+        </p>
+      )}
+      {failure === undefined ? null : (
+        <p className="risk__failure" role="alert">
+          {failure}
+        </p>
+      )}
     </Modal>
   );
 }

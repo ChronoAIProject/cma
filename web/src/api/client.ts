@@ -229,6 +229,15 @@ export function startLaunch(
   return bot.startLaunch(id, expectedRevision, snapshotDigest, acknowledgeWorkflowRisk, options);
 }
 
+export function recoverInitialPrompt(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.recoverInitialPrompt(id, expectedRevision, snapshotDigest, options);
+}
+
 export function cancelLaunch(
   id: string,
   expectedRevision: number,

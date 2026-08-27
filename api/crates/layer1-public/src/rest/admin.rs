@@ -19,18 +19,20 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json, Router,
 };
 use layer2_core::{
-    ActivityQuery, ActivityRecord, ActivityService, Caller, CoreError, DirectoryQuery,
-    PlatformSettingsService, ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId,
-    SessionService, SubjectId, TriggerService, TriggerServiceError, TriggerSupportLookup,
-    TriggerSupportSnapshot, UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
+    ActivityQuery, ActivityRecord, ActivityService, AuthorizeEffectReconciliationCommand, Caller,
+    CoreError, DirectoryQuery, LaunchEffectKind, OperationStore, PlatformSettingsService,
+    ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId, SessionService, SubjectId,
+    TriggerService, TriggerServiceError, TriggerSupportLookup, TriggerSupportSnapshot,
+    UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -41,7 +43,10 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::auth::{ActedUpon, AuthenticatedCaller};
 use crate::rest::openapi_shapes;
 use crate::rest::pagination::AdminSessionPageParams;
-use crate::rest::{problem_document, problem_response, Problem, QueryProblem};
+use crate::rest::trigger_openapi_shapes as trigger_schema;
+use crate::rest::{
+    idempotency, problem_document, problem_response, BodyProblem, Problem, QueryProblem,
+};
 
 mod settings;
 
@@ -62,6 +67,19 @@ pub struct AdminState {
     /// Redacted GitHub Trigger support projection, absent only when this
     /// deployment has no Trigger persistence configured.
     pub triggers: Option<Arc<TriggerService>>,
+    /// Durable operation claims shared with every other idempotent REST command.
+    pub operations: Arc<dyn OperationStore>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct AuthorizeEffectReconciliationRequest {
+    expected_revision: u64,
+    #[schema(value_type = trigger_schema::LaunchEffectKind)]
+    effect: LaunchEffectKind,
+    intent_key: String,
+    expected_fence: u64,
+    evidence_correlation_id: String,
 }
 
 /// A refusal that names no resource.
@@ -596,10 +614,11 @@ fn enum_code(value: impl Serialize) -> String {
 /// unit, and a route added outside that segment would escape whatever protects
 /// it without anything noticing.
 #[cfg(test)]
-const OPERATOR_ROUTES: [&str; 9] = [
+const OPERATOR_ROUTES: [&str; 10] = [
     "/api/v1/admin/users",
     "/api/v1/admin/activity",
     "/api/v1/admin/triggers/support",
+    "/api/v1/admin/triggers/launches/{launch_id}/reconcile",
     "/api/v1/admin/runtimes",
     "/api/v1/admin/sessions",
     // The same core operations the owner's own routes project. A second
@@ -622,6 +641,7 @@ pub(super) fn documented_router(state: Arc<AdminState>) -> OpenApiRouter {
         .routes(routes!(users))
         .routes(routes!(activity))
         .routes(routes!(trigger_support))
+        .routes(routes!(authorize_effect_reconciliation))
         .routes(routes!(runtimes))
         .routes(routes!(sessions))
         .routes(routes!(stop))
@@ -727,6 +747,81 @@ async fn trigger_support(
     let mut response = Json(TriggerSupportView::from(snapshot)).into_response();
     response.extensions_mut().insert(observed);
     Ok(response)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/triggers/launches/{launch_id}/reconcile",
+    tag = "administration",
+    params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = AuthorizeEffectReconciliationRequest,
+    responses(
+        (status = 202, description = "Exact fenced effect authorized for read-only reconciliation"),
+        (status = 503, description = "Trigger recovery storage is not configured")
+    )
+)]
+async fn authorize_effect_reconciliation(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<AuthorizeEffectReconciliationRequest>, BodyProblem>,
+) -> Response {
+    let operation = format!("trigger-effect-recovery-authorize:{launch_id}");
+    let (guard, body, _) = match idempotency::required_command(
+        key,
+        Arc::clone(&state.operations),
+        &caller,
+        operation,
+        body,
+    )
+    .await
+    {
+        Ok(parts) => parts,
+        Err(response) => return response,
+    };
+    let result: Result<Response, Response> = async {
+        let body = body.map_err(|error| error.into_response())?;
+        let timestamp = layer2_core::rfc3339_at(SystemTime::now());
+        let launch = state
+            .triggers
+            .as_ref()
+            .ok_or_else(trigger_support_unavailable)?
+            .authorize_effect_reconciliation(
+                &caller,
+                &layer2_core::LaunchId::parse(launch_id)
+                    .map_err(|_| trigger_support_problem(TriggerServiceError::NotFound))?,
+                AuthorizeEffectReconciliationCommand {
+                    expected_revision: body.expected_revision,
+                    effect: body.effect,
+                    intent_key: body.intent_key,
+                    expected_fence: body.expected_fence,
+                    evidence_correlation_id: body.evidence_correlation_id,
+                    now: timestamp,
+                    correlation_id: headers
+                        .get("x-request-id")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                },
+            )
+            .await
+            .map_err(trigger_support_problem)?;
+        Ok(effect_reconciliation_accepted(&caller, launch.owner))
+    }
+    .await;
+    guard.finish(result).await
+}
+
+/// Return no contributor projection from a cross-owner recovery control.
+/// Ownership is retained only in the response extension consumed by audit.
+fn effect_reconciliation_accepted(caller: &Caller, owner: SubjectId) -> Response {
+    let mut response = StatusCode::ACCEPTED.into_response();
+    if caller.is_acting_for_another(&owner) {
+        response.extensions_mut().insert(ActedUpon(owner));
+    }
+    response
 }
 
 fn trigger_support_unavailable() -> Response {

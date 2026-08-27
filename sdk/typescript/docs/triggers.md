@@ -159,6 +159,43 @@ did not happen; automatic retry is intentionally fenced until explicit recovery.
 Cancellation is also digest-bound to the current `effective.digest` and retains
 the Launch history.
 
+For an ambiguous initial task, show the owner the retained Launch and state
+plainly that CMA cannot determine whether the prior task started. Only after the
+owner deliberately accepts that another dispatch may execute the task twice may
+the client call `recoverInitialPrompt`. Freeze the revision, retained payload
+hash, body, and one idempotency key for the command; same-key reconciliation is
+the only safe response to an ambiguous transport result.
+
+```ts
+import { createClient, type Launch } from '@chronoai/cma-sdk';
+
+const cma = createClient({ baseUrl: 'https://cma.example.com' });
+
+async function recoverAmbiguousInitialTask(
+  launch: Launch,
+  idempotencyKey: string,
+): Promise<Launch> {
+  if (
+    launch.state !== 'failed_retryable' ||
+    launch.blocked_reason !== 'recovery_required' ||
+    launch.delivery?.state !== 'recovery_required'
+  ) {
+    throw new Error('This Launch is not awaiting initial-task recovery');
+  }
+
+  return cma.recoverInitialPrompt(launch.id, launch.revision_number, launch.delivery.payload_hash, {
+    idempotencyKey,
+  });
+}
+
+void recoverAmbiguousInitialTask;
+```
+
+The method sends `acknowledge_duplicate_execution_risk: true`; the application
+is responsible for obtaining the deliberate owner acknowledgement before
+calling it. Acceptance queues one replacement generation. It does not prove the
+earlier generation did not execute and it does not itself send another turn.
+
 ## Contribution and pull request
 
 Contribution is four distinct decisions:

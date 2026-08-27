@@ -1379,6 +1379,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
             Capability::ReadUserDirectory,
             Capability::ReadActivityLog,
             Capability::ConfigurePlatform,
+            Capability::ControlAnySession,
         ]),
     );
     let tickets = TerminalTickets::in_memory();
@@ -1398,6 +1399,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
             users,
             settings,
             triggers: None,
+            operations: Arc::clone(&operations) as Arc<dyn OperationStore>,
         }),
     );
     let app = Router::new()
@@ -4021,6 +4023,8 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
         "/api/v1/environment-profiles/preferred",
         "/api/v1/admin/users",
         "/api/v1/admin/activity",
+        "/api/v1/admin/triggers/support",
+        "/api/v1/admin/triggers/launches/{launch_id}/reconcile",
         "/api/v1/admin/runtimes",
         "/api/v1/admin/sessions",
         "/api/v1/admin/sessions/{id}/stop",
@@ -4071,8 +4075,12 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
     keyed_operations.sort();
     assert_eq!(
         keyed_operations,
-        ["post /api/v1/sessions", "post /api/v1/sessions/{id}/input",],
-        "only the two deduplicated operations may advertise Idempotency-Key"
+        [
+            "post /api/v1/admin/triggers/launches/{launch_id}/reconcile",
+            "post /api/v1/sessions",
+            "post /api/v1/sessions/{id}/input",
+        ],
+        "only operations backed by the durable operation store may advertise Idempotency-Key"
     );
 
     let discovery_schema =
@@ -4592,7 +4600,77 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
             );
         }
     }
-    assert_eq!(operations, 43, "every REST operation must be documented");
+    assert_eq!(operations, 45, "every REST operation must be documented");
+}
+
+#[tokio::test]
+async fn trigger_effect_recovery_requires_and_replays_one_durable_operation_key() {
+    let surface = test_surface(true);
+    let uri = "/api/v1/admin/triggers/launches/launch-recovery/reconcile";
+    let body = serde_json::json!({
+        "expected_revision": 17,
+        "effect": "pull_request",
+        "intent_key": "retained-intent",
+        "expected_fence": 9,
+        "evidence_correlation_id": "failure-correlation-9",
+    })
+    .to_string();
+
+    let missing = surface
+        .app
+        .clone()
+        .oneshot(json_request(Method::POST, uri, body.clone()))
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+
+    let first = surface
+        .app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            uri,
+            "one-effect-recovery",
+            body.clone(),
+        ))
+        .await
+        .unwrap();
+    let replay = surface
+        .app
+        .clone()
+        .oneshot(keyed_json_request(
+            Method::POST,
+            uri,
+            "one-effect-recovery",
+            body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let first = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+    let replay = to_bytes(replay.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(first, replay);
+    assert_eq!(surface.operations.state.lock().await.len(), 1);
+
+    let changed = surface
+        .app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            uri,
+            "one-effect-recovery",
+            serde_json::json!({
+                "expected_revision": 17,
+                "effect": "pull_request",
+                "intent_key": "different-intent",
+                "expected_fence": 9,
+                "evidence_correlation_id": "failure-correlation-9",
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

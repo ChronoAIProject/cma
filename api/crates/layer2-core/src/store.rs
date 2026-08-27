@@ -55,6 +55,11 @@ pub const MAX_PAGE_SIZE: u32 = 200;
 pub struct InitialPromptDispatch {
     pub delivery: PromptDelivery,
     pub payload: String,
+    /// Recovery generation whose owner-message boundary has already been
+    /// appended. Kept beside the private payload so a safe pre-write retry does
+    /// not duplicate the visible turn after a process restart.
+    #[serde(default)]
+    pub recorded_recovery_generation: u32,
 }
 
 /// A session as it is stored.

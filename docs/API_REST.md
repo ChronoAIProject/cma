@@ -170,7 +170,9 @@ side-effect-free. Authenticated resources under `/api/v1/triggers`,
 `/api/v1/trigger-connections`, and `/api/v1/launches` cover publisher drafts and
 revisions, reusable NyxID GitHub connections, immutable Launch review,
 repository/progress/diff state, cancellation, branch publication, and explicit
-Open or Update pull-request confirmation.
+Open or Update pull-request confirmation. Ambiguous initial-task delivery has a
+separate owner-confirmed recovery command; generic external-effect recovery is
+an operator-only read-only reconciliation command under `/api/v1/admin/`.
 
 Every workflow mutation requires `Idempotency-Key` and reserves through the
 same durable operation store described above. There is no dashboard-only route,
@@ -283,6 +285,7 @@ preflight response.
 | `PATCH /api/v1/launches/{launch_id}/overrides` | Replace allowed overrides under `expected_revision` | required | `200` `Launch` |
 | `PUT /api/v1/launches/{launch_id}/connection` | Select one exact reusable service under `expected_revision` | required | `200` `Launch` |
 | `POST /api/v1/launches/{launch_id}/start` | Confirm and enqueue the exact reviewed effective configuration | required | `202` `Launch` |
+| `POST /api/v1/launches/{launch_id}/recover-initial-prompt` | Explicitly authorize one replacement generation for the exact retained ambiguous prompt | required | `202` `Launch` |
 | `POST /api/v1/launches/{launch_id}/contributions/review` | Request a new sealed read-only workspace diff | required | `202` `Launch` |
 | `GET /api/v1/launches/{launch_id}/diff` | Read current diff, contribution, and pull-request status | absent | `200` `DiffReview` |
 | `POST /api/v1/launches/{launch_id}/contributions/publish` | Publish exactly one reviewed diff to the guarded Launch branch | required | `202` `Launch` |
@@ -380,6 +383,7 @@ the same for every action:
 | Start | Current `launch.effective.digest` |
 | Request diff | Current `launch.effective.digest` |
 | Cancel | Current `launch.effective.digest` |
+| Recover initial prompt | Retained `launch.delivery.payload_hash` |
 | Publish branch | Reviewed `diff.artifact.digest` |
 | Open or Update pull request | Side-effect-free `PullRequestDraft.intent_digest` |
 
@@ -387,13 +391,24 @@ A stale revision or digest returns a conflict/validation problem before the
 effect. The client reloads the Launch or review and asks for a new explicit
 decision; it never silently substitutes the new snapshot.
 
+Initial-prompt recovery additionally requires
+`acknowledge_duplicate_execution_risk: true`. It is admitted only for the owner
+of a `failed_retryable` Launch blocked on `recovery_required`, with a retained
+`recovery_required` delivery/effect and no worker lease. Acceptance queues one
+replacement generation but does not itself send it. Each accepted generation
+may add one owner turn and may execute the task twice relative to an ambiguous
+earlier generation. Replaying the same key/body cannot add another generation.
+See [CMA_Trigger_Recovery.md](./CMA_Trigger_Recovery.md) for the exact state and
+resource-count matrices.
+
 ### Durable progress
 
 `LaunchProgress` has `launch_id`, ordered `events`, and `next_cursor`. An event
 has `sequence`, `launch_id`, `occurred_at`, `correlation_id`, and a tagged `kind`.
 The closed kinds are `created`, `draft_updated`, `connection_selected`, `started`,
 `state_changed`, `step_changed`, `blocked`, `failure`, `effect_reconciled`,
-`delivery_changed`, `reach_changed`, `confirmation_recorded`, and `cancelled`.
+`delivery_changed`, `reach_changed`, `confirmation_recorded`, `resumed`,
+`recovery_authorized`, `cleanup_planned`, `cleanup_completed`, and `cancelled`.
 The nested step, failure, blocked reason, and reach values use the same sanitized
 public projections as `Launch`.
 
@@ -435,7 +450,7 @@ The server-owned fixture corpus under
 `api/crates/layer1-public/tests/fixtures/rest-sdk/` is serialized and parsed by
 server DTOs and copied byte-identically into both SDKs. The TypeScript SDK decodes
 the response fixtures through its public transport; the Rust SDK deserializes
-them into independent public types. `/openapi.json` enumerates all 29 operations
+them into independent public types. `/openapi.json` enumerates all 30 operations
 above and references concrete schemas for every owned nested representation.
 
 ---
@@ -1915,9 +1930,9 @@ Everything an operator can see and do lives under `/api/v1/admin/`, one segment 
 |---|---|---|
 | `cma:admin:sessions` | read every session | `GET /api/v1/admin/sessions` |
 | `cma:admin:users` | read the user directory | `GET /api/v1/admin/users` |
-| `cma:admin:activity` | read the activity log | `GET /api/v1/admin/activity` |
+| `cma:admin:activity` | read the activity log and redacted Trigger support | `GET /api/v1/admin/activity`, `GET /api/v1/admin/triggers/support` |
 | `cma:admin:sandboxes` | read the runtime inventory | `GET /api/v1/admin/runtimes` |
-| `cma:admin:control` | stop or terminate any session | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate` |
+| `cma:admin:control` | stop or terminate any session and authorize read-only Trigger effect reconciliation | `POST /api/v1/admin/sessions/{id}/stop`, `.../terminate`, `POST /api/v1/admin/triggers/launches/{launch_id}/reconcile` |
 | `cma:admin:settings` | configure the platform | `GET /api/v1/admin/settings`, `PUT /api/v1/admin/settings`, `PATCH /api/v1/admin/settings`, `POST /api/v1/admin/settings/reset` |
 
 Reading and acting are separate grants on purpose: a role handed out so somebody can watch the service cannot also stop somebody's work.
@@ -2312,6 +2327,41 @@ copy a rate, a monetary amount, or any administrator-authored briefing prose.
 **`detail` never contains a secret.** What may be recorded is an allowlist in the core, and there is no key in it for an environment variable's value, a credential, a token, a cookie or a header. A bundle of variables is described by how many it carried, never by what they were. Newest first; `limit` is clamped by the service. Entries expire on a schedule the deployment sets (`CHRONO_ACTIVITY_RETENTION_DAYS`, ninety days by default).
 
 Reading requires `cma:admin:activity`. There is no per-caller view: an ordinary caller cannot read the log at all, not even their own entries. What happened to their own session is in that session's event stream, which is theirs.
+
+### Trigger support and effect reconciliation
+
+```http
+GET  /api/v1/admin/triggers/support?launch_id=<launch_id>
+GET  /api/v1/admin/triggers/support?correlation_id=<correlation_id>
+POST /api/v1/admin/triggers/launches/{launch_id}/reconcile
+```
+
+Support requires `cma:admin:activity` and exactly one lookup parameter. It
+returns the redacted Launch/effect ledger needed to diagnose one correlation;
+it never returns a prompt, repository path or content, credential, raw object
+reference, or provider response body.
+
+Reconciliation requires `cma:admin:control`, `Idempotency-Key`, and this closed
+request body:
+
+```json
+{
+  "expected_revision": 17,
+  "effect": "pull_request",
+  "intent_key": "cma-trigger:launch:pull-request:1",
+  "expected_fence": 9,
+  "evidence_correlation_id": "recovery-correlation-9"
+}
+```
+
+The command is accepted only when the Launch is blocked on
+`recovery_required`, has no live worker lease, and every supplied value exactly
+matches the retained effect and failure. It returns an empty `202`, restores
+the retained step, and schedules only a read-only reconciliation. The complete
+owner Launch is deliberately not returned through a cross-owner control route.
+It never repeats the external write or authorizes a replacement initial prompt. See
+[CMA_Trigger_Recovery.md](./CMA_Trigger_Recovery.md) for the operator procedure
+and exact resource-count contract.
 
 ### Live runtimes
 

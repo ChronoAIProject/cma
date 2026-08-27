@@ -54,7 +54,19 @@ function owningLaunch(reach = 'active'): Launch {
     },
     workspace: { latest_checkpoint: { id: 'checkpoint-1' } },
     reach: { state: reach },
-    delivery: { state: 'delivered' },
+    delivery: {
+      launch_id: launchFixture.id,
+      session_id: 'ses_test',
+      revision_digest: launchFixture.revision_digest,
+      origin_key: `trigger:${launchFixture.id}:initial-prompt`,
+      payload_hash: 'b'.repeat(64),
+      state: 'write_confirmed',
+      attempt: 1,
+      recovery_generation: 0,
+      dispatch_fence_sequence: 1,
+      queued_at: '2026-08-26T12:00:00Z',
+      updated_at: '2026-08-26T12:00:00Z',
+    },
     diff: diffFixture.artifact,
   };
 }
@@ -441,7 +453,7 @@ describe('the Trigger repository relationship', () => {
     expect(await screen.findByText('upstream-owner/project')).toBeInTheDocument();
     expect(screen.getByText('contributor/project')).toBeInTheDocument();
     expect(screen.getByText('checkpoint-1')).toBeInTheDocument();
-    expect(screen.getByText('delivered')).toBeInTheDocument();
+    expect(screen.getByText('write confirmed')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Launch progress' })).toHaveAttribute(
       'href',
       `/launches/${launchFixture.id}`,

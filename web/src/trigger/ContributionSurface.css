@@ -74,7 +74,7 @@
 
 .contribution-file summary:focus-visible {
   outline: none;
-  box-shadow: inset var(--focus-ring);
+  box-shadow: var(--focus-ring);
 }
 
 .contribution-file summary > svg {

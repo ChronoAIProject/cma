@@ -322,6 +322,29 @@ export interface LaunchFailure {
   readonly observed_at: string;
 }
 
+export type PromptDeliveryState =
+  | 'queued'
+  | 'dispatch_fenced'
+  | 'write_confirmed'
+  | 'execution_observed'
+  | 'completed'
+  | 'failed'
+  | 'recovery_required';
+
+export interface PromptDelivery {
+  readonly launch_id: string;
+  readonly session_id: string;
+  readonly revision_digest: string;
+  readonly origin_key: string;
+  readonly payload_hash: string;
+  readonly state: PromptDeliveryState;
+  readonly attempt: number;
+  readonly recovery_generation: number;
+  readonly dispatch_fence_sequence: number | null;
+  readonly queued_at: string;
+  readonly updated_at: string;
+}
+
 export interface LaunchOverrides {
   readonly task_inputs: Readonly<Record<string, JsonValue>>;
   readonly branch_suffix?: string;
@@ -519,7 +542,7 @@ export interface Launch {
   readonly workspace: JsonObject | null;
   readonly session: JsonObject | null;
   readonly reach: JsonObject | null;
-  readonly delivery: JsonObject | null;
+  readonly delivery: PromptDelivery | null;
   readonly contribution_checkpoint_version: number | null;
   readonly diff: DiffArtifact | null;
   readonly contribution: ContributionRecord | null;
@@ -915,6 +938,29 @@ export async function startLaunch(
   );
 }
 
+export async function recoverInitialPrompt(
+  config: ResolvedConfig,
+  launchId: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return decodeLaunch(
+    await command(
+      config,
+      `${launchPath(launchId)}/recover-initial-prompt`,
+      'POST',
+      {
+        expected_revision: expectedRevision,
+        snapshot_digest: snapshotDigest,
+        acknowledge_duplicate_execution_risk: true,
+      },
+      202,
+      options,
+    ),
+  );
+}
+
 export async function requestLaunchDiff(
   config: ResolvedConfig,
   launchId: string,
@@ -1140,7 +1186,38 @@ export function decodeLaunch(raw: unknown): Launch {
   if (!Array.isArray(body.steps)) throw new ProtocolError('Launch steps was not an array');
   safeObject(body.revision_content, 'Launch revision content');
   safeObject(body.effective, 'Launch effective configuration');
+  if (body.delivery !== undefined && body.delivery !== null) decodePromptDelivery(body.delivery);
   return body as unknown as Launch;
+}
+
+function decodePromptDelivery(raw: unknown): PromptDelivery {
+  const body = safeObject(raw, 'Prompt delivery');
+  requireText(body, 'launch_id', 'Prompt delivery');
+  requireText(body, 'session_id', 'Prompt delivery');
+  requireText(body, 'revision_digest', 'Prompt delivery');
+  requireText(body, 'origin_key', 'Prompt delivery');
+  requireText(body, 'payload_hash', 'Prompt delivery');
+  const state = requireText(body, 'state', 'Prompt delivery');
+  if (
+    ![
+      'queued',
+      'dispatch_fenced',
+      'write_confirmed',
+      'execution_observed',
+      'completed',
+      'failed',
+      'recovery_required',
+    ].includes(state)
+  ) {
+    throw new ProtocolError('Prompt delivery carried an invalid state');
+  }
+  requireInteger(body, 'attempt', 'Prompt delivery');
+  requireInteger(body, 'recovery_generation', 'Prompt delivery');
+  if (body.dispatch_fence_sequence !== null)
+    requireInteger(body, 'dispatch_fence_sequence', 'Prompt delivery');
+  requireText(body, 'queued_at', 'Prompt delivery');
+  requireText(body, 'updated_at', 'Prompt delivery');
+  return body as unknown as PromptDelivery;
 }
 
 function decodeDiffReview(raw: unknown): DiffReview {
