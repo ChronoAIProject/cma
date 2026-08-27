@@ -146,6 +146,27 @@ Only `web` is published for arm64 as well as amd64. `api` and `runtime` are amd6
 
 Changing an image reference in `infra/` is a deployment-surface change and belongs in the same pull request as anything else that changes with it (§4).
 
+### Paired storage and runtime adoption
+
+The release that adds durable skill-pack custody cannot be deployed as an API-only image change. It introduces two paired contracts:
+
+- `chrono-bucket` must provide the durable mutation-generation fence before CMA can store a skill object. Drain every older storage-service replica and every direct writer sharing its S3 credentials before admitting the new CMA API. A delayed unconditional writer can otherwise finish after a generation-2 deletion acknowledgement and restore private bytes. Keep mutation tombstones outside every expiry, compaction, or lifecycle-deletion policy for the lifetime of the bucket.
+- The runtime image from the same CMA release must be published, copied into the deployment registry, and deliberately adopted through `CHRONO_SANDBOX_IMAGE` before the new API image is deployed. The paired runtime accepts the exact four-MiB prelude the control plane validates; `v0.7.0` still has the framework's two-MiB request default and will return `413` for a prelude the new control plane correctly accepted.
+
+Verify the storage deployment with a disposable logical key before starting CMA: commit generation 1 with its exact body SHA-256, commit deletion generation 2, confirm reads report the tombstone as absent, then prove a delayed or retried generation-1 write is rejected. Remove the disposable payload while retaining whatever tombstone the storage contract requires. Do not use a mixed old/new storage rollout as this probe: the drain is a prerequisite, not something one successful request can prove.
+
+Publishing the matching runtime still does not rotate sessions by itself. Copy its immutable version tag to the registry used by the cluster, update `CHRONO_SANDBOX_IMAGE` in the deliberate adoption pull request, and deploy that config with the new API. Never deploy the new API while the manifest still names the old runtime.
+
+Apply and verify the runtime ConfigMap before allowing the new API Deployment to start. Do not apply `infra/api/` as an unordered directory: Deployment pods consume the ConfigMap through `envFrom`, and a pod that starts with the previous value will not reload a later ConfigMap update. The observed value must exactly equal the immutable runtime reference copied into the deployment registry before the Deployment is applied:
+
+```sh
+kubectl --namespace chrono-bot apply -f infra/api/configmap.yaml
+kubectl --namespace chrono-bot get configmap cma-api \
+  -o jsonpath='{.data.CHRONO_SANDBOX_IMAGE}{"\n"}'
+# Compare the printed value with the copied immutable runtime reference.
+kubectl --namespace chrono-bot apply -f infra/api/deployment.yaml
+```
+
 ---
 
 ## 5. One-time MongoDB session namespace cutover
@@ -154,32 +175,62 @@ The release that introduces `sessions_v2` and `session_events_v2` cannot be roll
 
 Run this once for a database whose legacy names are still writable collections:
 
-1. Establish a recovery baseline: take the deployment's normal MongoDB backup or snapshot, record the current collection types for `sessions` and `session_events`, and confirm the old deployment is healthy before stopping it.
-2. Stop every CMA replica that can run the legacy writer. Wait for all pods/processes to terminate and for their outstanding MongoDB operations to finish. Do not start the replacement while any old replica can still receive work.
-3. Set `CHRONO_MONGODB_LEGACY_CUTOVER` to the exact value `drained`.
-4. Start exactly one new CMA replica and let startup finish. Do not overlap this step with an old binary or start a second migration candidate.
-5. Verify directly in MongoDB that `sessions` is a read-only view of `sessions_v2` and `session_events` is a read-only view of `session_events_v2`, then verify that the replacement's `/ready` endpoint returns `200`.
-6. Leave that verified migration replica running and unset `CHRONO_MONGODB_LEGACY_CUTOVER` in the deployment configuration (the empty value in `infra/api/configmap.yaml`). Do not restart the replica merely to reread a flag that a completed pair of compatibility views no longer needs.
-7. Start the remaining and all future replicas without the acknowledgement. Resume the ordinary rollout or replica count only after an unflagged replica is Ready.
+1. Confirm the old deployment is healthy and record the current collection types for `sessions` and `session_events`.
+2. Stop every CMA replica that can run the legacy writer. Wait for all pods/processes to terminate and for their outstanding MongoDB and object-storage operations to finish. Do not start the replacement while any old replica can still receive work.
+3. At this quiescent boundary, take the deployment's normal transaction-consistent MongoDB backup or snapshot and a version-retained recovery point for the configured `CHRONO_CONTEXT_BUCKET`. Keep their timestamps and provenance as one recovery unit. If object storage is deliberately unconfigured, record that fact with the MongoDB backup. Do not resume any writer between the two captures.
+4. Set `CHRONO_MONGODB_LEGACY_CUTOVER` to the exact value `drained`.
+5. Start exactly one new CMA replica and let startup finish. Do not overlap this step with an old binary or start a second migration candidate.
+6. Verify directly in MongoDB that `sessions` is a read-only view of `sessions_v2` and `session_events` is a read-only view of `session_events_v2`, then verify that the replacement's `/ready` endpoint returns `200`.
+7. Replace the verified migration replica sequentially with one unflagged replica. The deployment is deliberately single-replica with a `Recreate` strategy, so never overlap the flagged and unflagged pods. Clear the live ConfigMap value, scale the deployment to zero, wait for the flagged pod to be deleted, and only then scale back to one:
+
+   ```sh
+   kubectl --namespace chrono-bot patch configmap cma-api --type merge \
+     -p '{"data":{"CHRONO_MONGODB_LEGACY_CUTOVER":""}}'
+   kubectl --namespace chrono-bot scale deployment/cma-api --replicas=0
+   kubectl --namespace chrono-bot wait --for=delete pod \
+     -l app.kubernetes.io/name=cma-api --timeout=120s
+   kubectl --namespace chrono-bot scale deployment/cma-api --replicas=1
+   kubectl --namespace chrono-bot rollout status deployment/cma-api --timeout=5m
+   ```
+
+   Verify that exactly one API pod exists, the live ConfigMap value is empty, that sole replacement pod was created after the value was cleared, and its `/ready` endpoint returns `200`. Do not resume ordinary traffic until all four checks pass.
 
 Default startup refuses a writable or unproven partial legacy state before renaming, dropping, or otherwise mutating either legacy namespace. Before the first action on a genuinely empty database, or after the explicit drain acknowledgement, CMA records durable in-progress provenance so a crash can resume that exact migration. Once both views are installed, it majority-writes completion with the authoritative collection UUIDs. Later startup refuses a missing or replacement namespace instead of treating post-completion data loss as a fresh database. A generic partial state without that provenance is not inferred to be safe.
 
 ---
 
-## 6. One-time MongoDB coordination activation
+## 6. One-time MongoDB coordination and session-writer activation
 
-The release that makes runtime authority and cleanup debt durable moves the writable session collection from `sessions_v2` to `sessions_v3`. It leaves `session_events_v2` in place. This activation cannot overlap any pre-coordination CMA process: an old process can make an external provider call before its database write, and no MongoDB validator can recall that call. `CHRONO_MONGODB_COORDINATION_CUTOVER=drained` is the operator's assertion that both database work and provider work from those processes have permanently stopped.
+The release that makes runtime authority and cleanup debt durable moves the writable session collection from `sessions_v2` to `sessions_v3`. It leaves `session_events_v2` in place. The release that makes explicit skill grants and skill-pack custody durable also advances the `sessions_v3` document writer from `_cma_write_protocol: 1` to `_cma_write_protocol: 2`; this prevents an older whole-document replacement from silently removing `granted_skills` or `skill_packs`.
 
-Run this once for every existing CMA database, after the namespace cutover in section 5 is complete:
+Neither transition may overlap a CMA process that predates it. A pre-coordination process can make an external provider call before its database write, and MongoDB validators cannot recall that call or fence a standalone delete. A coordination-protocol-3 process with session write protocol 1 can still replace a session with a document that does not know the new fields. `CHRONO_MONGODB_COORDINATION_CUTOVER=drained` is the operator's assertion that database work and provider work from every such process have permanently stopped.
 
-1. Take one transaction-consistent backup or snapshot containing `sessions_v3` if it already exists, otherwise `sessions_v2`; `session_events_v2`; `session_coordination_receipts`; `_cma_session_namespace_cutovers`; `session_writes`; and `session_tombstones`. Keep these collections and provenance records as one recovery unit. Do not combine session data from one point in time with receipts or markers from another.
-2. Stop every pre-coordination CMA binary. Wait for every pod/process, outstanding MongoDB operation, and external provider create, delete, or replacement operation to finish. Prevent the old workload from returning. Rotate or revoke its database and provider credentials where the deployment permits that stronger fence.
+Run this procedure for every existing CMA database after the namespace cutover in section 5 is complete. A database receiving coordination protocol 3 and session write protocol 2 in the same release needs one drain. A database that completed coordination protocol 3 under an earlier build repeats the drain only for its one-time session-writer upgrade:
+
+1. Confirm the old deployment is healthy, then stop every CMA binary that predates coordination protocol 3 or writes `sessions_v3` with `_cma_write_protocol: 1`. Wait for every pod/process, outstanding MongoDB operation, object-storage mutation, and external provider create, delete, or replacement operation to finish. Prevent the old workload from returning. Rotate or revoke its database, storage, and provider credentials where the deployment permits that stronger fence.
+2. At this quiescent boundary, take one transaction-consistent backup or snapshot containing `sessions_v3` if it already exists, otherwise `sessions_v2`; `session_events_v2`; `session_coordination_receipts`; `_cma_session_namespace_cutovers`; `session_writes`; and `session_tombstones`. Capture a version-retained recovery point for the configured `CHRONO_CONTEXT_BUCKET` at the same boundary. Keep the MongoDB collections, object versions, and provenance records as one recovery unit. If object storage is deliberately unconfigured, record that fact with the MongoDB backup. Do not combine session data from one point in time with receipts, markers, skill packs, contexts, or handover objects from another.
 3. Set `CHRONO_MONGODB_COORDINATION_CUTOVER` to the exact value `drained`. If section 5 has not yet run, set its separate legacy acknowledgement only after satisfying that section's drain conditions too.
-4. Start exactly one new CMA replica. Do not start another activation candidate and do not restore any old replica while startup is in progress. A crash after the durable in-progress marker may be resumed by the same new binary without reasserting the flag.
-5. Verify directly in MongoDB that `sessions` is a read-only view of `sessions_v2`, `sessions_v2` is a read-only view of `sessions_v3`, and `sessions_v3` is the sole writable session collection. Confirm that the coordination activation and receipt provenance records in `_cma_session_namespace_cutovers` are complete and UUID-bound, then confirm `/ready` returns `200`.
-6. Leave the verified replica running and unset `CHRONO_MONGODB_COORDINATION_CUTOVER`. Start the remaining new replicas without the acknowledgement only after an unflagged replica becomes Ready.
+4. Start exactly one new CMA replica. Do not start another activation candidate and do not restore any old replica while startup is in progress. A coordination activation can resume without the flag after its durable in-progress marker is recorded. An already coordinated session-writer upgrade can resume without the flag after the strict protocol-2 session validator is installed. If startup fails before either applicable fence is durable, re-establish the drain before reasserting the flag.
+5. Verify directly in MongoDB that `sessions` is a read-only view of `sessions_v2`, `sessions_v2` is a read-only view of `sessions_v3`, and `sessions_v3` is the sole writable session collection. Confirm that its strict validator admits only `_cma_write_protocol: 2` with `_cma_coordination_protocol: 3`, and that every session document carries both exact values. Confirm that coordination receipts still carry `_cma_write_protocol: 1` with `_cma_coordination_protocol: 2`. Confirm that the coordination activation and receipt provenance records in `_cma_session_namespace_cutovers` are complete and UUID-bound, then confirm `/ready` returns `200`.
+6. Replace the verified migration replica sequentially with one unflagged replica. The deployment is deliberately single-replica with a `Recreate` strategy, so never overlap the flagged and unflagged pods. Clear the live ConfigMap value, scale the deployment to zero, wait for the flagged pod to be deleted, and only then scale back to one:
+
+   ```sh
+   kubectl --namespace chrono-bot patch configmap cma-api --type merge \
+     -p '{"data":{"CHRONO_MONGODB_COORDINATION_CUTOVER":""}}'
+   kubectl --namespace chrono-bot scale deployment/cma-api --replicas=0
+   kubectl --namespace chrono-bot wait --for=delete pod \
+     -l app.kubernetes.io/name=cma-api --timeout=120s
+   kubectl --namespace chrono-bot scale deployment/cma-api --replicas=1
+   kubectl --namespace chrono-bot rollout status deployment/cma-api --timeout=5m
+   ```
+
+   Verify that exactly one API pod exists, the live ConfigMap value is empty, that sole replacement pod was created after the value was cleared, and its `/ready` endpoint returns `200`. Do not resume ordinary traffic until all four checks pass.
 
 A genuinely empty database activates automatically. Any database that existed before startup requires the exact acknowledgement, even when its session collections happen to be empty. The activation majority-writes intent before fencing and renaming `sessions_v2`; the rename preserves its collection UUID. It then creates `sessions_v2` as a view of `sessions_v3`, establishes and audits the receipt collection, and completes a marker bound to both protected UUIDs. A completed marker authorizes verification only: startup will not recreate a missing session or receipt collection, repair a replacement collection, or infer a new empty store.
+
+An existing database that already has a complete coordination-protocol-3 marker and the exact previous session contract (`_cma_write_protocol: 1`, `_cma_coordination_protocol: 3`, strict validation, and error action) uses the same drain acknowledgement for its one-time session-writer upgrade. Before mutating it, startup verifies the activation and receipt provenance UUIDs, namespace chain, indexes, and every non-session collection contract. It refuses the previous session contract without `drained`. With the acknowledgement, it installs the strict protocol-2 session validator first, then updates only `_cma_write_protocol` on documents whose coordination protocol is already 3 and whose revision is already a 64-bit integer. The migration does not replace session documents, so `granted_skills`, `skill_packs`, and every other session-owned field are preserved.
+
+The strict session validator is also the durable resume boundary. The exact previous validator means the old writer is not yet fenced and a fresh drain acknowledgement is required. The exact current validator with any remaining protocol-1 documents means the old writer is fenced and startup may finish the document migration without the flag. Any other validator or validation mode, including a validator that admits both protocols, a missing or extra clause, a non-strict level, a warning action, or a collection UUID mismatch, is refused without mutation even when `drained` is set.
 
 ### Unreleased coordination protocols 1 and 2
 
@@ -187,17 +238,19 @@ Coordination protocols 1 and 2 were experimental formats that were never release
 
 Protocol 3 therefore refuses every protocol-1 or protocol-2 activation phase, including `in-progress`, `complete`, and the experimental protocol-2 `upgrade-in-progress` phase. It refuses them whether or not `CHRONO_MONGODB_COORDINATION_CUTOVER=drained` is set: the acknowledgement can prove that old writers stopped, but it cannot manufacture a historical accounting boundary. Protocol-3 `upgrade-in-progress` markers produced by the unshipped upgrade path are also refused because their shape does not prove which source history they came from. Startup performs no marker replacement, validator change, or document migration for any of these states.
 
-The supported protocol-3 start states are a fresh or pre-coordination database entering initial activation, a protocol-3 `in-progress` marker resuming that initial activation, and a protocol-3 `complete` marker verifying an already activated database. Markerless activation requires the exact pre-coordination source shape: `sessions_v2` is still a collection, `sessions_v3` is absent, and no coordination-receipt collection or provenance exists. A coordinated namespace whose activation marker was lost is refused before replacement provenance can be inserted. `CHRONO_MONGODB_COORDINATION_CUTOVER=drained` remains the required acknowledgement for first activation of an existing pre-coordination database; it is not an old-protocol upgrade switch and cannot replace lost proof.
+The supported protocol-3 start states are a fresh or pre-coordination database entering initial activation, a protocol-3 `in-progress` marker resuming that initial activation, and a protocol-3 `complete` marker verifying an already activated database. Markerless activation requires the exact pre-coordination source shape: `sessions_v2` is still a collection, `sessions_v3` is absent, and no coordination-receipt collection or provenance exists. A coordinated namespace whose activation marker was lost is refused before replacement provenance can be inserted. `CHRONO_MONGODB_COORDINATION_CUTOVER=drained` remains the required acknowledgement for first activation of an existing pre-coordination database and for the exact session-write-protocol-1 to protocol-2 transition described above. It is not a coordination-marker upgrade switch and cannot replace lost proof.
 
-Current coordination receipts use protocol 2 only. Every completed authority-switch receipt must name a positive 64-bit `runtime_started_seq`, and startup verifies that event marker. A protocol-1 receipt, a receipt validator that still admits protocol 1, an older session protocol, or a downgraded validator makes even a protocol-3 `complete` store fail closed. CMA does not rewrite those records or silently repair the completed contract.
+Current session documents use write protocol 2 and coordination protocol 3. Coordination receipts keep write protocol 1 and use coordination protocol 2 only. Every completed authority-switch receipt must name a positive 64-bit `runtime_started_seq`, and startup verifies that event marker. A coordination-protocol-1 receipt, a receipt validator that still admits it, an older session coordination protocol, or any unknown or downgraded validator makes even a protocol-3 `complete` store fail closed. The narrowly authorized session writer transition does not rewrite receipts or repair any other completed contract.
 
 For an experimental database carrying any refused marker, preserve a transaction-consistent backup for diagnosis, then reset the whole experimental database or restore a whole transaction-consistent backup from before coordination was activated. Do not delete or synthesize an individual marker, rewrite receipts, or relabel validators to force startup. After restoring a genuine pre-coordination state, follow the initial activation procedure above and satisfy its offline drain before setting `CHRONO_MONGODB_COORDINATION_CUTOVER=drained`.
 
-Rollback to coordination v1 or v2 is intentionally unsupported. An older startup rejects the protocol-3 marker, while an already-running old writer explicitly writes session protocol 1 or 2 and is rejected by the strict protocol-3 validator. Its coordination, delete, raw-append, and whole-document replacement transactions therefore abort rather than erase protocol-3 authority or its runtime-start marker. The offline drain remains mandatory because MongoDB validators cannot fence a standalone delete or recall a provider call. Never downgrade the validator or marker to make an old process start.
+Rollback to coordination v1 or v2 is intentionally unsupported. An older startup rejects the protocol-3 marker, while an already-running old coordination writer is rejected by the strict coordination-protocol-3 contract.
+
+Rollback to any image whose `sessions_v3` writer predates write protocol 2 is also unsupported after the protocol-2 validator is installed. Its startup rejects the changed session contract, and an already-running predecessor's protocol-1 insert, update, raw-append, coordination, or whole-document replacement fails document validation rather than erasing the new session fields. MongoDB still cannot fence a standalone delete or recall a provider call, which is why the offline drain is mandatory before installing the fence. Never downgrade a validator or marker to make an old process start.
 
 Rollback to a pre-coordination image is intentionally unsupported. Such an image expects `sessions_v2` to be a collection; after activation it is a view, so startup and direct old-style insert, replace, and delete operations must fail. Keep old workloads disabled after activation rather than treating that refusal as a reason to restore one.
 
-If protected data or proof is lost, never create a new `session_coordination_receipts` collection and never synthesize or delete an activation marker to make startup pass. Restore `sessions_v3`, `session_events_v2`, `session_coordination_receipts`, all provenance records in `_cma_session_namespace_cutovers`, `session_writes`, and `session_tombstones` from the same consistent backup. Simultaneous loss of protected data and its durable proof is outside automatic recovery and requires an explicit incident recovery decision.
+If protected data or proof is lost, never create a new `session_coordination_receipts` collection and never synthesize or delete an activation marker to make startup pass. Restore `sessions_v3`, `session_events_v2`, `session_coordination_receipts`, all provenance records in `_cma_session_namespace_cutovers`, `session_writes`, `session_tombstones`, and the version-retained `CHRONO_CONTEXT_BUCKET` recovery point as one unit. Restoring MongoDB alone can resurrect a `Stored` custody row after its exact object was deleted; restoring object storage alone can expose bytes whose cleanup acknowledgement remains durable. Simultaneous loss of protected data and its durable proof is outside automatic recovery and requires an explicit incident recovery decision.
 
 ---
 

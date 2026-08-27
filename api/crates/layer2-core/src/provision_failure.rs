@@ -167,6 +167,7 @@ impl SessionService {
         adapter: &Arc<dyn KernelAdapter>,
         context: RuntimeStartContext<'_>,
         lease: &mut Option<SessionLease>,
+        prepared_skills: &mut Option<crate::provision_support::PreparedSkillPacks>,
     ) -> Result<(), StartFailure> {
         let mut backoff = Duration::from_millis(
             self.retry_backoff_ms
@@ -176,10 +177,9 @@ impl SessionService {
         // it would lose the name of whatever was missing, which is the part
         // the owner can act on.
         let mut last = StartFailure::transient(String::new());
-
         for attempt in 1..=PROVISION_ATTEMPTS {
             match self
-                .start_runtime(session, spec, adapter, context, lease)
+                .start_runtime(session, spec, adapter, context, lease, prepared_skills)
                 .await
             {
                 Ok(()) => {
@@ -409,6 +409,24 @@ impl SessionService {
                 record.session.status = status;
                 record.session.stop_reason = stop_reason;
                 record.session.recovery_state = recovery;
+                if !keep {
+                    record.skill_packs = match (&record.skill_packs, self.skill_packs.as_ref()) {
+                        (crate::store::SkillPackState::Cleaned, _) => {
+                            crate::store::SkillPackState::Cleaned
+                        }
+                        (crate::store::SkillPackState::Staged(packs), None) if packs.is_empty() => {
+                            crate::store::SkillPackState::Cleaned
+                        }
+                        (
+                            crate::store::SkillPackState::LegacyHandover {
+                                stored_digest: None,
+                                ..
+                            },
+                            None,
+                        ) => crate::store::SkillPackState::Cleaned,
+                        (_, _) => crate::store::SkillPackState::CleanupPending,
+                    };
+                }
                 let session_id = record.session.id.clone();
                 self.persist_durably(
                     &mut record,
