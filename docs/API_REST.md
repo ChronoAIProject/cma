@@ -1246,9 +1246,30 @@ GET /api/v1/sessions/{id}/usage
 
 Requires the `usage` capability. Not every kernel reports token counts, and one that does not returns the typed capability error rather than a plausible zero.
 
-`context_window` is the ceiling the runtime stated for `context_used`. The key is absent where the runtime states none and is never zero; no interface estimates one.
+`context_window` is the latest ceiling a runtime stated for `context_used`.
+Absence on a later report does not erase an earlier stated ceiling. The key is
+absent when no report has stated one and is never zero; no interface estimates
+one.
 
-`input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall when the agent summarises the conversation to make room. Each such fall is recorded as a durable `context_compacted` event carrying the previous reading, the new reading and the stated ceiling where one is known.
+`input_tokens` and `output_tokens` are the sum, over runtime incarnations, of
+the highest cumulative totals each incarnation reported. A runtime's totals can
+dip in a corrected report, so the maximum within one incarnation prevents usage
+from falling; a replacement runtime restarts its counters, so its maximum is
+added after each compatibility `runtime_incarnation_started` marker or a
+strictly newer coordinated `runtime_started` marker. Markerless history is
+segmented on legacy `status_changed` events that enter `rotating`, as the best
+boundary retained by those logs rather than a claim of exact authority timing.
+The first `runtime_handover_started`, `runtime_incarnation_started`, or
+`runtime_started` event permanently enables exact marker accounting, after
+which status changes do not close a segment. Duplicate or older coordinated
+generations are ignored.
+
+`context_used` is the latest nonzero context reading across all incarnations,
+so it can fall when the agent summarises the conversation to make room. A zero
+in turn-only accounting means no context reading and leaves the last real value
+standing. Each observed fall within one runtime is recorded as a durable
+`context_compacted` event carrying the previous reading, the new reading and the
+stated ceiling where one is known.
 
 ### Live sandbox resources
 
