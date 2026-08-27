@@ -12,7 +12,7 @@ This crate is repository-only, carries `publish = false`, and is not published t
 crates.io. Add it by path from a checkout:
 
 ```sh
-cargo add cma-sdk --path /path/to/chrono-bot/sdk/rust
+cargo add cma-sdk --path /path/to/cma/sdk/rust
 cargo add tokio --features macros,rt-multi-thread
 ```
 
