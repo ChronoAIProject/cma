@@ -1,5 +1,7 @@
 //! Typed durable event vocabulary.
 
+use std::num::NonZeroU64;
+
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -219,6 +221,15 @@ pub enum EventKind {
         /// Episode length from a monotonic clock.
         duration_seconds: u32,
     },
+    /// A handover began while the outgoing runtime kept its cumulative counter.
+    RuntimeHandoverStarted,
+    /// A compatibility store durably named a newly provisioned runtime.
+    RuntimeIncarnationStarted,
+    /// A runtime became this session's durable authority.
+    RuntimeStarted {
+        /// Positive durable fencing generation.
+        generation: NonZeroU64,
+    },
     /// The service established that a runtime disappeared.
     RuntimeLost {
         /// Opaque provider runtime identifier.
@@ -345,6 +356,9 @@ const KNOWN_EVENT_TYPES: &[&str] = &[
     "plane_changed",
     "memory_pressure_opened",
     "memory_pressure_closed",
+    "runtime_handover_started",
+    "runtime_incarnation_started",
+    "runtime_started",
     "runtime_lost",
 ];
 
@@ -482,6 +496,11 @@ enum KnownEventKind {
         peak_permille: u16,
         duration_seconds: u32,
     },
+    RuntimeHandoverStarted,
+    RuntimeIncarnationStarted,
+    RuntimeStarted {
+        generation: NonZeroU64,
+    },
     RuntimeLost {
         runtime_id: String,
         #[serde(default)]
@@ -606,6 +625,9 @@ impl From<KnownEventKind> for EventKind {
                 peak_permille,
                 duration_seconds,
             },
+            KnownEventKind::RuntimeHandoverStarted => Self::RuntimeHandoverStarted,
+            KnownEventKind::RuntimeIncarnationStarted => Self::RuntimeIncarnationStarted,
+            KnownEventKind::RuntimeStarted { generation } => Self::RuntimeStarted { generation },
             KnownEventKind::RuntimeLost { runtime_id, cause } => {
                 Self::RuntimeLost { runtime_id, cause }
             }
@@ -645,6 +667,50 @@ mod tests {
         }))
         .expect_err("a known event with a wrong field type must fail");
         assert!(error.to_string().contains("terminal_resized"));
+    }
+
+    #[test]
+    fn runtime_started_is_typed_and_requires_a_positive_generation() {
+        let event: Event = serde_json::from_value(serde_json::json!({
+            "seq": 9,
+            "session_id": "sesn_fixture",
+            "event": { "type": "runtime_started", "generation": 7 }
+        }))
+        .expect("a positive marker is valid");
+        assert!(matches!(
+            event.kind,
+            EventKind::RuntimeStarted { generation } if generation.get() == 7
+        ));
+
+        let error = serde_json::from_value::<Event>(serde_json::json!({
+            "seq": 9,
+            "session_id": "sesn_fixture",
+            "event": { "type": "runtime_started", "generation": 0 }
+        }))
+        .expect_err("zero is not a runtime authority generation");
+        assert!(error.to_string().contains("runtime_started"));
+    }
+
+    #[test]
+    fn runtime_handover_started_is_a_typed_unit_event() {
+        let event: Event = serde_json::from_value(serde_json::json!({
+            "seq": 8,
+            "session_id": "sesn_fixture",
+            "event": { "type": "runtime_handover_started" }
+        }))
+        .expect("the handover marker is valid");
+        assert!(matches!(event.kind, EventKind::RuntimeHandoverStarted));
+    }
+
+    #[test]
+    fn runtime_incarnation_started_is_a_typed_unit_event() {
+        let event: Event = serde_json::from_value(serde_json::json!({
+            "seq": 8,
+            "session_id": "sesn_fixture",
+            "event": { "type": "runtime_incarnation_started" }
+        }))
+        .expect("the compatibility incarnation marker is valid");
+        assert!(matches!(event.kind, EventKind::RuntimeIncarnationStarted));
     }
 
     #[test]
@@ -760,6 +826,9 @@ mod tests {
                 "peak_permille": 950,
                 "duration_seconds": 30
             }),
+            serde_json::json!({ "type": "runtime_handover_started" }),
+            serde_json::json!({ "type": "runtime_incarnation_started" }),
+            serde_json::json!({ "type": "runtime_started", "generation": 3 }),
             serde_json::json!({
                 "type": "runtime_lost",
                 "runtime_id": "runtime_fixture",

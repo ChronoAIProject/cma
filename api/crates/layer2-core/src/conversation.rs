@@ -117,6 +117,85 @@ struct ReceivedHistoryTarget {
     running_from: Option<SessionStatus>,
 }
 
+/// Fold cumulative runtime counters across durable authority incarnations.
+///
+/// Before exact authority markers existed, `Rotating` is the only retained
+/// candidate boundary in the durable log. Legacy histories use it as their best
+/// available approximation; it is not proof that authority changed at that
+/// exact position. A marker-aware store instead records
+/// `RuntimeHandoverStarted` before its first non-authoritative `Rotating`. That
+/// durable discriminator permanently enables marker accounting for the
+/// session, so no later status change closes a segment. Every compatibility
+/// `RuntimeIncarnationStarted` closes the outgoing segment when its handle
+/// becomes durable. A strictly newer coordinated `RuntimeStarted` closes the
+/// outgoing segment at the exact authority switch; duplicate or older
+/// generations are replay noise.
+///
+/// Context readings describe the conversation, not a runtime counter, so an
+/// incarnation boundary resets only token maxima.
+fn fold_usage<'a>(kinds: impl IntoIterator<Item = &'a EventKind>) -> Usage {
+    let mut total = Usage::default();
+    let mut segment_input_tokens = 0_u64;
+    let mut segment_output_tokens = 0_u64;
+    let mut exact_markers = false;
+    let mut newest_generation = None;
+
+    for kind in kinds {
+        match kind {
+            EventKind::RuntimeHandoverStarted => exact_markers = true,
+            EventKind::RuntimeIncarnationStarted => {
+                exact_markers = true;
+                total.input_tokens = total.input_tokens.saturating_add(segment_input_tokens);
+                total.output_tokens = total.output_tokens.saturating_add(segment_output_tokens);
+                segment_input_tokens = 0;
+                segment_output_tokens = 0;
+            }
+            EventKind::RuntimeStarted { generation } => {
+                exact_markers = true;
+                if newest_generation.is_none_or(|current| *generation > current) {
+                    total.input_tokens = total.input_tokens.saturating_add(segment_input_tokens);
+                    total.output_tokens = total.output_tokens.saturating_add(segment_output_tokens);
+                    segment_input_tokens = 0;
+                    segment_output_tokens = 0;
+                    newest_generation = Some(*generation);
+                }
+            }
+            EventKind::StatusChanged { status, .. } if !exact_markers && status.is_rotating() => {
+                total.input_tokens = total.input_tokens.saturating_add(segment_input_tokens);
+                total.output_tokens = total.output_tokens.saturating_add(segment_output_tokens);
+                segment_input_tokens = 0;
+                segment_output_tokens = 0;
+            }
+            EventKind::UsageReported {
+                input_tokens,
+                output_tokens,
+                context_used,
+                context_window,
+            } => {
+                segment_input_tokens = segment_input_tokens.max(*input_tokens);
+                segment_output_tokens = segment_output_tokens.max(*output_tokens);
+                // A turn's own accounting has no context reading and writes
+                // zero. It is not a reading of an empty context, so it leaves
+                // the latest real reading standing.
+                if *context_used > 0 {
+                    total.context_used = *context_used;
+                }
+                // Absence means this report did not state a ceiling, not that
+                // a previously stated ceiling stopped applying. A later
+                // stated value wins because a route can change mid-session.
+                if let Some(window) = context_window {
+                    total.context_window = Some(*window);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    total.input_tokens = total.input_tokens.saturating_add(segment_input_tokens);
+    total.output_tokens = total.output_tokens.saturating_add(segment_output_tokens);
+    total
+}
+
 impl SessionService {
     /// Publish the durable result of receipt history, then propose its optional
     /// running transition against that exact record and runtime authority.
@@ -863,44 +942,26 @@ impl SessionService {
 
     /// What this session has used.
     ///
-    /// The highest totals its runtimes have reported, rather than the latest.
-    /// A session carried onto a replacement runtime is counted afresh by that
-    /// runtime, and taking the latest would show somebody their usage falling;
-    /// adding them together would count the history the new runtime resumed
-    /// from twice. Neither is right, and the highest is the one that cannot
-    /// understate what has been spent.
+    /// The sum of each runtime incarnation's highest reported totals.
+    ///
+    /// A runtime reports cumulative counters, so taking the maximum within one
+    /// incarnation corrects a lost or temporarily lower report without double
+    /// counting. A durable authority marker begins the next incarnation, whose
+    /// counters start afresh; summing those per-incarnation maxima is therefore
+    /// the cross-runtime total. Pre-marker history uses each durable `Rotating`
+    /// transition as a legacy boundary, so existing sessions remain readable
+    /// without a migration.
     pub async fn get_usage(&self, caller: &Caller, id: &SessionId) -> Result<Usage, CoreError> {
+        caller
+            .authorization
+            .require(AuthorizationCapability::UseOwnSessions)?;
         let record = self.record(id).await?;
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
         }
         record.session.capabilities.require(Capability::Usage)?;
         let events = self.events_since(caller, id, None).await?;
-        Ok(events.iter().fold(Usage::default(), |mut total, event| {
-            if let EventKind::UsageReported {
-                input_tokens,
-                output_tokens,
-                context_used,
-                context_window,
-            } = &event.kind
-            {
-                total.input_tokens = total.input_tokens.max(*input_tokens);
-                total.output_tokens = total.output_tokens.max(*output_tokens);
-                // A turn's own accounting has no context reading and writes
-                // zero. It is not a reading of an empty context, so it leaves
-                // the latest real reading standing.
-                if *context_used > 0 {
-                    total.context_used = *context_used;
-                }
-                // Absence means this report did not state a ceiling, not that
-                // a previously stated ceiling stopped applying. A later
-                // stated value wins because a route can change mid-session.
-                if let Some(window) = context_window {
-                    total.context_window = Some(*window);
-                }
-            }
-            total
-        }))
+        Ok(fold_usage(events.iter().map(|event| &event.kind)))
     }
 
     /// The channel toward a session's runtime, if the caller may drive it.
@@ -1000,3 +1061,7 @@ fn intent_for(decision: ApprovalDecision) -> PermissionDecision {
 #[cfg(test)]
 #[path = "conversation_operation_tests.rs"]
 mod conversation_operation_tests;
+
+#[cfg(test)]
+#[path = "usage_fold_tests.rs"]
+mod usage_fold_tests;

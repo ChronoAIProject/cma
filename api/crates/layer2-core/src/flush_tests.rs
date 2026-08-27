@@ -55,7 +55,6 @@ fn event(seq: u64, writer: &str) -> Event {
     }
 }
 
-#[derive(Default)]
 struct PairingStore {
     inner: Arc<FakeStore>,
     delay_next: AtomicBool,
@@ -64,6 +63,22 @@ struct PairingStore {
     calls: AtomicUsize,
     failures: AtomicUsize,
     committed: Mutex<Vec<(String, String)>>,
+}
+
+impl Default for PairingStore {
+    fn default() -> Self {
+        let inner = Arc::new(FakeStore::default());
+        inner.disable_coordination();
+        Self {
+            inner,
+            delay_next: AtomicBool::default(),
+            entered: Notify::new(),
+            release: Notify::new(),
+            calls: AtomicUsize::default(),
+            failures: AtomicUsize::default(),
+            committed: Mutex::default(),
+        }
+    }
 }
 
 impl PairingStore {

@@ -124,6 +124,11 @@ fn every_durable_kind() -> Vec<EventKind> {
             peak_permille: 950,
             duration_seconds: 8,
         },
+        EventKind::RuntimeHandoverStarted,
+        EventKind::RuntimeIncarnationStarted,
+        EventKind::RuntimeStarted {
+            generation: std::num::NonZeroU64::new(3).expect("the sample generation is positive"),
+        },
     ];
 
     for kind in &kinds {
@@ -154,6 +159,9 @@ fn every_durable_kind() -> Vec<EventKind> {
             | EventKind::RuntimeLost { .. }
             | EventKind::MemoryPressureOpened { .. }
             | EventKind::MemoryPressureClosed { .. }
+            | EventKind::RuntimeHandoverStarted
+            | EventKind::RuntimeIncarnationStarted
+            | EventKind::RuntimeStarted { .. }
             | EventKind::SignInRequired { .. } => {}
         }
     }
