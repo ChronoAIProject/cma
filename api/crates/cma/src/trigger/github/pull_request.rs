@@ -104,7 +104,7 @@ impl TryFrom<&Launch> for PullRequestContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PullRequestAdvance {
     Absent,
-    Ready(PullRequestRecord),
+    Ready(Box<PullRequestRecord>),
 }
 
 #[derive(Debug)]
@@ -240,7 +240,7 @@ impl GithubBroker {
                             false,
                         )
                         .await?;
-                    return Ok(PullRequestAdvance::Ready(record));
+                    return Ok(PullRequestAdvance::Ready(Box::new(record)));
                 }
                 if reconcile_only {
                     return Ok(PullRequestAdvance::Absent);
@@ -428,7 +428,7 @@ impl GithubBroker {
                             false,
                         )
                         .await
-                        .map(PullRequestAdvance::Ready),
+                        .map(|record| PullRequestAdvance::Ready(Box::new(record))),
                     None => Err(GithubBrokerError::AmbiguousWrite),
                 };
             }
@@ -448,7 +448,7 @@ impl GithubBroker {
             true,
         )
         .await
-        .map(PullRequestAdvance::Ready)
+        .map(|record| PullRequestAdvance::Ready(Box::new(record)))
     }
 
     async fn update_pull_request(
@@ -477,7 +477,7 @@ impl GithubBroker {
                     false,
                 )
                 .await
-                .map(PullRequestAdvance::Ready);
+                .map(|record| PullRequestAdvance::Ready(Box::new(record)));
         }
         if !context.record.intent.update_metadata {
             return self
@@ -490,7 +490,7 @@ impl GithubBroker {
                     false,
                 )
                 .await
-                .map(PullRequestAdvance::Ready);
+                .map(|record| PullRequestAdvance::Ready(Box::new(record)));
         }
         let desired_body = context.record.intent.provider_body();
         let current_matches = existing.title == context.record.intent.title
@@ -555,7 +555,7 @@ impl GithubBroker {
             true,
         )
         .await
-        .map(PullRequestAdvance::Ready)
+        .map(|record| PullRequestAdvance::Ready(Box::new(record)))
     }
 
     async fn reconciled_record(
@@ -1012,9 +1012,7 @@ mod tests {
                 Json(repository_wire(
                     10,
                     "R_upstream",
-                    20,
-                    "U_owner",
-                    "upstream",
+                    (20, "U_owner", "upstream"),
                     "project",
                     None,
                     false,
@@ -1025,9 +1023,7 @@ mod tests {
                 Json(repository_wire(
                     30,
                     "R_fork",
-                    21,
-                    "U_contributor",
-                    "contributor",
+                    (21, "U_contributor", "contributor"),
                     &fixture.fork_name,
                     Some(10),
                     true,
@@ -1165,13 +1161,12 @@ mod tests {
     fn repository_wire(
         id: u64,
         node_id: &str,
-        owner_id: u64,
-        owner_node_id: &str,
-        owner: &str,
+        owner: (u64, &str, &str),
         name: &str,
         parent: Option<u64>,
         push: bool,
     ) -> Value {
+        let (owner_id, owner_node_id, owner) = owner;
         json!({
             "id": id,
             "node_id": node_id,
@@ -1462,11 +1457,8 @@ mod tests {
 
         assert!(matches!(
             first,
-            PullRequestAdvance::Ready(PullRequestRecord {
-                state: PullRequestState::Open,
-                number: Some(7),
-                ..
-            })
+            PullRequestAdvance::Ready(record)
+                if record.state == PullRequestState::Open && record.number == Some(7)
         ));
         assert!(matches!(second, PullRequestAdvance::Ready(_)));
         let requests = requests.lock().await;
@@ -1553,10 +1545,7 @@ mod tests {
         server.abort();
         assert!(matches!(
             result,
-            PullRequestAdvance::Ready(PullRequestRecord {
-                number: Some(7),
-                ..
-            })
+            PullRequestAdvance::Ready(record) if record.number == Some(7)
         ));
         assert_eq!(
             requests
@@ -1655,7 +1644,7 @@ mod tests {
             server.abort();
             assert!(matches!(
                 result,
-                PullRequestAdvance::Ready(PullRequestRecord { state, .. }) if state == expected
+                PullRequestAdvance::Ready(record) if record.state == expected
             ));
             assert!(requests
                 .lock()
@@ -1693,10 +1682,8 @@ mod tests {
 
         assert!(matches!(
             result,
-            PullRequestAdvance::Ready(PullRequestRecord {
-                observed_title: Some(ref title),
-                ..
-            }) if title == "Maintainer-owned title"
+            PullRequestAdvance::Ready(record)
+                if record.observed_title.as_deref() == Some("Maintainer-owned title")
         ));
         assert_eq!(
             requests
@@ -1737,10 +1724,8 @@ mod tests {
         ));
         assert!(matches!(
             broker.reconcile_pull_request(&context).await.unwrap(),
-            PullRequestAdvance::Ready(PullRequestRecord {
-                head_revision: Some(ref head),
-                ..
-            }) if head == &"e".repeat(40)
+            PullRequestAdvance::Ready(record)
+                if record.head_revision.as_deref() == Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
         ));
         server.abort();
         assert_eq!(
@@ -1859,10 +1844,8 @@ mod tests {
         server.abort();
         assert!(matches!(
             result,
-            PullRequestAdvance::Ready(PullRequestRecord {
-                checks: CheckSummaryState::AwaitingMaintainerApproval,
-                ..
-            })
+            PullRequestAdvance::Ready(record)
+                if record.checks == CheckSummaryState::AwaitingMaintainerApproval
         ));
     }
 

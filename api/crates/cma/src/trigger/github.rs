@@ -205,7 +205,7 @@ pub(crate) struct RepositoryEvidence {
 pub(crate) enum ForkReconciliation {
     Absent,
     Pending { repository_id: Option<u64> },
-    Ready(ForkRecord),
+    Ready(Box<ForkRecord>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,8 +281,6 @@ pub(crate) struct RepositoryPermissions {
     pub maintain: bool,
     #[serde(default)]
     pub push: bool,
-    #[serde(default)]
-    pub triage: bool,
     #[serde(default)]
     pub pull: bool,
 }
@@ -781,13 +779,13 @@ impl GithubBroker {
             }
             Err(error) => return Err(error),
         }
-        Ok(ForkReconciliation::Ready(ForkRecord {
+        Ok(ForkReconciliation::Ready(Box::new(ForkRecord {
             repository: fork.identity,
             reused,
             source_revision: context.source_sha.clone(),
             canonical_url: fork.html_url,
             ready_at: layer2_core::rfc3339_at(SystemTime::now()),
-        }))
+        })))
     }
 
     /// Read the launch ref without ever changing it.
@@ -894,8 +892,11 @@ impl GithubBroker {
             })?;
         if response.value.reference != format!("refs/heads/{branch}")
             || response.value.object.kind != "commit"
-            || response.value.object.sha.to_ascii_lowercase()
-                != context.source_sha.to_ascii_lowercase()
+            || !response
+                .value
+                .object
+                .sha
+                .eq_ignore_ascii_case(&context.source_sha)
         {
             return Err(GithubBrokerError::AmbiguousWrite);
         }
@@ -957,7 +958,7 @@ impl GithubBroker {
                 None,
             )
             .await?;
-        if response.value.sha.to_ascii_lowercase() != sha.to_ascii_lowercase() {
+        if !response.value.sha.eq_ignore_ascii_case(sha) {
             return Err(GithubBrokerError::AuthorityDrift);
         }
         Ok(())

@@ -62,7 +62,7 @@ The configured rate is also the maximum burst:
 |---|---:|---|
 | Pre-authentication admission, per client network | 6,000 per minute | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` |
 | `GET` or `HEAD` on `/livez` and `/ready`, per client network | 120 per minute | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` |
-| Provision or rotate: `POST /sessions`, `POST /agui/run`, `POST /sessions/{id}/plane`, `POST /sessions/{id}/revive` | 10 per minute | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` |
+| Provision or rotate: `POST /sessions`, `POST /agui/run`, `POST /sessions/{id}/plane`, `POST /sessions/{id}/revive`, `POST /launches/{id}/start` | 10 per minute | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` |
 | Deliver a prompt: `POST /sessions/{id}/input`, `POST /sessions/{id}/steer` | 120 per minute | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` |
 | Every other admitted request | 600 per minute | `CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE` |
 
@@ -123,10 +123,13 @@ promise.
 
 ### Idempotent retries
 
-`POST /api/v1/sessions` and `POST /api/v1/sessions/{id}/input` are the two
-operations that read `Idempotency-Key`. They are the operations where a lost
-response would otherwise provision a second billed sandbox or deliver the same
-prompt twice. Other routes do not read the header.
+Outside the Trigger workflow, `POST /api/v1/sessions` and
+`POST /api/v1/sessions/{id}/input` are the two operations that read
+`Idempotency-Key`. They are the operations where a lost response would otherwise
+provision a second billed sandbox or deliver the same prompt twice. The Trigger
+commands marked `required` in [Triggers and Launches](#2-triggers-and-launches)
+consume the same durable store. Trigger reads, connection preflight, and
+pull-request review do not read the header.
 
 A key contains 1 to 255 visible ASCII bytes. It is scoped to the authenticated
 subject and the particular operation, so one subject cannot consume another's
@@ -164,7 +167,7 @@ the key may be used again.
 REST is the canonical and sole write projection for the Trigger workflow. The
 public preview under `/api/v1/triggers/public/{public_id}` is subject-free and
 side-effect-free. Authenticated resources under `/api/v1/triggers`,
-`/api/v1/github/connections`, and `/api/v1/launches` cover publisher drafts and
+`/api/v1/trigger-connections`, and `/api/v1/launches` cover publisher drafts and
 revisions, reusable NyxID GitHub connections, immutable Launch review,
 repository/progress/diff state, cancellation, branch publication, and explicit
 Open or Update pull-request confirmation.
@@ -176,12 +179,265 @@ Layer 2 models and public-safe reach/refusal status; GitHub HTTP payloads,
 credential values, internal effect keys, and provider request bodies never
 cross this interface. The TypeScript and Rust SDK fixtures are the executable
 contract for these resources, and `/openapi.json` contains every served route.
-The complete route and representation catalogue is in the Trigger section
-added with that fixture contract.
+The complete route and representation catalogue is in
+[Triggers and Launches](#2-triggers-and-launches).
 
 ---
 
-## 2. Environment Profiles
+## 2. Triggers and Launches
+
+A Trigger is a publisher-owned draft that becomes an immutable public revision.
+A Launch is one authenticated contributor's durable execution of that exact
+revision. A README button links only to the public identifier. It contains no CMA
+API key, GitHub token, prompt, repository credential, or mutable configuration.
+
+### Authentication and causality
+
+`GET /api/v1/triggers/public/{public_id}` is the only anonymous Trigger route. It
+is side-effect-free and sends no `Set-Cookie`; an SDK with a configured bearer or
+cookie jar deliberately suppresses both. Crawlers, unfurlers, browser prefetch,
+and repeated GETs can therefore inspect it without creating a Launch, forking a
+repository, or starting a session.
+
+Every other route requires the normal CMA subject credential. CMA never accepts a
+GitHub token from the browser. Connection commands return a NyxID OAuth handoff
+URL or a public-safe connection projection; NyxID retains the provider token.
+The OAuth callback consumes its state and returns to the Launch review. It never
+starts work.
+
+Every state-changing route below marked `required` requires one exact
+`Idempotency-Key`. The visible-ASCII, subject/operation scope, replay, body-conflict,
+in-flight, retention, and fail-closed rules are the rules in
+[Idempotent retries](#idempotent-retries). A lost response is retried with the
+same key and byte-identical body. A changed review, confirmation, or semantic
+intent uses a new key.
+
+### Publisher routes
+
+| Method and path | Purpose | Idempotency-Key | Success |
+|---|---|---|---|
+| `GET /api/v1/triggers/public/{public_id}` | Anonymous projection of one published or retired revision | absent | `200` `TriggerPreview` |
+| `GET /api/v1/triggers?limit=&cursor=` | List the caller's mutable drafts | absent | `200` `TriggerDraftPage` |
+| `POST /api/v1/triggers` | Create a draft after resolving one exact repository through one selected NyxID service | required | `201` `TriggerDraft` |
+| `GET /api/v1/triggers/{trigger_id}` | Read one owned draft | absent | `200` `TriggerDraft` |
+| `PUT /api/v1/triggers/{trigger_id}` | Fully replace a draft under `expected_version` | required | `200` `TriggerDraft` |
+| `POST /api/v1/triggers/{trigger_id}/publish` | Verify current publisher authority and publish one immutable revision | required | `201` `TriggerRevision` |
+| `GET /api/v1/trigger-revisions?limit=&cursor=` | List the caller's immutable revisions | absent | `200` `TriggerRevisionPage` |
+| `GET /api/v1/trigger-revisions/{revision_id}` | Read one owned immutable revision | absent | `200` `TriggerRevision` |
+| `POST /api/v1/trigger-revisions/{revision_id}/retire` | Stop new Launch creation without rewriting existing Launches | required | `200` `TriggerRevision` |
+
+Create and replace accept `selected_service_id` plus `content`. `content` is the
+closed publisher request shape: `schema_version`,
+`publisher_display_identity`, `repository`, `task`, `session`,
+`repository_access`, `setup`, `contribution`, `commercial_policy`,
+`override_policy`, and `public_projection`. `repository` carries the numeric
+`repository_id`, selected and contribution-base refs, and `source_mode`; CMA
+resolves canonical names, numeric/node identities, visibility, fork policy, and
+the observed source SHA itself. Unknown nested policy fields are refused.
+
+`TriggerDraft` carries `id`, `version`, `next_revision_number`, resolved
+`content`, `created_at`, and `updated_at`. Draft pages use
+`{"items": [...], "next_cursor": string|null}`. A revision adds `public_id`,
+`digest`, `availability`, the verified publisher `authority`, `published_at`,
+and nullable `retired_at`. Its content is immutable. Direct links to a retired
+revision remain previewable, while new Launch creation is refused.
+
+`TriggerPreview` is the deliberately smaller public shape:
+`public_id`, `availability`, `publisher_display_identity`, repository numeric id,
+owner, name, visibility and `allow_forking`, `public_summary`, permission ceiling,
+required capabilities, default and ceiling resources, default and ceiling
+timeouts, billing mode, pricing-policy reference, and revision digest. It contains
+neither the rendered/private prompt nor configured credential material.
+
+### NyxID GitHub connection routes
+
+| Method and path | Purpose | Idempotency-Key | Success |
+|---|---|---|---|
+| `GET /api/v1/trigger-connections` | List reusable GitHub services available to the caller | absent | `200` `{"connections": [...]}` |
+| `POST /api/v1/trigger-connections` | Begin a single explicit OAuth consent attempt from `intent_id` | required | `200` `ConnectionAuthorization` |
+| `POST /api/v1/trigger-connections/{service_id}/reconnect` | Begin new consent for one exact existing service | required | `200` `ConnectionAuthorization` |
+| `GET /api/v1/trigger-connections/{service_id}/preflight` | Revalidate one exact service and its public account/scope state | absent | `200` `TriggerConnection` |
+
+`ConnectionAuthorization` contains only `service_id`, `authorization_url`, and
+`attempt_nonce`. `TriggerConnection` contains `service_id`, `state_version`,
+public state, nullable numeric/node account identity and login/avatar, granted
+scope names, and nullable consent observation time. It never contains an access
+token, refresh token, backing key, or provider request body.
+
+Preflight is an authenticated GET and has no idempotency key. It is advisory for
+review; Start and every later irreversible effect revalidate authority at their
+own fence. A UI must not infer current write authority merely from an old
+preflight response.
+
+### Launch routes
+
+| Method and path | Purpose | Idempotency-Key | Success |
+|---|---|---|---|
+| `POST /api/v1/triggers/public/{public_id}/launches` | Create or resume this subject's current Launch for the immutable revision | required | `201` `Launch` |
+| `POST /api/v1/triggers/public/{public_id}/launches/new` | Create a separate Launch after `acknowledge_additional_resources: true` | required | `201` `Launch` |
+| `GET /api/v1/launches?state=&trigger_public_id=&limit=&cursor=` | List owned Launches with bounded cursor paging | absent | `200` `LaunchPage` |
+| `GET /api/v1/launches/{launch_id}` | Read the complete owned Launch review and current state | absent | `200` `Launch` |
+| `PATCH /api/v1/launches/{launch_id}/overrides` | Replace allowed overrides under `expected_revision` | required | `200` `Launch` |
+| `PUT /api/v1/launches/{launch_id}/connection` | Select one exact reusable service under `expected_revision` | required | `200` `Launch` |
+| `POST /api/v1/launches/{launch_id}/start` | Confirm and enqueue the exact reviewed effective configuration | required | `202` `Launch` |
+| `POST /api/v1/launches/{launch_id}/contributions/review` | Request a new sealed read-only workspace diff | required | `202` `Launch` |
+| `GET /api/v1/launches/{launch_id}/diff` | Read current diff, contribution, and pull-request status | absent | `200` `DiffReview` |
+| `POST /api/v1/launches/{launch_id}/contributions/publish` | Publish exactly one reviewed diff to the guarded Launch branch | required | `202` `Launch` |
+| `POST /api/v1/launches/{launch_id}/pull-request/review` | Seal an Open or Update proposal without writing GitHub | absent | `200` `PullRequestDraft` |
+| `POST /api/v1/launches/{launch_id}/pull-request/open` | Explicitly confirm exactly the sealed Open proposal | required | `202` `Launch` |
+| `POST /api/v1/launches/{launch_id}/pull-request/update` | Explicitly confirm exactly the sealed Update proposal | required | `202` `Launch` |
+| `GET /api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download` | Download one owned, retained, digest-verified immutable artifact | absent | `200 application/octet-stream` |
+| `POST /api/v1/launches/{launch_id}/cancel` | Cancel safely while retaining durable history | required | `200` `Launch` |
+| `GET /api/v1/launches/{launch_id}/events?after=&limit=` | Replay durable progress strictly after a sequence cursor | absent | `200` `LaunchProgress` |
+
+Re-clicking the same README link is not a request for duplicate infrastructure.
+The normal create-or-resume route returns the same contributor/revision Launch
+while it is nonterminal. A new `Idempotency-Key` may represent a later click and
+still resolves through that durable marker. Only `/launches/new`, with its explicit
+resource acknowledgement, requests another Launch.
+
+`LaunchPage` uses `{"items": [...], "next_cursor": string|null}`. Its filters are
+bound into the opaque cursor. Malformed cursors, cross-collection cursors, and
+unknown query fields are refused rather than silently changing the result set.
+
+### Launch representation
+
+The `Launch` response is the review snapshot and durable state machine in one
+resource. Its fields are grouped here; `/openapi.json` carries the closed nested
+schemas.
+
+| Fields | Meaning |
+|---|---|
+| `id`, `trigger_public_id`, `revision_digest`, `source_sha`, `revision_content` | Immutable Trigger and source captured by this Launch |
+| `state`, `revision_number`, `blocked_reason`, `failure` | Optimistic-concurrency revision and current lifecycle/failure projection |
+| `overrides`, `effective`, `pricing` | Contributor edits, exact resolved configuration/digest, and sealed price snapshot |
+| `connection`, `workflow_paths`, `workflow_risk_acknowledged` | Selected public-safe NyxID service and workflow warning decision |
+| `steps` | Stable ordered progress checklist |
+| `fork`, `branch`, `workspace`, `session`, `reach`, `delivery` | Reconciled resources and public-safe capability/prompt-delivery state |
+| `contribution_checkpoint_version`, `diff`, `contribution`, `pull_request` | Current contribution review and GitHub publication records |
+| `created_at`, `updated_at`, `started_at`, `terminal_at` | Durable lifecycle times |
+
+`state` is one of `draft`, `auth_required`, `preflight`, `fork_pending`,
+`fork_ready`, `branch_pending`, `workspace_pending`, `sandbox_pending`,
+`session_pending`, `prompt_pending`, `ready`, `contributing`, `pr_pending`,
+`pr_open`, `completed`, `failed_retryable`, `failed_terminal`, or `cancelled`.
+Clients must not derive authority from the state name; the command performs the
+same ownership, revision, policy, and authority checks again.
+
+Each step carries `key`, stable `sequence`, `status`, nullable start/completion
+times, `attempt`, `safe_detail`, `remediation`, public-safe external resource ids,
+and `correlation_id`. Status is `pending`, `running`, `completed`, `blocked`,
+`retryable`, `failed`, or `cancelled`. The fixed checklist covers review,
+connection, preflight, fork, branch, workspace, sandbox, session, capability,
+prompt delivery, ready, checkpoint, diff, branch publication, and pull request.
+
+`failure` is nullable. When present it carries `class`, stable `code`, safe
+`detail`, actionable `remediation`, `correlation_id`, nullable `retry_at`, and
+`observed_at`. `recovery_required` is never represented as an ordinary retryable
+failure: CMA holds the relevant fence until explicit recovery can resolve an
+ambiguous external or prompt effect.
+
+`reach` exposes service id, revocation state, signed-policy generation/fence,
+runtime audience, expiry, observation/refresh/revocation times, public refusal,
+and revocation acknowledgements. `delivery` exposes only the seven-state
+at-most-once record: `queued`, `dispatch_fenced`, `write_confirmed`,
+`execution_observed`, `completed`, `failed`, or `recovery_required`, plus safe
+origin/hash/fence sequence and times. Neither projection exposes credentials,
+worker fencing tokens, provider request ids, backing key ids, or object-store
+references.
+
+### Overrides and confirmations
+
+`PATCH /overrides` accepts:
+
+```json
+{
+  "expected_revision": 7,
+  "overrides": {
+    "task_inputs": {"area": "documentation"},
+    "branch_suffix": "docs-fix",
+    "resource_size": {"cpu_millis": 1000, "memory_mib": 2048},
+    "timeout_seconds": 3600,
+    "optional_checks": ["markdown"]
+  }
+}
+```
+
+Only publisher-declared editable fields within publisher and deployment ceilings
+are accepted. Each successful edit increments `revision_number` and produces a
+new `effective.digest`. Repository identity, credential route, permission ceiling,
+setup policy, kernel, and signed capability policy are not overrideable.
+
+Every irreversible or user-significant command carries both
+`expected_revision` and `snapshot_digest`. The digest target is deliberately not
+the same for every action:
+
+| Command | `snapshot_digest` must equal |
+|---|---|
+| Start | Current `launch.effective.digest` |
+| Request diff | Current `launch.effective.digest` |
+| Cancel | Current `launch.effective.digest` |
+| Publish branch | Reviewed `diff.artifact.digest` |
+| Open or Update pull request | Side-effect-free `PullRequestDraft.intent_digest` |
+
+A stale revision or digest returns a conflict/validation problem before the
+effect. The client reloads the Launch or review and asks for a new explicit
+decision; it never silently substitutes the new snapshot.
+
+### Durable progress
+
+`LaunchProgress` has `launch_id`, ordered `events`, and `next_cursor`. An event
+has `sequence`, `launch_id`, `occurred_at`, `correlation_id`, and a tagged `kind`.
+The closed kinds are `created`, `draft_updated`, `connection_selected`, `started`,
+`state_changed`, `step_changed`, `blocked`, `failure`, `effect_reconciled`,
+`delivery_changed`, `reach_changed`, `confirmation_recorded`, and `cancelled`.
+The nested step, failure, blocked reason, and reach values use the same sanitized
+public projections as `Launch`.
+
+`after` defaults to `0` and means strictly after that accepted sequence. `limit`
+defaults to `100`. Persist `next_cursor`, reconnect from it, and refresh the
+Launch projection as events arrive. A transport disconnect loses no accepted
+progress. Events never contain credentials, raw provider payloads, internal
+idempotency hashes, worker fences, or object references.
+
+### Diff and pull-request representations
+
+`DiffReview` contains `launch_id`, `revision_number`, `state`, `source_sha`,
+`workflow_paths`, and nullable `artifact`, `contribution`, and `pull_request`.
+The artifact seals baseline/checkpoint digests and expected/observed branch heads;
+bounded file entries with change kind, modes, hashes, byte counts, optional patch,
+and completeness; total changed bytes/files; commit identities; workflow paths;
+validation/check results; its digest and object size; creation/retention times; and
+the tenant-scoped download path.
+
+Branch publication requires the artifact digest and creates a contribution record
+with the exact expected head, produced tree/commit/object ids, resulting head,
+attribution, confirmation digest/time, and publication state. CMA uses guarded
+compare-and-swap semantics and does not force an unexpected fork branch head.
+
+Pull-request review accepts `operation: "open"|"update"` and optional title/body.
+Its `PullRequestDraft` seals upstream and fork numeric/node identities, base and
+head refs/revisions, prior target identity for Update, guarded previous metadata,
+the exact title/body/body digest, stable Launch marker, and `intent_digest`.
+Review has no provider write and no idempotency key. Open and Update are separate
+confirmation routes; neither can silently become the other.
+
+The reconciled pull-request record adds provider numeric/node id and number,
+canonical URL, `creating|updating|open|closed_unmerged|merged|recovery_required`
+state, observed base/head/title/body, mergeability/checks, confirmation and
+provider times. An ambiguous provider response is reconciled by marker and numeric
+identity before retry; unresolved ambiguity becomes `recovery_required`.
+
+The server-owned fixture corpus under
+`api/crates/layer1-public/tests/fixtures/rest-sdk/` is serialized and parsed by
+server DTOs and copied byte-identically into both SDKs. The TypeScript SDK decodes
+the response fixtures through its public transport; the Rust SDK deserializes
+them into independent public types. `/openapi.json` enumerates all 29 operations
+above and references concrete schemas for every owned nested representation.
+
+---
+
+## 3. Environment Profiles
 
 An environment profile is the named, reusable description from which sessions
 are created: variables, software, runtime and model choices, resource size,
@@ -607,7 +863,7 @@ owner-list pages even though the final JSON array has no profile-count limit.
 
 ---
 
-## 3. Sessions
+## 4. Sessions
 
 ### Create
 
@@ -627,7 +883,7 @@ Content-Type: application/json
 | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cols`                | no       | Initial terminal width. Sent with `rows` or not at all                                                                                          |
 | `rows`                | no       | Initial terminal height                                                                                                                         |
-| `environment_profile` | no       | Id from [Environment Profiles](#2-environment-profiles). **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
+| `environment_profile` | no       | Id from [Environment Profiles](#3-environment-profiles). **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
 | `quoted_rate_card`    | no       | The `rate_card` from `GET /api/v1/pricing/quote`. If another card is now in force, creation is refused with `409 price_changed` before any session exists. Omit it for backward compatibility when no quote was taken |
 
 **These four are the whole body.** An earlier version of this section
@@ -646,7 +902,7 @@ is the profile's: omitting `agent.size` takes the deployment's reservation, and
 the answer is frozen for the life of the session, including across a rotation.
 
 **A caller does not choose a kernel here.** Which one a session runs on comes
-from the [environment profile](#2-environment-profiles) it names, or from what
+from the [environment profile](#3-environment-profiles) it names, or from what
 the deployment configured when it names none. There is no session-create field
 for it, and that is deliberate: the reusable profile is the one place that
 states the complete agent configuration.
@@ -657,7 +913,7 @@ enumerates them — so it answers `422` with `invalid_request`. Rejection detail
 are fixed by error class rather than copied from Serde because other request
 bodies can carry credentials. It used to be discarded, and the session came
 back `201` on whichever kernel the profile actually resolved to. To choose a
-kernel, create or replace an [environment profile](#2-environment-profiles)
+kernel, create or replace an [environment profile](#3-environment-profiles)
 whose `agent.kernel` is the one you want, then name its `id` here.
 
 A body that cannot be read keeps the status that says why: `415` when the `Content-Type` is not `application/json`, `400` when the JSON is malformed, `422` when it parsed and could not be honoured. All three carry the same problem document as every other failure.
@@ -953,7 +1209,7 @@ and `version` remain byte-for-byte stable.
 
 ---
 
-## 4. Input, interrupt, steer
+## 5. Input, interrupt, steer
 
 ### One route, two planes
 
@@ -1021,7 +1277,7 @@ With no attachment live, all three operate the terminal directly.
 
 ---
 
-## 5. Events
+## 6. Events
 
 ### Replay and follow
 
@@ -1098,7 +1354,7 @@ closes an episode.
 
 ---
 
-## 6. Approvals
+## 7. Approvals
 
 ```http
 POST /api/v1/sessions/{id}/approvals/{request_id}
@@ -1113,7 +1369,7 @@ While an approval is pending the session is `idle` with `stop_reason: requires_a
 
 ---
 
-## 7. Terminal
+## 8. Terminal
 
 ```http
 GET  /api/v1/sessions/{id}/screen          → current rendered screen
@@ -1143,7 +1399,7 @@ A session with no terminal capability is refused here with `capability_unsupport
 
 ---
 
-## 8. Pricing and usage
+## 9. Pricing and usage
 
 ### Quote a new session
 
@@ -1340,7 +1596,7 @@ decimal strings, never binary floating-point numbers.
 
 ---
 
-## 9. Capability declaration
+## 10. Capability declaration
 
 ```http
 GET /api/v1/conformance
@@ -1399,7 +1655,7 @@ The document includes the RFC 9457 problem schema used by every refusal.
 
 ---
 
-## 10. Errors
+## 11. Errors
 
 ```http
 HTTP/1.1 409 Conflict
@@ -1576,7 +1832,7 @@ cross-replica enforcement boundary.
 
 ---
 
-## 11. Administration
+## 12. Administration
 
 Everything an operator can see and do lives under `/api/v1/admin/`, one segment so the whole surface can be restricted in front of the service as well as inside it. Each endpoint is gated on its own capability, and no capability is implied by another.
 
@@ -2012,7 +2268,7 @@ Both are recorded in the activity log with the operator as `actor` and the sessi
 
 ---
 
-## 12. What the caller may do
+## 13. What the caller may do
 
 A browser client asks who it is at `GET /auth/session`, and the answer says what that identity may do:
 

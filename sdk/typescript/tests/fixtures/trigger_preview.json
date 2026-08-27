@@ -1,0 +1,33 @@
+{
+  "public_id": "33333333-3333-4333-8333-333333333333",
+  "availability": "published",
+  "publisher_display_identity": "Chrono Maintainer",
+  "repository_id": 10,
+  "repository_owner": "upstream-owner",
+  "repository_name": "project",
+  "visibility": "public",
+  "allow_forking": true,
+  "public_summary": "Fix one bounded issue",
+  "permission_ceiling": "autonomous",
+  "required_capabilities": [
+    "conversation",
+    "durable_conversation",
+    "workspace_checkpoint",
+    "restricted_service_gateway",
+    "credential_refresh",
+    "credential_revocation"
+  ],
+  "resource_default": {
+    "cpu_millis": 500,
+    "memory_mib": 1024
+  },
+  "resource_ceiling": {
+    "cpu_millis": 1000,
+    "memory_mib": 2048
+  },
+  "timeout_default_seconds": 3600,
+  "timeout_ceiling_seconds": 7200,
+  "billing_mode": "zero_cost",
+  "pricing_policy_reference": "public-zero-cost-v1",
+  "revision_digest": "e49c49f8e2459f64d9f594ec060c89254d7dc03f07b468db5f51bd0f87603086"
+}

@@ -17,6 +17,7 @@ import * as events from './events.js';
 import * as operations from './operations.js';
 import * as resources from './resources.js';
 import * as sessions from './sessions.js';
+import * as triggers from './triggers.js';
 import type { SessionResourceStatus } from './resources.js';
 import type {
   CreateSession,
@@ -69,6 +70,278 @@ export class Cma {
   /** Public protocol and build discovery; no configured bearer is presented. */
   readConformance(options: OperationOptions = {}): Promise<Conformance> {
     return discovery.readConformance(this.#config, options);
+  }
+
+  /** Read one public, side-effect-free README Trigger preview. */
+  readTriggerPreview(
+    publicId: string,
+    options: OperationOptions = {},
+  ): Promise<triggers.TriggerPreview> {
+    return triggers.readTriggerPreview(this.#config, publicId, options);
+  }
+
+  /** Store a publisher Trigger draft. */
+  createTrigger(
+    selectedServiceId: string,
+    content: triggers.TriggerContentDraft,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.TriggerDraft> {
+    return triggers.createTrigger(this.#config, selectedServiceId, content, options);
+  }
+
+  /** List one cursor page of publisher Trigger drafts. */
+  listTriggers(
+    limit = 50,
+    cursor?: string,
+    options: OperationOptions = {},
+  ): Promise<triggers.CursorPage<triggers.TriggerDraft>> {
+    return triggers.listTriggers(this.#config, limit, cursor, options);
+  }
+
+  /** Read one publisher Trigger draft. */
+  readTrigger(id: string, options: OperationOptions = {}): Promise<triggers.TriggerDraft> {
+    return triggers.readTrigger(this.#config, id, options);
+  }
+
+  /** Replace one publisher Trigger draft under optimistic concurrency. */
+  updateTrigger(
+    id: string,
+    expectedVersion: number,
+    selectedServiceId: string,
+    content: triggers.TriggerContentDraft,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.TriggerDraft> {
+    return triggers.updateTrigger(
+      this.#config,
+      id,
+      expectedVersion,
+      selectedServiceId,
+      content,
+      options,
+    );
+  }
+
+  /** Publish one immutable Trigger revision. */
+  publishTrigger(
+    id: string,
+    expectedVersion: number,
+    selectedServiceId: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.TriggerRevision> {
+    return triggers.publishTrigger(this.#config, id, expectedVersion, selectedServiceId, options);
+  }
+
+  /** List one cursor page of immutable Trigger revisions. */
+  listTriggerRevisions(
+    limit = 50,
+    cursor?: string,
+    options: OperationOptions = {},
+  ): Promise<triggers.CursorPage<triggers.TriggerRevision>> {
+    return triggers.listTriggerRevisions(this.#config, limit, cursor, options);
+  }
+
+  /** Read one immutable publisher Trigger revision. */
+  readTriggerRevision(
+    id: string,
+    options: OperationOptions = {},
+  ): Promise<triggers.TriggerRevision> {
+    return triggers.readTriggerRevision(this.#config, id, options);
+  }
+
+  /** Retire a revision from new Launch creation without changing old Launches. */
+  retireTriggerRevision(
+    id: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.TriggerRevision> {
+    return triggers.retireTriggerRevision(this.#config, id, options);
+  }
+
+  /** List reusable NyxID GitHub connections for the current subject. */
+  listTriggerConnections(
+    options: OperationOptions = {},
+  ): Promise<readonly triggers.TriggerConnection[]> {
+    return triggers.listTriggerConnections(this.#config, options);
+  }
+
+  /** Begin explicit GitHub consent in NyxID. */
+  beginTriggerConnection(
+    intentId: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.ConnectionAuthorization> {
+    return triggers.beginTriggerConnection(this.#config, intentId, options);
+  }
+
+  /** Reconnect one exact reusable NyxID GitHub service. */
+  reconnectTriggerConnection(
+    serviceId: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.ConnectionAuthorization> {
+    return triggers.reconnectTriggerConnection(this.#config, serviceId, options);
+  }
+
+  /** Revalidate one exact reusable GitHub connection. */
+  preflightTriggerConnection(
+    serviceId: string,
+    options: OperationOptions = {},
+  ): Promise<triggers.TriggerConnection> {
+    return triggers.preflightTriggerConnection(this.#config, serviceId, options);
+  }
+
+  /** Create or resume this subject's current Launch for one revision. */
+  createOrResumeLaunch(
+    publicId: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.createOrResumeLaunch(this.#config, publicId, options);
+  }
+
+  /** Create a separate Launch after explicitly accepting extra resources. */
+  createNewLaunch(
+    publicId: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.createNewLaunch(this.#config, publicId, options);
+  }
+
+  /** List one bounded Launch cursor page. */
+  listLaunches(
+    page: triggers.LaunchListRequest = {},
+    options: OperationOptions = {},
+  ): Promise<triggers.CursorPage<triggers.Launch>> {
+    return triggers.listLaunches(this.#config, page, options);
+  }
+
+  /** Read one owned Launch. */
+  readLaunch(id: string, options: OperationOptions = {}): Promise<triggers.Launch> {
+    return triggers.readLaunch(this.#config, id, options);
+  }
+
+  /** Replace the editable fields on one Launch review. */
+  updateLaunchOverrides(
+    id: string,
+    expectedRevision: number,
+    overrides: triggers.LaunchOverrides,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.updateLaunchOverrides(this.#config, id, expectedRevision, overrides, options);
+  }
+
+  /** Select one exact reusable GitHub connection for a Launch. */
+  selectLaunchConnection(
+    id: string,
+    expectedRevision: number,
+    serviceId: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.selectLaunchConnection(this.#config, id, expectedRevision, serviceId, options);
+  }
+
+  /** Explicitly Start the exact reviewed Launch snapshot. */
+  startLaunch(
+    id: string,
+    expectedRevision: number,
+    snapshotDigest: string,
+    acknowledgeWorkflowRisk: boolean,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.startLaunch(
+      this.#config,
+      id,
+      expectedRevision,
+      snapshotDigest,
+      acknowledgeWorkflowRisk,
+      options,
+    );
+  }
+
+  /** Request a sealed diff checkpoint without publishing it. */
+  requestLaunchDiff(
+    id: string,
+    expectedRevision: number,
+    snapshotDigest: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.requestLaunchDiff(this.#config, id, expectedRevision, snapshotDigest, options);
+  }
+
+  /** Read the sealed diff and current contribution/PR status. */
+  readLaunchDiff(id: string, options: OperationOptions = {}): Promise<triggers.DiffReview> {
+    return triggers.readLaunchDiff(this.#config, id, options);
+  }
+
+  /** Explicitly publish the exact reviewed diff to the Launch branch. */
+  publishLaunchBranch(
+    id: string,
+    expectedRevision: number,
+    snapshotDigest: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.publishLaunchBranch(
+      this.#config,
+      id,
+      expectedRevision,
+      snapshotDigest,
+      options,
+    );
+  }
+
+  /** Seal the exact Open or Update pull-request proposal without writing GitHub. */
+  reviewPullRequest(
+    id: string,
+    operation: 'open' | 'update',
+    edits: { readonly title?: string; readonly body?: string } = {},
+    options: OperationOptions = {},
+  ): Promise<triggers.PullRequestDraft> {
+    return triggers.reviewPullRequest(this.#config, id, operation, edits, options);
+  }
+
+  /** Explicitly confirm the exact sealed Open or Update proposal. */
+  confirmPullRequest(
+    id: string,
+    operation: 'open' | 'update',
+    expectedRevision: number,
+    snapshotDigest: string,
+    edits: { readonly title?: string; readonly body?: string } = {},
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.confirmPullRequest(
+      this.#config,
+      id,
+      operation,
+      expectedRevision,
+      snapshotDigest,
+      edits,
+      options,
+    );
+  }
+
+  /** Cancel one Launch while retaining its durable history. */
+  cancelLaunch(
+    id: string,
+    expectedRevision: number,
+    snapshotDigest: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.cancelLaunch(this.#config, id, expectedRevision, snapshotDigest, options);
+  }
+
+  /** Replay durable Launch progress after one accepted cursor. */
+  readLaunchProgress(
+    id: string,
+    after = 0,
+    limit = 100,
+    options: OperationOptions = {},
+  ): Promise<triggers.LaunchProgress> {
+    return triggers.readLaunchProgress(this.#config, id, after, limit, options);
+  }
+
+  /** Download one immutable complete diff artifact. */
+  downloadDiffArtifact(
+    launchId: string,
+    artifactId: string,
+    options: OperationOptions = {},
+  ): Promise<Uint8Array> {
+    return triggers.downloadDiffArtifact(this.#config, launchId, artifactId, options);
   }
 
   /** Every environment profile owned by the authenticated subject. */

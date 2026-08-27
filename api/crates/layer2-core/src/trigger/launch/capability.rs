@@ -1,8 +1,5 @@
-use super::{BranchRecord, Launch, LaunchEventKind, LaunchState, WorkerLease};
-use crate::trigger::{
-    AuthorityProvenance, CapabilityRevocationState, ConnectionSnapshot, ReachStatus,
-    TriggerValidationError,
-};
+use super::{CapabilityRenewalRecord, Launch, LaunchEventKind, LaunchState, WorkerLease};
+use crate::trigger::{CapabilityRevocationState, TriggerValidationError};
 
 impl Launch {
     /// Whether this Launch has permanently ended and must surrender GitHub
@@ -19,13 +16,16 @@ impl Launch {
     pub fn record_capability_renewal(
         &mut self,
         lease: &WorkerLease,
-        reach: ReachStatus,
-        connection: ConnectionSnapshot,
-        authority: AuthorityProvenance,
-        branch: BranchRecord,
+        renewal: CapabilityRenewalRecord,
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
+        let CapabilityRenewalRecord {
+            reach,
+            connection,
+            authority,
+            branch,
+        } = renewal;
         let now = now.into();
         self.validate_capability_lease(lease, &now)?;
         reach.validate()?;

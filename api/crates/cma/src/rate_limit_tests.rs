@@ -76,6 +76,22 @@ fn test_routes() -> Router {
             post(|| async { StatusCode::NO_CONTENT }),
         )
         .route(
+            "/api/v1/launches/{id}/start",
+            post(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
+            "/api/v1/triggers/public/{public_id}",
+            get(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
+            "/api/v1/triggers/public/{public_id}/launches",
+            post(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
+            "/api/v1/agui/triggers/{public_id}",
+            get(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
             "/api/v1/agui/run",
             post(|| async { StatusCode::NO_CONTENT }),
         )
@@ -249,6 +265,7 @@ async fn every_provisioning_and_prompt_route_uses_its_strict_semantic_tier() {
         "/api/v1/agui/run",
         "/api/v1/sessions/sesn_rate/plane",
         "/api/v1/sessions/sesn_rate/revive",
+        "/api/v1/launches/launch_rate/start",
     ] {
         let app = operation_app(RateLimiters::for_test(generous(), one(), generous()));
         assert_eq!(
@@ -310,6 +327,14 @@ async fn public_routes_use_network_keys_even_with_ambient_subjects() {
         (Method::GET, "/openapi.json"),
         (Method::GET, "/api/v1/conformance"),
         (Method::GET, "/api/v1/agui/capabilities"),
+        (
+            Method::GET,
+            "/api/v1/triggers/public/123e4567-e89b-12d3-a456-426614174000",
+        ),
+        (
+            Method::GET,
+            "/api/v1/agui/triggers/123e4567-e89b-12d3-a456-426614174000",
+        ),
         (Method::POST, "/api/v1/mcp"),
         (Method::POST, "/api/v1/a2a"),
         (Method::GET, "/.well-known/agent-card.json"),
@@ -365,6 +390,39 @@ async fn public_routes_use_network_keys_even_with_ambient_subjects() {
             "protected subject budget split across networks after {path}"
         );
     }
+}
+
+#[tokio::test]
+async fn authenticated_launch_creation_nested_under_public_preview_is_subject_keyed() {
+    let app = operation_app(RateLimiters::for_test(one(), generous(), generous()));
+    let path = "/api/v1/triggers/public/123e4567-e89b-12d3-a456-426614174000/launches";
+    assert_eq!(
+        status(
+            &app,
+            request(
+                Method::POST,
+                path,
+                Some(SUBJECT),
+                Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))),
+            ),
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        status(
+            &app,
+            request(
+                Method::POST,
+                path,
+                Some(SUBJECT),
+                Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 11))),
+            ),
+        )
+        .await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "a new network must not mint another budget for the same authenticated subject"
+    );
 }
 
 #[tokio::test]
@@ -861,8 +919,8 @@ async fn only_rest_rejections_claim_the_rest_profile() {
     for (method, path, carries_rest_links) in [
         (Method::GET, "/openapi.json", true),
         (Method::GET, "/api/v1/sessions/sesn_rate", true),
-        (Method::GET, "/api/v1/agui", true),
-        (Method::GET, "/api/v1/agui/unknown", true),
+        (Method::GET, "/api/v1/agui", false),
+        (Method::GET, "/api/v1/agui/unknown", false),
         (Method::POST, "/api/v1/agui/run", false),
         (Method::GET, "/api/v1/agui/capabilities", false),
         (Method::GET, "/api/v1/sessions/sesn_rate/terminal", false),

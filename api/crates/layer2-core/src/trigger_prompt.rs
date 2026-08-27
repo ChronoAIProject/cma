@@ -516,9 +516,9 @@ fn validate_existing(
         || (delivery.state == PromptDeliveryState::Queued
             && delivery.dispatch_fence_sequence.is_some())
         || (delivery.state != PromptDeliveryState::Queued
-            && !delivery
+            && delivery
                 .dispatch_fence_sequence
-                .is_some_and(|sequence| sequence > 0))
+                .is_none_or(|sequence| sequence == 0))
     {
         return Err(CoreError::InvalidRequest(
             "the durable initial prompt does not match this Launch".into(),

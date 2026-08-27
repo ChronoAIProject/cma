@@ -8,23 +8,23 @@ use axum::http::{header, Method, Request, StatusCode};
 use layer2_core::{
     AuthorityProvenance, Authorization, BillingMode, BranchRecord, Capability,
     CapabilityRevocationState, CheckpointId, CheckpointIntegrity, CommercialPolicy,
-    CommitAttributionPolicy, CommitIdentity, ConnectedAccount, ConnectionSnapshot, ConnectionState,
-    ContributionPolicy, CredentialRoute, DelegationState, DiffArtifact, DiffArtifactId,
-    DiffArtifactObjectStore, DiffChangeKind, DiffFile, DiffValidationOutcome, EditableField,
-    ExecutorPolicy, ForkRecord, InputFieldDefinition, InputFieldKind, Launch, LaunchAuthority,
-    LaunchId, LaunchQuery, LaunchState, LaunchStore, OperationClaim, OperationReservation,
-    OperationStore, OverridePolicy, PermissionMode, PromptDelivery, PromptDeliveryState,
-    PublicProjectionPolicy, PublicTriggerId, PublishedRevision, PublisherAuthority,
-    PublisherRepositoryRole, PullRequestDefaults, ReachStatus, RepositoryAccessPolicy,
-    RepositoryIdentity, RepositoryOperationClass, RepositoryVisibility, RequiredCapability,
-    ResourcePolicy, ScopeClass, SessionId, SessionLink, SessionSize, SetupPolicy, SourceMode,
-    StoreError, SubjectId, TriggerAuthorityVerifier, TriggerConnection,
-    TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft, TriggerId, TriggerPage,
-    TriggerPageRequest, TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent,
-    TriggerRevisionId, TriggerService, TriggerServiceError, TriggerSessionPolicy, TriggerStore,
-    TriggerStoreError, TriggerTask, UpstreamRevision, WorkerLease, WorkflowChangePolicy,
-    WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord,
-    TRIGGER_SCHEMA_VERSION,
+    CommitAttributionPolicy, CommitIdentity, Confirmation, ConfirmationAction, ConnectedAccount,
+    ConnectionSnapshot, ConnectionState, ContributionId, ContributionPolicy, ContributionRecord,
+    CredentialRoute, DelegationState, DiffArtifact, DiffArtifactId, DiffArtifactObjectStore,
+    DiffChangeKind, DiffFile, DiffValidationOutcome, EditableField, ExecutorPolicy, ForkRecord,
+    InputFieldDefinition, InputFieldKind, Launch, LaunchAuthority, LaunchId, LaunchQuery,
+    LaunchState, LaunchStore, OperationClaim, OperationReservation, OperationStore, OverridePolicy,
+    PermissionMode, PromptDelivery, PromptDeliveryState, PublicProjectionPolicy, PublicTriggerId,
+    PublicationState, PublishedRevision, PublisherAuthority, PublisherRepositoryRole,
+    PullRequestDefaults, ReachStatus, RepositoryAccessPolicy, RepositoryIdentity,
+    RepositoryOperationClass, RepositoryVisibility, RequiredCapability, ResourcePolicy, ScopeClass,
+    SessionId, SessionLink, SessionSize, SetupPolicy, SourceMode, StoreError, SubjectId,
+    TriggerAuthorityVerifier, TriggerConnection, TriggerConnectionAuthorization,
+    TriggerConnectionManager, TriggerDraft, TriggerId, TriggerPage, TriggerPageRequest,
+    TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent, TriggerRevisionId,
+    TriggerService, TriggerServiceError, TriggerSessionPolicy, TriggerStore, TriggerStoreError,
+    TriggerTask, UpstreamRevision, WorkerLease, WorkflowChangePolicy, WorkspaceCheckpoint,
+    WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord, TRIGGER_SCHEMA_VERSION,
 };
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
@@ -36,6 +36,28 @@ use crate::auth::AuthenticatedSubject;
 const NOW: &str = "2026-08-26T12:00:00Z";
 const OWNER: &str = "contributor";
 const PRIVATE_PROMPT: &str = "PRIVATE_TRIGGER_PROMPT {{topic}}";
+const TRIGGER_ID: &str = "11111111-1111-4111-8111-111111111111";
+const REVISION_ID: &str = "22222222-2222-4222-8222-222222222222";
+const PUBLIC_ID: &str = "33333333-3333-4333-8333-333333333333";
+const LAUNCH_ID: &str = "44444444-4444-4444-8444-444444444444";
+const CHECKPOINT_ID: &str = "55555555-5555-4555-8555-555555555555";
+const DIFF_ID: &str = "66666666-6666-4666-8666-666666666666";
+const CONTRIBUTION_ID: &str = "77777777-7777-4777-8777-777777777777";
+const SDK_TRIGGER_PREVIEW_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/trigger_preview.json");
+const SDK_LAUNCH_FIXTURE: &str = include_str!("../../tests/fixtures/rest-sdk/launch.json");
+const SDK_LAUNCH_PROGRESS_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/launch_progress.json");
+const SDK_DIFF_REVIEW_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/diff_review.json");
+const SDK_PULL_REQUEST_DRAFT_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/pull_request_draft.json");
+const SDK_LAUNCH_START_REQUEST_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/launch_start_request.json");
+const SDK_PULL_REQUEST_REVIEW_REQUEST_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/pull_request_review_request.json");
+const SDK_PULL_REQUEST_CONFIRM_REQUEST_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/pull_request_confirm_request.json");
 
 #[tokio::test]
 async fn anonymous_preview_is_side_effect_free_and_prompt_free() {
@@ -61,6 +83,51 @@ async fn anonymous_preview_is_side_effect_free_and_prompt_free() {
     assert!(wire.contains("Fix one bounded issue"));
     assert!(!wire.contains(PRIVATE_PROMPT));
     assert!(!wire.contains("backing-key"));
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn agui_trigger_companions_share_the_rest_shapes_without_thread_aliases() {
+    let mut fixture = Fixture::new();
+    fixture.make_ready();
+    fixture.install_diff(b"companion review".to_vec());
+    let public_id = fixture.revision.public_id.0.clone();
+    let launch_id = fixture.launch.id.0.clone();
+    let app = crate::agui::trigger::router(fixture.state());
+
+    let preview = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/agui/triggers/{public_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), StatusCode::OK);
+    let preview = to_bytes(preview.into_body(), usize::MAX).await.unwrap();
+    assert!(!String::from_utf8_lossy(&preview).contains(PRIVATE_PROMPT));
+
+    for suffix in ["", "/events?after=0&limit=10", "/diff"] {
+        let response = app
+            .clone()
+            .oneshot(authenticated_request(
+                Method::GET,
+                &format!("/api/v1/agui/launches/{launch_id}{suffix}"),
+                OWNER,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "failed {suffix}");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let wire = String::from_utf8(body.to_vec()).unwrap();
+        assert!(!wire.contains("threadId"));
+        assert!(!wire.contains("runId"));
+        assert!(!wire.contains("idempotency_key_hash"));
+        assert!(!wire.contains("provider_request_id"));
+    }
+
     assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
 }
@@ -233,6 +300,103 @@ async fn explicit_branch_publication_is_digest_bound_idempotent_and_projection_s
         effect.kind != layer2_core::LaunchEffectKind::BranchPublication
             && effect.kind != layer2_core::LaunchEffectKind::PullRequest
     }));
+}
+
+#[tokio::test]
+async fn pull_request_review_is_read_only_and_open_confirmation_is_idempotent() {
+    let mut fixture = Fixture::new();
+    let artifact = fixture.install_published_contribution();
+    let launch_id = fixture.launch.id.0.clone();
+    let review_uri = format!("/api/v1/launches/{launch_id}/pull-request/review");
+
+    let review = send(
+        &fixture.router(),
+        Method::POST,
+        &review_uri,
+        json!({ "operation": "open" }),
+        "read-only-pr-review",
+    )
+    .await;
+    assert_eq!(
+        review.0,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&review.1)
+    );
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
+    let draft: Value = serde_json::from_slice(&review.1).unwrap();
+    assert_eq!(draft["operation"], "open");
+    assert_eq!(draft["launch_id"], launch_id);
+    assert_eq!(draft["expected_head_revision"], "e".repeat(40));
+    assert_eq!(draft["base_ref"], "main");
+    assert_eq!(draft["head_owner"], "contributor");
+    assert_eq!(draft["body_digest"].as_str().unwrap().len(), 64);
+    assert_eq!(draft["intent_digest"].as_str().unwrap().len(), 64);
+
+    let confirm_uri = format!("/api/v1/launches/{launch_id}/pull-request/open");
+    let body = json!({
+        "expected_revision": fixture.launch.revision_number,
+        "snapshot_digest": draft["intent_digest"],
+    });
+    let first = send(
+        &fixture.router(),
+        Method::POST,
+        &confirm_uri,
+        body.clone(),
+        "one-pr-open",
+    )
+    .await;
+    let replay = send(
+        &fixture.router(),
+        Method::POST,
+        &confirm_uri,
+        body,
+        "one-pr-open",
+    )
+    .await;
+
+    assert_eq!(first.0, StatusCode::ACCEPTED);
+    assert_eq!(replay.0, StatusCode::ACCEPTED);
+    assert_eq!(first.1, replay.1);
+    let response: Value = serde_json::from_slice(&first.1).unwrap();
+    assert_eq!(response["pull_request"]["state"], "creating");
+    assert_eq!(
+        response["pull_request"]["confirmation_snapshot_digest"],
+        draft["intent_digest"]
+    );
+    assert_eq!(response["diff"]["digest"], artifact.digest);
+    let wire = String::from_utf8(first.1).unwrap();
+    assert!(!wire.contains("intent_key"));
+    assert!(!wire.contains("idempotency_key_hash"));
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn contribution_read_is_owner_only_and_has_no_write_side_effect() {
+    let mut fixture = Fixture::new();
+    let artifact = fixture.install_published_contribution();
+    let uri = format!("/api/v1/launches/{}/diff", fixture.launch.id.0);
+
+    let response = fixture
+        .router()
+        .oneshot(authenticated_request(Method::GET, &uri, OWNER))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["artifact"]["digest"], artifact.digest);
+    assert_eq!(value["contribution"]["state"], "published");
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
+
+    let response = fixture
+        .router()
+        .oneshot(authenticated_request(Method::GET, &uri, "other-owner"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -412,17 +576,135 @@ fn unknown_fields_in_nested_trigger_policy_are_refused() {
 }
 
 #[test]
-fn trigger_openapi_paths_exist_and_only_preview_is_declared_anonymous() {
+fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous() {
     let fixture = Fixture::new();
     let documented = documented_router(fixture.state());
-    let paths = &documented.get_openapi().paths.paths;
-    assert!(paths.contains_key("/api/v1/triggers/public/{public_id}"));
-    assert!(paths.contains_key("/api/v1/launches/{launch_id}/start"));
-    assert!(paths.contains_key("/api/v1/launches/{launch_id}/contributions/review"));
-    assert!(paths.contains_key("/api/v1/launches/{launch_id}/contributions/publish"));
-    assert!(
-        paths.contains_key("/api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download")
+    let openapi = documented.get_openapi();
+    let paths = &openapi.paths.paths;
+    let expected = [
+        ("get", "/api/v1/triggers/public/{public_id}"),
+        ("get", "/api/v1/triggers"),
+        ("post", "/api/v1/triggers"),
+        ("get", "/api/v1/triggers/{trigger_id}"),
+        ("put", "/api/v1/triggers/{trigger_id}"),
+        ("post", "/api/v1/triggers/{trigger_id}/publish"),
+        ("get", "/api/v1/trigger-revisions"),
+        ("get", "/api/v1/trigger-revisions/{revision_id}"),
+        ("post", "/api/v1/trigger-revisions/{revision_id}/retire"),
+        ("get", "/api/v1/trigger-connections"),
+        ("post", "/api/v1/trigger-connections"),
+        ("post", "/api/v1/trigger-connections/{service_id}/reconnect"),
+        ("get", "/api/v1/trigger-connections/{service_id}/preflight"),
+        ("post", "/api/v1/triggers/public/{public_id}/launches"),
+        ("post", "/api/v1/triggers/public/{public_id}/launches/new"),
+        ("get", "/api/v1/launches"),
+        ("get", "/api/v1/launches/{launch_id}"),
+        ("patch", "/api/v1/launches/{launch_id}/overrides"),
+        ("put", "/api/v1/launches/{launch_id}/connection"),
+        ("post", "/api/v1/launches/{launch_id}/start"),
+        ("post", "/api/v1/launches/{launch_id}/contributions/review"),
+        ("get", "/api/v1/launches/{launch_id}/diff"),
+        ("post", "/api/v1/launches/{launch_id}/contributions/publish"),
+        ("post", "/api/v1/launches/{launch_id}/pull-request/review"),
+        ("post", "/api/v1/launches/{launch_id}/pull-request/open"),
+        ("post", "/api/v1/launches/{launch_id}/pull-request/update"),
+        (
+            "get",
+            "/api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download",
+        ),
+        ("post", "/api/v1/launches/{launch_id}/cancel"),
+        ("get", "/api/v1/launches/{launch_id}/events"),
+    ];
+
+    for (method, path) in expected {
+        let item = paths
+            .get(path)
+            .unwrap_or_else(|| panic!("missing Trigger path {path}"));
+        let present = match method {
+            "get" => item.get.is_some(),
+            "post" => item.post.is_some(),
+            "put" => item.put.is_some(),
+            "patch" => item.patch.is_some(),
+            _ => unreachable!("the Trigger catalogue uses a known method"),
+        };
+        assert!(present, "missing {method} operation for {path}");
+    }
+
+    let document = serde_json::to_value(openapi).expect("OpenAPI serializes");
+    let schemas = document["components"]["schemas"]
+        .as_object()
+        .expect("Trigger OpenAPI has component schemas");
+    for name in [
+        "TriggerTask",
+        "TriggerSessionPolicy",
+        "RepositoryAccessPolicy",
+        "SetupPolicy",
+        "ContributionPolicy",
+        "CommercialPolicy",
+        "OverridePolicy",
+        "PublicProjectionPolicy",
+        "TriggerRevisionContent",
+        "LaunchOverrides",
+        "EffectiveConfiguration",
+        "LaunchBlockedReason",
+        "LaunchFailure",
+        "PricingSnapshot",
+        "ForkRecord",
+        "BranchRecord",
+        "SessionLink",
+        "ReachStatus",
+        "PromptDelivery",
+        "DiffFile",
+        "CheckResult",
+        "CommitIdentity",
+        "WorkspaceManifest",
+    ] {
+        assert!(schemas.contains_key(name), "missing concrete schema {name}");
+    }
+    for (owner, field, target) in [
+        ("TriggerContentRequest", "task", "TriggerTask"),
+        (
+            "TriggerContentRequest",
+            "repository_access",
+            "RepositoryAccessPolicy",
+        ),
+        ("TriggerDraftView", "content", "TriggerRevisionContent"),
+        ("LaunchView", "revision_content", "TriggerRevisionContent"),
+        ("LaunchView", "overrides", "LaunchOverrides"),
+        ("LaunchView", "effective", "EffectiveConfiguration"),
+        ("WorkspaceRecordView", "baseline", "WorkspaceManifest"),
+    ] {
+        assert_eq!(
+            schemas[owner]["properties"][field]["$ref"],
+            format!("#/components/schemas/{target}"),
+            "{owner}.{field} must reference a concrete schema"
+        );
+    }
+    assert_eq!(
+        schemas["DiffArtifactView"]["properties"]["files"]["items"]["$ref"],
+        "#/components/schemas/DiffFile"
     );
+    for (field, target) in [
+        ("blocked_reason", "LaunchBlockedReason"),
+        ("failure", "LaunchFailure"),
+        ("pricing", "PricingSnapshot"),
+        ("fork", "ForkRecord"),
+        ("branch", "BranchRecord"),
+        ("session", "SessionLink"),
+        ("reach", "ReachStatus"),
+        ("delivery", "PromptDelivery"),
+    ] {
+        let schema = &schemas["LaunchView"]["properties"][field];
+        let wire = schema.to_string();
+        assert!(
+            wire.contains(&format!("#/components/schemas/{target}")),
+            "LaunchView.{field} lost its concrete {target} schema: {schema}"
+        );
+        assert!(
+            wire.contains("null"),
+            "LaunchView.{field} must admit the null value emitted before the resource exists: {schema}"
+        );
+    }
 
     for path in paths.keys() {
         assert_eq!(
@@ -451,6 +733,176 @@ fn launch_projection_excludes_credential_and_worker_internals() {
         "baseline_object_reference",
     ] {
         assert!(!wire.contains(forbidden), "leaked {forbidden}");
+    }
+}
+
+#[tokio::test]
+async fn progress_projection_excludes_worker_and_credential_internals() {
+    let fixture = Fixture::new();
+    let mut retained = fixture.store.launch.lock().unwrap().clone().unwrap();
+    let sequence = retained.events.last().map_or(1, |event| event.sequence + 1);
+    retained.events.push(LaunchEvent {
+        sequence,
+        launch_id: retained.id.clone(),
+        occurred_at: NOW.into(),
+        correlation_id: "progress-projection".into(),
+        kind: layer2_core::LaunchEventKind::StepChanged {
+            step: retained.steps[0].clone(),
+        },
+    });
+    *fixture.store.launch.lock().unwrap() = Some(retained);
+    let view = load_launch_progress(
+        &fixture.state(),
+        &SubjectId(OWNER.into()),
+        fixture.launch.id.0.clone(),
+        0,
+        100,
+    )
+    .await
+    .unwrap();
+    let wire = serde_json::to_string(&view).unwrap();
+    assert!(wire.contains("step_changed"));
+    for forbidden in [
+        "worker_fencing_token",
+        "backing_key_id",
+        "subject_token_generation",
+        "idempotency_key_hash",
+        "provider_request_id",
+        "object_reference",
+    ] {
+        assert!(!wire.contains(forbidden), "leaked {forbidden}");
+    }
+}
+
+async fn trigger_sdk_fixture_values() -> Vec<(&'static str, Value)> {
+    let draft_fixture = Fixture::new();
+    let mut fixture = Fixture::new();
+    fixture.install_published_contribution();
+    let mut events = fixture.launch.events.clone();
+    events.push(LaunchEvent {
+        sequence: events.last().map_or(1, |event| event.sequence + 1),
+        launch_id: fixture.launch.id.clone(),
+        occurred_at: NOW.into(),
+        correlation_id: "fixture-progress".into(),
+        kind: layer2_core::LaunchEventKind::StepChanged {
+            step: fixture.launch.steps[0].clone(),
+        },
+    });
+    let draft = fixture
+        .launch
+        .pull_request_draft(PullRequestOperation::Open, None, None)
+        .unwrap();
+    vec![
+        (
+            "trigger_preview.json",
+            serde_json::to_value(
+                load_public_preview(&fixture.state(), fixture.revision.public_id.0.clone())
+                    .await
+                    .unwrap(),
+            )
+            .unwrap(),
+        ),
+        (
+            "launch.json",
+            serde_json::to_value(LaunchView::from(draft_fixture.launch.clone())).unwrap(),
+        ),
+        (
+            "launch_progress.json",
+            serde_json::to_value(LaunchProgressView {
+                launch_id: fixture.launch.id.0.clone(),
+                next_cursor: events.last().unwrap().sequence,
+                events: events.into_iter().map(Into::into).collect(),
+            })
+            .unwrap(),
+        ),
+        (
+            "diff_review.json",
+            serde_json::to_value(DiffReviewView::from_launch(fixture.launch.clone())).unwrap(),
+        ),
+        (
+            "pull_request_draft.json",
+            serde_json::to_value(PullRequestDraftView::from(draft)).unwrap(),
+        ),
+        (
+            "launch_start_request.json",
+            json!({
+                "expected_revision": fixture.launch.revision_number,
+                "snapshot_digest": fixture.launch.effective.digest,
+                "acknowledge_workflow_risk": false
+            }),
+        ),
+        (
+            "pull_request_review_request.json",
+            json!({ "operation": "open" }),
+        ),
+        (
+            "pull_request_confirm_request.json",
+            json!({
+                "expected_revision": fixture.launch.revision_number,
+                "snapshot_digest": fixture
+                    .launch
+                    .pull_request_draft(PullRequestOperation::Open, None, None)
+                    .unwrap()
+                    .intent_digest
+            }),
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn trigger_sdk_fixtures_are_produced_and_parsed_by_server_types() {
+    let expected = [
+        ("trigger_preview.json", SDK_TRIGGER_PREVIEW_FIXTURE),
+        ("launch.json", SDK_LAUNCH_FIXTURE),
+        ("launch_progress.json", SDK_LAUNCH_PROGRESS_FIXTURE),
+        ("diff_review.json", SDK_DIFF_REVIEW_FIXTURE),
+        ("pull_request_draft.json", SDK_PULL_REQUEST_DRAFT_FIXTURE),
+        (
+            "launch_start_request.json",
+            SDK_LAUNCH_START_REQUEST_FIXTURE,
+        ),
+        (
+            "pull_request_review_request.json",
+            SDK_PULL_REQUEST_REVIEW_REQUEST_FIXTURE,
+        ),
+        (
+            "pull_request_confirm_request.json",
+            SDK_PULL_REQUEST_CONFIRM_REQUEST_FIXTURE,
+        ),
+    ];
+    for ((name, produced), (expected_name, source)) in
+        trigger_sdk_fixture_values().await.into_iter().zip(expected)
+    {
+        assert_eq!(name, expected_name);
+        assert_eq!(
+            produced,
+            serde_json::from_str::<Value>(source).unwrap(),
+            "{name}"
+        );
+    }
+
+    let start: StartLaunchRequest = serde_json::from_str(SDK_LAUNCH_START_REQUEST_FIXTURE).unwrap();
+    assert_eq!(start.expected_revision, 0);
+    assert!(!start.acknowledge_workflow_risk);
+    let review: PullRequestReviewRequest =
+        serde_json::from_str(SDK_PULL_REQUEST_REVIEW_REQUEST_FIXTURE).unwrap();
+    assert!(matches!(
+        review.operation,
+        PullRequestOperationRequest::Open
+    ));
+    let confirm: ConfirmPullRequestRequest =
+        serde_json::from_str(SDK_PULL_REQUEST_CONFIRM_REQUEST_FIXTURE).unwrap();
+    assert_eq!(confirm.expected_revision, 0);
+}
+
+#[tokio::test]
+#[ignore = "developer aid for refreshing the checked-in SDK corpus"]
+async fn dump_trigger_sdk_fixtures() {
+    for (name, value) in trigger_sdk_fixture_values().await {
+        println!(
+            "\n=== {name} ===\n{}",
+            serde_json::to_string_pretty(&value).unwrap()
+        );
     }
 }
 
@@ -584,6 +1036,10 @@ impl Fixture {
         let owner = SubjectId(OWNER.into());
         let revision = revision(SubjectId("publisher".into()));
         let mut launch = Launch::new(owner, revision.clone(), NOW, "create").unwrap();
+        launch.id = LaunchId(LAUNCH_ID.into());
+        for event in &mut launch.events {
+            event.launch_id = launch.id.clone();
+        }
         launch
             .select_connection(connection(), NOW, "connection")
             .unwrap();
@@ -700,7 +1156,7 @@ impl Fixture {
         )
         .unwrap();
         let checkpoint = WorkspaceCheckpoint {
-            id: CheckpointId::new(),
+            id: CheckpointId(CHECKPOINT_ID.into()),
             launch_id: self.launch.id.clone(),
             version: 1,
             workspace_epoch: 1,
@@ -734,7 +1190,7 @@ impl Fixture {
         self.launch.state = LaunchState::Contributing;
         let object_sha256 = format!("{:x}", Sha256::digest(&bytes));
         let artifact = DiffArtifact {
-            id: DiffArtifactId::new(),
+            id: DiffArtifactId(DIFF_ID.into()),
             launch_id: self.launch.id.clone(),
             checkpoint_id: checkpoint.id,
             baseline_digest: baseline.digest,
@@ -784,6 +1240,46 @@ impl Fixture {
         *self.store.launch.lock().unwrap() = Some(self.launch.clone());
         self.artifacts
             .install(self.launch.owner.clone(), artifact.clone(), bytes);
+        artifact
+    }
+
+    fn install_published_contribution(&mut self) -> DiffArtifact {
+        self.make_ready();
+        let artifact = self.install_diff(b"canonical retained review".to_vec());
+        let contribution = ContributionRecord {
+            id: ContributionId(CONTRIBUTION_ID.into()),
+            launch_id: self.launch.id.clone(),
+            diff_artifact_id: artifact.id.clone(),
+            revision_digest: self.launch.revision_digest.clone(),
+            baseline_digest: artifact.baseline_digest.clone(),
+            checkpoint_digest: artifact.checkpoint_digest.clone(),
+            diff_digest: artifact.digest.clone(),
+            branch_name: self.launch.branch.as_ref().unwrap().name.clone(),
+            state: PublicationState::Published,
+            expected_head: artifact.expected_branch_head.clone(),
+            base_tree_id: Some("c".repeat(40)),
+            tree_id: Some("d".repeat(40)),
+            commit_id: Some("e".repeat(40)),
+            resulting_head: Some("e".repeat(40)),
+            object_ids: vec!["d".repeat(40), "e".repeat(40)],
+            author: artifact.author.clone(),
+            committer: artifact.committer.clone(),
+            confirmation: Confirmation {
+                action: ConfirmationAction::PublishBranch,
+                subject: self.launch.owner.clone(),
+                snapshot_digest: artifact.digest.clone(),
+                confirmed_at: NOW.into(),
+                idempotency_key_hash: "test-publication-confirmation".into(),
+            },
+            intent_key: "test-publication-intent".into(),
+            created_at: NOW.into(),
+            updated_at: NOW.into(),
+        };
+        contribution.validate_intent(&self.launch.id).unwrap();
+        self.launch.branch.as_mut().unwrap().current_head = "e".repeat(40);
+        self.launch.contribution = Some(contribution);
+        self.launch.state = LaunchState::PrPending;
+        *self.store.launch.lock().unwrap() = Some(self.launch.clone());
         artifact
     }
 
@@ -1031,9 +1527,12 @@ impl FixtureStore {
 
 #[derive(Default)]
 struct MemoryOperations {
-    entries: Mutex<HashMap<(String, String, String), ([u8; 32], Option<Vec<u8>>)>>,
+    entries: Mutex<HashMap<OperationKey, OperationEntry>>,
     writes: AtomicUsize,
 }
+
+type OperationKey = (String, String, String);
+type OperationEntry = ([u8; 32], Option<Vec<u8>>);
 
 #[async_trait]
 impl OperationStore for MemoryOperations {
@@ -1159,8 +1658,8 @@ impl TriggerConnectionManager for StaticConnections {
 fn revision(owner: SubjectId) -> TriggerRevision {
     let content = content(owner.clone());
     TriggerRevision {
-        id: TriggerRevisionId::new(),
-        public_id: PublicTriggerId::new(),
+        id: TriggerRevisionId(REVISION_ID.into()),
+        public_id: PublicTriggerId(PUBLIC_ID.into()),
         digest: content.digest().unwrap(),
         publisher_authority: publisher_authority(&owner, &content.upstream.repository),
         content,
@@ -1173,7 +1672,7 @@ fn revision(owner: SubjectId) -> TriggerRevision {
 fn content(owner: SubjectId) -> TriggerRevisionContent {
     TriggerRevisionContent {
         schema_version: TRIGGER_SCHEMA_VERSION,
-        trigger_id: TriggerId::new(),
+        trigger_id: TriggerId(TRIGGER_ID.into()),
         revision_number: 1,
         publisher_subject_id: owner,
         publisher_display_identity: "Chrono Maintainer".into(),
