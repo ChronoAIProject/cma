@@ -21,11 +21,26 @@ jobs:
       - uses: actions/checkout@v5
       - name: Release notes validator regressions
         run: .github/release-notes-tests.sh
+      - name: Release planning tests
+        run: bash .github/plan-release-tests.sh
+      - name: Release image reconciliation tests
+        run: bash .github/reconcile-release-image-tests.sh
+      - name: Release image pre-publish absence tests
+        run: bash .github/assert-release-image-tags-absent-tests.sh
+      - name: GitHub release reconciliation tests
+        run: bash .github/reconcile-github-release-tests.sh
+      - name: Release image export tests
+        run: bash .github/export-release-image-tests.sh
+      - name: Release image import tests
+        run: bash .github/import-release-images-tests.sh
+      - name: Pinned Skopeo transport integration
+        run: bash .github/skopeo-transport-tests.sh
       - name: Root contains only permitted entries
         run: |
           allowed=".git .github api web infra docs sdk CLAUDE.md README.md .gitignore .dockerignore"
           fail=0
-          for entry in $(ls -A); do
+          shopt -s dotglob nullglob
+          for entry in *; do
             case " $allowed " in
               *" $entry "*) ;;
               *) echo "::error::disallowed root entry: $entry"; fail=1 ;;
