@@ -158,7 +158,7 @@ jq -n --arg tag v3.4.6 --rawfile body "$output" \
   > "$response"
 : > "$gh_log"
 env GH_COMMAND="$gh_mock" GH_TEST_LOG="$gh_log" \
-  GH_TEST_RESPONSE="$response" GITHUB_REPOSITORY=ChronoAIProject/chrono-bot \
+  GH_TEST_RESPONSE="$response" GITHUB_REPOSITORY=ChronoAIProject/cma \
   "$release_script" release v3.4.6 "$full_revision" "$output" \
   >/dev/null 2> "$stderr" \
   || fail "the exact completed release was not reused"
