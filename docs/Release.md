@@ -8,13 +8,14 @@ This document is the procedure. The rules it implements are in [CLAUDE.md](../CL
 
 ## 1. What a release produces
 
-| Artifact | Where | Immutable |
+| Artifact | Where | Integrity contract |
 |---|---|---|
-| `ghcr.io/chronoaiproject/cma-api:vX.Y.Z` | GHCR, private | yes |
-| `ghcr.io/chronoaiproject/cma-web:vX.Y.Z` | GHCR, private | yes |
-| `ghcr.io/chronoaiproject/cma-runtime:vX.Y.Z` | GHCR, private | yes |
-| the same three at `:<short-sha>` | GHCR, private | yes |
-| annotated tag `vX.Y.Z` | this repository | yes |
+| `ghcr.io/chronoaiproject/cma-api:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
+| `ghcr.io/chronoaiproject/cma-web:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
+| `ghcr.io/chronoaiproject/cma-runtime:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
+| the same three at `:<short-sha>` | GHCR, private | intended write-once under the same audited contract |
+| three OCI transfer archives with JSON metadata | the `Publish release` Actions run, readable under repository artifact access | yes; retained for up to one day from upload |
+| annotated tag `vX.Y.Z` | this repository | write-protected after creation by the required active ruleset |
 | GitHub release `vX.Y.Z` | this repository | notes editable |
 
 The release page carries three things:
@@ -23,7 +24,19 @@ The release page carries three things:
 2. **The source archives** — `Source code (zip)` and `Source code (tar.gz)`. GitHub generates these from the tag and attaches them to every release, so nothing uploads them and there is no second copy to go stale.
 3. **The images** — every reference in a block you can copy, and a link to each package in GHCR.
 
-No tag is ever moved and no tag is ever reused. There is deliberately no `latest`: a moving tag is something a manifest can be pointed at by accident, and [CLAUDE.md](../CLAUDE.md) §5 forbids a session sitting on an image whose contents can change underneath it.
+The OCI archives are not release assets, but they are an additional, ephemeral distribution surface for the private images. They are unencrypted, and anyone allowed to download this internal repository's Actions artifacts can receive them; that reader set is not assumed to be identical to the GHCR package ACL. One-day retention limits how long they are available, not who can read them. SDKs remain repository-only and untouched: the release workflow neither packages nor publishes anything under `sdk/`.
+
+The workflow intends to assign each image tag once, and a retry may retain an
+exact existing image tag, annotated tag or release record after validation.
+GHCR offers this workflow no compare-and-swap for a tag PUT. Even with every
+external writer excluded, a sequential rerun could receive stale "absent"
+listings after an earlier ambiguous push, rebuild different bytes, and PUT the
+same names again. The second absence check narrows that window but cannot close
+it. The audited writer and package-history prerequisites below are therefore
+required before treating a completed release tag as write-once. There is
+deliberately no `latest`: a moving tag is something a manifest can be pointed
+at by accident, and [CLAUDE.md](../CLAUDE.md) §5 forbids a session sitting on
+an image whose contents can change underneath it.
 
 The version lives in the tag and nowhere else. `api/Cargo.toml` and `web/package.json` stay where they are — a bot committing a bump to `main` would put it ahead of `develop` and buy nothing, since the number in those files is not what anything deploys.
 
@@ -87,54 +100,233 @@ Release declaration    Commit hygiene
 A context is the job's `name:`, so **renaming a job is a branch-protection change.** Rename one without updating the list and every later pull request into `main` waits forever on a check that no longer exists. Update the two together, in the same rollout:
 
 ```sh
-gh api -X PATCH repos/ChronoAIProject/cma/branches/main/protection/required_status_checks \
+REPOSITORY="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+gh api -X PATCH "repos/$REPOSITORY/branches/main/protection/required_status_checks" \
   -F strict=true -f 'contexts[]=Release declaration' ...
 ```
 
 `Images (runtime)` is deliberately absent, matching `develop`. `ci.yml` builds it and the publisher will not release without it, so it is covered — but it is not a required check, and adding it is its own change.
 
+### Required release write fences
+
+These are hard prerequisites for merging a release, not recovery advice to
+apply after publishing starts:
+
+1. **GHCR has one audited package writer.** After the repository rename, audit
+   the package roles, inherited organisation access, Actions repository access
+   and every workflow permission for `cma-api`, `cma-web` and `cma-runtime`.
+   The only identity able to write these three packages during ordinary
+   operation must be this repository's `Publish release` image jobs. Remove
+   human, team, token, other-repository and other-workflow write paths. Record
+   the package-settings or API evidence with the release-control change. The
+   current ACL check returned `403`, so this prerequisite is **not yet proven**.
+2. **`v*` tags reject update and deletion.** After the repository rename and
+   before the first release merge, create a repository ruleset targeting
+   `refs/tags/v*`, with enforcement `active`, exactly the `update` and
+   `deletion` rules, no `creation` rule, and no bypass actor. A creation rule
+   would block the publisher from creating a new release tag. Do not infer
+   success from the create response; GET the installed ruleset and verify its
+   schema:
+
+   ```bash
+   set -euo pipefail
+   REPOSITORY="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+   RULESET_ID='<active-v-tag-ruleset-id>'
+   gh api "repos/$REPOSITORY/rulesets/$RULESET_ID" > ruleset.json
+   jq -e '
+     .target == "tag" and .enforcement == "active" and
+     .conditions.ref_name.include == ["refs/tags/v*"] and
+     (.conditions.ref_name.exclude // []) == [] and
+     ([.rules[].type] | sort) == ["deletion", "update"] and
+     (.bypass_actors // []) == []
+   ' ruleset.json
+   rm ruleset.json
+   ```
+
+   The current repository has no tag ruleset, so this prerequisite is also
+   **not yet satisfied**. Never weaken or bypass it to make a failed release
+   retry succeed.
+
+Image reconciliation is authorized to reuse an existing release tag only
+under the exclusive-writer contract and only when package history ties that
+exact digest to an earlier attempt of this publisher. Exact version/revision
+labels and platform shape can be forged; they are not provenance for a tag
+that was present before the writer audit. If provenance is missing, stop and
+treat the tag as an integrity incident rather than deleting, overwriting or
+adopting it.
+
 Then, on merge, `publish.yml`:
 
 - resolves the pull request the merge commit came from, re-reads its label, and re-extracts its `## Release Notes` section — checked again rather than trusted, because an administrator can merge past a failing check;
-- computes the next version from the highest `vX.Y.Z` tag, seeding `v0.0.0` when there is none, so the first-ever release is `v0.0.1`, `v0.1.0` or `v1.0.0` depending on the label;
-- builds each image, scans it, and pushes it only if the scan passes;
-- creates the tag and the release last.
+- computes the next version from the numerically highest canonical `vX.Y.Z`
+  tag, seeding `v0.0.0` when there is none; on a whole-workflow rerun, reuses
+  the single canonical tag peeled to this commit only after its declared bump,
+  annotated target and exact assembled message all match;
+- reconciles each image's version and short-SHA tags before any build: two
+  absent tags authorize a build, two equal and valid tags reuse the published
+  digest, and one valid tag repairs only its missing alias from that digest;
+- fails without building or rewriting anything if tag discovery fails, the two
+  tags disagree, or an existing image has the wrong labels or platform shape;
+- builds, scans and pushes an OCI-media image only when reconciliation proved
+  that both release tags are absent;
+- lists the two tags again in a read-only check immediately before publish and
+  fails if either appeared; this narrows the build-and-scan race window but is
+  not a registry compare-and-swap, so it does not replace exclusive write
+  access;
+- after all three images are in GHCR, exports each published digest to a one-day OCI transfer artifact without rebuilding it;
+- immediately before creating the tag, requires exactly one non-empty,
+  unexpired transfer artifact for each image in the current workflow run;
+- creates the annotated tag and GitHub release last, reusing either only when
+  its target, annotation, title, body and published state are exactly what this
+  run would create.
 
 Watch it under **Actions → Publish release**. It takes roughly as long as the image job on the pull request did, because it restores the same layer cache.
+
+Prefer **Re-run failed jobs** because it repeats only the work that needs to
+converge. On **Re-run all jobs**, the planner, annotated tag and GitHub release
+reconcile exact state and fail closed on disagreement. Each image leg also
+reconciles before building, but GHCR's stale-read/CAS limitation still applies;
+use a whole-workflow rerun only with the writer and history checks above. A
+retried image job skips a visible equal pair, repairs one visible missing alias
+from the existing digest, and builds only when both listings report absence.
+This matters because the Dockerfiles refresh OS packages, so the same commit
+can build different bytes on a later attempt. A retried export reads the
+currently published digest and replaces only its same-named artifact from this
+workflow run; the release preflight still requires exactly one artifact per
+component before it can create the tag. A visible version, target, image digest,
+annotation or release-record disagreement stops without rewriting it.
 
 ---
 
 ## 3. Fetching what was released
 
-The packages are private, so authenticate first. It must be a **classic** personal access token with the `read:packages` scope — GitHub Packages supports no other kind.
+The release body lists the three GHCR references for direct consumers. When a deployment registry cannot authenticate to GHCR, use the OCI archives from the exact successful **Publish release** run. Each expires up to one day after its export upload, which can be earlier than the workflow's completion. Do not substitute `docker pull`, `docker tag`, `docker push`, or `docker save`: those paths do not prove that the destination kept the published root manifest and every platform manifest.
 
-A fine-grained token fails in a way worth knowing about, because nothing in it points at the token:
+The transfer requires `gh`, `jq`, Docker, and OpenSSL. Run it from this repository's checkout, set the release version, and copy the numeric run ID from the successful run's Actions URL. The following checks that the run succeeded at the commit named by the release tag, derives the short revision from that commit, and downloads all three artifacts into fresh temporary directories:
 
+```bash
+set -euo pipefail
+
+REPOSITORY="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+RUN_ID='<successful-publish-run-id>'
+VERSION=vX.Y.Z
+TRANSFER_DIR="$(mktemp -d)"
+AUTH_DIR="$(mktemp -d)"
+trap 'rm -rf "$TRANSFER_DIR" "$AUTH_DIR"' EXIT HUP INT TERM
+
+run_json="$(gh run view "$RUN_ID" --repo "$REPOSITORY" \
+  --json workflowName,conclusion,headSha,url)"
+jq -e '.workflowName == "Publish release" and .conclusion == "success"' \
+  <<<"$run_json"
+HEAD_SHA="$(jq -r '.headSha' <<<"$run_json")"
+test "$HEAD_SHA" = "$(gh api "repos/$REPOSITORY/commits/$VERSION" --jq '.sha')"
+REVISION="${HEAD_SHA:0:7}"
+
+for component in api web runtime; do
+  mkdir "$TRANSFER_DIR/$component"
+  gh run download "$RUN_ID" --repo "$REPOSITORY" \
+    --name "cma-${component}-${VERSION}-${REVISION}-oci" \
+    --dir "$TRANSFER_DIR/$component"
+done
 ```
-docker login ghcr.io   Login Succeeded
-docker pull ...:v0.1.0  403 Forbidden ... /v2/chronoaiproject/chrono-bot-api/manifests/v0.1.0
+
+Inspect and validate the JSON instead of sourcing it as shell code. This checks every selected identity, including the full and short commit revisions, the archive name and checksum, the source references, and the intended platform set. The exporter writes these files only after the version and revision tags have the same raw root-manifest digest, every source and archive platform config carries the exact version/full-revision labels, and the archive reproduces the root digest. `sourceDigest` is the GHCR digest observed and reproduced by the exporter at export time; accept it as the release identity only after the exclusive-writer and package-history checks above rule out a preseed or stale-read overwrite. Neither `archiveSha256` nor the checksum GitHub shows for its enclosing Actions artifact is an image digest.
+
+```bash
+for component in api web runtime; do
+  base="cma-${component}-${VERSION}-${REVISION}"
+  metadata="$TRANSFER_DIR/$component/$base.json"
+  archive="$TRANSFER_DIR/$component/$base.oci.tar"
+  source_repository="ghcr.io/chronoaiproject/cma-$component"
+  if [ "$component" = web ]; then
+    expected_platforms='["linux/amd64","linux/arm64"]'
+  else
+    expected_platforms='["linux/amd64"]'
+  fi
+
+  jq -e --arg component "$component" --arg version "$VERSION" \
+    --arg revision "$REVISION" --arg full_revision "$HEAD_SHA" \
+    --arg repository "$source_repository" \
+    --arg archive "$base.oci.tar" --argjson platforms "$expected_platforms" '
+      .schemaVersion == 1 and
+      .component == $component and .version == $version and
+      .revision == $revision and .fullRevision == $full_revision and
+      .sourceRepository == $repository and
+      .versionReference == ($repository + ":" + $version) and
+      .revisionReference == ($repository + ":" + $revision) and
+      (.sourceDigest | test("^sha256:[0-9a-f]{64}$")) and
+      .sourceReference == ($repository + "@" + .sourceDigest) and
+      .archive == $archive and .archiveReference == $version and
+      (.archiveSha256 | test("^sha256:[0-9a-f]{64}$")) and
+      .platforms == $platforms
+    ' "$metadata"
+
+  actual_archive_sha="sha256:$(openssl dgst -sha256 -r "$archive" | awk '{print $1}')"
+  test "$actual_archive_sha" = "$(jq -r '.archiveSha256' "$metadata")"
+  jq '{component, version, revision, fullRevision, sourceReference, sourceDigest, platforms}' \
+    "$metadata"
+done
 ```
 
-The login is accepted, so the credential looks good and the image looks like the thing that is wrong — missing, misnamed, or not visible to you. It is none of those. Check the token type before checking anything else.
+Use the same immutable Skopeo image as the publisher. Authenticate it only to the destination registry; the source is the downloaded archive. The copy must keep both flags shown here. If the destination cannot preserve the media types or digest, `--preserve-digests` fails instead of silently rewriting the image.
 
-```sh
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u <your-github-username> --password-stdin
-docker pull ghcr.io/chronoaiproject/cma-api:v0.1.0
+```bash
+SKOPEO_IMAGE='quay.io/skopeo/stable@sha256:4fcfc74eb89ec72dcd8caa7fbbf2a5f77d9fe3e2f5ac9e39192702f49c6d4d1a'
+TARGET_REGISTRY=registry.example.com
+TARGET_NAMESPACE=chrono
+TARGET_USER=operator
+
+skopeo_version="$(docker run --rm "$SKOPEO_IMAGE" --version)"
+printf '%s\n' "$skopeo_version" \
+  | grep -Eq '^skopeo version 1\.22\.2( commit: [0-9a-f]{7,40})?$'
+
+read -rsp 'Target registry token: ' TARGET_TOKEN
+printf '\n'
+printf '%s' "$TARGET_TOKEN" | docker run --rm -i \
+  --user "$(id -u):$(id -g)" --env HOME=/tmp \
+  --volume "$AUTH_DIR:/auth:rw" \
+  "$SKOPEO_IMAGE" login --authfile /auth/config.json \
+  --username "$TARGET_USER" --password-stdin "$TARGET_REGISTRY"
+unset TARGET_TOKEN
+
+SKOPEO_WRAPPER="$TRANSFER_DIR/run-pinned-skopeo"
+export SKOPEO_IMAGE
+export SKOPEO_TRANSFER_DIR="$TRANSFER_DIR"
+export SKOPEO_AUTH_DIR="$AUTH_DIR"
+cat >"$SKOPEO_WRAPPER" <<'SKOPEO'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${SKOPEO_IMAGE:?}"
+: "${SKOPEO_TRANSFER_DIR:?}"
+: "${SKOPEO_AUTH_DIR:?}"
+exec docker run --rm \
+  --user "$(id -u):$(id -g)" --env HOME=/tmp \
+  --volume "$SKOPEO_TRANSFER_DIR:/transfer:ro" \
+  --volume "$SKOPEO_AUTH_DIR:/auth:ro" \
+  --workdir /transfer \
+  "$SKOPEO_IMAGE" "$@"
+SKOPEO
+chmod 0700 "$SKOPEO_WRAPPER"
+
+SKOPEO_COMMAND="$SKOPEO_WRAPPER" \
+SKOPEO_AUTHFILE=/auth/config.json \
+  .github/import-release-images.sh \
+    "$TRANSFER_DIR" "$VERSION" "$HEAD_SHA" \
+    "$TARGET_REGISTRY/$TARGET_NAMESPACE"
+
+rm -rf "$TRANSFER_DIR" "$AUTH_DIR"
+trap - EXIT HUP INT TERM
 ```
 
-Inside Actions this does not arise — the workflow authenticates with the job's own `GITHUB_TOKEN`, which carries `packages: write` for this repository and needs no personal token at all.
+The importer validates every metadata field, archive checksum, raw root digest,
+platform config and exact version/full-revision label first. It then inspects
+all six destination tags before the first copy: an equal tag is kept, any
+mismatch aborts the whole import unchanged, and only an absent tag is copied
+with `--all --preserve-digests` and verified afterward. This makes a retry
+resume after a partial successful copy instead of overwriting it. Do not run
+another writer against those six tags between preflight and copy.
 
-The release body lists all three references for that version, which is the quickest way to get them exactly right.
-
-To deploy into a cluster that cannot authenticate to GHCR, pull and re-push into the registry it does use. The published images carry no provenance attestation precisely so that this is a plain copy:
-
-```sh
-docker pull  ghcr.io/chronoaiproject/cma-api:v0.1.0
-docker tag   ghcr.io/chronoaiproject/cma-api:v0.1.0 <target-registry>/cma-api:v0.1.0
-docker push  <target-registry>/cma-api:v0.1.0
-```
-
-Only `web` is published for arm64 as well as amd64. `api` and `runtime` are amd64 only: emulated Rust release builds ran for hours in CI, and every node in the target cluster is amd64.
+Digest equality proves that `web` retained its amd64+arm64 index and that `api` and `runtime` retained their exact single linux/amd64 manifests. The final commands remove the downloaded archives, importer scratch data, wrapper, and temporary registry authentication; the trap does the same after an error. Copying images into a registry only makes them available. It does not edit `infra/`, deploy a workload, or adopt the new runtime image.
 
 ---
 
@@ -155,15 +347,15 @@ The release that adds durable skill-pack custody cannot be deployed as an API-on
 
 Verify the storage deployment with a disposable logical key before starting CMA: commit generation 1 with its exact body SHA-256, commit deletion generation 2, confirm reads report the tombstone as absent, then prove a delayed or retried generation-1 write is rejected. Remove the disposable payload while retaining whatever tombstone the storage contract requires. Do not use a mixed old/new storage rollout as this probe: the drain is a prerequisite, not something one successful request can prove.
 
-Publishing the matching runtime still does not rotate sessions by itself. Copy its immutable version tag to the registry used by the cluster, update `CHRONO_SANDBOX_IMAGE` in the deliberate adoption pull request, and deploy that config with the new API. Never deploy the new API while the manifest still names the old runtime.
+Publishing the matching runtime still does not rotate sessions by itself. After verifying its digest under the release writer/history fence, copy that version tag to the registry used by the cluster, update `CHRONO_SANDBOX_IMAGE` in the deliberate adoption pull request, and deploy that config with the new API. Never deploy the new API while the manifest still names the old runtime.
 
-Apply and verify the runtime ConfigMap before allowing the new API Deployment to start. Do not apply `infra/api/` as an unordered directory: Deployment pods consume the ConfigMap through `envFrom`, and a pod that starts with the previous value will not reload a later ConfigMap update. The observed value must exactly equal the immutable runtime reference copied into the deployment registry before the Deployment is applied:
+Apply and verify the runtime ConfigMap before allowing the new API Deployment to start. Do not apply `infra/api/` as an unordered directory: Deployment pods consume the ConfigMap through `envFrom`, and a pod that starts with the previous value will not reload a later ConfigMap update. The observed value must exactly equal the verified runtime reference copied into the deployment registry before the Deployment is applied:
 
 ```sh
 kubectl --namespace chrono-bot apply -f infra/api/configmap.yaml
 kubectl --namespace chrono-bot get configmap cma-api \
   -o jsonpath='{.data.CHRONO_SANDBOX_IMAGE}{"\n"}'
-# Compare the printed value with the copied immutable runtime reference.
+# Compare the printed value with the copied, digest-verified runtime reference.
 kubectl --namespace chrono-bot apply -f infra/api/deployment.yaml
 ```
 
@@ -256,11 +448,47 @@ If protected data or proof is lost, never create a new `session_coordination_rec
 
 ## 7. When it goes wrong
 
-**The publish run failed before the images pushed.** Nothing was released — no tag exists, so nothing consumed the version. Fix the cause and re-run the workflow; it computes the same number again.
+**The publish run failed in an image job.** Choose **Re-run failed jobs**. Before
+doing any build work, the failed leg lists both release tags. If neither exists,
+it builds again. If both exist at the same valid digest, it skips the build. If
+only one exists, it validates that image and creates only the missing alias from
+its digest. A lookup failure, invalid image or disagreement fails closed. This
+normally makes a retry converge when a registry push succeeded but the action
+did not report success. A stale tag listing can still miss that push; if package
+history shows either name moved, stop rather than accepting the rebuilt digest.
 
-**It failed after the images pushed but before the tag.** The images exist at a version no tag claims. Re-running is still safe: it recomputes the same version and republishes those references from an equivalent build of the same commit. Nothing has been told to pull them, because the release that advertises them was never created — which is the window in which a reference may still be rewritten.
+**It failed after the images pushed but before the tag.** Prefer **Re-run failed
+jobs** so only the failed export or release work resumes. Under the verified
+exclusive-writer and package-history fence, those jobs re-read and export the
+current tagged digests. A whole-workflow rerun is more expensive and retains an
+existing digest only when reconciliation can see it; stale absence responses
+remain a residual risk, so review package history before accepting the release.
+An export retry may replace only its same-named artifact in this workflow run.
+Immediately before the tag step, the release job requires exactly one non-empty,
+unexpired transfer artifact for each component. Never rewrite either image tag
+by hand.
 
-**A commit reached `main` outside a pull request.** The run fails deliberately: there is no label, so there is no declared bump, and guessing one would put a number on a release nobody sized. Either tag and publish by hand, or revert and merge it properly.
+**It failed after the tag was pushed but before the GitHub release completed.**
+Choose **Re-run failed jobs**. The tag reconciler reuses the annotated tag only
+if it targets this workflow's commit and its message is byte-for-byte equal to
+the assembled release notes. The release reconciler likewise reuses an existing
+release only if its tag, title, body, draft state and prerelease state are exact;
+otherwise it stops without editing the existing record. The artifact preflight
+still runs first, so an expired transfer artifact is never hidden by a retry.
+
+**A commit reached `main` outside a pull request.** The run fails deliberately:
+there is no label, so there is no declared bump, and guessing one would put a
+number on a release nobody sized. Revert it and merge it properly. There is no
+ordinary hand-publishing path because a standing second package writer would
+invalidate the release integrity contract.
+
+If an operational incident makes a manual release unavoidable, treat it as a
+quiesced break-glass change: cancel and drain `Publish release`, prove no
+package or tag writer is active, record fresh GHCR writer-ACL evidence and the
+GET-verified tag ruleset payload, peer-review the exact commit, version, notes,
+six image references and three digests, and grant one time-bounded writer only
+for that change. Remove the grant and re-audit both fences before any workflow
+is resumed. Never delete or move an existing release tag as part of recovery.
 
 **The release pull request reads `BEHIND` and will not merge.** `develop` is missing the merge commit the *previous* release left on `main`. It carries no content — `git diff develop..main` is empty — but a merge commit is still a commit, and a protected branch requiring up-to-date branches will not take a pull request without it.
 
@@ -270,7 +498,10 @@ A back-merge that **conflicts** is left open deliberately rather than resolved a
 
 **The push to GHCR is refused.** Two causes, in order of likelihood. The repository's default workflow permission is read-only — the explicit `permissions:` blocks should cover it, but confirm under Settings → Actions → General. Failing that, the organisation restricts package creation by Actions, which is not something this repository can change.
 
-**Two merges landed together.** They do not race; the workflow serializes on a single concurrency group, and the second computes its version after the first has tagged.
+**Two merges landed together.** They do not race with each other; the workflow
+serializes on a single concurrency group, and the second computes its version
+after the first has tagged. This serialization does not cover an external
+package writer, which is why the exclusive-writer prerequisite is mandatory.
 
 **Three or more landed inside one build window.** A concurrency group holds one *pending* run, not a queue, so a third merge supersedes the second's pending run and that merge is marked cancelled having published nothing.
 
