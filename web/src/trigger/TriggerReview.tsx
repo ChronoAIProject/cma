@@ -23,7 +23,6 @@ import {
 } from '../ui/icons';
 import type { AppRouter } from '../routing/routes';
 import { authorizeTriggerConnection, isActiveTriggerConnection } from './connectionFlow';
-import { newIntentKey } from './idempotency';
 import {
   editableFields,
   jsonText,
@@ -32,6 +31,7 @@ import {
   taskFields,
   upstreamRepository,
 } from './model';
+import { useIdempotentCommand } from './useIdempotentCommand';
 import './Trigger.css';
 
 interface TriggerReviewProps {
@@ -40,6 +40,12 @@ interface TriggerReviewProps {
 }
 
 type TaskValues = Readonly<Record<string, JsonValue>>;
+
+interface ReviewSnapshot {
+  readonly selectedService: string;
+  readonly overrides: LaunchOverrides;
+  readonly workflowAcknowledged: boolean;
+}
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -84,14 +90,10 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
   const [busy, setBusy] = useState<'saving' | 'starting' | 'connecting' | 'checking' | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [readAttempt, setReadAttempt] = useState(0);
   const heading = useRef<HTMLHeadingElement>(null);
-  const resumeKey = useRef(newIntentKey());
   const authorization = useRef<AbortController | null>(null);
-  const beginCommand = useRef<{
-    readonly intentId: string;
-    readonly idempotencyKey: string;
-  } | null>(null);
-  const reconnectCommands = useRef(new Map<string, string>());
+  const { execute: executeCommand, pending } = useIdempotentCommand();
 
   useEffect(() => {
     heading.current?.focus();
@@ -100,7 +102,9 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
   useEffect(() => {
     let live = true;
     void Promise.all([
-      createOrResumeLaunch(publicId, { idempotencyKey: resumeKey.current }),
+      executeCommand(`trigger:resume:${publicId}`, 'Launch creation', (idempotencyKey) =>
+        createOrResumeLaunch(publicId, { idempotencyKey }),
+      ),
       listTriggerConnections(),
     ])
       .then(([current, available]) => {
@@ -126,7 +130,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
     return () => {
       live = false;
     };
-  }, [navigate, publicId]);
+  }, [executeCommand, navigate, publicId, readAttempt]);
 
   useEffect(() => {
     if (selectedService === '') {
@@ -173,25 +177,41 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
     [launch],
   );
 
-  async function persistReview(): Promise<Launch | null> {
-    if (launch === null || overrides === null || selectedService === '') return null;
-    let current = launch;
-    if (current.connection?.service_id !== selectedService) {
-      current = await selectLaunchConnection(current.id, current.revision_number, selectedService, {
-        idempotencyKey: newIntentKey(),
-      });
-    }
-    const normalized: LaunchOverrides = {
-      ...overrides,
-      task_inputs: Object.fromEntries(
-        Object.entries(overrides.task_inputs).filter(([, value]) => value !== undefined),
-      ),
+  function reviewSnapshot(): ReviewSnapshot | null {
+    if (overrides === null || selectedService === '') return null;
+    return {
+      selectedService,
+      overrides: {
+        ...overrides,
+        task_inputs: Object.fromEntries(
+          Object.entries(overrides.task_inputs).filter(([, value]) => value !== undefined),
+        ),
+      },
+      workflowAcknowledged,
     };
+  }
+
+  async function persistReview(snapshot: ReviewSnapshot): Promise<Launch | null> {
+    if (launch === null) return null;
+    let current = launch;
+    if (current.connection?.service_id !== snapshot.selectedService) {
+      const slot = `launch:connection:${current.id}`;
+      current = await executeCommand(slot, 'GitHub connection selection', (idempotencyKey) =>
+        selectLaunchConnection(current.id, current.revision_number, snapshot.selectedService, {
+          idempotencyKey,
+        }),
+      );
+      setLaunch(current);
+    }
     const server = initialOverrides(current);
-    if (!equalOverrides(normalized, server)) {
-      current = await updateLaunchOverrides(current.id, current.revision_number, normalized, {
-        idempotencyKey: newIntentKey(),
-      });
+    if (!equalOverrides(snapshot.overrides, server)) {
+      const slot = `launch:overrides:${current.id}`;
+      current = await executeCommand(slot, 'review update', (idempotencyKey) =>
+        updateLaunchOverrides(current.id, current.revision_number, snapshot.overrides, {
+          idempotencyKey,
+        }),
+      );
+      setLaunch(current);
     }
     setLaunch(current);
     setOverrides(initialOverrides(current));
@@ -199,12 +219,18 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
   }
 
   async function save(): Promise<void> {
+    const snapshot = reviewSnapshot();
+    if (snapshot === null) return;
     setBusy('saving');
     setFailure(null);
     try {
-      await persistReview();
+      await persistReview(snapshot);
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 409) {
+      if (cause instanceof TransportError) {
+        setFailure(
+          'The review outcome is unknown. CMA retained the exact connection, configuration, and command for reconciliation.',
+        );
+      } else if (cause instanceof ApiError && cause.status === 409) {
         setFailure(
           'This review changed in another tab. Your entries are retained; reload the current Launch before saving again.',
         );
@@ -217,57 +243,53 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
   }
 
   async function start(): Promise<void> {
+    const snapshot = reviewSnapshot();
+    if (snapshot === null || launch === null) return;
     setBusy('starting');
     setFailure(null);
     try {
-      const reviewed = await persistReview();
+      const startSlot = `launch:start:${launch.id}`;
+      const reviewed = pending?.slot === startSlot ? launch : await persistReview(snapshot);
       if (reviewed === null) return;
-      const started = await startLaunch(
-        reviewed.id,
-        reviewed.revision_number,
-        reviewed.effective.digest,
-        workflowAcknowledged,
-        { idempotencyKey: newIntentKey() },
+      const started = await executeCommand(startSlot, 'Launch start', (idempotencyKey) =>
+        startLaunch(
+          reviewed.id,
+          reviewed.revision_number,
+          reviewed.effective.digest,
+          snapshot.workflowAcknowledged,
+          { idempotencyKey },
+        ),
       );
       setLaunch(started);
       setConfirming(false);
       navigate({ kind: 'launch', launchId: started.id });
     } catch (cause) {
-      setConfirming(false);
-      setFailure(message(cause));
+      if (cause instanceof TransportError) {
+        setFailure(
+          'The Start outcome is unknown. CMA retained the exact reviewed configuration and command for reconciliation.',
+        );
+      } else {
+        setConfirming(false);
+        setFailure(message(cause));
+      }
     } finally {
       setBusy(null);
     }
   }
 
   async function beginConnection() {
-    const retained =
-      beginCommand.current ??
-      ({ intentId: crypto.randomUUID(), idempotencyKey: newIntentKey() } as const);
-    beginCommand.current = retained;
-    try {
-      const handoff = await beginTriggerConnection(retained.intentId, {
-        idempotencyKey: retained.idempotencyKey,
-      });
-      beginCommand.current = null;
-      return handoff;
-    } catch (cause) {
-      if (!(cause instanceof TransportError)) beginCommand.current = null;
-      throw cause;
-    }
+    const intentId = crypto.randomUUID();
+    return executeCommand('connection:begin', 'GitHub connection', (idempotencyKey) =>
+      beginTriggerConnection(intentId, { idempotencyKey }),
+    );
   }
 
   async function reconnectConnection(serviceId: string) {
-    const idempotencyKey = reconnectCommands.current.get(serviceId) ?? newIntentKey();
-    reconnectCommands.current.set(serviceId, idempotencyKey);
-    try {
-      const handoff = await reconnectTriggerConnection(serviceId, { idempotencyKey });
-      reconnectCommands.current.delete(serviceId);
-      return handoff;
-    } catch (cause) {
-      if (!(cause instanceof TransportError)) reconnectCommands.current.delete(serviceId);
-      throw cause;
-    }
+    return executeCommand(
+      `connection:reconnect:${serviceId}`,
+      'GitHub reconnection',
+      (idempotencyKey) => reconnectTriggerConnection(serviceId, { idempotencyKey }),
+    );
   }
 
   async function connect(mode: 'begin' | 'reconnect'): Promise<void> {
@@ -294,7 +316,13 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
         ...items.filter((item) => item.service_id !== connection.service_id),
       ]);
     } catch (cause) {
-      if (!controller.signal.aborted) setFailure(message(cause));
+      if (!controller.signal.aborted) {
+        setFailure(
+          cause instanceof TransportError
+            ? 'The connection request outcome is unknown. CMA retained the exact command for reconciliation.'
+            : message(cause),
+        );
+      }
     } finally {
       if (authorization.current === controller) authorization.current = null;
       setBusy(null);
@@ -347,6 +375,16 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
               Trigger review unavailable
             </h1>
             <p>{failure}</p>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setLoading(true);
+                setFailure(null);
+                setReadAttempt((attempt) => attempt + 1);
+              }}
+            >
+              {pending?.slot === `trigger:resume:${publicId}` ? 'Reconcile Launch' : 'Retry'}
+            </Button>
           </div>
         </section>
       </main>
@@ -364,6 +402,13 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
   const needsReconnect =
     selectedConnection !== null &&
     (selectedConnection.state !== 'active' || selectedConnection.account_id === null);
+  const editsLocked = busy !== null || pending !== null;
+  const pendingConnection = pending?.slot.startsWith('connection:') ?? false;
+  const pendingReview =
+    pending?.slot === `launch:connection:${launch.id}` ||
+    pending?.slot === `launch:overrides:${launch.id}`;
+  const pendingStart = pending?.slot === `launch:start:${launch.id}`;
+  const pendingStartSequence = confirming && (pendingReview || pendingStart);
 
   return (
     <main className="trigger-workflow">
@@ -390,6 +435,17 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
           </div>
         </div>
       )}
+      {pending === null ? null : (
+        <div className="notice notice--quiet trigger-workflow__notice" role="status">
+          <IconCheckOutline16 />
+          <div>
+            <p className="notice__title">Reconciling {pending.label}</p>
+            <p className="notice__detail">
+              Only the retained same-key command can run until CMA returns a finite result.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="trigger-workflow__scroll">
         <section className="trigger-band" aria-labelledby="trigger-task-heading">
@@ -397,7 +453,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
           <div className="trigger-formgrid">
             {fields.map((field) => {
               const value = overrides.task_inputs[field.key] ?? field.defaultValue;
-              const disabled = !field.editable || !editable.has('task_input');
+              const disabled = editsLocked || !field.editable || !editable.has('task_input');
               return (
                 <label className="field" key={field.key}>
                   <span className="field__label">{field.key.replaceAll('_', ' ')}</span>
@@ -478,7 +534,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
               <Input
                 placement="field__input"
                 value={overrides.branch_suffix ?? ''}
-                disabled={!editable.has('branch_suffix')}
+                disabled={editsLocked || !editable.has('branch_suffix')}
                 onChange={(event) =>
                   setOverrides({ ...overrides, branch_suffix: event.target.value })
                 }
@@ -492,7 +548,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
                 type="number"
                 min={1}
                 value={overrides.timeout_seconds ?? launch.effective.timeout_seconds}
-                disabled={!editable.has('timeout')}
+                disabled={editsLocked || !editable.has('timeout')}
                 onChange={(event) =>
                   setOverrides({ ...overrides, timeout_seconds: Number(event.target.value) })
                 }
@@ -507,7 +563,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
                 value={
                   overrides.resource_size?.cpu_millis ?? launch.effective.resource_size.cpu_millis
                 }
-                disabled={!editable.has('resource_size')}
+                disabled={editsLocked || !editable.has('resource_size')}
                 onChange={(event) =>
                   setOverrides({
                     ...overrides,
@@ -530,7 +586,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
                 value={
                   overrides.resource_size?.memory_mib ?? launch.effective.resource_size.memory_mib
                 }
-                disabled={!editable.has('resource_size')}
+                disabled={editsLocked || !editable.has('resource_size')}
                 onChange={(event) =>
                   setOverrides({
                     ...overrides,
@@ -553,6 +609,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
                   <input
                     type="checkbox"
                     checked={overrides.optional_checks.includes(check)}
+                    disabled={editsLocked}
                     onChange={(event) =>
                       setOverrides({
                         ...overrides,
@@ -576,10 +633,14 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
               <p>No GitHub account is connected through NyxID.</p>
               <Button
                 icon={<IconLinkOutline16 />}
-                disabled={busy !== null}
+                disabled={busy !== null || (pending !== null && !pendingConnection)}
                 onClick={() => void connect('begin')}
               >
-                {busy === 'connecting' ? 'Connecting' : 'Connect GitHub'}
+                {busy === 'connecting'
+                  ? 'Connecting'
+                  : pendingConnection
+                    ? 'Reconcile connection'
+                    : 'Connect GitHub'}
               </Button>
             </div>
           ) : (
@@ -591,6 +652,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
                     name="trigger-connection"
                     value={connection.service_id}
                     checked={selectedService === connection.service_id}
+                    disabled={editsLocked}
                     onChange={() => {
                       setSelectedService(connection.service_id);
                       setPreflight(null);
@@ -616,17 +678,21 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
             {needsReconnect ? (
               <Button
                 icon={<IconLinkOutline16 />}
-                disabled={busy !== null}
+                disabled={busy !== null || (pending !== null && !pendingConnection)}
                 onClick={() => void connect('reconnect')}
               >
-                {busy === 'connecting' ? 'Connecting' : 'Reconnect'}
+                {busy === 'connecting'
+                  ? 'Connecting'
+                  : pendingConnection
+                    ? 'Reconcile connection'
+                    : 'Reconnect'}
               </Button>
             ) : null}
             {selectedService === '' ? null : (
               <Button
                 variant="outline"
                 icon={<IconCheckOutline16 />}
-                disabled={busy !== null}
+                disabled={busy !== null || pending !== null}
                 onClick={() => void checkConnection()}
               >
                 {busy === 'checking' ? 'Checking' : 'Check access'}
@@ -636,10 +702,10 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
               <Button
                 variant="outline"
                 icon={<IconLinkOutline16 />}
-                disabled={busy !== null}
+                disabled={busy !== null || (pending !== null && !pendingConnection)}
                 onClick={() => void connect('begin')}
               >
-                Connect another
+                {pendingConnection ? 'Reconcile connection' : 'Connect another'}
               </Button>
             )}
           </div>
@@ -711,6 +777,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
                 <input
                   type="checkbox"
                   checked={workflowAcknowledged}
+                  disabled={editsLocked}
                   onChange={(event) => setWorkflowAcknowledged(event.target.checked)}
                 />
                 <span>
@@ -760,14 +827,19 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
         </span>
         <Button
           variant="outline"
-          disabled={busy !== null || selectedService === ''}
+          disabled={
+            busy !== null ||
+            selectedService === '' ||
+            (pending !== null && !pendingReview) ||
+            confirming
+          }
           onClick={() => void save()}
         >
-          {busy === 'saving' ? 'Saving' : 'Save review'}
+          {busy === 'saving' ? 'Saving' : pendingReview ? 'Reconcile review' : 'Save review'}
         </Button>
         <Button
           variant="primary"
-          disabled={!canStart || busy !== null}
+          disabled={!canStart || busy !== null || pending !== null}
           onClick={() => setConfirming(true)}
         >
           Start Launch
@@ -778,14 +850,29 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
         open={confirming}
         title="Start this Launch?"
         description="CMA will create or reuse your fork, create a Launch branch, allocate a sandbox, start a session, and send the reviewed task once."
-        onClose={() => setConfirming(false)}
+        onClose={() => {
+          if (!pendingStartSequence && busy === null) setConfirming(false);
+        }}
         footer={
           <>
-            <Button disabled={busy !== null} onClick={() => setConfirming(false)}>
+            <Button
+              disabled={busy !== null || pendingStartSequence}
+              onClick={() => setConfirming(false)}
+            >
               Cancel
             </Button>
-            <Button variant="primary" disabled={busy !== null} onClick={() => void start()}>
-              {busy === 'starting' ? 'Submitting' : 'Start Launch'}
+            <Button
+              variant="primary"
+              disabled={busy !== null || (pending !== null && !pendingStartSequence)}
+              onClick={() => void start()}
+            >
+              {busy === 'starting'
+                ? pendingStartSequence
+                  ? 'Reconciling'
+                  : 'Submitting'
+                : pendingStartSequence
+                  ? 'Reconcile Start'
+                  : 'Start Launch'}
             </Button>
           </>
         }
