@@ -15,6 +15,18 @@ import { CreatorFace, Fact, Facts, ReachList, Section, SkillList, Unknown } from
 import './SessionDrawer.css';
 import { IconCloseOutline16 } from '../ui/icons';
 import type { SessionSpend } from '@chronoai/cma-sdk';
+import type { Launch } from '@chronoai/cma-sdk';
+import { listLaunchPage } from '../api/client';
+import type { AppRouter } from '../routing/routes';
+import { routeClick, routePath } from '../routing/routes';
+import {
+  deliveryState,
+  jsonText,
+  reachState,
+  shortRevision,
+  upstreamRepository,
+  workspaceCheckpoint,
+} from '../trigger/model';
 
 /**
  * What is known about the open session — `docs/Web_Style.md` §17.
@@ -40,14 +52,27 @@ interface SessionDrawerProps {
   readonly ending?: string;
   /** Read this session's reserved-capacity spend from the public REST API. */
   readonly readSpend?: (id: string) => Promise<SessionSpend>;
+  /** Navigate to the owning Launch without turning the read into a mutation. */
+  readonly navigate?: AppRouter['navigate'];
 }
 
-export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDrawerProps) {
+export function SessionDrawer({
+  session,
+  onClose,
+  ending,
+  readSpend,
+  navigate,
+}: SessionDrawerProps) {
   const can = abilitiesFor(session);
   const [copied, setCopied] = useState(false);
   const [spendRead, setSpendRead] = useState<{
     readonly session: string;
     readonly spend?: SessionSpend;
+    readonly failed: boolean;
+  }>();
+  const [launchRead, setLaunchRead] = useState<{
+    readonly session: string;
+    readonly launch: Launch | null;
     readonly failed: boolean;
   }>();
   const tone = toneFor(session.lifecycle);
@@ -87,8 +112,44 @@ export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDr
     };
   }, [readSpend, session.id]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    let live = true;
+    void (async () => {
+      let cursor: string | undefined;
+      for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+        const page = await listLaunchPage({ limit: 100, cursor }, controller.signal);
+        const found = page.items.find(
+          (launch) =>
+            launch.session !== null &&
+            jsonText(launch.session.session_id ?? launch.session.id) === session.id,
+        );
+        if (found !== undefined) {
+          if (live) setLaunchRead({ session: session.id, launch: found, failed: false });
+          return;
+        }
+        if (page.next_cursor === null) {
+          if (live) setLaunchRead({ session: session.id, launch: null, failed: false });
+          return;
+        }
+        cursor = page.next_cursor;
+      }
+      throw new Error('Launch inventory exceeded the bounded relationship lookup');
+    })().catch(() => {
+      if (live && !controller.signal.aborted) {
+        setLaunchRead({ session: session.id, launch: null, failed: true });
+      }
+    });
+    return () => {
+      live = false;
+      controller.abort();
+    };
+  }, [session.id]);
+
   const currentSpend = spendRead?.session === session.id ? spendRead.spend : undefined;
   const spendFailed = spendRead?.session === session.id && spendRead.failed;
+  const owningLaunch = launchRead?.session === session.id ? launchRead.launch : null;
+  const launchLookupFailed = launchRead?.session === session.id && launchRead.failed;
 
   const copyIdentifier = () => {
     /*
@@ -210,6 +271,16 @@ export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDr
           <ReachList services={session.reach} />
         </Section>
 
+        {owningLaunch === null ? (
+          launchLookupFailed ? (
+            <Section title="Trigger repository">
+              <Unknown>Could not be read</Unknown>
+            </Section>
+          ) : null
+        ) : (
+          <TriggerRepository launch={owningLaunch} navigate={navigate} />
+        )}
+
         {/*
          * Only worth a band once there is something to say. A session that has
          * never been moved and reports no version would draw two empty rows.
@@ -273,6 +344,95 @@ export function SessionDrawer({ session, onClose, ending, readSpend }: SessionDr
        * acts is a panel people are afraid to open.
        */}
     </aside>
+  );
+}
+
+function TriggerRepository({
+  launch,
+  navigate,
+}: {
+  readonly launch: Launch;
+  readonly navigate?: AppRouter['navigate'];
+}) {
+  const upstream = upstreamRepository(launch);
+  const fork = launch.fork?.repository;
+  const reach = reachState(launch);
+  const artifact = launch.diff;
+  const canContribute =
+    artifact !== null &&
+    artifact.total_changed_files > 0 &&
+    artifact.total_changed_files <= artifact.changed_file_limit &&
+    artifact.expected_branch_head === artifact.observed_branch_head &&
+    artifact.validation === 'valid' &&
+    artifact.checks.every((check) => check.passed) &&
+    reach !== 'revoked' &&
+    reach !== 'revocation_pending' &&
+    reach !== 'expired';
+  const launchRoute = { kind: 'launch', launchId: launch.id } as const;
+  const contributionRoute = { kind: 'contribute', launchId: launch.id } as const;
+
+  return (
+    <Section title="Trigger repository">
+      <Facts>
+        <Fact label="Upstream">
+          {upstream.canonical_owner}/{upstream.canonical_name}
+        </Fact>
+        <Fact label="Fork">
+          {fork === undefined ? 'Pending' : `${fork.canonical_owner}/${fork.canonical_name}`}
+        </Fact>
+        <Fact label="Branch">{launch.branch?.name ?? 'Pending'}</Fact>
+        <Fact label="Base">
+          <code className="drawer__mono">{shortRevision(launch.source_sha)}</code>
+        </Fact>
+        <Fact label="Head">
+          {launch.branch === null ? (
+            'Pending'
+          ) : (
+            <code className="drawer__mono">{shortRevision(launch.branch.current_head)}</code>
+          )}
+        </Fact>
+        <Fact label="Checkpoint">{workspaceCheckpoint(launch) ?? 'Not yet'}</Fact>
+        <Fact label="GitHub reach">{reach?.replaceAll('_', ' ') ?? 'Pending'}</Fact>
+        <Fact label="Task delivery">
+          {deliveryState(launch)?.replaceAll('_', ' ') ?? 'Pending'}
+        </Fact>
+        {launch.pull_request === null ? null : (
+          <Fact label="Pull request">
+            {launch.pull_request.canonical_url === null ? (
+              launch.pull_request.state.replaceAll('_', ' ')
+            ) : (
+              <a href={launch.pull_request.canonical_url} target="_blank" rel="noopener noreferrer">
+                #{String(launch.pull_request.number)} {launch.pull_request.title}
+              </a>
+            )}
+          </Fact>
+        )}
+      </Facts>
+      <div className="drawer__repository-actions">
+        <a
+          className="button button--outline button--sm"
+          href={routePath(launchRoute)}
+          onClick={
+            navigate === undefined ? undefined : (event) => routeClick(event, launchRoute, navigate)
+          }
+        >
+          Launch progress
+        </a>
+        {canContribute ? (
+          <a
+            className="button button--primary button--sm"
+            href={routePath(contributionRoute)}
+            onClick={
+              navigate === undefined
+                ? undefined
+                : (event) => routeClick(event, contributionRoute, navigate)
+            }
+          >
+            Contribute
+          </a>
+        ) : null}
+      </div>
+    </Section>
   );
 }
 
