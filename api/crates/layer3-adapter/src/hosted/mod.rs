@@ -384,7 +384,7 @@ impl SandboxShape {
 impl Default for SandboxShape {
     fn default() -> Self {
         Self {
-            image: "chrono-bot-runtime:dev".into(),
+            image: "cma-runtime:dev".into(),
             entrypoint: vec!["/usr/local/bin/layer4-runtime".into()],
             resource_limits: BTreeMap::from([
                 ("cpu".to_string(), "1".to_string()),
