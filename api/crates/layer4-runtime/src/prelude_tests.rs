@@ -51,6 +51,7 @@ fn with(path: Option<&str>, body: Option<&str>, f: impl FnOnce()) {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_kernel_that_needs_a_file_gets_exactly_what_it_was_given() {
     // Byte for byte, and unread. What a kernel is configured with is the
@@ -108,6 +109,7 @@ fn a_path_that_leaves_the_pods_home_is_refused_rather_than_written() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_path_that_merely_says_here_is_kept() {
     let home = Home::new("curdir");
@@ -117,6 +119,7 @@ fn a_path_that_merely_says_here_is_kept() {
     });
 }
 
+#[cfg(unix)]
 #[test]
 fn the_directory_it_belongs_in_is_created() {
     // A fresh pod has nothing under its home but the home itself.
@@ -125,6 +128,43 @@ fn the_directory_it_belongs_in_is_created() {
         assert!(write(home.path()).expect("writable").is_some());
     });
     assert!(home.path().join("deep/er/still/config.toml").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_kernel_config_cannot_cross_an_intermediate_symlink() {
+    let home = Home::new("config-intermediate-link");
+    let outside = Home::new("config-intermediate-outside");
+    std::os::unix::fs::symlink(outside.path(), home.path().join(".akernel"))
+        .expect("the intermediate escape is created");
+
+    with(Some(".akernel/config.toml"), Some("private"), || {
+        write(home.path()).expect_err("an intermediate symlink must be refused");
+    });
+    assert!(
+        !outside.path().join("config.toml").exists(),
+        "the configuration must not land beyond the runtime home"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_kernel_config_cannot_cross_a_final_file_symlink() {
+    let home = Home::new("config-final-link");
+    let outside = Home::new("config-final-outside");
+    std::fs::create_dir_all(home.path().join(".akernel")).expect("the target directory exists");
+    let outside_file = outside.path().join("kept.toml");
+    std::fs::write(&outside_file, "unchanged").expect("the outside file exists");
+    std::os::unix::fs::symlink(&outside_file, home.path().join(".akernel/config.toml"))
+        .expect("the final escape is created");
+
+    with(Some(".akernel/config.toml"), Some("private"), || {
+        write(home.path()).expect_err("a final symlink must be refused");
+    });
+    assert_eq!(
+        std::fs::read_to_string(outside_file).expect("the outside file remains readable"),
+        "unchanged"
+    );
 }
 
 /// Carrying many files in one body.
@@ -201,6 +241,83 @@ mod a_pack_of_files {
     }
 
     #[test]
+    fn refuses_noncanonical_duplicate_and_control_character_targets() {
+        let duplicate = unpack(&pack(&[("a.md", b"one"), ("a.md", b"two")]))
+            .expect_err("one target may not be written twice");
+        assert!(duplicate.contains("repeats"), "got {duplicate}");
+
+        for path in ["./a.md", "dir/./a.md", "bad\u{1}.md"] {
+            let refused = unpack(&pack(&[(path, b"body")]))
+                .expect_err("the runtime accepts only canonical targets");
+            assert!(refused.contains(path), "got {refused}");
+        }
+    }
+
+    #[test]
+    fn refuses_file_and_directory_targets_in_either_order() {
+        for files in [
+            [("a", b"one".as_slice()), ("a/b", b"two".as_slice())],
+            [("a/b", b"one".as_slice()), ("a", b"two".as_slice())],
+        ] {
+            let refused = unpack(&pack(&files))
+                .expect_err("one target cannot be both a file and a directory");
+            assert!(refused.contains("conflicts"), "got {refused}");
+        }
+    }
+
+    #[test]
+    fn one_path_component_may_be_255_bytes_but_not_256() {
+        let accepted = "x".repeat(PACK_COMPONENT_LIMIT);
+        let refused = "x".repeat(PACK_COMPONENT_LIMIT + 1);
+
+        assert!(unpack(&pack(&[(accepted.as_str(), b"x")])).is_ok());
+        assert!(unpack(&pack(&[(refused.as_str(), b"x")])).is_err());
+    }
+
+    #[test]
+    fn slash_dense_paths_are_decoded_without_copying_every_prefix() {
+        let deep = "a/".repeat(1_700);
+        let paths = (0..160)
+            .map(|index| format!("branch-{index}/{deep}leaf"))
+            .collect::<Vec<_>>();
+        let files = paths
+            .iter()
+            .map(|path| (path.as_str(), b"".as_slice()))
+            .collect::<Vec<_>>();
+        let packed = pack(&files);
+        assert!(packed.len() < PACK_LIMIT);
+
+        assert_eq!(
+            unpack(&packed).expect("bounded deep paths are valid").len(),
+            files.len()
+        );
+    }
+
+    #[test]
+    fn refuses_more_than_the_sender_s_file_limit() {
+        let entries = (0..=PACK_FILE_LIMIT)
+            .map(|index| serde_json::json!({ "path": format!("file-{index}"), "len": 0 }))
+            .collect::<Vec<_>>();
+        let mut body = serde_json::to_vec(&serde_json::json!({
+            "chronoPrelude": PACK_VERSION,
+            "files": entries,
+        }))
+        .expect("the oversized header serializes");
+        body.push(b'\n');
+
+        let refused = unpack(&body).expect_err("the file count is bounded while decoding");
+        assert!(refused.contains("too many files"), "got {refused}");
+    }
+
+    #[test]
+    fn refuses_unclaimed_trailing_bytes() {
+        let mut body = pack(&[("a.md", b"body")]);
+        body.push(b'x');
+        let refused = unpack(&body).expect_err("every byte must belong to one declared file");
+        assert!(refused.contains("trailing"), "got {refused}");
+    }
+
+    #[test]
     fn refuses_a_framing_it_does_not_recognise() {
         let mut body = serde_json::json!({ "somethingElse": 1, "files": [] })
             .to_string()
@@ -219,6 +336,7 @@ mod a_pack_of_files {
         assert!(refused.contains(&PACK_LIMIT.to_string()), "got {refused}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn writes_what_it_was_handed_creating_directories_on_the_way() {
         let home = Home::new("pack-write");
@@ -228,5 +346,71 @@ mod a_pack_of_files {
         let landed = std::fs::read_to_string(home.path().join(".codex/skills/x/SKILL.md"))
             .expect("the file is there");
         assert_eq!(landed, "body");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_an_intermediate_directory_symlink_without_writing_beyond_home() {
+        let home = Home::new("pack-intermediate-link");
+        let outside = Home::new("pack-intermediate-outside");
+        std::os::unix::fs::symlink(outside.path(), home.path().join(".codex"))
+            .expect("the intermediate escape is created");
+        let files = unpack(&pack(&[(".codex/skills/x/SKILL.md", b"private")]))
+            .expect("the pack itself is well formed");
+
+        write_all(home.path(), &files).expect_err("an intermediate symlink must be refused");
+        assert!(
+            !outside.path().join("skills/x/SKILL.md").exists(),
+            "skill bytes must not land beyond the runtime home"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_final_file_symlink_without_overwriting_its_target() {
+        let home = Home::new("pack-final-link");
+        let outside = Home::new("pack-final-outside");
+        let target_dir = home.path().join(".codex/skills/x");
+        std::fs::create_dir_all(&target_dir).expect("the target directory exists");
+        let outside_file = outside.path().join("kept.md");
+        std::fs::write(&outside_file, "unchanged").expect("the outside file exists");
+        std::os::unix::fs::symlink(&outside_file, target_dir.join("SKILL.md"))
+            .expect("the final escape is created");
+        let files = unpack(&pack(&[(".codex/skills/x/SKILL.md", b"private")]))
+            .expect("the pack itself is well formed");
+
+        write_all(home.path(), &files).expect_err("a final symlink must be refused");
+        assert_eq!(
+            std::fs::read_to_string(outside_file).expect("the outside file remains readable"),
+            "unchanged"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaces_a_final_hardlink_without_overwriting_its_other_name() {
+        let home = Home::new("pack-final-hardlink");
+        let outside = Home::new("pack-final-hardlink-outside");
+        let target_dir = home.path().join(".codex/skills/x");
+        std::fs::create_dir_all(&target_dir).expect("the target directory exists");
+        let outside_file = outside.path().join("kept.md");
+        std::fs::write(&outside_file, "unchanged").expect("the outside file exists");
+        let target = target_dir.join("SKILL.md");
+        std::fs::hard_link(&outside_file, &target).expect("the final hardlink is created");
+        let files = unpack(&pack(&[(".codex/skills/x/SKILL.md", b"private")]))
+            .expect("the pack itself is well formed");
+
+        assert_eq!(
+            write_all(home.path(), &files).expect("the target is replaced"),
+            1
+        );
+        assert_eq!(
+            std::fs::read_to_string(&outside_file).expect("the outside name remains readable"),
+            "unchanged"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target).expect("the runtime target was overwritten"),
+            "private"
+        );
     }
 }
