@@ -49,6 +49,7 @@ pub(super) fn documented_router(state: TriggersState) -> OpenApiRouter {
         .routes(routes!(list_connections, begin_connection))
         .routes(routes!(reconnect_connection))
         .routes(routes!(preflight_connection))
+        .routes(routes!(resolve_connection_repository))
         .routes(routes!(create_or_resume_launch))
         .routes(routes!(create_new_launch))
         .routes(routes!(list_launches))
@@ -189,6 +190,13 @@ struct PublishTriggerRequest {
 #[derive(Debug, Deserialize, ToSchema, Default)]
 #[serde(deny_unknown_fields)]
 struct EmptyCommand {}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct RepositoryLocatorParams {
+    owner: String,
+    name: String,
+}
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -367,6 +375,22 @@ impl From<TriggerPreview> for TriggerPreviewView {
             billing_mode: enum_name(value.billing_mode),
             pricing_policy_reference: value.pricing_policy_reference,
             revision_digest: value.revision_digest,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct TriggerRepositorySelectionView {
+    #[schema(value_type = trigger_schema::RepositoryIdentity)]
+    repository: layer2_core::RepositoryIdentity,
+    source_sha: String,
+}
+
+impl From<TriggerRepositorySelection> for TriggerRepositorySelectionView {
+    fn from(value: TriggerRepositorySelection) -> Self {
+        Self {
+            repository: value.repository,
+            source_sha: value.source_sha,
         }
     }
 }
@@ -1570,6 +1594,33 @@ async fn preflight_connection(
         state
             .connections
             .preflight_connection(&caller.subject, &service_id)
+            .await?
+            .into(),
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/trigger-connections/{service_id}/repositories/resolve",
+    tag = "trigger-connections",
+    params(
+        ("service_id" = String, Path),
+        ("owner" = String, Query),
+        ("name" = String, Query)
+    ),
+    responses((status = 200, description = "Canonical repository identity resolved through the selected connection", body = TriggerRepositorySelectionView))
+)]
+async fn resolve_connection_repository(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(service_id): Path<String>,
+    params: Result<Query<RepositoryLocatorParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<TriggerRepositorySelectionView>, RequestFailure> {
+    let Query(params) = params?;
+    Ok(Json(
+        state
+            .connections
+            .resolve_repository_locator(&caller.subject, &service_id, &params.owner, &params.name)
             .await?
             .into(),
     ))

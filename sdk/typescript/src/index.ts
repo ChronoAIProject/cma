@@ -181,6 +181,7 @@ export {
   listTriggerRevisions,
   listTriggers,
   preflightTriggerConnection,
+  resolveTriggerRepository,
   publishLaunchBranch,
   publishTrigger,
   readLaunch,
@@ -230,6 +231,7 @@ export {
   type TriggerDraft,
   type TriggerPreview,
   type TriggerRevision,
+  type TriggerRepositorySelection,
   type TriggerRevisionContent,
 } from './triggers.js';
 export type {

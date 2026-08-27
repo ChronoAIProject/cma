@@ -17,8 +17,9 @@ use cma_sdk::{
     PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
     ResponseMetadata, RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session,
     SessionId, SessionInput, SessionPageRequest, SessionStatus, TerminalGeometry,
-    TriggerConnection, TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerRevision,
-    UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
+    TriggerConnection, TriggerContentDraft, TriggerDraft, TriggerPreview,
+    TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
+    UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -34,6 +35,7 @@ const CAPABILITY_REFUSED: &str = include_str!("fixtures/capability_refused.json"
 const SCREEN: &str = include_str!("fixtures/screen.json");
 const USAGE: &str = include_str!("fixtures/usage.json");
 const TRIGGER_PREVIEW: &str = include_str!("fixtures/trigger_preview.json");
+const REPOSITORY_SELECTION: &str = include_str!("fixtures/repository_selection.json");
 const LAUNCH: &str = include_str!("fixtures/launch.json");
 const LAUNCH_PROGRESS: &str = include_str!("fixtures/launch_progress.json");
 const DIFF_REVIEW: &str = include_str!("fixtures/diff_review.json");
@@ -350,6 +352,10 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     let preview: TriggerPreview =
         serde_json::from_str(TRIGGER_PREVIEW).expect("Trigger preview fixture is typed");
     assert_eq!(preview.repository_id, 10);
+    let repository: TriggerRepositorySelection =
+        serde_json::from_str(REPOSITORY_SELECTION).expect("repository selection fixture is typed");
+    assert_eq!(repository.repository.repository_node_id, "R_upstream");
+    assert_eq!(repository.source_sha, "a".repeat(40));
     let launch: Launch = serde_json::from_str(LAUNCH).expect("Launch fixture is typed");
     assert_eq!(launch.steps.len(), 15);
     let progress: LaunchProgress =
@@ -700,6 +706,55 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         fixture(std::str::from_utf8(&requests[11].body).unwrap()),
         fixture(LAUNCH_START_REQUEST)
     );
+}
+
+#[tokio::test]
+async fn repository_resolution_is_authenticated_keyless_and_canonical() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, REPOSITORY_SELECTION)]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let selection = client
+        .resolve_trigger_repository("service_fixture", "upstream-owner", ".github")
+        .await
+        .unwrap();
+    assert_eq!(selection.repository.repository_id, 10);
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::GET);
+    assert_eq!(
+        requests[0].uri.path(),
+        "/proxy/api/v1/trigger-connections/service_fixture/repositories/resolve"
+    );
+    assert_eq!(
+        requests[0].uri.query(),
+        Some("owner=upstream-owner&name=.github")
+    );
+    assert!(requests[0].authorization.is_some());
+    assert_eq!(requests[0].idempotency_key, None);
+}
+
+#[tokio::test]
+async fn repository_resolution_rejects_non_canonical_locators_before_transport() {
+    let stub = Stub::start([]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    for (owner, name) in [
+        ("", "project"),
+        ("upstream/owner", "project"),
+        ("upstream-owner", ".."),
+        ("upstream-owner", "project?private=true"),
+        (" upstream-owner", "project"),
+    ] {
+        assert!(matches!(
+            client
+                .resolve_trigger_repository("service_fixture", owner, name)
+                .await,
+            Err(Error::Protocol { ref message })
+                if message.contains("canonical owner or repository name")
+        ));
+    }
+    assert!(stub.requests().await.is_empty());
 }
 
 #[tokio::test]

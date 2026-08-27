@@ -61,6 +61,12 @@ export interface RepositoryIdentity {
   readonly fork_source_id?: number;
 }
 
+/** Canonical repository identity resolved through one exact reusable connection. */
+export interface TriggerRepositorySelection {
+  readonly repository: RepositoryIdentity;
+  readonly source_sha: string;
+}
+
 export interface TriggerRevisionContent extends JsonObject {
   readonly schema_version: number;
   readonly trigger_id: string;
@@ -647,6 +653,26 @@ export async function preflightTriggerConnection(
   );
 }
 
+export async function resolveTriggerRepository(
+  config: ResolvedConfig,
+  serviceId: string,
+  owner: string,
+  name: string,
+  options: OperationOptions = {},
+): Promise<TriggerRepositorySelection> {
+  const params = new URLSearchParams({
+    owner: repositoryLocator(owner, 'repository owner'),
+    name: repositoryLocator(name, 'repository name'),
+  });
+  return decodeRepositorySelection(
+    await request(
+      config,
+      `/api/v1/trigger-connections/${identifier(serviceId, 'service id')}/repositories/resolve?${params.toString()}`,
+      { ...options, expectedStatus: 200 },
+    ),
+  );
+}
+
 export async function createOrResumeLaunch(
   config: ResolvedConfig,
   publicId: string,
@@ -972,6 +998,21 @@ function decodeConnectionAuthorization(raw: unknown): ConnectionAuthorization {
   return body as unknown as ConnectionAuthorization;
 }
 
+function decodeRepositorySelection(raw: unknown): TriggerRepositorySelection {
+  const body = safeObject(raw, 'Trigger repository selection');
+  requireText(body, 'source_sha', 'Trigger repository selection');
+  const repository = safeObject(body.repository, 'Trigger repository identity');
+  requireInteger(repository, 'repository_id', 'Trigger repository identity');
+  requireInteger(repository, 'owner_id', 'Trigger repository identity');
+  requireText(repository, 'repository_node_id', 'Trigger repository identity');
+  requireText(repository, 'owner_node_id', 'Trigger repository identity');
+  requireText(repository, 'canonical_owner', 'Trigger repository identity');
+  requireText(repository, 'canonical_name', 'Trigger repository identity');
+  requireText(repository, 'default_branch', 'Trigger repository identity');
+  requireText(repository, 'selected_ref', 'Trigger repository identity');
+  return body as unknown as TriggerRepositorySelection;
+}
+
 export function decodeLaunch(raw: unknown): Launch {
   const body = safeObject(raw, 'Launch');
   requireText(body, 'id', 'Launch');
@@ -1093,6 +1134,20 @@ function identifier(value: string, name: string): string {
   if (value.trim() === '' || value.includes('/'))
     throw new ValidationError(`${name} must be a non-empty path identifier`);
   return encodeURIComponent(value);
+}
+
+function repositoryLocator(value: string, name: string): string {
+  if (
+    value.trim() !== value ||
+    value.length < 1 ||
+    value.length > 100 ||
+    !/^[A-Za-z0-9._-]+$/.test(value) ||
+    value === '.' ||
+    value === '..'
+  ) {
+    throw new ValidationError(`${name} must be one canonical owner or repository name`);
+  }
+  return value;
 }
 
 function launchPath(launchId: string): string {

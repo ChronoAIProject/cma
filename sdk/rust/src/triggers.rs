@@ -119,6 +119,15 @@ pub struct RepositoryIdentity {
     pub fork_source_id: Option<u64>,
 }
 
+/// Canonical repository identity resolved through one exact reusable connection.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerRepositorySelection {
+    pub repository: RepositoryIdentity,
+    pub source_sha: String,
+}
+
 /// Immutable upstream selection in a published Trigger revision.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1103,6 +1112,27 @@ impl Client {
         .await
     }
 
+    /// Resolve one human-facing owner/name through an exact reusable connection.
+    pub async fn resolve_trigger_repository(
+        &self,
+        service_id: &str,
+        owner: &str,
+        name: &str,
+    ) -> Result<TriggerRepositorySelection> {
+        identifier(service_id, "service id")?;
+        repository_locator(owner, "repository owner")?;
+        repository_locator(name, "repository name")?;
+        self.request_public_json(
+            Method::GET,
+            &["trigger-connections", service_id, "repositories", "resolve"],
+            &[("owner", owner.to_owned()), ("name", name.to_owned())],
+            None,
+            StatusCode::OK,
+            false,
+        )
+        .await
+    }
+
     /// Create or resume this subject's current Launch for one revision.
     pub async fn create_or_resume_launch(
         &self,
@@ -1416,6 +1446,21 @@ fn identifier(value: &str, name: &str) -> Result<()> {
     if value.trim().is_empty() || value.contains('/') {
         return Err(Error::protocol(format!(
             "{name} must be a non-empty path identifier"
+        )));
+    }
+    Ok(())
+}
+
+fn repository_locator(value: &str, name: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > 100
+        || matches!(value, "." | "..")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(Error::protocol(format!(
+            "{name} must be one canonical owner or repository name"
         )));
     }
     Ok(())
