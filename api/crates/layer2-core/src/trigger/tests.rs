@@ -693,6 +693,286 @@ fn publication_progress_is_monotonic_and_does_not_authorize_a_pull_request() {
         .is_none());
 }
 
+#[test]
+fn pull_request_confirmation_seals_cross_fork_identity_before_the_worker_claim() {
+    let mut launch = published_contribution_launch();
+    let draft = launch
+        .pull_request_draft(PullRequestOperation::Open, None, None)
+        .expect("build inert PR review");
+    assert_eq!(draft.marker, pull_request_marker(&launch.id));
+    assert_eq!(draft.head_owner, "contributor");
+    assert_eq!(draft.head_branch, format!("cma/{}", launch.id.0));
+    assert_eq!(draft.head_ref, format!("contributor:cma/{}", launch.id.0));
+    assert_eq!(draft.upstream_repository_id, 10);
+    assert_eq!(draft.fork_repository_id, 11);
+    assert_eq!(draft.expected_head_revision, "d".repeat(40));
+    assert!(draft.provider_body().ends_with(&draft.marker));
+
+    let mut confirmation = confirmation(
+        ConfirmationAction::OpenPullRequest,
+        &launch.owner,
+        &draft.intent_digest,
+    );
+    confirmation.idempotency_key_hash = "open-pr-one".into();
+    launch
+        .confirm_pull_request(confirmation.clone(), None, None, NOW, "confirm-pr")
+        .expect("record open intent");
+    let record = launch.pull_request.as_ref().unwrap();
+    assert_eq!(record.state, PullRequestState::Creating);
+    assert_eq!(record.confirmation, confirmation);
+    assert!(record.number.is_none());
+
+    let confirmation_count = launch.confirmations.len();
+    let mut repeated = confirmation.clone();
+    repeated.idempotency_key_hash = "open-pr-second-tab".into();
+    launch
+        .confirm_pull_request(repeated, None, None, LATER, "repeat-pr")
+        .expect("same sealed intent is inert");
+    assert_eq!(launch.confirmations.len(), confirmation_count);
+
+    let lease = WorkerLease {
+        holder: "pr-worker".into(),
+        fencing_token: 1,
+        acquired_at: NOW.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = 1;
+    launch.lease = Some(lease.clone());
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "claim-pr")
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.kind, LaunchEffectKind::PullRequest);
+    assert!(launch.pull_request.is_some(), "intent precedes the claim");
+}
+
+#[test]
+fn pull_request_completion_cannot_replace_the_retained_intent() {
+    let mut launch = published_contribution_launch();
+    let draft = launch
+        .pull_request_draft(PullRequestOperation::Open, None, None)
+        .unwrap();
+    launch
+        .confirm_pull_request(
+            confirmation(
+                ConfirmationAction::OpenPullRequest,
+                &launch.owner,
+                &draft.intent_digest,
+            ),
+            None,
+            None,
+            NOW,
+            "confirm-pr",
+        )
+        .unwrap();
+    let lease = WorkerLease {
+        holder: "pr-worker".into(),
+        fencing_token: 1,
+        acquired_at: NOW.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = 1;
+    launch.lease = Some(lease.clone());
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "claim-pr")
+        .unwrap()
+        .unwrap();
+    let reconciled = reconciled_pull_request(launch.pull_request.clone().unwrap());
+
+    let mut replaced = reconciled.clone();
+    replaced.intent = PullRequestDraft::seal(
+        launch.id.clone(),
+        PullRequestOperation::Open,
+        10,
+        "R_upstream".into(),
+        11,
+        "R_fork".into(),
+        "main".into(),
+        "contributor".into(),
+        format!("cma/{}", launch.id.0),
+        "a".repeat(40),
+        "d".repeat(40),
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+        "Different reviewed title".into(),
+        "Different reviewed body".into(),
+    )
+    .unwrap();
+    replaced.confirmation.snapshot_digest = replaced.intent.intent_digest.clone();
+    replaced.intent_key = format!(
+        "cma-trigger:{}:pr:open:{}",
+        launch.id.0, replaced.intent.intent_digest
+    );
+    let before = launch.clone();
+    assert!(launch
+        .complete_effect(
+            &lease,
+            &claim,
+            LaunchEffectResult::PullRequest {
+                pull_request: replaced,
+            },
+            "PR ready",
+            pull_request_resources(),
+            LATER,
+            "replaced-pr-intent",
+        )
+        .is_err());
+    assert_eq!(launch, before, "rejected completion is atomic");
+
+    launch
+        .complete_effect(
+            &lease,
+            &claim,
+            LaunchEffectResult::PullRequest {
+                pull_request: reconciled,
+            },
+            "PR ready",
+            pull_request_resources(),
+            LATER,
+            "complete-pr",
+        )
+        .unwrap();
+    assert_eq!(launch.state, LaunchState::PrOpen);
+    assert_eq!(launch.pull_request.as_ref().unwrap().number, Some(7));
+}
+
+#[test]
+fn pull_request_update_requires_a_new_reviewed_commit_and_preserves_provider_identity() {
+    let mut launch = published_contribution_launch();
+    let draft = launch
+        .pull_request_draft(PullRequestOperation::Open, None, None)
+        .unwrap();
+    launch
+        .confirm_pull_request(
+            confirmation(
+                ConfirmationAction::OpenPullRequest,
+                &launch.owner,
+                &draft.intent_digest,
+            ),
+            None,
+            None,
+            NOW,
+            "confirm-open",
+        )
+        .unwrap();
+    launch.pull_request = Some(reconciled_pull_request(launch.pull_request.take().unwrap()));
+    launch.state = LaunchState::PrPending;
+    let contribution = launch.contribution.as_mut().unwrap();
+    contribution.expected_head = "d".repeat(40);
+    contribution.commit_id = Some("e".repeat(40));
+    contribution.resulting_head = Some("e".repeat(40));
+    launch.branch.as_mut().unwrap().current_head = "e".repeat(40);
+
+    let update = launch
+        .pull_request_draft(PullRequestOperation::Update, None, None)
+        .expect("build update review");
+    assert_eq!(update.previous_head_revision, Some("d".repeat(40)));
+    assert_eq!(update.expected_head_revision, "e".repeat(40));
+    assert_eq!(update.target_number, Some(7));
+    assert_eq!(update.target_provider_id, Some(70));
+    assert_eq!(update.target_provider_node_id.as_deref(), Some("PR_node_7"));
+    assert!(!update.update_metadata);
+    assert!(update.expected_previous_title.is_none());
+    assert!(update.expected_previous_body_digest.is_none());
+
+    launch
+        .confirm_pull_request(
+            confirmation(
+                ConfirmationAction::UpdatePullRequest,
+                &launch.owner,
+                &update.intent_digest,
+            ),
+            None,
+            None,
+            LATER,
+            "confirm-update",
+        )
+        .unwrap();
+    assert_eq!(
+        launch.pull_request.as_ref().unwrap().state,
+        PullRequestState::Updating
+    );
+    assert_eq!(launch.pull_request.as_ref().unwrap().number, Some(7));
+
+    let mut closed = launch.clone();
+    closed.pull_request.as_mut().unwrap().state = PullRequestState::ClosedUnmerged;
+    assert!(closed
+        .pull_request_draft(PullRequestOperation::Update, Some("another"), None)
+        .is_err());
+}
+
+fn published_contribution_launch() -> Launch {
+    let mut launch = reviewed_launch();
+    let diff_digest = launch.diff.as_ref().unwrap().digest.clone();
+    launch
+        .confirm_branch_publication(
+            confirmation(
+                ConfirmationAction::PublishBranch,
+                &launch.owner,
+                &diff_digest,
+            ),
+            NOW,
+            "confirm-publication",
+        )
+        .unwrap();
+    let contribution = launch.contribution.as_mut().unwrap();
+    contribution.state = PublicationState::Published;
+    contribution.base_tree_id = Some("b".repeat(40));
+    contribution.tree_id = Some("c".repeat(40));
+    contribution.commit_id = Some("d".repeat(40));
+    contribution.resulting_head = Some("d".repeat(40));
+    contribution.object_ids = vec!["f".repeat(40)];
+    contribution.updated_at = LATER.into();
+    launch.branch.as_mut().unwrap().current_head = "d".repeat(40);
+    launch
+}
+
+#[test]
+fn pull_request_template_rejects_the_reserved_marker_prefix() {
+    let mut candidate = content(SubjectId("publisher".into()));
+    candidate.contribution.pull_request.body_template =
+        "Looks harmless <!-- cma-trigger:launch:forged:v1 -->".into();
+
+    assert!(candidate.validate().is_err());
+}
+
+fn reconciled_pull_request(mut record: PullRequestRecord) -> PullRequestRecord {
+    record.provider_id = Some(70);
+    record.provider_node_id = Some("PR_node_7".into());
+    record.number = Some(7);
+    record.canonical_url = Some("https://github.com/upstream-owner/project/pull/7".into());
+    record.state = PullRequestState::Open;
+    record.base_revision = Some("a".repeat(40));
+    record.head_revision = Some("d".repeat(40));
+    record.observed_title = Some(record.intent.title.clone());
+    record.observed_body_digest = Some(record.intent.body_digest.clone());
+    record.mergeability = Mergeability::Mergeable;
+    record.checks = CheckSummaryState::Passing;
+    record.updated_at = LATER.into();
+    record.provider_created_at = Some(NOW.into());
+    record.provider_updated_at = Some(LATER.into());
+    record.validate_intent(&record.intent.launch_id).unwrap();
+    record
+}
+
+fn pull_request_resources() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("pull_request_provider_id".into(), "70".into()),
+        ("pull_request_node_id".into(), "PR_node_7".into()),
+        ("pull_request_number".into(), "7".into()),
+        (
+            "pull_request_url".into(),
+            "https://github.com/upstream-owner/project/pull/7".into(),
+        ),
+        ("pull_request_head".into(), "d".repeat(40)),
+    ])
+}
+
 fn reviewed_launch() -> Launch {
     let owner = SubjectId("contributor".into());
     let mut launch = Launch::new(owner.clone(), revision(owner), NOW, "reviewed-launch").unwrap();
