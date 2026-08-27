@@ -24,7 +24,13 @@
 
 import { createClient, type CreateSession } from '@chronoai/cma-sdk';
 import type {
+  DiffReview,
   KernelOffer,
+  Launch,
+  LaunchListRequest,
+  LaunchOverrides,
+  LaunchProgress,
+  PullRequestDraft,
   Session,
   SessionAllowance,
   SessionLifecycle,
@@ -32,6 +38,12 @@ import type {
   PricingQuote,
   SessionResourceStatus,
   SessionSpend,
+  TriggerCommandOptions,
+  TriggerConnection,
+  TriggerContentDraft,
+  TriggerDraft,
+  TriggerPreview,
+  TriggerRevision,
 } from '@chronoai/cma-sdk';
 import { isStage, type Stage } from '../sessions/progress';
 import type { SignIn } from '@chronoai/cma-sdk';
@@ -44,10 +56,21 @@ export {
   toSession,
 } from '@chronoai/cma-sdk';
 export type {
+  DiffReview,
+  Launch,
+  LaunchListRequest,
+  LaunchOverrides,
+  LaunchProgress,
+  PullRequestDraft,
   PricingQuote,
   SessionAllowance,
   SessionResourceStatus,
   SessionSpend,
+  TriggerConnection,
+  TriggerContentDraft,
+  TriggerDraft,
+  TriggerPreview,
+  TriggerRevision,
 } from '@chronoai/cma-sdk';
 
 /**
@@ -58,6 +81,191 @@ export type {
  * not a coincidence but the reason they are the defaults.
  */
 const bot = createClient();
+
+/** Public, credential-suppressed README Trigger preview. */
+export function readTriggerPreview(
+  publicId: string,
+  signal?: AbortSignal,
+): Promise<TriggerPreview> {
+  return bot.readTriggerPreview(publicId, { signal });
+}
+
+export function createTrigger(
+  serviceId: string,
+  content: TriggerContentDraft,
+  options: TriggerCommandOptions,
+): Promise<TriggerDraft> {
+  return bot.createTrigger(serviceId, content, options);
+}
+
+export function listTriggers(): Promise<readonly TriggerDraft[]> {
+  return bot.listTriggers().then((page) => page.items);
+}
+
+export function updateTrigger(
+  id: string,
+  expectedVersion: number,
+  serviceId: string,
+  content: TriggerContentDraft,
+  options: TriggerCommandOptions,
+): Promise<TriggerDraft> {
+  return bot.updateTrigger(id, expectedVersion, serviceId, content, options);
+}
+
+export function publishTrigger(
+  id: string,
+  expectedVersion: number,
+  serviceId: string,
+  options: TriggerCommandOptions,
+): Promise<TriggerRevision> {
+  return bot.publishTrigger(id, expectedVersion, serviceId, options);
+}
+
+export function listTriggerRevisions(): Promise<readonly TriggerRevision[]> {
+  return bot.listTriggerRevisions().then((page) => page.items);
+}
+
+export function retireTriggerRevision(
+  id: string,
+  options: TriggerCommandOptions,
+): Promise<TriggerRevision> {
+  return bot.retireTriggerRevision(id, options);
+}
+
+export function listTriggerConnections(
+  signal?: AbortSignal,
+): Promise<readonly TriggerConnection[]> {
+  return bot.listTriggerConnections({ signal });
+}
+
+export function beginTriggerConnection(intentId: string, options: TriggerCommandOptions) {
+  return bot.beginTriggerConnection(intentId, options);
+}
+
+export function reconnectTriggerConnection(serviceId: string, options: TriggerCommandOptions) {
+  return bot.reconnectTriggerConnection(serviceId, options);
+}
+
+export function preflightTriggerConnection(
+  serviceId: string,
+  signal?: AbortSignal,
+): Promise<TriggerConnection> {
+  return bot.preflightTriggerConnection(serviceId, { signal });
+}
+
+export function createOrResumeLaunch(
+  publicId: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.createOrResumeLaunch(publicId, options);
+}
+
+export function createNewLaunch(publicId: string, options: TriggerCommandOptions): Promise<Launch> {
+  return bot.createNewLaunch(publicId, options);
+}
+
+export function listLaunches(page: LaunchListRequest = {}): Promise<readonly Launch[]> {
+  return bot.listLaunches(page).then((result) => result.items);
+}
+
+export function readLaunch(id: string, signal?: AbortSignal): Promise<Launch> {
+  return bot.readLaunch(id, { signal });
+}
+
+export function updateLaunchOverrides(
+  id: string,
+  expectedRevision: number,
+  overrides: LaunchOverrides,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.updateLaunchOverrides(id, expectedRevision, overrides, options);
+}
+
+export function selectLaunchConnection(
+  id: string,
+  expectedRevision: number,
+  serviceId: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.selectLaunchConnection(id, expectedRevision, serviceId, options);
+}
+
+export function startLaunch(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  acknowledgeWorkflowRisk: boolean,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.startLaunch(id, expectedRevision, snapshotDigest, acknowledgeWorkflowRisk, options);
+}
+
+export function cancelLaunch(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.cancelLaunch(id, expectedRevision, snapshotDigest, options);
+}
+
+export function readLaunchProgress(
+  id: string,
+  after: number,
+  signal?: AbortSignal,
+): Promise<LaunchProgress> {
+  return bot.readLaunchProgress(id, after, 100, { signal });
+}
+
+export function requestLaunchDiff(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.requestLaunchDiff(id, expectedRevision, snapshotDigest, options);
+}
+
+export function readLaunchDiff(id: string, signal?: AbortSignal): Promise<DiffReview> {
+  return bot.readLaunchDiff(id, { signal });
+}
+
+export function downloadDiffArtifact(
+  launchId: string,
+  artifactId: string,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  return bot.downloadDiffArtifact(launchId, artifactId, { signal });
+}
+
+export function publishLaunchBranch(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.publishLaunchBranch(id, expectedRevision, snapshotDigest, options);
+}
+
+export function reviewPullRequest(
+  id: string,
+  operation: 'open' | 'update',
+  edits: { readonly title?: string; readonly body?: string } = {},
+  signal?: AbortSignal,
+): Promise<PullRequestDraft> {
+  return bot.reviewPullRequest(id, operation, edits, { signal });
+}
+
+export function confirmPullRequest(
+  id: string,
+  operation: 'open' | 'update',
+  expectedRevision: number,
+  snapshotDigest: string,
+  edits: { readonly title?: string; readonly body?: string },
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.confirmPullRequest(id, operation, expectedRevision, snapshotDigest, edits, options);
+}
 
 /** Sessions belonging to the signed-in subject, newest first. */
 export function listSessions(): Promise<readonly Session[]> {

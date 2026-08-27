@@ -152,8 +152,8 @@ describe('DeveloperSurface', () => {
   });
 
   it('loads the complete real repository sets through the raw Vite glob', () => {
-    expect(SDK_DOCUMENTS.typescript).toHaveLength(8);
-    expect(SDK_DOCUMENTS.rust).toHaveLength(8);
+    expect(SDK_DOCUMENTS.typescript).toHaveLength(9);
+    expect(SDK_DOCUMENTS.rust).toHaveLength(9);
     expect(SDK_DOCUMENTS.typescript[0]?.label).toBe('Overview');
     expect(SDK_DOCUMENTS.rust.at(-1)?.label).toBe('Reference');
   });
