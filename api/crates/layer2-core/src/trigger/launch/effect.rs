@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 use crate::{
@@ -81,7 +81,12 @@ impl Launch {
         correlation_id: String,
     ) -> Result<Option<EffectClaim>, TriggerValidationError> {
         self.validate_worker_lease(lease, &now)?;
-        if self.blocked_reason.is_some() || self.state.is_terminal() {
+        if self.blocked_reason.is_some() {
+            return Ok(None);
+        }
+
+        let cleanup_due = self.cleanup_due(&now)?;
+        if self.state.is_terminal() && !cleanup_due {
             return Ok(None);
         }
 
@@ -127,7 +132,13 @@ impl Launch {
             self.resume_state = None;
         }
 
-        let Some(kind) = required_effect(self) else {
+        let kind = if cleanup_due {
+            self.ensure_cleanup_plan(&now, &correlation_id)?;
+            Some(LaunchEffectKind::Cleanup)
+        } else {
+            required_effect(self)
+        };
+        let Some(kind) = kind else {
             return Ok(None);
         };
         if kind == LaunchEffectKind::Branch && self.state == LaunchState::ForkReady {
@@ -391,6 +402,11 @@ impl Launch {
         } = completion;
         self.validate_worker_lease(lease, &now)?;
         let delivery_before = self.delivery.clone();
+        let cleanup_completed_before = self
+            .cleanup
+            .as_ref()
+            .and_then(|cleanup| cleanup.completed_at.as_ref())
+            .is_some();
         self.attach_effect_result(claim.kind, result)?;
         if claim.kind == LaunchEffectKind::InitialDispatch && self.delivery != delivery_before {
             let state = self
@@ -402,6 +418,27 @@ impl Launch {
                 now.clone(),
                 correlation_id.clone(),
                 LaunchEventKind::DeliveryChanged { state },
+            )?;
+        }
+        if claim.kind == LaunchEffectKind::Cleanup
+            && !cleanup_completed_before
+            && self
+                .cleanup
+                .as_ref()
+                .and_then(|cleanup| cleanup.completed_at.as_ref())
+                .is_some()
+        {
+            let target_count = self
+                .cleanup
+                .as_ref()
+                .expect("cleanup completion retains its plan")
+                .plan
+                .targets
+                .len();
+            self.push_event(
+                now.clone(),
+                correlation_id.clone(),
+                LaunchEventKind::CleanupCompleted { target_count },
             )?;
         }
         self.validate_effect_result(claim.kind, &external_resource_ids)?;
@@ -693,7 +730,26 @@ impl Launch {
                 }
                 self.pull_request = Some(pull_request)
             }
-            (LaunchEffectKind::Cleanup, LaunchEffectResult::Cleanup) => {}
+            (LaunchEffectKind::Cleanup, LaunchEffectResult::Cleanup { receipt }) => {
+                let cleanup = self.cleanup.as_mut().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "cleanup",
+                        "completion has no retained cleanup plan",
+                    )
+                })?;
+                if cleanup.completed_at.is_some()
+                    || cleanup.plan.targets != receipt.targets
+                    || seconds_from_rfc3339(&receipt.completed_at).is_none()
+                    || seconds_from_rfc3339(&receipt.completed_at)
+                        < seconds_from_rfc3339(&cleanup.plan.planned_at)
+                {
+                    return Err(TriggerValidationError::field(
+                        "cleanup.receipt",
+                        "does not complete the exact retained cleanup plan",
+                    ));
+                }
+                cleanup.completed_at = Some(receipt.completed_at);
+            }
             _ => {
                 return Err(TriggerValidationError::field(
                     "effect_result",
@@ -856,6 +912,16 @@ impl Launch {
         record.last_failure = Some(failure.clone());
         record.updated_at = now.clone();
         candidate.mark_step_failed(claim, &failure, state, &now)?;
+        if claim.kind == LaunchEffectKind::Cleanup {
+            candidate.updated_at = now.clone();
+            candidate.push_event(
+                now,
+                failure.correlation_id.clone(),
+                LaunchEventKind::Failure { failure },
+            )?;
+            *self = candidate;
+            return Ok(());
+        }
         candidate.fail(failure, now)?;
         *self = candidate;
         Ok(())
@@ -1108,7 +1174,20 @@ impl Launch {
                     ));
                 }
             }
-            LaunchEffectKind::Cleanup => {}
+            LaunchEffectKind::Cleanup => {
+                let cleanup = self.cleanup.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "cleanup",
+                        "the completed cleanup plan is missing",
+                    )
+                })?;
+                if cleanup.completed_at.is_none() || cleanup.plan.targets.is_empty() {
+                    return Err(TriggerValidationError::field(
+                        "cleanup",
+                        "has not retained a non-empty completed plan",
+                    ));
+                }
+            }
         }
         validate_external_resource_ids(external_resource_ids)
     }
@@ -1192,6 +1271,115 @@ impl Launch {
             .ok_or_else(|| {
                 TriggerValidationError::field("steps", "the stable effect step is missing")
             })
+    }
+
+    /// Whether retention cleanup may be claimed at this durable boundary.
+    pub fn cleanup_due(&self, now: &str) -> Result<bool, TriggerValidationError> {
+        if !self.state.is_terminal()
+            || self.workspace.is_none()
+            || self
+                .cleanup
+                .as_ref()
+                .and_then(|cleanup| cleanup.completed_at.as_ref())
+                .is_some()
+            || self
+                .reach
+                .as_ref()
+                .is_some_and(|reach| reach.state != CapabilityRevocationState::Revoked)
+        {
+            return Ok(false);
+        }
+        let delete_after = &self.workspace.as_ref().expect("checked above").delete_after;
+        let delete_after = seconds_from_rfc3339(delete_after).ok_or_else(|| {
+            TriggerValidationError::field(
+                "workspace.delete_after",
+                "is not a CMA retention timestamp",
+            )
+        })?;
+        let now = seconds_from_rfc3339(now).ok_or_else(|| {
+            TriggerValidationError::field("cleanup.now", "is not a CMA timestamp")
+        })?;
+        Ok(delete_after <= now)
+    }
+
+    /// Persist the exact dry-run inventory under the current Launch fence.
+    /// Repeated planning returns the same immutable target set.
+    pub fn plan_cleanup(
+        &mut self,
+        lease: &WorkerLease,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<CleanupPlan, TriggerValidationError> {
+        let mut candidate = self.clone();
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        candidate.validate_worker_lease(lease, &now)?;
+        if !candidate.cleanup_due(&now)? {
+            return Err(TriggerValidationError::field(
+                "cleanup",
+                "is not eligible at this retention boundary",
+            ));
+        }
+        candidate.ensure_cleanup_plan(&now, &correlation_id)?;
+        let plan = candidate
+            .cleanup
+            .as_ref()
+            .expect("planning retains a plan")
+            .plan
+            .clone();
+        *self = candidate;
+        Ok(plan)
+    }
+
+    fn ensure_cleanup_plan(
+        &mut self,
+        now: &str,
+        correlation_id: &str,
+    ) -> Result<(), TriggerValidationError> {
+        if self.cleanup.is_some() {
+            return Ok(());
+        }
+        let workspace = self.workspace.as_ref().ok_or_else(|| {
+            TriggerValidationError::field("cleanup", "has no retained CMA workspace objects")
+        })?;
+        let mut targets = Vec::new();
+        if let Some(diff) = self.diff.as_ref() {
+            targets.push(CleanupTarget::DiffArtifact {
+                artifact_id: diff.id.clone(),
+            });
+        }
+        let mut checkpoint_ids = BTreeSet::new();
+        for checkpoint in [
+            workspace.previous_checkpoint.as_ref(),
+            workspace.latest_checkpoint.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if checkpoint_ids.insert(checkpoint.id.clone()) {
+                targets.push(CleanupTarget::Checkpoint {
+                    checkpoint_id: checkpoint.id.clone(),
+                });
+            }
+        }
+        targets.push(CleanupTarget::Baseline);
+        let plan = CleanupPlan {
+            retention_policy_id: workspace.retention_policy_id.clone(),
+            delete_after: workspace.delete_after.clone(),
+            targets,
+            planned_at: now.to_string(),
+        };
+        let target_count = plan.targets.len();
+        self.cleanup = Some(CleanupRecord {
+            plan,
+            completed_at: None,
+        });
+        self.updated_at = now.to_string();
+        self.push_event(
+            now,
+            correlation_id,
+            LaunchEventKind::CleanupPlanned { target_count },
+        )
     }
 }
 

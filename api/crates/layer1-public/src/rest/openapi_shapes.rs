@@ -140,6 +140,44 @@ pub(super) enum ActivityAction {
     PlatformSettingsRead,
     PlatformSettingsWrite,
     PlatformSettingsReset,
+    TriggerPreviewRead,
+    TriggerDraftCreate,
+    TriggerDraftRead,
+    TriggerDraftList,
+    TriggerDraftUpdate,
+    TriggerRevisionPublish,
+    TriggerRevisionRead,
+    TriggerRevisionList,
+    TriggerRevisionRetire,
+    TriggerConnectionList,
+    TriggerConnectionBegin,
+    TriggerConnectionReconnect,
+    TriggerConnectionPreflight,
+    TriggerRepositoryResolve,
+    TriggerLaunchCreate,
+    TriggerLaunchRead,
+    TriggerLaunchList,
+    TriggerLaunchDraftUpdate,
+    TriggerLaunchConnectionSelect,
+    TriggerLaunchStart,
+    TriggerLaunchDiffReview,
+    TriggerLaunchDiffRead,
+    TriggerLaunchContributionPublish,
+    TriggerLaunchPullRequestReview,
+    TriggerLaunchPullRequestOpen,
+    TriggerLaunchPullRequestUpdate,
+    TriggerLaunchDiffDownload,
+    TriggerLaunchCancel,
+    TriggerLaunchEventsRead,
+    TriggerLaunchSupportRead,
+    TriggerOrchestrationPause,
+    TriggerOrchestrationResume,
+    TriggerEffectExecute,
+    TriggerEffectReconcile,
+    TriggerCapabilityRenew,
+    TriggerCapabilityRevoke,
+    TriggerCleanupPlan,
+    TriggerCleanupExecute,
 }
 
 /// Identifier of a session.
@@ -154,6 +192,18 @@ pub(super) struct EnvironmentProfileId(String);
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct SubjectId(String);
 
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct TriggerId(String);
+
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct TriggerRevisionId(String);
+
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct PublicTriggerId(String);
+
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct LaunchId(String);
+
 /// What an activity was taken on.
 #[derive(serde::Serialize, ToSchema)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
@@ -161,6 +211,11 @@ pub(super) enum ActivityTarget {
     Session(SessionId),
     EnvironmentProfile(EnvironmentProfileId),
     Subject(SubjectId),
+    Trigger(TriggerId),
+    TriggerRevision(TriggerRevisionId),
+    PublicTrigger(PublicTriggerId),
+    Launch(LaunchId),
+    TriggerConnection(String),
 }
 
 /// How an activity came out.
@@ -470,6 +525,44 @@ mod tests {
             core::ActivityAction::PlatformSettingsRead => ActivityAction::PlatformSettingsRead,
             core::ActivityAction::PlatformSettingsWrite => ActivityAction::PlatformSettingsWrite,
             core::ActivityAction::PlatformSettingsReset => ActivityAction::PlatformSettingsReset,
+            core::ActivityAction::TriggerPreviewRead => ActivityAction::TriggerPreviewRead,
+            core::ActivityAction::TriggerDraftCreate => ActivityAction::TriggerDraftCreate,
+            core::ActivityAction::TriggerDraftRead => ActivityAction::TriggerDraftRead,
+            core::ActivityAction::TriggerDraftList => ActivityAction::TriggerDraftList,
+            core::ActivityAction::TriggerDraftUpdate => ActivityAction::TriggerDraftUpdate,
+            core::ActivityAction::TriggerRevisionPublish => ActivityAction::TriggerRevisionPublish,
+            core::ActivityAction::TriggerRevisionRead => ActivityAction::TriggerRevisionRead,
+            core::ActivityAction::TriggerRevisionList => ActivityAction::TriggerRevisionList,
+            core::ActivityAction::TriggerRevisionRetire => ActivityAction::TriggerRevisionRetire,
+            core::ActivityAction::TriggerConnectionList => ActivityAction::TriggerConnectionList,
+            core::ActivityAction::TriggerConnectionBegin => ActivityAction::TriggerConnectionBegin,
+            core::ActivityAction::TriggerConnectionReconnect => ActivityAction::TriggerConnectionReconnect,
+            core::ActivityAction::TriggerConnectionPreflight => ActivityAction::TriggerConnectionPreflight,
+            core::ActivityAction::TriggerRepositoryResolve => ActivityAction::TriggerRepositoryResolve,
+            core::ActivityAction::TriggerLaunchCreate => ActivityAction::TriggerLaunchCreate,
+            core::ActivityAction::TriggerLaunchRead => ActivityAction::TriggerLaunchRead,
+            core::ActivityAction::TriggerLaunchList => ActivityAction::TriggerLaunchList,
+            core::ActivityAction::TriggerLaunchDraftUpdate => ActivityAction::TriggerLaunchDraftUpdate,
+            core::ActivityAction::TriggerLaunchConnectionSelect => ActivityAction::TriggerLaunchConnectionSelect,
+            core::ActivityAction::TriggerLaunchStart => ActivityAction::TriggerLaunchStart,
+            core::ActivityAction::TriggerLaunchDiffReview => ActivityAction::TriggerLaunchDiffReview,
+            core::ActivityAction::TriggerLaunchDiffRead => ActivityAction::TriggerLaunchDiffRead,
+            core::ActivityAction::TriggerLaunchContributionPublish => ActivityAction::TriggerLaunchContributionPublish,
+            core::ActivityAction::TriggerLaunchPullRequestReview => ActivityAction::TriggerLaunchPullRequestReview,
+            core::ActivityAction::TriggerLaunchPullRequestOpen => ActivityAction::TriggerLaunchPullRequestOpen,
+            core::ActivityAction::TriggerLaunchPullRequestUpdate => ActivityAction::TriggerLaunchPullRequestUpdate,
+            core::ActivityAction::TriggerLaunchDiffDownload => ActivityAction::TriggerLaunchDiffDownload,
+            core::ActivityAction::TriggerLaunchCancel => ActivityAction::TriggerLaunchCancel,
+            core::ActivityAction::TriggerLaunchEventsRead => ActivityAction::TriggerLaunchEventsRead,
+            core::ActivityAction::TriggerLaunchSupportRead => ActivityAction::TriggerLaunchSupportRead,
+            core::ActivityAction::TriggerOrchestrationPause => ActivityAction::TriggerOrchestrationPause,
+            core::ActivityAction::TriggerOrchestrationResume => ActivityAction::TriggerOrchestrationResume,
+            core::ActivityAction::TriggerEffectExecute => ActivityAction::TriggerEffectExecute,
+            core::ActivityAction::TriggerEffectReconcile => ActivityAction::TriggerEffectReconcile,
+            core::ActivityAction::TriggerCapabilityRenew => ActivityAction::TriggerCapabilityRenew,
+            core::ActivityAction::TriggerCapabilityRevoke => ActivityAction::TriggerCapabilityRevoke,
+            core::ActivityAction::TriggerCleanupPlan => ActivityAction::TriggerCleanupPlan,
+            core::ActivityAction::TriggerCleanupExecute => ActivityAction::TriggerCleanupExecute,
         ]
     );
 
@@ -492,6 +585,11 @@ mod tests {
                 core::ActivityTarget::Session(_) => {}
                 core::ActivityTarget::EnvironmentProfile(_) => {}
                 core::ActivityTarget::Subject(_) => {}
+                core::ActivityTarget::Trigger(_) => {}
+                core::ActivityTarget::TriggerRevision(_) => {}
+                core::ActivityTarget::PublicTrigger(_) => {}
+                core::ActivityTarget::Launch(_) => {}
+                core::ActivityTarget::TriggerConnection(_) => {}
             }
         }
 
@@ -509,6 +607,28 @@ mod tests {
             (
                 core::ActivityTarget::Subject(core::SubjectId("subject-schema".into())),
                 ActivityTarget::Subject(SubjectId("subject-schema".into())),
+            ),
+            (
+                core::ActivityTarget::Trigger(core::TriggerId("trigger-schema".into())),
+                ActivityTarget::Trigger(TriggerId("trigger-schema".into())),
+            ),
+            (
+                core::ActivityTarget::TriggerRevision(core::TriggerRevisionId(
+                    "revision-schema".into(),
+                )),
+                ActivityTarget::TriggerRevision(TriggerRevisionId("revision-schema".into())),
+            ),
+            (
+                core::ActivityTarget::PublicTrigger(core::PublicTriggerId("public-schema".into())),
+                ActivityTarget::PublicTrigger(PublicTriggerId("public-schema".into())),
+            ),
+            (
+                core::ActivityTarget::Launch(core::LaunchId("launch-schema".into())),
+                ActivityTarget::Launch(LaunchId("launch-schema".into())),
+            ),
+            (
+                core::ActivityTarget::TriggerConnection("service-schema".into()),
+                ActivityTarget::TriggerConnection("service-schema".into()),
             ),
         ];
         let expected_kinds = pairs
@@ -560,10 +680,30 @@ mod tests {
             &core::SubjectId("subject-schema".into()),
             &SubjectId("subject-schema".into()),
         );
+        assert_wire_mirror(
+            &core::TriggerId("trigger-schema".into()),
+            &TriggerId("trigger-schema".into()),
+        );
+        assert_wire_mirror(
+            &core::TriggerRevisionId("revision-schema".into()),
+            &TriggerRevisionId("revision-schema".into()),
+        );
+        assert_wire_mirror(
+            &core::PublicTriggerId("public-schema".into()),
+            &PublicTriggerId("public-schema".into()),
+        );
+        assert_wire_mirror(
+            &core::LaunchId("launch-schema".into()),
+            &LaunchId("launch-schema".into()),
+        );
         for generated in [
             schema::<SessionId>(),
             schema::<EnvironmentProfileId>(),
             schema::<SubjectId>(),
+            schema::<TriggerId>(),
+            schema::<TriggerRevisionId>(),
+            schema::<PublicTriggerId>(),
+            schema::<LaunchId>(),
         ] {
             assert_eq!(generated["type"], "string");
         }

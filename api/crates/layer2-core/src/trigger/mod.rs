@@ -8,8 +8,10 @@ mod capability;
 mod contribution;
 mod launch;
 mod revision;
+mod rollout;
 mod service;
 mod store;
+mod support;
 mod template;
 mod workspace;
 
@@ -17,8 +19,10 @@ pub use capability::*;
 pub use contribution::*;
 pub use launch::*;
 pub use revision::*;
+pub use rollout::*;
 pub use service::*;
 pub use store::*;
+pub use support::*;
 pub use workspace::*;
 
 #[cfg(test)]

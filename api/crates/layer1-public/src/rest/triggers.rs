@@ -1053,6 +1053,10 @@ enum LaunchEventKindView {
         #[schema(value_type = trigger_schema::LaunchBlockedReason)]
         reason: LaunchBlockedReason,
     },
+    Resumed {
+        #[schema(value_type = trigger_schema::LaunchBlockedReason)]
+        reason: LaunchBlockedReason,
+    },
     Failure {
         #[schema(value_type = trigger_schema::LaunchFailure)]
         failure: LaunchFailure,
@@ -1069,6 +1073,12 @@ enum LaunchEventKindView {
     },
     ConfirmationRecorded {
         action: String,
+    },
+    CleanupPlanned {
+        target_count: usize,
+    },
+    CleanupCompleted {
+        target_count: usize,
     },
     Cancelled,
 }
@@ -1093,6 +1103,7 @@ impl From<LaunchEvent> for LaunchEventView {
                     LaunchEventKindView::StepChanged { step: step.into() }
                 }
                 LaunchEventKind::Blocked { reason } => LaunchEventKindView::Blocked { reason },
+                LaunchEventKind::Resumed { reason } => LaunchEventKindView::Resumed { reason },
                 LaunchEventKind::Failure { failure } => LaunchEventKindView::Failure { failure },
                 LaunchEventKind::EffectReconciled { effect } => {
                     LaunchEventKindView::EffectReconciled {
@@ -1111,6 +1122,12 @@ impl From<LaunchEvent> for LaunchEventView {
                     LaunchEventKindView::ConfirmationRecorded {
                         action: enum_name(action),
                     }
+                }
+                LaunchEventKind::CleanupPlanned { target_count } => {
+                    LaunchEventKindView::CleanupPlanned { target_count }
+                }
+                LaunchEventKind::CleanupCompleted { target_count } => {
+                    LaunchEventKindView::CleanupCompleted { target_count }
                 }
                 LaunchEventKind::Cancelled => LaunchEventKindView::Cancelled,
             },
@@ -2362,6 +2379,10 @@ impl From<TriggerServiceError> for TriggerProblem {
 
 impl IntoResponse for TriggerProblem {
     fn into_response(self) -> Response {
+        let rollout_reason = match &self.0 {
+            TriggerServiceError::Rollout(denial) => Some(denial.code()),
+            _ => None,
+        };
         let mut retry_after = None;
         let (status, slug, code, detail, field): (StatusCode, &str, &str, String, Option<String>) =
             match self.0 {
@@ -2458,6 +2479,14 @@ impl IntoResponse for TriggerProblem {
                     };
                     (status, slug, code, error.to_string(), None)
                 }
+                TriggerServiceError::Rollout(_) => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "trigger-feature-paused",
+                    "trigger_feature_paused",
+                    "GitHub Trigger orchestration is currently unavailable for this request."
+                        .into(),
+                    None,
+                ),
                 TriggerServiceError::Store(error) => match error {
                     TriggerStoreError::Unavailable(_) | TriggerStoreError::Malformed(_) => (
                         StatusCode::SERVICE_UNAVAILABLE,
@@ -2483,6 +2512,9 @@ impl IntoResponse for TriggerProblem {
         let mut body = problem_document(status, slug, &detail, code);
         if let (Some(field), Some(object)) = (field, body.as_object_mut()) {
             object.insert("field".into(), field.into());
+        }
+        if let (Some(reason), Some(object)) = (rollout_reason, body.as_object_mut()) {
+            object.insert("rollout_reason".into(), reason.into());
         }
         let mut response = problem_response(status, body);
         if let Some(value) = retry_after.and_then(|value| HeaderValue::from_str(&value).ok()) {

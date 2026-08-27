@@ -1015,6 +1015,28 @@ async fn authority_failures_keep_auth_drift_rate_limit_and_outage_distinct() {
     assert_eq!(response.headers().get(header::RETRY_AFTER).unwrap(), "17");
 }
 
+#[tokio::test]
+async fn rollout_denials_are_typed_without_exposing_policy_configuration() {
+    use layer2_core::TriggerRolloutDenial;
+
+    for denial in [
+        TriggerRolloutDenial::EnvironmentDisabled,
+        TriggerRolloutDenial::OrchestrationPaused,
+        TriggerRolloutDenial::PublisherNotAllowlisted,
+        TriggerRolloutDenial::RepositoryNotAllowlisted,
+        TriggerRolloutDenial::UserOutsideCohort,
+    ] {
+        let expected_reason = denial.code();
+        let response = TriggerProblem(TriggerServiceError::Rollout(denial)).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(body["code"], "trigger_feature_paused");
+        assert_eq!(body["rollout_reason"], expected_reason);
+        assert!(!body.to_string().contains("allowlist_values"));
+    }
+}
+
 async fn send(
     app: &axum::Router,
     method: Method,
@@ -1493,6 +1515,20 @@ impl TriggerStore for FixtureStore {
 impl LaunchStore for FixtureStore {
     async fn insert_or_get_current(&self, _launch: &Launch) -> Result<Launch, TriggerStoreError> {
         self.write_unimplemented()
+    }
+
+    async fn get_current_launch(
+        &self,
+        owner: &SubjectId,
+        revision: &TriggerRevisionId,
+    ) -> Result<Option<Launch>, TriggerStoreError> {
+        Ok(self
+            .launch
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|launch| &launch.owner == owner && &launch.revision.id == revision)
+            .cloned())
     }
 
     async fn insert_new(&self, _launch: &Launch) -> Result<(), TriggerStoreError> {

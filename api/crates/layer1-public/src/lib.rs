@@ -18,7 +18,7 @@ pub mod tickets;
 
 mod unavailable;
 
-pub use auth::{ActedUpon, AuthenticatedSubject, SettingsTouched};
+pub use auth::{ActedUpon, AuthenticatedSubject, SettingsTouched, TriggerSupportObserved};
 
 /// A semantic operation on the core session model. Each interface declares the
 /// subset it projects.

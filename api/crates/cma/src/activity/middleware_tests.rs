@@ -11,19 +11,19 @@ use std::sync::Arc;
 
 use axum::{
     response::IntoResponse,
-    routing::{post, put},
+    routing::{get, post, put},
     Router,
 };
 use layer2_core::{
     store::{ActivityStore, StoreError},
-    ActivityAction, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService, DetailKey,
-    SubjectId,
+    ActivityAction, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService,
+    ActivityTarget, DetailKey, LaunchId, SubjectId,
 };
 use tokio::sync::Mutex;
 
 use super::ActivityRecorder;
 use crate::auth::{AuthMode, AuthState};
-use layer1_public::{ActedUpon, SettingsTouched};
+use layer1_public::{ActedUpon, SettingsTouched, TriggerSupportObserved};
 
 /// A store held in memory, so what was recorded can be read back exactly.
 #[derive(Default)]
@@ -291,6 +291,69 @@ async fn ending_your_own_session_names_nobody_else() {
     let entries = store.entries.lock().await.clone();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].detail.get(DetailKey::Subject), None);
+}
+
+#[tokio::test]
+async fn a_successful_trigger_support_read_records_only_resolved_identifiers() {
+    let store = Arc::new(FakeActivityStore::default());
+    let activity = ActivityService::new(Arc::clone(&store) as Arc<dyn ActivityStore>);
+    let auth = AuthState::new(
+        AuthMode::Trusted {
+            subject: "local-developer".into(),
+        },
+        None,
+    );
+    let app = Router::new()
+        .route(
+            "/api/v1/admin/triggers/support",
+            get(|| async {
+                let mut response = axum::http::StatusCode::OK.into_response();
+                response.extensions_mut().insert(TriggerSupportObserved {
+                    launch_id: LaunchId("launch-resolved".into()),
+                    correlation_id: Some("correlation-resolved".into()),
+                });
+                response
+            }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            ActivityRecorder::new(activity),
+            super::record,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&auth),
+            crate::auth::attach_subject,
+        ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port is available");
+    let addr = listener.local_addr().expect("the socket has an address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    reqwest::Client::new()
+        .get(format!(
+            "http://{addr}/api/v1/admin/triggers/support?correlation_id=raw-untrusted"
+        ))
+        .send()
+        .await
+        .expect("the support read reaches the server");
+    server.abort();
+
+    let entries = store.entries.lock().await.clone();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].action, ActivityAction::TriggerLaunchSupportRead);
+    assert_eq!(
+        entries[0].target,
+        Some(ActivityTarget::Launch(LaunchId("launch-resolved".into())))
+    );
+    assert_eq!(
+        entries[0].detail.get(DetailKey::CorrelationId),
+        Some("correlation-resolved")
+    );
+    assert!(!serde_json::to_string(&entries[0])
+        .unwrap()
+        .contains("raw-untrusted"));
 }
 
 /// Drive a settings write and carry only its handler-derived audit facts out.
