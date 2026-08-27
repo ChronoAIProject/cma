@@ -84,15 +84,19 @@ data:
   # or replaced namespace cannot be mistaken for a new empty database.
   CHRONO_MONGODB_LEGACY_CUTOVER: ""
   # One-time acknowledgement for first activation of an existing pre-coordination
-  # database. Leave this empty during ordinary startup. Stop every older process,
-  # wait for both its MongoDB work and external provider operations to finish,
-  # then start exactly one new replica with `drained`. Verify
-  # `sessions -> sessions_v2 -> sessions_v3`, the UUID-bound activation/receipt
-  # proofs, protocol 3 on every session, protocol 2 on every receipt, and readiness;
-  # then remove the value. This does not authorize protocol-1, protocol-2, or
-  # upgrade-in-progress activation markers. Those unreleased formats omit a
-  # reconstructable runtime-switch boundary and are refused even with `drained`;
-  # reset or restore the whole experimental database instead of rewriting proof.
+  # database or the exact session-write-protocol-1 to protocol-2 upgrade on an
+  # already completed coordination-protocol-3 database. Leave this empty during
+  # ordinary startup. Stop every process that predates either fence, wait for its
+  # MongoDB work and external provider operations to finish, then start exactly
+  # one new replica with `drained`. Verify `sessions -> sessions_v2 -> sessions_v3`,
+  # the UUID-bound activation/receipt proofs, session write protocol 2 with
+  # coordination protocol 3, receipt write protocol 1 with coordination protocol
+  # 2, and readiness;
+  # then remove the value and prove an unflagged replica becomes Ready. The exact
+  # protocol-2 session validator is the resumable writer-upgrade boundary. This
+  # does not authorize coordination protocol-1/protocol-2 markers, unknown or
+  # weakened validators, or UUID replacement; those states are refused even with
+  # `drained` and must not be relabelled or repaired in place.
   CHRONO_MONGODB_COORDINATION_CUTOVER: ""
   # How many days a recorded action is kept before the database removes it.
   #
@@ -111,9 +115,13 @@ data:
   # allowlist in the code, and there is no key in it for a credential, a token
   # or an environment variable's value.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
-  # Bucket holding each session's stored agent context, so a reopened session
-  # can be restarted with its transcript loaded into a fresh sandbox. Reached
-  # through the platform storage service, which brokers the credential.
+  # Bucket holding each session's stored agent context, claim-bound handover,
+  # and exact resolved skill packs. Reached through the platform storage
+  # service, which brokers the credential. A deployment without this storage
+  # refuses session creation whenever the resolved pack set is nonempty.
+  # Skill-pack generation-fence objects and their deletion tombstones must be
+  # exempt from lifecycle expiry, compaction, and unversioned deletion for the
+  # lifetime of this bucket; removing either can make a stale writer current.
   #
   # The one bucket this service addresses. It writes objects into this bucket
   # and nowhere else, and an unset value switches context storage off rather
@@ -123,9 +131,9 @@ data:
   # at all: the storage service authorises objects by bucket ownership, so a
   # bucket created by any other identity is refused permanently.
   CHRONO_CONTEXT_BUCKET: "chrono-platform-bot"
-  # This service's own machine identity on the identity platform, used to store
-  # session context. The identifier is not secret; its secret half lives in the
-  # Secret, and they are delivered separately for that reason.
+  # This service's own machine identity on the identity platform, used for all
+  # session-owned objects above. The identifier is not secret; its secret half
+  # lives in the Secret, and they are delivered separately for that reason.
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Root of the identity platform. Session context is stored through its proxy,
   # and a session's CLI acts against it on the owner's behalf. Without this,
@@ -206,6 +214,9 @@ data:
   # a session on an image nobody maintains, and forbids interrupting it to fix
   # that. Never point this at a moving tag; a tag that changes underneath a
   # running deployment would rotate sessions with nothing having been decided.
+  # The API and runtime also share one exact four-MiB skill-prelude limit. Adopt
+  # the matching runtime image before deploying an API that accepts that limit;
+  # the currently pinned v0.7.0 runtime rejects bodies above two MiB with 413.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime:v0.7.0"
   # The default, and therefore the floor a session receives when its profile
   # names no size.
