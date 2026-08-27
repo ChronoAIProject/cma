@@ -2,14 +2,68 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionDrawer } from './SessionDrawer';
 import { SessionHeader } from './SessionHeader';
 import { SessionActions } from './SessionActions';
 import { abilitiesFor } from './availability';
 import type { Session, SessionLifecycle } from './types';
 import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
-import type { SessionSpend } from '@chronoai/cma-sdk';
+import type { DiffReview, Launch, SessionSpend } from '@chronoai/cma-sdk';
+import { listLaunchPage } from '../api/client';
+
+vi.mock('../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/client')>();
+  return { ...actual, listLaunchPage: vi.fn() };
+});
+
+const launchFixture = JSON.parse(
+  readFileSync(resolve(process.cwd(), '../sdk/typescript/tests/fixtures/launch.json'), 'utf8'),
+) as Launch;
+const diffFixture = JSON.parse(
+  readFileSync(resolve(process.cwd(), '../sdk/typescript/tests/fixtures/diff_review.json'), 'utf8'),
+) as DiffReview;
+
+function owningLaunch(reach = 'active'): Launch {
+  const upstream = launchFixture.revision_content.upstream.repository;
+  return {
+    ...launchFixture,
+    session: { session_id: 'ses_test' },
+    fork: {
+      repository: {
+        ...upstream,
+        repository_id: 11,
+        repository_node_id: 'R_fork',
+        owner_id: 21,
+        owner_node_id: 'U_contributor',
+        canonical_owner: 'contributor',
+        fork_parent_id: upstream.repository_id,
+        fork_source_id: upstream.repository_id,
+      },
+      reused: false,
+      source_revision: launchFixture.source_sha,
+      canonical_url: 'https://github.com/contributor/project',
+      ready_at: '2026-08-26T12:00:00Z',
+    },
+    branch: {
+      name: `cma/${launchFixture.id}`,
+      expected_head: launchFixture.source_sha,
+      current_head: launchFixture.source_sha,
+      canonical_url: `https://github.com/contributor/project/tree/cma/${launchFixture.id}`,
+      created_at: '2026-08-26T12:00:00Z',
+    },
+    workspace: { latest_checkpoint: { id: 'checkpoint-1' } },
+    reach: { state: reach },
+    delivery: { state: 'delivered' },
+    diff: diffFixture.artifact,
+  };
+}
+
+beforeEach(() => {
+  vi.mocked(listLaunchPage)
+    .mockReset()
+    .mockImplementation(() => new Promise(() => {}));
+});
 
 /**
  * The session header and the details drawer — docs/Web_Style.md §12 and §11.
@@ -372,6 +426,61 @@ describe('what a session reaches', () => {
 
     const unreported = renderDrawer('running');
     expect(unreported.container.textContent).toContain('Not reported by the control plane');
+  });
+});
+
+describe('the Trigger repository relationship', () => {
+  it('discovers the owner-scoped Launch and exposes a reviewed contribution', async () => {
+    vi.mocked(listLaunchPage).mockResolvedValueOnce({
+      items: [owningLaunch()],
+      next_cursor: null,
+    });
+
+    renderDrawer('running');
+
+    expect(await screen.findByText('upstream-owner/project')).toBeInTheDocument();
+    expect(screen.getByText('contributor/project')).toBeInTheDocument();
+    expect(screen.getByText('checkpoint-1')).toBeInTheDocument();
+    expect(screen.getByText('delivered')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Launch progress' })).toHaveAttribute(
+      'href',
+      `/launches/${launchFixture.id}`,
+    );
+    expect(screen.getByRole('link', { name: 'Contribute' })).toHaveAttribute(
+      'href',
+      `/launches/${launchFixture.id}/contribute`,
+    );
+  });
+
+  it('continues through owner pages and matches only the exact session identifier', async () => {
+    vi.mocked(listLaunchPage)
+      .mockResolvedValueOnce({
+        items: [{ ...owningLaunch(), session: { session_id: 'ses_other' } }],
+        next_cursor: 'page-2',
+      })
+      .mockResolvedValueOnce({ items: [owningLaunch()], next_cursor: null });
+
+    renderDrawer('running');
+
+    expect(await screen.findByText('upstream-owner/project')).toBeInTheDocument();
+    expect(listLaunchPage).toHaveBeenNthCalledWith(
+      2,
+      { limit: 100, cursor: 'page-2' },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('withholds Contribute when GitHub reach is not effective', async () => {
+    vi.mocked(listLaunchPage).mockResolvedValueOnce({
+      items: [owningLaunch('revocation_pending')],
+      next_cursor: null,
+    });
+
+    renderDrawer('running');
+
+    expect(await screen.findByText('revocation pending')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Contribute' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Launch progress' })).toBeInTheDocument();
   });
 });
 
