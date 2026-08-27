@@ -37,6 +37,7 @@ struct ObservedStore {
 
 impl ObservedStore {
     fn new(inner: Arc<FakeStore>, mode: CountMode) -> Self {
+        inner.disable_coordination();
         Self {
             inner,
             mode,
@@ -46,12 +47,9 @@ impl ObservedStore {
     }
 
     fn racing(inner: Arc<FakeStore>) -> Self {
-        Self {
-            inner,
-            mode: CountMode::Delegate,
-            slow_writes: true,
-            count_calls: AtomicUsize::new(0),
-        }
+        let mut store = Self::new(inner, CountMode::Delegate);
+        store.slow_writes = true;
+        store
     }
 
     fn calls(&self) -> usize {
@@ -351,6 +349,7 @@ async fn revive_is_refused_when_another_session_occupies_the_slot() {
 #[tokio::test]
 async fn rereviving_a_live_session_returns_before_the_limit_is_queried() {
     let inner = Arc::new(FakeStore::default());
+    inner.disable_coordination();
     let adapter = Arc::new(FakeAdapter::default());
     let owner = user("owner");
     let unlimited = service_with_settings(
@@ -478,6 +477,7 @@ async fn the_default_store_count_uses_recorded_desired_state_and_owner() {
 #[tokio::test]
 async fn reconciliation_restores_every_live_record_without_counting() {
     let inner = Arc::new(FakeStore::default());
+    inner.disable_coordination();
     let adapter = Arc::new(FakeAdapter::default());
     let owner = user("owner");
     let first = service_with_settings(

@@ -125,6 +125,13 @@ fn is_runtime_reference_clear(record: &SessionRecord, events: &[Event]) -> bool 
     events.is_empty() && record.runtime_id.is_none()
 }
 
+fn is_runtime_incarnation_commit(record: &SessionRecord, events: &[Event]) -> bool {
+    record.runtime_id.is_some()
+        && events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::RuntimeIncarnationStarted))
+}
+
 fn is_retirement_commit(_record: &SessionRecord, events: &[Event]) -> bool {
     events.iter().any(|event| {
         matches!(
@@ -199,6 +206,7 @@ async fn coordinated_provisioning_switches_the_reserved_generation_into_authorit
     let adapter = Arc::new(FakeAdapter::default());
     let caller = user("coordinated-owner");
     let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    store.lose_runtime_switch_responses(1);
     let created = svc.create_session(&caller, spec()).await.expect("created");
 
     let settled = await_settled(&svc, &caller, &created.id).await;
@@ -231,6 +239,148 @@ async fn coordinated_provisioning_switches_the_reserved_generation_into_authorit
         .await
         .unwrap()
         .is_empty());
+    let markers = store
+        .events_since(&created.id, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                &event.kind,
+                crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { .. })
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        markers.len(),
+        1,
+        "confirming a lost switch response must not duplicate its marker"
+    );
+    assert!(!markers[0].appended_at.is_empty());
+    assert!(matches!(
+        &markers[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { generation })
+            if generation.get() == 1
+    ));
+}
+
+#[tokio::test]
+async fn compatibility_provisioning_names_the_runtime_with_one_incarnation_marker() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    let caller = user("compatibility-incarnation-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert!(durable.runtime_id.is_some());
+    let history = store.events_since(&created.id, 0).await.unwrap();
+    let markers = history
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                crate::event::StoredEventKind::Known(EventKind::RuntimeIncarnationStarted)
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(markers.len(), 1);
+    let marker = markers[0];
+    assert!(!marker.appended_at.is_empty());
+    let runtime_created = history
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                crate::event::StoredEventKind::Known(EventKind::Progress {
+                    stage: crate::session::ProvisioningStage::RuntimeCreated
+                })
+            )
+        })
+        .expect("runtime creation progress is durable");
+    assert!(
+        marker.seq < runtime_created.seq,
+        "the handle and incarnation boundary are durable before later progress"
+    );
+}
+
+#[tokio::test]
+async fn a_retried_compatibility_marker_commit_remains_one_durable_unit() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_runtime_incarnation_commit,
+    ));
+    store.fail_next(1);
+    let adapter = Arc::new(FakeAdapter::default());
+    let caller = user("compatibility-marker-retry-owner");
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    svc.retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    let write_ids = store.matched_write_ids();
+    assert_eq!(write_ids.len(), 2, "the unavailable write is retried once");
+    assert_eq!(
+        write_ids[0], write_ids[1],
+        "an unavailable commit must retry its idempotency key"
+    );
+    let markers = inner
+        .events_since(&created.id, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                crate::event::StoredEventKind::Known(EventKind::RuntimeIncarnationStarted)
+            )
+        })
+        .count();
+    assert_eq!(markers, 1);
+}
+
+#[tokio::test]
+async fn failed_compatibility_attachments_each_mark_only_the_runtime_the_store_named() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter::default());
+    adapter.fail_terminal_attaches(2);
+    let caller = user("compatibility-attempt-marker-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    svc.retry_backoff_ms
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    let created = svc.create_session(&caller, spec()).await.expect("created");
+
+    let settled = await_settled(&svc, &caller, &created.id).await;
+    assert_eq!(settled.status, SessionStatus::Ready);
+    assert_eq!(
+        adapter
+            .provision_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        3
+    );
+    let markers = store
+        .events_since(&created.id, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                crate::event::StoredEventKind::Known(EventKind::RuntimeIncarnationStarted)
+            )
+        })
+        .count();
+    assert_eq!(
+        markers, 3,
+        "each provisioned handle gets exactly one marker, including failed attachments"
+    );
 }
 
 #[tokio::test]
@@ -379,6 +529,26 @@ async fn coordinated_retries_never_reuse_a_provider_visible_generation() {
             .unwrap()
             .generation,
         3
+    );
+    let markers = store
+        .events_since(&created.id, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter_map(|event| match event.kind {
+            crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { generation }) => {
+                Some(generation)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        markers
+            .iter()
+            .map(|generation| generation.get())
+            .collect::<Vec<_>>(),
+        [3],
+        "failed candidates must not create runtime-incarnation markers"
     );
 }
 

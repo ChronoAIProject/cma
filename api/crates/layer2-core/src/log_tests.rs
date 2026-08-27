@@ -7,6 +7,10 @@ use std::time::Duration;
 use tokio::sync::Notify;
 
 use crate::commit_fault_support::CommitFaultStore;
+use crate::coordination::{
+    ConversationOpeningLeaseRequest, ConversationWriteAuthority, SessionBoundary,
+    SessionLeaseRequest, SessionOperation,
+};
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{SessionId, SubjectId};
 use crate::options::SessionMode;
@@ -77,7 +81,432 @@ fn said_for(id: &SessionId, seq: u64, content: &str) -> Event {
     }
 }
 
-#[derive(Default)]
+#[tokio::test]
+async fn external_marker_occupying_an_inflight_reservation_survives_rejection_rewind() {
+    let store = Arc::new(FakeStore::default());
+    let mut seeded = record();
+    seeded.runtime_id = Some("runtime-original".into());
+    store.seed(&seeded).await.expect("seed session");
+
+    let opening = store
+        .acquire_conversation_opening(
+            &ConversationOpeningLeaseRequest {
+                session_id: id(),
+                holder: "old-conversation-holder".into(),
+                token: "old-conversation-opening".into(),
+                runtime_id: "runtime-original".into(),
+                runtime_generation: 0,
+                runtime_candidate_token: None,
+                ttl: Duration::from_secs(30),
+            },
+            None,
+        )
+        .await
+        .expect("acquire old conversation opening");
+    let old_link = store
+        .publish_conversation_link(&opening, None)
+        .await
+        .expect("publish old conversation link");
+    let stale_record = store
+        .get(&id())
+        .await
+        .expect("read stale record")
+        .expect("session remains");
+
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    lane.pause_next_operation_after_pop();
+    let stale = lane.enqueue_conversation_commit(
+        super::CommitMode::UpdateExact,
+        stale_record,
+        vec![said(0, "stale-reserved-write")],
+        ConversationWriteAuthority::Active(old_link),
+    );
+    tokio::time::timeout(Duration::from_secs(2), lane.operation_popped.notified())
+        .await
+        .expect("the stale write is paused after reserving sequence one");
+
+    let authority = store
+        .runtime_authority(&id())
+        .await
+        .expect("read old runtime authority")
+        .expect("runtime authority exists");
+    let request = SessionLeaseRequest::new(
+        id(),
+        "replacement-holder",
+        SessionBoundary {
+            status: SessionStatus::Ready,
+            authority,
+        },
+        SessionOperation::Handover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store
+        .acquire_session_lease(&request)
+        .await
+        .expect("acquire replacement lease");
+    let reservation = store
+        .reserve_runtime_generation(&lease, "replacement-reservation")
+        .await
+        .expect("reserve replacement generation");
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, "runtime-replacement")
+        .await
+        .expect("register replacement runtime");
+    let switched = store
+        .switch_runtime_authority(&mut lease, &candidate)
+        .await
+        .expect("commit replacement authority and marker");
+    assert_eq!(switched.runtime_started_seq, 1);
+
+    lane.observe_tail(switched.runtime_started_seq);
+    assert_eq!(
+        service.sequences.current(&id()),
+        Some(switched.runtime_started_seq),
+        "the marker becomes the allocator's durable floor"
+    );
+    lane.release_popped_operation.notify_one();
+
+    let rejection = stale
+        .complete
+        .committed()
+        .await
+        .expect_err("the old conversation link is fenced by the switch");
+    assert!(matches!(
+        rejection,
+        StoreError::ConversationLinkChanged { .. }
+    ));
+    assert_eq!(
+        service.sequences.current(&id()),
+        Some(switched.runtime_started_seq),
+        "rejection cannot return the marker's occupied sequence"
+    );
+
+    let successor_record = store
+        .get(&id())
+        .await
+        .expect("read switched record")
+        .expect("session remains after switch");
+    let successor = lane.enqueue_commit(
+        super::CommitMode::UpdateExact,
+        successor_record,
+        vec![said(0, "readiness-successor")],
+    );
+    successor
+        .complete
+        .committed()
+        .await
+        .expect("the readiness successor follows the marker");
+    lane.fence().await;
+
+    let events = store
+        .events_since(&id(), 0)
+        .await
+        .expect("read final history");
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        [1, 2],
+        "the marker and readiness successor remain contiguous"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.kind,
+                    crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { .. })
+                )
+            })
+            .count(),
+        1,
+        "the interleaving writes exactly one runtime marker"
+    );
+}
+
+async fn marker_concurrency_fixture() -> (Arc<FakeStore>, SessionRecord, ConversationWriteAuthority)
+{
+    let store = Arc::new(FakeStore::default());
+    let mut seeded = record();
+    seeded.runtime_id = Some("runtime-original".into());
+    store.seed(&seeded).await.expect("seed session");
+
+    let opening = store
+        .acquire_conversation_opening(
+            &ConversationOpeningLeaseRequest {
+                session_id: id(),
+                holder: "old-conversation-holder".into(),
+                token: "old-conversation-opening".into(),
+                runtime_id: "runtime-original".into(),
+                runtime_generation: 0,
+                runtime_candidate_token: None,
+                ttl: Duration::from_secs(30),
+            },
+            None,
+        )
+        .await
+        .expect("acquire old conversation opening");
+    let old_link = store
+        .publish_conversation_link(&opening, None)
+        .await
+        .expect("publish old conversation link");
+    let stale_record = store
+        .get(&id())
+        .await
+        .expect("read stale record")
+        .expect("session remains");
+
+    (
+        store,
+        stale_record,
+        ConversationWriteAuthority::Active(old_link),
+    )
+}
+
+async fn commit_replacement_runtime_marker(store: &FakeStore) -> u64 {
+    let authority = store
+        .runtime_authority(&id())
+        .await
+        .expect("read old runtime authority")
+        .expect("runtime authority exists");
+    let request = SessionLeaseRequest::new(
+        id(),
+        "replacement-holder",
+        SessionBoundary {
+            status: SessionStatus::Ready,
+            authority,
+        },
+        SessionOperation::Handover,
+        Duration::from_secs(30),
+    );
+    let mut lease = store
+        .acquire_session_lease(&request)
+        .await
+        .expect("acquire replacement lease");
+    let reservation = store
+        .reserve_runtime_generation(&lease, "replacement-reservation")
+        .await
+        .expect("reserve replacement generation");
+    let candidate = store
+        .register_runtime_candidate(&lease, &reservation, "runtime-replacement")
+        .await
+        .expect("register replacement runtime");
+    store
+        .switch_runtime_authority(&mut lease, &candidate)
+        .await
+        .expect("commit replacement authority and marker")
+        .runtime_started_seq
+}
+
+#[tokio::test]
+async fn external_marker_occupying_a_batch_prefix_shifts_prequeued_successors() {
+    let (store, stale_record, stale_authority) = marker_concurrency_fixture().await;
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    lane.pause_next_operation_after_pop();
+
+    let stale = lane.enqueue_conversation_commit(
+        super::CommitMode::UpdateExact,
+        stale_record.clone(),
+        vec![said(0, "stale-batch-one"), said(0, "stale-batch-two")],
+        stale_authority,
+    );
+    tokio::time::timeout(Duration::from_secs(2), lane.operation_popped.notified())
+        .await
+        .expect("the stale two-event batch is paused after reserving one and two");
+
+    let first_successor = lane.enqueue_commit(
+        super::CommitMode::UpdateExact,
+        stale_record.clone(),
+        vec![
+            said(0, "first-prequeued-successor-one"),
+            said(0, "first-prequeued-successor-two"),
+        ],
+    );
+    let second_successor = lane.enqueue_commit(
+        super::CommitMode::UpdateExact,
+        stale_record,
+        vec![said(0, "second-prequeued-successor")],
+    );
+    assert_eq!(
+        service.sequences.current(&id()),
+        Some(5),
+        "the stale batch and both successors reserve one contiguous local range"
+    );
+
+    let marker_seq = commit_replacement_runtime_marker(&store).await;
+    assert_eq!(marker_seq, 1);
+    lane.observe_tail(marker_seq);
+    lane.release_popped_operation.notify_one();
+
+    assert!(matches!(
+        stale
+            .complete
+            .committed()
+            .await
+            .expect_err("the switch fences the stale conversation batch"),
+        StoreError::ConversationLinkChanged { .. }
+    ));
+    let first_record = first_successor
+        .complete
+        .committed()
+        .await
+        .expect("the first prequeued successor follows the marker");
+    let second_record = second_successor
+        .complete
+        .committed()
+        .await
+        .expect("the second prequeued successor follows the first");
+    lane.fence().await;
+
+    assert_eq!(first_record.session.last_seq, 3);
+    assert_eq!(second_record.session.last_seq, 4);
+    assert_eq!(service.sequences.current(&id()), Some(4));
+    let events = store
+        .events_since(&id(), 0)
+        .await
+        .expect("read shifted marker history");
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        [1, 2, 3, 4]
+    );
+    assert!(matches!(
+        &events[0].kind,
+        crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { .. })
+    ));
+    let messages = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            crate::event::StoredEventKind::Known(EventKind::MessageCommitted { content }) => {
+                Some(content.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        [
+            "first-prequeued-successor-one",
+            "first-prequeued-successor-two",
+            "second-prequeued-successor",
+        ],
+        "only the marker and shifted successors become durable"
+    );
+}
+
+#[tokio::test]
+async fn external_marker_inside_a_prequeued_successor_resequences_the_whole_queue() {
+    let (store, stale_record, stale_authority) = marker_concurrency_fixture().await;
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let lane = service.event_logs.lane(&id());
+    lane.pause_next_operation_after_pop();
+
+    let stale = lane.enqueue_conversation_commit(
+        super::CommitMode::UpdateExact,
+        stale_record.clone(),
+        vec![said(0, "stale-before-external-history")],
+        stale_authority,
+    );
+    tokio::time::timeout(Duration::from_secs(2), lane.operation_popped.notified())
+        .await
+        .expect("the stale write is paused after reserving sequence one");
+
+    let first_successor = lane.enqueue_commit(
+        super::CommitMode::UpdateExact,
+        stale_record.clone(),
+        vec![
+            said(0, "first-overlapping-successor-one"),
+            said(0, "first-overlapping-successor-two"),
+        ],
+    );
+    let second_successor = lane.enqueue_commit(
+        super::CommitMode::UpdateExact,
+        stale_record.clone(),
+        vec![
+            said(0, "second-overlapping-successor-one"),
+            said(0, "second-overlapping-successor-two"),
+        ],
+    );
+    assert_eq!(service.sequences.current(&id()), Some(5));
+
+    let mut external_record = stale_record;
+    external_record.session.last_seq = 2;
+    store
+        .commit_session_idempotent(
+            "external-history-before-marker",
+            &external_record,
+            &[
+                said(1, "external-history-one"),
+                said(2, "external-history-two"),
+            ],
+        )
+        .await
+        .expect("an external writer occupies the first two reservations");
+    let marker_seq = commit_replacement_runtime_marker(&store).await;
+    assert_eq!(
+        marker_seq, 3,
+        "the marker occupies the tail of the first successor's original reservation"
+    );
+    lane.observe_tail(marker_seq);
+    lane.release_popped_operation.notify_one();
+
+    assert!(matches!(
+        stale
+            .complete
+            .committed()
+            .await
+            .expect_err("the switch fences the stale conversation write"),
+        StoreError::ConversationLinkChanged { .. }
+    ));
+    let first_record = first_successor
+        .complete
+        .committed()
+        .await
+        .expect("the overlapping successor rebases after the marker");
+    let second_record = second_successor
+        .complete
+        .committed()
+        .await
+        .expect("the later successor moves with the same queue rebase");
+    lane.fence().await;
+
+    assert_eq!(first_record.session.last_seq, 5);
+    assert_eq!(second_record.session.last_seq, 7);
+    assert_eq!(service.sequences.current(&id()), Some(7));
+    let events = store
+        .events_since(&id(), 0)
+        .await
+        .expect("read resequenced marker history");
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        [1, 2, 3, 4, 5, 6, 7]
+    );
+    assert!(matches!(
+        &events[2].kind,
+        crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { .. })
+    ));
+    let messages = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            crate::event::StoredEventKind::Known(EventKind::MessageCommitted { content }) => {
+                Some(content.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        [
+            "external-history-one",
+            "external-history-two",
+            "first-overlapping-successor-one",
+            "first-overlapping-successor-two",
+            "second-overlapping-successor-one",
+            "second-overlapping-successor-two",
+        ],
+        "the stale reservation is absent and every successor remains FIFO"
+    );
+}
+
 struct FaultStore {
     inner: Arc<FakeStore>,
     failures: AtomicUsize,
@@ -93,6 +522,29 @@ struct FaultStore {
     pause_delete_after_call: AtomicUsize,
     delete_started: Notify,
     release_delete: Notify,
+}
+
+impl Default for FaultStore {
+    fn default() -> Self {
+        let inner = Arc::new(FakeStore::default());
+        inner.disable_coordination();
+        Self {
+            inner,
+            failures: AtomicUsize::default(),
+            failures_after_first_write: AtomicUsize::default(),
+            calls: AtomicUsize::default(),
+            lose_next_response: AtomicBool::default(),
+            pause_next_write: AtomicBool::default(),
+            write_started: Notify::new(),
+            release_write: Notify::new(),
+            delete_calls: AtomicUsize::default(),
+            delete_failures: AtomicUsize::default(),
+            pause_delete_before_call: AtomicUsize::default(),
+            pause_delete_after_call: AtomicUsize::default(),
+            delete_started: Notify::new(),
+            release_delete: Notify::new(),
+        }
+    }
 }
 
 impl FaultStore {
@@ -2978,6 +3430,7 @@ async fn fresh_lane_rotation_finalizers_refuse_a_successor_claim() {
 #[tokio::test]
 async fn fresh_lane_compatibility_handover_inherits_unrelated_history() {
     let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
     let mut claimed = record();
     claimed.session.status = SessionStatus::Rotating;
     claimed.session.options.mode = SessionMode::Terminal;
@@ -3067,6 +3520,7 @@ async fn fresh_lane_compatibility_handover_refuses_successor_authority() {
         ("pending handover", SuccessorChange::PendingHandover),
     ] {
         let store = Arc::new(FakeStore::default());
+        store.disable_coordination();
         let mut claimed = record();
         claimed.session.status = SessionStatus::Rotating;
         claimed.session.options.mode = SessionMode::Terminal;
@@ -3156,6 +3610,7 @@ async fn fresh_lane_compatibility_handover_refuses_successor_authority() {
 #[tokio::test]
 async fn compatibility_handover_observation_preserves_queued_history_order() {
     let store = Arc::new(FaultStore::default());
+    store.inner.disable_coordination();
     let mut claimed = record();
     claimed.session.status = SessionStatus::Rotating;
     claimed.session.options.mode = SessionMode::Terminal;
@@ -3268,6 +3723,7 @@ async fn compatibility_handover_observation_preserves_queued_history_order() {
 #[tokio::test]
 async fn compatibility_runtime_clear_inherits_unrelated_context_and_history() {
     let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
     let mut claimed = record();
     claimed.session.status = SessionStatus::Idle;
     claimed.session.recovery_state = RecoveryState::Idle;
@@ -3326,6 +3782,7 @@ async fn compatibility_runtime_clear_refuses_successor_authority() {
         ("runtime", SuccessorChange::Runtime),
     ] {
         let store = Arc::new(FakeStore::default());
+        store.disable_coordination();
         let mut claimed = record();
         claimed.session.status = SessionStatus::Idle;
         claimed.session.recovery_state = RecoveryState::Idle;

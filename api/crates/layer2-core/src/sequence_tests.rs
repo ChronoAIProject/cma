@@ -75,6 +75,32 @@ fn sessions_do_not_share_a_position() {
 }
 
 #[test]
+fn rejection_rewind_cannot_cross_a_durable_external_tail() {
+    let sequences = Sequences::default();
+    let id = session();
+
+    assert_eq!(sequences.take(&id, 0, 1), 1);
+    assert_eq!(sequences.observe_durable(&id, 1), 1);
+
+    sequences.rewind(&id, 1);
+
+    assert_eq!(sequences.current(&id), Some(1));
+    assert_eq!(sequences.take(&id, 0, 1), 2);
+}
+
+#[test]
+fn store_reconciliation_cannot_cross_a_durable_external_tail() {
+    let sequences = Sequences::default();
+    let id = session();
+
+    sequences.observe_durable(&id, 5);
+    sequences.reconcile(&id, 2);
+
+    assert_eq!(sequences.current(&id), Some(5));
+    assert_eq!(sequences.durable_floor(&id), 5);
+}
+
+#[test]
 fn a_deleted_session_is_forgotten_and_a_stopped_one_is_not() {
     // A stopped session can be revived and its log continues; forgetting its
     // position would restart numbering over events that are still there.
