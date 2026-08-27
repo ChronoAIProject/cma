@@ -45,6 +45,8 @@ const DIFF_ID: &str = "66666666-6666-4666-8666-666666666666";
 const CONTRIBUTION_ID: &str = "77777777-7777-4777-8777-777777777777";
 const SDK_TRIGGER_PREVIEW_FIXTURE: &str =
     include_str!("../../tests/fixtures/rest-sdk/trigger_preview.json");
+const SDK_REPOSITORY_SELECTION_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/repository_selection.json");
 const SDK_LAUNCH_FIXTURE: &str = include_str!("../../tests/fixtures/rest-sdk/launch.json");
 const SDK_LAUNCH_PROGRESS_FIXTURE: &str =
     include_str!("../../tests/fixtures/rest-sdk/launch_progress.json");
@@ -575,6 +577,37 @@ fn unknown_fields_in_nested_trigger_policy_are_refused() {
     assert!(error.to_string().contains("unknown field"));
 }
 
+#[tokio::test]
+async fn publisher_repository_locator_is_authenticated_canonical_and_read_only() {
+    let fixture = Fixture::new();
+    let uri = "/api/v1/trigger-connections/service-1/repositories/resolve?owner=upstream-owner&name=project";
+    let anonymous = fixture
+        .router()
+        .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+    let response = fixture
+        .router()
+        .oneshot(authenticated_request(Method::GET, uri, OWNER))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["repository"]["repository_id"], 10);
+    assert_eq!(value["repository"]["repository_node_id"], "R_upstream");
+    assert_eq!(value["repository"]["selected_ref"], "main");
+    assert_eq!(
+        value["source_sha"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert!(!String::from_utf8_lossy(&body).contains("backing-key"));
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
+}
+
 #[test]
 fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous() {
     let fixture = Fixture::new();
@@ -595,6 +628,10 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         ("post", "/api/v1/trigger-connections"),
         ("post", "/api/v1/trigger-connections/{service_id}/reconnect"),
         ("get", "/api/v1/trigger-connections/{service_id}/preflight"),
+        (
+            "get",
+            "/api/v1/trigger-connections/{service_id}/repositories/resolve",
+        ),
         ("post", "/api/v1/triggers/public/{public_id}/launches"),
         ("post", "/api/v1/triggers/public/{public_id}/launches/new"),
         ("get", "/api/v1/launches"),
@@ -803,6 +840,16 @@ async fn trigger_sdk_fixture_values() -> Vec<(&'static str, Value)> {
             .unwrap(),
         ),
         (
+            "repository_selection.json",
+            serde_json::to_value(TriggerRepositorySelectionView::from(
+                TriggerRepositorySelection {
+                    repository: upstream(),
+                    source_sha: "a".repeat(40),
+                },
+            ))
+            .unwrap(),
+        ),
+        (
             "launch.json",
             serde_json::to_value(LaunchView::from(draft_fixture.launch.clone())).unwrap(),
         ),
@@ -853,6 +900,10 @@ async fn trigger_sdk_fixture_values() -> Vec<(&'static str, Value)> {
 async fn trigger_sdk_fixtures_are_produced_and_parsed_by_server_types() {
     let expected = [
         ("trigger_preview.json", SDK_TRIGGER_PREVIEW_FIXTURE),
+        (
+            "repository_selection.json",
+            SDK_REPOSITORY_SELECTION_FIXTURE,
+        ),
         ("launch.json", SDK_LAUNCH_FIXTURE),
         ("launch_progress.json", SDK_LAUNCH_PROGRESS_FIXTURE),
         ("diff_review.json", SDK_DIFF_REVIEW_FIXTURE),
@@ -1652,6 +1703,22 @@ impl TriggerConnectionManager for StaticConnections {
         _selected_ref: &str,
     ) -> Result<TriggerRepositorySelection, TriggerServiceError> {
         Err(TriggerServiceError::NotFound)
+    }
+
+    async fn resolve_repository_locator(
+        &self,
+        _subject: &SubjectId,
+        _service_id: &str,
+        owner: &str,
+        name: &str,
+    ) -> Result<TriggerRepositorySelection, TriggerServiceError> {
+        if owner != "upstream-owner" || name != "project" {
+            return Err(TriggerServiceError::NotFound);
+        }
+        Ok(TriggerRepositorySelection {
+            repository: upstream(),
+            source_sha: "a".repeat(40),
+        })
     }
 }
 

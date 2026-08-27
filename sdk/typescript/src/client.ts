@@ -187,6 +187,16 @@ export class Cma {
     return triggers.preflightTriggerConnection(this.#config, serviceId, options);
   }
 
+  /** Resolve a pasted repository owner/name through one exact GitHub connection. */
+  resolveTriggerRepository(
+    serviceId: string,
+    owner: string,
+    name: string,
+    options: OperationOptions = {},
+  ): Promise<triggers.TriggerRepositorySelection> {
+    return triggers.resolveTriggerRepository(this.#config, serviceId, owner, name, options);
+  }
+
   /** Create or resume this subject's current Launch for one revision. */
   createOrResumeLaunch(
     publicId: string,

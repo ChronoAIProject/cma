@@ -85,4 +85,14 @@ impl TriggerConnectionManager for UnavailableGithub {
     ) -> Result<TriggerRepositorySelection, TriggerServiceError> {
         Err(unavailable())
     }
+
+    async fn resolve_repository_locator(
+        &self,
+        _subject: &SubjectId,
+        _service_id: &str,
+        _owner: &str,
+        _name: &str,
+    ) -> Result<TriggerRepositorySelection, TriggerServiceError> {
+        Err(unavailable())
+    }
 }

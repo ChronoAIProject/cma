@@ -19,6 +19,7 @@ import {
   readLaunchProgress,
   readTriggerPreview,
   reconnectTriggerConnection,
+  resolveTriggerRepository,
   requestLaunchDiff,
   retireTriggerRevision,
   reviewPullRequest,
@@ -282,6 +283,47 @@ describe('Trigger command idempotency', () => {
     expect(new Headers(init.headers).has('idempotency-key')).toBe(false);
   });
 
+  it('resolves a repository through the exact authenticated connection without a command key', async () => {
+    const credential = vi.fn(() => 'private-bearer');
+    const { fetch, calls } = responder(fixture('repository_selection.json'), 200);
+
+    await expect(
+      resolveTriggerRepository(
+        resolveConfig({ credential, fetch }),
+        'service_fixture',
+        'upstream-owner',
+        '.github',
+      ),
+    ).resolves.toMatchObject({ source_sha: 'a'.repeat(40) });
+
+    expect(credential).toHaveBeenCalledOnce();
+    const [url, init] = calls.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(
+      '/api/v1/trigger-connections/service_fixture/repositories/resolve?owner=upstream-owner&name=.github',
+    );
+    expect(init.method).toBe('GET');
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer private-bearer');
+    expect(new Headers(init.headers).has('idempotency-key')).toBe(false);
+  });
+
+  it('rejects non-canonical repository locators before transport', async () => {
+    const fetch = vi.fn();
+    const config = resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch });
+
+    for (const [owner, name] of [
+      ['', 'project'],
+      ['upstream/owner', 'project'],
+      ['upstream-owner', '..'],
+      ['upstream-owner', 'project?private=true'],
+      [' upstream-owner', 'project'],
+    ] as const) {
+      await expect(
+        resolveTriggerRepository(config, 'service_fixture', owner, name),
+      ).rejects.toThrow('canonical owner or repository name');
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('keeps pull-request review side-effect-free and puts a key only on confirmation', async () => {
     const fetch = vi
       .fn()
@@ -327,6 +369,16 @@ describe('Trigger response validation', () => {
       '33333333-3333-4333-8333-333333333333',
     );
     expect(preview.repository_id).toBe(10);
+
+    const repositoryTransport = responder(fixture('repository_selection.json'), 200);
+    const repository = await resolveTriggerRepository(
+      resolveConfig({ fetch: repositoryTransport.fetch }),
+      'service_fixture',
+      'upstream-owner',
+      'project',
+    );
+    expect(repository.repository.repository_node_id).toBe('R_upstream');
+    expect(repository.source_sha).toBe('a'.repeat(40));
 
     const launchTransport = responder(fixture('launch.json'), 200);
     const launch = await readLaunch(
