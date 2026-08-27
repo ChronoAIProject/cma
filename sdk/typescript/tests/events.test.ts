@@ -155,6 +155,9 @@ describe('core event envelopes', () => {
       peak_permille: 900,
       duration_seconds: 3,
     },
+    { type: 'runtime_handover_started' },
+    { type: 'runtime_incarnation_started' },
+    { type: 'runtime_started', generation: 3 },
     {
       type: 'runtime_lost',
       runtime_id: 'runtime_1',
@@ -172,6 +175,36 @@ describe('core event envelopes', () => {
         event,
       });
     }
+  });
+
+  it('exposes a runtime marker as a typed positive generation', () => {
+    const parsed = eventFromMessage(message({ type: 'runtime_started', generation: 7 }), SESSION);
+    if (parsed.event.type !== 'runtime_started') {
+      throw new Error('expected a runtime_started event');
+    }
+
+    const generation: number = parsed.event.generation;
+    expect(generation).toBe(7);
+  });
+
+  it('exposes a coordinated handover marker as a typed unit event', () => {
+    const parsed = eventFromMessage(message({ type: 'runtime_handover_started' }), SESSION);
+    if (parsed.event.type !== 'runtime_handover_started') {
+      throw new Error('expected a runtime_handover_started event');
+    }
+
+    const type: 'runtime_handover_started' = parsed.event.type;
+    expect(type).toBe('runtime_handover_started');
+  });
+
+  it('exposes a compatibility incarnation marker as a typed unit event', () => {
+    const parsed = eventFromMessage(message({ type: 'runtime_incarnation_started' }), SESSION);
+    if (parsed.event.type !== 'runtime_incarnation_started') {
+      throw new Error('expected a runtime_incarnation_started event');
+    }
+
+    const type: 'runtime_incarnation_started' = parsed.event.type;
+    expect(type).toBe('runtime_incarnation_started');
   });
 
   it('preserves a newer event kind losslessly', () => {
@@ -249,6 +282,7 @@ describe('core event envelopes', () => {
       },
       /duration/i,
     ],
+    [{ type: 'runtime_started', generation: 0 }, /generation/i],
     [{ type: 'runtime_lost', runtime_id: 'r', cause: 'mystery' }, /cause/i],
   ])('reports a malformed known event %#', (event, expected) => {
     expect(() => eventFromMessage(message(event), SESSION)).toThrow(expected);

@@ -28,7 +28,6 @@ use crate::{
     ConversationWriteAuthority, Reserved, SessionLease,
 };
 
-#[derive(Default)]
 struct RotationStore {
     inner: Arc<FakeStore>,
     pause_next: AtomicBool,
@@ -37,6 +36,22 @@ struct RotationStore {
     release: Notify,
     calls: AtomicUsize,
     failures: AtomicUsize,
+}
+
+impl Default for RotationStore {
+    fn default() -> Self {
+        let inner = Arc::new(FakeStore::default());
+        inner.disable_coordination();
+        Self {
+            inner,
+            pause_next: AtomicBool::new(false),
+            pause_call: AtomicUsize::new(0),
+            entered: Notify::new(),
+            release: Notify::new(),
+            calls: AtomicUsize::new(0),
+            failures: AtomicUsize::new(0),
+        }
+    }
 }
 
 impl RotationStore {
@@ -275,6 +290,16 @@ async fn a_session_is_carried_onto_a_newer_runtime() {
         .into_iter()
         .filter(|event| event.seq <= durable_settled.last_seq)
         .collect::<Vec<_>>();
+    assert_eq!(
+        handover.first().map(|event| event.seq),
+        Some(before_rotation + 1)
+    );
+    assert!(
+        handover
+            .windows(2)
+            .all(|events| events[1].seq == events[0].seq + 1),
+        "the authority marker and handover completion must keep one contiguous log: {handover:?}"
+    );
     let position = |predicate: fn(&EventKind) -> bool| {
         handover
             .iter()
@@ -290,6 +315,20 @@ async fn a_session_is_carried_onto_a_newer_runtime() {
             }
         )
     });
+    let handover_started = position(|kind| matches!(kind, EventKind::RuntimeHandoverStarted));
+    assert_eq!(
+        handover_started + 1,
+        rotating,
+        "the coordinated handover marker and Rotating status must be one adjacent durable unit"
+    );
+    assert_eq!(
+        handover
+            .iter()
+            .filter(|event| matches!(&event.kind, EventKind::RuntimeHandoverStarted))
+            .count(),
+        1,
+        "one coordinated attempt writes one accounting discriminator"
+    );
     let runtime_requested = position(|kind| {
         matches!(
             kind,
@@ -314,6 +353,19 @@ async fn a_session_is_carried_onto_a_newer_runtime() {
             }
         )
     });
+    let runtime_started = position(|kind| matches!(kind, EventKind::RuntimeStarted { .. }));
+    assert!(matches!(
+        &handover[runtime_started].kind,
+        EventKind::RuntimeStarted { generation } if generation.get() == 2
+    ));
+    assert_eq!(
+        handover
+            .iter()
+            .filter(|event| matches!(&event.kind, EventKind::RuntimeStarted { .. }))
+            .count(),
+        1,
+        "one successful rotation creates one incarnation marker"
+    );
     let ready = position(|kind| {
         matches!(
             kind,
@@ -333,10 +385,12 @@ async fn a_session_is_carried_onto_a_newer_runtime() {
     });
 
     assert!(
-        rotating < runtime_requested
+        handover_started < rotating
+            && rotating < runtime_requested
             && runtime_requested < runtime_created
             && runtime_created < attaching
-            && attaching < ready
+            && attaching < runtime_started
+            && runtime_started < ready
             && ready < progress_ready,
         "the bounded handover was not announced in runtime order: {handover:?}"
     );
@@ -1018,6 +1072,60 @@ async fn a_compatibility_replica_discards_h1_before_readopting_h2() {
     let h2 = durable.runtime_id.clone().expect("H2 is durable");
     assert_ne!(h2, h1);
     assert_eq!(durable.rotation_claim, None);
+    let compatibility_events = store
+        .inner
+        .events_since(&created.id, 0)
+        .await
+        .expect("compatibility history is readable");
+    let position = |predicate: fn(&EventKind) -> bool| {
+        compatibility_events
+            .iter()
+            .position(|event| {
+                matches!(&event.kind, crate::event::StoredEventKind::Known(kind) if predicate(kind))
+            })
+            .unwrap_or_else(|| {
+                panic!("compatibility history omitted a marker: {compatibility_events:?}")
+            })
+    };
+    let handover_started = position(|kind| matches!(kind, EventKind::RuntimeHandoverStarted));
+    let rotating = position(|kind| {
+        matches!(
+            kind,
+            EventKind::StatusChanged {
+                status: SessionStatus::Rotating,
+                ..
+            }
+        )
+    });
+    assert_eq!(
+        handover_started + 1,
+        rotating,
+        "compatibility enables marker accounting before its premature lifecycle status"
+    );
+    let incarnations = compatibility_events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            matches!(
+                event.kind,
+                crate::event::StoredEventKind::Known(EventKind::RuntimeIncarnationStarted)
+            )
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        incarnations.len(),
+        2,
+        "H1 and H2 are each named with one compatibility incarnation marker"
+    );
+    assert!(
+        incarnations[0] < handover_started && rotating < incarnations[1],
+        "H2 starts only when its handle becomes durable: {compatibility_events:?}"
+    );
+    assert!(compatibility_events.iter().all(|event| !matches!(
+        event.kind,
+        crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { .. })
+    )));
     assert_eq!(
         stale
             .entries
@@ -3115,6 +3223,12 @@ async fn a_permanently_refused_replacement_preserves_the_old_authority() {
         )),
         "a permanently failed attempt terminated the session instead of restoring it: \
          {failed_attempt:?}"
+    );
+    assert!(
+        failed_attempt
+            .iter()
+            .all(|event| !matches!(&event.kind, EventKind::RuntimeStarted { .. })),
+        "rolling back to H1 must not invent a new runtime incarnation: {failed_attempt:?}"
     );
 }
 

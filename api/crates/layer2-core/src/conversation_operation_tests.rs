@@ -15,7 +15,7 @@ use crate::conversation_support::{
 };
 use crate::coordination::{SessionLease, SessionOperation};
 use crate::error::CoreError;
-use crate::event::EventKind;
+use crate::event::{Event, EventKind, StoredEvent};
 use crate::session::{SessionStatus, StopReason};
 use crate::store::SessionStore;
 use crate::test_support::{
@@ -1301,10 +1301,69 @@ async fn the_tokens_a_turn_spent_are_recorded_when_it_ends() {
 }
 
 #[tokio::test]
-async fn usage_never_falls_when_a_session_is_carried_onto_a_new_runtime() {
-    // A replacement runtime counts afresh. Taking the latest would show
-    // somebody their usage decreasing; adding them would count the history the
-    // new runtime resumed from twice.
+async fn usage_sums_the_maxima_on_both_sides_of_a_legacy_rotation() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let svc = service_with_environments(Arc::clone(&store), adapter, profiles);
+    let alice = user("legacy-usage-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let kinds = [
+        EventKind::UsageReported {
+            input_tokens: 100_000,
+            output_tokens: 50_000,
+            context_used: 80_000,
+            context_window: Some(200_000),
+        },
+        EventKind::StatusChanged {
+            status: SessionStatus::Rotating,
+            stop_reason: None,
+            detail: Some("moving onto a replacement runtime".into()),
+            capability: None,
+        },
+        EventKind::UsageReported {
+            input_tokens: 10_000,
+            output_tokens: 5_000,
+            context_used: 9_000,
+            context_window: Some(200_000),
+        },
+    ];
+    let legacy = kinds
+        .into_iter()
+        .enumerate()
+        .map(|(offset, kind)| {
+            StoredEvent::from(Event {
+                session_id: created.id.clone(),
+                seq: offset as u64 + 1,
+                kind,
+                appended_at: "2026-08-27T00:00:00Z".into(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut record = store.get(&created.id).await.unwrap().unwrap();
+    record.session.last_seq = legacy.last().unwrap().seq;
+    store.seed(&record).await.expect("legacy record is durable");
+    *store.events.lock().await = legacy;
+
+    let usage = svc.get_usage(&alice, &created.id).await.expect("readable");
+    assert_eq!((usage.input_tokens, usage.output_tokens), (110_000, 55_000));
+    assert_eq!(usage.context_used, 9_000);
+}
+
+#[tokio::test]
+async fn a_lower_report_within_one_runtime_does_not_reduce_usage() {
+    // Runtime counters are cumulative totals. A missing update can be corrected
+    // by a later one, while a transient lower report must not erase the maximum
+    // already recorded for this incarnation.
     let (svc, alice, id, adapter) = conversation().await;
     svc.send_prompt(&alice, &id, "one".into())
         .await
@@ -1340,7 +1399,7 @@ async fn usage_never_falls_when_a_session_is_carried_onto_a_new_runtime() {
     let usage = svc.get_usage(&alice, &id).await.expect("readable");
     assert_eq!(
         usage.input_tokens, 8000,
-        "a fresh runtime's smaller count must not shrink what has been spent"
+        "a smaller report in one incarnation must not shrink what has been spent"
     );
 }
 
