@@ -207,6 +207,7 @@ impl TriggerService {
     pub async fn create_draft(
         &self,
         owner: SubjectId,
+        selected_service_id: String,
         mut content: TriggerRevisionContent,
         now: impl Into<String>,
     ) -> Result<TriggerDraft, TriggerServiceError> {
@@ -219,6 +220,7 @@ impl TriggerService {
         let draft = TriggerDraft {
             id,
             owner,
+            selected_service_id,
             version: 1,
             next_revision_number: 1,
             content,
@@ -256,6 +258,7 @@ impl TriggerService {
         owner: &SubjectId,
         id: &TriggerId,
         expected_version: u64,
+        selected_service_id: String,
         mut content: TriggerRevisionContent,
         now: impl Into<String>,
     ) -> Result<TriggerDraft, TriggerServiceError> {
@@ -275,6 +278,7 @@ impl TriggerService {
         replacement.version = replacement.version.checked_add(1).ok_or_else(|| {
             TriggerValidationError::field("version", "the draft revision counter is exhausted")
         })?;
+        replacement.selected_service_id = selected_service_id;
         replacement.content = content;
         replacement.updated_at = now.into();
         Ok(self
@@ -297,6 +301,16 @@ impl TriggerService {
                 expected: expected_version,
                 actual: draft.version,
             }
+            .into());
+        }
+        if draft.selected_service_id.is_empty() {
+            // Backfill the only pre-feature shape on first authorized publish.
+            draft.selected_service_id = selected_service_id.to_string();
+        } else if draft.selected_service_id != selected_service_id {
+            return Err(TriggerValidationError::field(
+                "selected_service_id",
+                "must match the connection that last verified this draft",
+            )
             .into());
         }
         draft.content.revision_number = draft.next_revision_number;

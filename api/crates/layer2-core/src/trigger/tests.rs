@@ -1367,7 +1367,12 @@ async fn publication_is_atomic_and_old_revisions_remain_immutable() {
     let owner = SubjectId("publisher".into());
     let (service, _) = service();
     let draft = service
-        .create_draft(owner.clone(), content(owner.clone()), NOW)
+        .create_draft(
+            owner.clone(),
+            "service-1".into(),
+            content(owner.clone()),
+            NOW,
+        )
         .await
         .unwrap();
     let first = service
@@ -1378,7 +1383,14 @@ async fn publication_is_atomic_and_old_revisions_remain_immutable() {
     let mut changed = first.draft.content.clone();
     changed.task.public_summary = "A later revision".into();
     let changed = service
-        .update_draft(&owner, &draft.id, first.draft.version, changed, LATER)
+        .update_draft(
+            &owner,
+            &draft.id,
+            first.draft.version,
+            "service-1".into(),
+            changed,
+            LATER,
+        )
         .await
         .unwrap();
     let second = service
@@ -1398,12 +1410,148 @@ async fn publication_is_atomic_and_old_revisions_remain_immutable() {
 }
 
 #[tokio::test]
+async fn publisher_connection_binding_survives_draft_reads_and_replacements() {
+    let owner = SubjectId("publisher".into());
+    let (service, _) = service();
+    let draft = service
+        .create_draft(
+            owner.clone(),
+            "service-original".into(),
+            content(owner.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(draft.selected_service_id, "service-original");
+    assert_eq!(
+        service
+            .get_draft(&owner, &draft.id)
+            .await
+            .unwrap()
+            .selected_service_id,
+        "service-original"
+    );
+
+    let replacement = service
+        .update_draft(
+            &owner,
+            &draft.id,
+            draft.version,
+            "service-reverified".into(),
+            draft.content,
+            LATER,
+        )
+        .await
+        .unwrap();
+    assert_eq!(replacement.selected_service_id, "service-reverified");
+    assert_eq!(
+        service
+            .get_draft(&owner, &draft.id)
+            .await
+            .unwrap()
+            .selected_service_id,
+        "service-reverified"
+    );
+}
+
+#[tokio::test]
+async fn publication_refuses_a_connection_other_than_the_draft_binding() {
+    let owner = SubjectId("publisher".into());
+    let (service, _) = service();
+    let draft = service
+        .create_draft(
+            owner.clone(),
+            "service-bound".into(),
+            content(owner.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+
+    let failure = service
+        .publish(
+            &owner,
+            &draft.id,
+            draft.version,
+            "service-substituted",
+            LATER,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(failure, TriggerServiceError::Validation(_)));
+    assert!(failure.to_string().contains("selected_service_id"));
+
+    let unchanged = service.get_draft(&owner, &draft.id).await.unwrap();
+    assert_eq!(unchanged.version, draft.version);
+    assert_eq!(unchanged.selected_service_id, "service-bound");
+}
+
+#[tokio::test]
+async fn a_legacy_draft_binds_its_first_authorized_publication_connection() {
+    let owner = SubjectId("publisher".into());
+    let (service, store) = service();
+    let draft = service
+        .create_draft(
+            owner.clone(),
+            "service-pre-migration".into(),
+            content(owner.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let mut legacy_wire = serde_json::to_value(&draft).unwrap();
+    legacy_wire
+        .as_object_mut()
+        .unwrap()
+        .remove("selected_service_id");
+    let legacy = serde_json::from_value::<TriggerDraft>(legacy_wire).unwrap();
+    assert!(legacy.selected_service_id.is_empty());
+    store
+        .inner
+        .lock()
+        .unwrap()
+        .drafts
+        .insert(legacy.id.clone(), legacy.clone());
+
+    let published = service
+        .publish(
+            &owner,
+            &legacy.id,
+            legacy.version,
+            "service-authorized",
+            LATER,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(published.draft.selected_service_id, "service-authorized");
+    assert_eq!(
+        service
+            .get_draft(&owner, &legacy.id)
+            .await
+            .unwrap()
+            .selected_service_id,
+        "service-authorized"
+    );
+    assert_eq!(
+        published.revision.publisher_authority.connection.service_id,
+        "service-authorized"
+    );
+}
+
+#[tokio::test]
 async fn a_readme_reclick_resumes_current_and_new_launch_explicitly_supersedes_it() {
     let publisher = SubjectId("publisher".into());
     let contributor = SubjectId("contributor".into());
     let (service, store) = service();
     let draft = service
-        .create_draft(publisher.clone(), content(publisher.clone()), NOW)
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
         .await
         .unwrap();
     let published = service
