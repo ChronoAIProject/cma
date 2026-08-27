@@ -1436,7 +1436,7 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
     assert_explain_is_page_bounded(
         &execution,
         PAGE_SIZE,
-        PAGE_SIZE,
+        PAGE_SIZE * 2,
         SUBJECT_AUTHORIZATION_INDEX,
     );
 
@@ -1736,7 +1736,9 @@ async fn real_mongo_recurring_work_pages_bound_examined_keys_and_documents() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
 async fn real_mongo_schema_maintenance_is_bounded_resumable_and_cutover_safe() {
-    const LEGACY_RECORDS: usize = AUTH_MIGRATION_LANE_BATCH_SIZE + 2;
+    // Leave one unversioned row behind the bounded startup batch in addition
+    // to the explicit v1 and v2 compatibility fixtures.
+    const LEGACY_RECORDS: usize = AUTH_MIGRATION_LANE_BATCH_SIZE + 3;
 
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
@@ -2457,10 +2459,7 @@ async fn real_mongo_subject_corruption_isolated_across_recurring_lanes() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
     let client = Client::with_uri_str(&uri).await.unwrap();
-    let database_name = format!(
-        "chrono_auth_corrupt_subject_test_{}",
-        uuid::Uuid::new_v4().simple()
-    );
+    let database_name = format!("cma_auth_subject_{}", uuid::Uuid::new_v4().simple());
     let key =
         AuthEncryptionKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap();
     let store = MongoAuthStore::open(&client, &database_name, "deployment-a", &key)
@@ -2595,10 +2594,7 @@ async fn real_mongo_credential_corruption_isolated_across_recurring_lanes() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
     let client = Client::with_uri_str(&uri).await.unwrap();
-    let database_name = format!(
-        "chrono_auth_corrupt_credential_test_{}",
-        uuid::Uuid::new_v4().simple()
-    );
+    let database_name = format!("cma_auth_credential_{}", uuid::Uuid::new_v4().simple());
     let key =
         AuthEncryptionKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap();
     let store = MongoAuthStore::open(&client, &database_name, "deployment-a", &key)

@@ -651,6 +651,7 @@ fn build_trigger_session_service_defaulting_to(
             handovers: Some(adapter.clone()),
             skills: None,
             workspaces: Some(workspaces),
+            skill_packs: None,
             settings: None,
         },
         environments,

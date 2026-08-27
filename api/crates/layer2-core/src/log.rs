@@ -125,6 +125,13 @@ struct RecordChange {
     /// from the newest durable record, but doing so must never let an obsolete
     /// finalizer or rollback inherit a newer handover's token.
     rotation_precondition: Option<RotationPrecondition>,
+    /// Whether this exact lifecycle repair may inherit a terminal row.
+    ///
+    /// Ordinary writes remain fenced once termination is durable. Compatibility
+    /// termination is the sole exception: it may need to clear an already-terminal
+    /// handover descriptor after skill cleanup advanced an unrelated revision.
+    /// The rotation precondition still fences the exact lifecycle/runtime boundary.
+    terminal_lifecycle_repair: bool,
 }
 
 #[derive(Clone)]
@@ -149,12 +156,15 @@ struct RecordFields {
     initial_prompt: bool,
     rotation: bool,
     handover: bool,
+    skill_grant: bool,
+    skill_packs: bool,
 }
 
 #[derive(Default)]
 struct CommitSemantics {
     owned_fields: Option<RecordFields>,
     rotation_precondition: Option<RotationPrecondition>,
+    terminal_lifecycle_repair: bool,
 }
 
 struct CommitRequest {
@@ -1069,6 +1079,7 @@ impl SessionLog {
                 semantics: CommitSemantics {
                     owned_fields: Some(owned_fields),
                     rotation_precondition: Some(rotation_precondition),
+                    terminal_lifecycle_repair: false,
                 },
                 conversation_authority: None,
             },
@@ -1315,6 +1326,7 @@ impl SessionLog {
                             before,
                             fields,
                             rotation_precondition: semantics.rotation_precondition,
+                            terminal_lifecycle_repair: semantics.terminal_lifecycle_repair,
                         });
                         state.local_tail = Some(Box::new(change.next_local_tail(&record)));
                         change
@@ -1643,7 +1655,10 @@ impl SessionLog {
                     return Ok(());
                 }
                 Err(StoreError::SequenceTaken { expected, .. }) if !events.is_empty() => {
-                    if self.durably_terminated().await && !only_terminal_detach(events) {
+                    if self.durably_terminated().await
+                        && !only_terminal_detach(events)
+                        && !change.is_some_and(|change| change.terminal_lifecycle_repair)
+                    {
                         return Err(StoreError::SessionTerminated {
                             id: self.id.clone(),
                         });
@@ -1657,7 +1672,10 @@ impl SessionLog {
                     );
                 }
                 Err(StoreError::NonContiguousAppend { expected, .. }) if !events.is_empty() => {
-                    if self.durably_terminated().await && !only_terminal_detach(events) {
+                    if self.durably_terminated().await
+                        && !only_terminal_detach(events)
+                        && !change.is_some_and(|change| change.terminal_lifecycle_repair)
+                    {
                         return Err(StoreError::SessionTerminated {
                             id: self.id.clone(),
                         });
@@ -1916,14 +1934,28 @@ impl SessionLog {
                         local_tail = Some(record.clone());
                         continue;
                     };
-                    let (fields, rotation_precondition) = change.as_deref().map_or_else(
-                        || (RecordFields::for_commit(&before, record, events), None),
-                        |change| (change.fields, change.rotation_precondition.clone()),
-                    );
+                    let (fields, rotation_precondition, terminal_lifecycle_repair) =
+                        change.as_deref().map_or_else(
+                            || {
+                                (
+                                    RecordFields::for_commit(&before, record, events),
+                                    None,
+                                    false,
+                                )
+                            },
+                            |change| {
+                                (
+                                    change.fields,
+                                    change.rotation_precondition.clone(),
+                                    change.terminal_lifecycle_repair,
+                                )
+                            },
+                        );
                     let rebuilt = Box::new(RecordChange {
                         before,
                         fields,
                         rotation_precondition,
+                        terminal_lifecycle_repair,
                     });
                     local_tail = Some(Box::new(rebuilt.next_local_tail(record)));
                     *change = Some(rebuilt);
@@ -1958,7 +1990,10 @@ impl SessionLog {
                 .ok_or_else(|| StoreError::SessionDeleted {
                     id: self.id.clone(),
                 })?;
-        if durable.session.status.is_terminal() && !only_terminal_detach(events) {
+        if durable.session.status.is_terminal()
+            && !only_terminal_detach(events)
+            && !change.is_some_and(|change| change.terminal_lifecycle_repair)
+        {
             return Err(StoreError::SessionTerminated {
                 id: self.id.clone(),
             });
@@ -2235,6 +2270,41 @@ impl SessionService {
         Ok(())
     }
 
+    /// Persist only a custody-state transition over unrelated durable changes.
+    ///
+    /// Custody moves without a public event while bytes cross from the session
+    /// row to object storage. Empty ordinary commits are intentionally fieldless,
+    /// so this narrow writer names the one field it owns explicitly.
+    pub(crate) async fn persist_skill_pack_state_durably(
+        &self,
+        record: &mut SessionRecord,
+        state: crate::store::SkillPackState,
+    ) -> Result<(), StoreError> {
+        if record.skill_packs == state {
+            return Ok(());
+        }
+        let before = record.clone();
+        record.skill_packs = state;
+        let lane = self.event_logs.lane(&record.session.id);
+        lane.observe_record(&before);
+        let result = lane
+            .enqueue_commit_with(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                Vec::new(),
+                Some(RecordFields {
+                    skill_packs: true,
+                    ..RecordFields::default()
+                }),
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
     /// Persist an exact proposal under one durable conversation predicate.
     pub(crate) async fn persist_conversation_durably(
         &self,
@@ -2280,6 +2350,8 @@ impl SessionService {
                     plane: true,
                     runtime: true,
                     rotation: true,
+                    skill_grant: true,
+                    skill_packs: true,
                     ..RecordFields::default()
                 },
                 RotationPrecondition {
@@ -2290,6 +2362,136 @@ impl SessionService {
                 },
                 |_| {},
             )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
+    /// Claim one handover and, for legacy sessions, stage its exact H2 bytes.
+    ///
+    /// History may advance while preflight reads object storage. The strict
+    /// runtime/lifecycle predicate lets this unit inherit that history without
+    /// separating the noninteractive boundary from the candidate it protects.
+    pub(crate) async fn mark_handover_durably(
+        &self,
+        record: &mut SessionRecord,
+        claimed: &SessionRecord,
+        events: Vec<Event>,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        lane.observe_record(claimed);
+        let result = lane
+            .enqueue_commit_with_rotation(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                events,
+                RecordFields {
+                    status: true,
+                    rotation: true,
+                    handover: true,
+                    skill_packs: claimed.skill_packs != record.skill_packs,
+                    ..RecordFields::default()
+                },
+                RotationPrecondition {
+                    claim: claimed.rotation_claim.clone(),
+                    status: claimed.session.status,
+                    runtime_id: Some(claimed.runtime_id.clone()),
+                    pending_handover: Some(claimed.pending_handover.clone()),
+                },
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
+    /// Commit a terminal lifecycle boundary together with skill cleanup intent.
+    ///
+    /// Runtime retirement happens under a Lifecycle lease first. This unit then
+    /// owns the exact status/claim/custody fields it settles while inheriting
+    /// unrelated history that raced the provider operation.
+    pub(crate) async fn terminate_with_skill_cleanup_durably(
+        &self,
+        record: &mut SessionRecord,
+        claimed: &SessionRecord,
+        events: Vec<Event>,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        lane.observe_record(claimed);
+        let result = lane
+            .enqueue_commit_with_rotation(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                events,
+                RecordFields {
+                    status: true,
+                    rotation: true,
+                    handover: true,
+                    skill_packs: true,
+                    ..RecordFields::default()
+                },
+                RotationPrecondition {
+                    claim: claimed.rotation_claim.clone(),
+                    status: claimed.session.status,
+                    runtime_id: Some(claimed.runtime_id.clone()),
+                    pending_handover: Some(claimed.pending_handover.clone()),
+                },
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
+    /// Publish one ordinary or compatibility runtime's Ready boundary.
+    ///
+    /// The skill grant and custody record become authoritative only with the
+    /// exact runtime that receives those bytes. They are therefore explicit
+    /// fields of this unit rather than inferred from an arbitrary status event.
+    pub(crate) async fn publish_ready_durably(
+        &self,
+        record: &mut SessionRecord,
+        claimed: &SessionRecord,
+        events: Vec<Event>,
+    ) -> Result<(), StoreError> {
+        let lane = self.event_logs.lane(&record.session.id);
+        lane.observe_record(claimed);
+        let fields = RecordFields {
+            status: true,
+            geometry: true,
+            plane: true,
+            // Readoption may mint the compatibility claim that fences local
+            // publication. Ordinary provisioning carries its existing claim
+            // unchanged, so owning this field is a no-op there.
+            rotation: true,
+            skill_grant: true,
+            skill_packs: true,
+            ..RecordFields::default()
+        };
+        // A claimless compatibility readoption mints its claim in this write.
+        // The old absence is still a strict predicate: otherwise conflict
+        // rebase could inherit a concurrently switched runtime and publish the
+        // stale runtime's Ready grant/custody against its successor.
+        let enqueued = lane.enqueue_commit_with_rotation(
+            CommitMode::UpdateInheriting,
+            record.clone(),
+            events,
+            fields,
+            RotationPrecondition {
+                claim: claimed.rotation_claim.clone(),
+                status: claimed.session.status,
+                runtime_id: Some(claimed.runtime_id.clone()),
+                pending_handover: Some(claimed.pending_handover.clone()),
+            },
+            |_| {},
+        );
+        let result = enqueued
             .complete
             .await
             .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
@@ -2484,6 +2686,7 @@ impl SessionService {
                     status: true,
                     rotation: true,
                     handover: true,
+                    skill_packs: true,
                     ..RecordFields::default()
                 },
                 RotationPrecondition {
@@ -2534,6 +2737,69 @@ impl SessionService {
                 record,
                 events,
                 semantics: CommitSemantics::default(),
+                conversation_authority: None,
+            },
+            retained,
+            |_| {},
+        );
+        complete
+    }
+
+    /// Retain a compatibility terminal repair behind its exact observed boundary.
+    ///
+    /// Skill cleanup owns only custody state and may advance the revision after
+    /// termination has committed. This repair may inherit that disjoint change,
+    /// but the observed status, runtime, rotation claim, and handover descriptor
+    /// must all still match before it clears the residual lifecycle fields.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn persist_terminal_lifecycle_repair_with<T, H, F, Fut, R, RFut, U>(
+        &self,
+        claimed: &SessionRecord,
+        record: SessionRecord,
+        events: Vec<Event>,
+        continuation: F,
+        on_rejected: R,
+        on_undelivered: U,
+    ) -> CommitReceiver<T>
+    where
+        T: Send + 'static,
+        H: Send + 'static,
+        F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+        Fut: Future<Output = (T, H)> + Send + 'static,
+        R: FnOnce(StoreError) -> RFut + Send + 'static,
+        RFut: Future<Output = ()> + Send + 'static,
+        U: FnOnce(T, H) + Send + 'static,
+    {
+        let id = record.session.id.clone();
+        let lane = self.event_logs.lane(&id);
+        lane.observe_record(claimed);
+        let (retained, complete) = retain_commit(
+            id,
+            Arc::clone(&lane),
+            continuation,
+            on_rejected,
+            on_undelivered,
+        );
+        lane.enqueue_retained_commit(
+            CommitRequest {
+                mode: CommitMode::UpdateInheriting,
+                record,
+                events,
+                semantics: CommitSemantics {
+                    owned_fields: Some(RecordFields {
+                        status: true,
+                        rotation: true,
+                        handover: true,
+                        ..RecordFields::default()
+                    }),
+                    rotation_precondition: Some(RotationPrecondition {
+                        claim: claimed.rotation_claim.clone(),
+                        status: claimed.session.status,
+                        runtime_id: Some(claimed.runtime_id.clone()),
+                        pending_handover: Some(claimed.pending_handover.clone()),
+                    }),
+                    terminal_lifecycle_repair: true,
+                },
                 conversation_authority: None,
             },
             retained,
@@ -2716,6 +2982,7 @@ fn record_from_entry(entry: &SessionEntry) -> SessionRecord {
     record.context_ref = entry.context_ref.clone();
     record.trigger_origin = entry.trigger_origin.clone();
     record.initial_prompt = entry.initial_prompt.clone();
+    record.skill_packs = entry.skill_packs.clone();
     record.revision = entry.event_log.revision.load(Ordering::Acquire);
     record
 }
@@ -2758,7 +3025,6 @@ impl RecordFields {
             || before.session.kernel != intended.session.kernel
             || before.session.environment_profile != intended.session.environment_profile
             || before.session.granted_services != intended.session.granted_services
-            || before.session.granted_skills != intended.session.granted_skills
             || before.session.pricing != intended.session.pricing
             || before.session.created_at != intended.session.created_at;
         // Runtime authority belongs only to an event whose semantics name it or
@@ -2767,6 +3033,10 @@ impl RecordFields {
         // handover; a mere difference from its local predecessor must never let
         // it resurrect that handle over newer durable authority.
         fields.context = before.context_ref != intended.context_ref;
+        // Skill grants and byte custody are also explicit-only. A queued event
+        // carries a full live snapshot that may predate handover or cleanup;
+        // inferring either field here would let that stale snapshot roll a
+        // Ready grant or terminal cleanup state backward.
         fields
     }
 
@@ -2932,7 +3202,7 @@ impl RecordChange {
             &intended.session.granted_services,
         );
         compatible &= rebase_selected(
-            configuration,
+            self.fields.skill_grant,
             &mut durable.session.granted_skills,
             &before.session.granted_skills,
             &intended.session.granted_skills,
@@ -2978,6 +3248,12 @@ impl RecordChange {
             &mut durable.pending_handover,
             &before.pending_handover,
             &intended.pending_handover,
+        );
+        compatible &= rebase_selected(
+            self.fields.skill_packs,
+            &mut durable.skill_packs,
+            &before.skill_packs,
+            &intended.skill_packs,
         );
 
         if !compatible {
@@ -3062,7 +3338,7 @@ impl RecordChange {
             &intended.session.granted_services,
         );
         copy_selected(
-            configuration,
+            self.fields.skill_grant,
             &mut target.session.granted_skills,
             &intended.session.granted_skills,
         );
@@ -3096,6 +3372,11 @@ impl RecordChange {
             self.fields.handover,
             &mut target.pending_handover,
             &intended.pending_handover,
+        );
+        copy_selected(
+            self.fields.skill_packs,
+            &mut target.skill_packs,
+            &intended.skill_packs,
         );
     }
 }
@@ -3455,6 +3736,40 @@ where
     )
 }
 
+/// Queue the one terminal lifecycle repair allowed to inherit a terminal row.
+///
+/// This is deliberately separate from the ordinary rotation-aware append. Its
+/// strict observed boundary still rejects a later lifecycle owner; only a
+/// disjoint revision advance such as skill cleanup can be inherited.
+pub(crate) fn append_terminal_lifecycle_repair<T, H, F, Fut, R, RFut, U>(
+    entry: &mut SessionEntry,
+    claimed: &SessionRecord,
+    kind: EventKind,
+    change: impl FnOnce(&mut SessionRecord),
+    continuation: F,
+    on_rejected: R,
+    on_undelivered: U,
+) -> CommitReceiver<T>
+where
+    T: Send + 'static,
+    H: Send + 'static,
+    F: FnOnce(SessionRecord) -> Fut + Send + 'static,
+    Fut: Future<Output = (T, H)> + Send + 'static,
+    R: FnOnce(StoreError) -> RFut + Send + 'static,
+    RFut: Future<Output = ()> + Send + 'static,
+    U: FnOnce(T, H) + Send + 'static,
+{
+    append_batch_with_authority(
+        entry,
+        [kind],
+        change,
+        AppendPredicate::terminal_repair(claimed),
+        continuation,
+        on_rejected,
+        on_undelivered,
+    )
+}
+
 /// Queue a semantic conversation event under its exact durable link fence.
 ///
 /// The proposed record participates in inheriting lineage immediately, while
@@ -3496,6 +3811,7 @@ where
 struct AppendPredicate<'a> {
     authority: Option<ConversationWriteAuthority>,
     claimed_rotation: Option<&'a SessionRecord>,
+    terminal_lifecycle_repair: bool,
 }
 
 impl<'a> AppendPredicate<'a> {
@@ -3503,6 +3819,7 @@ impl<'a> AppendPredicate<'a> {
         Self {
             authority: None,
             claimed_rotation: None,
+            terminal_lifecycle_repair: false,
         }
     }
 
@@ -3510,6 +3827,7 @@ impl<'a> AppendPredicate<'a> {
         Self {
             authority: Some(authority),
             claimed_rotation: None,
+            terminal_lifecycle_repair: false,
         }
     }
 
@@ -3517,6 +3835,15 @@ impl<'a> AppendPredicate<'a> {
         Self {
             authority: None,
             claimed_rotation: Some(claimed),
+            terminal_lifecycle_repair: false,
+        }
+    }
+
+    fn terminal_repair(claimed: &'a SessionRecord) -> Self {
+        Self {
+            authority: None,
+            claimed_rotation: Some(claimed),
+            terminal_lifecycle_repair: true,
         }
     }
 }
@@ -3542,6 +3869,7 @@ where
     let AppendPredicate {
         authority,
         claimed_rotation,
+        terminal_lifecycle_repair,
     } = predicate;
     let events = kinds
         .into_iter()
@@ -3612,6 +3940,7 @@ where
                         ..RecordFields::default()
                     }),
                     rotation_precondition: Some(rotation_precondition),
+                    terminal_lifecycle_repair,
                 },
                 None => CommitSemantics::default(),
             },

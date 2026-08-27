@@ -13,12 +13,40 @@ struct Readiness {
     reason: Option<&'static str>,
 }
 
+const LEGACY_CUTOVER_STAGED: &str = "legacy-cutover-staged";
+
 pub(crate) fn router(store: Arc<dyn SessionStore>) -> Router {
     Router::new()
         // Liveness is process-only. Restarting this process cannot repair its
         // database, and would discard the live runtime links it can preserve.
         .route("/livez", get(|| async { "ok" }))
         .route("/ready", get(move || ready(Arc::clone(&store))))
+}
+
+/// Serve process health while the legacy MongoDB cutover waits for recovery capture.
+///
+/// There is deliberately no application state to merge into this router. Once
+/// the migration has been verified, its MongoDB client is closed before this
+/// surface binds, and every operation other than liveness stays unavailable.
+pub(crate) fn legacy_cutover_router() -> Router {
+    Router::new()
+        .route(
+            "/livez",
+            get(|| async { "ok" }).head(legacy_cutover_unavailable),
+        )
+        .route("/ready", get(legacy_cutover_unavailable))
+        .fallback(legacy_cutover_unavailable)
+        .method_not_allowed_fallback(legacy_cutover_unavailable)
+}
+
+async fn legacy_cutover_unavailable() -> impl IntoResponse {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(Readiness {
+            status: "not-ready",
+            reason: Some(LEGACY_CUTOVER_STAGED),
+        }),
+    )
 }
 
 async fn ready(store: Arc<dyn SessionStore>) -> impl IntoResponse {
@@ -52,7 +80,7 @@ mod tests {
 
     use axum::{
         body::{to_bytes, Body},
-        http::Request,
+        http::{Method, Request},
     };
     use layer2_core::{
         Event, Page, Reserved, SessionId, SessionListQuery, SessionRecord, StoreError, StoredEvent,
@@ -138,9 +166,18 @@ mod tests {
     }
 
     async fn response(app: &Router, path: &str) -> axum::response::Response {
+        response_with_method(app, Method::GET, path).await
+    }
+
+    async fn response_with_method(
+        app: &Router,
+        method: Method,
+        path: &str,
+    ) -> axum::response::Response {
         app.clone()
             .oneshot(
                 Request::builder()
+                    .method(method)
                     .uri(path)
                     .body(Body::empty())
                     .expect("health request builds"),
@@ -191,5 +228,62 @@ mod tests {
             "ok"
         );
         assert_eq!(store.pings.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn the_legacy_cutover_stage_is_live_but_never_ready() {
+        let app = legacy_cutover_router();
+
+        let liveness = response(&app, "/livez").await;
+        assert_eq!(liveness.status(), StatusCode::OK);
+        assert_eq!(
+            to_bytes(liveness.into_body(), usize::MAX).await.unwrap(),
+            "ok"
+        );
+
+        let readiness = response(&app, "/ready").await;
+        assert_eq!(readiness.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            json(readiness).await,
+            serde_json::json!({
+                "status": "not-ready",
+                "reason": "legacy-cutover-staged",
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_legacy_cutover_stage_serves_no_public_operation() {
+        let app = legacy_cutover_router();
+
+        let head_liveness = response_with_method(&app, Method::HEAD, "/livez").await;
+        assert_eq!(head_liveness.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        for (method, path) in [
+            (Method::GET, "/"),
+            (Method::GET, "/api/v1/sessions"),
+            (Method::POST, "/api/v1/sessions"),
+            (Method::GET, "/auth/sign-in"),
+            (Method::GET, "/openapi.json"),
+            (Method::GET, "/.well-known/agent-card.json"),
+            (Method::GET, "/api/v1/sessions/sesn_stage/events"),
+            (Method::GET, "/api/v1/sessions/sesn_stage/terminal"),
+            (Method::POST, "/livez"),
+        ] {
+            let response = response_with_method(&app, method.clone(), path).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{method} {path} must remain unavailable"
+            );
+            assert_eq!(
+                json(response).await,
+                serde_json::json!({
+                    "status": "not-ready",
+                    "reason": "legacy-cutover-staged",
+                }),
+                "{method} {path} returned the wrong maintenance reason"
+            );
+        }
     }
 }
