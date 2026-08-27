@@ -58,11 +58,19 @@
       "cma:changePlane": false,
       "cma:planeChangeObserved": true,
       "cma:resources": true,
-      "cma:liveFrames": true
+      "cma:liveFrames": true,
+      "cma:trigger": {
+        "preview": true,
+        "launchSnapshot": true,
+        "progressReplay": true,
+        "diffReview": true,
+        "mutations": false
+      }
     }
   },
   "conformsTo": [
     "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
-    "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
+    "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/agui-trigger-read"
   ]
 }

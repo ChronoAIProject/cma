@@ -253,6 +253,25 @@ pub struct EffectClaim {
     pub fence: u64,
 }
 
+/// One successful, fenced effect completion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectCompletion {
+    pub result: LaunchEffectResult,
+    pub safe_detail: String,
+    pub external_resource_ids: BTreeMap<String, String>,
+    pub now: String,
+    pub correlation_id: String,
+}
+
+/// Exact authority and repository state installed by one capability renewal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityRenewalRecord {
+    pub reach: super::ReachStatus,
+    pub connection: ConnectionSnapshot,
+    pub authority: AuthorityProvenance,
+    pub branch: BranchRecord,
+}
+
 /// Typed durable result for one effect. Provider adapters cannot advance a
 /// Launch by returning an unstructured success flag.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

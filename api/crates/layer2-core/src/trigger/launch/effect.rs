@@ -246,22 +246,10 @@ impl Launch {
         &mut self,
         lease: &WorkerLease,
         claim: &EffectClaim,
-        result: LaunchEffectResult,
-        safe_detail: impl Into<String>,
-        external_resource_ids: BTreeMap<String, String>,
-        now: impl Into<String>,
-        correlation_id: impl Into<String>,
+        completion: EffectCompletion,
     ) -> Result<(), TriggerValidationError> {
         let mut candidate = self.clone();
-        candidate.apply_completion(
-            lease,
-            claim,
-            result,
-            safe_detail.into(),
-            external_resource_ids,
-            now.into(),
-            correlation_id.into(),
-        )?;
+        candidate.apply_completion(lease, claim, completion)?;
         *self = candidate;
         Ok(())
     }
@@ -392,12 +380,15 @@ impl Launch {
         &mut self,
         lease: &WorkerLease,
         claim: &EffectClaim,
-        result: LaunchEffectResult,
-        safe_detail: String,
-        external_resource_ids: BTreeMap<String, String>,
-        now: String,
-        correlation_id: String,
+        completion: EffectCompletion,
     ) -> Result<(), TriggerValidationError> {
+        let EffectCompletion {
+            result,
+            safe_detail,
+            external_resource_ids,
+            now,
+            correlation_id,
+        } = completion;
         self.validate_worker_lease(lease, &now)?;
         let delivery_before = self.delivery.clone();
         self.attach_effect_result(claim.kind, result)?;

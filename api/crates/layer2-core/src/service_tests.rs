@@ -297,15 +297,15 @@ impl crate::CredentialSource for TriggerCredential {
     }
 }
 
-fn trigger_session_service(
-    archive: Vec<u8>,
-) -> (
+type TriggerSessionFixture = (
     Arc<SessionService>,
     Arc<FakeStore>,
     Arc<FakeAdapter>,
     Arc<crate::test_support::FakeProfileStore>,
     Arc<TriggerWorkspaceBytes>,
-) {
+);
+
+fn trigger_session_service(archive: Vec<u8>) -> TriggerSessionFixture {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter {
         capabilities: layer3_adapter::KernelCapabilities {

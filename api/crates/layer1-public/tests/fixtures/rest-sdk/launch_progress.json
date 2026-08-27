@@ -1,0 +1,45 @@
+{
+  "launch_id": "44444444-4444-4444-8444-444444444444",
+  "events": [
+    {
+      "sequence": 1,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "create",
+      "kind": {
+        "type": "created"
+      }
+    },
+    {
+      "sequence": 2,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "connection",
+      "kind": {
+        "type": "connection_selected"
+      }
+    },
+    {
+      "sequence": 3,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "fixture-progress",
+      "kind": {
+        "type": "step_changed",
+        "step": {
+          "key": "review",
+          "sequence": 1,
+          "status": "pending",
+          "started_at": null,
+          "completed_at": null,
+          "attempt": 0,
+          "safe_detail": "",
+          "remediation": "",
+          "external_resource_ids": {},
+          "correlation_id": "create"
+        }
+      }
+    }
+  ],
+  "next_cursor": 3
+}

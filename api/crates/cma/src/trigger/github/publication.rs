@@ -252,16 +252,15 @@ impl GithubBroker {
         }
 
         let base_commit = self
-            .read_commit(context, &repository, &plan.expected_head)
+            .read_commit(context, repository, &plan.expected_head)
             .await?;
         if !base_commit.sha.eq_ignore_ascii_case(&plan.expected_head) {
             return Err(GithubBrokerError::AuthorityDrift);
         }
         validate_commit_sha(&base_commit.tree.sha)?;
         let base_tree_id = base_commit.tree.sha.to_ascii_lowercase();
-        let (tree_entries, object_ids) = self
-            .prepare_tree_entries(context, &repository, plan)
-            .await?;
+        let (tree_entries, object_ids) =
+            self.prepare_tree_entries(context, repository, plan).await?;
         let tree: Observed<TreeWriteWire> = self
             .github_json(
                 &context.owner,

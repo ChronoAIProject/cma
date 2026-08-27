@@ -67,6 +67,12 @@ pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
     "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
 );
 
+type TriggerProviderPorts = (
+    Arc<dyn TriggerAuthorityVerifier>,
+    Arc<dyn TriggerConnectionManager>,
+    Option<Arc<trigger::github::GithubBroker>>,
+);
+
 fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     vec![
         Box::new(AguiInterface),
@@ -486,27 +492,26 @@ async fn main() {
         }),
         auth_store,
     );
-    let (trigger_authority, trigger_connections, trigger_github): (
-        Arc<dyn TriggerAuthorityVerifier>,
-        Arc<dyn TriggerConnectionManager>,
-        Option<Arc<trigger::github::GithubBroker>>,
-    ) = match &config.auth_mode {
-        auth::AuthMode::Provider { base_url, .. } => {
-            let broker = match trigger::github::GithubBroker::new(base_url, Arc::clone(&auth_state))
-            {
-                Ok(broker) => Arc::new(broker),
-                Err(error) => {
-                    tracing::error!(error = %error, "cannot construct the GitHub authority broker");
-                    std::process::exit(2);
-                }
-            };
-            (broker.clone(), broker.clone(), Some(broker))
-        }
-        auth::AuthMode::Trusted { .. } => {
-            let unavailable = Arc::new(trigger::UnavailableGithub);
-            (unavailable.clone(), unavailable, None)
-        }
-    };
+    let (trigger_authority, trigger_connections, trigger_github): TriggerProviderPorts =
+        match &config.auth_mode {
+            auth::AuthMode::Provider { base_url, .. } => {
+                let broker = match trigger::github::GithubBroker::new(
+                    base_url,
+                    Arc::clone(&auth_state),
+                ) {
+                    Ok(broker) => Arc::new(broker),
+                    Err(error) => {
+                        tracing::error!(error = %error, "cannot construct the GitHub authority broker");
+                        std::process::exit(2);
+                    }
+                };
+                (broker.clone(), broker.clone(), Some(broker))
+            }
+            auth::AuthMode::Trusted { .. } => {
+                let unavailable = Arc::new(trigger::UnavailableGithub);
+                (unavailable.clone(), unavailable, None)
+            }
+        };
     let trigger_service = Arc::new(TriggerService::new(
         trigger_store.clone() as Arc<dyn layer2_core::TriggerStore>,
         trigger_store as Arc<dyn layer2_core::LaunchStore>,
