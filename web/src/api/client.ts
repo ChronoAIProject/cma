@@ -25,6 +25,7 @@
 import { createClient, type CreateSession } from '@chronoai/cma-sdk';
 import type {
   DiffReview,
+  CursorPage,
   KernelOffer,
   Launch,
   LaunchListRequest,
@@ -166,6 +167,14 @@ export function createNewLaunch(publicId: string, options: TriggerCommandOptions
 
 export function listLaunches(page: LaunchListRequest = {}): Promise<readonly Launch[]> {
   return bot.listLaunches(page).then((result) => result.items);
+}
+
+/** One owner-scoped Launch page, retained for bounded relationship lookups. */
+export function listLaunchPage(
+  page: LaunchListRequest = {},
+  signal?: AbortSignal,
+): Promise<CursorPage<Launch>> {
+  return bot.listLaunches(page, { signal });
 }
 
 export function readLaunch(id: string, signal?: AbortSignal): Promise<Launch> {

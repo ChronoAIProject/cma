@@ -114,6 +114,7 @@ export function Console({
   const [allowance, setAllowance] = useState<Allowance | undefined>(undefined);
   const allowanceRead = useRef(0);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const routeRef = useRef(route);
   const [notice, setNotice] = useState<FailureNotice | null>(null);
   /*
    * Bumped when the terminal palette changes. xterm reads its theme when the
@@ -238,13 +239,26 @@ export function Console({
    */
   const [focusHistory, setFocusHistory] = useState<readonly string[]>([]);
 
-  const active = sessions.find((s) => s.id === activeId) ?? null;
+  const selectedSession = sessions.find((session) => session.id === activeId) ?? null;
+  const routedSession =
+    route.kind === 'session'
+      ? (sessions.find((session) => session.id === route.sessionId) ?? null)
+      : null;
+  const active = route.kind === 'session' ? routedSession : selectedSession;
+  const effectiveActiveId = active?.id ?? null;
+  const effectiveFocusHistory = useMemo(
+    () =>
+      effectiveActiveId === null || focusHistory[0] === effectiveActiveId
+        ? focusHistory
+        : [effectiveActiveId, ...focusHistory.filter((seen) => seen !== effectiveActiveId)],
+    [effectiveActiveId, focusHistory],
+  );
   // Bound once so the surface below can be told it exists. Read straight from
   // the map, `noUncheckedIndexedAccess` makes every use `SignIn | undefined`.
   const pendingSignIn = active === null ? undefined : signIns[active.id];
 
   /** Select a session, in whichever arrangement is showing. */
-  const select = useCallback((id: string) => {
+  const selectState = useCallback((id: string) => {
     setActiveId(id);
     /*
      * Choosing a session is asking to look at it, so it leaves whatever else
@@ -267,6 +281,23 @@ export function Console({
       prev[0] === id ? prev : [id, ...prev.filter((seen) => seen !== id)],
     );
   }, []);
+
+  const select = useCallback(
+    (id: string) => {
+      selectState(id);
+      onNavigate({ kind: 'session', sessionId: id });
+    },
+    [onNavigate, selectState],
+  );
+
+  const clearSelection = useCallback(() => {
+    setActiveId(null);
+    onNavigate({ kind: 'home' }, { replace: true });
+  }, [onNavigate]);
+
+  useEffect(() => {
+    routeRef.current = route;
+  }, [route]);
 
   /*
    * §12: the card carries what failed — ending with the API's own words
@@ -323,9 +354,13 @@ export function Console({
           return;
         }
         setSessions(existing);
-        const live = existing.find((s) => s.lifecycle !== 'terminated');
-        if (live !== undefined) {
-          select(live.id);
+        const openingRoute = routeRef.current;
+        const requested =
+          openingRoute.kind === 'session'
+            ? existing.find((session) => session.id === openingRoute.sessionId)
+            : existing.find((session) => session.lifecycle !== 'terminated');
+        if (requested !== undefined) {
+          selectState(requested.id);
         }
       } catch (cause) {
         if (!cancelled) {
@@ -348,9 +383,9 @@ export function Console({
   const { start, endSession, reviveSessionById, removeSession, changeSessionPlane } =
     useSessionActions({
       sessions,
-      activeId,
+      activeId: effectiveActiveId,
       setSessions,
-      setActiveId,
+      clearSelection,
       setOpeningForId,
       setNotice,
       setActing,
@@ -435,7 +470,7 @@ export function Console({
     [openingTurn, openingForId],
   );
   const { nodes, reconnect } = useSessionDrivers(sessions, opening);
-  const driver = nodes.find((node) => node.session.id === activeId)?.driver ?? null;
+  const driver = nodes.find((node) => node.session.id === effectiveActiveId)?.driver ?? null;
 
   // The canvas shows exactly what the rail lists, so one arrangement never
   // holds a session the other has let go of.
@@ -468,8 +503,11 @@ export function Console({
       return undefined;
     }
     const connectable = canvasNodes.filter((node) => node.driver !== null).map((n) => n.session.id);
-    return unattachedNote(connectable.length, selectLiveWindow(connectable, focusHistory).size);
-  }, [view, arrangementShown, canvasNodes, focusHistory]);
+    return unattachedNote(
+      connectable.length,
+      selectLiveWindow(connectable, effectiveFocusHistory).size,
+    );
+  }, [view, arrangementShown, canvasNodes, effectiveFocusHistory]);
 
   /*
    * What the status band says this page is showing (§6).
@@ -507,7 +545,12 @@ export function Console({
 
   return (
     <AppFrame
-      detailsOpen={view === 'sessions' && active !== null && detailsOpen}
+      detailsOpen={
+        (route.kind === 'home' || route.kind === 'session') &&
+        view === 'sessions' &&
+        active !== null &&
+        detailsOpen
+      }
       sidebarCollapsed={railCollapsed}
       onSidebarCollapsedChange={setRailCollapsed}
       sidebar={({ collapsed, onToggle }) => (
@@ -555,7 +598,7 @@ export function Console({
           {collapsed ? null : (
             <SessionRail
               sessions={listed}
-              activeId={activeId}
+              activeId={effectiveActiveId}
               order={order}
               onSelect={select}
               onReorder={setOrder}
@@ -589,6 +632,7 @@ export function Console({
             session={active}
             ending={endings[active.id]}
             readSpend={readSessionSpend}
+            navigate={onNavigate}
             onClose={() => {
               setDetailsOpen(false);
             }}
@@ -606,6 +650,12 @@ export function Console({
             launchId={route.launchId}
             navigate={onNavigate}
           />
+        ) : route.kind === 'session' && !loading && routedSession === null ? (
+          <main className="console__surface">
+            <div className="console__empty" role="alert">
+              This session does not exist or is not available to this account.
+            </div>
+          </main>
         ) : route.kind === 'not_found' ? (
           <main className="console__surface">
             <div className="console__empty" role="alert">
@@ -712,8 +762,8 @@ export function Console({
                  */
                 key={`canvas:${String(paletteEpoch)}`}
                 nodes={canvasNodes}
-                focusedId={activeId}
-                focusHistory={focusHistory}
+                focusedId={effectiveActiveId}
+                focusHistory={effectiveFocusHistory}
                 onFocus={select}
                 onOpenToReply={(id) => {
                   /*
