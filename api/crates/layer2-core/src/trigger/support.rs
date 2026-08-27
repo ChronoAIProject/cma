@@ -131,6 +131,9 @@ pub enum TriggerSupportEventKind {
     EffectReconciled {
         effect: LaunchEffectKind,
     },
+    RecoveryAuthorized {
+        effect: LaunchEffectKind,
+    },
     DeliveryChanged {
         state: PromptDeliveryState,
     },
@@ -265,6 +268,9 @@ fn support_event(kind: &LaunchEventKind) -> TriggerSupportEventKind {
         },
         LaunchEventKind::EffectReconciled { effect } => {
             TriggerSupportEventKind::EffectReconciled { effect: *effect }
+        }
+        LaunchEventKind::RecoveryAuthorized { effect } => {
+            TriggerSupportEventKind::RecoveryAuthorized { effect: *effect }
         }
         LaunchEventKind::DeliveryChanged { state } => {
             TriggerSupportEventKind::DeliveryChanged { state: *state }

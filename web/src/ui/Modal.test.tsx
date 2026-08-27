@@ -46,6 +46,19 @@ describe('the dialog', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it('holds an unresolved command dialog until its caller makes it dismissible', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<Modal open dismissible={false} title="Unresolved command" onClose={onClose} />);
+
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    await user.click(document.querySelector('.modal__mask') as HTMLElement);
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Unresolved command' })).toBeInTheDocument();
+  });
+
   it('closes on the close control', async () => {
     const user = userEvent.setup();
     const onClose = open();

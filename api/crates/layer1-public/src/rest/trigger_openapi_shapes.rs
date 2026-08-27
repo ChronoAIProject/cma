@@ -392,6 +392,24 @@ pub(super) enum PromptDeliveryState {
 }
 
 #[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum LaunchEffectKind {
+    Preflight,
+    Fork,
+    Branch,
+    WorkspaceImport,
+    Sandbox,
+    Session,
+    Reach,
+    InitialDispatch,
+    Checkpoint,
+    Diff,
+    BranchPublication,
+    PullRequest,
+    Cleanup,
+}
+
+#[derive(serde::Serialize, ToSchema)]
 pub(super) struct PromptDelivery {
     launch_id: String,
     session_id: String,
@@ -400,6 +418,7 @@ pub(super) struct PromptDelivery {
     payload_hash: String,
     state: PromptDeliveryState,
     attempt: u32,
+    recovery_generation: u32,
     dispatch_fence_sequence: Option<u64>,
     queued_at: String,
     updated_at: String,

@@ -335,6 +335,26 @@ fn trigger_support_renders_only_the_closed_lease_projection() {
     assert_eq!(lease["expires_at"], "2026-08-27T00:02:01Z");
 }
 
+#[tokio::test]
+async fn cross_owner_effect_recovery_returns_only_empty_acceptance_and_audit_ownership() {
+    let caller = Caller::new(SubjectId("operator".into()), Default::default());
+    let owner = SubjectId("contributor".into());
+    let response = effect_reconciliation_accepted(&caller, owner.clone());
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        response.extensions().get::<ActedUpon>(),
+        Some(&ActedUpon(owner))
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("the empty acceptance body is readable");
+    assert!(
+        body.is_empty(),
+        "a cross-owner Launch projection must not escape"
+    );
+}
+
 #[test]
 fn a_target_of_any_kind_renders_with_the_kind_it_is() {
     let view = ActivityView::from(

@@ -18,7 +18,7 @@
 use axum::http::Method;
 use layer2_core::{
     ActivityAction as Action, ActivityDetail, ActivityTarget, DetailKey, EnvironmentProfileId,
-    LaunchId, PublicTriggerId, SessionId, TriggerId, TriggerRevisionId,
+    LaunchEffectKind, LaunchId, PublicTriggerId, SessionId, TriggerId, TriggerRevisionId,
 };
 use serde::Deserialize;
 
@@ -169,8 +169,20 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
         ["api", "v1", "launches", id, "cancel"] if method == Method::POST => {
             Some(Classified::new(Action::TriggerLaunchCancel).on(launch(id)))
         }
+        ["api", "v1", "launches", id, "recover-initial-prompt"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchPromptRecover).on(launch(id)))
+        }
         ["api", "v1", "launches", id, "events"] if method == Method::GET => {
             Some(Classified::new(Action::TriggerLaunchEventsRead).on(launch(id)))
+        }
+        ["api", "v1", "admin", "triggers", "launches", id, "reconcile"]
+            if method == Method::POST =>
+        {
+            Some(
+                Classified::new(Action::TriggerEffectRecoveryAuthorize)
+                    .on(launch(id))
+                    .with_body(),
+            )
         }
 
         ["api", "v1", "sessions"] => match *method {
@@ -337,6 +349,16 @@ struct ProfileBody {
     skills: Vec<serde::de::IgnoredAny>,
 }
 
+/// The only recovery evidence safe to retain in the cross-session activity log.
+/// The intent key and every provider or credential body have no field here.
+#[derive(Debug, Deserialize)]
+struct TriggerEffectRecoveryBody {
+    #[serde(default)]
+    effect: Option<LaunchEffectKind>,
+    #[serde(default)]
+    expected_fence: Option<u64>,
+}
+
 /// Read the parameters worth keeping out of a request body.
 ///
 /// A body that cannot be parsed records nothing rather than failing: the
@@ -389,11 +411,40 @@ pub fn detail_from_body(action: Action, body: &[u8]) -> ActivityDetail {
             detail.record(DetailKey::PackageCount, parsed.packages.len().to_string());
             detail.record(DetailKey::SkillCount, parsed.skills.len().to_string());
         }
+        Action::TriggerEffectRecoveryAuthorize => {
+            let Ok(parsed) = serde_json::from_slice::<TriggerEffectRecoveryBody>(body) else {
+                return detail;
+            };
+            if let Some(effect) = parsed.effect {
+                detail.record(DetailKey::Effect, launch_effect_name(effect));
+            }
+            if let Some(fence) = parsed.expected_fence {
+                detail.record(DetailKey::FencingToken, fence.to_string());
+            }
+        }
         // Every other action carries nothing in its body worth keeping, and is
         // never buffered in the first place.
         _ => {}
     }
     detail
+}
+
+fn launch_effect_name(effect: LaunchEffectKind) -> &'static str {
+    match effect {
+        LaunchEffectKind::Preflight => "preflight",
+        LaunchEffectKind::Fork => "fork",
+        LaunchEffectKind::Branch => "branch",
+        LaunchEffectKind::WorkspaceImport => "workspace_import",
+        LaunchEffectKind::Sandbox => "sandbox",
+        LaunchEffectKind::Session => "session",
+        LaunchEffectKind::Reach => "reach",
+        LaunchEffectKind::InitialDispatch => "initial_dispatch",
+        LaunchEffectKind::Checkpoint => "checkpoint",
+        LaunchEffectKind::Diff => "diff",
+        LaunchEffectKind::BranchPublication => "branch_publication",
+        LaunchEffectKind::PullRequest => "pull_request",
+        LaunchEffectKind::Cleanup => "cleanup",
+    }
 }
 
 /// Read the parameters worth keeping out of a query string.

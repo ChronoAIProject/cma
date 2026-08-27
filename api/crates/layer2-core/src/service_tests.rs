@@ -885,6 +885,18 @@ async fn replace_prompt_input(
         .conversation = Some(input);
 }
 
+fn ambiguous_prompt_input(calls: Arc<AtomicUsize>) -> ConversationInputSender {
+    ConversationInputSender::spawn(4, move |_input| {
+        let calls = Arc::clone(&calls);
+        async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err(AdapterError::Unavailable(
+                "runtime acknowledgement remained ambiguous".into(),
+            ))
+        }
+    })
+}
+
 async fn await_prompt_state(
     store: &Arc<FakeStore>,
     id: &SessionId,
@@ -1269,6 +1281,164 @@ async fn ambiguous_dispatch_never_resends_and_late_evidence_resolves_it() {
         )
         .await
         .expect("owner input is admitted after the initial turn completes");
+}
+
+#[tokio::test]
+async fn each_explicit_prompt_recovery_authorizes_exactly_one_new_generation() {
+    let fixture = trigger_prompt_fixture().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    replace_prompt_input(
+        &fixture.service,
+        &fixture.session.id,
+        ambiguous_prompt_input(Arc::clone(&calls)),
+    )
+    .await;
+
+    let first = fixture
+        .service
+        .dispatch_trigger_prompt(&fixture.launch, &fixture.claim)
+        .await
+        .expect("the first ambiguity is retained");
+    assert_eq!(first.state, crate::PromptDeliveryState::RecoveryRequired);
+    assert_eq!(first.attempt, 1);
+    assert_eq!(first.recovery_generation, 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let (first_recovery, first_claim) = recovered_prompt_claim(
+        fixture.launch.clone(),
+        first.clone(),
+        "recover-generation-one",
+    );
+    replace_prompt_input(
+        &fixture.service,
+        &fixture.session.id,
+        ambiguous_prompt_input(Arc::clone(&calls)),
+    )
+    .await;
+    let second = fixture
+        .service
+        .dispatch_trigger_prompt(&first_recovery, &first_claim)
+        .await
+        .expect("one explicit confirmation authorizes one replacement generation");
+    assert_eq!(second.state, crate::PromptDeliveryState::RecoveryRequired);
+    assert_eq!(second.attempt, 2);
+    assert_eq!(second.recovery_generation, 1);
+    assert_eq!(second.origin_key, first.origin_key);
+    assert_eq!(second.payload_hash, first.payload_hash);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    let fenced = fixture
+        .service
+        .dispatch_trigger_prompt(&first_recovery, &first_claim)
+        .await
+        .expect("the consumed confirmation leaves the ambiguous write fenced");
+    assert_eq!(fenced, second);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    let (second_recovery, second_claim) =
+        recovered_prompt_claim(first_recovery, second.clone(), "recover-generation-two");
+    replace_prompt_input(
+        &fixture.service,
+        &fixture.session.id,
+        ambiguous_prompt_input(Arc::clone(&calls)),
+    )
+    .await;
+    let third = fixture
+        .service
+        .dispatch_trigger_prompt(&second_recovery, &second_claim)
+        .await
+        .expect("a second confirmation authorizes only the next generation");
+    assert_eq!(third.state, crate::PromptDeliveryState::RecoveryRequired);
+    assert_eq!(third.attempt, 3);
+    assert_eq!(third.recovery_generation, 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+    let events = fixture
+        .service
+        .events_since(&fixture.caller, &fixture.session.id, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::OwnerMessage { .. }))
+            .count(),
+        3,
+        "each disclosed replacement is a separate visible owner turn"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::TurnStarted))
+            .count(),
+        3
+    );
+    assert_eq!(
+        fixture
+            .store
+            .get(&fixture.session.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .initial_prompt
+            .unwrap()
+            .recorded_recovery_generation,
+        2
+    );
+}
+
+fn recovered_prompt_claim(
+    mut launch: crate::Launch,
+    delivery: crate::PromptDelivery,
+    idempotency_key_hash: &str,
+) -> (crate::Launch, crate::EffectClaim) {
+    let failure = crate::LaunchFailure {
+        class: crate::FailureClass::RecoveryRequired,
+        code: "initial_prompt_recovery_required".into(),
+        detail: "CMA cannot prove whether the initial task reached the runtime.".into(),
+        remediation: "Explicitly acknowledge the duplicate-execution risk.".into(),
+        correlation_id: format!("evidence-{idempotency_key_hash}"),
+        retry_at: None,
+        observed_at: crate::clock::now_rfc3339(),
+    };
+    launch.delivery = Some(delivery.clone());
+    launch.state = crate::LaunchState::FailedRetryable;
+    launch.blocked_reason = Some(crate::LaunchBlockedReason::RecoveryRequired);
+    launch.resume_state = Some(crate::LaunchState::PromptPending);
+    launch.failure = Some(failure.clone());
+    launch.lease = None;
+    let effect = launch.effects.last_mut().unwrap();
+    effect.state = crate::EffectState::RecoveryRequired;
+    effect.last_failure = Some(failure);
+    let owner = launch.owner.clone();
+    launch
+        .authorize_initial_prompt_recovery(
+            crate::Confirmation {
+                action: crate::ConfirmationAction::RecoverPrompt,
+                subject: owner,
+                snapshot_digest: delivery.payload_hash,
+                confirmed_at: crate::clock::now_rfc3339(),
+                idempotency_key_hash: idempotency_key_hash.into(),
+            },
+            true,
+            crate::clock::now_rfc3339(),
+            format!("authorize-{idempotency_key_hash}"),
+        )
+        .unwrap();
+    let acquired = std::time::SystemTime::now();
+    let lease = crate::WorkerLease {
+        holder: format!("worker-{idempotency_key_hash}"),
+        fencing_token: launch.fencing_counter + 1,
+        acquired_at: crate::clock::rfc3339_at(acquired),
+        expires_at: crate::clock::rfc3339_at(acquired + std::time::Duration::from_secs(300)),
+    };
+    launch.fencing_counter = lease.fencing_token;
+    launch.lease = Some(lease.clone());
+    let claim = launch
+        .claim_next_effect(&lease, &lease.acquired_at, "claim-recovered-prompt")
+        .unwrap()
+        .unwrap();
+    (launch, claim)
 }
 
 #[tokio::test]

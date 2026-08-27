@@ -159,6 +159,7 @@ pub enum LaunchEventKind {
     Resumed { reason: LaunchBlockedReason },
     Failure { failure: LaunchFailure },
     EffectReconciled { effect: LaunchEffectKind },
+    RecoveryAuthorized { effect: LaunchEffectKind },
     DeliveryChanged { state: PromptDeliveryState },
     ReachChanged { reach: super::ReachStatus },
     ConfirmationRecorded { action: ConfirmationAction },
@@ -451,6 +452,13 @@ pub struct PromptDelivery {
     pub payload_hash: String,
     pub state: PromptDeliveryState,
     pub attempt: u32,
+    /// Number of explicitly authorized replacement-dispatch generations.
+    ///
+    /// Proven pre-write retries stay within one generation. An ambiguous write
+    /// consumes the generation and another send remains fenced until a new
+    /// `RecoverPrompt` confirmation advances this value.
+    #[serde(default)]
+    pub recovery_generation: u32,
     pub dispatch_fence_sequence: Option<u64>,
     pub queued_at: String,
     pub updated_at: String,
@@ -1009,27 +1017,55 @@ impl Launch {
         }
         let now = now.into();
         let correlation_id = correlation_id.into();
-        if self.state == LaunchState::PrPending
-            && self.effects.iter().any(|effect| {
-                matches!(
-                    effect.kind,
-                    LaunchEffectKind::BranchPublication | LaunchEffectKind::PullRequest
-                ) && matches!(
-                    effect.state,
-                    EffectState::Claimed | EffectState::Reconciling | EffectState::RecoveryRequired
-                )
-            })
-        {
+        if self.effects.iter().any(|effect| {
+            matches!(
+                effect.state,
+                EffectState::Claimed | EffectState::Reconciling | EffectState::RecoveryRequired
+            )
+        }) {
             return Err(TriggerValidationError::new(
-                "pull-request effects must be reconciled before cancellation",
+                "unsettled external effects must be reconciled before cancellation",
             ));
         }
         self.confirmations.push(confirmation);
+        for effect in &mut self.effects {
+            if matches!(
+                effect.state,
+                EffectState::Queued | EffectState::FailedRetryable
+            ) {
+                effect.state = EffectState::Cancelled;
+                effect.next_attempt_at = None;
+                effect.updated_at = now.clone();
+            }
+        }
+        let mut cancelled_steps = Vec::new();
+        for step in &mut self.steps {
+            if matches!(
+                step.status,
+                LaunchStepStatus::Pending
+                    | LaunchStepStatus::Running
+                    | LaunchStepStatus::Blocked
+                    | LaunchStepStatus::Retryable
+            ) {
+                step.status = LaunchStepStatus::Cancelled;
+                step.safe_detail = "Cancelled before this step completed.".into();
+                step.remediation.clear();
+                step.correlation_id = correlation_id.clone();
+                cancelled_steps.push(step.clone());
+            }
+        }
+        for step in cancelled_steps {
+            self.push_event(
+                now.clone(),
+                correlation_id.clone(),
+                LaunchEventKind::StepChanged { step },
+            )?;
+        }
         if self.state == LaunchState::PrPending && self.pull_request.is_some() {
             self.transition(LaunchState::PrOpen, now.clone(), correlation_id.clone())?;
         }
-        self.transition(LaunchState::Cancelled, now.clone(), correlation_id)?;
-        self.push_event(now, "cancel", LaunchEventKind::Cancelled)
+        self.transition(LaunchState::Cancelled, now.clone(), correlation_id.clone())?;
+        self.push_event(now, correlation_id, LaunchEventKind::Cancelled)
     }
 
     /// Begin or refresh a read-only contribution review.

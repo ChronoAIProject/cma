@@ -14,9 +14,9 @@ use layer2_core::{
     ContributionRecord, CredentialRoute, DiffArtifact, DiffArtifactId, DiffFile, EditableField,
     EffectiveConfiguration, ExecutorPolicy, ForkRecord, InputFieldDefinition, Launch,
     LaunchBlockedReason, LaunchEvent, LaunchEventKind, LaunchFailure, LaunchId, LaunchOverrides,
-    LaunchStep, OperationStore, OverridePolicy, PricingSnapshot, PromptDelivery,
-    PublicProjectionPolicy, PublicTriggerId, PullRequestDraft, PullRequestOperation,
-    PullRequestRecord, ReachStatus, RepositoryAccessPolicy, RequiredCapability, ResourcePolicy,
+    LaunchStep, OverridePolicy, PricingSnapshot, PromptDelivery, PublicProjectionPolicy,
+    PublicTriggerId, PullRequestDraft, PullRequestOperation, PullRequestRecord, ReachStatus,
+    RecoverInitialPromptCommand, RepositoryAccessPolicy, RequiredCapability, ResourcePolicy,
     ScopeClass, SessionLink, SetupPolicy, SourceMode, StartLaunchCommand, TriggerAvailability,
     TriggerConnection, TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft,
     TriggerId, TriggerPageRequest, TriggerPreview, TriggerRepositorySelection, TriggerRevision,
@@ -24,7 +24,7 @@ use layer2_core::{
     TriggerStoreError, TriggerTask, UpstreamRevision, WorkflowChangePolicy, WorkspaceCheckpoint,
     WorkspaceManifest, WorkspaceRecord,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -64,6 +64,7 @@ pub(super) fn documented_router(state: TriggersState) -> OpenApiRouter {
         .routes(routes!(open_pull_request))
         .routes(routes!(update_pull_request))
         .routes(routes!(download_diff_artifact))
+        .routes(routes!(recover_initial_prompt))
         .routes(routes!(cancel_launch))
         .routes(routes!(launch_progress))
         .with_state(state)
@@ -224,6 +225,15 @@ struct SelectConnectionRequest {
 struct ConfirmLaunchRequest {
     expected_revision: u64,
     snapshot_digest: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct RecoverInitialPromptRequest {
+    expected_revision: u64,
+    snapshot_digest: String,
+    #[serde(default)]
+    acknowledge_duplicate_execution_risk: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
@@ -1064,6 +1074,9 @@ enum LaunchEventKindView {
     EffectReconciled {
         effect: String,
     },
+    RecoveryAuthorized {
+        effect: String,
+    },
     DeliveryChanged {
         state: String,
     },
@@ -1107,6 +1120,11 @@ impl From<LaunchEvent> for LaunchEventView {
                 LaunchEventKind::Failure { failure } => LaunchEventKindView::Failure { failure },
                 LaunchEventKind::EffectReconciled { effect } => {
                     LaunchEventKindView::EffectReconciled {
+                        effect: enum_name(effect),
+                    }
+                }
+                LaunchEventKind::RecoveryAuthorized { effect } => {
+                    LaunchEventKindView::RecoveryAuthorized {
                         effect: enum_name(effect),
                     }
                 }
@@ -1154,36 +1172,7 @@ fn correlation_id(headers: &HeaderMap) -> String {
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
 
-async fn command<T: DeserializeOwned>(
-    key: idempotency::IdempotencyKey,
-    operations: Arc<dyn OperationStore>,
-    caller: &layer2_core::Caller,
-    operation: String,
-    body: Result<idempotency::RequestBody<T>, BodyProblem>,
-) -> Result<(idempotency::Idempotency, Result<T, BodyProblem>, String), Response> {
-    let key = key.required().map_err(IntoResponse::into_response)?;
-    let confirmation_hash = key
-        .confirmation_hash(&operation)
-        .expect("a required operation key has a digest");
-    let (body, fingerprint) = match body {
-        Ok(body) => body.into_parts(),
-        Err(error) => return Err(RequestFailure::from(error).into_response()),
-    };
-    let guard = match idempotency::Idempotency::begin(
-        key,
-        operations,
-        caller,
-        operation,
-        fingerprint,
-    )
-    .await
-    {
-        Ok(idempotency::Idempotency::Replay(response)) => return Err(response),
-        Ok(guard) => guard,
-        Err(response) => return Err(response),
-    };
-    Ok((guard, body, confirmation_hash))
-}
+use idempotency::required_command as command;
 
 fn parse_trigger_id(value: String) -> Result<TriggerId, TriggerServiceError> {
     TriggerId::parse(value).map_err(|_| TriggerServiceError::NotFound)
@@ -2316,6 +2305,57 @@ async fn cancel_launch(
             )
             .await?;
         Ok(Json(LaunchView::from(launch)).into_response())
+    }
+    .await;
+    guard.finish(result).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/launches/{launch_id}/recover-initial-prompt",
+    tag = "launches",
+    params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = RecoverInitialPromptRequest,
+    responses((status = 202, description = "One replacement initial-prompt generation explicitly authorized", body = LaunchView))
+)]
+async fn recover_initial_prompt(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<RecoverInitialPromptRequest>, BodyProblem>,
+) -> Response {
+    let operation = format!("trigger-launch-prompt-recovery:{launch_id}");
+    let (guard, body, confirmation_hash) =
+        match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
+            Ok(parts) => parts,
+            Err(response) => return response,
+        };
+    let result: Result<Response, RequestFailure> = async {
+        let body = body.map_err(RequestFailure::from)?;
+        let timestamp = now();
+        let launch = state
+            .triggers
+            .recover_initial_prompt(
+                &caller.subject,
+                &parse_launch_id(launch_id)?,
+                RecoverInitialPromptCommand {
+                    expected_revision: body.expected_revision,
+                    confirmation: Confirmation {
+                        action: ConfirmationAction::RecoverPrompt,
+                        subject: caller.subject.clone(),
+                        snapshot_digest: body.snapshot_digest,
+                        confirmed_at: timestamp.clone(),
+                        idempotency_key_hash: confirmation_hash,
+                    },
+                    acknowledge_duplicate_execution_risk: body.acknowledge_duplicate_execution_risk,
+                    now: timestamp,
+                    correlation_id: correlation_id(&headers),
+                },
+            )
+            .await?;
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
     }
     .await;
     guard.finish(result).await

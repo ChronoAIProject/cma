@@ -58,6 +58,231 @@ pub(super) fn required_effect(launch: &Launch) -> Option<LaunchEffectKind> {
 }
 
 impl Launch {
+    /// Authorize one replacement attempt for an ambiguously delivered initial
+    /// prompt. The immutable session outbox remains the final send authority.
+    pub fn authorize_initial_prompt_recovery(
+        &mut self,
+        confirmation: Confirmation,
+        acknowledge_duplicate_execution_risk: bool,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        let mut candidate = self.clone();
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        if !acknowledge_duplicate_execution_risk {
+            return Err(TriggerValidationError::field(
+                "acknowledge_duplicate_execution_risk",
+                "must be true before another initial task dispatch is authorized",
+            ));
+        }
+        if candidate.lease.is_some() {
+            return Err(TriggerValidationError::field(
+                "worker_lease",
+                "must be released before prompt recovery is authorized",
+            ));
+        }
+        candidate.recovery_failure()?;
+        if candidate.resume_state != Some(LaunchState::PromptPending) {
+            return Err(TriggerValidationError::field(
+                "resume_state",
+                "prompt recovery must resume the retained prompt step",
+            ));
+        }
+        let delivery = candidate.delivery.as_ref().ok_or_else(|| {
+            TriggerValidationError::field("delivery", "the retained prompt delivery is missing")
+        })?;
+        if delivery.state != PromptDeliveryState::RecoveryRequired {
+            return Err(TriggerValidationError::field(
+                "delivery.state",
+                "must be recovery_required before a replacement dispatch is authorized",
+            ));
+        }
+        if confirmation.action != ConfirmationAction::RecoverPrompt
+            || confirmation.subject != candidate.owner
+            || confirmation.snapshot_digest != delivery.payload_hash
+        {
+            return Err(TriggerValidationError::field(
+                "confirmation",
+                "does not authorize recovery of this exact retained prompt payload",
+            ));
+        }
+        if candidate.confirmations.iter().any(|existing| {
+            existing.action == ConfirmationAction::RecoverPrompt
+                && existing.idempotency_key_hash == confirmation.idempotency_key_hash
+        }) {
+            return Err(TriggerValidationError::field(
+                "confirmation",
+                "has already been consumed by a prompt recovery",
+            ));
+        }
+        let index = candidate.recovery_effect_index(LaunchEffectKind::InitialDispatch)?;
+        candidate.effects[index].state = EffectState::Queued;
+        candidate.effects[index].next_attempt_at = None;
+        candidate.effects[index].updated_at = now.clone();
+        let step = candidate.step_mut(LaunchEffectKind::InitialDispatch)?;
+        step.status = LaunchStepStatus::Pending;
+        step.safe_detail =
+            "A replacement dispatch was explicitly authorized for the retained task.".into();
+        step.remediation.clear();
+        step.correlation_id = correlation_id.clone();
+        let step = step.clone();
+        candidate.confirmations.push(confirmation);
+        candidate.push_event(
+            now.clone(),
+            correlation_id.clone(),
+            LaunchEventKind::ConfirmationRecorded {
+                action: ConfirmationAction::RecoverPrompt,
+            },
+        )?;
+        candidate.push_event(
+            now.clone(),
+            correlation_id.clone(),
+            LaunchEventKind::RecoveryAuthorized {
+                effect: LaunchEffectKind::InitialDispatch,
+            },
+        )?;
+        candidate.push_event(
+            now.clone(),
+            correlation_id.clone(),
+            LaunchEventKind::StepChanged { step },
+        )?;
+        candidate.transition(LaunchState::PromptPending, now, correlation_id)?;
+        candidate.failure = None;
+        candidate.resume_state = None;
+        *self = candidate;
+        Ok(())
+    }
+
+    /// Authorize one additional read-only reconciliation of an effect whose
+    /// outcome remained unknown. This never changes the effect to an executable
+    /// state and never creates a new provider intent.
+    pub fn authorize_effect_reconciliation(
+        &mut self,
+        kind: LaunchEffectKind,
+        intent_key: &str,
+        expected_fence: u64,
+        evidence_correlation_id: &str,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        let mut candidate = self.clone();
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        if candidate.lease.is_some() {
+            return Err(TriggerValidationError::field(
+                "worker_lease",
+                "must be released before reconciliation is authorized",
+            ));
+        }
+        let failure_correlation_id = candidate.recovery_failure()?.correlation_id.clone();
+        if evidence_correlation_id != failure_correlation_id {
+            return Err(TriggerValidationError::field(
+                "evidence_correlation_id",
+                "must name the retained recovery-required failure",
+            ));
+        }
+        let resume = candidate.resume_state.ok_or_else(|| {
+            TriggerValidationError::field(
+                "resume_state",
+                "a recovery-required Launch must retain its durable step",
+            )
+        })?;
+        let index = candidate.recovery_effect_index(kind)?;
+        let record = &candidate.effects[index];
+        if record.intent_key != intent_key || record.fence != expected_fence {
+            return Err(TriggerValidationError::field(
+                "effect",
+                "does not match the exact retained intent and fence",
+            ));
+        }
+        if !record.last_failure.as_ref().is_some_and(|failure| {
+            failure.class == FailureClass::RecoveryRequired
+                && failure.correlation_id == evidence_correlation_id
+        }) {
+            return Err(TriggerValidationError::field(
+                "effect.last_failure",
+                "does not match the retained recovery-required evidence",
+            ));
+        }
+        let mut resumed = candidate.clone();
+        resumed.state = resume;
+        resumed.blocked_reason = None;
+        resumed.failure = None;
+        resumed.resume_state = None;
+        if required_effect(&resumed) != Some(kind) {
+            return Err(TriggerValidationError::field(
+                "effect",
+                "does not match the retained recovery step",
+            ));
+        }
+        let record = &mut candidate.effects[index];
+        record.state = EffectState::Reconciling;
+        record.next_attempt_at = Some(now.clone());
+        record.updated_at = now.clone();
+        let step = candidate.step_mut(kind)?;
+        step.status = LaunchStepStatus::Retryable;
+        step.safe_detail = "An operator authorized another read-only reconciliation pass.".into();
+        step.remediation =
+            "CMA will inspect the retained intent; it will not repeat the external write.".into();
+        step.correlation_id = correlation_id.clone();
+        let step = step.clone();
+        candidate.push_event(
+            now.clone(),
+            correlation_id.clone(),
+            LaunchEventKind::RecoveryAuthorized { effect: kind },
+        )?;
+        candidate.push_event(
+            now.clone(),
+            correlation_id.clone(),
+            LaunchEventKind::StepChanged { step },
+        )?;
+        candidate.transition(resume, now, correlation_id)?;
+        candidate.failure = None;
+        candidate.resume_state = None;
+        *self = candidate;
+        Ok(())
+    }
+
+    fn recovery_failure(&self) -> Result<&LaunchFailure, TriggerValidationError> {
+        if self.state != LaunchState::FailedRetryable
+            || self.blocked_reason != Some(LaunchBlockedReason::RecoveryRequired)
+        {
+            return Err(TriggerValidationError::new(
+                "the Launch is not waiting for explicit recovery",
+            ));
+        }
+        self.failure
+            .as_ref()
+            .filter(|failure| failure.class == FailureClass::RecoveryRequired)
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "failure",
+                    "must retain the recovery-required classification",
+                )
+            })
+    }
+
+    fn recovery_effect_index(
+        &self,
+        kind: LaunchEffectKind,
+    ) -> Result<usize, TriggerValidationError> {
+        let index = self
+            .effects
+            .iter()
+            .rposition(|record| record.kind == kind && record.state != EffectState::Succeeded)
+            .ok_or_else(|| {
+                TriggerValidationError::field("effect", "the retained recovery effect is missing")
+            })?;
+        if self.effects[index].state != EffectState::RecoveryRequired {
+            return Err(TriggerValidationError::field(
+                "effect.state",
+                "must be recovery_required before recovery is authorized",
+            ));
+        }
+        Ok(index)
+    }
+
     /// Claim the current durable effect after a worker lease has been committed.
     ///
     /// A prior claim, including one from an expired worker, is never silently
@@ -491,6 +716,12 @@ impl Launch {
         if let Some(previous) = self.delivery.as_ref() {
             if !same_prompt_identity(previous, &delivery)
                 || delivery.attempt < previous.attempt
+                || delivery.recovery_generation < previous.recovery_generation
+                || (delivery.recovery_generation != previous.recovery_generation
+                    && !(previous.state == PromptDeliveryState::RecoveryRequired
+                        && delivery.state == PromptDeliveryState::Queued
+                        && delivery.recovery_generation
+                            == previous.recovery_generation.saturating_add(1)))
                 || !legal_prompt_delivery_transition(previous.state, delivery.state)
             {
                 return Err(TriggerValidationError::field(
@@ -1545,6 +1776,7 @@ fn legal_prompt_delivery_transition(from: PromptDeliveryState, to: PromptDeliver
                 | (State::WriteConfirmed, State::RecoveryRequired)
                 | (State::ExecutionObserved, State::Completed)
                 | (State::ExecutionObserved, State::Failed)
+                | (State::RecoveryRequired, State::Queued)
                 | (State::RecoveryRequired, State::ExecutionObserved)
                 | (State::RecoveryRequired, State::Completed)
                 | (State::RecoveryRequired, State::Failed)

@@ -724,7 +724,7 @@ async fn main() {
         triggers: Some(layer1_public::rest::TriggersState {
             triggers: Arc::clone(&trigger_service),
             connections: trigger_connections,
-            operations: operation_store,
+            operations: Arc::clone(&operation_store),
             diff_artifacts: trigger_workspace_store
                 .clone()
                 .map(|store| store as Arc<dyn layer2_core::DiffArtifactObjectStore>),
@@ -738,6 +738,7 @@ async fn main() {
             users: Arc::clone(&users),
             settings: Arc::clone(&settings),
             triggers: Some(trigger_service),
+            operations: operation_store,
         }),
     );
     let rate_limits =

@@ -11,8 +11,9 @@ use layer2_core::{
     CommitAttributionPolicy, CommitIdentity, Confirmation, ConfirmationAction, ConnectedAccount,
     ConnectionSnapshot, ConnectionState, ContributionId, ContributionPolicy, ContributionRecord,
     CredentialRoute, DelegationState, DiffArtifact, DiffArtifactId, DiffArtifactObjectStore,
-    DiffChangeKind, DiffFile, DiffValidationOutcome, EditableField, ExecutorPolicy, ForkRecord,
-    InputFieldDefinition, InputFieldKind, Launch, LaunchAuthority, LaunchId, LaunchQuery,
+    DiffChangeKind, DiffFile, DiffValidationOutcome, EditableField, EffectRecord, EffectState,
+    ExecutorPolicy, FailureClass, ForkRecord, InputFieldDefinition, InputFieldKind, Launch,
+    LaunchAuthority, LaunchBlockedReason, LaunchEffectKind, LaunchFailure, LaunchId, LaunchQuery,
     LaunchState, LaunchStore, OperationClaim, OperationReservation, OperationStore, OverridePolicy,
     PermissionMode, PromptDelivery, PromptDeliveryState, PublicProjectionPolicy, PublicTriggerId,
     PublicationState, PublishedRevision, PublisherAuthority, PublisherRepositoryRole,
@@ -68,6 +69,7 @@ async fn anonymous_preview_is_side_effect_free_and_prompt_free() {
     let app = fixture.router();
 
     let response = app
+        .clone()
         .oneshot(
             Request::get(format!("/api/v1/triggers/public/{public_id}"))
                 .body(Body::empty())
@@ -85,6 +87,17 @@ async fn anonymous_preview_is_side_effect_free_and_prompt_free() {
     assert!(wire.contains("Fix one bounded issue"));
     assert!(!wire.contains(PRIVATE_PROMPT));
     assert!(!wire.contains("backing-key"));
+
+    let repeated = app
+        .oneshot(
+            Request::get(format!("/api/v1/triggers/public/{public_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repeated.status(), StatusCode::OK);
+    assert!(repeated.headers().get(header::SET_COOKIE).is_none());
     assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
 }
@@ -196,6 +209,89 @@ async fn repeated_start_replays_the_exact_response_and_advances_once() {
             .revision_number,
         1
     );
+}
+
+#[tokio::test]
+async fn prompt_recovery_is_explicit_payload_bound_and_replays_one_authorization() {
+    let mut fixture = Fixture::new();
+    fixture.make_prompt_recovery_required();
+    let launch_id = fixture.launch.id.0.clone();
+    let payload_hash = fixture
+        .launch
+        .delivery
+        .as_ref()
+        .unwrap()
+        .payload_hash
+        .clone();
+    let uri = format!("/api/v1/launches/{launch_id}/recover-initial-prompt");
+
+    for (key, snapshot_digest, acknowledged) in [
+        (
+            "prompt-recovery-unacknowledged",
+            payload_hash.clone(),
+            false,
+        ),
+        ("prompt-recovery-wrong-payload", "f".repeat(64), true),
+    ] {
+        let refused = send(
+            &fixture.router(),
+            Method::POST,
+            &uri,
+            json!({
+                "expected_revision": fixture.launch.revision_number,
+                "snapshot_digest": snapshot_digest,
+                "acknowledge_duplicate_execution_risk": acknowledged,
+            }),
+            key,
+        )
+        .await;
+        assert_eq!(refused.0, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
+    }
+
+    let body = json!({
+        "expected_revision": fixture.launch.revision_number,
+        "snapshot_digest": payload_hash,
+        "acknowledge_duplicate_execution_risk": true,
+    });
+    let first = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        body.clone(),
+        "one-prompt-recovery",
+    )
+    .await;
+    let replay = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        body,
+        "one-prompt-recovery",
+    )
+    .await;
+
+    assert_eq!(first.0, StatusCode::ACCEPTED);
+    assert_eq!(replay.0, StatusCode::ACCEPTED);
+    assert_eq!(first.1, replay.1);
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    let response: Value = serde_json::from_slice(&first.1).unwrap();
+    assert_eq!(response["state"], "prompt_pending");
+    assert_eq!(response["delivery"]["state"], "recovery_required");
+    assert_eq!(response["delivery"]["recovery_generation"], 0);
+    let retained = fixture.store.launch.lock().unwrap().clone().unwrap();
+    assert_eq!(retained.effects.last().unwrap().state, EffectState::Queued);
+    assert_eq!(
+        retained
+            .confirmations
+            .iter()
+            .filter(|confirmation| confirmation.action == ConfirmationAction::RecoverPrompt)
+            .count(),
+        1
+    );
+    assert!(!String::from_utf8(first.1)
+        .unwrap()
+        .contains("idempotency_key_hash"));
 }
 
 #[tokio::test]
@@ -648,6 +744,10 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         (
             "get",
             "/api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download",
+        ),
+        (
+            "post",
+            "/api/v1/launches/{launch_id}/recover-initial-prompt",
         ),
         ("post", "/api/v1/launches/{launch_id}/cancel"),
         ("get", "/api/v1/launches/{launch_id}/events"),
@@ -1202,11 +1302,44 @@ impl Fixture {
             payload_hash: "c".repeat(64),
             state: PromptDeliveryState::Completed,
             attempt: 1,
+            recovery_generation: 0,
             dispatch_fence_sequence: Some(1),
             queued_at: NOW.into(),
             updated_at: NOW.into(),
         });
         self.launch.state = LaunchState::Ready;
+        *self.store.launch.lock().unwrap() = Some(self.launch.clone());
+    }
+
+    fn make_prompt_recovery_required(&mut self) {
+        self.make_ready();
+        let failure = LaunchFailure {
+            class: FailureClass::RecoveryRequired,
+            code: "effect_outcome_unknown".into(),
+            detail: "CMA cannot prove the external outcome.".into(),
+            remediation: "Review retained evidence before authorizing recovery.".into(),
+            correlation_id: "prompt-ambiguity".into(),
+            retry_at: None,
+            observed_at: NOW.into(),
+        };
+        self.launch.state = LaunchState::FailedRetryable;
+        self.launch.blocked_reason = Some(LaunchBlockedReason::RecoveryRequired);
+        self.launch.resume_state = Some(LaunchState::PromptPending);
+        self.launch.failure = Some(failure.clone());
+        self.launch.delivery.as_mut().unwrap().state = PromptDeliveryState::RecoveryRequired;
+        self.launch.effects.push(EffectRecord {
+            kind: LaunchEffectKind::InitialDispatch,
+            state: EffectState::RecoveryRequired,
+            intent_key: format!("cma-trigger:{}:initial-dispatch", self.launch.id.0),
+            attempt: 1,
+            reconciliation_attempt: 0,
+            fence: 1,
+            provider_request_id: None,
+            external_resource_ids: Default::default(),
+            next_attempt_at: None,
+            last_failure: Some(failure),
+            updated_at: NOW.into(),
+        });
         *self.store.launch.lock().unwrap() = Some(self.launch.clone());
     }
 
