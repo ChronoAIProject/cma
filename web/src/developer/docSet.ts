@@ -10,6 +10,7 @@ export const SDK_DOCUMENT_FILENAMES = [
   'authentication.md',
   'sessions.md',
   'streaming.md',
+  'triggers.md',
   'operations.md',
   'errors.md',
   'reference.md',

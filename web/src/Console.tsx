@@ -53,6 +53,10 @@ import './Console.css';
 import { DetailsPanel } from './chat/DetailsPanel';
 import { sectionsOf } from './chat/ToolCall';
 import type { ToolCallEntry } from '@chronoai/cma-sdk';
+import type { AppRoute, AppRouter } from './routing/routes';
+import { TriggerReview } from './trigger/TriggerReview';
+import { LaunchSurface } from './trigger/LaunchSurface';
+import { ContributionSurface } from './trigger/ContributionSurface';
 
 /**
  * The authenticated surface. Same page, now driven live.
@@ -77,6 +81,8 @@ import type { ToolCallEntry } from '@chronoai/cma-sdk';
 interface ConsoleProps {
   readonly user: User;
   readonly onSignOut: () => void;
+  readonly route?: AppRoute;
+  readonly onNavigate?: AppRouter['navigate'];
 }
 
 /** The three transient surfaces §1 admits. They are state, never routes. */
@@ -90,7 +96,12 @@ type ConsoleView = 'sessions' | 'operations' | 'developer';
  * request rather than a size the terminal is stuck with.
  */
 
-export function Console({ user, onSignOut }: ConsoleProps) {
+export function Console({
+  user,
+  onSignOut,
+  route = { kind: 'home' },
+  onNavigate = () => {},
+}: ConsoleProps) {
   /*
    * Read the landing-page prompt exactly once, on first render of the
    * authenticated surface. consumePendingTurn clears it as it reads, so a
@@ -585,7 +596,23 @@ export function Console({ user, onSignOut }: ConsoleProps) {
         )
       }
       center={
-        view === 'operations' ? (
+        route.kind === 'trigger' ? (
+          <TriggerReview key={route.publicId} publicId={route.publicId} navigate={onNavigate} />
+        ) : route.kind === 'launch' ? (
+          <LaunchSurface key={route.launchId} launchId={route.launchId} navigate={onNavigate} />
+        ) : route.kind === 'contribute' ? (
+          <ContributionSurface
+            key={route.launchId}
+            launchId={route.launchId}
+            navigate={onNavigate}
+          />
+        ) : route.kind === 'not_found' ? (
+          <main className="console__surface">
+            <div className="console__empty" role="alert">
+              This CMA page does not exist.
+            </div>
+          </main>
+        ) : view === 'operations' ? (
           <OperatorPage store={operatorStore} capabilities={user.capabilities} />
         ) : view === 'developer' ? (
           <DeveloperSurface />
