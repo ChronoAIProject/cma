@@ -581,8 +581,8 @@ impl SessionService {
             // An unavailable response can hide a committed switch. The same
             // candidate and lease token are an idempotent receipt; retry them
             // exactly before considering another generation.
-            match first_switch {
-                Ok(_) => {}
+            let switched = match first_switch {
+                Ok(switched) => switched,
                 Err(crate::store::StoreError::Unavailable(_)) => {
                     self.store
                         .switch_runtime_authority(
@@ -594,7 +594,7 @@ impl SessionService {
                             StartFailure::transient(format!(
                                 "the runtime authority switch could not be confirmed: {error}"
                             ))
-                        })?;
+                        })?
                 }
                 Err(error) => {
                     drop(installation);
@@ -602,7 +602,13 @@ impl SessionService {
                         "the runtime candidate could not become authoritative: {error}"
                     )));
                 }
-            }
+            };
+            // The switch writes its authority marker outside this process's
+            // ordinary event lane. Advance the allocator before readiness or
+            // handover completion can reserve the same sequence.
+            self.event_logs
+                .lane(&id)
+                .observe_tail(switched.runtime_started_seq);
             let switched_status = lease
                 .as_ref()
                 .expect("the switched lease is present")

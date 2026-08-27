@@ -169,6 +169,8 @@ fn event_payload(event: &layer2_core::Event) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use super::*;
     use layer2_core::{Event, EventKind, RuntimeLossCause, SessionStatus};
 
@@ -235,6 +237,80 @@ mod tests {
         let rendered = format!("{:?}", to_sse(&e));
         assert!(rendered.contains("runtime_lost"), "got {rendered}");
         assert!(rendered.contains("runtime-gone"), "got {rendered}");
+    }
+
+    #[test]
+    fn a_runtime_authority_marker_reaches_rest_with_its_generation() {
+        let event = Event {
+            session_id: SessionId("sesn_1".into()),
+            seq: 10,
+            kind: EventKind::RuntimeStarted {
+                generation: NonZeroU64::new(3).expect("the sample generation is positive"),
+            },
+            appended_at: "2026-08-27T03:12:00Z".into(),
+        };
+
+        assert_eq!(
+            event_payload(&event),
+            serde_json::json!({
+                "seq": 10,
+                "session_id": "sesn_1",
+                "event": { "type": "runtime_started", "generation": 3 }
+            })
+        );
+        let rendered = format!("{:?}", to_sse(&event));
+        assert!(rendered.contains("runtime_started"), "got {rendered}");
+        assert!(rendered.contains("10"), "got {rendered}");
+    }
+
+    #[test]
+    fn a_runtime_handover_marker_reaches_rest_as_a_unit_event() {
+        let event = Event {
+            session_id: SessionId("sesn_1".into()),
+            seq: 10,
+            kind: EventKind::RuntimeHandoverStarted,
+            appended_at: "2026-08-27T03:11:00Z".into(),
+        };
+
+        assert_eq!(
+            event_payload(&event),
+            serde_json::json!({
+                "seq": 10,
+                "session_id": "sesn_1",
+                "event": { "type": "runtime_handover_started" }
+            })
+        );
+        let rendered = format!("{:?}", to_sse(&event));
+        assert!(
+            rendered.contains("runtime_handover_started"),
+            "got {rendered}"
+        );
+        assert!(rendered.contains("10"), "got {rendered}");
+    }
+
+    #[test]
+    fn a_compatibility_incarnation_marker_reaches_rest_as_a_unit_event() {
+        let event = Event {
+            session_id: SessionId("sesn_1".into()),
+            seq: 11,
+            kind: EventKind::RuntimeIncarnationStarted,
+            appended_at: "2026-08-27T03:11:01Z".into(),
+        };
+
+        assert_eq!(
+            event_payload(&event),
+            serde_json::json!({
+                "seq": 11,
+                "session_id": "sesn_1",
+                "event": { "type": "runtime_incarnation_started" }
+            })
+        );
+        let rendered = format!("{:?}", to_sse(&event));
+        assert!(
+            rendered.contains("runtime_incarnation_started"),
+            "got {rendered}"
+        );
+        assert!(rendered.contains("11"), "got {rendered}");
     }
 
     #[test]

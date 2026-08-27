@@ -20,7 +20,7 @@ use crate::coordination::{
     SessionLeaseRequest, SessionOperation,
 };
 use crate::environment_service::EnvironmentProfileService;
-use crate::event::{Event, StoredEvent};
+use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::{ScreenFactory, SessionService};
 use crate::session::SessionSpec;
@@ -70,6 +70,8 @@ pub(crate) struct FakeStore {
     lose_next_conversation_publish_response: std::sync::atomic::AtomicBool,
     /// Successful retirement calls whose response is lost after the commit.
     lose_runtime_retirement_responses: std::sync::atomic::AtomicUsize,
+    /// Successful authority switches whose response is lost after the commit.
+    lose_runtime_switch_responses: std::sync::atomic::AtomicUsize,
     /// Successful lease advances whose response is lost after the commit.
     lose_runtime_advance_responses: std::sync::atomic::AtomicUsize,
     /// Hold one provider-operation release after its caller reaches the store.
@@ -250,6 +252,11 @@ impl FakeStore {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    pub(crate) fn enable_coordination(&self) {
+        self.coordination_disabled
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Expire the interaction lease while its process-local delivery remains in flight.
     ///
     /// This models the only coordinated overlap the input fence must survive:
@@ -291,6 +298,11 @@ impl FakeStore {
             .store(count, std::sync::atomic::Ordering::SeqCst);
     }
 
+    pub(crate) fn lose_runtime_switch_responses(&self, count: usize) {
+        self.lose_runtime_switch_responses
+            .store(count, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub(crate) fn lose_runtime_advance_responses(&self, count: usize) {
         self.lose_runtime_advance_responses
             .store(count, std::sync::atomic::Ordering::SeqCst);
@@ -320,6 +332,16 @@ impl FakeStore {
 
     fn lose_runtime_retirement_response(&self) -> bool {
         self.lose_runtime_retirement_responses
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |left| left.checked_sub(1),
+            )
+            .is_ok()
+    }
+
+    fn lose_runtime_switch_response(&self) -> bool {
+        self.lose_runtime_switch_responses
             .fetch_update(
                 std::sync::atomic::Ordering::SeqCst,
                 std::sync::atomic::Ordering::SeqCst,
@@ -404,6 +426,19 @@ impl FakeStore {
         Ok(())
     }
 
+    fn validate_ordinary_event_batch(events: &[Event]) -> Result<(), StoreError> {
+        if events
+            .iter()
+            .any(|event| matches!(&event.kind, EventKind::RuntimeStarted { .. }))
+        {
+            return Err(StoreError::Malformed(
+                "RuntimeStarted events may only be written by runtime-authority coordination"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn commit_idempotent(
         &self,
         write_id: &str,
@@ -412,6 +447,7 @@ impl FakeStore {
         create: bool,
         conversation_authority: Option<&ConversationWriteAuthority>,
     ) -> Result<u64, StoreError> {
+        Self::validate_ordinary_event_batch(events)?;
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
         let mut receipts = self.write_receipts.lock().await;
@@ -506,8 +542,14 @@ impl FakeStore {
         let state = coordination
             .entry(record.session.id.0.clone())
             .or_insert_with(|| FakeCoordination::legacy(coordination_seed));
-        if let (Some(_), Some(durable)) = (conversation_authority, existing) {
-            if durable.runtime_id != record.runtime_id {
+        let compatibility_runtime_change_allowed = self
+            .coordination_disabled
+            .load(std::sync::atomic::Ordering::SeqCst)
+            && state.authority.generation == 0
+            && state.lease.is_none()
+            && conversation_authority.is_none();
+        if let Some(durable) = existing {
+            if durable.runtime_id != record.runtime_id && !compatibility_runtime_change_allowed {
                 return Err(StoreError::SessionAuthorityChanged {
                     id: record.session.id.clone(),
                 });
@@ -538,7 +580,7 @@ impl FakeStore {
         durable.session.last_seq = durable_tail;
         held.extend(events.iter().cloned().map(StoredEvent::from));
         sessions.insert(record.session.id.0.clone(), durable.clone());
-        if state.authority.generation == 0 && state.lease.is_none() {
+        if compatibility_runtime_change_allowed {
             // Compatibility-stage writers have no separate authority switch.
             // Once a recorded generation exists, ordinary record/event commits
             // must never be allowed to move runtime ownership.
@@ -1407,6 +1449,7 @@ impl SessionStore for FakeStore {
         lease: &mut SessionLease,
         candidate: &RuntimeCandidate,
     ) -> Result<RuntimeAuthoritySwitch, StoreError> {
+        let caller_lease = lease.clone();
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
         let mut sessions = self.sessions.lock().await;
@@ -1424,24 +1467,35 @@ impl SessionStore for FakeStore {
         let now = tokio::time::Instant::now();
         state.expire_lease(now);
 
-        let held_by_this_token = state
-            .lease
-            .as_ref()
-            .is_some_and(|held| held.lease.token == lease.token);
+        // Receipt replay deliberately ignores the pre-switch boundary, which
+        // the successful switch advanced, but still requires the exact lease
+        // identity Mongo enforces: holder, token, and operation.
+        let held_by_this_identity = state.lease.as_ref().is_some_and(|held| {
+            held.lease.holder == lease.holder
+                && held.lease.token == lease.token
+                && held.lease.operation == lease.operation
+        });
         if let Some(completed) = state.switches.get(&candidate.token) {
             let current = SessionBoundary::for_record(record, state.authority.generation);
             let held_at_completed_boundary = state
                 .lease
                 .as_ref()
                 .is_some_and(|held| held.lease.boundary == completed.outcome.boundary);
-            if held_by_this_token
+            if held_by_this_identity
                 && held_at_completed_boundary
                 && completed.lease_token == lease.token
                 && completed.candidate == *candidate
                 && current == completed.outcome.boundary
             {
                 lease.boundary = completed.outcome.boundary.clone();
-                return Ok(completed.outcome.clone());
+                let outcome = completed.outcome.clone();
+                if self.lose_runtime_switch_response() {
+                    *lease = caller_lease;
+                    return Err(StoreError::Unavailable(
+                        "test runtime switch response lost after commit".into(),
+                    ));
+                }
+                return Ok(outcome);
             }
             return Err(StoreError::RuntimeCandidateChanged {
                 id: lease.session_id.clone(),
@@ -1485,8 +1539,30 @@ impl SessionStore for FakeStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| StoreError::Malformed("session revision overflow".into()))?;
+        let mut events = self.events.lock().await;
+        let sequence_floor =
+            Self::event_tail(&events, &record.session.id).max(record.session.last_seq);
+        let runtime_started_seq = sequence_floor.checked_add(1).ok_or_else(|| {
+            StoreError::Malformed(format!("event sequence overflow for {}", record.session.id))
+        })?;
+        let runtime_started = Event {
+            session_id: lease.session_id.clone(),
+            seq: runtime_started_seq,
+            kind: EventKind::RuntimeStarted {
+                generation: candidate.generation,
+            },
+            appended_at: crate::clock::now_rfc3339(),
+        };
+        Self::validate_append(
+            &events,
+            std::slice::from_ref(&runtime_started),
+            record.session.last_seq,
+        )?;
+
         record.revision = revision;
+        record.session.last_seq = runtime_started_seq;
         record.runtime_id = Some(candidate.runtime_id.clone());
+        events.push(StoredEvent::from(runtime_started));
         state.authority = RuntimeAuthority {
             generation: candidate.generation.get(),
             runtime_id: Some(candidate.runtime_id.clone()),
@@ -1513,6 +1589,7 @@ impl SessionStore for FakeStore {
         lease.boundary = boundary.clone();
         let outcome = RuntimeAuthoritySwitch {
             revision,
+            runtime_started_seq,
             boundary,
             cleanup,
         };
@@ -1524,6 +1601,12 @@ impl SessionStore for FakeStore {
                 outcome: outcome.clone(),
             },
         );
+        if self.lose_runtime_switch_response() {
+            *lease = caller_lease;
+            return Err(StoreError::Unavailable(
+                "test runtime switch response lost after commit".into(),
+            ));
+        }
         Ok(outcome)
     }
 
@@ -1822,6 +1905,7 @@ impl SessionStore for FakeStore {
     /// the thing it doubles is a test that passes for the wrong reason.
     ///
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
+        Self::validate_ordinary_event_batch(events)?;
         self.guard().await?;
         let _transaction = self.transaction.lock().await;
         let recorded_tail = match events.first() {
@@ -1872,6 +1956,7 @@ impl SessionStore for FakeStore {
 
     async fn event_tail(&self, id: &SessionId) -> Result<u64, StoreError> {
         self.guard().await?;
+        let _transaction = self.transaction.lock().await;
         Ok(self
             .events
             .lock()
@@ -1892,6 +1977,7 @@ impl SessionStore for FakeStore {
         if *self.broken_event_reads.lock().await {
             return Err(StoreError::Unavailable("test event history is down".into()));
         }
+        let _transaction = self.transaction.lock().await;
         let mut out: Vec<StoredEvent> = self
             .events
             .lock()
@@ -2160,5 +2246,301 @@ pub(crate) fn spec() -> SessionSpec {
         requested_mode: None,
         quoted_rate_card: None,
         options: Default::default(),
+    }
+}
+
+#[cfg(test)]
+mod runtime_started_store_tests {
+    use std::{num::NonZeroU64, time::Duration};
+
+    use super::*;
+    use crate::{
+        event::StoredEventKind,
+        options::AgentOptions,
+        session::{RecoveryState, Session, SessionStatus},
+    };
+
+    fn record() -> SessionRecord {
+        SessionRecord::new(Session {
+            id: SessionId("sesn_runtime_marker_fence".into()),
+            owner: SubjectId("subject-runtime-marker-fence".into()),
+            kernel: KernelId::new("example-runtime"),
+            status: SessionStatus::Ready,
+            recovery_state: RecoveryState::Normal,
+            stop_reason: None,
+            options: AgentOptions::default(),
+            environment_profile: None,
+            geometry: TerminalGeometry::default(),
+            last_seq: 0,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
+            capabilities: Default::default(),
+            granted_services: None,
+            granted_skills: None,
+            pricing: None,
+            created_at: "2026-08-27T00:00:00Z".into(),
+        })
+    }
+
+    fn runtime_started(id: &SessionId) -> Event {
+        Event {
+            session_id: id.clone(),
+            seq: 1,
+            kind: EventKind::RuntimeStarted {
+                generation: NonZeroU64::new(1).unwrap(),
+            },
+            appended_at: "2026-08-27T00:00:01Z".into(),
+        }
+    }
+
+    fn assert_reserved_marker_rejected<T>(result: Result<T, StoreError>) {
+        assert!(matches!(
+            result,
+            Err(StoreError::Malformed(message))
+                if message.contains("runtime-authority coordination")
+        ));
+    }
+
+    #[tokio::test]
+    async fn fake_store_commits_a_compatibility_incarnation_with_its_runtime_atomically_once() {
+        let store = FakeStore::default();
+        store.disable_coordination();
+        let original = record();
+        store.seed(&original).await.unwrap();
+
+        let marker = Event {
+            session_id: original.session.id.clone(),
+            seq: 1,
+            kind: EventKind::RuntimeIncarnationStarted,
+            appended_at: "2026-08-27T00:00:01Z".into(),
+        };
+        let mut named = original.clone();
+        named.runtime_id = Some("runtime-compatibility".into());
+        named.session.last_seq = marker.seq;
+
+        let first = store
+            .commit_session_idempotent(
+                "compatibility-runtime-incarnation",
+                &named,
+                std::slice::from_ref(&marker),
+            )
+            .await
+            .unwrap();
+        let replay = store
+            .commit_session_idempotent(
+                "compatibility-runtime-incarnation",
+                &named,
+                std::slice::from_ref(&marker),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(replay, first);
+        let durable = store.get(&original.session.id).await.unwrap().unwrap();
+        assert_eq!(durable.runtime_id.as_deref(), Some("runtime-compatibility"));
+        assert_eq!(durable.session.last_seq, marker.seq);
+        let events = store.events_since(&original.session.id, 0).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0].kind,
+            StoredEventKind::Known(EventKind::RuntimeIncarnationStarted)
+        ));
+    }
+
+    #[tokio::test]
+    async fn fake_store_reserves_runtime_started_for_the_coordination_switch() {
+        let store = FakeStore::default();
+        let original = record();
+        let marker = runtime_started(&original.session.id);
+        let mut attempted = original.clone();
+        attempted.session.last_seq = marker.seq;
+
+        assert_reserved_marker_rejected(
+            store
+                .create_session_idempotent(
+                    "create-with-runtime-marker",
+                    &attempted,
+                    std::slice::from_ref(&marker),
+                )
+                .await,
+        );
+        assert!(store.get(&original.session.id).await.unwrap().is_none());
+
+        store.seed(&original).await.unwrap();
+        assert_reserved_marker_rejected(store.append_events(std::slice::from_ref(&marker)).await);
+        assert_reserved_marker_rejected(
+            store
+                .commit_session_idempotent(
+                    "session-with-runtime-marker",
+                    &attempted,
+                    std::slice::from_ref(&marker),
+                )
+                .await,
+        );
+        assert_reserved_marker_rejected(
+            store
+                .commit_conversation_idempotent(
+                    "conversation-with-runtime-marker",
+                    &ConversationWriteAuthority::Active(ConversationLink {
+                        session_id: original.session.id.clone(),
+                        epoch: 1,
+                        token: "conversation-marker-fence".into(),
+                        runtime_generation: 0,
+                        runtime_id: "runtime-marker-fence".into(),
+                    }),
+                    &attempted,
+                    std::slice::from_ref(&marker),
+                )
+                .await,
+        );
+
+        let unchanged = store.get(&original.session.id).await.unwrap().unwrap();
+        assert_eq!(unchanged.revision, original.revision);
+        assert_eq!(unchanged.session.last_seq, 0);
+        assert_eq!(store.event_tail(&original.session.id).await.unwrap(), 0);
+        assert!(store
+            .events_since(&original.session.id, 0)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(store.write_receipts.lock().await.is_empty());
+
+        let authority = store
+            .runtime_authority(&original.session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut lease = store
+            .acquire_session_lease(&SessionLeaseRequest {
+                session_id: original.session.id.clone(),
+                holder: "runtime-marker-holder".into(),
+                token: "runtime-marker-lease".into(),
+                boundary: SessionBoundary::for_record(&original, authority.generation),
+                operation: SessionOperation::Lifecycle,
+                ttl: Duration::from_secs(60),
+            })
+            .await
+            .unwrap();
+        let reservation = store
+            .reserve_runtime_generation(&lease, "runtime-marker-candidate")
+            .await
+            .unwrap();
+        let candidate = store
+            .register_runtime_candidate(&lease, &reservation, "runtime-authoritative")
+            .await
+            .unwrap();
+        let switched = store
+            .switch_runtime_authority(&mut lease, &candidate)
+            .await
+            .unwrap();
+        assert_eq!(switched.runtime_started_seq, 1);
+
+        let switched_record = store.get(&original.session.id).await.unwrap().unwrap();
+        let mut unmarked_change = switched_record.clone();
+        unmarked_change.runtime_id = Some("runtime-bypassing-coordination".into());
+        assert!(matches!(
+            store
+                .commit_session_idempotent("unmarked-runtime-change", &unmarked_change, &[])
+                .await,
+            Err(StoreError::SessionAuthorityChanged { .. })
+        ));
+        let after_rejected_change = store.get(&original.session.id).await.unwrap().unwrap();
+        assert_eq!(after_rejected_change.runtime_id, switched_record.runtime_id);
+        assert_eq!(after_rejected_change.revision, switched_record.revision);
+        assert_eq!(
+            after_rejected_change.session.last_seq, switched_record.session.last_seq,
+            "an ordinary commit cannot advance coordinated runtime ownership"
+        );
+        assert_eq!(
+            store
+                .runtime_authority(&original.session.id)
+                .await
+                .unwrap()
+                .unwrap(),
+            switched.boundary.authority
+        );
+        assert!(!store
+            .write_receipts
+            .lock()
+            .await
+            .contains_key("unmarked-runtime-change"));
+        let compatibility_marker = Event {
+            session_id: original.session.id.clone(),
+            seq: switched_record.session.last_seq + 1,
+            kind: EventKind::RuntimeIncarnationStarted,
+            appended_at: "2026-08-27T00:00:02Z".into(),
+        };
+        let mut marked_change = switched_record.clone();
+        marked_change.runtime_id = Some("runtime-marker-bypassing-coordination".into());
+        marked_change.session.last_seq = compatibility_marker.seq;
+        assert!(matches!(
+            store
+                .commit_session_idempotent(
+                    "compatibility-marker-runtime-change",
+                    &marked_change,
+                    std::slice::from_ref(&compatibility_marker),
+                )
+                .await,
+            Err(StoreError::SessionAuthorityChanged { .. })
+        ));
+        assert_eq!(
+            store.event_tail(&original.session.id).await.unwrap(),
+            switched_record.session.last_seq,
+            "a compatibility marker cannot bypass coordinated runtime ownership"
+        );
+        store.disable_coordination();
+        assert!(matches!(
+            store
+                .commit_session_idempotent(
+                    "disabled-coordination-marker-runtime-change",
+                    &marked_change,
+                    std::slice::from_ref(&compatibility_marker),
+                )
+                .await,
+            Err(StoreError::SessionAuthorityChanged { .. })
+        ));
+        store.enable_coordination();
+        let after_disabled_change = store.get(&original.session.id).await.unwrap().unwrap();
+        assert_eq!(
+            after_disabled_change.runtime_id, switched_record.runtime_id,
+            "changing the test mode cannot replace the coordinated runtime"
+        );
+        assert_eq!(
+            after_disabled_change.revision, switched_record.revision,
+            "a rejected ownership change cannot advance the record"
+        );
+        assert_eq!(
+            after_disabled_change.session.last_seq, switched_record.session.last_seq,
+            "a rejected ownership change cannot append its marker"
+        );
+        assert_eq!(
+            store
+                .runtime_authority(&original.session.id)
+                .await
+                .unwrap()
+                .unwrap(),
+            switched.boundary.authority
+        );
+        assert!(!store
+            .write_receipts
+            .lock()
+            .await
+            .contains_key("disabled-coordination-marker-runtime-change"));
+        assert_eq!(
+            store
+                .switch_runtime_authority(&mut lease, &candidate)
+                .await
+                .unwrap(),
+            switched,
+            "an idempotent switch replays its receipt"
+        );
+        let events = store.events_since(&original.session.id, 0).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].kind,
+            StoredEventKind::Known(EventKind::RuntimeStarted { generation })
+                if *generation == candidate.generation
+        ));
     }
 }
