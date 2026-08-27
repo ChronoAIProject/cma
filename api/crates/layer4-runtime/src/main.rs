@@ -19,7 +19,7 @@ mod upstream;
 use std::net::SocketAddr;
 
 use axum::{
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     response::IntoResponse,
     routing::{get, post},
     Router,
@@ -32,6 +32,9 @@ use crate::upstream::{CredentialHolder, UpstreamState};
 
 #[derive(Clone)]
 pub(crate) struct AppState {
+    /// Serializes every operation whose correctness depends on the agent not
+    /// having started yet with both ways the agent can actually start.
+    startup: std::sync::Arc<Mutex<()>>,
     registry: PtyRegistry,
     /// The program this pod supervises, swappable in place so a plane change
     /// can restart the program without replacing the pod.
@@ -101,6 +104,7 @@ impl AppState {
     #[cfg(test)]
     pub(crate) fn for_test(commands: &[&str]) -> Self {
         Self {
+            startup: std::sync::Arc::new(Mutex::new(())),
             registry: PtyRegistry::new(),
             command: std::sync::Arc::new(std::sync::Mutex::new(
                 commands.first().unwrap_or(&"").to_string(),
@@ -130,6 +134,7 @@ impl AppState {
     /// bridge started eagerly would be a kernel process on the model endpoint
     /// for a session that was only ever going to be a terminal.
     async fn conversation_bridge(&self) -> std::io::Result<std::sync::Arc<Bridge>> {
+        let _startup = self.startup.lock().await;
         let mut held = self.conversation.lock().await;
         if let Some(running) = held.as_ref() {
             // A cached bridge whose process has gone is not a bridge. Handing
@@ -152,6 +157,34 @@ impl AppState {
         let bridge = std::sync::Arc::new(Bridge::start(&self.agent_command())?);
         *held = Some(std::sync::Arc::clone(&bridge));
         Ok(bridge)
+    }
+
+    /// Start or reattach the terminal plane without racing another plane or a
+    /// pre-start write.
+    async fn terminal_session(
+        &self,
+        id: &str,
+        cols: u16,
+        rows: u16,
+    ) -> std::io::Result<(
+        std::sync::Arc<pty::PtySession>,
+        tokio::sync::broadcast::Receiver<Vec<u8>>,
+    )> {
+        let _startup = self.startup.lock().await;
+        if self.conversation.lock().await.is_some() {
+            return Err(std::io::Error::other(
+                "this runtime is already hosting a conversation",
+            ));
+        }
+        self.registry
+            .get_or_start(
+                id,
+                &self.agent_command(),
+                cols,
+                rows,
+                upstream::PLACEHOLDER_KEY,
+            )
+            .await
     }
 
     /// The conversation this pod was handed, if it was handed one.
@@ -332,6 +365,7 @@ async fn main() {
         std::time::Instant::now(),
     ));
     let state = AppState {
+        startup: std::sync::Arc::new(Mutex::new(())),
         registry: PtyRegistry::new(),
         model_fault: model_fault.clone(),
         command: std::sync::Arc::new(std::sync::Mutex::new(command.clone())),
@@ -346,7 +380,24 @@ async fn main() {
         resources,
     };
 
-    let app = Router::new()
+    let app = runtime_router(state);
+
+    tracing::info!(%bind, %command, "runtime supervisor listening");
+    let listener = tokio::net::TcpListener::bind(bind)
+        .await
+        .expect("runtime supervisor must bind");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("runtime supervisor must serve");
+}
+
+/// The routes served by every runtime pod.
+///
+/// Kept in one function so tests exercise the same route-local limits as the
+/// listener started by `main`.
+fn runtime_router(state: AppState) -> Router {
+    Router::new()
         .route("/livez", get(|| async { "ok" }))
         .route("/readyz", get(ready))
         .route("/runtime/{id}/terminal", get(link::attach))
@@ -360,17 +411,11 @@ async fn main() {
         // than through the environment because what they carry does not fit
         // there: one skill alone is larger than a single environment string
         // may be, and the pod would fail to start with nothing naming why.
-        .route("/runtime/prelude", post(prelude_write))
-        .with_state(state);
-
-    tracing::info!(%bind, %command, "runtime supervisor listening");
-    let listener = tokio::net::TcpListener::bind(bind)
-        .await
-        .expect("runtime supervisor must bind");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("runtime supervisor must serve");
+        .route(
+            "/runtime/prelude",
+            post(prelude_write).layer(DefaultBodyLimit::max(prelude::PACK_LIMIT)),
+        )
+        .with_state(state)
 }
 
 /// Take a conversation handed over from the runtime this one replaces.
@@ -389,7 +434,8 @@ async fn conversation_restore(
         )
             .into_response();
     }
-    if state.registry.is_running().await {
+    let _startup = state.startup.lock().await;
+    if state.conversation.lock().await.is_some() || state.registry.is_running().await {
         return (
             axum::http::StatusCode::CONFLICT,
             "this runtime has already started its agent",
@@ -551,7 +597,8 @@ async fn prelude_write(
     State(state): State<AppState>,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
-    if state.registry.is_running().await || state.conversation.lock().await.is_some() {
+    let _startup = state.startup.lock().await;
+    if state.conversation.lock().await.is_some() || state.registry.is_running().await {
         return (
             axum::http::StatusCode::CONFLICT,
             "this runtime has already started its agent",
@@ -562,10 +609,7 @@ async fn prelude_write(
         Ok(files) => files,
         Err(why) => return (axum::http::StatusCode::UNPROCESSABLE_ENTITY, why).into_response(),
     };
-    let home = std::path::PathBuf::from(
-        std::env::var("HOME").unwrap_or_else(|_| "/home/chrono".to_string()),
-    );
-    match prelude::write_all(&home, &files) {
+    match prelude::write_all(&state.home, &files) {
         Ok(written) => (axum::http::StatusCode::OK, format!("{written}")).into_response(),
         Err(e) => {
             // Loud: the session was told it would have these.
@@ -622,4 +666,256 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
     tracing::info!("shutdown signal received");
+}
+
+#[cfg(test)]
+mod runtime_prelude_router_tests {
+    use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    const TEST_FILE: &str = "skills/router-boundary/SKILL.md";
+    const AXUM_DEFAULT_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
+    struct Pack {
+        bytes: Vec<u8>,
+        file_len: usize,
+    }
+
+    /// A well-formed prelude whose complete HTTP body has exactly `total_len`
+    /// bytes. The header contains the file body's length, so solve the small
+    /// fixed point instead of assuming a particular JSON representation size.
+    fn pack_of_size(total_len: usize) -> Pack {
+        let mut file_len = total_len;
+        loop {
+            let mut header = serde_json::to_vec(&serde_json::json!({
+                "chronoPrelude": 1,
+                "files": [{ "path": TEST_FILE, "len": file_len }],
+            }))
+            .expect("the test prelude header serializes");
+            let next_file_len = total_len
+                .checked_sub(header.len() + 1)
+                .expect("the requested pack can hold its header");
+            if next_file_len != file_len {
+                file_len = next_file_len;
+                continue;
+            }
+
+            header.push(b'\n');
+            header.resize(total_len, b'x');
+            return Pack {
+                bytes: header,
+                file_len,
+            };
+        }
+    }
+
+    struct RuntimeFixture {
+        address: std::net::SocketAddr,
+        home: std::path::PathBuf,
+        state: AppState,
+        server: tokio::task::JoinHandle<()>,
+    }
+
+    fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
+        let waker = futures_util::task::noop_waker();
+        future.poll(&mut Context::from_waker(&waker))
+    }
+
+    impl RuntimeFixture {
+        async fn start(name: &str) -> Self {
+            static NEXT_HOME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let sequence = NEXT_HOME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let home = std::env::temp_dir().join(format!(
+                "chrono-runtime-prelude-{}-{sequence}-{name}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&home);
+            std::fs::create_dir_all(&home).expect("the test runtime home is created");
+
+            let mut state = AppState::for_test(&["/bin/cat"]);
+            state.home = home.clone();
+            state.snapshot_dir = Some("sessions".into());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("the test runtime listener binds");
+            let address = listener
+                .local_addr()
+                .expect("the test runtime listener has an address");
+            let server_state = state.clone();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, runtime_router(server_state))
+                    .await
+                    .expect("the test runtime serves");
+            });
+            Self {
+                address,
+                home,
+                state,
+                server,
+            }
+        }
+
+        async fn post(&self, pack: Vec<u8>) -> reqwest::Response {
+            reqwest::Client::new()
+                .post(format!("http://{}/runtime/prelude", self.address))
+                .body(pack)
+                .send()
+                .await
+                .expect("the test runtime answers the prelude request")
+        }
+
+        fn written_file(&self) -> std::path::PathBuf {
+            self.home.join(TEST_FILE)
+        }
+    }
+
+    impl Drop for RuntimeFixture {
+        fn drop(&mut self) {
+            self.server.abort();
+            let _ = std::fs::remove_dir_all(&self.home);
+        }
+    }
+
+    #[tokio::test]
+    async fn prelude_route_accepts_a_valid_pack_above_axums_default_limit() {
+        let runtime = RuntimeFixture::start("above-default").await;
+        let pack = pack_of_size(AXUM_DEFAULT_BODY_LIMIT + 1);
+        let expected_file_len = pack.file_len;
+
+        let response = runtime.post(pack.bytes).await;
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            std::fs::metadata(runtime.written_file())
+                .expect("the accepted prelude was written")
+                .len(),
+            expected_file_len as u64
+        );
+    }
+
+    #[tokio::test]
+    async fn prelude_route_accepts_the_exact_advertised_limit() {
+        let runtime = RuntimeFixture::start("exact-limit").await;
+        let pack = pack_of_size(prelude::PACK_LIMIT);
+        let expected_file_len = pack.file_len;
+
+        let response = runtime.post(pack.bytes).await;
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            std::fs::metadata(runtime.written_file())
+                .expect("the exact-limit prelude was written")
+                .len(),
+            expected_file_len as u64
+        );
+    }
+
+    #[tokio::test]
+    async fn prelude_route_rejects_one_byte_over_the_limit_before_the_handler() {
+        let runtime = RuntimeFixture::start("over-limit").await;
+        let pack = pack_of_size(prelude::PACK_LIMIT + 1);
+
+        let response = runtime.post(pack.bytes).await;
+
+        // The parser itself would answer 422. A 413 proves the route's body
+        // extractor enforced the cap while collecting the request instead.
+        assert_eq!(response.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(
+            !runtime.written_file().exists(),
+            "an over-limit body must not reach the prelude writer"
+        );
+    }
+
+    #[tokio::test]
+    async fn prelude_write_finishes_before_a_queued_terminal_can_start() {
+        let runtime = RuntimeFixture::start("terminal-start-race").await;
+        let pack = pack_of_size(512);
+        let held = runtime.state.startup.lock().await;
+        let mut write = Box::pin(prelude_write(
+            State(runtime.state.clone()),
+            axum::body::Bytes::from(pack.bytes),
+        ));
+        assert!(matches!(poll_once(write.as_mut()), Poll::Pending));
+        let mut terminal = Box::pin(runtime.state.terminal_session("race", 80, 24));
+        assert!(matches!(poll_once(terminal.as_mut()), Poll::Pending));
+
+        drop(held);
+        assert_eq!(
+            write.await.into_response().status(),
+            axum::http::StatusCode::OK
+        );
+        assert!(runtime.written_file().exists());
+        terminal
+            .await
+            .expect("the terminal starts only after the prelude is durable");
+    }
+
+    #[tokio::test]
+    async fn prelude_write_finishes_before_a_queued_conversation_can_start() {
+        let runtime = RuntimeFixture::start("conversation-start-race").await;
+        let pack = pack_of_size(512);
+        let held = runtime.state.startup.lock().await;
+        let mut write = Box::pin(prelude_write(
+            State(runtime.state.clone()),
+            axum::body::Bytes::from(pack.bytes),
+        ));
+        assert!(matches!(poll_once(write.as_mut()), Poll::Pending));
+        let mut conversation = Box::pin(runtime.state.conversation_bridge());
+        assert!(matches!(poll_once(conversation.as_mut()), Poll::Pending));
+
+        drop(held);
+        assert_eq!(
+            write.await.into_response().status(),
+            axum::http::StatusCode::OK
+        );
+        assert!(runtime.written_file().exists());
+        conversation
+            .await
+            .expect("the conversation starts only after the prelude is durable");
+    }
+
+    #[tokio::test]
+    async fn a_started_agent_refuses_every_late_pre_start_write() {
+        let runtime = RuntimeFixture::start("late-write").await;
+        runtime
+            .state
+            .terminal_session("started", 80, 24)
+            .await
+            .expect("the terminal starts");
+
+        let response = runtime.post(pack_of_size(512).bytes).await;
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+        assert!(!runtime.written_file().exists());
+    }
+
+    #[tokio::test]
+    async fn a_live_conversation_refuses_restore_and_a_terminal() {
+        let runtime = RuntimeFixture::start("conversation-plane").await;
+        runtime
+            .state
+            .conversation_bridge()
+            .await
+            .expect("the conversation starts");
+
+        let carried = carry::seal(
+            std::path::Path::new("day/session.jsonl"),
+            br#"{"payload":{"id":"conv-started"}}
+"#,
+        );
+        let response = conversation_restore(
+            State(runtime.state.clone()),
+            axum::body::Bytes::from(carried),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+
+        let terminal = match runtime.state.terminal_session("wrong-plane", 80, 24).await {
+            Err(error) => error,
+            Ok(_) => panic!("one pod cannot host a terminal beside its conversation"),
+        };
+        assert!(terminal.to_string().contains("conversation"));
+    }
 }
