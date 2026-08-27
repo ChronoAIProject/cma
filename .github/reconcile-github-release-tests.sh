@@ -236,7 +236,7 @@ run_release() {
     GH_TEST_LOG="$gh_log" \
     GH_TEST_MODE="$gh_mode" \
     GH_TEST_RESPONSE="$response" \
-    GITHUB_REPOSITORY=chronoai/chrono-bot \
+    GITHUB_REPOSITORY=ChronoAIProject/cma \
     "$reconcile_script" release "$version" "$full_revision" "$notes" \
     > "$stdout" 2> "$stderr"
 }

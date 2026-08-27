@@ -333,6 +333,8 @@ pub struct Config {
 /// would pin the test to itself and nothing else.
 const BASELINE_SERVICES: &str = "chrono-llm,ornn-api,ornn";
 
+const DEFAULT_SANDBOX_IMAGE: &str = "cma-runtime:dev";
+
 /// Deployment identity used only when a new installation omits the key.
 ///
 /// Existing installations set this explicitly because it is persisted into
@@ -351,7 +353,7 @@ impl Config {
             "CHRONO_SANDBOX_BASE_URL",
             "http://opensandbox-server.opensandbox-system.svc.cluster.local",
         );
-        let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", "chrono-bot-runtime:dev");
+        let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", DEFAULT_SANDBOX_IMAGE);
         // What a sandbox costs the namespace quota when its session names no
         // size. Read as opaque strings and handed to the provider unchanged:
         // these are Kubernetes quantities, and parsing them here would only
@@ -788,6 +790,14 @@ mod tests {
         assert_eq!(
             var_or("CHRONO_TEST_ABSENT_DEPLOYMENT_ID", DEFAULT_DEPLOYMENT_ID),
             "cma"
+        );
+    }
+
+    #[test]
+    fn a_new_deployment_defaults_to_the_cma_runtime_image() {
+        assert_eq!(
+            var_or("CHRONO_TEST_ABSENT_SANDBOX_IMAGE", DEFAULT_SANDBOX_IMAGE),
+            "cma-runtime:dev"
         );
     }
 
