@@ -55,6 +55,7 @@ export {
   CapabilityRefused,
   DeploymentAtCapacity,
   SessionLimitReached,
+  TransportError,
   toSession,
 } from '@chronoai/cma-sdk';
 export type {
@@ -71,8 +72,13 @@ export type {
   TriggerConnection,
   TriggerContentDraft,
   TriggerDraft,
+  TriggerInputFieldDefinition,
+  TriggerRepositoryAccessPolicy,
   TriggerPreview,
   TriggerRevision,
+  TriggerSessionPolicy,
+  TriggerSourceMode,
+  TriggerTask,
 } from '@chronoai/cma-sdk';
 
 /**
@@ -102,6 +108,10 @@ export function createTrigger(
 
 export function listTriggers(): Promise<readonly TriggerDraft[]> {
   return bot.listTriggers().then((page) => page.items);
+}
+
+export function readTrigger(id: string, signal?: AbortSignal): Promise<TriggerDraft> {
+  return bot.readTrigger(id, { signal });
 }
 
 export function updateTrigger(

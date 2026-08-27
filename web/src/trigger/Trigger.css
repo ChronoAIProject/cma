@@ -444,6 +444,13 @@
   justify-content: space-between;
 }
 
+.trigger-connectionactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .trigger-connectionempty p,
 .trigger-connectionnote {
   margin: 0;

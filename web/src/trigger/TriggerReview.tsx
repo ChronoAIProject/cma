@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JsonValue, Launch, LaunchOverrides, TriggerConnection } from '@chronoai/cma-sdk';
 import {
   ApiError,
+  TransportError,
   beginTriggerConnection,
   createOrResumeLaunch,
   listTriggerConnections,
   preflightTriggerConnection,
+  reconnectTriggerConnection,
   selectLaunchConnection,
   startLaunch,
   updateLaunchOverrides,
@@ -20,6 +22,7 @@ import {
   IconWarningOutline16,
 } from '../ui/icons';
 import type { AppRouter } from '../routing/routes';
+import { authorizeTriggerConnection, isActiveTriggerConnection } from './connectionFlow';
 import { newIntentKey } from './idempotency';
 import {
   editableFields,
@@ -78,11 +81,17 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
   const [overrides, setOverrides] = useState<LaunchOverrides | null>(null);
   const [workflowAcknowledged, setWorkflowAcknowledged] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'saving' | 'starting' | 'connecting' | null>(null);
+  const [busy, setBusy] = useState<'saving' | 'starting' | 'connecting' | 'checking' | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const resumeKey = useRef(newIntentKey());
+  const authorization = useRef<AbortController | null>(null);
+  const beginCommand = useRef<{
+    readonly intentId: string;
+    readonly idempotencyKey: string;
+  } | null>(null);
+  const reconnectCommands = useRef(new Map<string, string>());
 
   useEffect(() => {
     heading.current?.focus();
@@ -125,14 +134,34 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
     }
     const controller = new AbortController();
     void preflightTriggerConnection(selectedService, controller.signal)
-      .then(setPreflight)
+      .then((connection) => {
+        setPreflight(connection);
+        setConnections((items) => [
+          connection,
+          ...items.filter((item) => item.service_id !== connection.service_id),
+        ]);
+      })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted) setFailure(message(cause));
+        if (
+          !controller.signal.aborted &&
+          (!(cause instanceof ApiError) ||
+            (cause.code !== 'trigger_connection_inactive' &&
+              cause.code !== 'trigger_reauthorization_required'))
+        ) {
+          setFailure(message(cause));
+        }
       });
     return () => {
       controller.abort();
     };
   }, [selectedService]);
+
+  useEffect(
+    () => () => {
+      authorization.current?.abort();
+    },
+    [],
+  );
 
   const fields = useMemo(() => (launch === null ? [] : taskFields(launch)), [launch]);
   const editable = useMemo(
@@ -211,16 +240,82 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
     }
   }
 
-  async function connect(): Promise<void> {
+  async function beginConnection() {
+    const retained =
+      beginCommand.current ??
+      ({ intentId: crypto.randomUUID(), idempotencyKey: newIntentKey() } as const);
+    beginCommand.current = retained;
+    try {
+      const handoff = await beginTriggerConnection(retained.intentId, {
+        idempotencyKey: retained.idempotencyKey,
+      });
+      beginCommand.current = null;
+      return handoff;
+    } catch (cause) {
+      if (!(cause instanceof TransportError)) beginCommand.current = null;
+      throw cause;
+    }
+  }
+
+  async function reconnectConnection(serviceId: string) {
+    const idempotencyKey = reconnectCommands.current.get(serviceId) ?? newIntentKey();
+    reconnectCommands.current.set(serviceId, idempotencyKey);
+    try {
+      const handoff = await reconnectTriggerConnection(serviceId, { idempotencyKey });
+      reconnectCommands.current.delete(serviceId);
+      return handoff;
+    } catch (cause) {
+      if (!(cause instanceof TransportError)) reconnectCommands.current.delete(serviceId);
+      throw cause;
+    }
+  }
+
+  async function connect(mode: 'begin' | 'reconnect'): Promise<void> {
+    if (mode === 'reconnect' && selectedService === '') return;
+    authorization.current?.abort();
+    const controller = new AbortController();
+    authorization.current = controller;
     setBusy('connecting');
     setFailure(null);
     try {
-      const handoff = await beginTriggerConnection(newIntentKey(), {
-        idempotencyKey: newIntentKey(),
+      const connection = await authorizeTriggerConnection({
+        signal: controller.signal,
+        begin: () => (mode === 'begin' ? beginConnection() : reconnectConnection(selectedService)),
+        preflight: preflightTriggerConnection,
+        onService: (serviceId) => {
+          setSelectedService(serviceId);
+          setPreflight(null);
+        },
       });
-      window.location.assign(handoff.authorization_url);
+      setSelectedService(connection.service_id);
+      setPreflight(connection);
+      setConnections((items) => [
+        connection,
+        ...items.filter((item) => item.service_id !== connection.service_id),
+      ]);
     } catch (cause) {
+      if (!controller.signal.aborted) setFailure(message(cause));
+    } finally {
+      if (authorization.current === controller) authorization.current = null;
+      setBusy(null);
+    }
+  }
+
+  async function checkConnection(): Promise<void> {
+    if (selectedService === '') return;
+    setBusy('checking');
+    setFailure(null);
+    try {
+      const connection = await preflightTriggerConnection(selectedService);
+      setPreflight(connection);
+      setConnections((items) => [
+        connection,
+        ...items.filter((item) => item.service_id !== connection.service_id),
+      ]);
+    } catch (cause) {
+      setPreflight(null);
       setFailure(message(cause));
+    } finally {
       setBusy(null);
     }
   }
@@ -263,7 +358,12 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
   const selectedConnection =
     connections.find((item) => item.service_id === selectedService) ?? null;
   const canStart =
-    connectionReady(preflight) && (launch.workflow_paths.length === 0 || workflowAcknowledged);
+    preflight?.service_id === selectedService &&
+    isActiveTriggerConnection(preflight) &&
+    (launch.workflow_paths.length === 0 || workflowAcknowledged);
+  const needsReconnect =
+    selectedConnection !== null &&
+    (selectedConnection.state !== 'active' || selectedConnection.account_id === null);
 
   return (
     <main className="trigger-workflow">
@@ -477,7 +577,7 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
               <Button
                 icon={<IconLinkOutline16 />}
                 disabled={busy !== null}
-                onClick={() => void connect()}
+                onClick={() => void connect('begin')}
               >
                 {busy === 'connecting' ? 'Connecting' : 'Connect GitHub'}
               </Button>
@@ -491,7 +591,10 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
                     name="trigger-connection"
                     value={connection.service_id}
                     checked={selectedService === connection.service_id}
-                    onChange={() => setSelectedService(connection.service_id)}
+                    onChange={() => {
+                      setSelectedService(connection.service_id);
+                      setPreflight(null);
+                    }}
                   />
                   <span>
                     <strong>{connection.account_login ?? 'GitHub account unavailable'}</strong>
@@ -509,6 +612,37 @@ export function TriggerReview({ publicId, navigate }: TriggerReviewProps) {
               ))}
             </div>
           )}
+          <div className="trigger-connectionactions">
+            {needsReconnect ? (
+              <Button
+                icon={<IconLinkOutline16 />}
+                disabled={busy !== null}
+                onClick={() => void connect('reconnect')}
+              >
+                {busy === 'connecting' ? 'Connecting' : 'Reconnect'}
+              </Button>
+            ) : null}
+            {selectedService === '' ? null : (
+              <Button
+                variant="outline"
+                icon={<IconCheckOutline16 />}
+                disabled={busy !== null}
+                onClick={() => void checkConnection()}
+              >
+                {busy === 'checking' ? 'Checking' : 'Check access'}
+              </Button>
+            )}
+            {connections.length === 0 ? null : (
+              <Button
+                variant="outline"
+                icon={<IconLinkOutline16 />}
+                disabled={busy !== null}
+                onClick={() => void connect('begin')}
+              >
+                Connect another
+              </Button>
+            )}
+          </div>
           {selectedConnection === null ? null : (
             <p className="trigger-connectionnote">
               CMA stores this NyxID service identity and scope snapshot, never a GitHub token.
