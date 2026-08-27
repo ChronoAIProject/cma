@@ -107,6 +107,19 @@ spec:
             limits:
               cpu: 1000m
               memory: 512Mi
+          # The legacy cutover stage deliberately binds only after migration,
+          # verification, and explicit MongoDB client shutdown. Suppress both
+          # liveness and readiness until that boundary exists so kubelet cannot
+          # restart the one-shot migration merely because its audit takes more
+          # than the ordinary liveness window. The budget stays finite: a pod
+          # that cannot expose /livez within 30 minutes is restarted.
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            timeoutSeconds: 3
+            periodSeconds: 10
+            failureThreshold: 180
           livenessProbe:
             httpGet:
               path: /livez

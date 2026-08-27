@@ -429,6 +429,7 @@ async fn one_response_server(
         let reason = match status {
             200 => "OK",
             404 => "Not Found",
+            503 => "Service Unavailable",
             status => panic!("the fixture does not name HTTP status {status}"),
         };
         let response = format!(
@@ -1061,6 +1062,7 @@ fn the_default_shape_requests_a_real_workload_size() {
     // A default, not a policy: the deployment sets these, because how much a
     // session costs is decided against the quota it is drawn from.
     let s = SandboxShape::default();
+    assert_eq!(s.image, "cma-runtime:dev");
     assert_eq!(s.resource_limits.get("cpu").map(String::as_str), Some("1"));
     assert_eq!(
         s.resource_limits.get("memory").map(String::as_str),
@@ -2927,5 +2929,330 @@ mod instruction_sources_are_composed {
             !note.starts_with("---"),
             "there is no first section to divide"
         );
+    }
+}
+
+mod runtime_prelude_size {
+    use super::*;
+
+    fn one_skill_with_body(bytes: usize) -> SkillPackage {
+        SkillPackage {
+            name: "review".into(),
+            files: vec![("SKILL.md".into(), vec![b'x'; bytes])],
+        }
+    }
+
+    fn one_skill_with_paths(paths: &[&str]) -> SkillPackage {
+        SkillPackage {
+            name: "review".into(),
+            files: paths
+                .iter()
+                .map(|path| ((*path).into(), Vec::new()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_exact_limit_is_accepted_and_one_more_byte_is_refused() {
+        let kernel = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            ".skills",
+            "",
+        );
+        let mut body_len = PRELUDE_LIMIT - 256;
+        let exact = loop {
+            let pack = kernel
+                .prelude_for(&[one_skill_with_body(body_len)], "", "")
+                .expect("candidate fits")
+                .expect("skill creates a prelude");
+            match pack.len().cmp(&PRELUDE_LIMIT) {
+                std::cmp::Ordering::Equal => break pack,
+                std::cmp::Ordering::Less => body_len += PRELUDE_LIMIT - pack.len(),
+                std::cmp::Ordering::Greater => body_len -= pack.len() - PRELUDE_LIMIT,
+            }
+        };
+        assert_eq!(exact.len(), PRELUDE_LIMIT);
+        assert!(matches!(
+            kernel.prelude_for(&[one_skill_with_body(body_len + 1)], "", ""),
+            Err(AdapterError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn notes_and_rooted_path_overhead_are_included() {
+        let with_notes = hosted("http://x");
+        assert!(matches!(
+            with_notes.prelude_for(&[], "", &"x".repeat(PRELUDE_LIMIT)),
+            Err(AdapterError::Unsupported(_))
+        ));
+
+        let component = "r".repeat(170);
+        let long_root = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            format!("{component}/{component}/{component}"),
+            "",
+        );
+        assert!(matches!(
+            long_root.prelude_for(&[one_skill_with_body(PRELUDE_LIMIT - 256)], "", ""),
+            Err(AdapterError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn paths_are_contained_canonical_and_unique_before_provisioning() {
+        let kernel = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            ".skills",
+            ".skills/review/SKILL.md",
+        );
+        let skill = |name: &str, paths: &[&str]| SkillPackage {
+            name: name.into(),
+            files: paths
+                .iter()
+                .map(|path| ((*path).into(), Vec::new()))
+                .collect(),
+        };
+
+        for invalid in [
+            skill("../review", &["SKILL.md"]),
+            skill("review", &["../SKILL.md"]),
+            skill("review", &["references//api.md"]),
+            skill("review", &["SKILL.md", "SKILL.md"]),
+        ] {
+            assert!(matches!(
+                kernel.prelude_for(&[invalid], "", ""),
+                Err(AdapterError::Unsupported(_))
+            ));
+        }
+        assert!(matches!(
+            kernel.prelude_for(&[skill("review", &["SKILL.md"])], "briefing", ""),
+            Err(AdapterError::Unsupported(_))
+        ));
+        assert!(kernel
+            .prelude_for(&[skill("review", &["references/api.md"])], "briefing", "")
+            .is_ok());
+    }
+
+    #[test]
+    fn zero_length_file_headers_are_count_bounded() {
+        let kernel = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            ".skills",
+            "",
+        );
+        let files = (0..=PRELUDE_FILE_LIMIT)
+            .map(|index| (format!("references/{index}.md"), Vec::new()))
+            .collect();
+        assert!(matches!(
+            kernel.prelude_for(
+                &[SkillPackage {
+                    name: "review".into(),
+                    files,
+                }],
+                "",
+                ""
+            ),
+            Err(AdapterError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn file_and_directory_targets_conflict_in_either_order() {
+        let kernel = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            ".skills",
+            "",
+        );
+
+        for paths in [["a", "a/b"], ["a/b", "a"]] {
+            assert!(matches!(
+                kernel.prelude_for(&[one_skill_with_paths(&paths)], "", ""),
+                Err(AdapterError::Unsupported(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn one_path_component_may_be_255_bytes_but_not_256() {
+        let kernel = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            ".skills",
+            "",
+        );
+        let accepted = "x".repeat(PRELUDE_COMPONENT_LIMIT);
+        let refused = "x".repeat(PRELUDE_COMPONENT_LIMIT + 1);
+
+        assert!(kernel
+            .prelude_for(&[one_skill_with_paths(&[accepted.as_str()])], "", "")
+            .is_ok());
+        assert!(matches!(
+            kernel.prelude_for(&[one_skill_with_paths(&[refused.as_str()])], "", ""),
+            Err(AdapterError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn slash_dense_paths_do_not_expand_into_copied_prefixes() {
+        let kernel = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            ".skills",
+            "",
+        );
+        let deep = "a/".repeat(1_700);
+        let files = (0..160)
+            .map(|index| (format!("branch-{index}/{deep}leaf"), Vec::new()))
+            .collect();
+
+        let packed = kernel
+            .prelude_for(
+                &[SkillPackage {
+                    name: "review".into(),
+                    files,
+                }],
+                "",
+                "",
+            )
+            .expect("bounded deep paths are valid")
+            .expect("the paths produce a prelude");
+        assert!(packed.len() < PRELUDE_LIMIT);
+    }
+}
+
+mod runtime_prelude_readiness {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_current_image_readiness_document_advertises_prelude_support() {
+        let (endpoint, server) = one_response_server(
+            200,
+            serde_json::json!({ "status": "ready", "prelude": true }),
+        )
+        .await;
+
+        assert!(hosted(&endpoint)
+            .takes_a_prelude(&endpoint)
+            .await
+            .expect("a current readiness document is authoritative"));
+        server.await.expect("the readiness fixture completes");
+    }
+
+    #[tokio::test]
+    async fn a_valid_old_image_readiness_document_explicitly_lacks_prelude_support() {
+        let (endpoint, server) =
+            one_response_server(200, serde_json::json!({ "status": "ready" })).await;
+
+        assert!(!hosted(&endpoint)
+            .takes_a_prelude(&endpoint)
+            .await
+            .expect("a valid old-image readiness document is authoritative"));
+        server.await.expect("the readiness fixture completes");
+    }
+
+    #[tokio::test]
+    async fn a_transient_readiness_failure_does_not_become_permanent_image_absence() {
+        let (endpoint, server) = one_response_server(
+            503,
+            serde_json::json!({ "error": "temporary upstream failure" }),
+        )
+        .await;
+
+        let error = hosted(&endpoint)
+            .takes_a_prelude(&endpoint)
+            .await
+            .expect_err("a failed readiness request remains a failed request");
+        assert!(
+            matches!(error, AdapterError::Rejected(ref detail) if detail.contains("503")),
+            "got {error:?}"
+        );
+        server.await.expect("the readiness fixture completes");
+    }
+
+    #[tokio::test]
+    async fn a_readiness_transport_failure_remains_runtime_unavailability() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("the disposable address binds");
+        let endpoint = format!(
+            "http://{}",
+            listener
+                .local_addr()
+                .expect("the disposable address is known")
+        );
+        drop(listener);
+
+        let error = hosted(&endpoint)
+            .takes_a_prelude(&endpoint)
+            .await
+            .expect_err("a connection failure cannot prove capability absence");
+        assert!(
+            matches!(error, AdapterError::Unavailable(_)),
+            "got {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn install_preserves_a_transient_probe_failure_for_provisioning_retries() {
+        let (runtime_endpoint, runtime_server) = one_response_server(
+            503,
+            serde_json::json!({ "error": "temporary upstream failure" }),
+        )
+        .await;
+        let (provider_endpoint, provider_server) =
+            one_response_server(200, serde_json::json!({ "endpoint": runtime_endpoint })).await;
+        let skills = vec![SkillPackage {
+            name: "review".into(),
+            files: vec![("SKILL.md".into(), b"# Review".to_vec())],
+        }];
+
+        let error = hosted(&provider_endpoint)
+            .install_prelude("sbx_probe", &skills, b"prelude".to_vec())
+            .await
+            .expect_err("a transient readiness failure must reach the retry classifier");
+        assert!(
+            matches!(error, AdapterError::Rejected(ref detail) if detail.contains("503")),
+            "transient probe failure became permanent: {error:?}"
+        );
+        provider_server
+            .await
+            .expect("the endpoint fixture completes");
+        runtime_server
+            .await
+            .expect("the readiness fixture completes");
+    }
+
+    #[tokio::test]
+    async fn malformed_readiness_does_not_claim_an_old_image() {
+        for document in [
+            serde_json::json!("not a readiness document"),
+            serde_json::json!({}),
+            serde_json::json!({ "status": "starting" }),
+            serde_json::json!({ "status": "ready", "prelude": null }),
+            serde_json::json!({ "error": "proxy failure" }),
+        ] {
+            let (endpoint, server) = one_response_server(200, document).await;
+            let error = hosted(&endpoint)
+                .takes_a_prelude(&endpoint)
+                .await
+                .expect_err("malformed readiness cannot prove capability absence");
+            assert!(
+                matches!(error, AdapterError::Unavailable(_)),
+                "got {error:?}"
+            );
+            server.await.expect("the readiness fixture completes");
+        }
     }
 }

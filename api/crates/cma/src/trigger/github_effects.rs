@@ -7,33 +7,37 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use layer2_core::{
     effect_requires_authority_admission, rfc3339_at, seconds_from_rfc3339, trigger_session_id,
-    AuthorityAdmissionSnapshot, AuthorityProvenance, BaselineArchivePlan, BaselineImportBlob,
-    BaselineImportChunk, BaselineImportOutcome, BaselineObjectStore, BranchRecord,
-    CapabilityAuthorityAdmission, CapabilityOperation, CapabilityRevocationState,
-    CheckpointIntegrity, CheckpointObjectStore, CleanupReceipt, CleanupTarget, ConnectionSnapshot,
-    CoreError, DelegationState, DiffArtifact, DiffArtifactObjectStore, DiffValidationOutcome,
-    EffectClaim, EffectClaimMode, FailureClass, Launch, LaunchAuthority, LaunchCapability,
-    LaunchEffectKind, LaunchEffectResult, LaunchFailure, RecoveryState, RepositoryIdentity,
-    Session, SessionCredentialAuthority, SessionId, SessionLink, SessionService, SessionStatus,
-    TriggerAuthorityError, TriggerAuthorityVerifier, TriggerServiceError, TriggerStoreError,
-    WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord,
-    BASELINE_IMPORT_CHUNK_BYTES, CAPABILITY_MAX_LIFETIME_SECONDS, CAPABILITY_POLICY_VERSION,
+    AuthorityAdmissionSnapshot, AuthorityProvenance, BaselineImportBlob, BaselineImportChunk,
+    BaselineImportOutcome, BaselineObjectStore, BranchRecord, CapabilityAuthorityAdmission,
+    CapabilityOperation, CapabilityRevocationState, CheckpointIntegrity, CheckpointObjectStore,
+    CleanupReceipt, CleanupTarget, ConnectionSnapshot, CoreError, DelegationState, DiffArtifact,
+    DiffArtifactObjectStore, DiffValidationOutcome, EffectClaim, EffectClaimMode, FailureClass,
+    Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind, LaunchEffectResult, LaunchFailure,
+    RecoveryState, RepositoryIdentity, Session, SessionCredentialAuthority, SessionId, SessionLink,
+    SessionService, SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier,
+    TriggerServiceError, TriggerStoreError, WorkspaceCheckpoint, WorkspaceEntry,
+    WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord, BASELINE_IMPORT_CHUNK_BYTES,
+    CAPABILITY_MAX_LIFETIME_SECONDS, CAPABILITY_POLICY_VERSION,
 };
 use sha2::{Digest as _, Sha256};
 
 use super::capability_signing::{
     CapabilitySigner, RuntimePolicyTombstone, POLICY_AUDIENCE, POLICY_VERSION,
 };
+#[cfg(test)]
+use super::github::WorkspaceSourceEntry;
 use super::github::{
     build_baseline_archive_plan, validate_repository_rebinding, workspace_blob_metadata,
     BranchContext, BranchReconciliation, ForkContext, ForkReconciliation, GithubBroker,
-    GithubBrokerError, WorkspaceBlobMetadata, WorkspaceContext, WorkspaceSourceEntry,
-    WorkspaceSourcePlan, WorkspaceUnsupported,
+    GithubBrokerError, WorkspaceBlobMetadata, WorkspaceContext, WorkspaceSourcePlan,
+    WorkspaceUnsupported,
 };
 use super::worker::{EffectExecution, EffectExecutor};
 use super::workspace_diff::{
     build_diff_artifact, build_invalid_diff_artifact, deterministic_diff_id, DiffBuildError,
 };
+#[cfg(test)]
+use layer2_core::BaselineArchivePlan;
 
 const DEFAULT_FORK_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_PROVIDER_RETRY: Duration = Duration::from_secs(300);

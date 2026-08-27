@@ -13,7 +13,7 @@ use crate::commit_fault_support::CommitFaultStore;
 use crate::event::{Event, EventKind};
 use crate::provision_failure::{Abandonment, StartFailure};
 use crate::session::{SessionStatus, StopReason};
-use crate::store::{SessionRecord, SessionStore, StoreError};
+use crate::store::{SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
     await_settled, service, service_over, service_with_credential_source, spec, user, FakeAdapter,
     FakeStore,
@@ -684,10 +684,10 @@ async fn a_conflicted_ready_commit_publishes_only_the_successful_runtime() {
         adapter
             .provision_calls
             .load(std::sync::atomic::Ordering::SeqCst),
-        2,
-        "the conflicted runtime is discarded before one clean retry"
+        1,
+        "an unrelated record change is inherited without replacing the runtime"
     );
-    assert_eq!(adapter.terminated.lock().await.len(), 1);
+    assert!(adapter.terminated.lock().await.is_empty());
     assert_eq!(
         adapter
             .resource_watch_calls
@@ -696,14 +696,10 @@ async fn a_conflicted_ready_commit_publishes_only_the_successful_runtime() {
         "only the durably ready runtime receives a resource watcher"
     );
     let senders = adapter.senders.lock().await;
-    assert_eq!(senders.len(), 2);
+    assert_eq!(senders.len(), 1);
     assert!(
-        senders[0].is_closed(),
-        "the rejected runtime's output receiver is dropped without a relay"
-    );
-    assert!(
-        !senders[1].is_closed(),
-        "the successfully committed runtime owns the published relay"
+        !senders[0].is_closed(),
+        "the durably committed runtime owns the published relay"
     );
     drop(senders);
     assert_eq!(
@@ -733,7 +729,7 @@ async fn a_conflicted_ready_commit_publishes_only_the_successful_runtime() {
         .count();
     assert_eq!(
         ready_events, 1,
-        "the rejected runtime never announces false readiness"
+        "rebasing the Ready boundary does not announce readiness twice"
     );
 }
 
@@ -918,6 +914,41 @@ async fn superseded_candidate_teardown_failure_is_surfaced_with_its_handle_intac
         .await
         .expect("the fixture starts without an existing runtime");
 
+    let installation_fence = svc.input_gates.gate(&created.id).read_owned().await;
+    let starting = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let runtime_adapter = Arc::clone(&runtime_adapter);
+        let live = live.clone();
+        async move {
+            let start_spec = spec();
+            let mut lease = None;
+            let mut prepared_skills = None;
+            svc.start_runtime(
+                &live,
+                &start_spec,
+                &runtime_adapter,
+                crate::provision::RuntimeStartContext {
+                    geometry: live.geometry,
+                    restore: None,
+                    trigger_recovery: None,
+                    platform_briefing: "",
+                    handover: None,
+                    publication_token: "superseded-candidate-test",
+                },
+                &mut lease,
+                &mut prepared_skills,
+            )
+            .await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while adapter.senders.lock().await.len() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the candidate reaches its installation boundary");
+
     let mut stopped = store.get(&created.id).await.unwrap().unwrap();
     stopped.session.status = SessionStatus::Terminated;
     stopped.session.stop_reason = Some(StopReason::Error);
@@ -927,24 +958,10 @@ async fn superseded_candidate_teardown_failure_is_surfaced_with_its_handle_intac
         .expect("the candidate's installation boundary is superseded");
 
     adapter.fail_terminations(1);
-    let start_spec = spec();
-    let mut lease = None;
-    let failure = svc
-        .start_runtime(
-            &live,
-            &start_spec,
-            &runtime_adapter,
-            crate::provision::RuntimeStartContext {
-                geometry: live.geometry,
-                restore: None,
-                trigger_recovery: None,
-                platform_briefing: "",
-                handover: None,
-                publication_token: "superseded-candidate-test",
-            },
-            &mut lease,
-        )
+    drop(installation_fence);
+    let failure = starting
         .await
+        .expect("the candidate task completes")
         .expect_err("the failed superseded teardown is returned to its caller");
     assert!(failure.retryable);
     assert!(failure.reason.contains("superseded runtime"));
@@ -1002,6 +1019,7 @@ async fn failed_row_discard_cannot_later_abandon_a_promoted_successor() {
     adapter.fail_terminations(1);
     let start_spec = spec();
     let mut lease = None;
+    let mut prepared_skills = None;
     let start_result = svc
         .start_with_retries(
             &live,
@@ -1016,6 +1034,7 @@ async fn failed_row_discard_cannot_later_abandon_a_promoted_successor() {
                 publication_token: "failed-discard-successor-test",
             },
             &mut lease,
+            &mut prepared_skills,
         )
         .await;
     let failure = match start_result {
@@ -1102,7 +1121,7 @@ async fn stack_owned_teardown_failure_never_discards_a_promoted_successor_or_ret
         .await
         .expect("the fixture starts without an existing runtime");
 
-    let lifecycle = svc.lock_lifecycle(&created.id).await;
+    let installation_fence = svc.input_gates.gate(&created.id).read_owned().await;
     let starting = tokio::spawn({
         let svc = Arc::clone(&svc);
         let runtime_adapter = Arc::clone(&runtime_adapter);
@@ -1110,6 +1129,7 @@ async fn stack_owned_teardown_failure_never_discards_a_promoted_successor_or_ret
         async move {
             let start_spec = spec();
             let mut lease = None;
+            let mut prepared_skills = None;
             svc.start_with_retries(
                 &live,
                 &start_spec,
@@ -1123,6 +1143,7 @@ async fn stack_owned_teardown_failure_never_discards_a_promoted_successor_or_ret
                     publication_token: "promoted-successor-candidate-test",
                 },
                 &mut lease,
+                &mut prepared_skills,
             )
             .await
         }
@@ -1160,7 +1181,7 @@ async fn stack_owned_teardown_failure_never_discards_a_promoted_successor_or_ret
         .provision_calls
         .load(std::sync::atomic::Ordering::SeqCst);
     adapter.fail_terminations(1);
-    drop(lifecycle);
+    drop(installation_fence);
     let start_result = tokio::time::timeout(std::time::Duration::from_secs(2), starting)
         .await
         .expect("the retry wrapper stops after exact candidate cleanup fails")
@@ -1245,7 +1266,7 @@ async fn deleted_row_stack_owned_teardown_failure_stops_without_another_candidat
         .await
         .expect("the fixture starts without an existing runtime");
 
-    let lifecycle = svc.lock_lifecycle(&created.id).await;
+    let installation_fence = svc.input_gates.gate(&created.id).read_owned().await;
     let starting = tokio::spawn({
         let svc = Arc::clone(&svc);
         let runtime_adapter = Arc::clone(&runtime_adapter);
@@ -1253,6 +1274,7 @@ async fn deleted_row_stack_owned_teardown_failure_stops_without_another_candidat
         async move {
             let start_spec = spec();
             let mut lease = None;
+            let mut prepared_skills = None;
             svc.start_with_retries(
                 &live,
                 &start_spec,
@@ -1266,6 +1288,7 @@ async fn deleted_row_stack_owned_teardown_failure_stops_without_another_candidat
                     publication_token: "deleted-candidate-row-test",
                 },
                 &mut lease,
+                &mut prepared_skills,
             )
             .await
         }
@@ -1287,6 +1310,13 @@ async fn deleted_row_stack_owned_teardown_failure_stops_without_another_candidat
     assert_ne!(candidate, initial);
 
     inner
+        .sessions
+        .lock()
+        .await
+        .get_mut(&created.id.0)
+        .expect("the concurrent lifecycle operation still owns the row")
+        .skill_packs = crate::store::SkillPackState::Cleaned;
+    inner
         .delete(&created.id)
         .await
         .expect("a concurrent lifecycle operation deletes the current row");
@@ -1294,7 +1324,7 @@ async fn deleted_row_stack_owned_teardown_failure_stops_without_another_candidat
         .provision_calls
         .load(std::sync::atomic::Ordering::SeqCst);
     adapter.fail_terminations(1);
-    drop(lifecycle);
+    drop(installation_fence);
     let start_result = tokio::time::timeout(std::time::Duration::from_secs(2), starting)
         .await
         .expect("the retry wrapper stops after exact candidate cleanup fails")
@@ -1796,8 +1826,12 @@ async fn an_unknown_kernel_is_refused_immediately_rather_than_asynchronously() {
     .await;
 
     assert!(result.is_err());
+    let persisted = store
+        .list_all(&SessionListQuery::default())
+        .await
+        .expect("readable");
     assert!(
-        store.scan_all().await.expect("readable").is_empty(),
+        persisted.items.is_empty() && persisted.next.is_none(),
         "a refused request must leave no record behind"
     );
 }
@@ -2018,8 +2052,12 @@ async fn a_session_its_kernel_cannot_be_is_refused_while_someone_is_listening() 
         result.expect_err("a conversation on a terminal-only kernel cannot exist"),
         crate::error::CoreError::CapabilityUnsupported("conversation".into())
     );
+    let persisted = store
+        .list_all(&SessionListQuery::default())
+        .await
+        .expect("readable");
     assert!(
-        store.scan_all().await.expect("readable").is_empty(),
+        persisted.items.is_empty() && persisted.next.is_none(),
         "a refused request must leave no record behind"
     );
     assert_eq!(
