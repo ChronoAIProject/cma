@@ -12,7 +12,9 @@ operations; NyxID retains and injects the contributor's GitHub OAuth credential.
 Draft writes use optimistic concurrency and exact caller-generated idempotency
 keys. Publication freezes the content and verified authority into an immutable
 revision. The public preview remains anonymous even when this `Client` has a
-credential provider.
+credential provider. The returned draft retains the exact NyxID UserService that
+authorized its latest repository resolution; publication must use that stored
+`selected_service_id` unless an explicit, verified draft replacement changes it.
 
 ```rust,no_run
 use cma_sdk::{Client, CreateTriggerRequest, PublishTriggerRequest, TriggerContentDraft};
@@ -36,7 +38,7 @@ let revision = client
         &draft.id,
         PublishTriggerRequest {
             expected_version: draft.version,
-            selected_service_id: service_id,
+            selected_service_id: draft.selected_service_id,
         },
         "publisher-publish-01",
     )

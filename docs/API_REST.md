@@ -235,8 +235,11 @@ closed publisher request shape: `schema_version`,
 resolves canonical names, numeric/node identities, visibility, fork policy, and
 the observed source SHA itself. Unknown nested policy fields are refused.
 
-`TriggerDraft` carries `id`, `version`, `next_revision_number`, resolved
-`content`, `created_at`, and `updated_at`. Draft pages use
+`TriggerDraft` carries `id`, `selected_service_id`, `version`,
+`next_revision_number`, resolved `content`, `created_at`, and `updated_at`.
+`selected_service_id` is the exact NyxID UserService that most recently resolved
+and authorized the mutable draft. Publication must name that same service; CMA
+refuses a silent connection substitution. Draft pages use
 `{"items": [...], "next_cursor": string|null}`. A revision adds `public_id`,
 `digest`, `availability`, the verified publisher `authority`, `published_at`,
 and nullable `retired_at`. Its content is immutable. Direct links to a retired

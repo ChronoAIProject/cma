@@ -67,56 +67,172 @@ export interface TriggerRepositorySelection {
   readonly source_sha: string;
 }
 
-export interface TriggerRevisionContent extends JsonObject {
+export type TriggerSourceMode = 'pinned_commit' | 'branch_head_at_launch';
+
+export interface TriggerTextInputBounds {
+  readonly min_bytes: number;
+  readonly max_bytes: number;
+}
+
+export interface TriggerIntegerInputBounds {
+  readonly minimum: number;
+  readonly maximum: number;
+}
+
+export interface TriggerChoiceInputValues {
+  readonly values: readonly string[];
+}
+
+/** Serde's externally tagged wire shape for one publisher input kind. */
+export type TriggerInputFieldKind =
+  | { readonly text: TriggerTextInputBounds }
+  | { readonly integer: TriggerIntegerInputBounds }
+  | 'boolean'
+  | { readonly choice: TriggerChoiceInputValues };
+
+export interface TriggerInputFieldDefinition {
+  readonly key: string;
+  readonly kind: TriggerInputFieldKind;
+  readonly required: boolean;
+  readonly default?: JsonValue;
+  readonly editable: boolean;
+}
+
+export interface TriggerTask {
+  readonly public_summary: string;
+  readonly prompt_template: string;
+  readonly renderer_version: number;
+  readonly input_fields: readonly TriggerInputFieldDefinition[];
+}
+
+export type TriggerRequiredCapability =
+  | 'conversation'
+  | 'durable_conversation'
+  | 'workspace_checkpoint'
+  | 'restricted_service_gateway'
+  | 'credential_refresh'
+  | 'credential_revocation';
+
+/** The public Trigger contract deliberately excludes unrestricted sessions. */
+export type TriggerPermissionCeiling = 'guarded' | 'autonomous';
+
+export interface TriggerResourcePolicy {
+  readonly default: SessionSize;
+  readonly ceiling: SessionSize;
+}
+
+export interface TriggerSessionPolicy {
+  readonly required_capabilities: readonly TriggerRequiredCapability[];
+  readonly permission_ceiling: TriggerPermissionCeiling;
+  readonly sandbox_profile: string;
+  readonly resources: TriggerResourcePolicy;
+  readonly timeout_default_seconds: number;
+  readonly timeout_ceiling_seconds: number;
+}
+
+export type TriggerScopeClass = 'public_repository' | 'workflow';
+
+export type TriggerRepositoryOperationClass =
+  | 'repository_read'
+  | 'tree_read'
+  | 'object_create'
+  | 'launch_ref_create'
+  | 'launch_ref_update'
+  | 'status_read';
+
+export type TriggerCredentialRoute = 'contributor_connection' | 'sponsored_grant';
+export type TriggerWorkflowChangePolicy = 'refuse' | 'require_scope_and_confirmation';
+
+export interface TriggerRepositoryAccessPolicy {
+  readonly credential_route: TriggerCredentialRoute;
+  readonly required_scope_classes: readonly TriggerScopeClass[];
+  readonly allowed_operation_classes: readonly TriggerRepositoryOperationClass[];
+  readonly workflow_change_policy: TriggerWorkflowChangePolicy;
+}
+
+export interface TriggerSetupPolicy {
+  readonly executor_policy: 'disabled';
+  readonly steps: readonly string[];
+}
+
+export interface TriggerPullRequestDefaults {
+  readonly title_template: string;
+  readonly body_template: string;
+}
+
+export interface TriggerContributionPolicy {
+  readonly branch_prefix: string;
+  readonly commit_attribution: 'contributor_no_reply';
+  readonly pull_request: TriggerPullRequestDefaults;
+}
+
+export type TriggerBillingMode = 'contributor' | 'zero_cost' | 'sponsored';
+
+export interface TriggerCommercialPolicy {
+  readonly billing_mode: TriggerBillingMode;
+  readonly policy_reference: string;
+}
+
+export type TriggerEditableField =
+  'task_input' | 'branch_suffix' | 'resource_size' | 'timeout' | 'optional_checks';
+
+export interface TriggerOverridePolicy {
+  readonly editable_fields: readonly TriggerEditableField[];
+  readonly optional_checks: readonly string[];
+}
+
+export interface TriggerPublicProjectionPolicy {
+  readonly version: number;
+}
+
+export interface TriggerUpstreamRevision {
+  readonly repository: RepositoryIdentity;
+  readonly source_mode: TriggerSourceMode;
+  readonly observed_source_sha?: string;
+  readonly contribution_base_ref: string;
+}
+
+export interface TriggerRevisionContent {
   readonly schema_version: number;
   readonly trigger_id: string;
   readonly revision_number: number;
   readonly publisher_subject_id: string;
   readonly publisher_display_identity: string;
-  readonly upstream: JsonObject & {
-    readonly repository: RepositoryIdentity;
-    readonly source_mode: 'pinned_commit' | 'branch_head_at_launch';
-    readonly observed_source_sha?: string;
-    readonly contribution_base_ref: string;
-  };
-  readonly task: JsonObject & {
-    readonly public_summary: string;
-    readonly prompt_template: string;
-    readonly renderer_version: number;
-    readonly input_fields: readonly JsonObject[];
-  };
-  readonly session: JsonObject;
-  readonly repository_access: JsonObject;
-  readonly setup: JsonObject;
-  readonly contribution: JsonObject;
-  readonly commercial_policy: JsonObject;
-  readonly override_policy: JsonObject;
-  readonly public_projection: JsonObject;
+  readonly upstream: TriggerUpstreamRevision;
+  readonly task: TriggerTask;
+  readonly session: TriggerSessionPolicy;
+  readonly repository_access: TriggerRepositoryAccessPolicy;
+  readonly setup: TriggerSetupPolicy;
+  readonly contribution: TriggerContributionPolicy;
+  readonly commercial_policy: TriggerCommercialPolicy;
+  readonly override_policy: TriggerOverridePolicy;
+  readonly public_projection: TriggerPublicProjectionPolicy;
 }
 
 export interface RepositorySelectionDraft {
   readonly repository_id: number;
   readonly selected_ref: string;
   readonly contribution_base_ref: string;
-  readonly source_mode: 'pinned_commit' | 'branch_head_at_launch';
+  readonly source_mode: TriggerSourceMode;
 }
 
 export interface TriggerContentDraft {
   readonly schema_version: number;
   readonly publisher_display_identity: string;
   readonly repository: RepositorySelectionDraft;
-  readonly task: JsonObject;
-  readonly session: JsonObject;
-  readonly repository_access: JsonObject;
-  readonly setup: JsonObject;
-  readonly contribution: JsonObject;
-  readonly commercial_policy: JsonObject;
-  readonly override_policy: JsonObject;
-  readonly public_projection: JsonObject;
+  readonly task: TriggerTask;
+  readonly session: TriggerSessionPolicy;
+  readonly repository_access: TriggerRepositoryAccessPolicy;
+  readonly setup: TriggerSetupPolicy;
+  readonly contribution: TriggerContributionPolicy;
+  readonly commercial_policy: TriggerCommercialPolicy;
+  readonly override_policy: TriggerOverridePolicy;
+  readonly public_projection: TriggerPublicProjectionPolicy;
 }
 
 export interface TriggerDraft {
   readonly id: string;
+  readonly selected_service_id: string;
   readonly version: number;
   readonly next_revision_number: number;
   readonly content: TriggerRevisionContent;
@@ -968,6 +1084,7 @@ function decodeTriggerPreview(raw: unknown): TriggerPreview {
 function decodeTriggerDraft(raw: unknown): TriggerDraft {
   const body = safeObject(raw, 'Trigger draft');
   requireText(body, 'id', 'Trigger draft');
+  requireText(body, 'selected_service_id', 'Trigger draft');
   requireInteger(body, 'version', 'Trigger draft');
   safeObject(body.content, 'Trigger draft content');
   return body as unknown as TriggerDraft;

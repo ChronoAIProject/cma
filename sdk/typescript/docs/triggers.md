@@ -29,8 +29,11 @@ resource-consuming Launch.
 Publisher configuration is ordinary authenticated CMA data. A developer selects
 one exact NyxID GitHub service and supplies a `TriggerContentDraft`; no secret is
 embedded in the public URL. Draft replacement uses `version` for optimistic
-concurrency. Publication freezes the content, upstream identity, authority
-snapshot, and digest into an immutable revision.
+concurrency. The returned draft's `selected_service_id` records the exact
+UserService that authorized its latest repository resolution. Keep that binding
+when publishing; CMA refuses a different service until an explicit, verified
+draft replacement records it. Publication freezes the content, upstream
+identity, authority snapshot, and digest into an immutable revision.
 
 ```ts
 import { createClient, type TriggerContentDraft, type TriggerRevision } from '@chronoai/cma-sdk';
@@ -44,7 +47,7 @@ async function publishTrigger(
   const draft = await cma.createTrigger(serviceId, content, {
     idempotencyKey: crypto.randomUUID(),
   });
-  return cma.publishTrigger(draft.id, draft.version, serviceId, {
+  return cma.publishTrigger(draft.id, draft.version, draft.selected_service_id, {
     idempotencyKey: crypto.randomUUID(),
   });
 }
