@@ -1823,7 +1823,13 @@ impl SessionService {
         // tell a session that is current from one that is behind. Without this
         // every session would look due for rotation forever.
         record.session.runtime_version = self.runtime_version.clone();
-        if let Err(e) = self.persist_durably(&mut record, Vec::new()).await {
+        let marker = Event {
+            session_id: id.clone(),
+            seq: 0,
+            kind: EventKind::RuntimeIncarnationStarted,
+            appended_at: String::new(),
+        };
+        if let Err(e) = self.persist_durably(&mut record, vec![marker]).await {
             // Worth shouting about: the runtime exists and the record does not
             // name it, which is exactly the orphan reconciliation must catch.
             tracing::error!(session_id = %id, error = %e, "runtime provisioned but not recorded");
