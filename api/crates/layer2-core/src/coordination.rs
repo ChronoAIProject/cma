@@ -326,6 +326,8 @@ pub struct RuntimeCleanup {
 pub struct RuntimeAuthoritySwitch {
     /// Store revision after changing the record's runtime handle.
     pub revision: u64,
+    /// Sequence of the runtime-incarnation marker committed with the switch.
+    pub runtime_started_seq: u64,
     /// Exact boundary now durable and held by the caller's lease.
     pub boundary: SessionBoundary,
     /// Previous authority left for retryable cleanup, when one existed.
@@ -352,6 +354,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::event::{Event, EventKind, StoredEvent};
     use crate::ids::{KernelId, SubjectId};
     use crate::session::{RecoveryState, Session};
     use crate::store::{SessionStore, StoreError};
@@ -954,27 +957,35 @@ mod tests {
             .await
             .unwrap();
 
+        store.lose_runtime_switch_responses(1);
+        assert!(matches!(
+            store.switch_runtime_authority(&mut lease, &candidate).await,
+            Err(StoreError::Unavailable(_))
+        ));
         let switched = store
             .switch_runtime_authority(&mut lease, &candidate)
             .await
             .unwrap();
         assert_eq!(switched.revision, 1);
+        assert_eq!(switched.runtime_started_seq, 1);
         assert_eq!(switched.boundary, lease.boundary);
         assert_eq!(switched.boundary.authority.generation, 1);
         assert_eq!(
             switched.boundary.authority.runtime_id.as_deref(),
             Some("runtime-replacement")
         );
-        assert_eq!(
-            store
-                .get(&record().session.id)
-                .await
-                .unwrap()
-                .unwrap()
-                .runtime_id
-                .as_deref(),
-            Some("runtime-replacement")
-        );
+        let durable = store.get(&record().session.id).await.unwrap().unwrap();
+        assert_eq!(durable.runtime_id.as_deref(), Some("runtime-replacement"));
+        assert_eq!(durable.session.last_seq, switched.runtime_started_seq);
+        let events = store.events_since(&record().session.id, 0).await.unwrap();
+        assert_eq!(events.len(), 1, "the retry must not duplicate the marker");
+        let marker = events.into_iter().next().unwrap().into_known().unwrap();
+        assert_eq!(marker.seq, switched.runtime_started_seq);
+        assert!(!marker.appended_at.is_empty());
+        assert!(matches!(
+            marker.kind,
+            EventKind::RuntimeStarted { generation } if generation == candidate.generation
+        ));
         assert_eq!(
             store
                 .runtime_authority(&record().session.id)
@@ -1003,6 +1014,191 @@ mod tests {
                 token: "retired:reservation-a".into(),
                 reason: RuntimeCleanupReason::RetiredAuthority,
             }]
+        );
+    }
+
+    #[tokio::test]
+    async fn authority_switch_receipt_replay_requires_the_exact_lease_identity() {
+        let store = FakeStore::default();
+        store.seed(&record()).await.unwrap();
+        let request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let mut lease = store.acquire_session_lease(&request).await.unwrap();
+        let reservation = store
+            .reserve_runtime_generation(&lease, "reservation-identity")
+            .await
+            .unwrap();
+        let candidate = store
+            .register_runtime_candidate(&lease, &reservation, "runtime-replacement")
+            .await
+            .unwrap();
+        let switched = store
+            .switch_runtime_authority(&mut lease, &candidate)
+            .await
+            .unwrap();
+
+        let mut forged_holder = lease.clone();
+        forged_holder.holder = "replica-forged".into();
+        assert!(matches!(
+            store
+                .switch_runtime_authority(&mut forged_holder, &candidate)
+                .await,
+            Err(StoreError::RuntimeCandidateChanged { .. })
+        ));
+
+        let mut forged_operation = lease.clone();
+        forged_operation.operation = SessionOperation::Recover;
+        assert!(matches!(
+            store
+                .switch_runtime_authority(&mut forged_operation, &candidate)
+                .await,
+            Err(StoreError::RuntimeCandidateChanged { .. })
+        ));
+
+        assert_eq!(
+            store
+                .switch_runtime_authority(&mut lease, &candidate)
+                .await
+                .unwrap(),
+            switched,
+            "the exact completed lease still replays its receipt"
+        );
+        let events = store.events_since(&record().session.id, 0).await.unwrap();
+        assert_eq!(events.len(), 1, "forged retries cannot append a marker");
+    }
+
+    #[tokio::test]
+    async fn authority_switch_appends_after_the_exact_durable_tail() {
+        let store = FakeStore::default();
+        let mut seeded = record();
+        seeded.session.last_seq = 1;
+        store.seed(&seeded).await.unwrap();
+        store.events.lock().await.extend([
+            StoredEvent::from(Event {
+                session_id: seeded.session.id.clone(),
+                seq: 1,
+                kind: EventKind::SessionCreated,
+                appended_at: "2026-08-26T00:00:01Z".into(),
+            }),
+            StoredEvent::from(Event {
+                session_id: seeded.session.id.clone(),
+                seq: 2,
+                kind: EventKind::TurnStarted,
+                appended_at: "2026-08-26T00:00:02Z".into(),
+            }),
+        ]);
+        let request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let mut lease = store.acquire_session_lease(&request).await.unwrap();
+        let reservation = store
+            .reserve_runtime_generation(&lease, "reservation-contiguous")
+            .await
+            .unwrap();
+        let candidate = store
+            .register_runtime_candidate(&lease, &reservation, "runtime-contiguous")
+            .await
+            .unwrap();
+
+        let switched = store
+            .switch_runtime_authority(&mut lease, &candidate)
+            .await
+            .unwrap();
+
+        assert_eq!(switched.runtime_started_seq, 3);
+        assert_eq!(
+            store
+                .get(&seeded.session.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .session
+                .last_seq,
+            3,
+            "the marker closes a physical tail that was ahead of the record"
+        );
+        let events = store.events_since(&seeded.session.id, 0).await.unwrap();
+        assert_eq!(
+            events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert!(matches!(
+            events.last().map(|event| &event.kind),
+            Some(crate::event::StoredEventKind::Known(
+                EventKind::RuntimeStarted { generation }
+            )) if *generation == candidate.generation
+        ));
+    }
+
+    #[tokio::test]
+    async fn authority_switch_failure_commits_neither_marker_nor_authority() {
+        let store = FakeStore::default();
+        let mut overflowing = record();
+        overflowing.session.last_seq = u64::MAX;
+        store.seed(&overflowing).await.unwrap();
+        let request = request(
+            &store,
+            "replica-a",
+            SessionOperation::Handover,
+            Duration::from_secs(30),
+        )
+        .await;
+        let mut lease = store.acquire_session_lease(&request).await.unwrap();
+        let original_lease = lease.clone();
+        let reservation = store
+            .reserve_runtime_generation(&lease, "reservation-overflow")
+            .await
+            .unwrap();
+        let candidate = store
+            .register_runtime_candidate(&lease, &reservation, "runtime-overflow")
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            store
+                .switch_runtime_authority(&mut lease, &candidate)
+                .await,
+            Err(StoreError::Malformed(detail)) if detail.contains("event sequence overflow")
+        ));
+
+        assert_eq!(lease, original_lease);
+        let durable = store.get(&overflowing.session.id).await.unwrap().unwrap();
+        assert_eq!(durable.revision, overflowing.revision);
+        assert_eq!(durable.session.last_seq, u64::MAX);
+        assert_eq!(durable.runtime_id, overflowing.runtime_id);
+        assert_eq!(
+            store
+                .runtime_authority(&overflowing.session.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .generation,
+            0
+        );
+        assert!(store
+            .events_since(&overflowing.session.id, 0)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .runtime_cleanup_debts(&overflowing.session.id)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|cleanup| cleanup.reason == RuntimeCleanupReason::UncommittedCandidate)
+                .count(),
+            1,
+            "the failed candidate remains cleanup debt rather than authority"
         );
     }
 
@@ -1123,6 +1319,13 @@ mod tests {
                 .generation,
             newer.generation.get()
         );
+        let markers = store.events_since(&record().session.id, 0).await.unwrap();
+        assert_eq!(markers.len(), 1, "the stale candidate appends no marker");
+        assert!(matches!(
+            &markers[0].kind,
+            crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { generation })
+                if *generation == newer.generation
+        ));
     }
 
     #[tokio::test]
