@@ -40,6 +40,128 @@ pub(crate) struct Readoption {
 }
 
 impl SessionService {
+    /// Settle a legacy handover against the exact runtime being readopted.
+    ///
+    /// H1 keeps its old public grant. H2 publishes the candidate grant and
+    /// custody in the same Ready commit. The source identity is deliberately a
+    /// handle/generation pair: generation zero compatibility handovers use the
+    /// descriptor to distinguish their handle-only authority, while coordinated
+    /// switches must advance the generation monotonically.
+    fn settle_readopted_legacy_handover(
+        record: &mut SessionRecord,
+        runtime_generation: u64,
+    ) -> Result<(), StoreError> {
+        let crate::store::SkillPackState::LegacyHandover {
+            source_runtime_id,
+            source_generation,
+            packs,
+            stored_digest,
+        } = record.skill_packs.clone()
+        else {
+            return Ok(());
+        };
+        if source_runtime_id.is_empty() {
+            return Err(StoreError::Malformed(
+                "a legacy skill handover has no exact source runtime".into(),
+            ));
+        }
+        crate::store::validate_skill_packs(&packs).map_err(|error| {
+            StoreError::Malformed(format!("invalid legacy handover skill packs: {error}"))
+        })?;
+        if stored_digest
+            .is_some_and(|digest| crate::store::SkillPackDigest::for_packs(&packs) != digest)
+        {
+            return Err(StoreError::Malformed(
+                "a legacy skill handover receipt does not match its exact bytes".into(),
+            ));
+        }
+        let runtime_id = record
+            .runtime_id
+            .as_deref()
+            .filter(|runtime_id| !runtime_id.is_empty())
+            .ok_or_else(|| {
+                StoreError::Malformed(
+                    "a readopted legacy skill handover has no authoritative runtime".into(),
+                )
+            })?;
+        if let Some(pending) = record.pending_handover.as_ref() {
+            if record.rotation_claim.as_deref() != Some(pending.claim.as_str()) {
+                return Err(StoreError::Malformed(
+                    "a compatibility skill handover does not own its rotation claim".into(),
+                ));
+            }
+        }
+
+        let source_survived = if source_generation == 0 {
+            if record.pending_handover.is_some() {
+                if runtime_generation != 0 {
+                    return Err(StoreError::Malformed(
+                        "a compatibility skill handover acquired nonzero runtime authority".into(),
+                    ));
+                }
+                runtime_id == source_runtime_id
+            } else {
+                match runtime_generation {
+                    0 if runtime_id == source_runtime_id => true,
+                    0 => {
+                        return Err(StoreError::Malformed(
+                            "a generation-zero skill handover changed runtime without a compatibility descriptor"
+                                .into(),
+                        ))
+                    }
+                    _ if runtime_id != source_runtime_id => false,
+                    _ => {
+                        return Err(StoreError::Malformed(
+                            "a legacy skill handover advanced authority without changing runtimes"
+                                .into(),
+                        ))
+                    }
+                }
+            }
+        } else if runtime_generation < source_generation {
+            return Err(StoreError::Malformed(
+                "a legacy skill handover runtime generation regressed".into(),
+            ));
+        } else if runtime_generation == source_generation {
+            if runtime_id != source_runtime_id {
+                return Err(StoreError::Malformed(
+                    "a legacy skill handover changed handles without advancing authority".into(),
+                ));
+            }
+            true
+        } else if runtime_id == source_runtime_id {
+            return Err(StoreError::Malformed(
+                "a legacy skill handover advanced authority without changing runtimes".into(),
+            ));
+        } else {
+            false
+        };
+
+        if source_survived {
+            // A successful object-store receipt lets H1 return to its exact
+            // legacy state while the candidate remains at the deterministic key
+            // for the next retry. Without external custody, retain the inline
+            // candidate so a retry still never consults the mutable registry.
+            if stored_digest.is_some() {
+                record.skill_packs = crate::store::SkillPackState::Legacy;
+            }
+            return Ok(());
+        }
+        if record.rotation_claim.is_none() && record.session.status != SessionStatus::Provisioning {
+            return Err(StoreError::Malformed(
+                "a replacement runtime cannot settle legacy skills without its rotation claim"
+                    .into(),
+            ));
+        }
+
+        record.session.granted_skills = Some(Self::granted_skills_for(&packs));
+        record.skill_packs = stored_digest.map_or_else(
+            || crate::store::SkillPackState::Staged(packs),
+            |digest| crate::store::SkillPackState::Stored { digest },
+        );
+        Ok(())
+    }
+
     /// Give a stopped session a runtime again.
     ///
     /// The same machinery that starts a session, pointed at one that already
@@ -219,6 +341,7 @@ impl SessionService {
                         outcome: crate::provision_failure::Abandonment::Keep,
                         lease,
                         handover: None,
+                        prepared_skills: None,
                         rotation_claim,
                     },
                 )
@@ -674,17 +797,32 @@ impl SessionService {
             current.session.status,
             SessionStatus::Provisioning | SessionStatus::Rotating
         ) {
+            let ready_claimed = current.clone();
             if current.session.status.is_rotating() && current.rotation_claim.is_none() {
+                if matches!(
+                    &current.skill_packs,
+                    crate::store::SkillPackState::LegacyHandover { .. }
+                ) {
+                    return Err(store_failed(StoreError::Malformed(
+                        "a rotating legacy skill handover has no durable claim".into(),
+                    )));
+                }
                 current.rotation_claim = Some(format!(
                     "rotn_{}",
                     uuid::Uuid::new_v4().simple()
                 ));
             }
+            let runtime_generation = lease
+                .as_ref()
+                .map_or(0, |held| held.boundary.authority.generation);
+            Self::settle_readopted_legacy_handover(&mut current, runtime_generation)
+                .map_err(store_failed)?;
             current.session.status = SessionStatus::Ready;
             current.session.recovery_state = RecoveryState::Normal;
             current.session.stop_reason = None;
-            self.persist_durably(
+            self.publish_ready_durably(
                 &mut current,
+                &ready_claimed,
                 vec![Event {
                     session_id: id.clone(),
                     seq: 0,

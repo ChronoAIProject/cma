@@ -13,7 +13,9 @@ use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::event::{Event, EventKind};
 use crate::ids::{SessionId, SubjectId};
-use crate::log::{append_with_rotation_claim, drop_undelivered, ignore_rejected};
+use crate::log::{
+    append_terminal_lifecycle_repair, append_with_rotation_claim, drop_undelivered, ignore_rejected,
+};
 use crate::service::{store_failed, SessionService};
 use crate::session::{RecoveryState, SessionStatus, StopReason};
 use crate::store::{SessionRecord, StoreError};
@@ -164,10 +166,12 @@ impl SessionService {
         if let Some(lease) = lease {
             return self.end_session_coordinated(record, lease, lifecycle).await;
         }
+        let has_local_entry = self.entries.read().await.contains_key(id);
         if record.session.status.is_terminal()
             && record.rotation_claim.is_none()
             && record.pending_handover.is_none()
             && record.runtime_id.is_none()
+            && !has_local_entry
         {
             let credentials = self.credentials.clone();
             let service = Arc::clone(self);
@@ -183,7 +187,7 @@ impl SessionService {
                         );
                     }
                 }
-                service.remove_skill_packs(&session_id).await;
+                service.finish_skill_pack_cleanup_after_commit(session_id);
                 Ok(owner)
             });
             return Self::await_compatibility_lifecycle_task(task, "session termination").await;
@@ -265,7 +269,7 @@ impl SessionService {
                                 );
                             }
                         }
-                        service.remove_skill_packs(&session_id).await;
+                        service.finish_skill_pack_cleanup_after_commit(session_id.clone());
                         tracing::info!(session_id = %session_id, "session terminated");
                     }
                     cleanup.and_then(|_| {
@@ -282,7 +286,8 @@ impl SessionService {
                     .await;
             };
             let commit = if phase_one_complete {
-                self.persist_durably_with(
+                self.persist_terminal_lifecycle_repair_with(
+                    &record,
                     record.clone(),
                     Vec::new(),
                     continuation,
@@ -290,9 +295,9 @@ impl SessionService {
                     drop_undelivered,
                 )
             } else {
-                append_with_rotation_claim(
+                append_terminal_lifecycle_repair(
                     entry,
-                    Some(&record),
+                    &record,
                     EventKind::StatusChanged {
                         status: SessionStatus::Terminated,
                         stop_reason: Some(StopReason::UserTerminated),
@@ -343,7 +348,8 @@ impl SessionService {
             }]
         };
         let task = self
-            .persist_durably_with(
+            .persist_terminal_lifecycle_repair_with(
+                &record,
                 retired,
                 events,
                 move |committed| async move {
@@ -368,7 +374,7 @@ impl SessionService {
                                     );
                                 }
                             }
-                            service.remove_skill_packs(&session_id).await;
+                            service.finish_skill_pack_cleanup_after_commit(session_id.clone());
                             tracing::info!(session_id = %session_id, "session terminated");
                         }
                         result
@@ -451,20 +457,37 @@ impl SessionService {
             }
         };
 
-        if !terminal.session.status.is_terminal()
+        let lifecycle_changed = !terminal.session.status.is_terminal()
             || terminal.session.stop_reason != Some(StopReason::UserTerminated)
             || terminal.session.recovery_state != RecoveryState::Retired
             || terminal.rotation_claim.is_some()
-            || terminal.pending_handover.is_some()
-        {
+            || terminal.pending_handover.is_some();
+        let terminal_custody = match (&terminal.skill_packs, self.skill_packs.as_ref()) {
+            (crate::store::SkillPackState::Cleaned, _) => crate::store::SkillPackState::Cleaned,
+            (crate::store::SkillPackState::Staged(packs), None) if packs.is_empty() => {
+                crate::store::SkillPackState::Cleaned
+            }
+            (
+                crate::store::SkillPackState::LegacyHandover {
+                    stored_digest: None,
+                    ..
+                },
+                None,
+            ) => crate::store::SkillPackState::Cleaned,
+            (_, _) => crate::store::SkillPackState::CleanupPending,
+        };
+        if lifecycle_changed {
+            let claimed_terminal = terminal.clone();
             terminal.session.status = SessionStatus::Terminated;
             terminal.session.stop_reason = Some(StopReason::UserTerminated);
             terminal.session.recovery_state = RecoveryState::Retired;
             terminal.rotation_claim = None;
             terminal.pending_handover = None;
+            terminal.skill_packs = terminal_custody;
             if let Err(error) = self
-                .persist_durably(
+                .terminate_with_skill_cleanup_durably(
                     &mut terminal,
+                    &claimed_terminal,
                     vec![Event {
                         session_id: id.clone(),
                         seq: 0,
@@ -477,6 +500,17 @@ impl SessionService {
                         appended_at: String::new(),
                     }],
                 )
+                .await
+            {
+                self.entries.write().await.remove(&id);
+                drop(input_fence);
+                let _ = self.store.release_session_lease(&lease).await;
+                drop(lifecycle);
+                return Err(store_failed(error));
+            }
+        } else if terminal.skill_packs != terminal_custody {
+            if let Err(error) = self
+                .persist_skill_pack_state_durably(&mut terminal, terminal_custody)
                 .await
             {
                 self.entries.write().await.remove(&id);
@@ -546,7 +580,16 @@ impl SessionService {
                 );
             }
         }
-        self.remove_skill_packs(&id).await;
+        if let Err(error) = self
+            .finish_skill_pack_cleanup(&mut terminal, Some(&lease))
+            .await
+        {
+            tracing::error!(
+                session_id = %id,
+                %error,
+                "session terminated with skill cleanup still pending"
+            );
+        }
         if let Err(error) = self.store.release_session_lease(&lease).await {
             tracing::debug!(
                 session_id = %id,
@@ -1007,14 +1050,21 @@ impl SessionService {
         caller
             .authorization
             .require(Capability::TerminateOwnSession)?;
-        let record = self.record(id).await?;
-        if !record.session.is_owned_by(&caller.subject) {
+        let initial = self.record(id).await?;
+        if !initial.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
         }
         // Idempotent termination also repairs a terminal row whose authority or
         // exact cleanup debt survived an earlier process. Delete must not skip
         // that repair and then erase the only row capable of safe reclamation.
         self.terminate_session(caller, id).await?;
+        let cleanup_record = self
+            .finish_terminal_skill_pack_cleanup_with_authority(
+                id,
+                crate::coordination::SessionOperation::Lifecycle,
+            )
+            .await
+            .map_err(store_failed)?;
         self.entries.write().await.remove(id);
         loop {
             match self.delete_durably(id).await {
@@ -1042,7 +1092,9 @@ impl SessionService {
         // The transcript goes with the session. Leaving it behind would keep a
         // record of work its owner asked to be removed, and orphan a blob
         // nothing references.
-        if let (Some(store), Some(reference)) = (&self.context, record.context_ref.as_deref()) {
+        if let (Some(store), Some(reference)) =
+            (&self.context, cleanup_record.context_ref.as_deref())
+        {
             if let Err(e) = store.delete(reference).await {
                 tracing::error!(session_id = %id, error = %e, "cannot remove stored context");
             }
@@ -1056,10 +1108,7 @@ impl SessionService {
                 tracing::error!(session_id = %id, %error, "cannot remove stored handover snapshot");
             }
         }
-        // Termination normally removed these already. Repeating it catches a
-        // prior cleanup outage and is harmless for an absent deterministic key.
-        self.remove_skill_packs(id).await;
         tracing::info!(session_id = %id, "session deleted");
-        Ok(record.context_ref)
+        Ok(cleanup_record.context_ref)
     }
 }

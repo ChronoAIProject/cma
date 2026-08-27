@@ -15,8 +15,8 @@ use crate::service::{Deployment, ScreenFactory, SessionService};
 
 use crate::ids::SessionId;
 use crate::test_support::{
-    kernel, no_environments, unconfigured_settings, FakeAdapter, FakeStore, FixedCredential,
-    NullScreen, RecordingScreen,
+    fixture_skill_ports, kernel, no_environments, unconfigured_settings, FakeAdapter, FakeStore,
+    FixedCredential, NullScreen, RecordingScreen,
 };
 
 /// A fixed settings document for a session-service fixture.
@@ -70,17 +70,18 @@ pub(crate) fn service_with_environments_and_settings_service(
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
+    let (skills, skill_packs) = fixture_skill_ports(&store);
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
         factory,
-        store,
+        Arc::clone(&store) as Arc<dyn crate::store::SessionStore>,
         crate::service::SessionPorts {
             context: None,
             handovers: Some(handovers),
             credentials: None,
-            skills: None,
-            skill_packs: None,
+            skills: Some(skills),
+            skill_packs: Some(skill_packs),
             settings: Some(settings),
         },
         environments,
@@ -290,13 +291,16 @@ pub(crate) fn service_with_environments_on_version(
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
+    let (skills, skill_packs) = fixture_skill_ports(&store);
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
         factory,
-        store,
+        Arc::clone(&store) as Arc<dyn crate::store::SessionStore>,
         crate::service::SessionPorts {
             handovers: Some(handovers),
+            skills: Some(skills),
+            skill_packs: Some(skill_packs),
             ..Default::default()
         },
         environments,

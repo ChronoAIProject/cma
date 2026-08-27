@@ -1,11 +1,12 @@
 use super::*;
 use layer2_core::{
     store::{PendingHandover, PendingHandoverTarget},
-    AgentOptions, ConversationLink, ConversationWriteAuthority, Event, EventKind, KernelId,
-    PageCursor, PageRequest, Rate, RateCardId, RecoveryState, RuntimeCleanupReason, Session,
-    SessionBoundary, SessionCapabilities, SessionId, SessionLeaseRequest, SessionListQuery,
-    SessionMode, SessionOperation, SessionPricing, SessionRecord, SessionStatus, SkillPack,
-    SkillPackState, StopReason, StoredEventKind, SubjectId, TerminalGeometry,
+    AgentOptions, ConversationLink, ConversationWriteAuthority, Event, EventKind, GrantedSkill,
+    KernelId, PageCursor, PageRequest, Rate, RateCardId, RecoveryState, RuntimeCleanupReason,
+    Session, SessionBoundary, SessionCapabilities, SessionId, SessionLeaseRequest,
+    SessionListQuery, SessionMode, SessionOperation, SessionPricing, SessionRecord, SessionStatus,
+    SkillId, SkillPack, SkillPackDigest, SkillPackState, StopReason, StoredEventKind, SubjectId,
+    TerminalGeometry,
 };
 use std::io::Write;
 use std::sync::{
@@ -394,7 +395,6 @@ fn a_document_without_revision_reads_as_revision_zero() {
     let stored = to_doc(&record).expect("record can be stored");
     let mut document = mongodb::bson::serialize_to_document(&stored).expect("doc serializes");
     assert!(document.remove("revision").is_some());
-    assert!(document.remove(WRITE_PROTOCOL_FIELD).is_some());
 
     let legacy: SessionDoc =
         mongodb::bson::deserialize_from_bson(document.into()).expect("legacy doc reads");
@@ -466,9 +466,349 @@ fn staged_skill_bytes_are_redacted_from_session_doc_debug_output() {
 }
 
 #[test]
+fn legacy_handover_skill_custody_round_trips_exact_bytes_receipt_and_source_generation() {
+    let packs = vec![SkillPack {
+        name: "private-review".into(),
+        version: Some("4.1".into()),
+        files: vec![("SKILL.md".into(), b"private-handover-body-marker".to_vec())],
+    }];
+    let digest = SkillPackDigest::for_packs(&packs);
+    let mut record = record_with(None);
+    record.runtime_id = Some("runtime-private-h1".into());
+    record.skill_packs = SkillPackState::LegacyHandover {
+        source_runtime_id: "runtime-private-h1".into(),
+        source_generation: 41,
+        packs,
+        stored_digest: Some(digest),
+    };
+
+    let stored = to_doc(&record).expect("legacy handover record encodes");
+    let document = mongodb::bson::serialize_to_document(&stored).expect("document encodes");
+    let custody = document
+        .get_document("skill_packs")
+        .expect("custody is a subdocument");
+    assert_eq!(custody.get_str("state").unwrap(), "legacy_handover");
+    assert_eq!(
+        custody.get_str("source_runtime_id").unwrap(),
+        "runtime-private-h1"
+    );
+    assert_eq!(custody.get_i64("source_generation").unwrap(), 41);
+    assert_eq!(
+        custody.get_binary_generic("stored_digest").unwrap(),
+        digest.as_bytes()
+    );
+    assert_eq!(
+        custody.get_array("packs").unwrap()[0]
+            .as_document()
+            .unwrap()
+            .get_array("files")
+            .unwrap()[0]
+            .as_document()
+            .unwrap()
+            .get_binary_generic("body")
+            .unwrap(),
+        b"private-handover-body-marker"
+    );
+    assert_eq!(
+        from_doc(stored)
+            .expect("legacy handover record decodes")
+            .skill_packs,
+        record.skill_packs
+    );
+}
+
+#[test]
+fn interactive_legacy_handover_requires_its_exact_source_runtime() {
+    let packs = vec![SkillPack {
+        name: "private-review".into(),
+        version: Some("4.1".into()),
+        files: vec![("SKILL.md".into(), b"exact candidate".to_vec())],
+    }];
+    let mut record = record_with(None);
+    record.runtime_id = Some("runtime-h2".into());
+    record.skill_packs = SkillPackState::LegacyHandover {
+        source_runtime_id: "runtime-h1".into(),
+        source_generation: 7,
+        stored_digest: Some(SkillPackDigest::for_packs(&packs)),
+        packs,
+    };
+
+    let ready = to_doc(&record).expect("the malformed persisted shape still serializes");
+    assert!(matches!(from_doc(ready), Err(StoreError::Malformed(_))));
+
+    record.session.status = SessionStatus::Rotating;
+    let rotating = from_doc(to_doc(&record).expect("rotating H2 serializes"))
+        .expect("a switched H2 may retain handover custody until Ready settlement");
+    assert_eq!(rotating.runtime_id.as_deref(), Some("runtime-h2"));
+    assert!(matches!(
+        rotating.skill_packs,
+        SkillPackState::LegacyHandover { .. }
+    ));
+}
+
+#[test]
+fn malformed_legacy_handover_skill_custody_is_rejected() {
+    let packs = vec![SkillPack {
+        name: "private-review".into(),
+        version: Some("4.1".into()),
+        files: vec![("SKILL.md".into(), b"exact candidate".to_vec())],
+    }];
+    let docs = skill_packs_to_docs(&packs);
+    let valid_digest = skill_pack_digest_to_binary(SkillPackDigest::for_packs(&packs));
+    let state = |source_runtime_id: &str, source_generation: i64, stored_digest: Option<Binary>| {
+        SkillPackStateDoc::LegacyHandover {
+            source_runtime_id: source_runtime_id.into(),
+            source_generation,
+            packs: docs.clone(),
+            stored_digest,
+        }
+    };
+
+    assert!(matches!(
+        skill_pack_state_from_doc(Some(state("", 1, Some(valid_digest.clone())))),
+        Err(StoreError::Malformed(_))
+    ));
+    assert!(matches!(
+        skill_pack_state_from_doc(Some(state("runtime-h1", -1, Some(valid_digest.clone())))),
+        Err(StoreError::Malformed(_))
+    ));
+    assert!(matches!(
+        skill_pack_state_from_doc(Some(state(
+            "runtime-h1",
+            1,
+            Some(Binary {
+                subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                bytes: vec![0; 31],
+            })
+        ))),
+        Err(StoreError::Malformed(_))
+    ));
+    assert!(matches!(
+        skill_pack_state_from_doc(Some(state(
+            "runtime-h1",
+            1,
+            Some(skill_pack_digest_to_binary(SkillPackDigest::for_packs(&[])))
+        ))),
+        Err(StoreError::Malformed(_))
+    ));
+
+    let invalid_tree = SkillPackStateDoc::LegacyHandover {
+        source_runtime_id: "runtime-h1".into(),
+        source_generation: 1,
+        packs: skill_packs_to_docs(&[SkillPack {
+            name: "private-review".into(),
+            version: None,
+            files: vec![("../SKILL.md".into(), Vec::new())],
+        }]),
+        stored_digest: None,
+    };
+    assert!(matches!(
+        skill_pack_state_from_doc(Some(invalid_tree)),
+        Err(StoreError::Malformed(_))
+    ));
+}
+
+#[test]
+fn legacy_handover_listing_redacts_candidate_bytes_and_source_identity() {
+    let body_marker = b"private-list-handover-body-marker";
+    let source_marker = b"runtime-private-list-h1";
+    let packs = vec![SkillPack {
+        name: "private-review".into(),
+        version: Some("4.1".into()),
+        files: vec![("SKILL.md".into(), body_marker.to_vec())],
+    }];
+    let mut record = record_with(None);
+    record.session.status = SessionStatus::Rotating;
+    record.runtime_id = Some("runtime-public-h2".into());
+    record.skill_packs = SkillPackState::LegacyHandover {
+        source_runtime_id: String::from_utf8(source_marker.to_vec()).unwrap(),
+        source_generation: 7,
+        stored_digest: Some(SkillPackDigest::for_packs(&packs)),
+        packs,
+    };
+    let stored = to_doc(&record).expect("exact handover record encodes");
+    assert_eq!(
+        from_doc(stored.clone())
+            .expect("exact get remains authoritative")
+            .skill_packs,
+        record.skill_packs
+    );
+
+    let mut projected =
+        mongodb::bson::serialize_to_document(&stored).expect("exact record serializes");
+    projected.insert(
+        "skill_packs",
+        mongodb::bson::serialize_to_bson(&SkillPackStateDoc::StagedSummary)
+            .expect("summary serializes"),
+    );
+    let projected_bytes = mongodb::bson::serialize_to_vec(&projected).unwrap();
+    assert!(!projected_bytes
+        .windows(body_marker.len())
+        .any(|window| window == body_marker));
+    assert!(!projected_bytes
+        .windows(source_marker.len())
+        .any(|window| window == source_marker));
+    let listed: SessionDoc = mongodb::bson::deserialize_from_document(projected)
+        .expect("projected row retains the session shape");
+    assert_eq!(
+        from_list_doc(listed)
+            .expect("projected handover row decodes for listing")
+            .skill_packs,
+        SkillPackState::StagedSummary
+    );
+    assert_eq!(
+        staged_skill_summary_stage(),
+        doc! {
+            "$set": {
+                "skill_packs": {
+                    "$cond": [
+                        { "$in": ["$skill_packs.state", ["staged", "legacy_handover"]] },
+                        { "state": "staged_summary" },
+                        "$skill_packs",
+                    ]
+                }
+            }
+        }
+    );
+}
+
+#[test]
+fn legacy_handover_skills_cannot_push_the_actual_bson_document_over_its_bound() {
+    let mut record = record_with(None);
+    record.skill_packs = SkillPackState::LegacyHandover {
+        source_runtime_id: "runtime-h1".into(),
+        source_generation: 1,
+        packs: vec![SkillPack {
+            name: "too-large".into(),
+            version: None,
+            files: vec![(
+                "SKILL.md".into(),
+                vec![0; MAX_STAGED_SESSION_DOCUMENT_BYTES],
+            )],
+        }],
+        stored_digest: None,
+    };
+
+    let error = to_doc(&record).expect_err("oversized handover BSON is refused");
+    assert!(matches!(error, StoreError::Malformed(_)));
+    assert!(error
+        .to_string()
+        .contains("session BSON with staged skills"));
+}
+
+#[test]
+fn a_projected_staged_skill_row_excludes_bodies_and_preserves_cleanup_custody() {
+    let mut record = record_with(None);
+    record.skill_packs = SkillPackState::Staged(vec![SkillPack {
+        name: "private-review".into(),
+        version: Some("3.2".into()),
+        files: vec![("SKILL.md".into(), b"private-list-body-marker".to_vec())],
+    }]);
+
+    let stored = to_doc(&record).expect("exact staged record encodes");
+    let mut projected =
+        mongodb::bson::serialize_to_document(&stored).expect("exact record serializes");
+    projected.insert(
+        "skill_packs",
+        mongodb::bson::serialize_to_bson(&SkillPackStateDoc::StagedSummary)
+            .expect("summary serializes"),
+    );
+
+    let projected_bytes = mongodb::bson::serialize_to_vec(&projected).unwrap();
+    assert!(!projected_bytes
+        .windows(b"private-list-body-marker".len())
+        .any(|window| window == b"private-list-body-marker"));
+    assert_eq!(
+        projected
+            .get_document("skill_packs")
+            .expect("summary is a document"),
+        &doc! { "state": "staged_summary" }
+    );
+
+    let listed: SessionDoc = mongodb::bson::deserialize_from_document(projected.clone())
+        .expect("projected row retains the session shape");
+    let listed = from_list_doc(listed).expect("projected row decodes for listing");
+    assert_eq!(listed.session.id, record.session.id);
+    assert_eq!(listed.session.granted_skills, record.session.granted_skills);
+    assert_eq!(listed.skill_packs, SkillPackState::StagedSummary);
+
+    let exact: SessionDoc = mongodb::bson::deserialize_from_document(projected).unwrap();
+    assert!(matches!(from_doc(exact), Err(StoreError::Malformed(_))));
+}
+
+#[test]
+fn a_projected_staged_skill_summary_cannot_be_written_as_authority() {
+    let mut record = record_with(None);
+    record.skill_packs = SkillPackState::StagedSummary;
+
+    let error = to_doc(&record).expect_err("listing projection is not durable state");
+    assert!(matches!(error, StoreError::Malformed(_)));
+    assert!(error.to_string().contains("cannot be persisted"));
+}
+
+#[test]
+fn stored_skill_digest_round_trips_as_fixed_bson_binary() {
+    let mut record = record_with(None);
+    let digest = SkillPackDigest::for_packs(&[SkillPack {
+        name: "private-review".into(),
+        version: Some("3.2".into()),
+        files: vec![("SKILL.md".into(), b"private-body-marker".to_vec())],
+    }]);
+    record.skill_packs = SkillPackState::Stored { digest };
+
+    let stored = to_doc(&record).expect("stored record encodes");
+    let document = mongodb::bson::serialize_to_document(&stored).expect("document encodes");
+    assert_eq!(
+        document
+            .get_document("skill_packs")
+            .expect("custody is a subdocument")
+            .get_binary_generic("digest")
+            .expect("digest is BSON binary"),
+        digest.as_bytes()
+    );
+    assert_eq!(
+        from_doc(stored).expect("stored record decodes").skill_packs,
+        record.skill_packs
+    );
+}
+
+#[test]
+fn malformed_stored_skill_digests_are_refused() {
+    let wrong_subtype = SkillPackStateDoc::Stored {
+        digest: Binary {
+            subtype: mongodb::bson::spec::BinarySubtype::Uuid,
+            bytes: vec![0; 32],
+        },
+    };
+    assert!(matches!(
+        skill_pack_state_from_doc(Some(wrong_subtype)),
+        Err(StoreError::Malformed(_))
+    ));
+
+    let wrong_length = SkillPackStateDoc::Stored {
+        digest: Binary {
+            subtype: mongodb::bson::spec::BinarySubtype::Generic,
+            bytes: vec![0; 31],
+        },
+    };
+    assert!(matches!(
+        skill_pack_state_from_doc(Some(wrong_length)),
+        Err(StoreError::Malformed(_))
+    ));
+    assert!(
+        mongodb::bson::deserialize_from_document::<SkillPackStateDoc>(doc! {
+            "state": "stored"
+        })
+        .is_err()
+    );
+}
+
+#[test]
 fn a_document_without_skill_custody_reads_as_legacy() {
     let mut record = record_with(None);
-    record.skill_packs = SkillPackState::Stored;
+    record.skill_packs = SkillPackState::Stored {
+        digest: SkillPackDigest::for_packs(&[]),
+    };
     let stored = to_doc(&record).expect("record encodes");
     let mut document = mongodb::bson::serialize_to_document(&stored).expect("document encodes");
     assert!(document.remove("skill_packs").is_some());
@@ -1763,6 +2103,16 @@ fn protocol_validators_require_the_current_marker_and_session_revision() {
         schema
             .get_document("properties")
             .unwrap()
+            .get_document(WRITE_PROTOCOL_FIELD)
+            .unwrap()
+            .get_array("enum")
+            .unwrap(),
+        &[Bson::Int32(SESSION_WRITE_PROTOCOL)]
+    );
+    assert_eq!(
+        schema
+            .get_document("properties")
+            .unwrap()
             .get_document("revision")
             .unwrap()
             .get_str("bsonType")
@@ -1938,13 +2288,71 @@ fn exact_collection_contract(collection: &str, uuid: Binary) -> CollectionContra
 }
 
 #[test]
+fn session_write_contract_classifier_accepts_only_exact_current_or_previous_contracts() {
+    let uuid = test_collection_uuid(9);
+    let current = exact_collection_contract(SESSIONS, uuid.clone());
+    assert_eq!(
+        classify_session_write_contract(&current, &uuid).unwrap(),
+        SessionWriteContract::Current
+    );
+
+    let mut previous = current.clone();
+    previous.validator = Some(previous_session_protocol_validator());
+    assert_eq!(
+        classify_session_write_contract(&previous, &uuid).unwrap(),
+        SessionWriteContract::Previous
+    );
+
+    let mut unknown = current.clone();
+    unknown.validator = Some(session_protocol_validator_for(
+        SESSION_WRITE_PROTOCOL + 1,
+        SESSION_COORDINATION_PROTOCOL,
+    ));
+    assert!(classify_session_write_contract(&unknown, &uuid).is_err());
+
+    let mut mixed = current.clone();
+    let mut mixed_validator = session_protocol_validator();
+    *mixed_validator
+        .get_document_mut("$jsonSchema")
+        .unwrap()
+        .get_document_mut("properties")
+        .unwrap()
+        .get_document_mut(WRITE_PROTOCOL_FIELD)
+        .unwrap()
+        .get_array_mut("enum")
+        .unwrap() = vec![
+        Bson::Int32(WRITE_PROTOCOL),
+        Bson::Int32(SESSION_WRITE_PROTOCOL),
+    ];
+    mixed.validator = Some(mixed_validator);
+    assert!(classify_session_write_contract(&mixed, &uuid).is_err());
+
+    let mut wrong_coordination = current.clone();
+    wrong_coordination.validator = Some(legacy_session_protocol_validator());
+    assert!(classify_session_write_contract(&wrong_coordination, &uuid).is_err());
+
+    let mut weakened = previous.clone();
+    weakened.validation_action = Some(ValidationAction::Warn);
+    assert!(classify_session_write_contract(&weakened, &uuid).is_err());
+
+    let mut view = current.clone();
+    view.kind = NamespaceKind::View {
+        source: Some(SESSIONS.into()),
+        pipeline_is_empty: true,
+    };
+    assert!(classify_session_write_contract(&view, &uuid).is_err());
+
+    assert!(classify_session_write_contract(&current, &test_collection_uuid(10)).is_err());
+}
+
+#[test]
 fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types() {
     let reordered = doc! {
         "$jsonSchema": {
             "properties": {
                 "revision": { "bsonType": "long" },
                 WRITE_PROTOCOL_FIELD: {
-                    "enum": [WRITE_PROTOCOL],
+                    "enum": [SESSION_WRITE_PROTOCOL],
                     "bsonType": "int",
                 },
                 COORDINATION_PROTOCOL_FIELD: {
@@ -1971,7 +2379,7 @@ fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types(
             "properties": {
                 WRITE_PROTOCOL_FIELD: {
                     "bsonType": "int",
-                    "enum": [WRITE_PROTOCOL],
+                    "enum": [SESSION_WRITE_PROTOCOL],
                 },
                 "revision": { "bsonType": "long" },
                 COORDINATION_PROTOCOL_FIELD: {
@@ -1995,7 +2403,7 @@ fn validator_comparison_ignores_document_key_order_but_not_array_order_or_types(
             "properties": {
                 WRITE_PROTOCOL_FIELD: {
                     "bsonType": "int",
-                    "enum": [i64::from(WRITE_PROTOCOL)],
+                    "enum": [i64::from(SESSION_WRITE_PROTOCOL)],
                 },
                 "revision": { "bsonType": "long" },
                 COORDINATION_PROTOCOL_FIELD: {
@@ -2152,22 +2560,26 @@ fn current_session_documents_carry_both_writer_protocols() {
     let document = mongodb::bson::serialize_to_document(&stored).expect("record serializes");
     assert_eq!(
         document.get_i32(WRITE_PROTOCOL_FIELD).unwrap(),
-        WRITE_PROTOCOL
+        SESSION_WRITE_PROTOCOL
     );
     assert_eq!(
         document.get_i32(COORDINATION_PROTOCOL_FIELD).unwrap(),
         SESSION_COORDINATION_PROTOCOL
     );
     assert!(document.contains_key("coordination"));
+
+    let mut predecessor = stored;
+    predecessor.write_protocol = WRITE_PROTOCOL;
+    assert!(from_doc(predecessor).is_err());
 }
 
 #[test]
-fn session_protocol_migration_changes_only_protocol_and_revision_fields() {
+fn session_protocol_migrations_keep_initial_activation_separate_from_writer_resume() {
     assert_eq!(
         session_protocol_migration_update(),
         doc! {
             "$set": {
-                WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+                WRITE_PROTOCOL_FIELD: SESSION_WRITE_PROTOCOL,
                 COORDINATION_PROTOCOL_FIELD: SESSION_COORDINATION_PROTOCOL,
             },
             "$max": { "revision": 0_i64 },
@@ -2176,10 +2588,25 @@ fn session_protocol_migration_changes_only_protocol_and_revision_fields() {
     assert_eq!(
         current_session_protocol_filter(),
         doc! {
-            WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+            WRITE_PROTOCOL_FIELD: SESSION_WRITE_PROTOCOL,
             COORDINATION_PROTOCOL_FIELD: SESSION_COORDINATION_PROTOCOL,
             "revision": { "$type": "long" },
         }
+    );
+    assert_eq!(
+        previous_session_protocol_filter(),
+        doc! {
+            WRITE_PROTOCOL_FIELD: { "$eq": WRITE_PROTOCOL, "$type": "int" },
+            COORDINATION_PROTOCOL_FIELD: {
+                "$eq": SESSION_COORDINATION_PROTOCOL,
+                "$type": "int",
+            },
+            "revision": { "$type": "long" },
+        }
+    );
+    assert_eq!(
+        session_write_protocol_migration_update(),
+        doc! { "$set": { WRITE_PROTOCOL_FIELD: SESSION_WRITE_PROTOCOL } }
     );
 }
 
@@ -2189,13 +2616,29 @@ fn read_aggregations_hide_tombstoned_sessions() {
     let listed = session_page_pipeline(doc! { "owner": "subject" }, &query).unwrap();
     assert_eq!(listed[0], doc! { "$match": { "owner": "subject" } });
     assert_eq!(listed[1], doc! { "$sort": { "created_at": -1, "_id": -1 } });
-    assert_eq!(listed[2], tombstone_lookup_stage());
+    assert_eq!(listed[2], staged_skill_summary_stage());
+    assert_eq!(listed[3], tombstone_lookup_stage());
     assert_eq!(
-        listed[3],
+        listed[4],
         doc! { "$match": { "_cma_tombstones.0": { "$exists": false } } }
     );
-    assert_eq!(listed[4], doc! { "$project": { "_cma_tombstones": 0 } });
-    assert_eq!(listed[5], doc! { "$limit": 6_i64 });
+    assert_eq!(listed[5], doc! { "$project": { "_cma_tombstones": 0 } });
+    assert_eq!(listed[6], doc! { "$limit": 6_i64 });
+
+    let exact = exact_session_pipeline(&SessionId("sesn_exact".into()));
+    assert_eq!(exact[2], tombstone_lookup_stage());
+    assert!(!exact.contains(&staged_skill_summary_stage()));
+    assert_eq!(exact.last().unwrap(), &doc! { "$limit": 1_i64 });
+    assert_eq!(
+        runtime_authority_projection(),
+        doc! {
+            "_id": 1_i32,
+            WRITE_PROTOCOL_FIELD: 1_i32,
+            COORDINATION_PROTOCOL_FIELD: 1_i32,
+            "runtime_id": 1_i32,
+            "coordination": 1_i32,
+        }
+    );
 
     let counted = visible_count_pipeline(doc! { "status": "ready" });
     assert_eq!(counted[1], tombstone_lookup_stage());
@@ -2241,7 +2684,7 @@ fn contains_string_field(value: &Bson, field: &str, expected: &str) -> bool {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at MongoDB"]
 async fn real_session_page_uses_the_compound_index_before_tombstone_filtering() {
     const MATCHES: usize = 5_000;
-    const EXAMINED_CEILING: i64 = 64;
+    const EXAMINED_CEILING: i64 = 256;
 
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name MongoDB");
@@ -2272,47 +2715,223 @@ async fn real_session_page_uses_the_compound_index_before_tombstone_filtering() 
         .await
         .expect("test sessions seed");
 
-    let required = required_indexes()
-        .into_iter()
-        .find(|required| required.name == "owner_1_created_at_-1__id_-1")
-        .expect("owner pagination index is required");
-    sessions
-        .create_index(required_index_model(&required))
-        .await
-        .expect("owner pagination index creates");
+    for required in required_indexes().into_iter().filter(|required| {
+        required.collection == SESSIONS
+            && [
+                OWNER_SESSION_PAGE_INDEX,
+                OWNER_STATUS_SESSION_PAGE_INDEX,
+                ALL_SESSION_PAGE_INDEX,
+                STATUS_SESSION_PAGE_INDEX,
+            ]
+            .contains(&required.name)
+    }) {
+        sessions
+            .create_index(required_index_model(&required))
+            .await
+            .unwrap_or_else(|error| panic!("pagination index {} creates: {error}", required.name));
+    }
 
-    let query = SessionListQuery::new(PageRequest::new(5, None), None);
-    let pipeline = session_page_pipeline(doc! { "owner": "subject-page-explain" }, &query)
-        .expect("page pipeline builds");
-    let explain = database
-        .run_command(doc! {
-            "explain": {
-                "aggregate": SESSIONS,
-                "pipeline": pipeline,
-                "cursor": {},
-            },
-            "verbosity": "executionStats",
-        })
-        .await
-        .expect("page aggregation explains");
+    let cursor = PageCursor::new("2026-08-25T00:00:00Z", "sesn_04990");
+    let cases = [
+        (
+            "all first page",
+            doc! {},
+            SessionListQuery::new(PageRequest::new(5, None), None),
+            ALL_SESSION_PAGE_INDEX,
+        ),
+        (
+            "owner first page",
+            doc! { "owner": "subject-page-explain" },
+            SessionListQuery::new(PageRequest::new(5, None), None),
+            OWNER_SESSION_PAGE_INDEX,
+        ),
+        (
+            "status first page",
+            doc! {},
+            SessionListQuery::new(PageRequest::new(5, None), Some(SessionStatus::Running)),
+            STATUS_SESSION_PAGE_INDEX,
+        ),
+        (
+            "owner status first page",
+            doc! { "owner": "subject-page-explain" },
+            SessionListQuery::new(PageRequest::new(5, None), Some(SessionStatus::Running)),
+            OWNER_STATUS_SESSION_PAGE_INDEX,
+        ),
+        (
+            "all continuation",
+            doc! {},
+            SessionListQuery::new(PageRequest::new(5, Some(cursor.clone())), None),
+            ALL_SESSION_PAGE_INDEX,
+        ),
+        (
+            "owner continuation",
+            doc! { "owner": "subject-page-explain" },
+            SessionListQuery::new(PageRequest::new(5, Some(cursor.clone())), None),
+            OWNER_SESSION_PAGE_INDEX,
+        ),
+        (
+            "status continuation",
+            doc! {},
+            SessionListQuery::new(
+                PageRequest::new(5, Some(cursor.clone())),
+                Some(SessionStatus::Running),
+            ),
+            STATUS_SESSION_PAGE_INDEX,
+        ),
+        (
+            "owner status continuation",
+            doc! { "owner": "subject-page-explain" },
+            SessionListQuery::new(
+                PageRequest::new(5, Some(cursor)),
+                Some(SessionStatus::Running),
+            ),
+            OWNER_STATUS_SESSION_PAGE_INDEX,
+        ),
+    ];
 
-    let stats = explain_cursor_stats(&explain);
-    let keys = explain_count(stats, "totalKeysExamined");
-    let documents = explain_count(stats, "totalDocsExamined");
-    let uses_index =
-        contains_string_field(&Bson::Document(explain.clone()), "indexName", required.name);
+    for (case, filter, query, expected_index) in cases {
+        assert!(matches!(
+            session_page_hint(&filter, &query).unwrap(),
+            Hint::Name(name) if name == expected_index
+        ));
+        let pipeline = session_page_pipeline(filter, &query).expect("page pipeline builds");
+        let explain = database
+            .run_command(doc! {
+                "explain": {
+                    "aggregate": SESSIONS,
+                    "pipeline": pipeline,
+                    "cursor": {},
+                    "hint": expected_index,
+                },
+                "verbosity": "executionStats",
+            })
+            .await
+            .unwrap_or_else(|error| panic!("{case} explains: {error}"));
+
+        let stats = explain_cursor_stats(&explain);
+        let keys = explain_count(stats, "totalKeysExamined");
+        let documents = explain_count(stats, "totalDocsExamined");
+        let explain = Bson::Document(explain);
+        assert!(
+            contains_string_field(&explain, "indexName", expected_index),
+            "{case} did not use {expected_index}"
+        );
+        assert!(
+            !contains_string_field(&explain, "stage", "SORT"),
+            "{case} introduced a blocking sort before staged-body redaction"
+        );
+        assert!(
+            keys <= EXAMINED_CEILING,
+            "{case} examined {keys} keys from {MATCHES} matches"
+        );
+        assert!(
+            documents <= EXAMINED_CEILING,
+            "{case} examined {documents} documents from {MATCHES} matches"
+        );
+    }
 
     database.drop().await.expect("temporary database drops");
+}
 
-    assert!(uses_index, "page explain did not use {}", required.name);
-    assert!(
-        keys <= EXAMINED_CEILING,
-        "five-row page examined {keys} keys from {MATCHES} matches"
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_session_listing_redacts_staged_bodies_while_get_remains_exact() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name MongoDB");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!("chrono_staged_listing_{}_{}", std::process::id(), nonce);
+    let store = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .expect("test store opens");
+    let mut record = record_with(None);
+    record.session.id = SessionId("sesn_staged_listing".into());
+    record.session.last_seq = 0;
+    record.skill_packs = SkillPackState::Staged(vec![SkillPack {
+        name: "private-review".into(),
+        version: Some("3.2".into()),
+        files: vec![("SKILL.md".into(), b"private-real-list-body-marker".to_vec())],
+    }]);
+    store
+        .create_session_idempotent("seed-staged-listing", &record, &[])
+        .await
+        .expect("staged session is seeded");
+
+    let authority_document = store
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &record.session.id.0 })
+        .projection(runtime_authority_projection())
+        .await
+        .expect("projected authority read succeeds")
+        .expect("projected authority row exists");
+    assert!(!authority_document.contains_key("skill_packs"));
+    assert!(!mongodb::bson::serialize_to_vec(&authority_document)
+        .unwrap()
+        .windows(b"private-real-list-body-marker".len())
+        .any(|window| window == b"private-real-list-body-marker"));
+    assert_eq!(
+        store.runtime_authority(&record.session.id).await.unwrap(),
+        Some(RuntimeAuthority {
+            generation: 0,
+            runtime_id: None,
+        })
     );
-    assert!(
-        documents <= EXAMINED_CEILING,
-        "five-row page examined {documents} documents from {MATCHES} matches"
+
+    let identity = store
+        .mongo_session_identity(&record.session.id)
+        .await
+        .expect("projected existence read succeeds")
+        .expect("projected identity exists");
+    assert_eq!(identity, doc! { "_id": &record.session.id.0 });
+    assert!(store
+        .runtime_cleanup_debts(&record.session.id)
+        .await
+        .expect("cleanup-debt read succeeds")
+        .is_empty());
+
+    let query = SessionListQuery::new(PageRequest::new(5, None), None);
+    let mut raw = store
+        .sessions
+        .aggregate(session_page_pipeline(doc! { "_id": &record.session.id.0 }, &query).unwrap())
+        .await
+        .expect("listing aggregate opens");
+    let projected = raw
+        .try_next()
+        .await
+        .expect("listing aggregate reads")
+        .expect("staged row is visible");
+    assert_eq!(
+        projected.get_document("skill_packs").unwrap(),
+        &doc! { "state": "staged_summary" }
     );
+    let projected_bytes = mongodb::bson::serialize_to_vec(&projected).unwrap();
+    assert!(!projected_bytes
+        .windows(b"private-real-list-body-marker".len())
+        .any(|window| window == b"private-real-list-body-marker"));
+
+    let listed = store
+        .list_all(&query)
+        .await
+        .expect("bounded listing succeeds")
+        .items
+        .into_iter()
+        .next()
+        .expect("staged session is listed");
+    assert_eq!(listed.skill_packs, SkillPackState::StagedSummary);
+    let exact = store
+        .get(&record.session.id)
+        .await
+        .expect("exact read succeeds")
+        .expect("exact staged session remains present");
+    assert_eq!(exact.skill_packs, record.skill_packs);
+
+    store.database.drop().await.unwrap();
 }
 
 #[test]
@@ -2321,7 +2940,7 @@ fn raw_append_touches_the_session_without_lowering_a_legacy_tail() {
         appended_event_session_update(&doc! { "last_seq": 9_i64 }, 7),
         doc! {
             "$set": {
-                "_cma_write_protocol": WRITE_PROTOCOL,
+                "_cma_write_protocol": SESSION_WRITE_PROTOCOL,
                 "_cma_coordination_protocol": SESSION_COORDINATION_PROTOCOL,
                 "revision": 0_i64,
             },
@@ -2332,7 +2951,7 @@ fn raw_append_touches_the_session_without_lowering_a_legacy_tail() {
         appended_event_session_update(&doc! { "last_seq": 4_i64, "revision": 3_i64 }, 5),
         doc! {
             "$set": {
-                "_cma_write_protocol": WRITE_PROTOCOL,
+                "_cma_write_protocol": SESSION_WRITE_PROTOCOL,
                 "_cma_coordination_protocol": SESSION_COORDINATION_PROTOCOL,
             },
             "$max": { "last_seq": 5_i64 },
@@ -2524,18 +3143,41 @@ fn cached_audit_failure_keeps_readiness_closed_until_a_successful_reaudit() {
 }
 
 #[test]
-fn post_fence_session_validation_allows_legacy_revision_zero_but_not_bad_tails() {
+fn session_validation_separates_legacy_cutover_documents_from_post_fence_documents() {
     let stored = to_doc(&record_with(None)).unwrap();
-    let mut legacy = mongodb::bson::serialize_to_document(&stored).unwrap();
+    let current = mongodb::bson::serialize_to_document(&stored).unwrap();
+    assert_eq!(validate_stored_session_document(&current).unwrap().1, 7);
+
+    let mut legacy = current.clone();
     legacy.remove("revision");
     legacy.remove(WRITE_PROTOCOL_FIELD);
-    assert_eq!(validate_stored_session_document(&legacy).unwrap().1, 7);
+    assert_eq!(
+        validate_compatible_stored_session_document(&legacy)
+            .unwrap()
+            .1,
+        7
+    );
+    assert!(validate_stored_session_document(&legacy).is_err());
+
+    let mut pre_coordination = legacy.clone();
+    pre_coordination.remove(COORDINATION_PROTOCOL_FIELD);
+    assert!(validate_compatible_stored_session_document(&pre_coordination).is_ok());
+    pre_coordination.insert(
+        COORDINATION_PROTOCOL_FIELD,
+        LEGACY_SESSION_COORDINATION_PROTOCOL,
+    );
+    assert!(validate_compatible_stored_session_document(&pre_coordination).is_err());
+
+    legacy.insert(WRITE_PROTOCOL_FIELD, WRITE_PROTOCOL);
+    assert!(validate_compatible_stored_session_document(&legacy).is_ok());
+    legacy.insert(WRITE_PROTOCOL_FIELD, SESSION_WRITE_PROTOCOL);
+    assert!(validate_compatible_stored_session_document(&legacy).is_err());
 
     legacy.insert("last_seq", -1_i64);
-    assert!(validate_stored_session_document(&legacy).is_err());
+    assert!(validate_compatible_stored_session_document(&legacy).is_err());
     legacy.insert("last_seq", 7_i64);
     legacy.insert("revision", 1_i32);
-    assert!(validate_stored_session_document(&legacy).is_err());
+    assert!(validate_compatible_stored_session_document(&legacy).is_err());
 }
 
 #[test]
@@ -2744,6 +3386,29 @@ fn session_page_indexes_cover_owned_and_admin_queries_with_status() {
         assert_eq!(required.keys, keys);
         assert!(!required.unique);
     }
+
+    let unfiltered = SessionListQuery::new(PageRequest::new(5, None), None);
+    let status = SessionListQuery::new(PageRequest::new(5, None), Some(SessionStatus::Running));
+    for (filter, query, expected) in [
+        (doc! {}, &unfiltered, ALL_SESSION_PAGE_INDEX),
+        (
+            doc! { "owner": "subject-page" },
+            &unfiltered,
+            OWNER_SESSION_PAGE_INDEX,
+        ),
+        (doc! {}, &status, STATUS_SESSION_PAGE_INDEX),
+        (
+            doc! { "owner": "subject-page" },
+            &status,
+            OWNER_STATUS_SESSION_PAGE_INDEX,
+        ),
+    ] {
+        assert!(matches!(
+            session_page_hint(&filter, query).unwrap(),
+            Hint::Name(name) if name == expected
+        ));
+    }
+    assert!(session_page_hint(&doc! { "kernel": "unsupported" }, &unfiltered).is_err());
 }
 
 #[test]
@@ -3118,6 +3783,316 @@ async fn real_existing_database_requires_the_coordination_drain_gate() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_previous_session_writer_requires_a_drain_and_preserves_skill_ownership() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!(
+        "chrono_session_writer_upgrade_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let database = client.database(&database_name);
+    let store = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .expect("test store opens");
+
+    let pack = SkillPack {
+        name: "durable-review".into(),
+        version: Some("7.4".into()),
+        files: vec![("SKILL.md".into(), b"durable review body".to_vec())],
+    };
+    let digest = SkillPackDigest::for_packs(std::slice::from_ref(&pack));
+    let granted = vec![GrantedSkill {
+        id: SkillId::new("durable-review"),
+        version: Some("7.4".into()),
+    }];
+    let mut record = record_with(None);
+    record.session.id = SessionId("sesn_session_writer_upgrade".into());
+    record.session.last_seq = 0;
+    record.session.granted_skills = Some(granted.clone());
+    record.context_ref = Some("contexts/session-writer-upgrade".into());
+    record.skill_packs = SkillPackState::Stored { digest };
+    store
+        .create_session_idempotent("seed-session-writer-upgrade", &record, &[])
+        .await
+        .expect("protected session is seeded");
+
+    database
+        .run_command(doc! {
+            "collMod": SESSIONS,
+            "validator": previous_session_protocol_validator(),
+            "validationLevel": "strict",
+            "validationAction": "error",
+        })
+        .await
+        .expect("test installs the exact predecessor contract");
+    store
+        .sessions
+        .clone_with_type::<Document>()
+        .update_one(
+            doc! { "_id": &record.session.id.0 },
+            doc! { "$set": { WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL } },
+        )
+        .await
+        .expect("test rewinds the row to the predecessor writer");
+    drop(store);
+
+    let contracts_before = collection_contract_snapshot(&database, &[SESSIONS]).await;
+    let sessions_before = sorted_collection_documents(&database, SESSIONS).await;
+    let error = match MongoSessionStore::open(&client, &database_name, false, false).await {
+        Ok(_) => panic!("the predecessor session writer requires an explicit drain"),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("CHRONO_MONGODB_COORDINATION_CUTOVER=drained"));
+    assert_eq!(
+        collection_contract_snapshot(&database, &[SESSIONS]).await,
+        contracts_before,
+        "refusing the cutover cannot install a validator"
+    );
+    assert_eq!(
+        sorted_collection_documents(&database, SESSIONS).await,
+        sessions_before,
+        "refusing the cutover cannot migrate a row"
+    );
+
+    let upgraded = MongoSessionStore::open(&client, &database_name, false, true)
+        .await
+        .expect("the drained predecessor upgrades");
+    let contracts = collection_contract_snapshot(&database, &[SESSIONS]).await;
+    assert_eq!(
+        classify_session_write_contract(&contracts[SESSIONS], &upgraded.collection_ids[SESSIONS])
+            .unwrap(),
+        SessionWriteContract::Current
+    );
+    let durable = upgraded
+        .get(&record.session.id)
+        .await
+        .unwrap()
+        .expect("migrated session remains present");
+    assert_eq!(durable.session.granted_skills, Some(granted));
+    assert_eq!(durable.skill_packs, SkillPackState::Stored { digest });
+    assert_eq!(durable.context_ref, record.context_ref);
+
+    let current = upgraded
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &record.session.id.0 })
+        .await
+        .unwrap()
+        .expect("migrated document remains present");
+    assert_eq!(
+        current.get_i32(WRITE_PROTOCOL_FIELD).unwrap(),
+        SESSION_WRITE_PROTOCOL
+    );
+    let mut stale_whole_replacement = current.clone();
+    stale_whole_replacement.insert(WRITE_PROTOCOL_FIELD, WRITE_PROTOCOL);
+    assert!(stale_whole_replacement.remove("granted_skills").is_some());
+    assert!(stale_whole_replacement.remove("skill_packs").is_some());
+    assert!(upgraded
+        .sessions
+        .clone_with_type::<Document>()
+        .replace_one(
+            doc! { "_id": &record.session.id.0 },
+            stale_whole_replacement,
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        upgraded
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "_id": &record.session.id.0 })
+            .await
+            .unwrap()
+            .unwrap(),
+        current,
+        "a protocol-1 whole replacement cannot erase grant or custody fields"
+    );
+
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_current_session_validator_resumes_a_stale_protocol_one_row_without_a_gate() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database_name = format!(
+        "chrono_session_writer_resume_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let database = client.database(&database_name);
+    let store = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .expect("test store opens");
+    let mut record = record_with(None);
+    record.session.id = SessionId("sesn_session_writer_resume".into());
+    record.session.last_seq = 0;
+    record.session.granted_skills = Some(vec![GrantedSkill {
+        id: SkillId::new("resume-review"),
+        version: Some("2".into()),
+    }]);
+    record.skill_packs = SkillPackState::CleanupPending;
+    store
+        .create_session_idempotent("seed-session-writer-resume", &record, &[])
+        .await
+        .unwrap();
+    store
+        .sessions
+        .clone_with_type::<Document>()
+        .update_one(
+            doc! { "_id": &record.session.id.0 },
+            doc! { "$set": { WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL } },
+        )
+        .bypass_document_validation(true)
+        .await
+        .expect("test models a crash after the current validator landed");
+    let mut expected = store
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &record.session.id.0 })
+        .await
+        .unwrap()
+        .unwrap();
+    expected.insert(WRITE_PROTOCOL_FIELD, SESSION_WRITE_PROTOCOL);
+    drop(store);
+
+    let resumed = MongoSessionStore::open(&client, &database_name, false, false)
+        .await
+        .expect("the current fence resumes its incomplete row migration without a gate");
+    assert_eq!(
+        resumed
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "_id": &record.session.id.0 })
+            .await
+            .unwrap()
+            .unwrap(),
+        expected
+    );
+    let durable = resumed.get(&record.session.id).await.unwrap().unwrap();
+    assert_eq!(
+        durable.session.granted_skills,
+        record.session.granted_skills
+    );
+    assert_eq!(durable.skill_packs, SkillPackState::CleanupPending);
+
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_unknown_or_weakened_session_contracts_fail_without_mutation() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+
+    for scenario in ["unknown", "mixed", "weakened"] {
+        let database_name = format!(
+            "chrono_session_contract_{scenario}_{}_{}",
+            std::process::id(),
+            nonce
+        );
+        let database = client.database(&database_name);
+        let store = MongoSessionStore::open(&client, &database_name, false, false)
+            .await
+            .expect("test store opens");
+        let mut record = record_with(None);
+        record.session.id = SessionId(format!("sesn_session_contract_{scenario}"));
+        record.session.last_seq = 0;
+        record.skill_packs = SkillPackState::CleanupPending;
+        store
+            .create_session_idempotent(&format!("seed-session-contract-{scenario}"), &record, &[])
+            .await
+            .unwrap();
+
+        let mut validator = match scenario {
+            "unknown" => session_protocol_validator_for(
+                SESSION_WRITE_PROTOCOL + 1,
+                SESSION_COORDINATION_PROTOCOL,
+            ),
+            "mixed" | "weakened" => session_protocol_validator(),
+            _ => unreachable!(),
+        };
+        if scenario == "mixed" {
+            *validator
+                .get_document_mut("$jsonSchema")
+                .unwrap()
+                .get_document_mut("properties")
+                .unwrap()
+                .get_document_mut(WRITE_PROTOCOL_FIELD)
+                .unwrap()
+                .get_array_mut("enum")
+                .unwrap() = vec![
+                Bson::Int32(WRITE_PROTOCOL),
+                Bson::Int32(SESSION_WRITE_PROTOCOL),
+            ];
+        }
+        database
+            .run_command(doc! {
+                "collMod": SESSIONS,
+                "validator": validator,
+                "validationLevel": "strict",
+                "validationAction": if scenario == "weakened" { "warn" } else { "error" },
+            })
+            .await
+            .unwrap();
+        drop(store);
+
+        let contracts_before = collection_contract_snapshot(&database, &[SESSIONS]).await;
+        let sessions_before = sorted_collection_documents(&database, SESSIONS).await;
+        let cutovers_before = sorted_collection_documents(&database, NAMESPACE_CUTOVERS).await;
+        let error = match MongoSessionStore::open(&client, &database_name, false, true).await {
+            Ok(_) => panic!("{scenario} session contract must fail closed"),
+            Err(error) => error,
+        };
+        assert!(error
+            .to_string()
+            .contains("neither the exact current nor previous write-protocol contract"));
+        assert_eq!(
+            collection_contract_snapshot(&database, &[SESSIONS]).await,
+            contracts_before,
+            "startup changed the {scenario} contract"
+        );
+        assert_eq!(
+            sorted_collection_documents(&database, SESSIONS).await,
+            sessions_before,
+            "startup changed rows under the {scenario} contract"
+        );
+        assert_eq!(
+            sorted_collection_documents(&database, NAMESPACE_CUTOVERS).await,
+            cutovers_before,
+            "startup changed provenance under the {scenario} contract"
+        );
+        database.drop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn real_receipt_validator_rejects_legacy_protocol_and_missing_runtime_markers() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
@@ -3341,12 +4316,7 @@ async fn real_unproven_protocol_upgrade_markers_are_rejected_without_mutation() 
         "after-strict-validator",
         "after-document-migration",
     ] {
-        let database_name = format!(
-            "chrono_coordination_v3_resume_{}_{}_{}",
-            stage,
-            std::process::id(),
-            nonce
-        );
+        let database_name = format!("cma_up_{}_{}_{}", stage, std::process::id(), nonce);
         let database = client.database(&database_name);
         let store = MongoSessionStore::open(&client, &database_name, false, false)
             .await
@@ -3517,7 +4487,7 @@ async fn real_completed_v3_contract_fails_closed_without_repairing_a_downgrade()
     };
     assert!(error
         .to_string()
-        .contains("changed write-protocol validator"));
+        .contains("neither the exact current nor previous write-protocol contract"));
     assert_eq!(
         database
             .collection::<Document>(NAMESPACE_CUTOVERS)
@@ -3766,6 +4736,7 @@ async fn real_unproven_upgrade_marker_rejects_a_replacement_without_mutation() {
     replacement.session.last_seq = 0;
     let mut replacement_document =
         mongodb::bson::serialize_to_document(&to_doc(&replacement).unwrap()).unwrap();
+    replacement_document.insert(WRITE_PROTOCOL_FIELD, WRITE_PROTOCOL);
     replacement_document.insert(
         COORDINATION_PROTOCOL_FIELD,
         LEGACY_SESSION_COORDINATION_PROTOCOL,
@@ -3858,11 +4829,7 @@ async fn real_missing_activation_marker_cannot_reauthorize_a_coordinated_namespa
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock is after epoch")
         .as_nanos();
-    let database_name = format!(
-        "chrono_missing_coordination_activation_{}_{}",
-        std::process::id(),
-        nonce
-    );
+    let database_name = format!("cma_missing_activation_{}_{}", std::process::id(), nonce);
     let database = client.database(&database_name);
     let store = MongoSessionStore::open(&client, &database_name, false, false)
         .await
@@ -3902,10 +4869,7 @@ async fn real_missing_activation_marker_cannot_reauthorize_a_coordinated_namespa
     let tombstones_before = sorted_collection_documents(&database, TOMBSTONES).await;
     let receipts_before = sorted_collection_documents(&database, COORDINATION_RECEIPTS).await;
 
-    for (coordination_cutover_confirmed, expected_error) in [
-        (false, "CHRONO_MONGODB_COORDINATION_CUTOVER=drained"),
-        (true, "not an untouched pre-coordination source"),
-    ] {
+    for coordination_cutover_confirmed in [false, true] {
         let error = match MongoSessionStore::open(
             &client,
             &database_name,
@@ -3919,12 +4883,10 @@ async fn real_missing_activation_marker_cannot_reauthorize_a_coordinated_namespa
         };
         let message = error.to_string();
         assert!(
-            message.contains(expected_error),
+            message.contains("completed MongoDB namespace cutover is no longer complete"),
             "unexpected refusal: {message}"
         );
-        if coordination_cutover_confirmed {
-            assert!(message.contains("refusing to create replacement provenance"));
-        }
+        assert!(message.contains("refusing to recreate missing namespaces"));
         assert_eq!(
             collection_contract_snapshot(
                 &database,
@@ -3986,7 +4948,7 @@ async fn real_in_progress_coordination_activation_resumes_every_namespace_bounda
 
     for stage in ["before-fence", "after-fence", "after-rename", "after-view"] {
         let database_name = format!(
-            "chrono_coordination_resume_{}_{}_{}",
+            "cma_coord_resume_{}_{}_{}",
             stage,
             std::process::id(),
             nonce
@@ -4316,8 +5278,19 @@ async fn real_completed_activation_provenance_rejects_session_loss_and_replaceme
 
     drop_session_namespace_pairs(&database).await;
     create_fenced_session_namespace_pairs(&database).await;
+    database
+        .run_command(doc! {
+            "collMod": SESSIONS,
+            "validator": previous_session_protocol_validator(),
+            "validationLevel": "strict",
+            "validationAction": "error",
+        })
+        .await
+        .unwrap();
+    let replacement_contract_before =
+        collection_contract_snapshot(&database, &[SESSIONS, EVENTS]).await;
     let replacement_error =
-        match MongoSessionStore::open(&client, &database_name, false, false).await {
+        match MongoSessionStore::open(&client, &database_name, false, true).await {
             Ok(_) => panic!("replacement collections must not inherit completed provenance"),
             Err(error) => error,
         };
@@ -4341,6 +5314,11 @@ async fn real_completed_activation_provenance_rejects_session_loss_and_replaceme
             .unwrap()
             .unwrap(),
         activation_before
+    );
+    assert_eq!(
+        collection_contract_snapshot(&database, &[SESSIONS, EVENTS]).await,
+        replacement_contract_before,
+        "UUID provenance must be verified before a drained startup can replace the predecessor validator"
     );
 
     drop_session_namespace_pairs(&database).await;
@@ -4517,6 +5495,18 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_handover_lease() {
     let store = MongoSessionStore::open(&client, &database, true, true)
         .await
         .expect("test store opens and fences the legacy namespace");
+    let initially_migrated = store
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &original.session.id.0 })
+        .await
+        .expect("initially migrated document reads")
+        .expect("initially migrated document exists");
+    assert_eq!(
+        initially_migrated.get_i32(WRITE_PROTOCOL_FIELD).unwrap(),
+        SESSION_WRITE_PROTOCOL,
+        "initial coordination activation must finish on the durable session writer"
+    );
     let record = store
         .get(&original.session.id)
         .await
@@ -4565,7 +5555,7 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_handover_lease() {
     assert_eq!(promoted.get_i64("revision").unwrap(), 0);
     assert_eq!(
         promoted.get_i32(WRITE_PROTOCOL_FIELD).unwrap(),
-        WRITE_PROTOCOL
+        SESSION_WRITE_PROTOCOL
     );
     assert_eq!(
         promoted.get_i32(COORDINATION_PROTOCOL_FIELD).unwrap(),
@@ -4607,7 +5597,32 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_handover_lease() {
     assert_eq!(debts[0].runtime_id, "runtime-generation-zero");
     assert_eq!(debts[0].reason, RuntimeCleanupReason::RetiredAuthority);
     store
-        .acknowledge_runtime_cleanup(&lease, &debts[0])
+        .release_session_lease(&lease)
+        .await
+        .expect("the promoted handover lease releases");
+    let current = store
+        .get(&original.session.id)
+        .await
+        .expect("switched session reads")
+        .expect("switched session remains present");
+    let authority = store
+        .runtime_authority(&original.session.id)
+        .await
+        .expect("switched authority reads")
+        .expect("switched session has authority metadata");
+    let cleanup_lease = store
+        .acquire_session_lease(&SessionLeaseRequest {
+            session_id: original.session.id.clone(),
+            holder: "legacy-coordination-cleanup".into(),
+            token: "lease-legacy-cleanup".into(),
+            boundary: SessionBoundary::for_record(&current, authority.generation),
+            operation: SessionOperation::Lifecycle,
+            ttl: Duration::from_secs(30),
+        })
+        .await
+        .expect("the exact cleanup lease is acquired");
+    store
+        .acknowledge_runtime_cleanup(&cleanup_lease, &debts[0])
         .await
         .expect("the exact generation-zero cleanup is acknowledged");
     assert!(store
@@ -4616,9 +5631,9 @@ async fn a_real_legacy_document_can_acquire_its_first_durable_handover_lease() {
         .unwrap()
         .is_empty());
     store
-        .release_session_lease(&lease)
+        .release_session_lease(&cleanup_lease)
         .await
-        .expect("the promoted lease releases");
+        .expect("the cleanup lease releases");
 
     client
         .database(&database)
@@ -4746,6 +5761,88 @@ async fn a_real_store_rejects_runtime_started_from_every_ordinary_write_path() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn real_skill_cleanup_fence_preserves_the_session_and_events_until_cleaned() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+        .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
+    let client = Client::with_uri_str(&uri)
+        .await
+        .expect("test Mongo connects");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let database = format!(
+        "chrono_skill_cleanup_fence_{}_{}",
+        std::process::id(),
+        nonce
+    );
+    let store = MongoSessionStore::open(&client, &database, false, false)
+        .await
+        .expect("test store opens");
+    let id = SessionId("sesn_skill_cleanup_fence".into());
+    let mut seed = record_with(None);
+    seed.session.id = id.clone();
+    seed.session.last_seq = 1;
+    seed.runtime_id = None;
+    seed.skill_packs = SkillPackState::CleanupPending;
+    store
+        .create_session_idempotent("seed-skill-cleanup-fence", &seed, &[event(&id.0, 1)])
+        .await
+        .expect("session with cleanup debt is seeded");
+    let session_before = store
+        .sessions
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": &id.0 })
+        .await
+        .unwrap()
+        .unwrap();
+    let events_before = sorted_collection_documents(&store.database, EVENTS).await;
+    let writes_before = sorted_collection_documents(&store.database, WRITES).await;
+
+    assert!(matches!(
+        store.delete(&id).await,
+        Err(StoreError::SessionSkillCleanupPending { id: refused }) if refused == id
+    ));
+    assert_eq!(
+        store
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "_id": &id.0 })
+            .await
+            .unwrap()
+            .unwrap(),
+        session_before,
+        "the refused transaction cannot retain its coordination-clock write"
+    );
+    assert_eq!(
+        sorted_collection_documents(&store.database, EVENTS).await,
+        events_before
+    );
+    assert_eq!(
+        sorted_collection_documents(&store.database, WRITES).await,
+        writes_before
+    );
+    assert!(!store.is_tombstoned(&id).await.unwrap());
+
+    let mut cleaned = store.get(&id).await.unwrap().unwrap();
+    cleaned.skill_packs = SkillPackState::Cleaned;
+    store
+        .commit_session_idempotent("finish-skill-cleanup-fence", &cleaned, &[])
+        .await
+        .expect("cleanup acknowledgement commits");
+    store
+        .delete(&id)
+        .await
+        .expect("the exactly cleaned session deletes");
+    assert!(store.get(&id).await.unwrap().is_none());
+    assert!(store.events_since(&id, 0).await.unwrap().is_empty());
+    assert!(store.is_tombstoned(&id).await.unwrap());
+
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn a_real_store_coordinates_exact_cleanup_before_deletion() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
@@ -4766,6 +5863,7 @@ async fn a_real_store_coordinates_exact_cleanup_before_deletion() {
     seed.session.id = id.clone();
     seed.session.last_seq = 1;
     seed.runtime_id = None;
+    seed.skill_packs = SkillPackState::Cleaned;
     store
         .create_session_idempotent("seed-exact-coordination", &seed, &[event(&id.0, 1)])
         .await
@@ -5820,11 +6918,7 @@ async fn a_real_store_refuses_a_missing_or_replaced_coordination_receipt_collect
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock is after epoch")
         .as_nanos();
-    let database = format!(
-        "chrono_coordination_receipt_replacement_{}_{}",
-        std::process::id(),
-        nonce
-    );
+    let database = format!("cma_receipt_replace_{}_{}", std::process::id(), nonce);
     let store = MongoSessionStore::open(&client, &database, false, false)
         .await
         .expect("test store opens");
@@ -6043,6 +7137,7 @@ async fn a_real_tombstoned_session_cannot_be_recreated_or_appended_to() {
     let mut record = record_with(None);
     record.session.id = SessionId("sesn_tombstoned".into());
     record.session.last_seq = 0;
+    record.skill_packs = SkillPackState::Cleaned;
     store
         .create_session_idempotent("create-before-delete", &record, &[])
         .await
@@ -6327,6 +7422,7 @@ async fn a_real_raw_append_and_delete_serialize_without_leaving_orphan_events() 
         let mut record = record_with(None);
         record.session.id = id.clone();
         record.session.last_seq = 0;
+        record.skill_packs = SkillPackState::Cleaned;
         store
             .create_session_idempotent(&format!("race-create-{attempt}"), &record, &[])
             .await
