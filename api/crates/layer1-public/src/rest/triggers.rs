@@ -12,7 +12,7 @@ use layer2_core::{
     BillingMode, CommercialPolicy, Confirmation, ConfirmationAction, ContributionPolicy,
     ContributionRecord, CredentialRoute, DiffArtifact, DiffArtifactId, EditableField,
     ExecutorPolicy, InputFieldDefinition, Launch, LaunchId, LaunchOverrides, LaunchStep,
-    OperationStore, OverridePolicy, PublicProjectionPolicy, PublicTriggerId,
+    OperationStore, OverridePolicy, PublicProjectionPolicy, PublicTriggerId, PullRequestRecord,
     RepositoryAccessPolicy, RequiredCapability, ResourcePolicy, ScopeClass, SetupPolicy,
     SourceMode, TriggerAvailability, TriggerConnection, TriggerConnectionAuthorization,
     TriggerConnectionManager, TriggerDraft, TriggerId, TriggerPageRequest, TriggerPreview,
@@ -508,8 +508,7 @@ struct LaunchView {
     contribution_checkpoint_version: Option<u64>,
     diff: Option<DiffArtifactView>,
     contribution: Option<ContributionRecordView>,
-    #[schema(value_type = Object)]
-    pull_request: Option<Value>,
+    pull_request: Option<PullRequestRecordView>,
     created_at: String,
     updated_at: String,
     started_at: Option<String>,
@@ -597,6 +596,48 @@ struct ContributionRecordView {
     updated_at: String,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+struct PullRequestRecordView {
+    operation: String,
+    marker: String,
+    upstream_repository_id: u64,
+    upstream_repository_node_id: String,
+    fork_repository_id: u64,
+    fork_repository_node_id: String,
+    base_ref: String,
+    head_owner: String,
+    head_branch: String,
+    head_ref: String,
+    expected_base_revision: String,
+    expected_head_revision: String,
+    previous_head_revision: Option<String>,
+    target_number: Option<u64>,
+    update_metadata: bool,
+    expected_previous_title: Option<String>,
+    expected_previous_body_digest: Option<String>,
+    title: String,
+    body: String,
+    body_digest: String,
+    intent_digest: String,
+    provider_id: Option<u64>,
+    provider_node_id: Option<String>,
+    number: Option<u64>,
+    canonical_url: Option<String>,
+    state: String,
+    base_revision: Option<String>,
+    head_revision: Option<String>,
+    observed_title: Option<String>,
+    observed_body_digest: Option<String>,
+    mergeability: String,
+    checks: String,
+    confirmation_snapshot_digest: String,
+    confirmed_at: String,
+    created_at: String,
+    updated_at: String,
+    provider_created_at: Option<String>,
+    provider_updated_at: Option<String>,
+}
+
 impl From<ContributionRecord> for ContributionRecordView {
     fn from(value: ContributionRecord) -> Self {
         Self {
@@ -620,6 +661,51 @@ impl From<ContributionRecord> for ContributionRecordView {
             confirmed_at: value.confirmation.confirmed_at,
             created_at: value.created_at,
             updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<PullRequestRecord> for PullRequestRecordView {
+    fn from(value: PullRequestRecord) -> Self {
+        Self {
+            operation: enum_name(value.intent.operation),
+            marker: value.intent.marker,
+            upstream_repository_id: value.intent.upstream_repository_id,
+            upstream_repository_node_id: value.intent.upstream_repository_node_id,
+            fork_repository_id: value.intent.fork_repository_id,
+            fork_repository_node_id: value.intent.fork_repository_node_id,
+            base_ref: value.intent.base_ref,
+            head_owner: value.intent.head_owner,
+            head_branch: value.intent.head_branch,
+            head_ref: value.intent.head_ref,
+            expected_base_revision: value.intent.expected_base_revision,
+            expected_head_revision: value.intent.expected_head_revision,
+            previous_head_revision: value.intent.previous_head_revision,
+            target_number: value.intent.target_number,
+            update_metadata: value.intent.update_metadata,
+            expected_previous_title: value.intent.expected_previous_title,
+            expected_previous_body_digest: value.intent.expected_previous_body_digest,
+            title: value.intent.title,
+            body: value.intent.body,
+            body_digest: value.intent.body_digest,
+            intent_digest: value.intent.intent_digest,
+            provider_id: value.provider_id,
+            provider_node_id: value.provider_node_id,
+            number: value.number,
+            canonical_url: value.canonical_url,
+            state: enum_name(value.state),
+            base_revision: value.base_revision,
+            head_revision: value.head_revision,
+            observed_title: value.observed_title,
+            observed_body_digest: value.observed_body_digest,
+            mergeability: enum_name(value.mergeability),
+            checks: enum_name(value.checks),
+            confirmation_snapshot_digest: value.confirmation.snapshot_digest,
+            confirmed_at: value.confirmation.confirmed_at,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+            provider_created_at: value.provider_created_at,
+            provider_updated_at: value.provider_updated_at,
         }
     }
 }
@@ -758,7 +844,7 @@ impl From<Launch> for LaunchView {
             contribution_checkpoint_version: value.contribution_checkpoint_version,
             diff,
             contribution: value.contribution.map(Into::into),
-            pull_request: value.pull_request.map(json_value),
+            pull_request: value.pull_request.map(Into::into),
             created_at: value.created_at,
             updated_at: value.updated_at,
             started_at: value.started_at,

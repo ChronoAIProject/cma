@@ -488,6 +488,17 @@ impl TriggerRevisionContent {
                 ));
             }
         }
+        if self
+            .contribution
+            .pull_request
+            .body_template
+            .contains("<!-- cma-trigger:")
+        {
+            return Err(TriggerValidationError::field(
+                "contribution.pull_request.body_template",
+                "must not contain the reserved CMA marker prefix",
+            ));
+        }
         if self.commercial_policy.billing_mode == BillingMode::Sponsored
             || self.repository_access.credential_route == CredentialRoute::SponsoredGrant
         {

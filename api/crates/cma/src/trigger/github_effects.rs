@@ -90,6 +90,26 @@ trait GithubEffectPort: Send + Sync {
             "the Git Data publication adapter is unavailable".into(),
         ))
     }
+
+    async fn write_pull_request(
+        &self,
+        context: &super::github::PullRequestContext,
+    ) -> Result<super::github::PullRequestAdvance, GithubBrokerError> {
+        let _ = context;
+        Err(GithubBrokerError::Malformed(
+            "the pull-request adapter is unavailable".into(),
+        ))
+    }
+
+    async fn reconcile_pull_request(
+        &self,
+        context: &super::github::PullRequestContext,
+    ) -> Result<super::github::PullRequestAdvance, GithubBrokerError> {
+        let _ = context;
+        Err(GithubBrokerError::Malformed(
+            "the pull-request adapter is unavailable".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -375,6 +395,20 @@ impl GithubEffectPort for GithubBroker {
         plan: &super::workspace_diff::PublicationPlan,
     ) -> Result<super::github::PublicationAdvance, GithubBrokerError> {
         GithubBroker::publish_branch(self, context, plan).await
+    }
+
+    async fn write_pull_request(
+        &self,
+        context: &super::github::PullRequestContext,
+    ) -> Result<super::github::PullRequestAdvance, GithubBrokerError> {
+        GithubBroker::write_pull_request(self, context).await
+    }
+
+    async fn reconcile_pull_request(
+        &self,
+        context: &super::github::PullRequestContext,
+    ) -> Result<super::github::PullRequestAdvance, GithubBrokerError> {
+        GithubBroker::reconcile_pull_request(self, context).await
     }
 }
 
@@ -1889,6 +1923,72 @@ impl GithubEffectExecutor {
             external_resource_ids: resources,
         }
     }
+
+    async fn run_pull_request(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+        reconcile_only: bool,
+    ) -> EffectExecution {
+        let context = match super::github::PullRequestContext::try_from(launch) {
+            Ok(context) => context,
+            Err(error) => return broker_failure(error, claim, reconcile_only),
+        };
+        let result = if reconcile_only {
+            self.github.reconcile_pull_request(&context).await
+        } else {
+            self.github.write_pull_request(&context).await
+        };
+        match result {
+            Ok(super::github::PullRequestAdvance::Ready(pull_request)) => {
+                let mut resources = retained_resources(launch, claim);
+                if let Some(id) = pull_request.provider_id {
+                    resources.insert("pull_request_provider_id".into(), id.to_string());
+                }
+                if let Some(node_id) = pull_request.provider_node_id.as_ref() {
+                    resources.insert("pull_request_node_id".into(), node_id.clone());
+                }
+                if let Some(number) = pull_request.number {
+                    resources.insert("pull_request_number".into(), number.to_string());
+                }
+                if let Some(url) = pull_request.canonical_url.as_ref() {
+                    resources.insert("pull_request_url".into(), url.clone());
+                }
+                resources.insert(
+                    "pull_request_head".into(),
+                    pull_request.intent.expected_head_revision.clone(),
+                );
+                EffectExecution::Completed {
+                    result: LaunchEffectResult::PullRequest { pull_request },
+                    safe_detail: "The cross-fork pull request was reconciled by its CMA marker and exact repository refs."
+                        .into(),
+                    external_resource_ids: resources,
+                }
+            }
+            Ok(super::github::PullRequestAdvance::Absent) => {
+                if reconcile_only {
+                    reconcile_failure(
+                        claim,
+                        "pull_request_outcome_pending",
+                        "Checking whether GitHub accepted the earlier pull-request request.",
+                        retained_resources(launch, claim),
+                    )
+                } else {
+                    EffectExecution::Failed {
+                        failure: failure(
+                            FailureClass::RecoveryRequired,
+                            "pull_request_write_not_observed",
+                            "GitHub did not expose the pull request after the create request.",
+                            "Review the retained marker and branch evidence before authorizing another create.",
+                            claim,
+                            None,
+                        ),
+                    }
+                }
+            }
+            Err(error) => broker_failure(error, claim, reconcile_only),
+        }
+    }
 }
 
 #[async_trait]
@@ -1906,6 +2006,7 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
             LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
             LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
+            LaunchEffectKind::PullRequest => self.run_pull_request(launch, claim, false).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -1928,6 +2029,7 @@ impl EffectExecutor for GithubEffectExecutor {
             // repeatable during reconciliation.
             LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
             LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
+            LaunchEffectKind::PullRequest => self.run_pull_request(launch, claim, true).await,
             _ => unsupported_effect(claim),
         }
     }
@@ -2291,6 +2393,26 @@ fn broker_failure(
                 None,
             ),
         },
+        Error::UpstreamBaseConflict => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::ConflictStaleHead,
+                "upstream_base_changed",
+                "The upstream contribution base changed after this Launch captured it.",
+                "Review a fresh diff against the current upstream base before publishing again.",
+                claim,
+                None,
+            ),
+        },
+        Error::PullRequestChanged => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::ConflictStaleHead,
+                "pull_request_changed",
+                "The linked pull request or contributor branch changed outside this reviewed intent.",
+                "Review the current GitHub PR and request a fresh CMA diff before deciding how to continue.",
+                claim,
+                None,
+            ),
+        },
         Error::UnsupportedWorkspace(reason) => {
             let (code, detail) = match reason {
                 WorkspaceUnsupported::TreeIncomplete => (
@@ -2602,8 +2724,8 @@ mod tests {
     use base64::Engine as _;
     use layer2_core::{
         BranchRecord, Confirmation, ConfirmationAction, DiffArtifactId, EffectClaimMode,
-        ForkRecord, LaunchState, PublicationState, RepositoryIdentity, RepositoryVisibility,
-        SubjectId,
+        ForkRecord, LaunchState, PublicationState, PullRequestOperation, PullRequestState,
+        RepositoryIdentity, RepositoryVisibility, SubjectId,
     };
     use ring::rand::SystemRandom;
     use ring::signature::Ed25519KeyPair;
@@ -3014,9 +3136,13 @@ mod tests {
         answers: Mutex<VecDeque<ForkAnswer>>,
         publication_answers:
             Mutex<VecDeque<Result<super::super::github::PublicationAdvance, GithubBrokerError>>>,
+        pull_request_answers:
+            Mutex<VecDeque<Result<super::super::github::PullRequestAdvance, GithubBrokerError>>>,
         create_calls: AtomicUsize,
         reconcile_calls: AtomicUsize,
         publication_calls: AtomicUsize,
+        pull_request_write_calls: AtomicUsize,
+        pull_request_reconcile_calls: AtomicUsize,
     }
 
     impl FakeGithub {
@@ -3024,9 +3150,12 @@ mod tests {
             Self {
                 answers: Mutex::new(answers.into_iter().collect()),
                 publication_answers: Mutex::new(VecDeque::new()),
+                pull_request_answers: Mutex::new(VecDeque::new()),
                 create_calls: AtomicUsize::new(0),
                 reconcile_calls: AtomicUsize::new(0),
                 publication_calls: AtomicUsize::new(0),
+                pull_request_write_calls: AtomicUsize::new(0),
+                pull_request_reconcile_calls: AtomicUsize::new(0),
             }
         }
 
@@ -3038,9 +3167,29 @@ mod tests {
             Self {
                 answers: Mutex::new(VecDeque::new()),
                 publication_answers: Mutex::new(answers.into_iter().collect()),
+                pull_request_answers: Mutex::new(VecDeque::new()),
                 create_calls: AtomicUsize::new(0),
                 reconcile_calls: AtomicUsize::new(0),
                 publication_calls: AtomicUsize::new(0),
+                pull_request_write_calls: AtomicUsize::new(0),
+                pull_request_reconcile_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn with_pull_request_answers(
+            answers: impl IntoIterator<
+                Item = Result<super::super::github::PullRequestAdvance, GithubBrokerError>,
+            >,
+        ) -> Self {
+            Self {
+                answers: Mutex::new(VecDeque::new()),
+                publication_answers: Mutex::new(VecDeque::new()),
+                pull_request_answers: Mutex::new(answers.into_iter().collect()),
+                create_calls: AtomicUsize::new(0),
+                reconcile_calls: AtomicUsize::new(0),
+                publication_calls: AtomicUsize::new(0),
+                pull_request_write_calls: AtomicUsize::new(0),
+                pull_request_reconcile_calls: AtomicUsize::new(0),
             }
         }
 
@@ -3133,6 +3282,31 @@ mod tests {
                 .unwrap()
                 .pop_front()
                 .expect("a publication answer was configured")
+        }
+
+        async fn write_pull_request(
+            &self,
+            _context: &super::super::github::PullRequestContext,
+        ) -> Result<super::super::github::PullRequestAdvance, GithubBrokerError> {
+            self.pull_request_write_calls.fetch_add(1, Ordering::SeqCst);
+            self.pull_request_answers
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a pull-request answer was configured")
+        }
+
+        async fn reconcile_pull_request(
+            &self,
+            _context: &super::super::github::PullRequestContext,
+        ) -> Result<super::super::github::PullRequestAdvance, GithubBrokerError> {
+            self.pull_request_reconcile_calls
+                .fetch_add(1, Ordering::SeqCst);
+            self.pull_request_answers
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a pull-request answer was configured")
         }
     }
 
@@ -3237,6 +3411,99 @@ mod tests {
                 },
                 ..
             }
+        ));
+    }
+
+    #[tokio::test]
+    async fn ambiguous_pull_request_create_moves_to_reconciliation_without_a_second_write() {
+        let github = Arc::new(FakeGithub::with_pull_request_answers([Err(
+            GithubBrokerError::AmbiguousWrite,
+        )]));
+        let executor = GithubEffectExecutor::with_port(github.clone(), Duration::from_secs(300));
+        let launch = pull_request_launch();
+
+        let result = executor
+            .execute(
+                &launch,
+                &claim_for(LaunchEffectKind::PullRequest, EffectClaimMode::Execute),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            EffectExecution::ReconcileLater {
+                failure: LaunchFailure {
+                    class: FailureClass::AmbiguousExternal,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert_eq!(github.pull_request_write_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            github.pull_request_reconcile_calls.load(Ordering::SeqCst),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_takeover_searches_without_reauthorizing_create() {
+        let launch = pull_request_launch();
+        let ready = reconciled_pull_request(&launch, PullRequestState::Open);
+        let github = Arc::new(FakeGithub::with_pull_request_answers([Ok(
+            super::super::github::PullRequestAdvance::Ready(ready),
+        )]));
+        let executor = GithubEffectExecutor::with_port(github.clone(), Duration::from_secs(300));
+
+        let result = executor
+            .reconcile(
+                &launch,
+                &claim_for(LaunchEffectKind::PullRequest, EffectClaimMode::Reconcile),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            EffectExecution::Completed {
+                result: LaunchEffectResult::PullRequest {
+                    pull_request: layer2_core::PullRequestRecord {
+                        state: PullRequestState::Open,
+                        number: Some(7),
+                        ..
+                    }
+                },
+                ..
+            }
+        ));
+        assert_eq!(github.pull_request_write_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            github.pull_request_reconcile_calls.load(Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn external_pull_request_change_is_actionable_and_never_retried_automatically() {
+        let github = Arc::new(FakeGithub::with_pull_request_answers([Err(
+            GithubBrokerError::PullRequestChanged,
+        )]));
+        let executor = GithubEffectExecutor::with_port(github, Duration::from_secs(300));
+        let result = executor
+            .execute(
+                &pull_request_launch(),
+                &claim_for(LaunchEffectKind::PullRequest, EffectClaimMode::Execute),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            EffectExecution::Failed {
+                failure: LaunchFailure {
+                    class: FailureClass::ConflictStaleHead,
+                    ref code,
+                    ..
+                }
+            } if code == "pull_request_changed"
         ));
     }
 
@@ -4274,6 +4541,65 @@ mod tests {
             artifact_object: built.object,
             checkpoint_archive,
         }
+    }
+
+    fn pull_request_launch() -> Launch {
+        let mut launch = publication_launch().launch;
+        let contribution = launch.contribution.as_mut().unwrap();
+        contribution.state = PublicationState::Published;
+        contribution.base_tree_id = Some("b".repeat(40));
+        contribution.tree_id = Some("c".repeat(40));
+        contribution.commit_id = Some("d".repeat(40));
+        contribution.resulting_head = Some("d".repeat(40));
+        contribution.object_ids = vec!["f".repeat(40)];
+        contribution.updated_at = "2026-08-27T00:00:03Z".into();
+        launch.branch.as_mut().unwrap().current_head = "d".repeat(40);
+        let draft = launch
+            .pull_request_draft(PullRequestOperation::Open, None, None)
+            .unwrap();
+        launch
+            .confirm_pull_request(
+                Confirmation {
+                    action: ConfirmationAction::OpenPullRequest,
+                    subject: launch.owner.clone(),
+                    snapshot_digest: draft.intent_digest,
+                    confirmed_at: "2026-08-27T00:00:04Z".into(),
+                    idempotency_key_hash: "open-pr-confirmation".into(),
+                },
+                None,
+                None,
+                "2026-08-27T00:00:04Z",
+                "confirm-pr",
+            )
+            .unwrap();
+        launch
+    }
+
+    fn reconciled_pull_request(
+        launch: &Launch,
+        state: PullRequestState,
+    ) -> layer2_core::PullRequestRecord {
+        let mut record = launch.pull_request.clone().unwrap();
+        let upstream = &launch.revision.content.upstream.repository;
+        record.provider_id = Some(70);
+        record.provider_node_id = Some("PR_node_7".into());
+        record.number = Some(7);
+        record.canonical_url = Some(format!(
+            "https://github.com/{}/{}/pull/7",
+            upstream.canonical_owner, upstream.canonical_name
+        ));
+        record.state = state;
+        record.base_revision = Some(launch.source_sha.clone());
+        record.head_revision = Some("d".repeat(40));
+        record.observed_title = Some(record.intent.title.clone());
+        record.observed_body_digest = Some(record.intent.body_digest.clone());
+        record.mergeability = layer2_core::Mergeability::Mergeable;
+        record.checks = layer2_core::CheckSummaryState::Passing;
+        record.updated_at = "2026-08-27T00:00:05Z".into();
+        record.provider_created_at = Some("2026-08-27T00:00:04Z".into());
+        record.provider_updated_at = Some("2026-08-27T00:00:05Z".into());
+        record.validate_intent(&launch.id).unwrap();
+        record
     }
 
     fn test_archive(
