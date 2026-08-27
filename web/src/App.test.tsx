@@ -202,6 +202,15 @@ beforeEach(() => {
       if (path === '/api/v1/environment-profiles' && method === 'GET') {
         return json(200, []);
       }
+      if (path === '/api/v1/triggers' && method === 'GET') {
+        return json(200, { items: [], next_cursor: null });
+      }
+      if (path === '/api/v1/trigger-revisions' && method === 'GET') {
+        return json(200, { items: [], next_cursor: null });
+      }
+      if (path === '/api/v1/trigger-connections' && method === 'GET') {
+        return json(200, { connections: [] });
+      }
       if (path === '/api/v1/kernels' && method === 'GET') {
         return json(200, {
           kernels: [{ id: 'codex', modes: ['terminal', 'conversation'] }],
@@ -795,6 +804,24 @@ describe('App', () => {
     expect(requested).toHaveAttribute('aria-selected', 'true');
     expect(window.location.pathname).toBe('/sessions/sesn_1');
     expect(await screen.findByRole('button', { name: 'Manage lifecycle' })).toBeEnabled();
+  });
+
+  it('opens GitHub Triggers from a deep link by replacing it with the home frame', async () => {
+    seedSessions(1);
+    window.history.replaceState(null, '', '/sessions/sesn_0');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'GitHub Triggers' }));
+
+    expect(await screen.findByRole('heading', { name: 'GitHub Triggers' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/');
+
+    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Back to sessions' }));
+    expect(await screen.findByRole('button', { name: 'Manage lifecycle' })).toBeInTheDocument();
   });
 
   it('keeps an unknown or wrong-owner session route as a typed read-only view', async () => {
