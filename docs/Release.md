@@ -352,73 +352,514 @@ Publishing the matching runtime still does not rotate sessions by itself. After 
 Apply and verify the runtime ConfigMap before allowing the new API Deployment to start. Do not apply `infra/api/` as an unordered directory: Deployment pods consume the ConfigMap through `envFrom`, and a pod that starts with the previous value will not reload a later ConfigMap update. The observed value must exactly equal the verified runtime reference copied into the deployment registry before the Deployment is applied:
 
 ```sh
-kubectl --namespace chrono-bot apply -f infra/api/configmap.yaml
-kubectl --namespace chrono-bot get configmap cma-api \
+kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot apply -f infra/api/configmap.yaml
+kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get configmap cma-api \
   -o jsonpath='{.data.CHRONO_SANDBOX_IMAGE}{"\n"}'
 # Compare the printed value with the copied, digest-verified runtime reference.
-kubectl --namespace chrono-bot apply -f infra/api/deployment.yaml
 ```
 
----
+For an ordinary release after the first-production cutover is complete, apply the new Deployment only after that digest comparison:
 
-## 5. One-time MongoDB session namespace cutover
+```sh
+kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot apply -f infra/api/deployment.yaml
+```
 
-The release that introduces `sessions_v2` and `session_events_v2` cannot be rolled out alongside a CMA version that still mutates `sessions` and `session_events`. MongoDB validators can reject old inserts and replacements, but they do not fence deletes. `CHRONO_MONGODB_LEGACY_CUTOVER=drained` is therefore an operator assertion, not a condition CMA can discover or prove.
-
-Run this once for a database whose legacy names are still writable collections:
-
-1. Confirm the old deployment is healthy and record the current collection types for `sessions` and `session_events`.
-2. Stop every CMA replica that can run the legacy writer. Wait for all pods/processes to terminate and for their outstanding MongoDB and object-storage operations to finish. Do not start the replacement while any old replica can still receive work.
-3. At this quiescent boundary, take the deployment's normal transaction-consistent MongoDB backup or snapshot and a version-retained recovery point for the configured `CHRONO_CONTEXT_BUCKET`. Keep their timestamps and provenance as one recovery unit. If object storage is deliberately unconfigured, record that fact with the MongoDB backup. Do not resume any writer between the two captures.
-4. Set `CHRONO_MONGODB_LEGACY_CUTOVER` to the exact value `drained`.
-5. Start exactly one new CMA replica and let startup finish. Do not overlap this step with an old binary or start a second migration candidate.
-6. Verify directly in MongoDB that `sessions` is a read-only view of `sessions_v2` and `session_events` is a read-only view of `session_events_v2`, then verify that the replacement's `/ready` endpoint returns `200`.
-7. Replace the verified migration replica sequentially with one unflagged replica. The deployment is deliberately single-replica with a `Recreate` strategy, so never overlap the flagged and unflagged pods. Clear the live ConfigMap value, scale the deployment to zero, wait for the flagged pod to be deleted, and only then scale back to one:
-
-   ```sh
-   kubectl --namespace chrono-bot patch configmap cma-api --type merge \
-     -p '{"data":{"CHRONO_MONGODB_LEGACY_CUTOVER":""}}'
-   kubectl --namespace chrono-bot scale deployment/cma-api --replicas=0
-   kubectl --namespace chrono-bot wait --for=delete pod \
-     -l app.kubernetes.io/name=cma-api --timeout=120s
-   kubectl --namespace chrono-bot scale deployment/cma-api --replicas=1
-   kubectl --namespace chrono-bot rollout status deployment/cma-api --timeout=5m
-   ```
-
-   Verify that exactly one API pod exists, the live ConfigMap value is empty, that sole replacement pod was created after the value was cleared, and its `/ready` endpoint returns `200`. Do not resume ordinary traffic until all four checks pass.
-
-Default startup refuses a writable or unproven partial legacy state before renaming, dropping, or otherwise mutating either legacy namespace. Before the first action on a genuinely empty database, or after the explicit drain acknowledgement, CMA records durable in-progress provenance so a crash can resume that exact migration. Once both views are installed, it majority-writes completion with the authoritative collection UUIDs. Later startup refuses a missing or replacement namespace instead of treating post-completion data loss as a fresh database. A generic partial state without that provenance is not inferred to be safe.
+For the first production release containing the MongoDB cutovers below, do not run that Deployment command yet. Applying it before recovery capture A could start normal CMA and cross both database boundaries. Section 5 applies that Deployment only after the old writer is gone, capture A is durable, and the live ConfigMap selects the maintenance stage.
 
 ---
 
-## 6. One-time MongoDB coordination and session-writer activation
+## 5. First production MongoDB cutover
 
-The release that makes runtime authority and cleanup debt durable moves the writable session collection from `sessions_v2` to `sessions_v3`. It leaves `session_events_v2` in place. The release that makes explicit skill grants and skill-pack custody durable also advances the `sessions_v3` document writer from `_cma_write_protocol: 1` to `_cma_write_protocol: 2`; this prevents an older whole-document replacement from silently removing `granted_skills` or `skill_packs`.
+The first production release containing these migrations needs **one continuous writer drain and two recovery units**. Capture A preserves the raw `sessions` and `session_events` collections for wholesale rollback to the old image. Capture B preserves verified, UUID-bound `sessions_v2` and `session_events_v2` before coordination can begin. Do not resume a database, object-storage, or provider writer between them.
 
-Neither transition may overlap a CMA process that predates it. A pre-coordination process can make an external provider call before its database write, and MongoDB validators cannot recall that call or fence a standalone delete. A coordination-protocol-3 process with session write protocol 1 can still replace a session with a document that does not know the new fields. `CHRONO_MONGODB_COORDINATION_CUTOVER=drained` is the operator's assertion that database work and provider work from every such process have permanently stopped.
+Production must remain on `v0.7.0` until operators have proved Atlas backup/PITR or snapshot readiness and a restore path, plus version retention and a matching restore path for `CHRONO_CONTEXT_BUCKET`. Record the evidence, recovery identifiers, timestamps, retention, and restore owner before starting. A backup policy that has not produced and restored a usable recovery point is not evidence.
 
-Run this procedure for every existing CMA database after the namespace cutover in section 5 is complete. A database receiving coordination protocol 3 and session write protocol 2 in the same release needs one drain. A database that completed coordination protocol 3 under an earlier build repeats the drain only for its one-time session-writer upgrade:
+Run this once for each existing production database:
 
-1. Confirm the old deployment is healthy, then stop every CMA binary that predates coordination protocol 3 or writes `sessions_v3` with `_cma_write_protocol: 1`. Wait for every pod/process, outstanding MongoDB operation, object-storage mutation, and external provider create, delete, or replacement operation to finish. Prevent the old workload from returning. Rotate or revoke its database, storage, and provider credentials where the deployment permits that stronger fence.
-2. At this quiescent boundary, take one transaction-consistent backup or snapshot containing `sessions_v3` if it already exists, otherwise `sessions_v2`; `session_events_v2`; `session_coordination_receipts`; `_cma_session_namespace_cutovers`; `session_writes`; and `session_tombstones`. Capture a version-retained recovery point for the configured `CHRONO_CONTEXT_BUCKET` at the same boundary. Keep the MongoDB collections, object versions, and provenance records as one recovery unit. If object storage is deliberately unconfigured, record that fact with the MongoDB backup. Do not combine session data from one point in time with receipts, markers, skill packs, contexts, or handover objects from another.
-3. Set `CHRONO_MONGODB_COORDINATION_CUTOVER` to the exact value `drained`. If section 5 has not yet run, set its separate legacy acknowledgement only after satisfying that section's drain conditions too.
-4. Start exactly one new CMA replica. Do not start another activation candidate and do not restore any old replica while startup is in progress. A coordination activation can resume without the flag after its durable in-progress marker is recorded. An already coordinated session-writer upgrade can resume without the flag after the strict protocol-2 session validator is installed. If startup fails before either applicable fence is durable, re-establish the drain before reasserting the flag.
-5. Verify directly in MongoDB that `sessions` is a read-only view of `sessions_v2`, `sessions_v2` is a read-only view of `sessions_v3`, and `sessions_v3` is the sole writable session collection. Confirm that its strict validator admits only `_cma_write_protocol: 2` with `_cma_coordination_protocol: 3`, and that every session document carries both exact values. Confirm that coordination receipts still carry `_cma_write_protocol: 1` with `_cma_coordination_protocol: 2`. Confirm that the coordination activation and receipt provenance records in `_cma_session_namespace_cutovers` are complete and UUID-bound, then confirm `/ready` returns `200`.
-6. Replace the verified migration replica sequentially with one unflagged replica. The deployment is deliberately single-replica with a `Recreate` strategy, so never overlap the flagged and unflagged pods. Clear the live ConfigMap value, scale the deployment to zero, wait for the flagged pod to be deleted, and only then scale back to one:
+1. Confirm the old deployment is healthy. Verify directly that `sessions` and `session_events` are writable collections, record their UUIDs and document counts, and confirm `sessions_v2`, `sessions_v3`, `session_events_v2`, `session_coordination_receipts`, and `_cma_session_namespace_cutovers` are absent. If the source is not exactly raw legacy state, stop and investigate; do not adapt this procedure around it.
+2. Fence ordinary traffic, then stop every old CMA replica and prevent it from returning. First prove that no pod carries the dedicated no-match label. Replace the Service's exact checked selector with that label and prove that its EndpointSlices contain no endpoint whose readiness is true or unknown. The JSON Patch `test` operation makes this fail closed if the live selector has drifted; investigate drift instead of editing the expected value during the release. Keep this Service fence unchanged through both captures, coordination activation, and the final unflagged restart. It covers both the direct API hostname and the app-origin Gateway routes because both route through `Service/cma-api`.
 
    ```sh
-   kubectl --namespace chrono-bot patch configmap cma-api --type merge \
-     -p '{"data":{"CHRONO_MONGODB_COORDINATION_CUTOVER":""}}'
-   kubectl --namespace chrono-bot scale deployment/cma-api --replicas=0
-   kubectl --namespace chrono-bot wait --for=delete pod \
-     -l app.kubernetes.io/name=cma-api --timeout=120s
-   kubectl --namespace chrono-bot scale deployment/cma-api --replicas=1
-   kubectl --namespace chrono-bot rollout status deployment/cma-api --timeout=5m
+   (
+     set -eu
+     cma_fence_matches="$(kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod \
+       -l 'release.chrono-ai.fun/cutover-fence=mongodb-715' -o name)"
+     if [ -n "${cma_fence_matches}" ]; then
+       echo "the cutover fence selector unexpectedly matches a pod" >&2
+       exit 1
+     fi
+     kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot patch service cma-api --type=json \
+       -p='[{"op":"test","path":"/spec/selector","value":{"app.kubernetes.io/name":"cma-api"}},{"op":"replace","path":"/spec/selector","value":{"release.chrono-ai.fun/cutover-fence":"mongodb-715"}}]'
+     kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get service cma-api -o json | \
+       jq -e '.spec.selector == {"release.chrono-ai.fun/cutover-fence":"mongodb-715"}'
+     cma_fence_attempt=0
+     until kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get endpointslice \
+       -l kubernetes.io/service-name=cma-api -o json | \
+       jq -e '[.items[].endpoints[]? | select(.conditions.ready != false)] | length == 0' >/dev/null; do
+       cma_fence_attempt=$((cma_fence_attempt + 1))
+       if [ "${cma_fence_attempt}" -ge 60 ]; then
+         echo "cma-api still has a routable EndpointSlice endpoint; leaving traffic fenced" >&2
+         exit 1
+       fi
+       sleep 2
+     done
+     kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot scale deployment/cma-api --replicas=0
+     kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot wait --for=delete pod \
+       -l app.kubernetes.io/name=cma-api --timeout=120s
+   )
    ```
 
-   Verify that exactly one API pod exists, the live ConfigMap value is empty, that sole replacement pod was created after the value was cleared, and its `/ready` endpoint returns `200`. Do not resume ordinary traffic until all four checks pass.
+   The subshell refuses to scale down until EndpointSlice reconciliation has proved the traffic fence, and exits after 120 seconds without advancing if that proof never arrives. Then wait for every outstanding MongoDB operation, object mutation, and external provider create, delete, or replacement call to finish. Rotate or revoke the old workload's database, storage, and provider credentials where the deployment permits that stronger fence. If any later step fails, leave the no-match Service selector in place until an explicit incident decision is complete. Do not install a shell trap or other automatic cleanup that could reopen traffic after a failed release.
 
-A genuinely empty database activates automatically. Any database that existed before startup requires the exact acknowledgement, even when its session collections happen to be empty. The activation majority-writes intent before fencing and renaming `sessions_v2`; the rename preserves its collection UUID. It then creates `sessions_v2` as a view of `sessions_v3`, establishes and audits the receipt collection, and completes a marker bound to both protected UUIDs. A completed marker authorizes verification only: startup will not recreate a missing session or receipt collection, repair a replacement collection, or infer a new empty store.
+3. **Capture recovery unit A.** At this zero-writer boundary, take one transaction-consistent MongoDB backup or snapshot containing the raw collections and a version-retained recovery point for `CHRONO_CONTEXT_BUCKET`. Record both recovery identifiers and timestamps as one unit. If object storage is deliberately unconfigured, record that fact with the MongoDB recovery point. Prove the capture completed successfully before continuing.
+4. Select the explicit legacy maintenance stage in the live ConfigMap, then apply the new API Deployment. The tuple is exact: stage `legacy`, legacy acknowledgement `drained`, and an empty coordination acknowledgement. Applying the Deployment is safe only after capture A because its first new pod now has no normal-startup path. Run this in a dedicated shell that remains open through capture B so the exact pod identity selected here remains available to step 5.
+
+   ```sh
+   set -eu
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot patch configmap cma-api --type merge \
+     -p '{"data":{"CHRONO_MONGODB_CUTOVER_STAGE":"legacy","CHRONO_MONGODB_LEGACY_CUTOVER":"drained","CHRONO_MONGODB_COORDINATION_CUTOVER":""}}'
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot apply -f infra/api/deployment.yaml
+   cma_stage_pod_attempt=0
+   while :; do
+     cma_stage_pods_json="$(kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod \
+       -l app.kubernetes.io/name=cma-api -o json)"
+     cma_stage_pod_count="$(printf '%s' "${cma_stage_pods_json}" | jq -er '.items | length')"
+     case "${cma_stage_pod_count}" in
+       0)
+         cma_stage_pod_attempt=$((cma_stage_pod_attempt + 1))
+         if [ "${cma_stage_pod_attempt}" -ge 60 ]; then
+           echo "no cma-api stage pod appeared within two minutes; traffic remains fenced" >&2
+           exit 1
+         fi
+         sleep 2
+         ;;
+       1)
+         cma_stage_pod="$(printf '%s' "${cma_stage_pods_json}" | jq -er '.items[0].metadata.name')"
+         cma_stage_pod_uid="$(printf '%s' "${cma_stage_pods_json}" | jq -er '.items[0].metadata.uid')"
+         break
+         ;;
+       *)
+         echo "more than one cma-api stage pod exists; traffic remains fenced" >&2
+         exit 1
+         ;;
+     esac
+   done
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot wait \
+     --for='jsonpath={.status.containerStatuses[?(@.name=="api")].started}=true' \
+     "pod/${cma_stage_pod}" --timeout=31m
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod "${cma_stage_pod}" -o json | \
+     jq -e --arg uid "${cma_stage_pod_uid}" \
+     '.metadata.uid == $uid and (.status.containerStatuses // [] | map(select(.name == "api"))) as $api | ($api | length) == 1 and $api[0].started == true and $api[0].restartCount == 0'
+   ```
+
+   The creation gate waits up to two minutes for one pod and fails immediately if it observes more than one. Do not use `kubectl rollout status` for this stage. The Deployment cannot become Available because its sole pod is deliberately never Ready. The command instead waits up to 31 minutes for the exact captured `api` pod to pass its 30-minute startup probe, then rejects replacement or restart. Liveness and readiness remain suppressed until the post-shutdown `/livez` listener binds. A timeout or restart means the boundary was not reached and must be investigated with the Service fence still in place, not treated as capture B.
+5. Verify the maintenance boundary before capture B. Recheck the exact API pod captured in step 4 and port-forward directly to it in that dedicated terminal. This bypasses the intentionally fenced Service. Leave the port-forward running while performing the HTTP checks, then stop it manually; its exit, replacement, or restart is a failed verification, not permission to continue.
+
+   ```sh
+   : "${cma_stage_pod:?step 4 did not capture the stage pod}"
+   : "${cma_stage_pod_uid:?step 4 did not capture the stage pod UID}"
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod "${cma_stage_pod}" -o json | \
+     jq -e --arg uid "${cma_stage_pod_uid}" \
+     '.metadata.uid == $uid and (.status.containerStatuses // [] | map(select(.name == "api"))) as $api | ($api | length) == 1 and $api[0].started == true and $api[0].restartCount == 0'
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot port-forward \
+     "pod/${cma_stage_pod}" 18080:8080
+   ```
+
+   From another terminal, mechanically assert the exact maintenance responses. The live route must return body `ok` with `200`. `/ready` and the real session collection route must return the exact staged reason with `503`, while `HEAD /livez` must also return `503`.
+
+   ```sh
+   (
+     set -eu
+     cma_stage_unavailable='{"status":"not-ready","reason":"legacy-cutover-staged"}|503'
+     test "$(curl --fail --show-error --silent --max-time 10 --write-out '|%{http_code}' \
+       http://127.0.0.1:18080/livez)" = 'ok|200'
+     test "$(curl --show-error --silent --max-time 10 --write-out '|%{http_code}' \
+       http://127.0.0.1:18080/ready)" = "${cma_stage_unavailable}"
+     test "$(curl --show-error --silent --max-time 10 --write-out '|%{http_code}' \
+       http://127.0.0.1:18080/api/v1/sessions)" = "${cma_stage_unavailable}"
+     test "$(curl --head --show-error --silent --max-time 10 --output /dev/null --write-out '%{http_code}' \
+       http://127.0.0.1:18080/livez)" = '503'
+     kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get service cma-api -o json | \
+       jq -e '.spec.selector == {"release.chrono-ai.fun/cutover-fence":"mongodb-715"}'
+     kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get endpointslice \
+       -l kubernetes.io/service-name=cma-api -o json | \
+       jq -e '[.items[].endpoints[]? | select(.conditions.ready != false)] | length == 0'
+   )
+   ```
+
+   Directly in MongoDB, prove all of the following:
+
+   - `sessions` is an empty-pipeline view of the sole writable `sessions_v2` collection, and `session_events` is an empty-pipeline view of the sole writable `session_events_v2` collection.
+   - Both v2 collections have their exact strict/error validators. Their UUIDs equal the pre-rename UUIDs recorded at capture A.
+   - The protocol-1 `sessions-v2` marker is complete, has exact origin `operator-drained`, and names the live UUIDs of `sessions_v2`, `session_events_v2`, and `session_tombstones`. Read its exact binary `collection_uuids.session_tombstones` value and assert that it equals the live `info.uuid` returned for `session_tombstones` by `listCollections`; a matching name, validator, or document set is not UUID proof. Make the equivalent exact comparison for both v2 collections.
+   - `sessions_v3`, `session_coordination_receipts`, coordination activation provenance, and receipt provenance are absent. Session documents carry no coordination protocol field.
+   - `session_tombstones` exists with its exact stage contract and valid history. Session/event counts, granted skills, skill custody, context references, write receipts, tombstones, and unrelated collections reconcile with capture A.
+
+   The stage has already dropped its derived MongoDB handles and explicitly shut down its client before `/livez` became available. Do not treat a running process, a `503` readiness response without the exact reason, or a partially migrated database as this boundary.
+6. **Capture recovery unit B.** While that exact maintenance process remains live and unready, take a second transaction-consistent MongoDB backup or snapshot containing `sessions_v2`, `session_events_v2`, `_cma_session_namespace_cutovers`, `session_writes`, and `session_tombstones`, plus a matching version-retained `CHRONO_CONTEXT_BUCKET` recovery point. Record and prove this pair independently from capture A. Never combine MongoDB from one recovery unit with contexts, skill objects, handover objects, or object versions from the other.
+7. Restart into coordination activation without releasing the drain. Atomically clear the stage and legacy acknowledgement and set only the coordination acknowledgement to `drained`. Delete the maintenance pod completely before starting exactly one normal activation candidate. The Service must still carry the no-match selector from step 2. Run this in a dedicated shell that remains open through step 8 so the candidate cannot be replaced by a later label match.
+
+   ```sh
+   set -eu
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot patch configmap cma-api --type merge \
+     -p '{"data":{"CHRONO_MONGODB_CUTOVER_STAGE":"","CHRONO_MONGODB_LEGACY_CUTOVER":"","CHRONO_MONGODB_COORDINATION_CUTOVER":"drained"}}'
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot scale deployment/cma-api --replicas=0
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot wait --for=delete pod \
+     -l app.kubernetes.io/name=cma-api --timeout=120s
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot scale deployment/cma-api --replicas=1
+   cma_activation_pod_attempt=0
+   while :; do
+     cma_activation_pods_json="$(kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod \
+       -l app.kubernetes.io/name=cma-api -o json)"
+     cma_activation_pod_count="$(printf '%s' "${cma_activation_pods_json}" | jq -er '.items | length')"
+     case "${cma_activation_pod_count}" in
+       0)
+         cma_activation_pod_attempt=$((cma_activation_pod_attempt + 1))
+         if [ "${cma_activation_pod_attempt}" -ge 60 ]; then
+           echo "no cma-api activation pod appeared within two minutes; traffic remains fenced" >&2
+           exit 1
+         fi
+         sleep 2
+         ;;
+       1)
+         cma_activation_pod="$(printf '%s' "${cma_activation_pods_json}" | jq -er '.items[0].metadata.name')"
+         cma_activation_pod_uid="$(printf '%s' "${cma_activation_pods_json}" | jq -er '.items[0].metadata.uid')"
+         break
+         ;;
+       *)
+         echo "more than one cma-api activation pod exists; traffic remains fenced" >&2
+         exit 1
+         ;;
+     esac
+   done
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot wait \
+     --for=condition=Ready "pod/${cma_activation_pod}" --timeout=31m
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod "${cma_activation_pod}" -o json | \
+     jq -e --arg uid "${cma_activation_pod_uid}" \
+     '(.status.containerStatuses // [] | map(select(.name == "api"))) as $api | (.status.conditions // [] | map(select(.type == "Ready" and .status == "True"))) as $ready | .metadata.uid == $uid and ($api | length) == 1 and $api[0].started == true and $api[0].restartCount == 0 and ($ready | length) == 1'
+   ```
+
+   The bounded creation gate refuses multiple candidates, and the 31-minute wait covers the manifest's 30-minute startup-probe budget for only the captured pod. A timeout, replacement, or restart does not cancel or roll back database work: leave the Service fenced and every old writer stopped while investigating the candidate.
+8. Recheck the exact Ready activation pod captured in step 7 and port-forward directly to it. Reject replacement or a startup restart before accepting the candidate.
+
+   ```sh
+   : "${cma_activation_pod:?step 7 did not capture the activation pod}"
+   : "${cma_activation_pod_uid:?step 7 did not capture the activation pod UID}"
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod "${cma_activation_pod}" -o json | \
+     jq -e --arg uid "${cma_activation_pod_uid}" \
+     '(.status.containerStatuses // [] | map(select(.name == "api"))) as $api | (.status.conditions // [] | map(select(.type == "Ready" and .status == "True"))) as $ready | .metadata.uid == $uid and ($api | length) == 1 and $api[0].started == true and $api[0].restartCount == 0 and ($ready | length) == 1'
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot port-forward \
+     "pod/${cma_activation_pod}" 18080:8080
+   ```
+
+   Through that direct connection, run this exact normal-mode HTTP and fence gate from another terminal:
+
+   ```sh
+   (
+     set -eu
+     test "$(curl --fail --show-error --silent --max-time 10 --write-out '|%{http_code}' \
+       http://127.0.0.1:18080/livez)" = 'ok|200'
+     test "$(curl --fail --show-error --silent --max-time 10 --write-out '|%{http_code}' \
+       http://127.0.0.1:18080/ready)" = '{"status":"ready"}|200'
+     kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get service cma-api -o json | \
+       jq -e '.spec.selector == {"release.chrono-ai.fun/cutover-fence":"mongodb-715"}'
+     kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get endpointslice \
+       -l kubernetes.io/service-name=cma-api -o json | \
+       jq -e '[.items[].endpoints[]? | select(.conditions.ready != false)] | length == 0'
+   )
+   ```
+
+   Perform the representative authenticated reads through that same port-forward; do not probe through the fenced Service. Verify directly that `sessions` views `sessions_v2`, `sessions_v2` views the sole writable `sessions_v3`, and the original `sessions_v2` UUID moved with the rename to `sessions_v3`. Confirm the strict session validator admits only `_cma_write_protocol: 2` with `_cma_coordination_protocol: 3`, every session carries both exact values, receipts carry write protocol 1 with coordination protocol 2, both coordination provenance records are complete and UUID-bound, and preserved history/custody/context/write/tombstone state reconciles with capture B. Stop the port-forward manually after verification. Any failure leaves traffic fenced.
+9. Perform the final unflagged restart while ordinary traffic remains disabled. Clear the coordination acknowledgement, delete the flagged pod completely, start one replacement, and verify that its creation follows the ConfigMap change. Run the whole step in a dedicated shell that remains open through step 10; the pod identity captured before the Ready wait is the only candidate that may later receive traffic.
+
+   ```sh
+   set -eu
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot patch configmap cma-api --type merge \
+     -p '{"data":{"CHRONO_MONGODB_CUTOVER_STAGE":"","CHRONO_MONGODB_LEGACY_CUTOVER":"","CHRONO_MONGODB_COORDINATION_CUTOVER":""}}'
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot scale deployment/cma-api --replicas=0
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot wait --for=delete pod \
+     -l app.kubernetes.io/name=cma-api --timeout=120s
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot scale deployment/cma-api --replicas=1
+   cma_final_pod_attempt=0
+   while :; do
+     cma_final_pods_json="$(kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod \
+       -l app.kubernetes.io/name=cma-api -o json)"
+     cma_final_pod_count="$(printf '%s' "${cma_final_pods_json}" | jq -er '.items | length')"
+     case "${cma_final_pod_count}" in
+       0)
+         cma_final_pod_attempt=$((cma_final_pod_attempt + 1))
+         if [ "${cma_final_pod_attempt}" -ge 60 ]; then
+           echo "no final cma-api pod appeared within two minutes; traffic remains fenced" >&2
+           exit 1
+         fi
+         sleep 2
+         ;;
+       1)
+         cma_final_pod="$(printf '%s' "${cma_final_pods_json}" | jq -er '.items[0].metadata.name')"
+         cma_final_pod_uid="$(printf '%s' "${cma_final_pods_json}" | jq -er '.items[0].metadata.uid')"
+         break
+         ;;
+       *)
+         echo "more than one final cma-api pod exists; traffic remains fenced" >&2
+         exit 1
+         ;;
+     esac
+   done
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot wait \
+     --for=condition=Ready "pod/${cma_final_pod}" --timeout=31m
+   cma_final_pod_json="$(kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod "${cma_final_pod}" -o json)"
+   cma_final_pod_ip="$(printf '%s' "${cma_final_pod_json}" | jq -er '.status.podIP')"
+   printf '%s' "${cma_final_pod_json}" | \
+     jq -e --arg uid "${cma_final_pod_uid}" --arg ip "${cma_final_pod_ip}" \
+     '(.status.containerStatuses // [] | map(select(.name == "api"))) as $api | (.status.conditions // [] | map(select(.type == "Ready" and .status == "True"))) as $ready | .metadata.uid == $uid and .status.podIP == $ip and ($api | length) == 1 and $api[0].started == true and $api[0].restartCount == 0 and ($ready | length) == 1'
+   ```
+
+   The bounded creation gate fails immediately on multiple candidates. A timeout, replacement, or restart again leaves traffic fenced and does not prove that database work stopped. Port-forward directly to the already captured and verified pod from the same shell:
+
+   ```sh
+   : "${cma_final_pod:?step 9 did not capture the verified final pod}"
+   : "${cma_final_pod_uid:?step 9 did not capture the verified final pod UID}"
+   : "${cma_final_pod_ip:?step 9 did not capture the verified final pod IP}"
+   cma_final_pod_json="$(kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod "${cma_final_pod}" -o json)"
+   printf '%s' "${cma_final_pod_json}" | \
+     jq -e --arg uid "${cma_final_pod_uid}" --arg ip "${cma_final_pod_ip}" \
+     '(.status.containerStatuses // [] | map(select(.name == "api"))) as $api | (.status.conditions // [] | map(select(.type == "Ready" and .status == "True"))) as $ready | .metadata.uid == $uid and .status.podIP == $ip and ($api | length) == 1 and $api[0].started == true and $api[0].restartCount == 0 and ($ready | length) == 1'
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot port-forward \
+     "pod/${cma_final_pod}" 18080:8080
+   ```
+
+   Verify all three live cutover values are empty and the same protected UUIDs and contracts remain. In the other terminal, rerun the exact normal-mode HTTP and fence gate from step 8 and perform the representative authenticated reads through the port-forward. Stop the port-forward manually but keep this shell and its three `cma_final_pod*` identity variables before restoring traffic.
+
+10. Restore ordinary traffic only after every final check has passed. Export a short-lived release access token as `CHRONO_RELEASE_ACCESS_TOKEN` in the step 9 shell before continuing; the script requires it while traffic is still fenced and unsets it after successful restoration and authenticated verification. Replace the exact fence selector with the source selector by another compare-and-replace JSON Patch, wait for EndpointSlice reconciliation, require exactly one ready-or-unknown endpoint for the verified pod, and verify authenticated reads through both the direct API hostname and the app-origin API route. The installed traps only re-fence traffic; they never reopen it.
+
+   ```sh
+   set -eu
+   : "${cma_final_pod:?step 9 did not record the verified final pod}"
+   : "${cma_final_pod_uid:?step 9 did not record the verified final pod UID}"
+   : "${cma_final_pod_ip:?step 9 did not record the verified final pod IP}"
+   : "${CHRONO_RELEASE_ACCESS_TOKEN:?export the short-lived release access token while traffic is fenced}"
+   cma_read_selector_state() {
+     cma_selector_json="$(kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get service cma-api -o json)" || return 1
+     printf '%s' "${cma_selector_json}" | jq -er '
+       if .spec.selector == {"release.chrono-ai.fun/cutover-fence":"mongodb-715"} then "fenced"
+       elif .spec.selector == {"app.kubernetes.io/name":"cma-api"} then "source"
+       else "unknown"
+       end'
+   }
+   cma_wait_for_fenced_endpoints() {
+     cma_fence_endpoint_attempt=0
+     while :; do
+       if ! cma_fence_endpoints_json="$(kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get endpointslice \
+         -l kubernetes.io/service-name=cma-api -o json)"; then
+         echo "CRITICAL: cma-api is selected as fenced, but its EndpointSlices could not be read; keep or impose a manual traffic fence" >&2
+         return 1
+       fi
+       if ! cma_fence_endpoint_count="$(printf '%s' "${cma_fence_endpoints_json}" | \
+         jq -er '[.items[].endpoints[]? | select(.conditions.ready != false)] | length')"; then
+         echo "CRITICAL: cma-api EndpointSlices could not be parsed after re-fencing; keep or impose a manual traffic fence" >&2
+         return 1
+       fi
+       if [ "${cma_fence_endpoint_count}" -eq 0 ]; then
+         return 0
+       fi
+       cma_fence_endpoint_attempt=$((cma_fence_endpoint_attempt + 1))
+       if [ "${cma_fence_endpoint_attempt}" -ge 60 ]; then
+         echo "CRITICAL: cma-api still has routable endpoints after re-fencing; impose a manual traffic fence" >&2
+         return 1
+       fi
+       if ! sleep 2; then
+         echo "CRITICAL: the re-fence EndpointSlice wait was interrupted; verify or impose a manual traffic fence" >&2
+         return 1
+       fi
+     done
+   }
+   cma_refence_api() {
+     cma_refence_patch_status=0
+     kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot patch service cma-api --type=json \
+       -p='[{"op":"test","path":"/spec/selector","value":{"app.kubernetes.io/name":"cma-api"}},{"op":"replace","path":"/spec/selector","value":{"release.chrono-ai.fun/cutover-fence":"mongodb-715"}}]' || cma_refence_patch_status=$?
+     if ! cma_refence_state="$(cma_read_selector_state)"; then
+       echo "CRITICAL: could not read cma-api after the source-to-fence patch; impose a manual traffic fence" >&2
+       return 1
+     fi
+     case "${cma_refence_state}" in
+       fenced) ;;
+       source)
+         echo "CRITICAL: cma-api still has its source selector after the re-fence attempt; impose a manual traffic fence" >&2
+         return 1
+         ;;
+       *)
+         echo "CRITICAL: cma-api has an unknown selector after the re-fence attempt; impose a manual traffic fence" >&2
+         return 1
+         ;;
+     esac
+     if ! cma_wait_for_fenced_endpoints; then
+       return 1
+     fi
+     if [ "${cma_refence_patch_status}" -ne 0 ]; then
+       echo "the re-fence patch reported failure, but the exact fence selector and zero routable endpoints were verified" >&2
+     fi
+     return 0
+   }
+   cma_abort_after_reopen() {
+     echo "$1; re-fencing cma-api before exit" >&2
+     if cma_refence_api; then
+       cma_traffic_open=0
+       echo "cma-api is fenced again" >&2
+       return 0
+     fi
+     echo "CRITICAL: automatic re-fencing could not be proved; impose and verify a manual traffic fence" >&2
+     return 1
+   }
+   cma_refence_on_exit() {
+     cma_exit_status=$?
+     trap - EXIT
+     if [ "${cma_traffic_open}" -eq 1 ]; then
+       cma_refence_api || echo "CRITICAL: exit-time re-fencing could not be proved; impose and verify a manual traffic fence" >&2
+     fi
+     exit "${cma_exit_status}"
+   }
+   cma_refence_on_signal() {
+     trap - HUP INT TERM
+     echo "traffic-restoration shell interrupted; re-fencing before exit" >&2
+     exit 1
+   }
+   cma_traffic_open=0
+   trap cma_refence_on_exit EXIT
+   trap cma_refence_on_signal HUP INT TERM
+   kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get pod "${cma_final_pod}" -o json | \
+     jq -e --arg uid "${cma_final_pod_uid}" --arg ip "${cma_final_pod_ip}" \
+     '.metadata.uid == $uid and .status.podIP == $ip and (.status.containerStatuses // [] | map(select(.name == "api" and .started == true and .restartCount == 0)) | length) == 1 and (.status.conditions // [] | map(select(.type == "Ready" and .status == "True")) | length) == 1'
+   test "$(cma_read_selector_state)" = 'fenced'
+   cma_traffic_open=1
+   if ! kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot patch service cma-api --type=json \
+     -p='[{"op":"test","path":"/spec/selector","value":{"release.chrono-ai.fun/cutover-fence":"mongodb-715"}},{"op":"replace","path":"/spec/selector","value":{"app.kubernetes.io/name":"cma-api"}}]'; then
+     if ! cma_reopen_state="$(cma_read_selector_state)"; then
+       echo "CRITICAL: the reopen patch failed and the live selector could not be read; impose and verify a manual traffic fence" >&2
+       exit 1
+     fi
+     case "${cma_reopen_state}" in
+       fenced)
+         if cma_wait_for_fenced_endpoints; then
+           cma_traffic_open=0
+           echo "the reopen patch failed and cma-api remains fenced" >&2
+         else
+           echo "CRITICAL: the reopen patch failed and a zero-endpoint fence could not be proved" >&2
+         fi
+         ;;
+       source)
+         if cma_refence_api; then
+           cma_traffic_open=0
+           echo "the reopen patch reported failure after applying the source selector; cma-api is fenced again" >&2
+         else
+           echo "CRITICAL: the reopen patch reported failure after applying the source selector, and automatic re-fencing could not be proved" >&2
+         fi
+         ;;
+       *)
+         echo "CRITICAL: the reopen patch failed and cma-api has an unknown selector; impose and verify a manual traffic fence" >&2
+         ;;
+     esac
+     exit 1
+   fi
+   if ! cma_reopen_state="$(cma_read_selector_state)"; then
+     cma_abort_after_reopen "the post-patch selector could not be read" || :
+     exit 1
+   fi
+   if [ "${cma_reopen_state}" != 'source' ]; then
+     cma_abort_after_reopen "the post-patch selector is not the exact source selector" || :
+     exit 1
+   fi
+   cma_endpoint_attempt=0
+   while :; do
+     if ! cma_endpoints_json="$(kubectl --context gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke --namespace chrono-bot get endpointslice \
+       -l kubernetes.io/service-name=cma-api -o json)"; then
+       cma_abort_after_reopen "the reopened EndpointSlices could not be read" || :
+       exit 1
+     fi
+     if ! cma_endpoint_state="$(printf '%s' "${cma_endpoints_json}" | \
+       jq -r --arg pod "${cma_final_pod}" --arg uid "${cma_final_pod_uid}" --arg ip "${cma_final_pod_ip}" '
+       [.items[].endpoints[]? | select(.conditions.ready != false)] as $ready |
+       if ($ready | length) == 0 then "pending"
+       elif ($ready | length) == 1 and $ready[0].targetRef.kind == "Pod" and $ready[0].targetRef.name == $pod and $ready[0].targetRef.uid == $uid and (($ready[0].addresses | index($ip)) != null) then "exact"
+       else "wrong"
+       end')"; then
+       cma_abort_after_reopen "the reopened EndpointSlices could not be parsed" || :
+       exit 1
+     fi
+     case "${cma_endpoint_state}" in
+       exact) break ;;
+       wrong)
+         cma_abort_after_reopen "a routable endpoint is not the exact verified pod" || :
+         exit 1
+         ;;
+       pending) ;;
+       *)
+         cma_abort_after_reopen "the EndpointSlice gate returned an unknown state" || :
+         exit 1
+         ;;
+     esac
+     cma_endpoint_attempt=$((cma_endpoint_attempt + 1))
+     if [ "${cma_endpoint_attempt}" -ge 60 ]; then
+       cma_abort_after_reopen "the Service did not converge on the exact verified pod" || :
+       exit 1
+     fi
+     if ! sleep 2; then
+       cma_abort_after_reopen "the EndpointSlice wait was interrupted" || :
+       exit 1
+     fi
+   done
+   if ! test "$(curl --fail --show-error --silent --max-time 15 --write-out '|%{http_code}' \
+     https://bot-api.chrono-ai.fun/livez)" = 'ok|200'; then
+     cma_abort_after_reopen "the direct public liveness check failed" || :
+     exit 1
+   fi
+   if ! test "$(curl --fail --show-error --silent --max-time 15 --write-out '|%{http_code}' \
+     https://bot-api.chrono-ai.fun/ready)" = '{"status":"ready"}|200'; then
+     cma_abort_after_reopen "the direct public readiness check failed" || :
+     exit 1
+   fi
+   if ! curl --fail --show-error --silent --max-time 15 --output /dev/null \
+     https://bot.chrono-ai.fun/openapi.json; then
+     cma_abort_after_reopen "the app-origin discovery check failed" || :
+     exit 1
+   fi
+   if ! cma_direct_sessions="$(curl --fail --show-error --silent --max-time 15 \
+     --header "Authorization: Bearer ${CHRONO_RELEASE_ACCESS_TOKEN}" \
+     'https://bot-api.chrono-ai.fun/api/v1/sessions?limit=1')"; then
+     cma_abort_after_reopen "the authenticated direct API read failed" || :
+     exit 1
+   fi
+   if ! printf '%s' "${cma_direct_sessions}" | jq -e 'type == "array"' >/dev/null; then
+     cma_abort_after_reopen "the authenticated direct API read returned a non-session response" || :
+     exit 1
+   fi
+   if ! cma_app_sessions="$(curl --fail --show-error --silent --max-time 15 \
+     --header "Authorization: Bearer ${CHRONO_RELEASE_ACCESS_TOKEN}" \
+     'https://bot.chrono-ai.fun/api/v1/sessions?limit=1')"; then
+     cma_abort_after_reopen "the authenticated app-origin API read failed" || :
+     exit 1
+   fi
+   if ! printf '%s' "${cma_app_sessions}" | jq -e 'type == "array"' >/dev/null; then
+     cma_abort_after_reopen "the authenticated app-origin API read returned a non-session response" || :
+     exit 1
+   fi
+   unset CHRONO_RELEASE_ACCESS_TOKEN cma_direct_sessions cma_app_sessions
+   cma_traffic_open=0
+   trap - EXIT HUP INT TERM
+   ```
+
+   A nonzero response from the reopen patch is never interpreted as proof that traffic stayed fenced. The script reads the live selector: an observed source selector is immediately changed back with an exact source-to-fence patch, an observed fence is verified through zero routable endpoints, and an unreadable or unknown selector is a critical manual-fence condition. After reopening, a command error, an unexpected routable endpoint, a timeout, a signal, or any public or authenticated verification failure takes the same fail-closed path. Only the exact pod name, UID, and address recorded in step 9 can pass the EndpointSlice gate. After both authenticated reads succeed, the success path unsets `CHRONO_RELEASE_ACCESS_TOKEN` and the captured response bodies before it marks restoration complete and removes the re-fence traps.
+
+If any stage fails, keep every writer stopped. Before coordination begins, recovery unit A supports a whole-unit restore to the old image and recovery unit B supports a whole-unit restart from the proven v2 source. After coordination begins, never restore an old process against the advanced database and never splice the two recovery units. Make an explicit incident decision to restore one complete MongoDB/object unit or continue forward from its exact supported state.
+
+---
+
+## 6. MongoDB cutover contracts and recovery
+
+The legacy migration records exact `operator-drained` intent and the original `sessions` and `session_events` UUIDs before its first protected mutation. A raw stage refuses a fresh database, an existing or ambiguous provenance namespace, a markerless v2 namespace, any unknown validator/action/level, and every coordinated state. An exact in-progress marker resumes only enumerated intermediate contracts while retaining those source identities. Before reconciliation can write a tombstone, the stage binds the exact `session_tombstones` collection UUID. Completion majority-writes the UUIDs of `sessions_v2`, `session_events_v2`, and `session_tombstones`. Re-entering the stage after completion is read-only verification: before and after the completed-stage rerun, assert that the completed marker's exact binary `collection_uuids.session_tombstones` value equals the live `listCollections` `info.uuid` for `session_tombstones` and that neither value changed. The rerun refuses a missing or replacement tombstone collection, does not replace a validator or repair provenance, and never adopts a replacement UUID.
+
+Coordination activation moves the writable session collection from `sessions_v2` to `sessions_v3` while leaving `session_events_v2` in place. It also advances the session writer to `_cma_write_protocol: 2` with `_cma_coordination_protocol: 3`, preventing an older whole-document replacement from silently removing `granted_skills`, `skill_packs`, or other current fields. `CHRONO_MONGODB_COORDINATION_CUTOVER=drained` is the operator assertion that every older database, object-storage, and provider operation has permanently stopped; CMA cannot discover that external fact.
+
+A genuinely empty database activates automatically. Any database that existed before startup requires the exact acknowledgement, even when its session collections happen to be empty. Activation majority-writes intent before fencing and renaming `sessions_v2`; the rename preserves its collection UUID. It then creates `sessions_v2` as a view of `sessions_v3`, establishes and audits the receipt collection, and completes a marker bound to both protected UUIDs. A completed marker authorizes verification only: startup will not recreate a missing session or receipt collection, repair a replacement collection, or infer a new empty store.
 
 An existing database that already has a complete coordination-protocol-3 marker and the exact previous session contract (`_cma_write_protocol: 1`, `_cma_coordination_protocol: 3`, strict validation, and error action) uses the same drain acknowledgement for its one-time session-writer upgrade. Before mutating it, startup verifies the activation and receipt provenance UUIDs, namespace chain, indexes, and every non-session collection contract. It refuses the previous session contract without `drained`. With the acknowledgement, it installs the strict protocol-2 session validator first, then updates only `_cma_write_protocol` on documents whose coordination protocol is already 3 and whose revision is already a 64-bit integer. The migration does not replace session documents, so `granted_skills`, `skill_packs`, and every other session-owned field are preserved.
 
