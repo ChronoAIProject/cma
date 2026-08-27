@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -79,6 +80,30 @@ describe('the dialog', () => {
 
     await user.tab({ shift: true });
     expect(screen.getByRole('button', { name: 'Save' })).toHaveFocus();
+  });
+
+  it('keeps focus inside a controlled field when its owner re-renders', async () => {
+    const user = userEvent.setup();
+
+    function ControlledDialog() {
+      const [value, setValue] = useState('');
+      return (
+        <Modal open title="Edit" onClose={() => undefined}>
+          <label>
+            Title
+            <input value={value} onChange={(event) => setValue(event.target.value)} />
+          </label>
+        </Modal>
+      );
+    }
+
+    render(<ControlledDialog />);
+    const title = screen.getByLabelText('Title');
+    await user.click(title);
+    await user.type(title, 'One retained title');
+
+    expect(title).toHaveFocus();
+    expect(title).toHaveValue('One retained title');
   });
 
   it('returns focus to whatever opened it', () => {

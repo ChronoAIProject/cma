@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DiffFile, DiffReview, PullRequestDraft } from '@chronoai/cma-sdk';
 import {
+  TransportError,
+  confirmPullRequest,
   downloadDiffArtifact,
   publishLaunchBranch,
   readLaunchDiff,
   requestLaunchDiff,
   reviewPullRequest,
-  confirmPullRequest,
 } from '../api/client';
 import type { AppRouter } from '../routing/routes';
 import { routeClick, routePath } from '../routing/routes';
@@ -22,7 +23,6 @@ import {
   IconRightUpOutline16,
   IconWarningOutline16,
 } from '../ui/icons';
-import { newIntentKey } from './idempotency';
 import {
   mergeabilityLabel,
   reachState,
@@ -32,6 +32,7 @@ import {
   upstreamRepository,
 } from './model';
 import { useLaunchResource } from './useLaunchResource';
+import { useIdempotentCommand } from './useIdempotentCommand';
 import './ContributionSurface.css';
 
 interface ContributionSurfaceProps {
@@ -76,6 +77,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
   const [proposalTitle, setProposalTitle] = useState('');
   const [proposalBody, setProposalBody] = useState('');
   const heading = useRef<HTMLHeadingElement>(null);
+  const commands = useIdempotentCommand();
 
   useEffect(() => {
     heading.current?.focus();
@@ -105,16 +107,25 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
     if (launch === null) return;
     setBusy('capture');
     setReviewFailure(null);
+    const slot = `launch:diff:${launch.id}`;
     try {
-      const next = await requestLaunchDiff(
-        launch.id,
-        launch.revision_number,
-        launch.effective.digest,
-        { idempotencyKey: newIntentKey() },
-      );
+      const next =
+        commands.pending?.slot === slot
+          ? await commands.reconcile<typeof launch>(slot, 'diff capture')
+          : await commands.execute(slot, 'diff capture', (idempotencyKey) =>
+              requestLaunchDiff(launch.id, launch.revision_number, launch.effective.digest, {
+                idempotencyKey,
+              }),
+            );
       resource.accept(next);
     } catch (cause) {
-      setReviewFailure(cause instanceof Error ? cause.message : String(cause));
+      setReviewFailure(
+        cause instanceof TransportError
+          ? 'The diff-capture outcome is unknown. CMA retained the exact command for reconciliation.'
+          : cause instanceof Error
+            ? cause.message
+            : String(cause),
+      );
     } finally {
       setBusy(null);
     }
@@ -126,15 +137,27 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
     if (launch === null || artifact === null || artifact === undefined) return;
     setBusy('publish');
     setReviewFailure(null);
+    const slot = `launch:branch:${launch.id}`;
     try {
-      const next = await publishLaunchBranch(launch.id, launch.revision_number, artifact.digest, {
-        idempotencyKey: newIntentKey(),
-      });
+      const next =
+        commands.pending?.slot === slot
+          ? await commands.reconcile<typeof launch>(slot, 'branch publication')
+          : await commands.execute(slot, 'branch publication', (idempotencyKey) =>
+              publishLaunchBranch(launch.id, launch.revision_number, artifact.digest, {
+                idempotencyKey,
+              }),
+            );
       resource.accept(next);
       setConfirmingPublish(false);
     } catch (cause) {
-      setConfirmingPublish(false);
-      setReviewFailure(cause instanceof Error ? cause.message : String(cause));
+      if (!(cause instanceof TransportError)) setConfirmingPublish(false);
+      setReviewFailure(
+        cause instanceof TransportError
+          ? 'The branch-publication outcome is unknown. CMA retained the exact reviewed artifact and command for reconciliation.'
+          : cause instanceof Error
+            ? cause.message
+            : String(cause),
+      );
       await resource.refresh();
     } finally {
       setBusy(null);
@@ -184,22 +207,35 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
     if (launch === null || current === null) return;
     setBusy('pr');
     setReviewFailure(null);
+    const slot = `launch:pull-request:${launch.id}:${current.operation}`;
     try {
-      const edits = { title: proposalTitle, body: proposalBody };
-      const sealed = await reviewPullRequest(launch.id, current.operation, edits);
-      const next = await confirmPullRequest(
-        launch.id,
-        sealed.operation,
-        launch.revision_number,
-        sealed.intent_digest,
-        edits,
-        { idempotencyKey: newIntentKey() },
-      );
+      let next;
+      if (commands.pending?.slot === slot) {
+        next = await commands.reconcile<typeof launch>(slot, 'pull-request confirmation');
+      } else {
+        const edits = { title: proposalTitle, body: proposalBody };
+        const sealed = await reviewPullRequest(launch.id, current.operation, edits);
+        next = await commands.execute(slot, 'pull-request confirmation', (idempotencyKey) =>
+          confirmPullRequest(
+            launch.id,
+            sealed.operation,
+            launch.revision_number,
+            sealed.intent_digest,
+            edits,
+            { idempotencyKey },
+          ),
+        );
+      }
       resource.accept(next);
       setProposal(null);
     } catch (cause) {
-      setProposal(null);
-      setReviewFailure(cause instanceof Error ? cause.message : String(cause));
+      setReviewFailure(
+        cause instanceof TransportError
+          ? 'The pull-request outcome is unknown. CMA retained the exact reviewed title, body, head, and command for reconciliation.'
+          : cause instanceof Error
+            ? cause.message
+            : String(cause),
+      );
       await resource.refresh();
     } finally {
       setBusy(null);
@@ -239,6 +275,13 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
   }
 
   const launch = resource.launch;
+  const captureSlot = `launch:diff:${launch.id}`;
+  const publishSlot = `launch:branch:${launch.id}`;
+  const proposalSlot =
+    proposal === null ? null : `launch:pull-request:${launch.id}:${proposal.operation}`;
+  const pendingCapture = commands.pending?.slot === captureSlot;
+  const pendingPublish = commands.pending?.slot === publishSlot;
+  const pendingProposal = proposalSlot !== null && commands.pending?.slot === proposalSlot;
   const repository = upstreamRepository(launch);
   const artifact = review?.artifact ?? launch.diff;
   const contribution = review?.contribution ?? launch.contribution;
@@ -291,6 +334,17 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             : new Date(resource.lastUpdated).toLocaleTimeString()}
         </div>
       ) : null}
+      {commands.pending === null ? null : (
+        <div className="notice notice--quiet trigger-workflow__notice" role="status">
+          <IconRefreshOutline16 />
+          <div>
+            <p className="notice__title">Reconciling {commands.pending.label}</p>
+            <p className="notice__detail">
+              Only the retained same-key command can be retried until CMA returns a finite result.
+            </p>
+          </div>
+        </div>
+      )}
       {reviewFailure === null ? null : (
         <div className="notice notice--fail trigger-workflow__notice" role="alert">
           <IconWarningOutline16 />
@@ -335,14 +389,22 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             </span>
             <Button
               variant="outline"
-              disabled={busy !== null || launch.session === null}
+              disabled={
+                busy !== null ||
+                launch.session === null ||
+                (commands.pending !== null && !pendingCapture)
+              }
               onClick={() => void capture()}
             >
               {busy === 'capture'
-                ? 'Submitting'
-                : artifact === null
-                  ? 'Review diff'
-                  : 'Refresh diff'}
+                ? pendingCapture
+                  ? 'Reconciling'
+                  : 'Submitting'
+                : pendingCapture
+                  ? 'Reconcile diff capture'
+                  : artifact === null
+                    ? 'Review diff'
+                    : 'Refresh diff'}
             </Button>
           </div>
         </section>
@@ -503,7 +565,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
                 </span>
                 <Button
                   variant="primary"
-                  disabled={!canPublish || busy !== null}
+                  disabled={!canPublish || busy !== null || commands.pending !== null}
                   onClick={() => setConfirmingPublish(true)}
                 >
                   Publish branch
@@ -576,7 +638,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             {operation === null ? null : (
               <Button
                 variant="primary"
-                disabled={contribution === null || busy !== null}
+                disabled={contribution === null || busy !== null || commands.pending !== null}
                 onClick={() => void prepareProposal(operation)}
               >
                 {busy === 'proposal'
@@ -594,14 +656,29 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
         open={confirmingPublish}
         title="Publish this reviewed branch?"
         description="CMA will create one commit with the author and committer shown in this review, then advance only the guarded Launch branch if its head is unchanged."
-        onClose={() => setConfirmingPublish(false)}
+        onClose={() => {
+          if (busy === null && !pendingPublish) setConfirmingPublish(false);
+        }}
         footer={
           <>
-            <Button disabled={busy !== null} onClick={() => setConfirmingPublish(false)}>
+            <Button
+              disabled={busy !== null || pendingPublish}
+              onClick={() => setConfirmingPublish(false)}
+            >
               Cancel
             </Button>
-            <Button variant="primary" disabled={busy !== null} onClick={() => void publish()}>
-              {busy === 'publish' ? 'Submitting' : 'Publish branch'}
+            <Button
+              variant="primary"
+              disabled={busy !== null || (commands.pending !== null && !pendingPublish)}
+              onClick={() => void publish()}
+            >
+              {busy === 'publish'
+                ? pendingPublish
+                  ? 'Reconciling'
+                  : 'Submitting'
+                : pendingPublish
+                  ? 'Reconcile branch publication'
+                  : 'Publish branch'}
             </Button>
           </>
         }
@@ -611,22 +688,32 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
         open={proposal !== null}
         title={`${proposal?.operation === 'update' ? 'Update' : 'Open'} pull request?`}
         description="This writes the exact reviewed head to the upstream repository's pull-request list. Review and merge remain on GitHub."
-        onClose={() => setProposal(null)}
+        onClose={() => {
+          if (busy === null && !pendingProposal) setProposal(null);
+        }}
         footer={
           <>
-            <Button disabled={busy !== null} onClick={() => setProposal(null)}>
+            <Button disabled={busy !== null || pendingProposal} onClick={() => setProposal(null)}>
               Cancel
             </Button>
             <Button
               variant="primary"
-              disabled={busy !== null || proposalTitle.trim() === ''}
+              disabled={
+                busy !== null ||
+                proposalTitle.trim() === '' ||
+                (commands.pending !== null && !pendingProposal)
+              }
               onClick={() => void confirmProposal()}
             >
               {busy === 'pr'
-                ? 'Submitting'
-                : proposal?.operation === 'update'
-                  ? 'Update pull request'
-                  : 'Open pull request'}
+                ? pendingProposal
+                  ? 'Reconciling'
+                  : 'Submitting'
+                : pendingProposal
+                  ? 'Reconcile pull request'
+                  : proposal?.operation === 'update'
+                    ? 'Update pull request'
+                    : 'Open pull request'}
             </Button>
           </>
         }
@@ -643,6 +730,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             <Input
               placement="field__input"
               value={proposalTitle}
+              disabled={pendingProposal}
               onChange={(event) => setProposalTitle(event.target.value)}
             />
           </label>
@@ -651,6 +739,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             <textarea
               className="field__input"
               value={proposalBody}
+              disabled={pendingProposal}
               onChange={(event) => setProposalBody(event.target.value)}
             />
           </label>

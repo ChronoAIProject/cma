@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { cancelLaunch, createNewLaunch } from '../api/client';
+import { TransportError, cancelLaunch, createNewLaunch } from '../api/client';
 import type { AppRouter } from '../routing/routes';
 import { routeClick, routePath } from '../routing/routes';
 import { Button } from '../ui/Button';
@@ -15,7 +15,6 @@ import {
   IconRightUpOutline16,
   IconWarningOutline16,
 } from '../ui/icons';
-import { newIntentKey } from './idempotency';
 import {
   deliveryState,
   isTerminalLaunch,
@@ -31,6 +30,7 @@ import {
   workspaceCheckpoint,
 } from './model';
 import { useLaunchResource } from './useLaunchResource';
+import { useIdempotentCommand } from './useIdempotentCommand';
 import './LaunchSurface.css';
 
 interface LaunchSurfaceProps {
@@ -69,6 +69,7 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
   const [busy, setBusy] = useState<'cancel' | 'new' | null>(null);
   const [actionFailure, setActionFailure] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const commands = useIdempotentCommand();
 
   useEffect(() => {
     heading.current?.focus();
@@ -80,17 +81,26 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
     setBusy('cancel');
     setActionFailure(null);
     try {
-      const next = await cancelLaunch(
-        current.id,
-        current.revision_number,
-        current.effective.digest,
-        { idempotencyKey: newIntentKey() },
+      const next = await commands.execute(
+        `launch:cancel:${current.id}`,
+        'Launch cancellation',
+        (idempotencyKey) =>
+          cancelLaunch(current.id, current.revision_number, current.effective.digest, {
+            idempotencyKey,
+          }),
       );
       resource.accept(next);
       setConfirmingCancel(false);
     } catch (cause) {
-      setConfirmingCancel(false);
-      setActionFailure(cause instanceof Error ? cause.message : String(cause));
+      if (cause instanceof TransportError) {
+        setActionFailure(
+          'The cancellation outcome is unknown. CMA retained the exact command; reconcile it before another Launch action.',
+        );
+        await resource.refresh();
+      } else {
+        setConfirmingCancel(false);
+        setActionFailure(cause instanceof Error ? cause.message : String(cause));
+      }
     } finally {
       setBusy(null);
     }
@@ -102,14 +112,26 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
     setBusy('new');
     setActionFailure(null);
     try {
-      const next = await createNewLaunch(current.trigger_public_id, {
-        idempotencyKey: newIntentKey(),
-      });
+      const next = await commands.execute(
+        `launch:new:${current.id}`,
+        'New Launch creation',
+        (idempotencyKey) =>
+          createNewLaunch(current.trigger_public_id, {
+            idempotencyKey,
+          }),
+      );
       setConfirmingNew(false);
       navigate({ kind: 'trigger', publicId: next.trigger_public_id });
     } catch (cause) {
-      setConfirmingNew(false);
-      setActionFailure(cause instanceof Error ? cause.message : String(cause));
+      if (cause instanceof TransportError) {
+        setActionFailure(
+          'The New Launch outcome is unknown. CMA retained the exact command; reconcile it before another Launch action.',
+        );
+        await resource.refresh();
+      } else {
+        setConfirmingNew(false);
+        setActionFailure(cause instanceof Error ? cause.message : String(cause));
+      }
     } finally {
       setBusy(null);
     }
@@ -155,6 +177,8 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
   const reach = reachState(launch);
   const delivery = deliveryState(launch);
   const terminal = isTerminalLaunch(launch);
+  const pendingCancel = commands.pending?.slot === `launch:cancel:${launch.id}`;
+  const pendingNew = commands.pending?.slot === `launch:new:${launch.id}`;
   const contributionRoute = { kind: 'contribute', launchId: launch.id } as const;
   const sessionRoute =
     linkedSession === undefined
@@ -183,7 +207,9 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
         </div>
       ) : null}
       <p className="launch__live" aria-live="polite" aria-atomic="true">
-        {resource.liveSummary}
+        {commands.pending === null
+          ? resource.liveSummary
+          : `Reconciling ${commands.pending.label.toLowerCase()}`}
       </p>
 
       {actionFailure === null ? null : (
@@ -438,13 +464,17 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
           Refresh
         </Button>
         {terminal ? (
-          <Button variant="outline" disabled={busy !== null} onClick={() => setConfirmingNew(true)}>
+          <Button
+            variant="outline"
+            disabled={busy !== null || commands.pending !== null}
+            onClick={() => setConfirmingNew(true)}
+          >
             New Launch
           </Button>
         ) : (
           <Button
             variant="danger"
-            disabled={busy !== null}
+            disabled={busy !== null || commands.pending !== null}
             onClick={() => setConfirmingCancel(true)}
           >
             Cancel Launch
@@ -456,14 +486,29 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
         open={confirmingCancel}
         title="Cancel this Launch?"
         description="CMA will stop new orchestration and revoke Launch reach where safe. Your fork, branch, commits, pull request, session history, and workspace record are not deleted."
-        onClose={() => setConfirmingCancel(false)}
+        onClose={() => {
+          if (busy === null && !pendingCancel) setConfirmingCancel(false);
+        }}
         footer={
           <>
-            <Button disabled={busy !== null} onClick={() => setConfirmingCancel(false)}>
+            <Button
+              disabled={busy !== null || pendingCancel}
+              onClick={() => setConfirmingCancel(false)}
+            >
               Keep Launch
             </Button>
-            <Button variant="danger" disabled={busy !== null} onClick={() => void cancel()}>
-              {busy === 'cancel' ? 'Submitting' : 'Cancel Launch'}
+            <Button
+              variant="danger"
+              disabled={busy !== null || (commands.pending !== null && !pendingCancel)}
+              onClick={() => void cancel()}
+            >
+              {busy === 'cancel'
+                ? pendingCancel
+                  ? 'Reconciling'
+                  : 'Submitting'
+                : pendingCancel
+                  ? 'Reconcile cancellation'
+                  : 'Cancel Launch'}
             </Button>
           </>
         }
@@ -472,14 +517,26 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
         open={confirmingNew}
         title="Create a separate Launch?"
         description="This creates a new Launch-owned branch and may allocate another sandbox and session. The current Launch, session, branch, and pull request stay unchanged."
-        onClose={() => setConfirmingNew(false)}
+        onClose={() => {
+          if (busy === null && !pendingNew) setConfirmingNew(false);
+        }}
         footer={
           <>
-            <Button disabled={busy !== null} onClick={() => setConfirmingNew(false)}>
+            <Button disabled={busy !== null || pendingNew} onClick={() => setConfirmingNew(false)}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={busy !== null} onClick={() => void createAnother()}>
-              {busy === 'new' ? 'Submitting' : 'Create New Launch'}
+            <Button
+              variant="primary"
+              disabled={busy !== null || (commands.pending !== null && !pendingNew)}
+              onClick={() => void createAnother()}
+            >
+              {busy === 'new'
+                ? pendingNew
+                  ? 'Reconciling'
+                  : 'Submitting'
+                : pendingNew
+                  ? 'Reconcile New Launch'
+                  : 'Create New Launch'}
             </Button>
           </>
         }
