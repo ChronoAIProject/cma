@@ -636,7 +636,7 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         // deliberate bump, so the two versions genuinely coexist, and a POST
         // to a router without the route answers 404 — which the adapter reads
         // as a sandbox that is gone and replaces a healthy one.
-        "prelude": true,
+        "prelude": prelude::SUPPORTED,
         // Declared only when this pod has observed something useful. The route
         // existing proves a wire version, not that this guest exposes any
         // counter. A control plane must still never open the link on a guess:
@@ -671,15 +671,20 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod runtime_prelude_router_tests {
     use super::*;
+    #[cfg(unix)]
     use std::future::Future;
+    #[cfg(unix)]
     use std::pin::Pin;
+    #[cfg(unix)]
     use std::task::{Context, Poll};
 
     const TEST_FILE: &str = "skills/router-boundary/SKILL.md";
+    #[cfg(unix)]
     const AXUM_DEFAULT_BODY_LIMIT: usize = 2 * 1024 * 1024;
 
     struct Pack {
         bytes: Vec<u8>,
+        #[cfg(unix)]
         file_len: usize,
     }
 
@@ -706,6 +711,7 @@ mod runtime_prelude_router_tests {
             header.resize(total_len, b'x');
             return Pack {
                 bytes: header,
+                #[cfg(unix)]
                 file_len,
             };
         }
@@ -714,10 +720,12 @@ mod runtime_prelude_router_tests {
     struct RuntimeFixture {
         address: std::net::SocketAddr,
         home: std::path::PathBuf,
+        #[cfg(unix)]
         state: AppState,
         server: tokio::task::JoinHandle<()>,
     }
 
+    #[cfg(unix)]
     fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
         let waker = futures_util::task::noop_waker();
         future.poll(&mut Context::from_waker(&waker))
@@ -752,6 +760,7 @@ mod runtime_prelude_router_tests {
             Self {
                 address,
                 home,
+                #[cfg(unix)]
                 state,
                 server,
             }
@@ -766,6 +775,20 @@ mod runtime_prelude_router_tests {
                 .expect("the test runtime answers the prelude request")
         }
 
+        async fn readiness(&self) -> serde_json::Value {
+            let response = reqwest::Client::new()
+                .get(format!("http://{}/readyz", self.address))
+                .send()
+                .await
+                .expect("the test runtime answers readiness");
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            let body = response
+                .bytes()
+                .await
+                .expect("the readiness body is readable");
+            serde_json::from_slice(&body).expect("readiness is JSON")
+        }
+
         fn written_file(&self) -> std::path::PathBuf {
             self.home.join(TEST_FILE)
         }
@@ -778,6 +801,21 @@ mod runtime_prelude_router_tests {
         }
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unix_readiness_advertises_prelude_support() {
+        let runtime = RuntimeFixture::start("unix-readiness").await;
+        assert_eq!(runtime.readiness().await["prelude"], true);
+    }
+
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn non_unix_readiness_does_not_advertise_prelude_support() {
+        let runtime = RuntimeFixture::start("non-unix-readiness").await;
+        assert_eq!(runtime.readiness().await["prelude"], false);
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn prelude_route_accepts_a_valid_pack_above_axums_default_limit() {
         let runtime = RuntimeFixture::start("above-default").await;
@@ -795,6 +833,7 @@ mod runtime_prelude_router_tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn prelude_route_accepts_the_exact_advertised_limit() {
         let runtime = RuntimeFixture::start("exact-limit").await;
@@ -828,6 +867,7 @@ mod runtime_prelude_router_tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn prelude_write_finishes_before_a_queued_terminal_can_start() {
         let runtime = RuntimeFixture::start("terminal-start-race").await;
@@ -852,6 +892,7 @@ mod runtime_prelude_router_tests {
             .expect("the terminal starts only after the prelude is durable");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn prelude_write_finishes_before_a_queued_conversation_can_start() {
         let runtime = RuntimeFixture::start("conversation-start-race").await;
@@ -876,6 +917,7 @@ mod runtime_prelude_router_tests {
             .expect("the conversation starts only after the prelude is durable");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_started_agent_refuses_every_late_pre_start_write() {
         let runtime = RuntimeFixture::start("late-write").await;
@@ -890,6 +932,7 @@ mod runtime_prelude_router_tests {
         assert!(!runtime.written_file().exists());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_live_conversation_refuses_restore_and_a_terminal() {
         let runtime = RuntimeFixture::start("conversation-plane").await;
