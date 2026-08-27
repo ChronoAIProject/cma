@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Release notes validator regressions
+        run: .github/release-notes-tests.sh
       - name: Root contains only permitted entries
         run: |
           allowed=".git .github api web infra docs sdk CLAUDE.md README.md .gitignore .dockerignore"
