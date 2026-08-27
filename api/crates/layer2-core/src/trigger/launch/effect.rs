@@ -45,7 +45,9 @@ pub(super) fn required_effect(launch: &Launch) -> Option<LaunchEffectKind> {
             if launch.pull_request.as_ref().is_some_and(|record| {
                 matches!(
                     record.state,
-                    PullRequestState::Creating | PullRequestState::RecoveryRequired
+                    PullRequestState::Creating
+                        | PullRequestState::Updating
+                        | PullRequestState::RecoveryRequired
                 )
             }) =>
         {
@@ -673,6 +675,31 @@ impl Launch {
                 }
             }
             (LaunchEffectKind::PullRequest, LaunchEffectResult::PullRequest { pull_request }) => {
+                let previous = self.pull_request.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "pull_request",
+                        "PR completion has no durable write intent",
+                    )
+                })?;
+                pull_request.validate_intent(&self.id)?;
+                if !same_pull_request_intent(previous, &pull_request)
+                    || !matches!(
+                        (previous.state, pull_request.state),
+                        (
+                            PullRequestState::Creating
+                                | PullRequestState::Updating
+                                | PullRequestState::RecoveryRequired,
+                            PullRequestState::Open
+                                | PullRequestState::ClosedUnmerged
+                                | PullRequestState::Merged
+                        )
+                    )
+                {
+                    return Err(TriggerValidationError::field(
+                        "pull_request",
+                        "does not reconcile the retained PR write intent",
+                    ));
+                }
                 self.pull_request = Some(pull_request)
             }
             (LaunchEffectKind::Cleanup, LaunchEffectResult::Cleanup) => {}
@@ -1083,7 +1110,7 @@ impl Launch {
                     )
                 })?;
                 pull_request.validate_intent(&self.id)?;
-                if pull_request.number == 0 {
+                if pull_request.number.is_none_or(|number| number == 0) {
                     return Err(TriggerValidationError::field(
                         "pull_request.number",
                         "the provider PR number is missing",
@@ -1301,6 +1328,16 @@ fn same_publication_intent(left: &ContributionRecord, right: &ContributionRecord
         && left.expected_head == right.expected_head
         && left.author == right.author
         && left.committer == right.committer
+        && left.confirmation == right.confirmation
+        && left.intent_key == right.intent_key
+        && left.created_at == right.created_at
+}
+
+fn same_pull_request_intent(
+    left: &crate::PullRequestRecord,
+    right: &crate::PullRequestRecord,
+) -> bool {
+    left.intent == right.intent
         && left.confirmation == right.confirmation
         && left.intent_key == right.intent_key
         && left.created_at == right.created_at
