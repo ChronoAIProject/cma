@@ -8,6 +8,7 @@ import {
   IconDataOutline16,
   IconFollowsystemOutline16,
   IconLightOutline16,
+  IconProjectAddOutline16,
   IconRightUpOutline16,
 } from '../ui/icons';
 import {
@@ -63,6 +64,10 @@ interface ProfileMenuProps {
   readonly onDeveloper?: () => void;
   /** Whether the Developer surface is currently showing. */
   readonly developerActive?: boolean;
+  /** Open the authenticated GitHub Trigger publisher. */
+  readonly onPublisher?: () => void;
+  /** Whether the GitHub Trigger publisher is currently showing. */
+  readonly publisherActive?: boolean;
   /**
    * Whether the sidebar it sits in is closed.
    *
@@ -126,6 +131,8 @@ export function ProfileMenu({
   operationsActive = false,
   onDeveloper,
   developerActive = false,
+  onPublisher,
+  publisherActive = false,
   collapsed = false,
 }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
@@ -153,8 +160,15 @@ export function ProfileMenu({
    * separator keeps them out of the settings group. They still remain actions:
    * each row names where it goes instead of pretending this menu is navigation.
    */
-  if (onDeveloper !== undefined || onOperations !== undefined) {
+  if (onPublisher !== undefined || onDeveloper !== undefined || onOperations !== undefined) {
     items.push({ type: 'separator', id: 'after-settings' });
+  }
+  if (onPublisher !== undefined) {
+    items.push({
+      id: 'publisher',
+      icon: <IconProjectAddOutline16 />,
+      label: publisherActive ? 'Back to sessions' : 'GitHub Triggers',
+    });
   }
   if (onDeveloper !== undefined) {
     items.push({
@@ -205,6 +219,10 @@ export function ProfileMenu({
       case 'developer':
         setOpen(false);
         onDeveloper?.();
+        return;
+      case 'publisher':
+        setOpen(false);
+        onPublisher?.();
         return;
       case 'sign-out':
         setOpen(false);

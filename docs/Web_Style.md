@@ -24,11 +24,12 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | **sessions**   | The default, and where the work happens. A list, one surface, and what is known about it. |
 | **trigger**    | A public Trigger preview and, after sign-in, the contributor's immutable launch review.   |
 | **launch**     | One durable Launch: automation progress, repository state, and its contribution review.   |
+| **publisher**  | Authoring and publishing immutable GitHub Trigger revisions. Available after sign-in.      |
 | **operations** | Running the service. Drawn only for a caller holding an operator capability.              |
 | **developer**  | Reading the public SDK guides bundled with this build. Available to every signed-in user. |
 
 Sessions has two **arrangements** of the same list — `list` and `canvas`. A plane is not a view and an
-arrangement is not a view: both change what the middle column draws and nothing else. There are five
+arrangement is not a view: both change what the middle column draws and nothing else. There are six
 view families and one page frame. Trigger and Launch views are contextual deep links rather than
 permanent sidebar destinations; §13b defines their complete route set and return behavior.
 
@@ -449,7 +450,7 @@ wrapping row would change the height of the column's foot as somebody drags it. 
 keeps the face and drops the two lines.
 
 Everything else the foot used to carry is **inside that row's menu**: appearance, environment
-profiles, Developer, operations where the caller holds the capability, and signing out. Each row
+profiles, GitHub Triggers, Developer, operations where the caller holds the capability, and signing out. Each row
 takes a leading glyph. The menu opens **upward** and holds the trigger's own width, so
 its edges are the row's edges — it sits at the foot of a column, so there is nowhere below it to go,
 and a list that is narrower than the control it came from reads as belonging to something else.
@@ -1247,6 +1248,110 @@ runtime empty state for a bundle CI was required to reject.
 
 ---
 
+## 19b. GitHub Trigger publisher
+
+**An authenticated authoring surface, not a route and not part of Developer.** Every signed-in user
+may open it from an account-menu action named _GitHub Triggers_. The same row reads _Back to sessions_
+while the publisher is showing. Reloading returns to sessions, and selecting a session does the same.
+Opening any transient utility view while a Trigger, Launch, contribution, or session deep link is in
+the address bar first replaces that address with the home route; the requested utility view then
+draws. The address change is only a return to the page frame and never starts, saves, publishes, or
+retires work.
+
+The fixed first band has the session header's proportions, names **GitHub Triggers**, and carries one
+compact _New Trigger_ command. One scrollport beneath it owns the page. At desktop widths its content
+is centred on a 1,100px maximum axis and uses a 240px Trigger rail, a 32px gap and the remaining editor
+width. The rail is unframed and lists each mutable draft by public summary, canonical repository and
+draft version; the active row uses the existing selected-navigation ground, a 2px leading accent rule,
+weight and `aria-current`. At widths below 48rem, the rail becomes a full-width 40px native selector
+above the editor, the gap becomes 16px, and every two-column field row becomes one column. No label,
+repository name, prompt, URL, error or command may widen the viewport.
+
+The empty state is one sentence and the same _New Trigger_ command. Loading uses the existing skeleton
+treatment without claiming percentage progress. A failed initial read occupies the editor axis as an
+alert with an explicit Retry command. An existing draft stays visible if a later connection,
+repository, save, publish, copy or retirement operation fails.
+
+### Connection and repository
+
+Every draft names one exact reusable NyxID GitHub UserService. The connection section has a native
+selector whose options show the GitHub login where known and a shortened service identifier, followed
+by its state, granted scope classes and last verified account. The adjacent command is _Connect_ for a
+new service, _Reconnect_ for an inactive selected service, and _Check connection_ when an authorization
+window is outstanding or the browser could not observe it close. The publisher never displays or
+accepts a CMA key, GitHub token, OAuth code, NyxID token, or service credential.
+
+Connect and Reconnect synchronously open a blank popup from the activating gesture, request the exact
+authorization handoff, validate its HTTPS GitHub destination, and navigate that popup. CMA remains
+open with the draft intact. The original page polls preflight for that exact service on a bounded
+cadence and stops on active success, terminal failure, a five-minute timeout, cancellation, or
+unmount. A blocked popup is a named failure and leaves the manual check command. A failed handoff
+closes the blank popup. Cross-origin popup contents are never inspected; only its `closed` state is
+observed. Successful preflight refreshes the connection list and never silently selects a different
+service.
+
+Repository selection is a GitHub repository URL field and a _Verify repository_ command. Only the
+`https://github.com/{owner}/{name}` repository form is accepted; query, fragment, credentials, extra
+path segments and non-GitHub hosts are rejected before a request. Verification resolves through the
+exact selected UserService and replaces no typed field on failure. Success draws the server's
+canonical owner/name, visibility, default branch, source revision and forkability. Numeric and node
+identities remain protocol state and are never editable controls. Saving and publishing are disabled
+until the selected connection is active and the current URL has a matching successful resolution.
+
+### Draft editor
+
+The editor is unframed. Full-width sections separated by a hairline cover Repository, Task, Session,
+GitHub access, Contribution and Overrides. Section headings use 15/22 semibold type; field labels and
+help/error seats reuse §12.2. Textareas use the established field treatment and resize vertically.
+Numbers use bounded numeric inputs; closed choices use native selects; permission is a two-part
+segmented control; binary choices use checkboxes. Commands use the shared button hierarchy and icons.
+
+Task fields are ordered rows with key, kind, required, editable and kind-specific bounds or choices.
+Each row has symbol-only move and remove controls with tooltips and stable 36px targets. Adding a field
+is a text command with a plus glyph. Required fields expose a default control, because a required field
+without a default cannot be published. Setup execution is shown as fixed _Disabled_ with no command or
+steps editor. Contributor-owned credentials, the `cma/` branch prefix, no-reply attribution, public
+projection version and zero-cost policy are fixed facts rather than editable controls. Sponsored
+credentials and sponsored billing are absent, followed by one quiet _Unavailable in this release_
+status. The prompt and pull-request body render as plain text while editing; repository and publisher
+content is never interpreted as markup or HTML.
+
+Save carries the draft version that was read and uses one idempotency key for the unresolved logical
+command. Validation and server failures leave every entered value in place. A version conflict reads
+the current draft but does not overwrite the retained editor; a notice offers _Load current draft_ and
+_Retry with current version_. An ambiguous transport outcome changes the command status to
+_Reconciling_, suppresses duplicate writes, reads the draft, and clears the retained key only after a
+finite server response proves whether that command landed. Save never publishes.
+
+Publish opens the shared modal and names the next immutable revision number, repository, source mode
+and public summary. Its affirmative command is _Publish immutable revision_. On success the editor
+reads the mutable draft again because publishing advances its version and next revision number, then
+refreshes the revision list. A failed publish leaves both editor and confirmation context intact.
+
+### Immutable revisions
+
+The revision section is a chronological list beneath the draft editor, not cards inside the form.
+Each row names revision number, publication state, short digest, publication time and the authority
+login captured at publication. A published row carries symbol-only copy controls with tooltips for the
+public Trigger URL and README Markdown. Copy feedback is announced in a polite live region and never
+changes row geometry. The Markdown is one ordinary linked-image badge or text link whose destination
+is the same-origin canonical `/triggers/{public_id}` URL; it contains no credential or publisher-only
+identifier.
+
+Retirement requires the shared inline confirmation, names the revision number, and explains that
+existing Launches remain durable while new launches from that revision stop. Only published revisions
+offer it. A successful retirement replaces that row from the server response. A failed or ambiguous
+retirement keeps the confirmation and row visible and follows the same idempotency/reconciliation
+contract as Save.
+
+All editor sections follow document order under Tab. Rail buttons and task-row commands have visible
+focus, confirmations trap and restore focus through the shared primitives, status is announced without
+moving focus, and no pointer-only action exists. At narrow widths controls that would otherwise form a
+crowded row become full-width 44px targets. Reduced motion removes only decorative transitions; OAuth,
+validation, save, publish, reconciliation and retirement states remain equally explicit.
+
+---
+
 ## 20. The signed-out surface
 
 The live character, at a size where its expression is legible, and one thing to do.
@@ -1420,3 +1525,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-24 | Added §19a for the signed-in Developer surface. Admitted Developer as the third transient view without adding a route; fixed its account-menu return wording, session-selection return, header, scroll ownership, 200px desktop document rail, 748px unframed reading axis, 48rem narrow selector and two-part SDK control. Defined the deployment preface as the only non-repository prose, naming the current same-origin API base and the stated operator or identity-administrator path while credential issuance is not self-service. Required both eight-guide SDK sets to be bundled and validated at build time, with symmetric filenames, unique nav metadata and leading H1s. Reused the conversation markdown pipeline under a document policy with true heading ranks, stable duplicate-safe anchors, GFM tables, existing code treatment, safe external links, bundled-document switching, no raw HTML or images, and no runtime empty state for an invalid bundle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 2026-08-27 | Added §13b and amended §§1 and 9 for the CMA Trigger workflow. The binding route set now covers public preview, authenticated review, durable Launch progress, contribution review, and session deep links without making navigation a side effect. Defined the repository/progress/diff/attribution/PR bands, closed progress and mergeability language, workflow acknowledgement, provider-metadata preservation, offline cursor recovery, mobile and assistive-technology behavior, and the public-interface split: AG-UI read/replay companion projections, REST/SDK mutations through the shared idempotency store, and explicit absence from PTY, MCP, and A2A.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 2026-08-27 | Extended the Developer documentation bundle from eight to nine symmetric guides so the public Trigger and Launch SDK workflow is available in both TypeScript and Rust. The existing build-time rules remain unchanged: matching filenames, one leading H1, one nav record, and unique order and label metadata are still required before the frontend can build.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-08-27 | Added §19b and amended §§1 and 10 for the authenticated GitHub Trigger publisher. Admitted Publisher as the sixth view without adding a persistent route; defined deep-route return, the account-menu action, desktop and narrow draft navigation, exact NyxID UserService selection, bounded popup OAuth preflight, canonical repository verification, typed unframed policy editing, fixed MVP controls, optimistic concurrency and idempotent reconciliation, immutable publish confirmation, revision copying and retirement, retained failure state, untrusted-text rendering, and keyboard, focus, live-region, reduced-motion and narrow-target behavior. |

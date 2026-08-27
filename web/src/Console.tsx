@@ -57,6 +57,7 @@ import type { AppRoute, AppRouter } from './routing/routes';
 import { TriggerReview } from './trigger/TriggerReview';
 import { LaunchSurface } from './trigger/LaunchSurface';
 import { ContributionSurface } from './trigger/ContributionSurface';
+import { PublisherSurface } from './publisher/PublisherSurface';
 
 /**
  * The authenticated surface. Same page, now driven live.
@@ -85,8 +86,8 @@ interface ConsoleProps {
   readonly onNavigate?: AppRouter['navigate'];
 }
 
-/** The three transient surfaces §1 admits. They are state, never routes. */
-type ConsoleView = 'sessions' | 'operations' | 'developer';
+/** The transient surfaces §1 admits. They are state, never routes. */
+type ConsoleView = 'sessions' | 'publisher' | 'operations' | 'developer';
 
 /**
  * Geometry the first frame is requested at.
@@ -148,6 +149,17 @@ export function Console({
    * carries no router, and this is deliberately not persisted — see above.
    */
   const [view, setView] = useState<ConsoleView>('sessions');
+
+  const toggleUtilityView = useCallback(
+    (next: Exclude<ConsoleView, 'sessions'>) => {
+      const opening = view !== next;
+      if (opening && route.kind !== 'home') {
+        onNavigate({ kind: 'home' }, { replace: true });
+      }
+      setView(opening ? next : 'sessions');
+    },
+    [onNavigate, route.kind, view],
+  );
 
   useEffect(() => {
     void profileStore
@@ -532,6 +544,9 @@ export function Console({
     if (view === 'developer') {
       return 'Developer';
     }
+    if (view === 'publisher') {
+      return 'GitHub Triggers';
+    }
     if (loading) {
       return 'Loading sessions';
     }
@@ -582,13 +597,17 @@ export function Console({
               collapsed={collapsed}
               operationsActive={view === 'operations'}
               developerActive={view === 'developer'}
+              publisherActive={view === 'publisher'}
+              onPublisher={() => {
+                toggleUtilityView('publisher');
+              }}
               onDeveloper={() => {
-                setView(view === 'developer' ? 'sessions' : 'developer');
+                toggleUtilityView('developer');
               }}
               onOperations={
                 canOperate(user.capabilities)
                   ? () => {
-                      setView(view === 'operations' ? 'sessions' : 'operations');
+                      toggleUtilityView('operations');
                     }
                   : undefined
               }
@@ -666,6 +685,8 @@ export function Console({
           <OperatorPage store={operatorStore} capabilities={user.capabilities} />
         ) : view === 'developer' ? (
           <DeveloperSurface />
+        ) : view === 'publisher' ? (
+          <PublisherSurface displayIdentity={user.displayName ?? user.handle} />
         ) : (
           <main className="console__surface">
             <SessionHeader
