@@ -2082,6 +2082,13 @@ async fn coordinated_rotation_drains_admitted_input_before_its_only_snapshot() {
         adapter.handovers.lock().await.as_slice(),
         std::slice::from_ref(&exact_snapshot)
     );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while svc.starting.read().await.contains(&created.id) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the replacement publication clears its local start claim");
     let durable = store.get(&created.id).await.unwrap().unwrap();
     assert_eq!(durable.pending_handover, None);
     assert_eq!(durable.rotation_claim, None);
