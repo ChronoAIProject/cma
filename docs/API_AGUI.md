@@ -53,6 +53,14 @@ Consequently AG-UI projects **seven** of the ten core operations. `resize_termin
 
 It projects **conversation sessions**. A session created in terminal mode carries no conversation capability, and a run against it is refused with the typed capability error naming `conversation` — before a stream opens, because a stream that opened and then said nothing would look like an agent thinking.
 
+The `cma:trigger` extension is a deliberately read-only companion to that
+session projection. It can preview a Trigger and read an owned Launch,
+repository, pull-request, progress, or diff snapshot. It cannot draft, Start,
+cancel, retry, publish, or confirm a pull request. Those commands use REST and
+its shared idempotency store, so there is one write admission mechanism rather
+than an AG-UI-specific duplicate. These workflow reads are not additional core
+session operations and never reinterpret a Launch id as a thread id.
+
 ### The conformance table
 
 One row per core operation, for a **conversation session**. It is the claim behind "a chat client can drive a CMA session", and it is narrower than that sentence sounds: two operations are terminal facts this protocol does not carry, and three depend on what the kernel behind the session offers.
@@ -82,9 +90,23 @@ This table is the per-session view of the same fact `API_Overview.md` §1 states
 POST /api/v1/agui/run          → text/event-stream
 GET  /api/v1/agui/events       → text/event-stream
 GET  /api/v1/agui/capabilities → application/json
+GET  /api/v1/agui/triggers/{public_id}                    → application/json
+GET  /api/v1/agui/launches/{launch_id}                    → application/json
+GET  /api/v1/agui/launches/{launch_id}/events             → application/json
+GET  /api/v1/agui/launches/{launch_id}/diff               → application/json
 ```
 
 A run is one request. The response is an SSE stream of AG-UI events that ends when the turn ends.
+
+The four `cma:trigger` companion routes are resource reads rather than AG-UI run
+streams. Trigger preview is public and side-effect-free. Launch, progress, and
+diff reads require the Launch owner. The events companion accepts the same
+`after` cursor and bounded `limit` as REST and returns the same ordered public
+events and `next_cursor`; reconnecting clients reject regressions and reconcile
+a fresh Launch snapshot after replay. The diff response includes the sealed
+review artifact and safe repository/PR status, never credentials, internal
+effect keys, or provider request bodies. Their exact schemas are shared with
+REST and the public SDK fixtures.
 
 `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>` is the same event vocabulary, read rather than driven: a session's whole history and then everything after it, projected through the same mapping and never ending on its own. Every AG-UI event frame on this route carries the session id in both `threadId` and `runId`; a run response instead echoes that turn's accepted run id. Raw SSE keepalive comments are transport frames rather than AG-UI events and carry neither identifier. This route is what §7 means by recovering a dropped stream, and it exists because §7 used to send clients to `/api/v1/sessions/{id}/events` — a REST route, which answers in the core's vocabulary and not this one. A client that followed that advice received frames it could not read.
 
@@ -661,7 +683,12 @@ GET /api/v1/agui/capabilities
     "custom":         { "cma:terminal": false, "cma:usage": true,
                         "cma:resources": true,
                         "cma:changePlane": false, "cma:planeChangeObserved": true,
-                        "cma:liveFrames": true }
+                        "cma:liveFrames": true,
+                        "cma:trigger": {
+                          "preview": true, "launchSnapshot": true,
+                          "progressReplay": true, "diffReview": true,
+                          "mutations": false
+                        } }
   },
   "conformsTo": [
     "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
@@ -673,6 +700,12 @@ GET /api/v1/agui/capabilities
 `websocket: false` is deliberate. AG-UI here rides SSE; the terminal has its own WebSocket and is not an AG-UI transport.
 
 The `events` map is the machine-readable form of §3 and is the contract. Read it rather than assuming.
+
+The closed `cma:trigger` object declares companion availability. A missing
+object means this deployment does not project the workflow through AG-UI; it
+does not authorize probing undocumented paths. `mutations: false` is permanent
+for this version of the extension. A client sends every Trigger or Launch
+command through the documented REST/SDK operation instead.
 
 ---
 

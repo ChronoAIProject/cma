@@ -19,15 +19,18 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | **terminal**     | The kernel's own interface, entire and unmediated. The raw seat at the agent.                                            |
 | **conversation** | The structured seat: approvals as buttons, tool calls as structure, usage as a number, history that survives the screen. |
 
-| View           | What it is                                                                                |
-| -------------- | ----------------------------------------------------------------------------------------- |
-| **sessions**   | The default, and where the work happens. A list, one surface, and what is known about it. |
-| **operations** | Running the service. Drawn only for a caller holding an operator capability.              |
-| **developer**  | Reading the public SDK guides bundled with this build. Available to every signed-in user. |
+| View           | What it is                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------- |
+| **sessions**   | The default, and where the work happens. A list, one surface, and what is known about it.    |
+| **trigger**    | A public Trigger preview and, after sign-in, the contributor's immutable launch review.     |
+| **launch**     | One durable Launch: automation progress, repository state, and its contribution review.     |
+| **operations** | Running the service. Drawn only for a caller holding an operator capability.                 |
+| **developer**  | Reading the public SDK guides bundled with this build. Available to every signed-in user.    |
 
 Sessions has two **arrangements** of the same list — `list` and `canvas`. A plane is not a view and an
-arrangement is not a view: both change what the middle column draws and nothing else. There are three
-views, one page frame, and no navigation beyond them.
+arrangement is not a view: both change what the middle column draws and nothing else. There are five
+view families and one page frame. Trigger and Launch views are contextual deep links rather than
+permanent sidebar destinations; §13b defines their complete route set and return behavior.
 
 The four binding consequences survive this redesign untouched:
 
@@ -381,7 +384,9 @@ No icon font, no sprite sheet, no runtime fetch.
 ## 9. The frame
 
 A full-viewport three-column grid — **sidebar, centre, details** — with no app bar, no status band,
-no footer and no router.
+and no footer. A small client-side router owns only the canonical routes in §13b plus the existing
+signed-in utility views. Routing changes which view the centre and details columns project; it never
+starts work, confirms an action, retries a write, or treats a browser history event as authority.
 
 | Column  | Min | Max | Default        | Collapsed  |
 | ------- | --- | --- | -------------- | ---------- |
@@ -449,7 +454,7 @@ takes a leading glyph. The menu opens **upward** and holds the trigger's own wid
 its edges are the row's edges — it sits at the foot of a column, so there is nowhere below it to go,
 and a list that is narrower than the control it came from reads as belonging to something else.
 
-Operations is still one of §1's three views and still not navigation: **one** entry, which names where
+Operations is still one of §1's signed-in utility views and still not navigation: **one** entry, which names where
 it goes — _Operations_, or _Back to sessions_ while the panel is showing. It does not mark itself as
 current, because a menu with a current value is a set of alternatives and these rows are actions.
 
@@ -721,6 +726,97 @@ The notice may fade in once at its final position and then holds still. It never
 loops, and nothing in this component starts a keyframe animation. A track changing length uses only
 the shared curve and duration tokens. Urgency comes from placement, words, and failure ink, not from
 motion that competes with the session somebody is reading.
+
+---
+
+## 13b. Trigger and Launch workflows
+
+A README Trigger enters the product through one of four canonical routes. These are the whole public
+route vocabulary for the workflow; query strings never carry credentials, prompts, repository
+targets, confirmations, or provider state.
+
+| Route | View and authority |
+| --- | --- |
+| `/triggers/:publicId` | Side-effect-free public preview. After sign-in the same route adds the immutable revision, eligible GitHub connection, editable fields, and explicit Start review. |
+| `/launches/:launchId` | Owner-only durable progress and repository view. Refresh and reconnect read server state and replay from the last acknowledged Launch cursor. |
+| `/launches/:launchId/contribute` | Owner-only diff review nested under the same Launch. Opening it is read-only; Publish branch and Open or Update pull request remain separate confirmations. |
+| `/sessions/:sessionId` | The existing sessions view with this session selected. A Trigger repository band links back to its owning Launch when one exists. |
+
+The anonymous Trigger route uses a reduced frame: the brand remains, the centre owns the viewport,
+and signed-in session or account chrome is absent. Sign-in returns only to an allowlisted canonical
+route and consumes no Start action. Once authenticated, the normal frame returns. Browser Back moves
+between these route states without undoing a server action, and a missing, retired, unavailable, or
+wrong-owner resource is a complete typed view rather than a redirect to Sessions.
+
+The Launch view has one compact identity header followed by full-width bands, never cards nested in
+cards:
+
+1. Repository identity: upstream, contributor fork, launch branch, captured base/head revisions,
+   connection account, and current reach status.
+2. Automation progress: one stable row per server step, in server order.
+3. Session handoff: the canonical session link once provisioned.
+4. Contribution: latest checkpoint/diff, commit attribution, publication result, and linked PR.
+
+Every progress row has a fixed icon slot, a visible state word, the step label, timestamp, and safe
+detail. The closed vocabulary is **pending**, **running**, **completed**, **retryable**, **blocked**,
+and **failed**. Completed uses a check glyph and the word; running uses a labelled motion glyph that
+becomes a still glyph under reduced motion; retryable exposes Retry only when the server says the
+effect is repeatable. `auth_required`, `owner_credential_unavailable`, `service_inactive`,
+`feature_paused`, rotating/recovering, and terminal failure retain their distinct server language.
+None is inferred from elapsed time. A feature pause freezes the row and says **Paused by CMA**; it is
+not a failure and does not imply the active session was interrupted.
+
+Offline is a condition of the whole view and uses §11's fixed strip. The retained timeline stays
+visible but is marked **Last updated ...** and no stale response may move a step backward. Reconnect
+first opens replay at the last accepted cursor, then reconciles a fresh Launch snapshot. A cursor gap
+or stale revision discards optimistic local state, never the user's unsubmitted review fields.
+
+Repository, progress, workflow, diff, attribution, and PR data use typed rows with the component
+language already defined in §§12 and 13a:
+
+- A workflow warning is a full-width warning band with the exact baseline paths and a checkbox in
+  the Start review. It never implies GitHub granted Actions permission.
+- A diff is an unframed file list. Each row states path, add/delete counts, change kind, binary state,
+  and mode transition in text. Expanding a text file reveals its bounded patch in the code face.
+- Commit attribution shows author and committer as two labelled facts before Publish is enabled.
+- A PR band shows canonical link and number, base/head revisions, state, checks, and mergeability.
+  Mergeability is exactly **Computing**, **Mergeable**, or **Conflicting**; null never means conflict.
+  **Awaiting maintainer approval** is its own checks state and never a CMA retry failure.
+- An ordinary Update pull request preserves provider title/body. Explicit title/body edits show the
+  previously observed values and fail on concurrent provider change rather than overwriting it.
+- A closed-unmerged or merged PR has no Update control. The former offers the explicit New Launch
+  route, producing a new Launch-owned branch and marker while preserving the old Launch and PR link.
+
+Confirmations use §12.4's one-dialog rule. Review diff, Publish branch, Open pull request, and Update
+pull request are separate controls and separate server snapshots. Cancel closes the dialog without
+changing the Launch. While a command is in flight its one control is disabled with **Submitting**;
+repeated clicks reuse the same client idempotency key until a finite response arrives. An ambiguous
+write changes to **Reconciling** and exposes no second write button.
+
+The interface decision is fixed before implementation:
+
+| Capability | AG-UI | REST/SDK | PTY | MCP | A2A |
+| --- | --- | --- | --- | --- | --- |
+| Public preview | Read-only companion projection | Public read | Absent | Absent | Absent |
+| Launch/repository/PR snapshot | Read-only companion projection | Owner read | Absent | Absent | Absent |
+| Launch progress replay | Read-only companion replay | Owner cursor replay | Absent | Absent | Absent |
+| Diff review and artifact read | Read-only companion projection | Owner read | Absent | Absent | Absent |
+| Start, cancel, review, publish, PR confirmations | Absent | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
+
+AG-UI declares this read-only subset under its `cma:trigger` custom capability. Its existing run and
+session event semantics do not change, and a Launch identifier is never presented as a session
+thread. REST remains the superset and the dashboard uses the same TypeScript client contract shipped
+to third parties. PTY cannot honestly draw this workflow; MCP and A2A remain unserved and their 501
+surfaces do not acquire Trigger operations.
+
+Everything here is governed by §15: semantic landmarks and headings precede ARIA, every row and
+dialog is keyboard operable, state is never colour-only, targets are at least 32px and become 44px
+below 30rem, and required text meets AA in both themes. On route load, focus goes to the view heading;
+the existing §15 prompt-focus rule still applies when `/sessions/:sessionId` opens a usable session.
+Progress updates are announced through one polite live summary rather than making every row live.
+Failures and explicit confirmation consequences use an assertive alert exactly once. On a narrow
+viewport the details column closes first, the progress and repository bands become one column, long
+repository names wrap, and no action is available only through hover.
 
 ---
 
@@ -1322,3 +1418,4 @@ Append-only. Never edit or delete an entry.
 | 2026-08-24 | Completed #477's browser-state migration without resetting returning users: five preferences and pending content now write only `cma:*` keys, valid historical `chrono-bot:*` values are read canonical-first and copied forward, the pre-paint appearance path follows the same rule, and the product terminal ids migrate from `chronobot-*` to `cma-*`. Pending content remains per-tab and clears both names when consumed so an old prompt cannot replay.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | 2026-08-24 | Replaced §20's large animated SVG seat with the supplied live Three.js character while keeping the prompt interactive on the first frame. Defined a stable unframed square, theme-derived body, lens, studio and shadow colours, a still theme-inked fallback when WebGL cannot start, live appearance updates, visibility pausing and complete disposal. Bounded its float, pointer look, trailing hem, lens glint, contact shadow and press-to-spin under §14a, with reduced motion making every part still. Moved the existing animated SVG into the authenticated sidebar: it draws once when that shell mounts and keeps its quiet lens sweep, while its wrapper never inherits the former landing bob and session or view changes never remount it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | 2026-08-24 | Added §19a for the signed-in Developer surface. Admitted Developer as the third transient view without adding a route; fixed its account-menu return wording, session-selection return, header, scroll ownership, 200px desktop document rail, 748px unframed reading axis, 48rem narrow selector and two-part SDK control. Defined the deployment preface as the only non-repository prose, naming the current same-origin API base and the stated operator or identity-administrator path while credential issuance is not self-service. Required both eight-guide SDK sets to be bundled and validated at build time, with symmetric filenames, unique nav metadata and leading H1s. Reused the conversation markdown pipeline under a document policy with true heading ranks, stable duplicate-safe anchors, GFM tables, existing code treatment, safe external links, bundled-document switching, no raw HTML or images, and no runtime empty state for an invalid bundle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2026-08-27 | Added §13b and amended §§1 and 9 for the CMA Trigger workflow. The binding route set now covers public preview, authenticated review, durable Launch progress, contribution review, and session deep links without making navigation a side effect. Defined the repository/progress/diff/attribution/PR bands, closed progress and mergeability language, workflow acknowledgement, provider-metadata preservation, offline cursor recovery, mobile and assistive-technology behavior, and the public-interface split: AG-UI read/replay companion projections, REST/SDK mutations through the shared idempotency store, and explicit absence from PTY, MCP, and A2A. |
