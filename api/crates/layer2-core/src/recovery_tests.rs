@@ -21,11 +21,11 @@ use crate::coordination::{
     RuntimeCandidate, SessionBoundary, SessionLeaseRequest, SessionOperation,
 };
 use crate::event::{Event, EventKind};
-use crate::ids::SessionId;
+use crate::ids::{SessionId, SubjectId};
 use crate::lease::Detached;
 use crate::service::Deployment;
 use crate::session::{RecoveryState, RuntimeLossCause, SessionStatus, StopReason};
-use crate::store::{SessionRecord, SessionStore};
+use crate::store::{SessionRecord, SessionStore, SkillPack, SkillPackState};
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{
     await_settled, service, service_over, spec, user, FakeAdapter, FakeStore,
@@ -184,6 +184,196 @@ fn is_runtime_lost(_record: &SessionRecord, events: &[Event]) -> bool {
     events
         .iter()
         .any(|event| matches!(event.kind, EventKind::RuntimeLost { .. }))
+}
+
+fn any_session_commit(_record: &SessionRecord, _events: &[Event]) -> bool {
+    true
+}
+
+#[tokio::test]
+async fn reconciliation_settles_a_live_session_beyond_the_first_page() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("paged-reconciliation-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let template = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("the live session exists");
+    drop(first);
+
+    for index in 0..200 {
+        let mut unrelated = SessionRecord::new(template.session.clone());
+        // Equal timestamps sort by descending id. These stopped rows therefore
+        // fill page one ahead of the generated id and leave the live session on
+        // page two of every reconciliation phase.
+        unrelated.session.id = SessionId(format!("sesn_z{index:04}"));
+        unrelated.session.owner = SubjectId("unrelated".into());
+        unrelated.session.status = SessionStatus::Idle;
+        unrelated.session.stop_reason = Some(StopReason::UserTerminated);
+        store
+            .seed(&unrelated)
+            .await
+            .expect("seed unrelated session");
+    }
+
+    let restarted = service(Arc::clone(&store), Arc::clone(&adapter));
+    let reclaimed = restarted.reconcile().await;
+
+    assert_eq!(
+        reclaimed.readopted_sessions, 1,
+        "bounded reconciliation must settle an entitled row after a full page"
+    );
+    assert!(
+        restarted.entries.read().await.contains_key(&created.id),
+        "the page-two runtime is published locally"
+    );
+}
+
+#[tokio::test]
+async fn reconciliation_reloads_projected_staged_custody_before_writing_runtime_loss() {
+    let store = Arc::new(FakeStore::default());
+    let projecting = Arc::new(CommitFaultStore::new(Arc::clone(&store), is_runtime_lost));
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("projected-staged-loss-owner");
+    let first = service_over(projecting.clone(), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let mut exact = store.get(&created.id).await.unwrap().unwrap();
+    let runtime = exact.runtime_id.clone().expect("runtime is durable");
+    let packs = vec![SkillPack {
+        name: "private-recovery".into(),
+        version: Some("7".into()),
+        files: vec![("SKILL.md".into(), b"exact-private-recovery-body".to_vec())],
+    }];
+    exact.skill_packs = SkillPackState::Staged(packs.clone());
+    store
+        .commit_session_idempotent("seed-projected-staged-loss", &exact, &[])
+        .await
+        .expect("exact staged custody is seeded");
+    drop(first);
+    adapter.lose(&runtime).await;
+
+    let get_calls_before = projecting.get_calls();
+    projecting.project_staged_listings(true);
+    projecting.pause_after_next();
+    let restarted = service_over(projecting.clone(), Arc::clone(&adapter));
+    let reconciliation = tokio::spawn({
+        let restarted = Arc::clone(&restarted);
+        async move { restarted.reconcile().await }
+    });
+    projecting.wait_until_held().await;
+
+    assert!(
+        projecting.get_calls() > get_calls_before,
+        "settlement must perform an exact read"
+    );
+    assert_eq!(
+        store.get(&created.id).await.unwrap().unwrap().skill_packs,
+        SkillPackState::Staged(packs),
+        "the runtime-loss write must inherit exact staged bytes, not the listing summary"
+    );
+
+    projecting.release();
+    tokio::time::timeout(Duration::from_secs(2), reconciliation)
+        .await
+        .expect("reconciliation resumes")
+        .expect("reconciliation task completes");
+}
+
+#[tokio::test]
+async fn reconciliation_fails_closed_when_an_exact_read_returns_a_staged_summary() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("projected-exact-read-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let mut exact = store.get(&created.id).await.unwrap().unwrap();
+    let runtime = exact.runtime_id.clone().expect("runtime is durable");
+    let packs = vec![SkillPack {
+        name: "private-refusal".into(),
+        version: None,
+        files: vec![(
+            "SKILL.md".into(),
+            b"must-not-be-redacted-into-a-write".to_vec(),
+        )],
+    }];
+    exact.skill_packs = SkillPackState::Staged(packs.clone());
+    store
+        .commit_session_idempotent("seed-projected-exact-refusal", &exact, &[])
+        .await
+        .unwrap();
+    drop(first);
+    adapter.stop_serving(&runtime).await;
+
+    let projecting = Arc::new(CommitFaultStore::new(
+        Arc::clone(&store),
+        any_session_commit,
+    ));
+    projecting.project_staged_listings(true);
+    projecting.project_staged_gets(true);
+    let restarted = service_over(projecting.clone(), Arc::clone(&adapter));
+    let reclaimed = restarted.reconcile().await;
+
+    assert_eq!(reclaimed.deferred_sessions, 1);
+    assert!(
+        projecting.get_calls() > 0,
+        "the projected row is investigated"
+    );
+    assert_eq!(
+        projecting.matched_calls(),
+        0,
+        "no durable mutation is attempted"
+    );
+    assert!(adapter.terminated.lock().await.is_empty());
+    assert!(adapter.running.lock().await.contains_key(&runtime));
+    let durable = store.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(durable.runtime_id.as_deref(), Some(runtime.as_str()));
+    assert_eq!(durable.skill_packs, SkillPackState::Staged(packs));
+    assert!(runtime_losses(&store, &created.id).await.is_empty());
+}
+
+#[tokio::test]
+async fn terminal_cleanup_treats_a_projected_staged_summary_as_pending_work() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("projected-terminal-cleanup-owner");
+    let first = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+    let mut terminal = store.get(&created.id).await.unwrap().unwrap();
+    if let Some(runtime) = terminal.runtime_id.take() {
+        adapter.lose(&runtime).await;
+    }
+    terminal.session.status = SessionStatus::Terminated;
+    terminal.skill_packs = SkillPackState::Staged(Vec::new());
+    store.seed(&terminal).await.unwrap();
+    drop(first);
+
+    let projecting = Arc::new(CommitFaultStore::new(
+        Arc::clone(&store),
+        any_session_commit,
+    ));
+    projecting.project_staged_listings(true);
+    let restarted = service_over(projecting.clone(), Arc::clone(&adapter));
+    restarted.reconcile().await;
+
+    assert!(
+        projecting.get_calls() > 0,
+        "cleanup reloads the exact terminal row"
+    );
+    assert!(
+        projecting.matched_calls() > 0,
+        "cleanup acknowledgement is durable"
+    );
+    assert_eq!(
+        store.get(&created.id).await.unwrap().unwrap().skill_packs,
+        SkillPackState::Cleaned
+    );
 }
 
 #[tokio::test]

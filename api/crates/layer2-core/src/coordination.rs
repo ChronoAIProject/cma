@@ -737,7 +737,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn expired_interaction_nonce_gets_a_new_epoch_and_cannot_clear_its_successor() {
         let store = FakeStore::default();
-        store.seed(&record()).await.unwrap();
+        let mut seeded = record();
+        seeded.skill_packs = crate::store::SkillPackState::Cleaned;
+        store.seed(&seeded).await.unwrap();
         let interaction = interaction_request(&store, "replica-a", Duration::from_secs(1)).await;
         let old = store.acquire_interaction_lease(&interaction).await.unwrap();
 

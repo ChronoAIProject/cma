@@ -15,8 +15,8 @@ use crate::service::{Deployment, ScreenFactory, SessionService};
 
 use crate::ids::SessionId;
 use crate::test_support::{
-    kernel, no_environments, unconfigured_settings, FakeAdapter, FakeStore, FixedCredential,
-    NullScreen, RecordingScreen,
+    fixture_skill_ports, kernel, no_environments, unconfigured_settings, FakeAdapter, FakeStore,
+    FixedCredential, NullScreen, RecordingScreen,
 };
 
 /// A fixed settings document for a session-service fixture.
@@ -70,16 +70,18 @@ pub(crate) fn service_with_environments_and_settings_service(
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
+    let (skills, skill_packs) = fixture_skill_ports(&store);
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
         factory,
-        store,
+        Arc::clone(&store) as Arc<dyn crate::store::SessionStore>,
         crate::service::SessionPorts {
             context: None,
             handovers: Some(handovers),
             credentials: None,
-            skills: None,
+            skills: Some(skills),
+            skill_packs: Some(skill_packs),
             settings: Some(settings),
         },
         environments,
@@ -119,6 +121,7 @@ pub(crate) fn service_over_with_context(
             handovers: Some(handovers),
             credentials: None,
             skills: None,
+            skill_packs: None,
             settings: None,
         },
         no_environments(),
@@ -144,6 +147,27 @@ pub(crate) fn service_on_version_with_skills(
     adapter: Arc<FakeAdapter>,
     version: &str,
     skills: Arc<dyn crate::store::SkillSource>,
+) -> Arc<SessionService> {
+    service_on_version_with_skill_ports(store, adapter, version, skills, None)
+}
+
+/// The skill fixture with durable pack custody enabled.
+pub(crate) fn service_on_version_with_skill_store(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    version: &str,
+    skills: Arc<dyn crate::store::SkillSource>,
+    skill_packs: Arc<dyn crate::store::SkillPackStore>,
+) -> Arc<SessionService> {
+    service_on_version_with_skill_ports(store, adapter, version, skills, Some(skill_packs))
+}
+
+fn service_on_version_with_skill_ports(
+    store: Arc<FakeStore>,
+    adapter: Arc<FakeAdapter>,
+    version: &str,
+    skills: Arc<dyn crate::store::SkillSource>,
+    skill_packs: Option<Arc<dyn crate::store::SkillPackStore>>,
 ) -> Arc<SessionService> {
     let factory: ScreenFactory = Arc::new(|_| Box::new(RecordingScreen::default()));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
@@ -171,6 +195,7 @@ pub(crate) fn service_on_version_with_skills(
         crate::service::SessionPorts {
             skills: Some(skills),
             handovers: Some(handovers),
+            skill_packs,
             ..Default::default()
         },
         environments,
@@ -203,6 +228,7 @@ pub(crate) fn service_on_version(
             handovers: Some(handovers),
             credentials: None,
             skills: None,
+            skill_packs: None,
             settings: None,
         },
         no_environments(),
@@ -265,13 +291,16 @@ pub(crate) fn service_with_environments_on_version(
     let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
+    let (skills, skill_packs) = fixture_skill_ports(&store);
     adapters.insert(kernel(), adapter);
     let service = SessionService::new(
         adapters,
         factory,
-        store,
+        Arc::clone(&store) as Arc<dyn crate::store::SessionStore>,
         crate::service::SessionPorts {
             handovers: Some(handovers),
+            skills: Some(skills),
+            skill_packs: Some(skill_packs),
             ..Default::default()
         },
         environments,
@@ -317,6 +346,7 @@ pub(crate) fn service_with_credential_source(
             handovers: Some(handovers),
             credentials: Some(credentials),
             skills: None,
+            skill_packs: None,
             settings: None,
         },
         no_environments(),
@@ -363,6 +393,7 @@ pub(crate) fn service_as(
             handovers: Some(handovers),
             credentials: None,
             skills: None,
+            skill_packs: None,
             settings: None,
         },
         no_environments(),
