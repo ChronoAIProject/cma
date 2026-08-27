@@ -3,10 +3,13 @@ import markMarkup from '../assets/brand/cma-mark-animated.svg?raw';
 import { ApiError, readTriggerPreview, type TriggerPreview } from '../api/client';
 import { BouncingText } from '../sessions/BouncingText';
 import { IconBranchOutline16, IconCheckOutline16, IconWarningOutline16 } from '../ui/icons';
+import type { TriggerAuthError } from '../routing/routes';
+import { TriggerAuthNotice } from './TriggerAuthNotice';
 import './Trigger.css';
 
 interface PublicTriggerPreviewProps {
   readonly publicId: string;
+  readonly authError?: TriggerAuthError;
   readonly onSignIn: () => void;
 }
 
@@ -54,19 +57,25 @@ function duration(seconds: number): string {
   return `${String(seconds)} seconds`;
 }
 
-export function PublicTriggerPreview({ publicId, onSignIn }: PublicTriggerPreviewProps) {
+export function PublicTriggerPreview(props: PublicTriggerPreviewProps) {
+  return <PublicTriggerPreviewRoute key={props.publicId} {...props} />;
+}
+
+function PublicTriggerPreviewRoute({ publicId, authError, onSignIn }: PublicTriggerPreviewProps) {
   const [preview, setPreview] = useState<TriggerPreview | null>(null);
   const [failure, setFailure] = useState<PreviewFailure | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     heading.current?.focus();
-  }, [publicId]);
+  }, [failure, preview, publicId]);
 
   useEffect(() => {
     const controller = new AbortController();
     void readTriggerPreview(publicId, controller.signal)
-      .then(setPreview)
+      .then((next) => {
+        if (!controller.signal.aborted) setPreview(next);
+      })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) {
           setFailure(failureFor(cause));
@@ -122,6 +131,10 @@ export function PublicTriggerPreview({ publicId, onSignIn }: PublicTriggerPrevie
                   </span>
                 </p>
               </header>
+
+              {authError === undefined ? null : (
+                <TriggerAuthNotice error={authError} placement="public" />
+              )}
 
               <section className="trigger-band" aria-labelledby="trigger-preview-access">
                 <h2 id="trigger-preview-access">Session access</h2>

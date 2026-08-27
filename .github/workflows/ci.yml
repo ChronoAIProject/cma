@@ -14,6 +14,34 @@ permissions:
   contents: read
 
 jobs:
+  trigger-release-contract:
+    name: Trigger release contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Runtime provenance and release evidence stay mandatory
+        run: |
+          ruby .github/scripts/cma-trigger-publish-contract.rb
+          ruby .github/scripts/cma-trigger-publish-contract.rb --self-test
+
+  trigger-provider-smoke-contract:
+    name: Trigger provider smoke contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Harness and fixture configuration are closed and valid
+        run: |
+          set -euo pipefail
+          node --check .github/scripts/cma-trigger-provider-smoke.mjs
+          node .github/scripts/cma-trigger-provider-smoke.mjs --self-test
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --validate-config .github/cma-trigger-provider-smoke.example.json
+      - name: Provider workflow is valid YAML
+        run: ruby .github/scripts/cma-trigger-provider-contract.rb
+
   structure:
     name: Repository structure
     runs-on: ubuntu-latest
@@ -417,6 +445,28 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
+      - uses: actions/setup-node@v6
+        if: matrix.component == 'runtime'
+        with:
+          node-version: 26
+      - name: Pinned Trigger runtime network boundary
+        if: matrix.component == 'runtime'
+        run: |
+          node --check .github/scripts/cma-trigger-runtime-image-smoke.mjs
+          node .github/scripts/cma-trigger-runtime-image-smoke.mjs --self-test
+          node .github/scripts/cma-trigger-runtime-image-smoke.mjs \
+            --image cma-runtime:ci \
+            --build-commit "${{ github.sha }}" \
+            --expected-architecture amd64 \
+            --output "$RUNNER_TEMP/cma-trigger-d09.json"
+      - name: Retain Trigger runtime boundary evidence
+        if: ${{ always() && matrix.component == 'runtime' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cma-trigger-d09-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cma-trigger-d09.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:

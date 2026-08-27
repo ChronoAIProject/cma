@@ -135,6 +135,20 @@ fn trigger_recovery_actions_are_distinct_and_target_the_launch() {
 }
 
 #[test]
+fn trigger_connection_revocation_is_targeted_without_recording_a_body() {
+    let classified = classified(Method::DELETE, "/api/v1/trigger-connections/service-exact");
+    assert_eq!(classified.action, Action::TriggerConnectionRevoke);
+    assert_eq!(
+        classified.target,
+        Some(ActivityTarget::TriggerConnection("service-exact".into()))
+    );
+    assert!(
+        !classified.reads_body,
+        "the empty revocation command must not create an audit-body channel"
+    );
+}
+
+#[test]
 fn effect_recovery_audit_keeps_only_closed_evidence_and_never_provider_material() {
     let body = br#"{
         "expected_revision": 17,

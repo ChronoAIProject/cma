@@ -5,8 +5,9 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use layer2_core::{
-    seconds_from_rfc3339, BranchRecord, CapabilityRevocationState, FailureClass, Launch,
-    LaunchFailure, LaunchState, ReachStatus, SessionId, SessionLink, TriggerService,
+    seconds_from_rfc3339, AuthorityAdmissionSnapshot, BranchRecord, CapabilityAuthorityAdmission,
+    CapabilityRevocationState, FailureClass, ForkRecord, Launch, LaunchFailure, LaunchState,
+    ReachStatus, SessionId, SessionLink, TriggerService,
 };
 
 use super::super::worker::tests::{
@@ -57,7 +58,6 @@ enum RenewalStep {
     Succeed {
         runtime_audience: String,
         branch_head: String,
-        expires_at_epoch_seconds: u64,
     },
     Panic,
 }
@@ -73,17 +73,18 @@ enum RevocationStep {
 }
 
 struct ScriptedExecutor {
-    runtime_answers: Mutex<VecDeque<Result<String, LaunchFailure>>>,
+    runtime_answers: Mutex<VecDeque<Result<RuntimePolicyObservation, LaunchFailure>>>,
     renewal_steps: Mutex<VecDeque<RenewalStep>>,
     revocation_steps: Mutex<VecDeque<RevocationStep>>,
     runtime_calls: AtomicUsize,
     renewal_calls: Mutex<Vec<(u64, u64)>>,
     revocation_calls: AtomicUsize,
+    retirement_calls: AtomicUsize,
 }
 
 impl ScriptedExecutor {
     fn new(
-        runtime_answers: Vec<Result<String, LaunchFailure>>,
+        runtime_answers: Vec<Result<RuntimePolicyObservation, LaunchFailure>>,
         renewal_steps: Vec<RenewalStep>,
         revocation_steps: Vec<RevocationStep>,
     ) -> Self {
@@ -94,17 +95,18 @@ impl ScriptedExecutor {
             runtime_calls: AtomicUsize::new(0),
             renewal_calls: Mutex::new(Vec::new()),
             revocation_calls: AtomicUsize::new(0),
+            retirement_calls: AtomicUsize::new(0),
         }
     }
 }
 
 #[async_trait]
 impl CapabilityExecutor for ScriptedExecutor {
-    async fn runtime_audience(
+    async fn runtime_observation(
         &self,
         _launch: &Launch,
         _fence: u64,
-    ) -> Result<String, LaunchFailure> {
+    ) -> Result<RuntimePolicyObservation, LaunchFailure> {
         self.runtime_calls.fetch_add(1, Ordering::SeqCst);
         self.runtime_answers
             .lock()
@@ -113,8 +115,41 @@ impl CapabilityExecutor for ScriptedExecutor {
             .expect("the test configured every runtime observation")
     }
 
+    async fn admit_renewal(
+        &self,
+        launch: &Launch,
+        fence: u64,
+        target_policy_generation: u64,
+        target_policy_expires_at_epoch_seconds: u64,
+    ) -> Result<CapabilityAuthorityAdmission, LaunchFailure> {
+        let mut branch = launch.branch.clone().unwrap();
+        if let Some(RenewalStep::Succeed { branch_head, .. }) =
+            self.renewal_steps.lock().unwrap().front()
+        {
+            branch.current_head = branch_head.clone();
+        }
+        let snapshot = AuthorityAdmissionSnapshot::for_capability_renewal(
+            launch,
+            fence,
+            target_policy_generation,
+            launch.connection.clone().unwrap(),
+            launch.authority.clone().unwrap(),
+            launch.revision.content.upstream.repository.clone(),
+            launch.fork.as_ref().unwrap().repository.clone(),
+            branch,
+            NOW,
+        )
+        .unwrap();
+        Ok(CapabilityAuthorityAdmission {
+            snapshot,
+            target_policy_generation,
+            target_policy_expires_at_epoch_seconds,
+        })
+    }
+
     async fn renew(&self, launch: &Launch, fence: u64) -> Result<CapabilityRenewal, LaunchFailure> {
-        let generation = launch.reach.as_ref().unwrap().policy_generation + 1;
+        let admission = launch.capability_authority_admission.as_ref().unwrap();
+        let generation = admission.target_policy_generation;
         self.renewal_calls.lock().unwrap().push((generation, fence));
         let step = self
             .renewal_steps
@@ -125,17 +160,15 @@ impl CapabilityExecutor for ScriptedExecutor {
         match step {
             RenewalStep::Succeed {
                 runtime_audience,
-                branch_head,
-                expires_at_epoch_seconds,
+                branch_head: _,
             } => {
-                let mut branch = launch.branch.clone().unwrap();
-                branch.current_head = branch_head;
+                let branch = admission.snapshot.branch.clone().unwrap();
                 Ok(CapabilityRenewal {
                     reach: active_reach(
                         generation,
                         fence,
                         &runtime_audience,
-                        expires_at_epoch_seconds,
+                        admission.target_policy_expires_at_epoch_seconds,
                     ),
                     connection: launch.connection.clone().unwrap(),
                     authority: launch.authority.clone().unwrap(),
@@ -169,9 +202,19 @@ impl CapabilityExecutor for ScriptedExecutor {
                 runtime_audience,
                 tombstone_acknowledged: tombstone,
                 agent_key_revocation_confirmed: agent_key,
+                credential_session_id: layer2_core::trigger_session_id(&launch.id).unwrap(),
             }),
             RevocationStep::Fail(failure) => Err(failure),
         }
+    }
+
+    async fn retire_credential(
+        &self,
+        launch: &Launch,
+        _fence: u64,
+    ) -> Result<SessionId, LaunchFailure> {
+        self.retirement_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(layer2_core::trigger_session_id(&launch.id).unwrap())
     }
 }
 
@@ -202,10 +245,71 @@ fn active_reach(
     }
 }
 
+fn empty_runtime_observation(runtime_audience: &str) -> RuntimePolicyObservation {
+    RuntimePolicyObservation {
+        runtime_audience: runtime_audience.into(),
+        required: true,
+        supported: true,
+        installed: false,
+        revoked: false,
+        launch_id: None,
+        generation: None,
+        fence: None,
+        expires_at_epoch_seconds: None,
+        last_refusal: None,
+    }
+}
+
+fn current_runtime_observation(
+    launch: &Launch,
+    refusal: Option<layer2_core::CapabilityRefusal>,
+) -> RuntimePolicyObservation {
+    let reach = launch.reach.as_ref().unwrap();
+    RuntimePolicyObservation {
+        runtime_audience: reach.runtime_audience.clone(),
+        required: true,
+        supported: true,
+        installed: true,
+        revoked: false,
+        launch_id: Some(launch.id.0.clone()),
+        generation: Some(reach.policy_generation),
+        fence: Some(reach.policy_fence),
+        expires_at_epoch_seconds: Some(reach.expires_at_epoch_seconds),
+        last_refusal: refusal,
+    }
+}
+
 fn launch_with_active_reach(expires_at_epoch_seconds: u64) -> Launch {
     let mut launch = launch_fixture();
     launch.state = LaunchState::Ready;
     launch.fencing_counter = 7;
+    let upstream = &launch.revision.content.upstream.repository;
+    launch.fork = Some(ForkRecord {
+        repository: layer2_core::RepositoryIdentity {
+            repository_id: 11,
+            repository_node_id: "R_fork".into(),
+            owner_id: launch.connection.as_ref().unwrap().account.account_id,
+            owner_node_id: launch
+                .connection
+                .as_ref()
+                .unwrap()
+                .account
+                .account_node_id
+                .clone(),
+            canonical_owner: "contributor".into(),
+            canonical_name: upstream.canonical_name.clone(),
+            visibility: upstream.visibility,
+            allow_forking: true,
+            default_branch: upstream.default_branch.clone(),
+            selected_ref: upstream.selected_ref.clone(),
+            fork_parent_id: Some(upstream.repository_id),
+            fork_source_id: Some(upstream.repository_id),
+        },
+        reused: false,
+        source_revision: launch.source_sha.clone(),
+        canonical_url: "https://github.com/contributor/project".into(),
+        ready_at: NOW.into(),
+    });
     launch.branch = Some(BranchRecord {
         name: format!("cma/{}", launch.id.0),
         expected_head: "a".repeat(40),
@@ -217,10 +321,23 @@ fn launch_with_active_reach(expires_at_epoch_seconds: u64) -> Launch {
         created_at: NOW.into(),
     });
     launch.session = Some(SessionLink {
-        session_id: SessionId(format!("sesn_{}", launch.id.0)),
+        session_id: layer2_core::trigger_session_id(&launch.id).unwrap(),
         environment_profile_id: "trigger-profile".into(),
         runtime_generation: 1,
         created_at: NOW.into(),
+    });
+    let credential_session_id = launch.session.as_ref().unwrap().session_id.clone();
+    launch
+        .authority
+        .as_mut()
+        .unwrap()
+        .session_credential_authority = Some(layer2_core::SessionCredentialAuthority {
+        session_id: credential_session_id,
+        custody_generation: 1,
+        provider_key_id: "provider-session-key-1".into(),
+        provider_state_version: 1,
+        provider_expires_at_epoch_milliseconds: 4_000_000_000_000,
+        grant_fingerprint: "a".repeat(64),
     });
     launch.reach = Some(active_reach(
         3,
@@ -244,7 +361,6 @@ fn successful_renewal(runtime_audience: &str, branch_head: &str) -> RenewalStep 
     RenewalStep::Succeed {
         runtime_audience: runtime_audience.into(),
         branch_head: branch_head.into(),
-        expires_at_epoch_seconds: epoch(NOW) + 600,
     }
 }
 
@@ -372,6 +488,7 @@ async fn capability_maintenance_audit_is_closed_and_never_retains_authority_valu
                 layer2_core::DetailKey::CorrelationId,
                 layer2_core::DetailKey::RevisionDigest,
                 layer2_core::DetailKey::RepositoryId,
+                layer2_core::DetailKey::ForkRepositoryId,
                 layer2_core::DetailKey::GithubAccountId,
                 layer2_core::DetailKey::ServiceId,
                 layer2_core::DetailKey::LaunchState,
@@ -401,7 +518,7 @@ async fn runtime_rotation_forces_immediate_renewal() {
     let launch = launch_with_active_reach(epoch(NOW) + 60);
     let service = service_for_launch(launch.clone());
     let executor = Arc::new(ScriptedExecutor::new(
-        vec![Ok("runtime-v2".into())],
+        vec![Ok(empty_runtime_observation("runtime-v2"))],
         vec![successful_renewal("runtime-v2", &"a".repeat(40))],
         Vec::new(),
     ));
@@ -427,6 +544,142 @@ async fn runtime_rotation_forces_immediate_renewal() {
             .unwrap()
             .runtime_audience,
         "runtime-v2"
+    );
+}
+
+#[tokio::test]
+async fn same_handle_supervisor_restart_forces_a_new_policy_generation() {
+    let launch = launch_with_active_reach(epoch(NOW) + 60);
+    let service = service_for_launch(launch.clone());
+    let executor = Arc::new(ScriptedExecutor::new(
+        vec![Ok(empty_runtime_observation("runtime-v1"))],
+        vec![successful_renewal("runtime-v1", &"a".repeat(40))],
+        Vec::new(),
+    ));
+    let worker = test_worker(
+        service.clone(),
+        executor.clone(),
+        "same-handle-restart-worker",
+        &[NOW, ONE_SECOND_LATER],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, launch.revision_number, "same-handle-restart",)
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::Renewed
+    );
+    assert_eq!(executor.runtime_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.renewal_calls.lock().unwrap().as_slice(), &[(4, 8)]);
+    let current = stored(&service, &launch).await;
+    assert_eq!(current.reach.as_ref().unwrap().policy_generation, 4);
+    assert_eq!(
+        current.reach.as_ref().unwrap().runtime_audience,
+        "runtime-v1"
+    );
+}
+
+#[tokio::test]
+async fn exact_runtime_policy_observation_projects_the_latest_closed_refusal_without_resending() {
+    let launch = launch_with_active_reach(epoch(NOW) + 60);
+    let service = service_for_launch(launch.clone());
+    let executor = Arc::new(ScriptedExecutor::new(
+        vec![Ok(current_runtime_observation(
+            &launch,
+            Some(layer2_core::CapabilityRefusal::OperationDenied),
+        ))],
+        Vec::new(),
+        Vec::new(),
+    ));
+    let worker = test_worker(
+        service.clone(),
+        executor.clone(),
+        "refusal-observer",
+        &[NOW],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, launch.revision_number, "observe-refusal")
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::NoWork
+    );
+    assert!(executor.renewal_calls.lock().unwrap().is_empty());
+    assert_eq!(
+        stored(&service, &launch).await.reach.unwrap().last_refusal,
+        Some(layer2_core::CapabilityRefusal::OperationDenied)
+    );
+}
+
+#[tokio::test]
+async fn contradictory_runtime_generation_is_retained_for_recovery_and_never_overwritten() {
+    let launch = launch_with_active_reach(epoch(NOW) + 60);
+    let mut observation = current_runtime_observation(&launch, None);
+    observation.generation = Some(99);
+    let service = service_for_launch(launch.clone());
+    let executor = Arc::new(ScriptedExecutor::new(
+        vec![Ok(observation)],
+        Vec::new(),
+        Vec::new(),
+    ));
+    let worker = test_worker(
+        service.clone(),
+        executor.clone(),
+        "generation-conflict-worker",
+        &[NOW],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, launch.revision_number, "generation-conflict",)
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::Deferred
+    );
+    assert!(executor.renewal_calls.lock().unwrap().is_empty());
+    let current = stored(&service, &launch).await;
+    assert_eq!(
+        current.failure.as_ref().map(|failure| failure.class),
+        Some(FailureClass::RecoveryRequired)
+    );
+    assert_eq!(current.reach.unwrap().policy_generation, 3);
+}
+
+#[tokio::test]
+async fn runtime_policy_for_another_launch_fails_closed_without_resending() {
+    let launch = launch_with_active_reach(epoch(NOW) + 60);
+    let mut observation = current_runtime_observation(&launch, None);
+    observation.launch_id = Some("018f6d65-22a4-7e6b-9b1f-39e58d506f99".into());
+    let service = service_for_launch(launch.clone());
+    let executor = Arc::new(ScriptedExecutor::new(
+        vec![Ok(observation)],
+        Vec::new(),
+        Vec::new(),
+    ));
+    let worker = test_worker(
+        service.clone(),
+        executor.clone(),
+        "authority-conflict-worker",
+        &[NOW],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, launch.revision_number, "authority-conflict",)
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::Failed
+    );
+    assert!(executor.renewal_calls.lock().unwrap().is_empty());
+    assert_eq!(
+        stored(&service, &launch)
+            .await
+            .failure
+            .as_ref()
+            .map(|failure| failure.class),
+        Some(FailureClass::TerminalSecurity)
     );
 }
 
@@ -461,7 +714,7 @@ async fn renewal_persists_the_current_launch_branch_head() {
 }
 
 #[tokio::test]
-async fn crash_repeats_the_generation_under_a_higher_worker_fence() {
+async fn crash_waits_out_the_unknown_policy_then_advances_generation_on_takeover() {
     let launch = launch_with_active_reach(epoch(NOW) + 20);
     let service = service_for_launch(launch.clone());
     let executor = Arc::new(ScriptedExecutor::new(
@@ -485,6 +738,14 @@ async fn crash_repeats_the_generation_under_a_higher_worker_fence() {
 
     let stranded = stored(&service, &launch).await;
     assert_eq!(stranded.reach.as_ref().unwrap().policy_generation, 3);
+    assert_eq!(
+        stranded
+            .capability_authority_admission
+            .as_ref()
+            .unwrap()
+            .target_policy_generation,
+        4
+    );
     assert!(stranded.lease.is_some());
     let replacement = test_worker(
         service.clone(),
@@ -501,7 +762,7 @@ async fn crash_repeats_the_generation_under_a_higher_worker_fence() {
     );
     assert_eq!(
         executor.renewal_calls.lock().unwrap().as_slice(),
-        &[(4, 8), (4, 9)]
+        &[(4, 8), (5, 9)]
     );
 }
 
@@ -571,6 +832,73 @@ async fn provider_key_settlement_makes_revocation_effective_without_a_runtime() 
     assert_eq!(reach.state, CapabilityRevocationState::Revoked);
     assert!(!reach.tombstone_acknowledged);
     assert!(reach.agent_key_revocation_confirmed);
+}
+
+#[tokio::test]
+async fn terminal_reachless_launch_retires_exact_custody_before_and_after_session_link() {
+    for retain_session_link in [false, true] {
+        let mut launch = launch_with_active_reach(epoch(NOW) + 60);
+        launch.state = LaunchState::Cancelled;
+        launch.reach = None;
+        if !retain_session_link {
+            launch.session = None;
+        }
+        let retained_session = launch.session.clone();
+        let service = service_for_launch(launch.clone());
+        let executor = Arc::new(ScriptedExecutor::new(Vec::new(), Vec::new(), Vec::new()));
+        let worker = test_worker(
+            service.clone(),
+            executor.clone(),
+            "reachless-retirement-worker",
+            &[NOW, ONE_SECOND_LATER],
+        );
+
+        assert_eq!(
+            worker
+                .run_once(&launch.id, launch.revision_number, "reachless-retirement")
+                .await
+                .unwrap(),
+            CapabilityRunOutcome::Revoked
+        );
+        let current = stored(&service, &launch).await;
+        assert_eq!(current.session, retained_session);
+        assert!(current.reach.is_none());
+        let retirement = current
+            .session_credential_retirement
+            .as_ref()
+            .expect("positive custody settlement is retained without Reach");
+        assert_eq!(
+            retirement.session_id,
+            layer2_core::trigger_session_id(&launch.id).unwrap()
+        );
+        assert_eq!(retirement.settled_at, ONE_SECOND_LATER);
+        assert_eq!(executor.retirement_calls.load(Ordering::SeqCst), 1);
+
+        let candidates = service
+            .capability_candidates(layer2_core::TriggerPageRequest::default())
+            .await
+            .unwrap();
+        assert!(candidates.items.is_empty());
+
+        let repeated = test_worker(
+            service.clone(),
+            executor.clone(),
+            "reachless-retirement-replay",
+            &["2026-08-27T00:00:02Z"],
+        );
+        assert_eq!(
+            repeated
+                .run_once(
+                    &launch.id,
+                    current.revision_number,
+                    "reachless-retirement-replay",
+                )
+                .await
+                .unwrap(),
+            CapabilityRunOutcome::NoWork
+        );
+        assert_eq!(executor.retirement_calls.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[tokio::test]

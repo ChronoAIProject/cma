@@ -10,7 +10,7 @@ use sha2::{Digest as _, Sha256};
 
 pub const VERSION: u32 = 1;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub const CAPABILITY_VERSION: u32 = 2;
+pub const CAPABILITY_VERSION: u32 = 4;
 pub const MAX_FILES: usize = 100_000;
 pub const MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 1_024;
@@ -85,11 +85,26 @@ struct CaptureAcknowledgement<'a> {
     bytes: u64,
     quiesced_writers: u32,
     writers_resumed: bool,
+    writer_state: &'static str,
+    writer_resume_token: Option<&'a str>,
 }
 
 impl Captured {
     /// Length-delimited acknowledgement followed by the exact sealed archive.
     pub fn into_wire(self) -> Result<Vec<u8>, String> {
+        self.into_wire_with_writer_receipt("resumed", true, None)
+    }
+
+    pub fn into_wire_held(self, resume_token: &str) -> Result<Vec<u8>, String> {
+        self.into_wire_with_writer_receipt("held_for_teardown", false, Some(resume_token))
+    }
+
+    fn into_wire_with_writer_receipt(
+        self,
+        writer_state: &'static str,
+        writers_resumed: bool,
+        writer_resume_token: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
         let acknowledgement = serde_json::to_vec(&CaptureAcknowledgement {
             cma_checkpoint: VERSION,
             workspace_epoch: self.workspace_epoch,
@@ -100,7 +115,9 @@ impl Captured {
             entries: self.entries,
             bytes: self.bytes,
             quiesced_writers: self.quiesced_writers,
-            writers_resumed: true,
+            writers_resumed,
+            writer_state,
+            writer_resume_token,
         })
         .map_err(|error| format!("encode checkpoint acknowledgement: {error}"))?;
         let header_len = u64::try_from(acknowledgement.len())
@@ -124,7 +141,8 @@ pub struct PreparedCapture {
 }
 
 impl PreparedCapture {
-    /// Make a fully flushed capture authoritative only after writers resumed.
+    /// Make a fully flushed capture authoritative after the caller has either
+    /// resumed the writers or retained their fence for immediate teardown.
     pub fn commit(mut self) -> Result<Captured, String> {
         if self.committed.exists() {
             let retained = load_capture_path(
@@ -154,6 +172,13 @@ impl PreparedCapture {
             }
             let _ = std::fs::remove_file(&self.temporary);
             self.temporary = PathBuf::new();
+            prune_committed_captures(
+                self.committed
+                    .parent()
+                    .ok_or_else(|| "workspace checkpoint has no storage root".to_string())?,
+                retained.workspace_epoch,
+                retained.checkpoint_version,
+            )?;
             return Ok(retained);
         }
         std::fs::rename(&self.temporary, &self.committed)
@@ -163,6 +188,12 @@ impl PreparedCapture {
             std::fs::File::open(parent)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|error| format!("flush workspace checkpoint directory: {error}"))?;
+            let captured = self.captured.as_ref().expect("prepared capture exists");
+            prune_committed_captures(
+                parent,
+                captured.workspace_epoch,
+                captured.checkpoint_version,
+            )?;
         }
         Ok(self.captured.take().expect("prepared capture exists"))
     }
@@ -186,13 +217,19 @@ pub fn load_capture(
     validate_capture_request(epoch, version, source_revision)?;
     let path = capture_path(checkpoint_root, epoch, version);
     if !path.exists() {
+        if latest_capture_version(checkpoint_root, epoch)?.is_some_and(|latest| version < latest) {
+            return Err(
+                "workspace checkpoint version predates the retained checkpoint high-water".into(),
+            );
+        }
         return Ok(None);
     }
     load_capture_path(&path, epoch, version, source_revision).map(Some)
 }
 
 /// Walk a quiescent tree, seal it deterministically, verify it, and flush a
-/// temporary artifact. The caller must resume writers before calling commit.
+/// temporary artifact. The caller must settle the writer disposition before
+/// calling commit.
 pub fn prepare_capture(
     workspace_root: &Path,
     checkpoint_root: &Path,
@@ -334,6 +371,68 @@ fn capture_path(root: &Path, epoch: u64, version: u64) -> PathBuf {
     root.join(format!("epoch-{epoch}-v{version}.pack"))
 }
 
+fn latest_capture_version(root: &Path, epoch: u64) -> Result<Option<u64>, String> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("inspect workspace checkpoint storage: {error}")),
+    };
+    let prefix = format!("epoch-{epoch}-v");
+    let mut latest = None;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("inspect workspace checkpoint entry: {error}"))?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(version) = name
+            .strip_prefix(&prefix)
+            .and_then(|value| value.strip_suffix(".pack"))
+            .and_then(|value| value.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        latest = Some(latest.map_or(version, |current: u64| current.max(version)));
+    }
+    Ok(latest)
+}
+
+/// Keep the current capture and its immediate predecessor for ambiguous wire
+/// retries. Older versions have already been superseded at the runtime fence
+/// and would otherwise grow without bound during periodic checkpointing.
+fn prune_committed_captures(root: &Path, epoch: u64, committed: u64) -> Result<(), String> {
+    let entries = std::fs::read_dir(root)
+        .map_err(|error| format!("inspect workspace checkpoint storage: {error}"))?;
+    let prefix = format!("epoch-{epoch}-v");
+    let retain_from = committed.saturating_sub(1);
+    let mut removed = false;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("inspect workspace checkpoint entry: {error}"))?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(version) = name
+            .strip_prefix(&prefix)
+            .and_then(|value| value.strip_suffix(".pack"))
+            .and_then(|value| value.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        if version < retain_from {
+            std::fs::remove_file(entry.path())
+                .map_err(|error| format!("prune superseded workspace checkpoint: {error}"))?;
+            removed = true;
+        }
+    }
+    if removed {
+        std::fs::File::open(root)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("flush pruned workspace checkpoint directory: {error}"))?;
+    }
+    Ok(())
+}
+
 fn load_capture_path(
     path: &Path,
     epoch: u64,
@@ -404,6 +503,9 @@ fn collect_capture_paths(
             .to_str()
             .ok_or_else(|| "workspace path is not UTF-8".to_string())?
             .to_string();
+        if excluded_capture_path(&relative) {
+            continue;
+        }
         validate_path(&relative)?;
         let kind = std::fs::symlink_metadata(&path)
             .map_err(|error| format!("inspect workspace entry {relative}: {error}"))?
@@ -809,12 +911,45 @@ fn validate_path(path: &str) -> Result<(), String> {
             segment.is_empty()
                 || segment == "."
                 || segment == ".."
-                || segment.eq_ignore_ascii_case(".git")
+                || excluded_capture_segment(segment)
         })
     {
         return Err("workspace archive contains a non-canonical path".into());
     }
     Ok(())
+}
+
+fn excluded_capture_path(path: &str) -> bool {
+    path.split('/').any(excluded_capture_segment)
+}
+
+/// Files owned by the runtime or conventionally used as credential material
+/// are outside the repository durability boundary. Matching every path segment
+/// also prevents a nested tool directory from becoming checkpoint content.
+fn excluded_capture_segment(segment: &str) -> bool {
+    let lower = segment.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        ".git"
+            | ".cma"
+            | ".chrono"
+            | ".codex"
+            | ".claude"
+            | ".nyxid"
+            | ".ssh"
+            | ".aws"
+            | ".gnupg"
+            | ".netrc"
+            | ".npmrc"
+            | ".pypirc"
+            | "credentials"
+            | "credentials.json"
+            | "id_rsa"
+            | "id_ed25519"
+    ) || lower == ".env"
+        || lower.starts_with(".env.")
+        || lower.starts_with(".cma-")
+        || lower.starts_with(".chrono-")
 }
 
 fn validate_symlink(path: &str, target: &str) -> Result<(), String> {

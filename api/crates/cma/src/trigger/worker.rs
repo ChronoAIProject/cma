@@ -6,8 +6,9 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use layer2_core::{
-    rfc3339_at, ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget,
-    DetailKey, EffectClaim, EffectClaimMode, EffectCompletion, Launch, LaunchEffectKind,
+    effect_requires_authority_admission, rfc3339_at, ActivityAction, ActivityOutcome,
+    ActivityRecord, ActivityService, ActivityTarget, AuthorityAdmissionSnapshot, DetailKey,
+    EffectClaim, EffectClaimMode, EffectCompletion, FailureClass, Launch, LaunchEffectKind,
     LaunchEffectResult, LaunchFailure, LaunchId, TriggerService, TriggerServiceError,
 };
 
@@ -48,6 +49,14 @@ pub(crate) enum EffectExecution {
         reconcile_at: String,
         external_resource_ids: BTreeMap<String, String>,
     },
+    /// A deterministic session exists but is still provisioning, rotating, or
+    /// recovering. This is observable waiting, not a failed reconciliation.
+    WaitLater {
+        wait_at: String,
+        safe_detail: String,
+        remediation: String,
+        external_resource_ids: BTreeMap<String, String>,
+    },
     RetryWithProgress {
         result: LaunchEffectResult,
         failure: LaunchFailure,
@@ -71,6 +80,16 @@ pub(crate) enum EffectExecution {
 /// Provider/runtime implementation for the closed Launch effect vocabulary.
 #[async_trait]
 pub(crate) trait EffectExecutor: Send + Sync {
+    /// Perform only reads and return the exact credential-free authority that
+    /// must be committed before this claim may execute a provider write.
+    async fn admit(
+        &self,
+        _launch: &Launch,
+        _claim: &EffectClaim,
+    ) -> Result<Option<AuthorityAdmissionSnapshot>, EffectExecution> {
+        Ok(None)
+    }
+
     async fn execute(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution;
 
     async fn reconcile(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution;
@@ -225,6 +244,31 @@ impl EffectWorker {
             .commit_worker(launch.revision_number, &lease, launch)
             .await?;
         let execution = match claim.mode {
+            EffectClaimMode::Execute if effect_requires_authority_admission(claim.kind) => {
+                match self.executor.admit(&launch, &claim).await {
+                    Ok(Some(admission)) => {
+                        let admitted_at = rfc3339_at(self.clock.now());
+                        launch.record_effect_authority_admission(
+                            &lease,
+                            &claim,
+                            admission,
+                            admitted_at,
+                        )?;
+                        // This is the authority write-before-effect CAS. A CAS
+                        // failure or process death before it completes means no
+                        // adapter write can have been admitted.
+                        launch = self
+                            .triggers
+                            .commit_worker(launch.revision_number, &lease, launch)
+                            .await?;
+                        self.executor.execute(&launch, &claim).await
+                    }
+                    Ok(None) => EffectExecution::Failed {
+                        failure: missing_admission_failure(&claim, &acquired_at, correlation_id),
+                    },
+                    Err(execution) => execution,
+                }
+            }
             EffectClaimMode::Execute => self.executor.execute(&launch, &claim).await,
             EffectClaimMode::Reconcile => self.executor.reconcile(&launch, &claim).await,
         };
@@ -277,6 +321,24 @@ impl EffectWorker {
                     &settled_at,
                 )?;
                 (EffectRunOutcome::Deferred, ActivityOutcome::Failed)
+            }
+            EffectExecution::WaitLater {
+                wait_at,
+                safe_detail,
+                remediation,
+                external_resource_ids,
+            } => {
+                launch.defer_waiting(
+                    &lease,
+                    &claim,
+                    wait_at,
+                    safe_detail,
+                    remediation,
+                    external_resource_ids,
+                    &settled_at,
+                    correlation_id,
+                )?;
+                (EffectRunOutcome::Deferred, ActivityOutcome::Succeeded)
             }
             EffectExecution::RetryWithProgress {
                 result,
@@ -425,6 +487,26 @@ impl EffectWorker {
             outcome = ?outcome,
             "Trigger effect worker settled one durable boundary"
         );
+    }
+}
+
+fn missing_admission_failure(
+    claim: &EffectClaim,
+    observed_at: &str,
+    correlation_id: &str,
+) -> LaunchFailure {
+    LaunchFailure {
+        class: FailureClass::TerminalSecurity,
+        code: "trigger_authority_admission_missing".into(),
+        detail: "The effect adapter did not produce a durable authority admission.".into(),
+        remediation: "Contact support; CMA did not perform the external write.".into(),
+        correlation_id: if correlation_id.trim().is_empty() {
+            format!("{}:admission", claim.intent_key)
+        } else {
+            correlation_id.into()
+        },
+        retry_at: None,
+        observed_at: observed_at.into(),
     }
 }
 

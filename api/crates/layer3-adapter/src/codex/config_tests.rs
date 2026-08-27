@@ -19,6 +19,7 @@ fn spec_with(permission: RuntimePermission, effort: Option<&str>) -> RuntimeSpec
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: RuntimeOptions {
             permission,
@@ -35,6 +36,12 @@ fn rendered(permission: RuntimePermission) -> String {
         "a-model",
         "responses",
     )
+}
+
+fn trigger_spec() -> RuntimeSpec {
+    let mut spec = spec_with(RuntimePermission::Autonomous, Some("high"));
+    spec.runtime_policy_required = true;
+    spec
 }
 
 #[test]
@@ -102,6 +109,41 @@ fn each_level_of_authority_becomes_this_kernels_own_pair() {
             "{permission:?} got {config}"
         );
     }
+}
+
+#[test]
+fn a_trigger_is_unattended_but_confined_to_workspace_and_loopback() {
+    let config = render(
+        &trigger_spec(),
+        "http://127.0.0.1:9091",
+        "a-model",
+        "responses",
+    );
+    for required in [
+        "approval_policy = \"never\"",
+        "default_permissions = \"cma-trigger\"",
+        "network_proxy = true",
+        "extends = \":workspace\"",
+        "enable_socks5 = false",
+        "enable_socks5_udp = false",
+        "allow_upstream_proxy = false",
+        "allow_local_binding = false",
+        "\"127.0.0.2\" = \"allow\"",
+    ] {
+        assert!(config.contains(required), "missing {required}: {config}");
+    }
+    for forbidden in [
+        "danger-full-access",
+        "sandbox_mode",
+        "sandbox_workspace_write",
+        "0.0.0.0",
+        "\"*\" = \"allow\"",
+        "\"localhost\" = \"allow\"",
+        "\"127.0.0.1\" = \"allow\"",
+    ] {
+        assert!(!config.contains(forbidden), "found {forbidden}: {config}");
+    }
+    assert_eq!(config.matches(" = \"allow\"").count(), 1, "got {config}");
 }
 
 #[test]

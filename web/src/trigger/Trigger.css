@@ -137,6 +137,10 @@
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
+.trigger-public__auth-notice {
+  margin-bottom: 24px;
+}
+
 .trigger-public__action .button {
   min-height: 40px;
 }

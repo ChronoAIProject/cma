@@ -29,11 +29,14 @@ mod task_retirement;
 mod terminal_input;
 
 pub use runtime::{
-    ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeGeneration, RuntimeHandle,
+    ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeGatewayProbeOutcome,
+    RuntimeGatewayProbeReceipt, RuntimeGatewayProbeRequest, RuntimeGeneration, RuntimeHandle,
     RuntimeIdentity, RuntimeListing, RuntimeLossReason, RuntimeMode, RuntimeOptions,
-    RuntimePermission, RuntimePolicyReceipt, RuntimeReservationIdentity, RuntimeSpec, SkillPackage,
-    TermSize, TerminalChannel, TerminalInput, TerminalOutput, WorkspaceCheckpointPackage,
+    RuntimePermission, RuntimePolicyObservation, RuntimePolicyReceipt, RuntimePolicyRefusal,
+    RuntimeReservationIdentity, RuntimeSpec, SkillPackage, TermSize, TerminalChannel,
+    TerminalInput, TerminalOutput, WorkspaceCheckpointDisposition, WorkspaceCheckpointPackage,
     WorkspaceCheckpointRequest, WorkspaceEntryKind, WorkspaceEntryPackage, WorkspacePackage,
+    WorkspaceWriterState, RUNTIME_GATEWAY_PROBE_VERSION,
 };
 pub use terminal_input::TerminalInputSender;
 
@@ -45,7 +48,8 @@ pub use conversation::{
     ConversationUpdate, MessageId, PermissionDecision, PermissionLocator, PermissionOption,
     PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
     RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind, TurnStopReason, TurnUsage, UsageUpdate,
+    ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage,
+    UsageUpdate,
 };
 
 pub mod claude_code;
@@ -276,6 +280,32 @@ pub trait KernelAdapter: Send + Sync {
         ))
     }
 
+    /// Observe the non-secret authenticated-policy state of one exact runtime.
+    ///
+    /// This is distinct from static capability discovery: a supervisor may
+    /// restart inside the same provider runtime and lose its in-memory policy
+    /// while the opaque runtime handle remains unchanged.
+    async fn observe_runtime_policy(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<RuntimePolicyObservation, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime does not expose authenticated policy state".to_string(),
+        ))
+    }
+
+    /// Prove that this exact runtime can traverse its command sandbox and the
+    /// restricted local service gateway without exposing gateway response data.
+    async fn probe_runtime_gateway(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &RuntimeGatewayProbeRequest,
+    ) -> Result<RuntimeGatewayProbeReceipt, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime does not expose a restricted gateway probe".to_string(),
+        ))
+    }
+
     /// Tear the runtime down using provider authority captured when this call
     /// begins.
     ///
@@ -357,6 +387,17 @@ pub trait KernelAdapter: Send + Sync {
     ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
         Err(AdapterError::Unsupported(
             "this runtime cannot coherently checkpoint its workspace".to_string(),
+        ))
+    }
+
+    /// Reopen the exact writer fence returned by a hold-for-teardown capture.
+    async fn resume_workspace_writers(
+        &self,
+        _handle: &RuntimeHandle,
+        _resume_token: &str,
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot resume a held workspace checkpoint".to_string(),
         ))
     }
 

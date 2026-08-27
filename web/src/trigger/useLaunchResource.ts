@@ -18,54 +18,101 @@ function failureMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-/** Replay progress by cursor, then reconcile a snapshot without moving revisions backward. */
-export function useLaunchResource(launchId: string): LaunchResource {
-  const [launch, setLaunch] = useState<Launch | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [failure, setFailure] = useState<string | null>(null);
-  const [offline, setOffline] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
-  const [liveSummary, setLiveSummary] = useState('');
-  const cursor = useRef(0);
-  const revision = useRef(-1);
+interface LaunchResourceState {
+  readonly launchId: string;
+  readonly launch: Launch | null;
+  readonly loading: boolean;
+  readonly failure: string | null;
+  readonly offline: boolean;
+  readonly lastUpdated: number | null;
+  readonly liveSummary: string;
+}
 
-  const accept = useCallback((next: Launch) => {
-    if (next.revision_number < revision.current) {
-      return;
-    }
-    revision.current = next.revision_number;
-    setLaunch(next);
-    setLastUpdated(Date.now());
-    setOffline(false);
-    setFailure(null);
-    const active = next.steps.find(
-      (step) => step.status === 'running' || step.status === 'blocked',
-    );
-    setLiveSummary(
+function emptyResource(launchId: string): LaunchResourceState {
+  return {
+    launchId,
+    launch: null,
+    loading: true,
+    failure: null,
+    offline: false,
+    lastUpdated: null,
+    liveSummary: '',
+  };
+}
+
+function acceptedResource(current: LaunchResourceState, next: Launch): LaunchResourceState {
+  const active = next.steps.find((step) => step.status === 'running' || step.status === 'blocked');
+  return {
+    ...current,
+    launch: next,
+    failure: null,
+    offline: false,
+    lastUpdated: Date.now(),
+    liveSummary:
       active === undefined
         ? `Launch ${next.state.replaceAll('_', ' ')}`
         : active.safe_detail || active.key.replaceAll('_', ' '),
-    );
-  }, []);
+  };
+}
+
+/** Replay progress by cursor, then reconcile a snapshot without moving revisions backward. */
+export function useLaunchResource(launchId: string): LaunchResource {
+  const [resource, setResource] = useState<LaunchResourceState>(() => emptyResource(launchId));
+  const activeLaunchId = useRef(launchId);
+  const refreshController = useRef<{
+    readonly launchId: string;
+    readonly controller: AbortController;
+  } | null>(null);
+
+  const accept = useCallback(
+    (next: Launch) => {
+      if (activeLaunchId.current !== launchId || next.id !== launchId) return;
+      setResource((current) => {
+        const scoped = current.launchId === launchId ? current : emptyResource(launchId);
+        if (scoped.launch !== null && next.revision_number < scoped.launch.revision_number) {
+          return current;
+        }
+        return acceptedResource(scoped, next);
+      });
+    },
+    [launchId],
+  );
 
   const refresh = useCallback(async (): Promise<Launch | null> => {
+    refreshController.current?.controller.abort();
+    const controller = new AbortController();
+    refreshController.current = { launchId, controller };
     try {
-      const next = await readLaunch(launchId);
+      const next = await readLaunch(launchId, controller.signal);
+      if (controller.signal.aborted || activeLaunchId.current !== launchId) return null;
       accept(next);
       return next;
     } catch (cause) {
-      setFailure(failureMessage(cause));
-      setOffline(typeof navigator !== 'undefined' && !navigator.onLine);
+      if (!controller.signal.aborted && activeLaunchId.current === launchId) {
+        setResource((current) => ({
+          ...(current.launchId === launchId ? current : emptyResource(launchId)),
+          failure: failureMessage(cause),
+          offline: typeof navigator !== 'undefined' && !navigator.onLine,
+        }));
+      }
       return null;
     } finally {
-      setLoading(false);
+      if (refreshController.current?.controller === controller) refreshController.current = null;
+      if (activeLaunchId.current === launchId) {
+        setResource((current) => ({
+          ...(current.launchId === launchId ? current : emptyResource(launchId)),
+          loading: false,
+        }));
+      }
     }
   }, [accept, launchId]);
 
   useEffect(() => {
-    cursor.current = 0;
-    revision.current = -1;
+    activeLaunchId.current = launchId;
+    refreshController.current?.controller.abort();
     let live = true;
+    let cursor = 0;
+    let observedSnapshot = false;
     let timer: number | undefined;
     let controller: AbortController | undefined;
 
@@ -73,27 +120,40 @@ export function useLaunchResource(launchId: string): LaunchResource {
       if (live) timer = window.setTimeout(poll, POLL_INTERVAL_MS);
     };
     const poll = async () => {
-      controller = new AbortController();
+      controller?.abort();
+      const pollController = new AbortController();
+      controller = pollController;
       try {
-        const progress = await readLaunchProgress(launchId, cursor.current, controller.signal);
-        if (!live) return;
-        if (progress.next_cursor >= cursor.current) {
-          cursor.current = progress.next_cursor;
-        }
-        if (progress.events.length > 0 || revision.current < 0) {
-          const next = await readLaunch(launchId, controller.signal);
-          if (live) accept(next);
+        const progress = await readLaunchProgress(launchId, cursor, pollController.signal);
+        if (!live || activeLaunchId.current !== launchId || pollController.signal.aborted) return;
+        const nextCursor = Math.max(cursor, progress.next_cursor);
+        if (progress.events.length > 0 || !observedSnapshot) {
+          const next = await readLaunch(launchId, pollController.signal);
+          if (live && activeLaunchId.current === launchId && !pollController.signal.aborted) {
+            accept(next);
+            observedSnapshot = true;
+            cursor = nextCursor;
+          }
         } else {
-          setOffline(false);
+          cursor = nextCursor;
+          setResource((current) =>
+            current.launchId === launchId ? { ...current, offline: false } : current,
+          );
         }
       } catch (cause) {
-        if (live && !controller.signal.aborted) {
-          setFailure(failureMessage(cause));
-          setOffline(typeof navigator !== 'undefined' && !navigator.onLine);
+        if (live && activeLaunchId.current === launchId && !pollController.signal.aborted) {
+          setResource((current) => ({
+            ...(current.launchId === launchId ? current : emptyResource(launchId)),
+            failure: failureMessage(cause),
+            offline: typeof navigator !== 'undefined' && !navigator.onLine,
+          }));
         }
       } finally {
-        if (live) {
-          setLoading(false);
+        if (live && activeLaunchId.current === launchId && controller === pollController) {
+          setResource((current) => ({
+            ...(current.launchId === launchId ? current : emptyResource(launchId)),
+            loading: false,
+          }));
           schedule();
         }
       }
@@ -109,11 +169,16 @@ export function useLaunchResource(launchId: string): LaunchResource {
     return () => {
       live = false;
       controller?.abort();
+      if (refreshController.current?.launchId === launchId) {
+        refreshController.current.controller.abort();
+        refreshController.current = null;
+      }
       if (timer !== undefined) window.clearTimeout(timer);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('focus', onOnline);
     };
   }, [accept, launchId]);
 
-  return { launch, loading, failure, offline, lastUpdated, liveSummary, refresh, accept };
+  const current = resource.launchId === launchId ? resource : emptyResource(launchId);
+  return { ...current, refresh, accept };
 }

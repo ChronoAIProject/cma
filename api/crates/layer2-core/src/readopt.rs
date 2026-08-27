@@ -87,52 +87,68 @@ impl SessionService {
             return Err(CoreError::InvalidState);
         }
 
-        let (record, restore) = if let Some(pending) = record.pending_handover.as_ref() {
-            let restore = match self.load_pending_handover_snapshot(&record).await {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
+        let (record, restore, trigger_recovery) =
+            if let Some(pending) = record.pending_handover.as_ref() {
+                let recovery = match self.load_pending_handover_recovery(&record).await {
+                    Ok(recovery) => recovery,
+                    Err(error) => {
+                        self.finish_start(id).await;
+                        return Err(store_failed(error));
+                    }
+                };
+                let mut rotating = record.clone();
+                rotating.session.status = SessionStatus::Rotating;
+                rotating.session.stop_reason = None;
+                rotating.rotation_claim = Some(pending.claim.clone());
+                if let Err(error) = self
+                    .persist_durably(
+                        &mut rotating,
+                        vec![Event {
+                            session_id: id.clone(),
+                            seq: 0,
+                            kind: EventKind::StatusChanged {
+                                status: SessionStatus::Rotating,
+                                stop_reason: None,
+                                detail: Some(
+                                    "resuming the stored runtime handover from its exact snapshot"
+                                        .into(),
+                                ),
+                                capability: None,
+                            },
+                            appended_at: String::new(),
+                        }],
+                    )
+                    .await
+                {
                     self.finish_start(id).await;
                     return Err(store_failed(error));
                 }
-            };
-            let mut rotating = record.clone();
-            rotating.session.status = SessionStatus::Rotating;
-            rotating.session.stop_reason = None;
-            rotating.rotation_claim = Some(pending.claim.clone());
-            if let Err(error) = self
-                .persist_durably(
-                    &mut rotating,
-                    vec![Event {
-                        session_id: id.clone(),
-                        seq: 0,
-                        kind: EventKind::StatusChanged {
-                            status: SessionStatus::Rotating,
-                            stop_reason: None,
-                            detail: Some(
-                                "resuming the stored runtime handover from its exact snapshot"
-                                    .into(),
-                            ),
-                            capability: None,
-                        },
-                        appended_at: String::new(),
-                    }],
-                )
-                .await
-            {
-                self.finish_start(id).await;
-                return Err(store_failed(error));
-            }
-            let published = match self.publish_pending_handover_target(rotating).await {
-                Ok(published) => published,
-                Err(error) => {
+                let published = match self.publish_pending_handover_target(rotating).await {
+                    Ok(published) => published,
+                    Err(error) => {
+                        self.finish_start(id).await;
+                        return Err(store_failed(error));
+                    }
+                };
+                (published, recovery.restore, recovery.trigger_recovery)
+            } else {
+                let trigger_recovery =
+                    match self.resolve_trigger_recovery_pair_for(&record, None).await {
+                        Ok(pair) => pair,
+                        Err(error) => {
+                            self.finish_start(id).await;
+                            return Err(store_failed(error));
+                        }
+                    };
+                if record.trigger_origin.is_some() && trigger_recovery.is_none() {
                     self.finish_start(id).await;
-                    return Err(store_failed(error));
+                    return Err(CoreError::RuntimeUnavailable(
+                        "this Trigger session has no complete workspace/conversation recovery pair"
+                            .into(),
+                    ));
                 }
+                (record, None, trigger_recovery)
             };
-            (published, restore)
-        } else {
-            (record, None)
-        };
 
         let mut lease = match self
             .acquire_runtime_lease_at(&record, crate::coordination::SessionOperation::Provision)
@@ -219,6 +235,7 @@ impl SessionService {
                         outcome: crate::provision_failure::Abandonment::Keep,
                         lease,
                         handover: None,
+                        trigger_recovery,
                         rotation_claim,
                     },
                 )
@@ -472,6 +489,7 @@ impl SessionService {
                 // runtime opens a second conversation beside the first.
                 let mut options = crate::provision::runtime_options(&record.session.options);
                 options.resume_conversation = conversation_id.clone();
+                options.restricted_service_gateway = record.trigger_origin.is_some();
                 if options.resume_conversation.is_none() {
                     tracing::warn!(
                         session_id = %id,
@@ -757,6 +775,32 @@ impl SessionService {
                 None => (None, None, None, None),
             };
 
+        let runtime_generation = lease
+            .as_ref()
+            .map_or_else(
+                || {
+                    current
+                        .trigger_origin
+                        .as_ref()
+                        .map(|_| u64::from(current.session.rotations).saturating_add(1))
+                        .unwrap_or(0)
+                },
+                |held| held.boundary.authority.generation,
+            );
+        if let (Some(workspaces), Some(origin)) =
+            (self.workspaces.as_ref(), current.trigger_origin.as_ref())
+        {
+            workspaces
+                .synchronize_runtime_generation(
+                    &current.session.owner,
+                    origin,
+                    runtime_generation,
+                    &crate::clock::now_rfc3339(),
+                )
+                .await
+                .map_err(store_failed)?;
+        }
+
         let mut adopted = current.session.clone();
         adopted.capabilities = capabilities;
         let event_log = self.event_logs.lane(&id);
@@ -771,9 +815,7 @@ impl SessionService {
             environment_values,
             screen: Arc::clone(&screen),
             runtime: Some(handle.clone()),
-            runtime_generation: lease
-                .as_ref()
-                .map_or(0, |held| held.boundary.authority.generation),
+            runtime_generation,
             publication_token: publication_token.to_string(),
             publication_complete: false,
             conversation_link,
@@ -804,9 +846,6 @@ impl SessionService {
                 ));
             }
         }
-        let runtime_generation = lease
-            .as_ref()
-            .map_or(0, |held| held.boundary.authority.generation);
         if let Some(held) = lease.as_mut() {
             let replayed = self
                 .store

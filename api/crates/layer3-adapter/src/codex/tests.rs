@@ -22,6 +22,15 @@ fn the_kernel_is_named_for_diagnostics_only() {
     assert_eq!(adapter("http://p").kernel_name(), "codex");
 }
 
+#[test]
+fn this_kernel_binds_its_production_conversation_to_shared_acp_evidence() {
+    let binding = adapter("http://p").conversation_binding(&Default::default());
+    assert_eq!(
+        binding.evidence_contract(),
+        crate::hosted::ConversationEvidenceContract::AcpV1
+    );
+}
+
 #[tokio::test]
 async fn a_conversation_against_a_dead_provider_reports_unavailable() {
     // A conversation that could not be opened is a failure, not an absent

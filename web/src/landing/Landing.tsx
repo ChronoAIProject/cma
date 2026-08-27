@@ -31,7 +31,11 @@ import './Landing.css';
  * small insult a product only gets to make once.
  */
 
-export function Landing() {
+interface LandingProps {
+  readonly returnTo?: string;
+}
+
+export function Landing({ returnTo }: LandingProps = {}) {
   const { signIn } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState('');
@@ -62,7 +66,7 @@ export function Landing() {
     } else {
       setStatus('Redirecting to sign in.');
     }
-    void signIn();
+    void signIn(returnTo);
   }
 
   return (

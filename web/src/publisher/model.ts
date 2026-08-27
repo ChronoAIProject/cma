@@ -33,7 +33,6 @@ export const EDITABLE_FIELDS: readonly TriggerEditableField[] = [
   'branch_suffix',
   'resource_size',
   'timeout',
-  'optional_checks',
 ];
 
 export interface GithubRepositoryLocator {
@@ -379,14 +378,6 @@ export function validatePublisherEditor(editor: PublisherEditor): PublisherValid
   const body = content.contribution.pull_request.body_template;
   if (body.trim() === '' || bytes(body) > 32 * 1024 || body.includes('<!-- cma-trigger:')) {
     errors.prBody = 'Use a non-empty body under 32 KiB without the reserved CMA marker.';
-  }
-  const checks = content.override_policy.optional_checks;
-  if (
-    checks.length > 16 ||
-    new Set(checks).size !== checks.length ||
-    checks.some((check) => check.trim() === '' || bytes(check) > 128)
-  ) {
-    errors.checks = 'Declare at most 16 unique check identifiers of at most 128 bytes.';
   }
   return errors;
 }

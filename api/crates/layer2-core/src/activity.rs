@@ -141,6 +141,7 @@ pub enum ActivityAction {
     TriggerRevisionRetire,
     TriggerConnectionList,
     TriggerConnectionBegin,
+    TriggerConnectionRevoke,
     TriggerConnectionReconnect,
     TriggerConnectionPreflight,
     TriggerRepositoryResolve,

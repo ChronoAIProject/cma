@@ -9,7 +9,12 @@ import { SessionActions } from './SessionActions';
 import { abilitiesFor } from './availability';
 import type { Session, SessionLifecycle } from './types';
 import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
-import type { DiffReview, Launch, SessionSpend } from '@chronoai/cma-sdk';
+import type {
+  DiffReview,
+  Launch,
+  LaunchCapabilityRevocationState,
+  SessionSpend,
+} from '@chronoai/cma-sdk';
 import { listLaunchPage } from '../api/client';
 
 vi.mock('../api/client', async (importOriginal) => {
@@ -24,7 +29,7 @@ const diffFixture = JSON.parse(
   readFileSync(resolve(process.cwd(), '../sdk/typescript/tests/fixtures/diff_review.json'), 'utf8'),
 ) as DiffReview;
 
-function owningLaunch(reach = 'active'): Launch {
+function owningLaunch(reach: LaunchCapabilityRevocationState | null = 'active'): Launch {
   const upstream = launchFixture.revision_content.upstream.repository;
   return {
     ...launchFixture,
@@ -53,7 +58,21 @@ function owningLaunch(reach = 'active'): Launch {
       created_at: '2026-08-26T12:00:00Z',
     },
     workspace: { latest_checkpoint: { id: 'checkpoint-1' } },
-    reach: { state: reach },
+    reach:
+      reach === null
+        ? null
+        : {
+            service_id: 'service-1',
+            state: reach,
+            policy_generation: 1,
+            policy_fence: 1,
+            runtime_audience: 'runtime-fixture',
+            expires_at_epoch_seconds: 1_800_000_000,
+            numeric_binding_observed_at: '2026-08-26T12:00:00Z',
+            refreshed_at: '2026-08-26T12:00:00Z',
+            tombstone_acknowledged: false,
+            agent_key_revocation_confirmed: false,
+          },
     delivery: {
       launch_id: launchFixture.id,
       session_id: 'ses_test',
@@ -482,15 +501,22 @@ describe('the Trigger repository relationship', () => {
     );
   });
 
-  it('withholds Contribute when GitHub reach is not effective', async () => {
+  it.each([
+    ['missing', null],
+    ['revocation pending', 'revocation_pending'],
+    ['revoked', 'revoked'],
+    ['expired', 'expired'],
+  ] as const)('withholds Contribute when GitHub reach is %s', async (_label, reach) => {
     vi.mocked(listLaunchPage).mockResolvedValueOnce({
-      items: [owningLaunch('revocation_pending')],
+      items: [owningLaunch(reach)],
       next_cursor: null,
     });
 
     renderDrawer('running');
 
-    expect(await screen.findByText('revocation pending')).toBeInTheDocument();
+    expect(
+      await screen.findByText(reach === null ? 'Pending' : reach.replaceAll('_', ' ')),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Contribute' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Launch progress' })).toBeInTheDocument();
   });
