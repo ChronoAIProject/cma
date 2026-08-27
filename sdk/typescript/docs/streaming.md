@@ -90,6 +90,25 @@ into typed payloads. A discriminator introduced by a newer server becomes
 the cursor to advance. A malformed payload under a known discriminator is not a
 future event and fails as a protocol error.
 
+`runtime_handover_started` is a unit event written immediately before every
+marker-aware handover enters `rotating`. It permanently enables marker-based
+usage accounting for the session, so rollback and readoption status changes do
+not split the outgoing runtime's cumulative counter. History without this
+discriminator retains its legacy `rotating` boundaries.
+
+`runtime_incarnation_started` is a unit event for compatibility stores without
+durable fencing generations. It is committed atomically with the record that
+names a newly provisioned runtime, and every such marker separates cumulative
+token counters. A provider attempt that never gets a durable handle writes none;
+an idempotently retried commit writes the unit once.
+
+`runtime_started` carries a positive `generation`. It marks a committed change
+in runtime authority, not an attempt to start one; duplicate or older generations
+do not begin another incarnation. Usage readers use strictly newer markers to
+separate cumulative token counters that restart on a replacement runtime. A
+`runtime_started` event also enables marker accounting when no handover
+marker preceded it.
+
 AG-UI is a separate, run-shaped projection for conversation frontends. Use
 `AguiConnection` and `AguiOperations` when building that surface; use
 `streamEvents` when consuming the durable session log. See the

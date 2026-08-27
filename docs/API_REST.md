@@ -1043,11 +1043,62 @@ Only durable semantic events appear on this route. Ephemeral terminal and
 message deltas travel on their interface-specific live connections; they are
 never stored and cannot be replayed here.
 
-A runtime the service established as lost arrives in an unnamed SSE frame with the core kind nested under `event`, exactly as the implementation sends it:
+A handover first records a unit discriminator immediately before its `rotating`
+status, in the same durable write:
 
 ```text
 id: 1045
-data: {"seq":1045,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_lost","runtime_id":"runtime_01K35QJ0","cause":"out_of_memory"}}
+data: {"seq":1045,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_handover_started"}}
+
+id: 1046
+data: {"seq":1046,"session_id":"sesn_01JD8Z3K7","event":{"type":"status_changed","status":"rotating"}}
+```
+
+`runtime_handover_started` means the outgoing runtime's cumulative token counter
+continues through this attempt. The unit event permanently selects marker-based
+usage accounting for this session, so later status changes are lifecycle state
+rather than token-counter boundaries. A rollback to the outgoing runtime writes
+no incarnation marker and keeps that counter in the same segment.
+
+The next marker depends on the store protocol. A compatibility store has no
+fencing generation, so it atomically names each newly provisioned runtime and
+appends this unit event in the same record commit:
+
+```text
+id: 1047
+data: {"seq":1047,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_incarnation_started"}}
+```
+
+Every `runtime_incarnation_started` begins another compatibility runtime
+incarnation. A provider attempt that never gets a durable handle writes none;
+retrying the same atomic commit through its idempotency receipt cannot append a
+duplicate unit.
+
+A coordinated store instead commits a successful runtime-authority switch with
+its positive durable generation:
+
+```text
+id: 1047
+data: {"seq":1047,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_started","generation":3}}
+```
+
+`runtime_started` is committed atomically with the coordinated authority switch,
+so a candidate that fails before taking authority writes none and retrying a
+completed switch does not write another. A strictly newer generation begins
+another runtime incarnation; duplicate or older generations are ignored by
+folds. Before these markers existed, `rotating` is the only retained candidate
+boundary in the durable log, so markerless history is segmented there as a
+legacy approximation. It does not prove that authority changed at that exact
+event; databases from unreleased coordination formats whose boundary can be
+later are refused during startup rather than reported as exactly accounted.
+Once any marker discriminator has appeared, `status_changed` is lifecycle state
+only: a modern handover can enter `rotating` and roll back to the same runtime.
+
+A runtime the service established as lost has the same envelope:
+
+```text
+id: 1048
+data: {"seq":1048,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_lost","runtime_id":"runtime_01K35QJ0","cause":"out_of_memory"}}
 ```
 
 `runtime_lost` carries `runtime_id`, the opaque identifier of the runtime that is gone, and `cause` where the service could establish one. The cause is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`; when nothing supplied a reason, `cause` is omitted rather than invented.

@@ -222,6 +222,7 @@ async fn cancelling_an_unknown_opening_acquisition_releases_the_exact_claim() {
 #[tokio::test(start_paused = true)]
 async fn an_unknown_acquisition_releases_if_backing_changes_before_retry() {
     let store = std::sync::Arc::new(FakeStore::default());
+    store.disable_coordination();
     store.seed(&record("runtime-a")).await.unwrap();
     store.lose_next_conversation_acquire_response();
     let service = service(
@@ -653,6 +654,14 @@ async fn nonzero_openings_require_the_exact_lease_and_registered_candidate() {
         .register_runtime_candidate(&lease, &reservation, "runtime-two")
         .await
         .unwrap();
+    let mut stale_record = store.get(&id()).await.unwrap().unwrap();
+    stale_record.session.last_seq += 1;
+    let stale_event = Event {
+        session_id: id(),
+        seq: stale_record.session.last_seq,
+        kind: EventKind::TurnStarted,
+        appended_at: String::new(),
+    };
     store
         .switch_runtime_authority(&mut lease, &candidate)
         .await
@@ -667,4 +676,21 @@ async fn nonzero_openings_require_the_exact_lease_and_registered_candidate() {
             .await,
         Err(StoreError::ConversationOpeningLost { .. })
     ));
+    let switched_tail = store.event_tail(&id()).await.unwrap();
+    assert!(matches!(
+        store
+            .commit_conversation_idempotent(
+                "stale-runtime-one-append",
+                &ConversationWriteAuthority::Active(link),
+                &stale_record,
+                &[stale_event],
+            )
+            .await,
+        Err(StoreError::ConversationLinkChanged { .. })
+    ));
+    assert_eq!(
+        store.event_tail(&id()).await.unwrap(),
+        switched_tail,
+        "the old authority cannot append after the successor marker"
+    );
 }
