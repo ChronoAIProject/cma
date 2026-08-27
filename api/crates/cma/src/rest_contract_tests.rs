@@ -29,8 +29,8 @@ use layer2_core::{
     RegisteredUser, Reserved, ScreenFactory, ScreenModel, ScreenSnapshot, ServiceCatalog,
     ServiceId, Session, SessionId, SessionLease, SessionListQuery, SessionMode, SessionPorts,
     SessionRecord, SessionService, SessionSpec, SessionStatus, SessionStore, SkillCatalog, SkillId,
-    SkillPack, SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry, UserDirectory,
-    UserDirectoryStore, MAX_PAGE_SIZE,
+    SkillPack, SkillPackStore, SkillSource, StoreError, StoredEvent, SubjectId, TerminalGeometry,
+    UserDirectory, UserDirectoryStore, MAX_PAGE_SIZE,
 };
 use layer3_adapter::{
     AdapterError, KernelAdapter, KernelCapabilities, RuntimeHandle, RuntimeMode, RuntimeSpec,
@@ -1025,6 +1025,26 @@ impl SkillSource for TestSkills {
     }
 }
 
+#[derive(Default)]
+struct MemorySkillPacks(Mutex<HashMap<String, Vec<SkillPack>>>);
+
+#[async_trait::async_trait]
+impl SkillPackStore for MemorySkillPacks {
+    async fn put(&self, id: &SessionId, packs: &[SkillPack]) -> Result<(), StoreError> {
+        self.0.lock().await.insert(id.0.clone(), packs.to_vec());
+        Ok(())
+    }
+
+    async fn get(&self, id: &SessionId) -> Result<Option<Vec<SkillPack>>, StoreError> {
+        Ok(self.0.lock().await.get(&id.0).cloned())
+    }
+
+    async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
+        self.0.lock().await.remove(&id.0);
+        Ok(())
+    }
+}
+
 struct NoActivity;
 
 #[async_trait::async_trait]
@@ -1359,6 +1379,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
         SessionPorts {
             handovers: Some(handovers),
             skills: Some(Arc::new(TestSkills)),
+            skill_packs: Some(Arc::new(MemorySkillPacks::default())),
             settings: Some(Arc::clone(&settings)),
             ..Default::default()
         },
@@ -4995,11 +5016,8 @@ async fn every_session_response_uses_the_complete_projection() {
     let (id, created) = create_session(&app).await;
     assert_creator(&created);
     assert_named_reach(&created);
-    assert!(
-        created["agent"].get("skills").is_none(),
-        "creation must not claim skills before provisioning records them: {created}"
-    );
-    assert_catalogue_received_credential(&catalogue, "create", false).await;
+    assert_named_skills(&created);
+    assert_catalogue_received_credential(&catalogue, "create", true).await;
     wait_until_ready(&sessions, &caller, &id).await;
 
     let listed = assert_json(
@@ -5093,7 +5111,7 @@ async fn directory_outages_cost_creator_names_not_session_responses() {
     let (id, created) = create_session(&app).await;
     assert_creator_absent(&created);
     assert_named_reach(&created);
-    assert!(created["agent"].get("skills").is_none());
+    assert_named_skills(&created);
     wait_until_ready(&sessions, &caller, &id).await;
 
     let listed = assert_json(
@@ -5216,7 +5234,7 @@ async fn catalogue_outages_cost_names_not_session_responses() {
     let (id, created) = create_session(&app).await;
     assert_creator(&created);
     assert_unnamed_reach(&created);
-    assert!(created["agent"].get("skills").is_none());
+    assert_unnamed_skills(&created);
     wait_until_ready(&sessions, &caller, &id).await;
 
     let listed = assert_json(

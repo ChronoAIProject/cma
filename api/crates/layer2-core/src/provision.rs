@@ -71,6 +71,7 @@ impl SessionService {
         adapter: &Arc<dyn KernelAdapter>,
         context: RuntimeStartContext<'_>,
         lease: &mut Option<SessionLease>,
+        prepared_skills: &mut Option<crate::provision_support::PreparedSkillPacks>,
     ) -> Result<(), StartFailure> {
         let RuntimeStartContext {
             geometry,
@@ -121,65 +122,19 @@ impl SessionService {
                     "this session's environment could not be prepared: {e}"
                 ))
             })?;
-        /*
-         * The session's skills, fetched before a sandbox is asked for.
-         *
-         * Here rather than after, because a skill that cannot be had is a
-         * session that would start without something it was told it has —
-         * and the agent only discovers that by failing to do what it was
-         * told it could. Fetching first means the refusal costs nothing but
-         * the request.
-         */
-        let skills = match (self.skills.as_ref(), environment.skills.is_empty()) {
-            (Some(source), false) => {
-                let wanted: Vec<crate::environment::SkillId> = environment
-                    .skills
-                    .iter()
-                    .map(|s| crate::environment::SkillId::new(s.clone()))
-                    .collect();
-                match source
-                    .packs_for(spec.caller_credential.as_deref(), &wanted)
-                    .await
-                {
-                    Ok(packs) => packs,
-                    /*
-                     * Whether this is fatal depends on whether anybody asked.
-                     *
-                     * At creation there is a caller on the line, the fetch is
-                     * made as them, and a session that cannot have what it was
-                     * described as having should not be started — §3, refused
-                     * by name before anything is provisioned.
-                     *
-                     * A rotation or a recovery has no caller and no credential
-                     * of theirs to ask with, so the fetch falls back to this
-                     * service's own identity, which sees only public skills.
-                     * Refusing there does not protect anybody: it destroys a
-                     * session somebody is working in, to avoid it missing a
-                     * file. It cost three live sessions the first time this
-                     * shipped, and losing the work is far worse than losing a
-                     * skill.
-                     */
-                    Err(why) if spec.caller_credential.is_some() => {
-                        return Err(StartFailure::permanent(format!(
-                            "this session's skills could not be prepared: {why}"
-                        )))
-                    }
-                    Err(why) => {
-                        tracing::warn!(
-                            session_id = %id,
-                            %why,
-                            "carrying this session forward without refetching its skills; \
-                             it keeps everything else it had"
-                        );
-                        Vec::new()
-                    }
-                }
-            }
-            // Nothing to fetch, or nothing that knows how. A deployment with
-            // no registry configured still starts sessions; they simply carry
-            // whatever the image does.
-            _ => Vec::new(),
+        let Some(prepared) = self
+            .prepare_skill_packs(
+                session,
+                &environment.skills,
+                prepared_skills,
+                true,
+                lease.as_ref(),
+            )
+            .await?
+        else {
+            return Ok(());
         };
+        let skills = &prepared.packs;
         self.note_progress(&id, ProvisioningStage::RuntimeRequested)
             .await;
         // What the runtime is told, translated once. Some kernels settle how
@@ -307,8 +262,6 @@ impl SessionService {
         if lease.is_none() {
             self.remember_runtime(&id, &handle).await;
         }
-        // And what it actually has, which is not always what it asked for.
-        self.remember_skills(&id, &skills).await;
         self.note_progress(&id, ProvisioningStage::RuntimeCreated)
             .await;
         // The skills are on the pod's disk by now: the adapter puts them there
@@ -674,6 +627,7 @@ impl SessionService {
                 }
             }
         };
+        let ready_claimed = current.clone();
         let mut ready = current;
         ready.session.geometry = geometry;
         ready.session.status = SessionStatus::Ready;
@@ -681,6 +635,15 @@ impl SessionService {
         // `recovering` would be a state a replacement session never leaves.
         ready.session.recovery_state = RecoveryState::Normal;
         ready.session.stop_reason = None;
+        // The grant becomes public in the same commit that makes this exact
+        // runtime interactive. Legacy fallback may legitimately have produced
+        // a different answer; before Ready the session remains noninteractive.
+        ready.session.granted_skills = Some(Self::granted_skills_for(skills));
+        ready.skill_packs = if let Some(digest) = prepared.stored_digest {
+            crate::store::SkillPackState::Stored { digest }
+        } else {
+            crate::store::SkillPackState::Staged(skills.clone())
+        };
         ready.session.runtime_version = match ready.pending_handover.as_ref().map(|pending| {
             &pending.target
         }) {
@@ -725,7 +688,10 @@ impl SessionService {
                 self.complete_handover_durably(&mut ready, &handover.rotating, ready_events)
                     .await
             }
-            None => self.persist_durably(&mut ready, ready_events).await,
+            None => {
+                self.publish_ready_durably(&mut ready, &ready_claimed, ready_events)
+                    .await
+            }
         };
         readiness.map_err(|error| {
             StartFailure::transient(format!(
@@ -824,6 +790,7 @@ impl SessionService {
             attached: None,
             attachments_issued: 0,
             context_ref,
+            skill_packs: durable.skill_packs,
             captured_len,
         };
         let replaced = self.entries.write().await.insert(id.clone(), entry);

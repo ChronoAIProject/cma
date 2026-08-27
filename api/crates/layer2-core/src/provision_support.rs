@@ -38,6 +38,8 @@ pub(crate) const PROVISION_DEADLINE: Duration = Duration::from_secs(600);
 /// Long enough to cover one bounded provider create and attachment attempt.
 /// Renewed at every durable/provider boundary rather than trusted for its age.
 pub(crate) const RUNTIME_OPERATION_LEASE_TTL: Duration = Duration::from_secs(600);
+/// Object I/O must finish while a freshly renewed runtime-operation lease is live.
+const SKILL_PACK_IO_DEADLINE: Duration = Duration::from_secs(180);
 /// Refresh a pending conversation before either it or its backing operation can expire.
 pub(crate) const CONVERSATION_OPENING_RENEW_INTERVAL: Duration = Duration::from_secs(300);
 
@@ -46,6 +48,8 @@ pub(crate) struct BringUpContext {
     pub(crate) outcome: crate::provision_failure::Abandonment,
     pub(crate) lease: Option<SessionLease>,
     pub(crate) handover: Option<crate::rotate::CoordinatedHandover>,
+    /// Exact bytes resolved before H1 was touched, when this is a handover.
+    pub(crate) prepared_skills: Option<PreparedSkillPacks>,
     /// Exact durable rotation claim this bring-up must publish or abandon.
     pub(crate) rotation_claim: Option<String>,
 }
@@ -59,8 +63,14 @@ impl BringUpContext {
             outcome,
             lease: None,
             handover: None,
+            prepared_skills: None,
             rotation_claim,
         }
+    }
+
+    pub(crate) fn with_prepared_skills(mut self, prepared: PreparedSkillPacks) -> Self {
+        self.prepared_skills = Some(prepared);
+        self
     }
 }
 
@@ -798,7 +808,643 @@ enum RuntimeInteractionAcquisition {
     },
 }
 
+/// Exact skill bytes retained across provider retries in one bring-up.
+#[derive(Clone)]
+pub(crate) struct PreparedSkillPacks {
+    pub(crate) packs: Vec<crate::store::SkillPack>,
+    pub(crate) stored_digest: Option<crate::store::SkillPackDigest>,
+}
+
+impl PreparedSkillPacks {
+    fn new(packs: Vec<crate::store::SkillPack>, externally_stored: bool) -> Self {
+        let stored_digest =
+            externally_stored.then(|| crate::store::SkillPackDigest::for_packs(&packs));
+        Self {
+            packs,
+            stored_digest,
+        }
+    }
+}
+
 impl SessionService {
+    /// Resolve a new session's skills while its caller is still present.
+    ///
+    /// The returned bytes and the grant derived from them enter the atomic
+    /// session create together. Nothing after that boundary needs the caller's
+    /// credential, so a process loss cannot turn a private grant into an empty
+    /// one merely because reconciliation has no request to borrow authority
+    /// from.
+    pub(crate) async fn resolve_skill_packs_for_creation(
+        &self,
+        caller_credential: Option<&str>,
+        wanted: &[String],
+    ) -> Result<Vec<crate::store::SkillPack>, crate::error::CoreError> {
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let source = self.skills.as_ref().ok_or_else(|| {
+            crate::error::CoreError::SkillCatalogUnavailable(
+                "this deployment has no source for the selected skills".into(),
+            )
+        })?;
+        let wanted = wanted
+            .iter()
+            .cloned()
+            .map(crate::environment::SkillId::new)
+            .collect::<Vec<_>>();
+        source
+            .packs_for(caller_credential, &wanted)
+            .await
+            .map_err(crate::error::CoreError::SkillCatalogUnavailable)
+    }
+
+    pub(crate) fn granted_skills_for(
+        packs: &[crate::store::SkillPack],
+    ) -> Vec<crate::environment::GrantedSkill> {
+        packs
+            .iter()
+            .map(|pack| crate::environment::GrantedSkill {
+                id: crate::environment::SkillId::new(pack.name.clone()),
+                version: pack.version.clone(),
+            })
+            .collect()
+    }
+
+    /// Resolve the exact bytes H2 will receive before H1 can be touched.
+    ///
+    /// Legacy registry fallback remains nonfatal, but its result stays in this
+    /// handover's cache until the Rotating commit durably stages it. Modern
+    /// sessions are read only from their recorded custody and never refetched.
+    pub(crate) async fn prepare_skill_packs_for_handover(
+        &self,
+        session: &Session,
+        lease: Option<&SessionLease>,
+    ) -> Result<PreparedSkillPacks, crate::provision_failure::StartFailure> {
+        let environment = self
+            .environments
+            .resolve_for_owner(&session.owner, session.environment_profile.as_ref())
+            .await
+            .map_err(|error| {
+                crate::provision_failure::StartFailure::transient(format!(
+                    "this session's environment could not be prepared before handover: {error}"
+                ))
+            })?;
+        let mut prepared = None;
+        self.prepare_skill_packs(session, &environment.skills, &mut prepared, false, lease)
+            .await?
+            .ok_or_else(|| {
+                crate::provision_failure::StartFailure::transient(
+                    "this session changed before its skills were prepared".into(),
+                )
+            })
+    }
+
+    /// Restore exact durable bytes, or perform the one nonfatal fallback that
+    /// legacy sessions require. Provider retries retain the returned value and
+    /// never ask the mutable registry twice.
+    pub(crate) async fn prepare_skill_packs(
+        &self,
+        session: &Session,
+        legacy_wanted: &[String],
+        prepared: &mut Option<PreparedSkillPacks>,
+        stage_legacy: bool,
+        lease: Option<&SessionLease>,
+    ) -> Result<Option<PreparedSkillPacks>, crate::provision_failure::StartFailure> {
+        use crate::store::SkillPackState;
+
+        let id = &session.id;
+        let _lifecycle = self.lock_lifecycle(id).await;
+        let mut record = match self.store.get(id).await {
+            Ok(Some(record))
+                if record.session.wants_runtime() && record.session.kernel == session.kernel =>
+            {
+                record
+            }
+            Ok(_) => return Ok(None),
+            Err(error) => {
+                return Err(crate::provision_failure::StartFailure::transient(format!(
+                    "this session could not be checked before its skills were prepared: {error}"
+                )))
+            }
+        };
+
+        if matches!(&record.skill_packs, SkillPackState::StagedSummary) {
+            return Err(crate::provision_failure::StartFailure::transient(
+                "the session store returned a projected skill custody summary for an exact read"
+                    .into(),
+            ));
+        }
+        if matches!(
+            &record.skill_packs,
+            SkillPackState::CleanupPending | SkillPackState::Cleaned
+        ) {
+            return Ok(None);
+        }
+        if let Some(cached) = prepared.as_ref() {
+            let custody_matches = match &record.skill_packs {
+                SkillPackState::Staged(packs) => packs == &cached.packs,
+                SkillPackState::Stored { digest } => cached.stored_digest == Some(*digest),
+                SkillPackState::LegacyHandover {
+                    packs,
+                    stored_digest,
+                    ..
+                } => packs == &cached.packs && stored_digest == &cached.stored_digest,
+                SkillPackState::Legacy
+                | SkillPackState::StagedSummary
+                | SkillPackState::CleanupPending
+                | SkillPackState::Cleaned => false,
+            };
+            if !custody_matches {
+                return Err(crate::provision_failure::StartFailure::transient(
+                    "this session's skill custody changed during provider retry".into(),
+                ));
+            }
+            return Ok(Some(cached.clone()));
+        }
+
+        let (packs, externally_stored) = match record.skill_packs.clone() {
+            SkillPackState::Staged(packs) => {
+                if record.session.status.is_interactive() {
+                    self.require_matching_skill_grant(&record, &packs)?;
+                }
+                self.validate_prepared_skill_packs(&packs)?;
+                let stored = self.store_staged_skill_packs(id, &packs, lease).await?;
+                (packs, stored)
+            }
+            SkillPackState::Stored { digest } => {
+                let packs = self.read_stored_skill_packs(id, lease).await?;
+                if crate::store::SkillPackDigest::for_packs(&packs) != digest {
+                    return Err(crate::provision_failure::StartFailure::transient(
+                        "this session's stored skill packs failed their integrity check".into(),
+                    ));
+                }
+                self.validate_prepared_skill_packs(&packs)?;
+                self.require_matching_skill_grant(&record, &packs)?;
+                tracing::info!(
+                    session_id = %id,
+                    skills = packs.len(),
+                    "restored this session's stored skills"
+                );
+                (packs, true)
+            }
+            SkillPackState::LegacyHandover {
+                source_runtime_id,
+                packs,
+                stored_digest,
+                ..
+            } => {
+                if source_runtime_id.is_empty() {
+                    return Err(crate::provision_failure::StartFailure::transient(
+                        "this session's legacy skill handover has no exact source runtime".into(),
+                    ));
+                }
+                self.validate_prepared_skill_packs(&packs)?;
+                if stored_digest.is_some_and(|digest| {
+                    crate::store::SkillPackDigest::for_packs(&packs) != digest
+                }) {
+                    return Err(crate::provision_failure::StartFailure::transient(
+                        "this session's legacy handover skill receipt does not match its exact bytes"
+                            .into(),
+                    ));
+                }
+                // Replacing the deterministic object with the same candidate is
+                // safe and repairs a lost object without consulting the mutable
+                // registry. Without an external store the inline bytes remain
+                // the durable retry source.
+                let stored = self.store_staged_skill_packs(id, &packs, lease).await?;
+                (packs, stored)
+            }
+            SkillPackState::Legacy => {
+                let packs = if let Some(store) = self.skill_packs.as_ref() {
+                    self.renew_skill_pack_io_lease(lease, id, "read").await?;
+                    let result = tokio::time::timeout(SKILL_PACK_IO_DEADLINE, store.get(id)).await;
+                    self.renew_skill_pack_io_lease(lease, id, "read").await?;
+                    match result {
+                        Err(_) => {
+                            return Err(crate::provision_failure::StartFailure::transient(format!(
+                                "this session's stored skills did not finish reading within {}s",
+                                SKILL_PACK_IO_DEADLINE.as_secs()
+                            )))
+                        }
+                        Ok(result) => match result {
+                            Ok(Some(packs)) => packs,
+                            Ok(None) => {
+                                self.refetch_legacy_skill_packs(&record, legacy_wanted)
+                                    .await
+                            }
+                            Err(error) => {
+                                return Err(crate::provision_failure::StartFailure::transient(
+                                    format!(
+                                        "this session's stored skills could not be read: {error}"
+                                    ),
+                                ))
+                            }
+                        },
+                    }
+                } else {
+                    self.refetch_legacy_skill_packs(&record, legacy_wanted)
+                        .await
+                };
+                self.validate_prepared_skill_packs(&packs)?;
+
+                // Ordinary recovery stages the fallback before provider create.
+                // A handover stages it atomically with the Rotating boundary so
+                // a failed preflight leaves H1's legacy grant/custody coherent.
+                if stage_legacy {
+                    self.persist_skill_pack_state_durably(
+                        &mut record,
+                        SkillPackState::Staged(packs.clone()),
+                    )
+                    .await
+                    .map_err(|error| {
+                        crate::provision_failure::StartFailure::transient(format!(
+                            "legacy skill bytes could not be staged for recovery: {error}"
+                        ))
+                    })?;
+                }
+                let stored = self.store_staged_skill_packs(id, &packs, lease).await?;
+                (packs, stored)
+            }
+            SkillPackState::StagedSummary => {
+                return Err(crate::provision_failure::StartFailure::transient(
+                    "the session store returned a projected skill custody summary for an exact read"
+                        .into(),
+                ))
+            }
+            SkillPackState::CleanupPending | SkillPackState::Cleaned => return Ok(None),
+        };
+
+        let resolved = PreparedSkillPacks::new(packs, externally_stored);
+        *prepared = Some(resolved.clone());
+        Ok(Some(resolved))
+    }
+
+    fn validate_prepared_skill_packs(
+        &self,
+        packs: &[crate::store::SkillPack],
+    ) -> Result<(), crate::provision_failure::StartFailure> {
+        crate::store::validate_skill_packs(packs).map_err(|error| {
+            crate::provision_failure::StartFailure::transient(format!(
+                "this session's skill packs are invalid: {error}"
+            ))
+        })?;
+        if let Some(store) = self.skill_packs.as_ref() {
+            store.validate(packs).map_err(|error| {
+                crate::provision_failure::StartFailure::transient(format!(
+                    "this session's skill packs cannot be represented by its store: {error}"
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    async fn read_stored_skill_packs(
+        &self,
+        id: &SessionId,
+        lease: Option<&SessionLease>,
+    ) -> Result<Vec<crate::store::SkillPack>, crate::provision_failure::StartFailure> {
+        let store = self.skill_packs.as_ref().ok_or_else(|| {
+            crate::provision_failure::StartFailure::transient(
+                "this session's skill store is not configured".into(),
+            )
+        })?;
+        self.renew_skill_pack_io_lease(lease, id, "read").await?;
+        let result = tokio::time::timeout(SKILL_PACK_IO_DEADLINE, store.get(id)).await;
+        self.renew_skill_pack_io_lease(lease, id, "read").await?;
+        result
+            .map_err(|_| {
+                crate::provision_failure::StartFailure::transient(format!(
+                    "this session's stored skills did not finish reading within {}s",
+                    SKILL_PACK_IO_DEADLINE.as_secs()
+                ))
+            })?
+            .map_err(|error| {
+                crate::provision_failure::StartFailure::transient(format!(
+                    "this session's stored skills could not be read: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                crate::provision_failure::StartFailure::transient(
+                    "this session's recorded skill packs are missing".into(),
+                )
+            })
+    }
+
+    async fn store_staged_skill_packs(
+        &self,
+        id: &SessionId,
+        packs: &[crate::store::SkillPack],
+        lease: Option<&SessionLease>,
+    ) -> Result<bool, crate::provision_failure::StartFailure> {
+        let Some(store) = self.skill_packs.as_ref() else {
+            return Ok(false);
+        };
+        self.renew_skill_pack_io_lease(lease, id, "write").await?;
+        let result = tokio::time::timeout(SKILL_PACK_IO_DEADLINE, store.put(id, packs)).await;
+        self.renew_skill_pack_io_lease(lease, id, "write").await?;
+        result
+            .map_err(|_| {
+                crate::provision_failure::StartFailure::transient(format!(
+                    "this session's skills did not finish storing within {}s",
+                    SKILL_PACK_IO_DEADLINE.as_secs()
+                ))
+            })?
+            .map_err(|error| {
+                crate::provision_failure::StartFailure::transient(format!(
+                    "this session's skills could not be stored for recovery: {error}"
+                ))
+            })?;
+        Ok(true)
+    }
+
+    async fn renew_skill_pack_io_lease(
+        &self,
+        lease: Option<&SessionLease>,
+        id: &SessionId,
+        operation: &str,
+    ) -> Result<(), crate::provision_failure::StartFailure> {
+        self.renew_runtime_lease(lease).await.map_err(|error| {
+            crate::provision_failure::StartFailure::transient(format!(
+                "runtime authority expired before skill pack {operation} for {id}: {error}"
+            ))
+        })
+    }
+
+    async fn refetch_legacy_skill_packs(
+        &self,
+        record: &crate::store::SessionRecord,
+        legacy_wanted: &[String],
+    ) -> Vec<crate::store::SkillPack> {
+        let wanted = record.session.granted_skills.as_ref().map_or_else(
+            || {
+                legacy_wanted
+                    .iter()
+                    .cloned()
+                    .map(crate::environment::SkillId::new)
+                    .collect::<Vec<_>>()
+            },
+            |granted| granted.iter().map(|skill| skill.id.clone()).collect(),
+        );
+        if wanted.is_empty() {
+            return Vec::new();
+        }
+        let Some(source) = self.skills.as_ref() else {
+            tracing::warn!(
+                session_id = %record.session.id,
+                "legacy skill packs are absent and no registry is configured; carrying the session forward without skills"
+            );
+            return Vec::new();
+        };
+        match source.packs_for(None, &wanted).await {
+            Ok(packs) => packs,
+            Err(why) => {
+                tracing::warn!(
+                    session_id = %record.session.id,
+                    %why,
+                    "legacy skill packs could not be refetched; carrying the session forward without skills"
+                );
+                Vec::new()
+            }
+        }
+    }
+
+    fn require_matching_skill_grant(
+        &self,
+        record: &crate::store::SessionRecord,
+        packs: &[crate::store::SkillPack],
+    ) -> Result<(), crate::provision_failure::StartFailure> {
+        let installed = Self::granted_skills_for(packs);
+        match record.session.granted_skills.as_deref() {
+            Some(granted) if granted == installed.as_slice() => Ok(()),
+            Some(_) => Err(crate::provision_failure::StartFailure::transient(
+                "the stored skill packs do not match this session's frozen grant".into(),
+            )),
+            None => Err(crate::provision_failure::StartFailure::transient(
+                "this session has skill bytes but no frozen grant".into(),
+            )),
+        }
+    }
+
+    /// Drive one terminal session through durable cleanup intent and acknowledgement.
+    ///
+    /// The row remains the owner until deterministic object deletion succeeds.
+    /// Every state write owns only `skill_packs`, so unrelated event history can
+    /// advance without reopening custody or losing the cleanup acknowledgement.
+    pub(crate) async fn finish_skill_pack_cleanup(
+        &self,
+        record: &mut crate::store::SessionRecord,
+        lease: Option<&SessionLease>,
+    ) -> Result<(), StoreError> {
+        use crate::store::SkillPackState;
+
+        let id = record.session.id.clone();
+        loop {
+            self.renew_runtime_lease(lease).await?;
+            if !record.session.status.is_terminal() {
+                return Err(StoreError::Malformed(format!(
+                    "skill pack cleanup requires terminal session {id}"
+                )));
+            }
+            match &record.skill_packs {
+                SkillPackState::Cleaned => {
+                    self.synchronize_live_skill_pack_custody(record).await;
+                    return Ok(());
+                }
+                // An explicitly empty staged set has no object when this
+                // deployment has never had a pack store. Avoid making ordinary
+                // no-skill sessions undeletable while preserving every state
+                // that could still name external bytes.
+                SkillPackState::Staged(packs) if packs.is_empty() && self.skill_packs.is_none() => {
+                    if self
+                        .advance_skill_pack_cleanup_state(record, SkillPackState::Cleaned)
+                        .await?
+                    {
+                        self.synchronize_live_skill_pack_custody(record).await;
+                        return Ok(());
+                    }
+                    continue;
+                }
+                SkillPackState::LegacyHandover {
+                    stored_digest: None,
+                    ..
+                } if self.skill_packs.is_none() => {
+                    if self
+                        .advance_skill_pack_cleanup_state(record, SkillPackState::Cleaned)
+                        .await?
+                    {
+                        self.synchronize_live_skill_pack_custody(record).await;
+                        return Ok(());
+                    }
+                    continue;
+                }
+                SkillPackState::CleanupPending => {}
+                SkillPackState::StagedSummary => {
+                    return Err(StoreError::Malformed(format!(
+                        "skill pack cleanup for {id} received a projected custody summary from an exact read"
+                    )))
+                }
+                SkillPackState::Legacy
+                | SkillPackState::LegacyHandover { .. }
+                | SkillPackState::Staged(_)
+                | SkillPackState::Stored { .. } => {
+                    if self.skill_packs.is_none() {
+                        return Err(StoreError::Unavailable(format!(
+                            "skill pack cleanup for {id} requires a configured skill pack store"
+                        )));
+                    }
+                    if !self
+                        .advance_skill_pack_cleanup_state(record, SkillPackState::CleanupPending)
+                        .await?
+                    {
+                        continue;
+                    }
+                    self.synchronize_live_skill_pack_custody(record).await;
+                }
+            }
+
+            let store = self.skill_packs.as_ref().ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "skill pack cleanup for {id} is pending but no skill pack store is configured"
+                ))
+            })?;
+            self.renew_runtime_lease(lease).await?;
+            let deletion = tokio::time::timeout(SKILL_PACK_IO_DEADLINE, store.delete(&id)).await;
+            // If deletion outlives coordinated authority, leave the durable
+            // Pending receipt for a fresh lease holder to replay idempotently.
+            self.renew_runtime_lease(lease).await?;
+            deletion.map_err(|_| {
+                StoreError::Unavailable(format!(
+                    "skill pack cleanup for {id} did not finish within {}s",
+                    SKILL_PACK_IO_DEADLINE.as_secs()
+                ))
+            })??;
+            if self
+                .advance_skill_pack_cleanup_state(record, SkillPackState::Cleaned)
+                .await?
+            {
+                self.synchronize_live_skill_pack_custody(record).await;
+                tracing::info!(session_id = %id, "session skill custody cleaned");
+                return Ok(());
+            }
+        }
+    }
+
+    /// Persist one cleanup state, reloading rather than guessing after a race.
+    async fn advance_skill_pack_cleanup_state(
+        &self,
+        record: &mut crate::store::SessionRecord,
+        state: crate::store::SkillPackState,
+    ) -> Result<bool, StoreError> {
+        let id = record.session.id.clone();
+        match self.persist_skill_pack_state_durably(record, state).await {
+            Ok(()) => Ok(true),
+            Err(StoreError::RevisionConflict { .. } | StoreError::SessionTerminated { .. }) => {
+                *record = self
+                    .store
+                    .get(&id)
+                    .await?
+                    .ok_or(StoreError::SessionDeleted { id })?;
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Acquire fresh cross-replica and local authority for terminal skill cleanup.
+    ///
+    /// The acquisition and release live in one method so every failure after a
+    /// lease is granted still releases it. Reconciliation uses `Reclaim`; an
+    /// owner deletion uses `Lifecycle` and waits for this same acknowledgement
+    /// before it is allowed to erase the row.
+    pub(crate) async fn finish_terminal_skill_pack_cleanup_with_authority(
+        &self,
+        id: &SessionId,
+        operation: SessionOperation,
+    ) -> Result<crate::store::SessionRecord, StoreError> {
+        let initial = self
+            .store
+            .get(id)
+            .await?
+            .ok_or_else(|| StoreError::SessionDeleted { id: id.clone() })?;
+        if !initial.session.status.is_terminal() {
+            return Err(StoreError::Malformed(format!(
+                "skill pack cleanup requires terminal session {id}"
+            )));
+        }
+        if initial.skill_packs == crate::store::SkillPackState::Cleaned {
+            self.synchronize_live_skill_pack_custody(&initial).await;
+            return Ok(initial);
+        }
+
+        let lease = self.acquire_runtime_lease_at(&initial, operation).await?;
+        let lifecycle = self.lock_lifecycle(id).await;
+        let result = async {
+            self.renew_runtime_lease(lease.as_ref()).await?;
+            let mut record = self
+                .store
+                .get(id)
+                .await?
+                .ok_or_else(|| StoreError::SessionDeleted { id: id.clone() })?;
+            self.finish_skill_pack_cleanup(&mut record, lease.as_ref())
+                .await?;
+            Ok(record)
+        }
+        .await;
+        drop(lifecycle);
+
+        let release = match lease.as_ref() {
+            Some(held) => self.store.release_session_lease(held).await,
+            None => Ok(()),
+        };
+        match (result, release) {
+            (Err(error), release) => {
+                if let Err(release_error) = release {
+                    tracing::debug!(
+                        session_id = %id,
+                        %release_error,
+                        "skill cleanup lease ended before explicit release"
+                    );
+                }
+                Err(error)
+            }
+            (Ok(record), Ok(())) => Ok(record),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    /// Continue compatibility cleanup outside the retained lane operation.
+    ///
+    /// A retained continuation cannot await a new write on its own lane. This
+    /// scheduler lets that continuation return first, then reacquires the local
+    /// lifecycle gate and drives the durable saga from a fresh terminal row.
+    pub(crate) fn finish_skill_pack_cleanup_after_commit(self: &Arc<Self>, id: SessionId) {
+        let service = Arc::clone(self);
+        crate::log::spawn_retained_work(async move {
+            if let Err(error) = service
+                .finish_terminal_skill_pack_cleanup_with_authority(&id, SessionOperation::Reclaim)
+                .await
+            {
+                tracing::error!(
+                    session_id = %id,
+                    %error,
+                    "session skill cleanup remains durable for reconciliation"
+                );
+            }
+        });
+    }
+
+    async fn synchronize_live_skill_pack_custody(&self, record: &crate::store::SessionRecord) {
+        if let Some(entry) = self
+            .entries
+            .write()
+            .await
+            .get_mut(&record.session.id)
+            .filter(|entry| entry.session.status.is_terminal())
+        {
+            entry.skill_packs.clone_from(&record.skill_packs);
+        }
+    }
+
     /// Provision a runtime for an existing session and attach its terminal.
     pub(crate) async fn bring_up(
         self: &Arc<Self>,
@@ -830,6 +1476,7 @@ impl SessionService {
             outcome,
             mut lease,
             handover,
+            mut prepared_skills,
             rotation_claim,
         } = context;
         let id = session.id.clone();
@@ -921,7 +1568,12 @@ impl SessionService {
                             tokio::time::timeout(
                                 PROVISION_DEADLINE,
                                 self.start_with_retries(
-                                    &session, &spec, &adapter, start, &mut lease,
+                                    &session,
+                                    &spec,
+                                    &adapter,
+                                    start,
+                                    &mut lease,
+                                    &mut prepared_skills,
                                 ),
                             )
                             .await
@@ -940,7 +1592,14 @@ impl SessionService {
         } else {
             tokio::time::timeout(
                 PROVISION_DEADLINE,
-                self.start_with_retries(&session, &spec, &adapter, start, &mut lease),
+                self.start_with_retries(
+                    &session,
+                    &spec,
+                    &adapter,
+                    start,
+                    &mut lease,
+                    &mut prepared_skills,
+                ),
             )
             .await
         };
@@ -1023,7 +1682,8 @@ impl SessionService {
                     %error,
                     "cannot record the coordinated runtime abandonment; leaving its debt intact"
                 ),
-                Ok(Some(record)) => {
+                Ok(Some(mut record)) => {
+                    let mut advanced = false;
                     if let Some(held) = lease.as_mut() {
                         let boundary = SessionBoundary::for_record(
                             &record,
@@ -1035,6 +1695,28 @@ impl SessionService {
                                 %error,
                                 "the abandonment committed but its runtime lease could not advance"
                             );
+                        } else {
+                            advanced = true;
+                        }
+                    }
+                    if advanced && record.session.status.is_terminal() {
+                        if let Some(held) = lease.as_ref() {
+                            if let Err(error) = self.renew_runtime_lease(Some(held)).await {
+                                tracing::warn!(
+                                    session_id = %id,
+                                    %error,
+                                    "the abandonment lease expired before skill cleanup"
+                                );
+                            } else if let Err(error) = self
+                                .finish_skill_pack_cleanup(&mut record, Some(held))
+                                .await
+                            {
+                                tracing::error!(
+                                    session_id = %id,
+                                    %error,
+                                    "abandoned session skill cleanup remains pending"
+                                );
+                            }
                         }
                     }
                 }
@@ -1100,15 +1782,19 @@ impl SessionService {
                 );
             }
             Ok(Err(failure)) => {
-                if let Err(error) = self
+                match self
                     .abandon(&id, &adapter, &failure, outcome, rotation_claim.as_deref())
                     .await
                 {
-                    tracing::error!(
+                    Ok(Some(record)) if record.session.status.is_terminal() => {
+                        self.finish_skill_pack_cleanup_after_commit(id.clone());
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::error!(
                         session_id = %id,
                         %error,
                         "cannot record the runtime abandonment; leaving it intact"
-                    );
+                    ),
                 }
             }
             Err(_) if coordinated_failure => {
@@ -1118,7 +1804,7 @@ impl SessionService {
                 );
             }
             Err(_) => {
-                if let Err(error) = self
+                match self
                     .abandon(
                         &id,
                         &adapter,
@@ -1131,11 +1817,15 @@ impl SessionService {
                     )
                     .await
                 {
-                    tracing::error!(
+                    Ok(Some(record)) if record.session.status.is_terminal() => {
+                        self.finish_skill_pack_cleanup_after_commit(id.clone());
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::error!(
                         session_id = %id,
                         %error,
                         "cannot record the timed-out runtime abandonment; leaving it intact"
-                    );
+                    ),
                 }
             }
         }
@@ -1767,49 +2457,6 @@ impl SessionService {
             .await
         {
             tracing::warn!(session_id = %id, error = %error, "cannot record progress");
-        }
-    }
-
-    /// Record the runtime a session was given, as soon as it exists.
-    /// Write down the skills this runtime was actually given.
-    ///
-    /// Not the set the session asked for. A rotation has no caller to fetch as
-    /// and falls back to this service's own identity, which sees only public
-    /// skills - so a session can legitimately come back with fewer than it
-    /// started with, and #442 is about stopping that. Until it does, the record
-    /// must say what is on the disk rather than what was once requested.
-    ///
-    /// The difference is not cosmetic: the record is what every interface
-    /// reports, so a record describing skills the sandbox does not have is an
-    /// interface telling somebody their agent can do something it cannot.
-    pub(crate) async fn remember_skills(&self, id: &SessionId, skills: &[crate::SkillPack]) {
-        let installed: Vec<crate::environment::GrantedSkill> = skills
-            .iter()
-            .map(|pack| crate::environment::GrantedSkill {
-                id: crate::environment::SkillId::new(pack.name.clone()),
-                version: pack.version.clone(),
-            })
-            .collect();
-        let Ok(Some(mut record)) = self.store.get(id).await else {
-            tracing::error!(session_id = %id, "cannot record the skills: session is gone");
-            return;
-        };
-        if record.session.granted_skills.as_deref() == Some(installed.as_slice()) {
-            return;
-        }
-        tracing::info!(
-            session_id = %id,
-            had = ?record.session.granted_skills,
-            now = ?installed,
-            "recording the skills this runtime was actually given"
-        );
-        record.session.granted_skills = Some(installed);
-        if let Err(e) = self.persist_durably(&mut record, Vec::new()).await {
-            tracing::error!(
-                session_id = %id,
-                error = %e,
-                "skills installed but not recorded; the record now overstates what this session has"
-            );
         }
     }
 

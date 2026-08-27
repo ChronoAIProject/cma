@@ -302,6 +302,31 @@ impl SessionService {
             return Err(CoreError::InvalidState);
         };
 
+        // Refresh before acquiring cross-replica provider authority. The lease
+        // must cover every custody read or write as well as snapshot/provider
+        // work; otherwise a remote lifecycle operation can delete the object
+        // between preflight and H2 publication.
+        let record = match self.store.get(&id).await {
+            Ok(Some(current))
+                if current.session.wants_runtime()
+                    && !current.is_effectively_rotating()
+                    && current.session.kernel == record.session.kernel
+                    && current.runtime_id.as_deref() == Some(old.0.as_str()) =>
+            {
+                current
+            }
+            Ok(_) => {
+                self.finish_start(&id).await;
+                return Err(CoreError::InvalidState);
+            }
+            Err(error) => {
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(format!(
+                    "this session could not be checked before handover authority was acquired, so its runtime has not been moved: {error}"
+                )));
+            }
+        };
+
         let lease = match self
             .acquire_runtime_lease_at(&record, SessionOperation::Handover)
             .await
@@ -315,10 +340,68 @@ impl SessionService {
             }
         };
         if let Some(lease) = lease {
+            if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
+                let _ = self.store.release_session_lease(&lease).await;
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(format!(
+                    "the handover lease expired before skill preparation: {error}"
+                )));
+            }
+            let prepared_skills = match self
+                .prepare_skill_packs_for_handover(&record.session, Some(&lease))
+                .await
+            {
+                Ok(prepared) => prepared,
+                Err(failure) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        reason = %failure.reason,
+                        "cannot reproduce this session's frozen skills; leaving its runtime in place"
+                    );
+                    let _ = self.store.release_session_lease(&lease).await;
+                    self.finish_start(&id).await;
+                    return Err(CoreError::RuntimeUnavailable(format!(
+                        "this session's frozen skills could not be prepared, so its runtime has not been moved: {}",
+                        failure.reason
+                    )));
+                }
+            };
+            if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
+                tracing::warn!(
+                    session_id = %id,
+                    %error,
+                    "the handover lease expired while exact skill bytes were being prepared"
+                );
+                let _ = self.store.release_session_lease(&lease).await;
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(
+                    "this session's skill preflight outlived its handover authority; its runtime has not been moved"
+                        .into(),
+                ));
+            }
             return self
-                .carry_over_coordinated(record, change, adapter, old, lease)
+                .carry_over_coordinated(record, change, adapter, old, lease, prepared_skills)
                 .await;
         }
+
+        let prepared_skills = match self
+            .prepare_skill_packs_for_handover(&record.session, None)
+            .await
+        {
+            Ok(prepared) => prepared,
+            Err(failure) => {
+                tracing::warn!(
+                    session_id = %id,
+                    reason = %failure.reason,
+                    "cannot reproduce this session's frozen skills; leaving its runtime in place"
+                );
+                self.finish_start(&id).await;
+                return Err(CoreError::RuntimeUnavailable(format!(
+                    "this session's frozen skills could not be prepared, so its runtime has not been moved: {}",
+                    failure.reason
+                )));
+            }
+        };
 
         let Some(handovers) = self.handovers.as_ref().cloned() else {
             self.finish_start(&id).await;
@@ -385,7 +468,7 @@ impl SessionService {
         // The claim and recovery descriptor become durable in one write while
         // all post-snapshot input remains held behind the same fence.
         let marked = self
-            .mark_rotating(&record, &change, Some(pending.clone()))
+            .mark_rotating(&record, &change, Some(pending.clone()), 0, &prepared_skills)
             .await;
         drop(input_fence);
         let Some(rotating) = marked else {
@@ -515,7 +598,8 @@ impl SessionService {
                     crate::provision_support::BringUpContext::compatibility(
                         crate::provision_failure::Abandonment::Keep,
                         rotation_claim,
-                    ),
+                    )
+                    .with_prepared_skills(prepared_skills),
                 )
                 .await;
         });
@@ -690,6 +774,7 @@ impl SessionService {
         adapter: Arc<dyn layer3_adapter::KernelAdapter>,
         old: RuntimeHandle,
         mut lease: SessionLease,
+        prepared_skills: crate::provision_support::PreparedSkillPacks,
     ) -> Result<Session, CoreError> {
         let id = record.session.id.clone();
         if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
@@ -715,7 +800,15 @@ impl SessionService {
             }
         };
 
-        let marked = self.mark_rotating(&record, &change, None).await;
+        let marked = self
+            .mark_rotating(
+                &record,
+                &change,
+                None,
+                lease.boundary.authority.generation,
+                &prepared_skills,
+            )
+            .await;
         drop(input_fence);
         let Some(rotating) = marked else {
             let _ = self.store.release_session_lease(&lease).await;
@@ -808,6 +901,7 @@ impl SessionService {
                         outcome: crate::provision_failure::Abandonment::Keep,
                         lease: Some(lease),
                         handover: Some(handover),
+                        prepared_skills: Some(prepared_skills),
                         rotation_claim,
                     },
                 )
@@ -866,6 +960,7 @@ impl SessionService {
         restored.session.stop_reason = original.session.stop_reason;
         restored.rotation_claim = None;
         restored.pending_handover = None;
+        restored.skill_packs.clone_from(&original.skill_packs);
         let event = Event {
             session_id: id.clone(),
             seq: 0,
@@ -906,6 +1001,8 @@ impl SessionService {
         record: &SessionRecord,
         change: &Handover,
         pending_handover: Option<PendingHandover>,
+        source_generation: u64,
+        prepared_skills: &crate::provision_support::PreparedSkillPacks,
     ) -> Option<SessionRecord> {
         let mut rotating = record.clone();
         rotating.session.status = SessionStatus::Rotating;
@@ -915,6 +1012,33 @@ impl SessionService {
             |pending| pending.claim.clone(),
         ));
         rotating.pending_handover = pending_handover;
+        if matches!(
+            &record.skill_packs,
+            crate::store::SkillPackState::Legacy
+                | crate::store::SkillPackState::LegacyHandover { .. }
+        ) {
+            let Some(source_runtime_id) = record
+                .runtime_id
+                .as_ref()
+                .filter(|runtime_id| !runtime_id.is_empty())
+                .cloned()
+            else {
+                tracing::error!(
+                    session_id = %record.session.id,
+                    "cannot record legacy skill handover without an exact source runtime"
+                );
+                return None;
+            };
+            // The legacy candidate can differ from H1's old grant. Publish it
+            // only with the noninteractive Rotating boundary; Ready later makes
+            // the matching grant visible with the exact H2 runtime.
+            rotating.skill_packs = crate::store::SkillPackState::LegacyHandover {
+                source_runtime_id,
+                source_generation,
+                packs: prepared_skills.packs.clone(),
+                stored_digest: prepared_skills.stored_digest,
+            };
+        }
         let id = rotating.session.id.clone();
         let events = vec![
             Event {
@@ -935,7 +1059,10 @@ impl SessionService {
                 appended_at: String::new(),
             },
         ];
-        if let Err(e) = self.persist_durably(&mut rotating, events).await {
+        if let Err(e) = self
+            .mark_handover_durably(&mut rotating, record, events)
+            .await
+        {
             tracing::error!(session_id = %id, error = %e, "cannot record the handover");
             return None;
         }

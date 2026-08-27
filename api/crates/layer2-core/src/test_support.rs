@@ -19,6 +19,7 @@ use crate::coordination::{
     RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
     SessionLeaseRequest, SessionOperation,
 };
+use crate::environment::Baseline;
 use crate::environment_service::EnvironmentProfileService;
 use crate::event::{Event, EventKind, StoredEvent};
 use crate::ids::{KernelId, SessionId, SubjectId};
@@ -43,6 +44,8 @@ pub(crate) struct FakeStore {
     coordination: Mutex<HashMap<String, FakeCoordination>>,
     /// Durable receipts for whole record/event transactions, including empty batches.
     write_receipts: Mutex<HashMap<String, (SessionId, u64)>>,
+    /// Recoverable skill bytes shared by restarted environment-aware fixtures.
+    skill_pack_objects: Mutex<HashMap<String, Vec<crate::store::SkillPack>>>,
     /// Successful record writes, so idempotent migrations can be asserted.
     pub(crate) upserts: std::sync::atomic::AtomicUsize,
     /// Newly acquired lifecycle leases, so tests can prove a failure path was
@@ -1885,7 +1888,15 @@ impl SessionStore for FakeStore {
                 });
             }
         }
-        self.sessions.lock().await.remove(&id.0);
+        let mut sessions = self.sessions.lock().await;
+        if sessions
+            .get(&id.0)
+            .is_some_and(|record| record.skill_packs != crate::store::SkillPackState::Cleaned)
+        {
+            return Err(StoreError::SessionSkillCleanupPending { id: id.clone() });
+        }
+        sessions.remove(&id.0);
+        drop(sessions);
         self.events.lock().await.retain(|e| &e.session_id != id);
         coordination.remove(&id.0);
         self.write_receipts
@@ -1991,6 +2002,68 @@ impl SessionStore for FakeStore {
     }
 }
 
+struct FixtureSkillSource;
+
+#[async_trait::async_trait]
+impl crate::store::SkillSource for FixtureSkillSource {
+    async fn packs_for(
+        &self,
+        _caller_credential: Option<&str>,
+        skills: &[crate::environment::SkillId],
+    ) -> Result<Vec<crate::store::SkillPack>, String> {
+        Ok(skills
+            .iter()
+            .map(|skill| crate::store::SkillPack {
+                name: skill.0.clone(),
+                version: Some("test-fixture".into()),
+                files: vec![("SKILL.md".into(), format!("# {}\n", skill.0).into_bytes())],
+            })
+            .collect())
+    }
+}
+
+struct FixtureSkillPackStore(Arc<FakeStore>);
+
+#[async_trait::async_trait]
+impl crate::store::SkillPackStore for FixtureSkillPackStore {
+    async fn put(
+        &self,
+        id: &SessionId,
+        packs: &[crate::store::SkillPack],
+    ) -> Result<(), StoreError> {
+        self.0
+            .skill_pack_objects
+            .lock()
+            .await
+            .insert(id.0.clone(), packs.to_vec());
+        Ok(())
+    }
+
+    async fn get(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<Vec<crate::store::SkillPack>>, StoreError> {
+        Ok(self.0.skill_pack_objects.lock().await.get(&id.0).cloned())
+    }
+
+    async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
+        self.0.skill_pack_objects.lock().await.remove(&id.0);
+        Ok(())
+    }
+}
+
+pub(crate) fn fixture_skill_ports(
+    store: &Arc<FakeStore>,
+) -> (
+    Arc<dyn crate::store::SkillSource>,
+    Arc<dyn crate::store::SkillPackStore>,
+) {
+    (
+        Arc::new(FixtureSkillSource),
+        Arc::new(FixtureSkillPackStore(Arc::clone(store))),
+    )
+}
+
 fn page_sessions(mut records: Vec<SessionRecord>, query: &SessionListQuery) -> Page<SessionRecord> {
     records.retain(|record| {
         query
@@ -2039,7 +2112,7 @@ pub(crate) fn terminal_input_channel(
     (input, received)
 }
 pub(crate) use crate::environment_support::{
-    baseline, catalog_service, environments, fake_agent, profile_spec, unconfigured_settings,
+    catalog_service, environments, fake_agent, profile_spec, unconfigured_settings,
     FakeProfileStore, FakeSkillCatalog, ReplacementInterference,
 };
 pub(crate) use crate::screen_support::{FixedCredential, RecordingScreen};
@@ -2064,8 +2137,8 @@ impl ScreenModel for NullScreen {
 
 pub(crate) use crate::service_support::{
     credential_on, owned, service_as, service_on_version, service_on_version_with_settings,
-    service_on_version_with_skills, service_over_with_context, service_with_context,
-    service_with_credential_source, service_with_credentials,
+    service_on_version_with_skill_store, service_on_version_with_skills, service_over_with_context,
+    service_with_context, service_with_credential_source, service_with_credentials,
     service_with_environments_and_settings, service_with_environments_and_settings_service,
     service_with_environments_on_version, write_screen,
 };
@@ -2104,6 +2177,7 @@ pub(crate) fn service_over(
             handovers: Some(handovers),
             credentials: None,
             skills: None,
+            skill_packs: None,
             settings: None,
         },
         no_environments(),
@@ -2123,7 +2197,24 @@ pub(crate) fn service_with_environments(
     adapter: Arc<FakeAdapter>,
     profiles: Arc<EnvironmentProfileService>,
 ) -> Arc<SessionService> {
-    service_over_with_environments(store, adapter, profiles)
+    let factory: ScreenFactory = Arc::new(|g| Box::new(NullScreen(g)));
+    let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
+    let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
+    let (skills, skill_packs) = fixture_skill_ports(&store);
+    adapters.insert(kernel(), adapter);
+    SessionService::new(
+        adapters,
+        factory,
+        Arc::clone(&store) as Arc<dyn SessionStore>,
+        crate::service::SessionPorts {
+            handovers: Some(handovers),
+            skills: Some(skills),
+            skill_packs: Some(skill_packs),
+            ..Default::default()
+        },
+        profiles,
+        owned(),
+    )
 }
 
 /// The environment-aware fixture over an adversarial session store.
@@ -2145,6 +2236,7 @@ pub(crate) fn service_over_with_environments(
             handovers: Some(handovers),
             credentials: None,
             skills: None,
+            skill_packs: None,
             settings: None,
         },
         profiles,
@@ -2159,7 +2251,7 @@ pub(crate) fn service_over_with_environments(
 pub(crate) fn no_environments() -> Arc<EnvironmentProfileService> {
     EnvironmentProfileService::new(
         Arc::new(FakeProfileStore::default()),
-        baseline(),
+        Baseline::new([], [], []),
         None,
         None,
         crate::environment::AgentConfiguration {
@@ -2182,7 +2274,7 @@ pub(crate) fn environments_defaulting_to(
 ) -> Arc<EnvironmentProfileService> {
     EnvironmentProfileService::new(
         Arc::new(FakeProfileStore::default()),
-        baseline(),
+        Baseline::new([], [], []),
         None,
         None,
         agent,

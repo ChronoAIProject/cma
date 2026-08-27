@@ -123,6 +123,9 @@ pub mod service;
 mod service_state;
 pub mod session;
 pub mod size;
+#[cfg(test)]
+#[path = "skill_pack_tests.rs"]
+mod skill_pack_tests;
 pub mod store;
 pub mod terminal;
 mod terminal_io;
@@ -196,8 +199,8 @@ pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, HandoverSnapshot,
     HandoverStore, OperationClaim, OperationReservation, OperationStore, Page, PageCursor,
     PageRequest, PendingHandover, PendingHandoverTarget, SessionListQuery, SessionRecord,
-    SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE,
-    MAX_PAGE_SIZE,
+    SessionStore, SkillPack, SkillPackDigest, SkillPackState, SkillPackStore, SkillSource,
+    StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
