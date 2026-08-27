@@ -124,6 +124,15 @@ pub trait TriggerConnectionManager: Send + Sync {
         repository_id: u64,
         selected_ref: &str,
     ) -> Result<TriggerRepositorySelection, TriggerServiceError>;
+
+    /// Resolve a human-facing owner/name locator to immutable provider identity.
+    async fn resolve_repository_locator(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+        owner: &str,
+        name: &str,
+    ) -> Result<TriggerRepositorySelection, TriggerServiceError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
