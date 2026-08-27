@@ -24,8 +24,8 @@ import {
   retireTriggerRevision,
   updateTrigger,
 } from '../api/client';
-import { newIntentKey } from '../trigger/idempotency';
 import { authorizeTriggerConnection, isActiveTriggerConnection } from '../trigger/connectionFlow';
+import { useIdempotentCommand } from '../trigger/useIdempotentCommand';
 import { Button } from '../ui/Button';
 import { InlineConfirm } from '../ui/InlineConfirm';
 import { Input } from '../ui/Input';
@@ -58,14 +58,7 @@ import {
 import './PublisherSurface.css';
 
 type Operation =
-  | 'loading'
-  | 'connecting'
-  | 'checking'
-  | 'resolving'
-  | 'saving'
-  | 'publishing'
-  | 'retiring'
-  | 'reconciling';
+  'loading' | 'connecting' | 'checking' | 'resolving' | 'saving' | 'publishing' | 'retiring';
 
 interface Conflict {
   readonly current: TriggerDraft;
@@ -124,9 +117,9 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
   const [copied, setCopied] = useState<string | null>(null);
   const [readAttempt, setReadAttempt] = useState(0);
   const [loaded, setLoaded] = useState(false);
-  const commandKeys = useRef(new Map<string, string>());
   const authorization = useRef<AbortController | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const { execute: executeCommand, pending } = useIdempotentCommand();
 
   const validation = useMemo(() => validatePublisherEditor(editor), [editor]);
   const dirty = editorIsDirty(editor);
@@ -136,6 +129,12 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
   const activeConnection =
     checkedConnection?.service_id === editor.selectedServiceId &&
     isActiveTriggerConnection(checkedConnection);
+  const pendingBegin = pending?.slot === 'connection:begin';
+  const pendingReconnect = pending?.slot === `connection:reconnect:${editor.selectedServiceId}`;
+  const pendingSave =
+    pending?.slot.startsWith('trigger:create') || pending?.slot.startsWith('trigger:update:');
+  const pendingPublish = pending?.slot.startsWith('trigger:publish:') ?? false;
+  const pendingRetirement = pending?.slot.startsWith('trigger:retire:') ?? false;
 
   const currentRevisions = useMemo(() => {
     if (editor.server === null) return [];
@@ -218,36 +217,8 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     [],
   );
 
-  async function command<T>(slot: string, send: (key: string) => Promise<T>): Promise<T> {
-    const retained = commandKeys.current.get(slot) ?? newIntentKey();
-    commandKeys.current.set(slot, retained);
-    let finite = false;
-    try {
-      try {
-        const result = await send(retained);
-        finite = true;
-        return result;
-      } catch (cause) {
-        if (!(cause instanceof TransportError)) {
-          finite = true;
-          throw cause;
-        }
-        setOperation('reconciling');
-        try {
-          const result = await send(retained);
-          finite = true;
-          return result;
-        } catch (reconciled) {
-          if (!(reconciled instanceof TransportError)) finite = true;
-          throw reconciled;
-        }
-      }
-    } finally {
-      if (finite) commandKeys.current.delete(slot);
-    }
-  }
-
   function chooseEditor(next: PublisherEditor): void {
+    if (pending !== null) return;
     if (dirty) {
       setDiscardEditor(next);
       return;
@@ -277,11 +248,14 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
         signal: controller.signal,
         begin: () =>
           mode === 'begin'
-            ? command(`connection:begin:${intentId}`, (idempotencyKey) =>
+            ? executeCommand('connection:begin', 'GitHub connection', (idempotencyKey) =>
                 beginTriggerConnection(intentId, { idempotencyKey }),
               )
-            : command(`connection:reconnect:${editor.selectedServiceId}`, (idempotencyKey) =>
-                reconnectTriggerConnection(editor.selectedServiceId, { idempotencyKey }),
+            : executeCommand(
+                `connection:reconnect:${editor.selectedServiceId}`,
+                'GitHub reconnection',
+                (idempotencyKey) =>
+                  reconnectTriggerConnection(editor.selectedServiceId, { idempotencyKey }),
               ),
         preflight: preflightTriggerConnection,
         onService: (serviceId) => {
@@ -297,12 +271,16 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
       await refreshConnections();
       setStatus(`Connected as ${connection.account_login ?? 'GitHub user'}`);
     } catch (cause) {
-      if (!controller.signal.aborted) setFailure(message(cause));
+      if (!controller.signal.aborted) {
+        setFailure(
+          cause instanceof TransportError
+            ? 'The connection outcome is unknown. CMA retained the exact command for reconciliation.'
+            : message(cause),
+        );
+      }
     } finally {
       if (authorization.current === controller) authorization.current = null;
-      setOperation((current) =>
-        current === 'connecting' || current === 'reconciling' ? null : current,
-      );
+      setOperation((current) => (current === 'connecting' ? null : current));
     }
   }
 
@@ -377,7 +355,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     const server = editor.server;
     const slot = server === null ? 'trigger:create' : `trigger:update:${server.id}`;
     try {
-      const saved = await command(slot, (idempotencyKey) =>
+      const saved = await executeCommand(slot, 'Trigger draft save', (idempotencyKey) =>
         server === null
           ? createTrigger(editor.selectedServiceId, editor.content, { idempotencyKey })
           : updateTrigger(
@@ -408,9 +386,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
       }
       return null;
     } finally {
-      setOperation((current) =>
-        current === 'saving' || current === 'reconciling' ? null : current,
-      );
+      setOperation((current) => (current === 'saving' ? null : current));
     }
   }
 
@@ -420,8 +396,9 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     setOperation('publishing');
     setFailure(null);
     try {
-      const revision = await command(
+      const revision = await executeCommand(
         `trigger:publish:${server.id}:${String(server.next_revision_number)}`,
+        'Trigger publication',
         (idempotencyKey) =>
           publishTrigger(server.id, server.version, editor.selectedServiceId, { idempotencyKey }),
       );
@@ -436,9 +413,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
           : message(cause),
       );
     } finally {
-      setOperation((current) =>
-        current === 'publishing' || current === 'reconciling' ? null : current,
-      );
+      setOperation((current) => (current === 'publishing' ? null : current));
     }
   }
 
@@ -446,8 +421,10 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     setOperation('retiring');
     setFailure(null);
     try {
-      const retired = await command(`trigger:retire:${revision.id}`, (idempotencyKey) =>
-        retireTriggerRevision(revision.id, { idempotencyKey }),
+      const retired = await executeCommand(
+        `trigger:retire:${revision.id}`,
+        'Trigger retirement',
+        (idempotencyKey) => retireTriggerRevision(revision.id, { idempotencyKey }),
       );
       setRevisions((items) => items.map((item) => (item.id === retired.id ? retired : item)));
       setRetiringId(null);
@@ -459,9 +436,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
           : message(cause),
       );
     } finally {
-      setOperation((current) =>
-        current === 'retiring' || current === 'reconciling' ? null : current,
-      );
+      setOperation((current) => (current === 'retiring' ? null : current));
     }
   }
 
@@ -559,6 +534,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
         <Button
           size="sm"
           icon={<IconPlusOutline16 />}
+          disabled={pending !== null}
           onClick={() => {
             chooseEditor(newPublisherEditor(displayIdentity));
           }}
@@ -573,6 +549,17 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
           <div>
             <p className="notice__title">The Trigger was not changed.</p>
             <p className="notice__detail">{failure}</p>
+          </div>
+        </div>
+      )}
+      {pending === null ? null : (
+        <div className="notice notice--quiet publisher__notice" role="status">
+          <IconRefreshOutline16 />
+          <div>
+            <p className="notice__title">Reconciling {pending.label}</p>
+            <p className="notice__detail">
+              Only the retained same-key command can run until CMA returns a finite result.
+            </p>
           </div>
         </div>
       )}
@@ -611,6 +598,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
                   type="button"
                   className={`publisher__draft${editor.server?.id === draft.id ? ' publisher__draft--on' : ''}`}
                   aria-current={editor.server?.id === draft.id ? 'page' : undefined}
+                  disabled={pending !== null}
                   onClick={() => {
                     chooseEditor(editorFromDraft(draft));
                   }}
@@ -629,6 +617,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
               <span>Draft</span>
               <select
                 value={editor.server?.id ?? 'new'}
+                disabled={pending !== null}
                 onChange={(event) => {
                   const selected = drafts.find((draft) => draft.id === event.target.value);
                   chooseEditor(
@@ -674,6 +663,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
                   <select
                     className="publisher-select"
                     value={editor.selectedServiceId}
+                    disabled={pending !== null}
                     onChange={(event) => {
                       setCheckedConnection(null);
                       setEditor((current) => ({
@@ -697,36 +687,40 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
                   {editor.selectedServiceId === '' ? (
                     <Button
                       icon={<IconLinkOutline16 />}
-                      disabled={operation === 'connecting'}
+                      disabled={operation === 'connecting' || (pending !== null && !pendingBegin)}
                       onClick={() => void authorize('begin')}
                     >
-                      Connect GitHub
+                      {pendingBegin ? 'Reconcile connection' : 'Connect GitHub'}
                     </Button>
                   ) : selectedConnection?.state !== 'active' ? (
                     <Button
                       icon={<IconRefreshOutline16 />}
-                      disabled={operation === 'connecting'}
+                      disabled={
+                        operation === 'connecting' || (pending !== null && !pendingReconnect)
+                      }
                       onClick={() => void authorize('reconnect')}
                     >
-                      Reconnect
+                      {pendingReconnect ? 'Reconcile connection' : 'Reconnect'}
                     </Button>
                   ) : (
                     <Button
                       icon={<IconCheckOutline16 />}
-                      disabled={operation === 'checking'}
+                      disabled={operation === 'checking' || pending !== null}
                       onClick={() => void checkConnection()}
                     >
                       Check connection
                     </Button>
                   )}
-                  <Button
-                    size="sm"
-                    icon={<IconPlusOutline16 />}
-                    disabled={operation === 'connecting'}
-                    onClick={() => void authorize('begin')}
-                  >
-                    Connect another
-                  </Button>
+                  {editor.selectedServiceId === '' ? null : (
+                    <Button
+                      size="sm"
+                      icon={<IconPlusOutline16 />}
+                      disabled={operation === 'connecting' || (pending !== null && !pendingBegin)}
+                      onClick={() => void authorize('begin')}
+                    >
+                      {pendingBegin ? 'Reconcile connection' : 'Connect another'}
+                    </Button>
+                  )}
                 </div>
               </div>
               {selectedConnection === null ? null : (
@@ -747,441 +741,458 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
               )}
             </section>
 
-            <section className="publisher-section" aria-labelledby="publisher-repository">
-              <h3 id="publisher-repository">Repository</h3>
-              <div className="publisher-repository-row">
-                <label className="publisher-field">
-                  <span>GitHub repository URL</span>
-                  <Input
-                    type="url"
-                    icon={<IconBranchOutline16 />}
-                    placeholder="https://github.com/owner/repository"
-                    value={editor.repositoryUrl}
-                    onChange={(event) => {
-                      const repositoryUrl = event.target.value;
-                      setEditor((current) => ({ ...current, repositoryUrl, repository: null }));
-                      setFailure(null);
-                      setStatus(null);
-                    }}
-                  />
-                </label>
-                <Button
-                  variant="outline"
-                  disabled={!activeConnection || operation === 'resolving'}
-                  onClick={() => void resolveRepository()}
-                >
-                  Verify repository
-                </Button>
-              </div>
-              {editor.repository === null ? null : (
-                <dl className="publisher-facts publisher-facts--repository">
-                  <div>
-                    <dt>Canonical repository</dt>
-                    <dd>
-                      {editor.repository.repository.canonical_owner}/
-                      {editor.repository.repository.canonical_name}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Default branch</dt>
-                    <dd>{editor.repository.repository.default_branch}</dd>
-                  </div>
-                  <div>
-                    <dt>Source revision</dt>
-                    <dd title={editor.repository.source_sha}>
-                      {short(editor.repository.source_sha, 12)}
-                    </dd>
-                  </div>
-                </dl>
-              )}
-              <div className="publisher-fields publisher-fields--three">
-                <label className="publisher-field">
-                  <span>Source mode</span>
-                  <select
-                    className="publisher-select"
-                    value={editor.content.repository.source_mode}
-                    onChange={(event) => {
-                      changeContent((content) => ({
-                        ...content,
-                        repository: {
-                          ...content.repository,
-                          source_mode: event.target
-                            .value as TriggerContentDraft['repository']['source_mode'],
-                        },
-                      }));
-                    }}
-                  >
-                    <option value="pinned_commit">Pinned commit</option>
-                    <option value="branch_head_at_launch">Branch head at launch</option>
-                  </select>
-                </label>
-                <label className="publisher-field">
-                  <span>Selected branch</span>
-                  <Input
-                    value={editor.content.repository.selected_ref}
-                    onChange={(event) => {
-                      changeContent((content) => ({
-                        ...content,
-                        repository: { ...content.repository, selected_ref: event.target.value },
-                      }));
-                    }}
-                  />
-                </label>
-                <label className="publisher-field">
-                  <span>Contribution base</span>
-                  <Input
-                    value={editor.content.repository.contribution_base_ref}
-                    onChange={(event) => {
-                      changeContent((content) => ({
-                        ...content,
-                        repository: {
-                          ...content.repository,
-                          contribution_base_ref: event.target.value,
-                        },
-                      }));
-                    }}
-                  />
-                </label>
-              </div>
-            </section>
-
-            <section className="publisher-section" aria-labelledby="publisher-task">
-              <h3 id="publisher-task">Task</h3>
-              <div className="publisher-fields">
-                <label className="publisher-field">
-                  <span>Publisher display identity</span>
-                  <Input
-                    value={editor.content.publisher_display_identity}
-                    onChange={(event) => {
-                      changeContent((content) => ({
-                        ...content,
-                        publisher_display_identity: event.target.value,
-                      }));
-                    }}
-                  />
-                </label>
-                <label className="publisher-field">
-                  <span>Public summary</span>
-                  <Input
-                    value={editor.content.task.public_summary}
-                    onChange={(event) => {
-                      changeContent((content) => ({
-                        ...content,
-                        task: { ...content.task, public_summary: event.target.value },
-                      }));
-                    }}
-                  />
-                </label>
-              </div>
-              <label className="publisher-field">
-                <span>Prompt template</span>
-                <textarea
-                  className="field__input publisher-textarea publisher-textarea--prompt"
-                  value={editor.content.task.prompt_template}
-                  onChange={(event) => {
-                    changeContent((content) => ({
-                      ...content,
-                      task: { ...content.task, prompt_template: event.target.value },
-                    }));
-                  }}
-                />
-              </label>
-              <TaskInputEditor
-                fields={editor.content.task.input_fields}
-                validation={validation}
-                onChange={(inputFields) => {
-                  changeContent((content) => ({
-                    ...content,
-                    task: { ...content.task, input_fields: inputFields },
-                  }));
-                }}
-              />
-            </section>
-
-            <section className="publisher-section" aria-labelledby="publisher-session">
-              <h3 id="publisher-session">Session</h3>
-              <div className="publisher-fields">
-                <div className="publisher-field">
-                  <span>Permission ceiling</span>
-                  <div className="publisher-segmented" role="group" aria-label="Permission ceiling">
-                    {(['guarded', 'autonomous'] as const).map((permission) => (
-                      <button
-                        key={permission}
-                        type="button"
-                        aria-pressed={editor.content.session.permission_ceiling === permission}
-                        onClick={() => {
-                          changeContent((content) => ({
-                            ...content,
-                            session: { ...content.session, permission_ceiling: permission },
-                          }));
-                        }}
-                      >
-                        {permission === 'guarded' ? 'Guarded' : 'Autonomous'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <label className="publisher-field">
-                  <span>Sandbox profile</span>
-                  <Input
-                    value={editor.content.session.sandbox_profile}
-                    onChange={(event) => {
-                      changeContent((content) => ({
-                        ...content,
-                        session: { ...content.session, sandbox_profile: event.target.value },
-                      }));
-                    }}
-                  />
-                </label>
-              </div>
-              <div className="publisher-fields publisher-fields--four">
-                {(
-                  [
-                    ['Default CPU (m)', 'default', 'cpu_millis'],
-                    ['Default memory (MiB)', 'default', 'memory_mib'],
-                    ['CPU ceiling (m)', 'ceiling', 'cpu_millis'],
-                    ['Memory ceiling (MiB)', 'ceiling', 'memory_mib'],
-                  ] as const
-                ).map(([label, tier, key]) => (
-                  <label className="publisher-field" key={`${tier}:${key}`}>
-                    <span>{label}</span>
+            <fieldset className="publisher__form" disabled={pending !== null}>
+              <legend className="sr-only">Trigger configuration</legend>
+              <section className="publisher-section" aria-labelledby="publisher-repository">
+                <h3 id="publisher-repository">Repository</h3>
+                <div className="publisher-repository-row">
+                  <label className="publisher-field">
+                    <span>GitHub repository URL</span>
                     <Input
-                      type="number"
-                      min={1}
-                      value={editor.content.session.resources[tier][key]}
+                      type="url"
+                      icon={<IconBranchOutline16 />}
+                      placeholder="https://github.com/owner/repository"
+                      value={editor.repositoryUrl}
+                      onChange={(event) => {
+                        const repositoryUrl = event.target.value;
+                        setEditor((current) => ({ ...current, repositoryUrl, repository: null }));
+                        setFailure(null);
+                        setStatus(null);
+                      }}
+                    />
+                  </label>
+                  <Button
+                    variant="outline"
+                    disabled={!activeConnection || operation === 'resolving'}
+                    onClick={() => void resolveRepository()}
+                  >
+                    Verify repository
+                  </Button>
+                </div>
+                {editor.repository === null ? null : (
+                  <dl className="publisher-facts publisher-facts--repository">
+                    <div>
+                      <dt>Canonical repository</dt>
+                      <dd>
+                        {editor.repository.repository.canonical_owner}/
+                        {editor.repository.repository.canonical_name}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Default branch</dt>
+                      <dd>{editor.repository.repository.default_branch}</dd>
+                    </div>
+                    <div>
+                      <dt>Source revision</dt>
+                      <dd title={editor.repository.source_sha}>
+                        {short(editor.repository.source_sha, 12)}
+                      </dd>
+                    </div>
+                  </dl>
+                )}
+                <div className="publisher-fields publisher-fields--three">
+                  <label className="publisher-field">
+                    <span>Source mode</span>
+                    <select
+                      className="publisher-select"
+                      value={editor.content.repository.source_mode}
                       onChange={(event) => {
                         changeContent((content) => ({
                           ...content,
-                          session: {
-                            ...content.session,
-                            resources: {
-                              ...content.session.resources,
-                              [tier]: {
-                                ...content.session.resources[tier],
-                                [key]: inputNumber(event),
-                              },
-                            },
+                          repository: {
+                            ...content.repository,
+                            source_mode: event.target
+                              .value as TriggerContentDraft['repository']['source_mode'],
+                          },
+                        }));
+                      }}
+                    >
+                      <option value="pinned_commit">Pinned commit</option>
+                      <option value="branch_head_at_launch">Branch head at launch</option>
+                    </select>
+                  </label>
+                  <label className="publisher-field">
+                    <span>Selected branch</span>
+                    <Input
+                      value={editor.content.repository.selected_ref}
+                      onChange={(event) => {
+                        changeContent((content) => ({
+                          ...content,
+                          repository: { ...content.repository, selected_ref: event.target.value },
+                        }));
+                      }}
+                    />
+                  </label>
+                  <label className="publisher-field">
+                    <span>Contribution base</span>
+                    <Input
+                      value={editor.content.repository.contribution_base_ref}
+                      onChange={(event) => {
+                        changeContent((content) => ({
+                          ...content,
+                          repository: {
+                            ...content.repository,
+                            contribution_base_ref: event.target.value,
                           },
                         }));
                       }}
                     />
                   </label>
-                ))}
-              </div>
-              <div className="publisher-fields">
+                </div>
+              </section>
+
+              <section className="publisher-section" aria-labelledby="publisher-task">
+                <h3 id="publisher-task">Task</h3>
+                <div className="publisher-fields">
+                  <label className="publisher-field">
+                    <span>Publisher display identity</span>
+                    <Input
+                      value={editor.content.publisher_display_identity}
+                      onChange={(event) => {
+                        changeContent((content) => ({
+                          ...content,
+                          publisher_display_identity: event.target.value,
+                        }));
+                      }}
+                    />
+                  </label>
+                  <label className="publisher-field">
+                    <span>Public summary</span>
+                    <Input
+                      value={editor.content.task.public_summary}
+                      onChange={(event) => {
+                        changeContent((content) => ({
+                          ...content,
+                          task: { ...content.task, public_summary: event.target.value },
+                        }));
+                      }}
+                    />
+                  </label>
+                </div>
                 <label className="publisher-field">
-                  <span>Default timeout (seconds)</span>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={86400}
-                    value={editor.content.session.timeout_default_seconds}
+                  <span>Prompt template</span>
+                  <textarea
+                    className="field__input publisher-textarea publisher-textarea--prompt"
+                    value={editor.content.task.prompt_template}
                     onChange={(event) => {
                       changeContent((content) => ({
                         ...content,
-                        session: {
-                          ...content.session,
-                          timeout_default_seconds: inputNumber(event),
+                        task: { ...content.task, prompt_template: event.target.value },
+                      }));
+                    }}
+                  />
+                </label>
+                <TaskInputEditor
+                  fields={editor.content.task.input_fields}
+                  validation={validation}
+                  onChange={(inputFields) => {
+                    changeContent((content) => ({
+                      ...content,
+                      task: { ...content.task, input_fields: inputFields },
+                    }));
+                  }}
+                />
+              </section>
+
+              <section className="publisher-section" aria-labelledby="publisher-session">
+                <h3 id="publisher-session">Session</h3>
+                <div className="publisher-fields">
+                  <div className="publisher-field">
+                    <span>Permission ceiling</span>
+                    <div
+                      className="publisher-segmented"
+                      role="group"
+                      aria-label="Permission ceiling"
+                    >
+                      {(['guarded', 'autonomous'] as const).map((permission) => (
+                        <button
+                          key={permission}
+                          type="button"
+                          aria-pressed={editor.content.session.permission_ceiling === permission}
+                          onClick={() => {
+                            changeContent((content) => ({
+                              ...content,
+                              session: { ...content.session, permission_ceiling: permission },
+                            }));
+                          }}
+                        >
+                          {permission === 'guarded' ? 'Guarded' : 'Autonomous'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="publisher-field">
+                    <span>Sandbox profile</span>
+                    <Input
+                      value={editor.content.session.sandbox_profile}
+                      onChange={(event) => {
+                        changeContent((content) => ({
+                          ...content,
+                          session: { ...content.session, sandbox_profile: event.target.value },
+                        }));
+                      }}
+                    />
+                  </label>
+                </div>
+                <div className="publisher-fields publisher-fields--four">
+                  {(
+                    [
+                      ['Default CPU (m)', 'default', 'cpu_millis'],
+                      ['Default memory (MiB)', 'default', 'memory_mib'],
+                      ['CPU ceiling (m)', 'ceiling', 'cpu_millis'],
+                      ['Memory ceiling (MiB)', 'ceiling', 'memory_mib'],
+                    ] as const
+                  ).map(([label, tier, key]) => (
+                    <label className="publisher-field" key={`${tier}:${key}`}>
+                      <span>{label}</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={editor.content.session.resources[tier][key]}
+                        onChange={(event) => {
+                          changeContent((content) => ({
+                            ...content,
+                            session: {
+                              ...content.session,
+                              resources: {
+                                ...content.session.resources,
+                                [tier]: {
+                                  ...content.session.resources[tier],
+                                  [key]: inputNumber(event),
+                                },
+                              },
+                            },
+                          }));
+                        }}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div className="publisher-fields">
+                  <label className="publisher-field">
+                    <span>Default timeout (seconds)</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={86400}
+                      value={editor.content.session.timeout_default_seconds}
+                      onChange={(event) => {
+                        changeContent((content) => ({
+                          ...content,
+                          session: {
+                            ...content.session,
+                            timeout_default_seconds: inputNumber(event),
+                          },
+                        }));
+                      }}
+                    />
+                  </label>
+                  <label className="publisher-field">
+                    <span>Timeout ceiling (seconds)</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={86400}
+                      value={editor.content.session.timeout_ceiling_seconds}
+                      onChange={(event) => {
+                        changeContent((content) => ({
+                          ...content,
+                          session: {
+                            ...content.session,
+                            timeout_ceiling_seconds: inputNumber(event),
+                          },
+                        }));
+                      }}
+                    />
+                  </label>
+                </div>
+                <ul className="publisher-fixed-list" aria-label="Required session capabilities">
+                  {REQUIRED_CAPABILITIES.map((capability) => (
+                    <li key={capability}>
+                      <IconCheckOutline16 /> {capability.replaceAll('_', ' ')}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
+              <section className="publisher-section" aria-labelledby="publisher-access">
+                <h3 id="publisher-access">GitHub access</h3>
+                <dl className="publisher-fixed">
+                  <div>
+                    <dt>Credential route</dt>
+                    <dd>Contributor connection</dd>
+                  </div>
+                  <div>
+                    <dt>Required scope class</dt>
+                    <dd>Public repository</dd>
+                  </div>
+                  <div>
+                    <dt>Setup executor</dt>
+                    <dd>Disabled</dd>
+                  </div>
+                </dl>
+                <fieldset className="publisher-checks">
+                  <legend>Allowed operation classes</legend>
+                  {REPOSITORY_OPERATIONS.map((operationClass) => (
+                    <label className="publisher-toggle" key={operationClass}>
+                      <input
+                        type="checkbox"
+                        checked={editor.content.repository_access.allowed_operation_classes.includes(
+                          operationClass,
+                        )}
+                        onChange={(event) => {
+                          setRepositoryOperations(operationClass, event.target.checked);
+                        }}
+                      />
+                      <span>{operationClass.replaceAll('_', ' ')}</span>
+                    </label>
+                  ))}
+                </fieldset>
+                <label className="publisher-field publisher-field--compact">
+                  <span>Workflow changes</span>
+                  <select
+                    className="publisher-select"
+                    value={editor.content.repository_access.workflow_change_policy}
+                    onChange={(event) => {
+                      changeContent((content) => ({
+                        ...content,
+                        repository_access: {
+                          ...content.repository_access,
+                          workflow_change_policy: event.target
+                            .value as TriggerContentDraft['repository_access']['workflow_change_policy'],
+                        },
+                      }));
+                    }}
+                  >
+                    <option value="refuse">Refuse</option>
+                    <option value="require_scope_and_confirmation">
+                      Require scope and confirmation
+                    </option>
+                  </select>
+                </label>
+              </section>
+
+              <section className="publisher-section" aria-labelledby="publisher-contribution">
+                <h3 id="publisher-contribution">Contribution</h3>
+                <dl className="publisher-fixed">
+                  <div>
+                    <dt>Branch prefix</dt>
+                    <dd>
+                      <code>cma/</code>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Commit attribution</dt>
+                    <dd>Contributor no-reply identity</dd>
+                  </div>
+                  <div>
+                    <dt>Billing</dt>
+                    <dd>Zero cost</dd>
+                  </div>
+                </dl>
+                <label className="publisher-field">
+                  <span>Pull-request title template</span>
+                  <Input
+                    value={editor.content.contribution.pull_request.title_template}
+                    onChange={(event) => {
+                      changeContent((content) => ({
+                        ...content,
+                        contribution: {
+                          ...content.contribution,
+                          pull_request: {
+                            ...content.contribution.pull_request,
+                            title_template: event.target.value,
+                          },
                         },
                       }));
                     }}
                   />
                 </label>
                 <label className="publisher-field">
-                  <span>Timeout ceiling (seconds)</span>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={86400}
-                    value={editor.content.session.timeout_ceiling_seconds}
+                  <span>Pull-request body template</span>
+                  <textarea
+                    className="field__input publisher-textarea"
+                    value={editor.content.contribution.pull_request.body_template}
                     onChange={(event) => {
                       changeContent((content) => ({
                         ...content,
-                        session: {
-                          ...content.session,
-                          timeout_ceiling_seconds: inputNumber(event),
+                        contribution: {
+                          ...content.contribution,
+                          pull_request: {
+                            ...content.contribution.pull_request,
+                            body_template: event.target.value,
+                          },
                         },
                       }));
                     }}
                   />
                 </label>
-              </div>
-              <ul className="publisher-fixed-list" aria-label="Required session capabilities">
-                {REQUIRED_CAPABILITIES.map((capability) => (
-                  <li key={capability}>
-                    <IconCheckOutline16 /> {capability.replaceAll('_', ' ')}
-                  </li>
-                ))}
-              </ul>
-            </section>
+                <p className="publisher-unavailable">
+                  Sponsored credentials and billing · Unavailable in this release
+                </p>
+              </section>
 
-            <section className="publisher-section" aria-labelledby="publisher-access">
-              <h3 id="publisher-access">GitHub access</h3>
-              <dl className="publisher-fixed">
-                <div>
-                  <dt>Credential route</dt>
-                  <dd>Contributor connection</dd>
-                </div>
-                <div>
-                  <dt>Required scope class</dt>
-                  <dd>Public repository</dd>
-                </div>
-                <div>
-                  <dt>Setup executor</dt>
-                  <dd>Disabled</dd>
-                </div>
-              </dl>
-              <fieldset className="publisher-checks">
-                <legend>Allowed operation classes</legend>
-                {REPOSITORY_OPERATIONS.map((operationClass) => (
-                  <label className="publisher-toggle" key={operationClass}>
-                    <input
-                      type="checkbox"
-                      checked={editor.content.repository_access.allowed_operation_classes.includes(
-                        operationClass,
-                      )}
-                      onChange={(event) => {
-                        setRepositoryOperations(operationClass, event.target.checked);
-                      }}
-                    />
-                    <span>{operationClass.replaceAll('_', ' ')}</span>
-                  </label>
-                ))}
-              </fieldset>
-              <label className="publisher-field publisher-field--compact">
-                <span>Workflow changes</span>
-                <select
-                  className="publisher-select"
-                  value={editor.content.repository_access.workflow_change_policy}
-                  onChange={(event) => {
-                    changeContent((content) => ({
-                      ...content,
-                      repository_access: {
-                        ...content.repository_access,
-                        workflow_change_policy: event.target
-                          .value as TriggerContentDraft['repository_access']['workflow_change_policy'],
-                      },
-                    }));
-                  }}
-                >
-                  <option value="refuse">Refuse</option>
-                  <option value="require_scope_and_confirmation">
-                    Require scope and confirmation
-                  </option>
-                </select>
-              </label>
-            </section>
-
-            <section className="publisher-section" aria-labelledby="publisher-contribution">
-              <h3 id="publisher-contribution">Contribution</h3>
-              <dl className="publisher-fixed">
-                <div>
-                  <dt>Branch prefix</dt>
-                  <dd>
-                    <code>cma/</code>
-                  </dd>
-                </div>
-                <div>
-                  <dt>Commit attribution</dt>
-                  <dd>Contributor no-reply identity</dd>
-                </div>
-                <div>
-                  <dt>Billing</dt>
-                  <dd>Zero cost</dd>
-                </div>
-              </dl>
-              <label className="publisher-field">
-                <span>Pull-request title template</span>
-                <Input
-                  value={editor.content.contribution.pull_request.title_template}
-                  onChange={(event) => {
-                    changeContent((content) => ({
-                      ...content,
-                      contribution: {
-                        ...content.contribution,
-                        pull_request: {
-                          ...content.contribution.pull_request,
-                          title_template: event.target.value,
+              <section className="publisher-section" aria-labelledby="publisher-overrides">
+                <h3 id="publisher-overrides">Contributor overrides</h3>
+                <fieldset className="publisher-checks publisher-checks--overrides">
+                  <legend>Editable fields</legend>
+                  {EDITABLE_FIELDS.map((field) => (
+                    <label className="publisher-toggle" key={field}>
+                      <input
+                        type="checkbox"
+                        checked={editor.content.override_policy.editable_fields.includes(field)}
+                        onChange={(event) => {
+                          setEditableField(field, event.target.checked);
+                        }}
+                      />
+                      <span>{field.replaceAll('_', ' ')}</span>
+                    </label>
+                  ))}
+                </fieldset>
+                <label className="publisher-field">
+                  <span>Optional check identifiers, one per line</span>
+                  <textarea
+                    className="field__input publisher-textarea publisher-textarea--short"
+                    value={editor.content.override_policy.optional_checks.join('\n')}
+                    onChange={(event) => {
+                      changeContent((content) => ({
+                        ...content,
+                        override_policy: {
+                          ...content.override_policy,
+                          optional_checks: event.target.value.split('\n').filter(Boolean),
                         },
-                      },
-                    }));
-                  }}
-                />
-              </label>
-              <label className="publisher-field">
-                <span>Pull-request body template</span>
-                <textarea
-                  className="field__input publisher-textarea"
-                  value={editor.content.contribution.pull_request.body_template}
-                  onChange={(event) => {
-                    changeContent((content) => ({
-                      ...content,
-                      contribution: {
-                        ...content.contribution,
-                        pull_request: {
-                          ...content.contribution.pull_request,
-                          body_template: event.target.value,
-                        },
-                      },
-                    }));
-                  }}
-                />
-              </label>
-              <p className="publisher-unavailable">
-                Sponsored credentials and billing · Unavailable in this release
-              </p>
-            </section>
-
-            <section className="publisher-section" aria-labelledby="publisher-overrides">
-              <h3 id="publisher-overrides">Contributor overrides</h3>
-              <fieldset className="publisher-checks publisher-checks--overrides">
-                <legend>Editable fields</legend>
-                {EDITABLE_FIELDS.map((field) => (
-                  <label className="publisher-toggle" key={field}>
-                    <input
-                      type="checkbox"
-                      checked={editor.content.override_policy.editable_fields.includes(field)}
-                      onChange={(event) => {
-                        setEditableField(field, event.target.checked);
-                      }}
-                    />
-                    <span>{field.replaceAll('_', ' ')}</span>
-                  </label>
-                ))}
-              </fieldset>
-              <label className="publisher-field">
-                <span>Optional check identifiers, one per line</span>
-                <textarea
-                  className="field__input publisher-textarea publisher-textarea--short"
-                  value={editor.content.override_policy.optional_checks.join('\n')}
-                  onChange={(event) => {
-                    changeContent((content) => ({
-                      ...content,
-                      override_policy: {
-                        ...content.override_policy,
-                        optional_checks: event.target.value.split('\n').filter(Boolean),
-                      },
-                    }));
-                  }}
-                />
-              </label>
-            </section>
+                      }));
+                    }}
+                  />
+                </label>
+              </section>
+            </fieldset>
 
             <div className="publisher-savebar">
               <span>
-                {operation === 'reconciling'
-                  ? 'Reconciling'
+                {pending !== null
+                  ? `Reconciling ${pending.label}`
                   : dirty
                     ? 'Unsaved changes'
                     : 'Draft saved'}
               </span>
               <div className="publisher-actions">
-                <Button variant="outline" disabled={!dirty || busy} onClick={() => void save()}>
-                  {operation === 'saving' ? 'Saving' : 'Save draft'}
+                <Button
+                  variant="outline"
+                  disabled={!dirty || busy || (pending !== null && !pendingSave)}
+                  onClick={() => void save()}
+                >
+                  {operation === 'saving'
+                    ? 'Saving'
+                    : pendingSave
+                      ? 'Reconcile save'
+                      : 'Save draft'}
                 </Button>
                 <Button
                   variant="primary"
-                  disabled={editor.server === null || dirty || !activeConnection || busy}
+                  disabled={
+                    editor.server === null || dirty || !activeConnection || busy || pending !== null
+                  }
                   onClick={() => {
                     setPublishOpen(true);
                   }}
@@ -1215,8 +1226,15 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
                         {retiringId === revision.id ? (
                           <InlineConfirm
                             question={`Retire revision ${String(revision.content.revision_number)}? Existing Launches continue; new Launches stop.`}
-                            confirmLabel="Retire revision"
-                            busy={operation === 'retiring' || operation === 'reconciling'}
+                            confirmLabel={
+                              pendingRetirement ? 'Reconcile retirement' : 'Retire revision'
+                            }
+                            busy={
+                              operation === 'retiring' ||
+                              (pending !== null &&
+                                pending?.slot !== `trigger:retire:${revision.id}`)
+                            }
+                            cancelDisabled={pending?.slot === `trigger:retire:${revision.id}`}
                             onCancel={() => {
                               setRetiringId(null);
                             }}
@@ -1245,6 +1263,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
                                 aria-label={`Retire revision ${String(revision.content.revision_number)}`}
                                 title="Retire revision"
                                 icon={<IconTrashOutline16 />}
+                                disabled={pending !== null}
                                 onClick={() => {
                                   setRetiringId(revision.id);
                                 }}
@@ -1267,21 +1286,25 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
         title="Publish immutable revision"
         description="Publishing creates a new public README destination. This revision cannot be edited."
         onClose={() => {
-          if (!busy) setPublishOpen(false);
+          if (!busy && !pendingPublish) setPublishOpen(false);
         }}
         footer={
           <>
             <Button
               variant="outline"
-              disabled={busy}
+              disabled={busy || pendingPublish}
               onClick={() => {
                 setPublishOpen(false);
               }}
             >
               Keep editing
             </Button>
-            <Button variant="primary" disabled={busy} onClick={() => void publish()}>
-              Publish immutable revision
+            <Button
+              variant="primary"
+              disabled={busy || (pending !== null && !pendingPublish)}
+              onClick={() => void publish()}
+            >
+              {pendingPublish ? 'Reconcile publication' : 'Publish immutable revision'}
             </Button>
           </>
         }

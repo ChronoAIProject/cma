@@ -9,7 +9,7 @@ import type {
   TriggerRepositorySelection,
   TriggerRevision,
 } from '@chronoai/cma-sdk';
-import { ApiError } from '../api/client';
+import { ApiError, TransportError } from '../api/client';
 import { PublisherSurface } from './PublisherSurface';
 import { applyRepository, newPublisherEditor } from './model';
 
@@ -66,6 +66,13 @@ const ACTIVE: TriggerConnection = {
   avatar_url: null,
   granted_scopes: ['public_repo'],
   consent_observed_at: '2026-08-27T00:00:00Z',
+};
+
+const HANDOFF = {
+  service_id: ACTIVE.service_id,
+  authorization_url:
+    'https://github.com/login/oauth/authorize?client_id=fixture&state=12345678-1234-4234-8234-123456789abc',
+  attempt_nonce: '12345678-1234-4234-8234-123456789abc',
 };
 
 function revisionContent(content: TriggerContentDraft, triggerId: string) {
@@ -233,6 +240,32 @@ describe('exact connection and repository selection', () => {
     expect(flow.authorizeTriggerConnection).toHaveBeenCalledOnce();
     expect(screen.getByLabelText('Public summary')).toHaveValue('Fix one bounded issue');
   });
+
+  it('reconciles an ambiguous OAuth begin with one intent and command key', async () => {
+    api.listTriggers.mockResolvedValue([]);
+    api.listTriggerConnections.mockResolvedValue([]);
+    api.beginTriggerConnection.mockRejectedValue(new TransportError('response lost'));
+    flow.authorizeTriggerConnection.mockImplementation(async (options) => {
+      const handoff = await options.begin();
+      options.onService?.(handoff.service_id);
+      return ACTIVE;
+    });
+    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Connect GitHub' }));
+    await waitFor(() => expect(api.beginTriggerConnection).toHaveBeenCalledTimes(2));
+    expect(api.beginTriggerConnection.mock.calls[1]).toEqual(
+      api.beginTriggerConnection.mock.calls[0],
+    );
+
+    api.beginTriggerConnection.mockResolvedValue(HANDOFF);
+    await user.click(screen.getByRole('button', { name: 'Reconcile connection' }));
+    await waitFor(() => expect(api.beginTriggerConnection).toHaveBeenCalledTimes(3));
+    expect(api.beginTriggerConnection.mock.calls[2]).toEqual(
+      api.beginTriggerConnection.mock.calls[0],
+    );
+  });
 });
 
 describe('draft mutations', () => {
@@ -296,6 +329,26 @@ describe('draft mutations', () => {
       'My retained edit',
     );
   });
+
+  it('freezes and reconciles the exact draft after repeated transport loss', async () => {
+    api.updateTrigger.mockRejectedValue(new TransportError('response lost'));
+    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    const user = userEvent.setup();
+    const summary = await screen.findByLabelText('Public summary');
+    await user.clear(summary);
+    await user.type(summary, 'Retained publisher edit');
+    await user.click(screen.getByRole('button', { name: 'Save draft' }));
+
+    await waitFor(() => expect(api.updateTrigger).toHaveBeenCalledTimes(2));
+    expect(summary).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Reconcile save' })).toBeEnabled();
+    expect(api.updateTrigger.mock.calls[1]).toEqual(api.updateTrigger.mock.calls[0]);
+
+    api.updateTrigger.mockResolvedValue(draft('Retained publisher edit', 4));
+    await user.click(screen.getByRole('button', { name: 'Reconcile save' }));
+    await waitFor(() => expect(api.updateTrigger).toHaveBeenCalledTimes(3));
+    expect(api.updateTrigger.mock.calls[2]).toEqual(api.updateTrigger.mock.calls[0]);
+  });
 });
 
 describe('immutable publication and retirement', () => {
@@ -343,6 +396,48 @@ describe('immutable publication and retirement', () => {
     await user.click(within(row!).getByRole('button', { name: 'Retire revision' }));
     await waitFor(() => expect(api.retireTriggerRevision).toHaveBeenCalledOnce());
     expect(await screen.findByText('retired')).toBeInTheDocument();
+  });
+
+  it('retains publication confirmation until the exact command reconciles', async () => {
+    api.publishTrigger.mockRejectedValue(new TransportError('response lost'));
+    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(api.preflightTriggerConnection).toHaveBeenCalled());
+    await user.click(await screen.findByRole('button', { name: 'Publish' }));
+    const dialog = screen.getByRole('dialog', { name: 'Publish immutable revision' });
+    await user.click(within(dialog).getByRole('button', { name: 'Publish immutable revision' }));
+
+    await waitFor(() => expect(api.publishTrigger).toHaveBeenCalledTimes(2));
+    expect(within(dialog).getByRole('button', { name: 'Reconcile publication' })).toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: 'Keep editing' })).toBeDisabled();
+    expect(api.publishTrigger.mock.calls[1]).toEqual(api.publishTrigger.mock.calls[0]);
+
+    api.publishTrigger.mockResolvedValue(revision());
+    await user.click(within(dialog).getByRole('button', { name: 'Reconcile publication' }));
+    await waitFor(() => expect(api.publishTrigger).toHaveBeenCalledTimes(3));
+    expect(api.publishTrigger.mock.calls[2]).toEqual(api.publishTrigger.mock.calls[0]);
+  });
+
+  it('pins retirement confirmation while its outcome is ambiguous', async () => {
+    api.listTriggerRevisions.mockResolvedValue([revision()]);
+    api.retireTriggerRevision.mockRejectedValue(new TransportError('response lost'));
+    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    const user = userEvent.setup();
+    const row = (await screen.findByText('Revision 1')).closest('li');
+    expect(row).not.toBeNull();
+    await user.click(within(row!).getByRole('button', { name: 'Retire revision 1' }));
+    await user.click(within(row!).getByRole('button', { name: 'Retire revision' }));
+
+    await waitFor(() => expect(api.retireTriggerRevision).toHaveBeenCalledTimes(2));
+    expect(within(row!).getByRole('button', { name: 'Keep it' })).toBeDisabled();
+    expect(within(row!).getByRole('button', { name: 'Reconcile retirement' })).toBeEnabled();
+
+    api.retireTriggerRevision.mockResolvedValue(revision('retired'));
+    await user.click(within(row!).getByRole('button', { name: 'Reconcile retirement' }));
+    await waitFor(() => expect(api.retireTriggerRevision).toHaveBeenCalledTimes(3));
+    expect(api.retireTriggerRevision.mock.calls[2]).toEqual(
+      api.retireTriggerRevision.mock.calls[0],
+    );
   });
 });
 

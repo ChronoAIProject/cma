@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ConnectionAuthorization, Launch, TriggerConnection } from '@chronoai/cma-sdk';
-import { ApiError } from '../api/client';
+import { ApiError, TransportError } from '../api/client';
 import { TriggerReview } from './TriggerReview';
 
 const api = vi.hoisted(() => ({
@@ -129,5 +129,91 @@ describe('Trigger contributor GitHub authorization', () => {
     await waitFor(() =>
       expect(api.preflightTriggerConnection).toHaveBeenCalledWith(ACTIVE.service_id),
     );
+  });
+});
+
+describe('Trigger contributor command reconciliation', () => {
+  it('reconciles an ambiguous create-or-resume with the original key', async () => {
+    api.createOrResumeLaunch.mockRejectedValue(new TransportError('response lost'));
+    render(<TriggerReview publicId="public-trigger" navigate={vi.fn()} />);
+
+    await waitFor(() => expect(api.createOrResumeLaunch).toHaveBeenCalledTimes(2));
+    expect(
+      new Set(api.createOrResumeLaunch.mock.calls.map((call) => call[1].idempotencyKey)).size,
+    ).toBe(1);
+
+    api.createOrResumeLaunch.mockResolvedValue(launch(ACTIVE));
+    await userEvent.click(await screen.findByRole('button', { name: 'Reconcile Launch' }));
+
+    await waitFor(() => expect(api.createOrResumeLaunch).toHaveBeenCalledTimes(3));
+    expect(api.createOrResumeLaunch.mock.calls[2]?.[1]).toEqual(
+      api.createOrResumeLaunch.mock.calls[0]?.[1],
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Fix one bounded issue' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps Start confirmation and the exact request after repeated transport loss', async () => {
+    const navigate = vi.fn();
+    api.startLaunch.mockRejectedValue(new TransportError('response lost'));
+    render(<TriggerReview publicId="public-trigger" navigate={navigate} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Start Launch' }));
+    const dialog = screen.getByRole('dialog', { name: 'Start this Launch?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Start Launch' }));
+
+    await waitFor(() => expect(api.startLaunch).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Start outcome is unknown/i);
+    expect(within(dialog).getByRole('button', { name: 'Reconcile Start' })).toBeEnabled();
+    expect(screen.getByLabelText(/topic/i)).toBeDisabled();
+    expect(api.startLaunch.mock.calls[1]).toEqual(api.startLaunch.mock.calls[0]);
+
+    const started = { ...launch(ACTIVE), state: 'preflight' as const };
+    api.startLaunch.mockResolvedValue(started);
+    await user.click(within(dialog).getByRole('button', { name: 'Reconcile Start' }));
+
+    await waitFor(() => expect(api.startLaunch).toHaveBeenCalledTimes(3));
+    expect(api.startLaunch.mock.calls[2]).toEqual(api.startLaunch.mock.calls[0]);
+    expect(navigate).toHaveBeenCalledWith({ kind: 'launch', launchId: started.id });
+  });
+
+  it('joins duplicate Start clicks to one in-flight command', async () => {
+    let finish!: (value: Launch) => void;
+    api.startLaunch.mockImplementation(
+      () =>
+        new Promise<Launch>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<TriggerReview publicId="public-trigger" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Start Launch' }));
+    const confirm = within(screen.getByRole('dialog')).getByRole('button', {
+      name: 'Start Launch',
+    });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(api.startLaunch).toHaveBeenCalledOnce());
+    finish({ ...launch(ACTIVE), state: 'preflight' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('retains review fields when another tab advances the Launch revision', async () => {
+    api.updateLaunchOverrides.mockRejectedValue(
+      new ApiError(409, 'revision conflict', 'revision_conflict'),
+    );
+    render(<TriggerReview publicId="public-trigger" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    const topic = await screen.findByLabelText(/topic/i);
+    await user.clear(topic);
+    await user.type(topic, 'my concurrent edit');
+    await user.click(screen.getByRole('button', { name: 'Save review' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/another tab/i);
+    expect(topic).toHaveValue('my concurrent edit');
   });
 });
