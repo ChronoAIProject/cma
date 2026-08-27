@@ -31,6 +31,8 @@ pub(super) mod turn;
 mod evidence_tests;
 
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest as _, Sha256};
 use tokio::sync::{mpsc, oneshot};
@@ -168,6 +170,12 @@ const CONVERSATION_PATH: &str = "/runtime/conversation";
 
 /// Where a pod takes the files its kernel needs before starting.
 const PRELUDE_PATH: &str = "/runtime/prelude";
+/// Exact maximum accepted by the runtime supervisor's prelude parser.
+const PRELUDE_LIMIT: usize = 4 * 1024 * 1024;
+/// Skill files plus the one optional standing-instructions document.
+const PRELUDE_FILE_LIMIT: usize = 4_097;
+/// Largest byte length of one component accepted by the Linux runtime image.
+const PRELUDE_COMPONENT_LIMIT: usize = 255;
 
 /// Versioned repository workspace restore/checkpoint endpoint.
 const WORKSPACE_PATH: &str = "/runtime/workspace";
@@ -208,6 +216,132 @@ where
     D: serde::Deserializer<'de>,
 {
     <bool as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+#[derive(serde::Serialize)]
+struct PreludeHeader {
+    #[serde(rename = "chronoPrelude")]
+    format: u8,
+    files: Vec<PreludeEntry>,
+}
+
+#[derive(serde::Serialize)]
+struct PreludeEntry {
+    path: String,
+    len: usize,
+}
+
+struct BoundedPrelude {
+    bytes: Vec<u8>,
+    exceeded: bool,
+}
+
+impl BoundedPrelude {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            exceeded: false,
+        }
+    }
+}
+
+impl Write for BoundedPrelude {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self
+            .bytes
+            .len()
+            .checked_add(bytes.len())
+            .is_none_or(|length| length > PRELUDE_LIMIT)
+        {
+            self.exceeded = true;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "runtime prelude limit exceeded",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn oversized_prelude() -> AdapterError {
+    AdapterError::Unsupported(format!(
+        "this session's runtime prelude exceeds the {PRELUDE_LIMIT}-byte limit"
+    ))
+}
+
+fn add_prelude_entry(
+    entries: &mut Vec<PreludeEntry>,
+    path_bytes: &mut usize,
+    path: &str,
+    len: usize,
+) -> Result<(), AdapterError> {
+    if !is_canonical_prelude_path(path) {
+        return Err(AdapterError::Unsupported(
+            "runtime prelude contains an unsafe, noncanonical, or overlong path".into(),
+        ));
+    }
+    *path_bytes = path_bytes
+        .checked_add(path.len())
+        .filter(|bytes| *bytes <= PRELUDE_LIMIT)
+        .ok_or_else(oversized_prelude)?;
+    entries.push(PreludeEntry {
+        path: path.to_owned(),
+        len,
+    });
+    Ok(())
+}
+
+fn validate_prelude_targets(entries: &[PreludeEntry]) -> Result<(), AdapterError> {
+    // Component ordering places every file immediately before its first
+    // descendant. Keep only references here: copying every prefix of a deep
+    // path would turn the bounded wire header into quadratic allocation.
+    let mut targets = entries
+        .iter()
+        .map(|entry| Path::new(entry.path.as_str()))
+        .collect::<Vec<_>>();
+    targets.sort_unstable_by(|left, right| left.components().cmp(right.components()));
+    if targets
+        .windows(2)
+        .any(|pair| is_component_prefix(pair[0], pair[1]))
+    {
+        return Err(AdapterError::Unsupported(
+            "runtime prelude contains conflicting file and directory targets".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_component_prefix(prefix: &Path, path: &Path) -> bool {
+    let mut components = path.components();
+    prefix
+        .components()
+        .all(|component| components.next() == Some(component))
+}
+
+fn is_canonical_prelude_path(raw: &str) -> bool {
+    if raw.is_empty() || raw.chars().any(char::is_control) {
+        return false;
+    }
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        return false;
+    }
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        let Component::Normal(part) = component else {
+            return false;
+        };
+        if part.len() > PRELUDE_COMPONENT_LIMIT {
+            return false;
+        }
+        normalized.push(part);
+    }
+    !normalized.as_os_str().is_empty() && normalized.as_os_str() == path.as_os_str()
 }
 
 impl From<SandboxError> for AdapterError {
@@ -319,7 +453,7 @@ impl SandboxShape {
 impl Default for SandboxShape {
     fn default() -> Self {
         Self {
-            image: "chrono-bot-runtime:dev".into(),
+            image: "cma-runtime:dev".into(),
             entrypoint: vec!["/usr/local/bin/layer4-runtime".into()],
             resource_limits: BTreeMap::from([
                 ("cpu".to_string(), "1".to_string()),
@@ -908,6 +1042,15 @@ impl HostedKernel {
                 "runtime timeout must be positive".into(),
             ));
         }
+        // Build and validate the exact bytes before provider creation. Skill
+        // archive bodies alone do not include rooted paths, the prelude header,
+        // or standing notes, and a candidate created before this check would be
+        // guaranteed to fail identically on every retry.
+        let prelude = self.prelude_for(
+            &spec.skills,
+            &spec.platform_briefing,
+            &spec.environment.agent_notes,
+        )?;
         let resource_limits = self.shape.limits_for(spec.capacity);
         let request = SandboxRequest {
             image: ImageSpec {
@@ -994,14 +1137,9 @@ impl HostedKernel {
         // The skills and the note the agent reads before using them travel
         // together: both have to be on disk before the kernel starts, and both
         // are useless if they land after it has already decided what to do.
-        if !spec.skills.is_empty() || !self.agent_notes.trim().is_empty() {
-            self.install_prelude(
-                &sandbox.id,
-                &spec.skills,
-                &spec.platform_briefing,
-                &spec.environment.agent_notes,
-            )
-            .await?;
+        if let Some(prelude) = prelude {
+            self.install_prelude(&sandbox.id, &spec.skills, prelude)
+                .await?;
         }
 
         Ok(RuntimeHandle(sandbox.id))
@@ -1030,6 +1168,79 @@ impl HostedKernel {
         note
     }
 
+    /// Encode exactly what the supervisor will receive, with its actual limit.
+    fn prelude_for(
+        &self,
+        skills: &[SkillPackage],
+        platform_briefing: &str,
+        owner_notes: &str,
+    ) -> Result<Option<Vec<u8>>, AdapterError> {
+        let notes_path = self.agent_notes.trim();
+        if skills.is_empty() && notes_path.is_empty() {
+            return Ok(None);
+        }
+        let root = self.skills_root.trim();
+        if !skills.is_empty() && root.is_empty() {
+            return Err(AdapterError::Unsupported(
+                "this runtime's agent reads no skills".to_string(),
+            ));
+        }
+
+        let note = (!notes_path.is_empty())
+            .then(|| self.agent_note(platform_briefing, owner_notes).into_bytes());
+        let file_count = skills
+            .iter()
+            .map(|skill| skill.files.len())
+            .try_fold(usize::from(note.is_some()), usize::checked_add)
+            .ok_or_else(oversized_prelude)?;
+        if file_count > PRELUDE_FILE_LIMIT {
+            return Err(oversized_prelude());
+        }
+        let mut entries = Vec::with_capacity(file_count);
+        let mut path_bytes = 0_usize;
+        if let Some(body) = note.as_ref() {
+            add_prelude_entry(&mut entries, &mut path_bytes, notes_path, body.len())?;
+        }
+        for skill in skills {
+            for (relative, body) in &skill.files {
+                root.len()
+                    .checked_add(skill.name.len())
+                    .and_then(|bytes| bytes.checked_add(relative.len()))
+                    .and_then(|bytes| bytes.checked_add(2))
+                    .filter(|bytes| *bytes <= PRELUDE_LIMIT)
+                    .ok_or_else(oversized_prelude)?;
+                let path = format!("{root}/{}/{relative}", skill.name);
+                add_prelude_entry(&mut entries, &mut path_bytes, &path, body.len())?;
+            }
+        }
+        validate_prelude_targets(&entries)?;
+
+        let mut pack = BoundedPrelude::new();
+        if let Err(error) = serde_json::to_writer(
+            &mut pack,
+            &PreludeHeader {
+                format: 1,
+                files: entries,
+            },
+        ) {
+            return Err(if pack.exceeded {
+                oversized_prelude()
+            } else {
+                AdapterError::Rejected(format!("runtime prelude header is invalid: {error}"))
+            });
+        }
+        pack.write_all(b"\n").map_err(|_| oversized_prelude())?;
+        if let Some(body) = note.as_ref() {
+            pack.write_all(body).map_err(|_| oversized_prelude())?;
+        }
+        for skill in skills {
+            for (_, body) in &skill.files {
+                pack.write_all(body).map_err(|_| oversized_prelude())?;
+            }
+        }
+        Ok(Some(pack.bytes))
+    }
+
     /// Put a session's skills on its pod's disk, under this kernel's root.
     ///
     /// The paths are composed here, so the pod is handed paths and writes
@@ -1043,15 +1254,8 @@ impl HostedKernel {
         &self,
         sandbox: &str,
         skills: &[SkillPackage],
-        platform_briefing: &str,
-        owner_notes: &str,
+        pack: Vec<u8>,
     ) -> Result<(), AdapterError> {
-        let root = self.skills_root.trim();
-        if !skills.is_empty() && root.is_empty() {
-            return Err(AdapterError::Unsupported(
-                "this runtime's agent reads no skills".to_string(),
-            ));
-        }
         let endpoint = self.client.endpoint(sandbox, SUPERVISOR_PORT).await?;
         if !self.takes_a_prelude(&endpoint.endpoint).await? {
             return Err(AdapterError::Unsupported(format!(
@@ -1062,31 +1266,6 @@ impl HostedKernel {
                     .collect::<Vec<_>>()
                     .join(", ")
             )));
-        }
-
-        let mut entries = Vec::new();
-        let mut bodies = Vec::new();
-        let notes = self.agent_notes.trim();
-        if !notes.is_empty() {
-            let body = self.agent_note(platform_briefing, owner_notes).into_bytes();
-            entries.push(serde_json::json!({ "path": notes, "len": body.len() }));
-            bodies.push(body);
-        }
-        for skill in skills {
-            for (relative, body) in &skill.files {
-                entries.push(serde_json::json!({
-                    "path": format!("{root}/{}/{relative}", skill.name),
-                    "len": body.len(),
-                }));
-                bodies.push(body.clone());
-            }
-        }
-        let mut pack = serde_json::json!({ "chronoPrelude": 1, "files": entries })
-            .to_string()
-            .into_bytes();
-        pack.push(b'\n');
-        for body in bodies {
-            pack.extend_from_slice(body.as_slice());
         }
 
         let bytes = pack.len();

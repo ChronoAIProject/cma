@@ -41,7 +41,7 @@ use crate::event::{Event, EventKind};
 use crate::ids::KernelId;
 use crate::service::SessionService;
 use crate::session::{RecoveryState, RuntimeLossCause, SessionSpec, SessionStatus};
-use crate::store::{SessionRecord, StoreError};
+use crate::store::{SessionRecord, SessionScan, SkillPackState, StoreError};
 
 const RECLAIM_LEASE_TTL: Duration = Duration::from_secs(30);
 
@@ -113,41 +113,76 @@ impl SessionService {
     pub async fn reconcile(self: &Arc<Self>) -> Reclaimed {
         let mut reclaimed = Reclaimed::default();
 
-        let records = match self.store.scan_all().await {
-            Ok(r) => r,
-            Err(e) => {
-                // Without the record there is nothing to compare against, and
-                // guessing here would tear down live work.
-                tracing::error!(error = %e, "reconciliation skipped: cannot read sessions");
-                return reclaimed;
-            }
-        };
-
-        let census = self.take_census().await;
-
-        for record in &records {
-            self.discard_stale_coordinated_entry(record).await;
-            self.reclaim_cleanup_debts(record, &mut reclaimed).await;
-            if !record.session.wants_runtime() && record.runtime_id.is_some() {
-                self.settle_stopped_compatibility_runtime(record, &mut reclaimed)
-                    .await;
+        // Preserve the original fail-closed boundary: prove that the complete
+        // durable set is readable before asking providers or taking any action.
+        // Pages are dropped as they are validated, so that proof no longer
+        // retains every historical session in one process-wide allocation.
+        // This cannot be folded into the action walk: then a later page failure
+        // would arrive only after earlier cleanup mutations had already landed.
+        let mut preflight = SessionScan::new();
+        loop {
+            match preflight.next_page(self.store.as_ref()).await {
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(error) => {
+                    // Without the record there is nothing to compare against,
+                    // and guessing here would tear down live work.
+                    tracing::error!(
+                        error = %error,
+                        "reconciliation skipped: cannot read sessions"
+                    );
+                    return reclaimed;
+                }
             }
         }
 
-        // Only these are entitled to a runtime. A stopped session is not — that
-        // is what stopping means — so its sandbox is reclaimed below.
-        let entitled: HashSet<String> = records
-            .iter()
-            .filter(|r| r.session.wants_runtime())
-            .map(|r| r.session.id.0.clone())
+        let census = self.take_census().await;
+
+        // Provider ownership is the bounded set relevant to orphan diagnostics.
+        // Remove an id only after its entitled durable row is observed; a
+        // partial scan must never be treated as evidence that the row is absent.
+        let mut unaccounted_sessions: HashSet<String> = census
+            .values()
+            .filter(|view| view.trusted)
+            .flat_map(|view| view.owners.values().filter_map(Clone::clone))
             .collect();
+
+        let mut action_scan = SessionScan::new();
+        loop {
+            let records = match action_scan.next_page(self.store.as_ref()).await {
+                Ok(Some(records)) => records,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        "reconciliation stopped: cannot continue cleanup session scan"
+                    );
+                    return reclaimed;
+                }
+            };
+            for record in &records {
+                self.reconcile_terminal_skill_pack_cleanup(record).await;
+                self.discard_stale_coordinated_entry(record).await;
+                self.reclaim_cleanup_debts(record, &mut reclaimed).await;
+                if !record.session.wants_runtime() && record.runtime_id.is_some() {
+                    self.settle_stopped_compatibility_runtime(record, &mut reclaimed)
+                        .await;
+                }
+                if record.session.wants_runtime() {
+                    unaccounted_sessions.remove(record.session.id.as_str());
+                }
+            }
+        }
 
         for view in census.values() {
             if !view.trusted {
                 continue;
             }
             for (runtime, session) in &view.owners {
-                if session.as_deref().is_some_and(|s| entitled.contains(s)) {
+                if session
+                    .as_deref()
+                    .is_some_and(|id| !unaccounted_sessions.contains(id))
+                {
                     continue;
                 }
                 let generation = view.generations.get(runtime).copied();
@@ -160,11 +195,27 @@ impl SessionService {
             }
         }
 
-        for record in records {
-            if !record.session.wants_runtime() {
-                continue;
+        // Keep settlement in its own walk so every cleanup phase completes
+        // globally before reconciliation publishes or replaces a live runtime.
+        let mut settlement_scan = SessionScan::new();
+        loop {
+            let records = match settlement_scan.next_page(self.store.as_ref()).await {
+                Ok(Some(records)) => records,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        "reconciliation stopped: cannot continue settlement session scan"
+                    );
+                    return reclaimed;
+                }
+            };
+            for record in records {
+                if !record.session.wants_runtime() {
+                    continue;
+                }
+                self.settle_session(record, &census, &mut reclaimed).await;
             }
-            self.settle_session(record, &census, &mut reclaimed).await;
         }
 
         if reclaimed != Reclaimed::default() {
@@ -178,6 +229,34 @@ impl SessionService {
             );
         }
         reclaimed
+    }
+
+    /// Replay terminal object cleanup from the durable owner row.
+    ///
+    /// A scan is only a reason to investigate. The shared cleanup driver
+    /// refreshes the row, acquires a distributed Reclaim lease before the local
+    /// lifecycle gate, and releases that lease on every result.
+    async fn reconcile_terminal_skill_pack_cleanup(&self, observed: &SessionRecord) {
+        if !observed.session.status.is_terminal() || observed.skill_packs == SkillPackState::Cleaned
+        {
+            return;
+        }
+        let id = &observed.session.id;
+        match self
+            .finish_terminal_skill_pack_cleanup_with_authority(id, SessionOperation::Reclaim)
+            .await
+        {
+            Ok(_) | Err(StoreError::SessionDeleted { .. }) => {}
+            Err(StoreError::SessionLeaseHeld { .. }) => tracing::debug!(
+                session_id = %id,
+                "terminal skill cleanup is owned by another lifecycle operation"
+            ),
+            Err(error) => tracing::warn!(
+                session_id = %id,
+                %error,
+                "terminal session skill cleanup remains pending"
+            ),
+        }
     }
 
     /// Remove a replica-local channel that no longer names durable authority.
@@ -399,6 +478,14 @@ impl SessionService {
         let _lifecycle = self.lock_lifecycle(id).await;
         let _input_fence = self.input_gates.gate(id).write_owned().await;
         let current = match self.store.get(id).await {
+            Ok(Some(current)) if matches!(&current.skill_packs, SkillPackState::StagedSummary) => {
+                tracing::error!(
+                    session_id = %id,
+                    "exact stopped-session read returned a projected skill custody summary"
+                );
+                reclaimed.deferred_sessions += 1;
+                return;
+            }
             Ok(Some(current)) => current,
             Ok(None) => return,
             Err(error) => {
@@ -854,6 +941,13 @@ impl SessionService {
         id: &crate::ids::SessionId,
     ) -> Option<(SessionRecord, crate::coordination::SessionLease)> {
         let record = match self.store.get(id).await {
+            Ok(Some(record)) if matches!(&record.skill_packs, SkillPackState::StagedSummary) => {
+                tracing::error!(
+                    session_id = %id,
+                    "exact cleanup read returned a projected skill custody summary"
+                );
+                return None;
+            }
             Ok(Some(record)) => record,
             Ok(None) | Err(StoreError::SessionDeleted { .. }) => return None,
             Err(error) => {
@@ -908,6 +1002,40 @@ impl SessionService {
         // sandboxes.
         if self.starting.read().await.contains(&id) {
             return;
+        }
+
+        // Store listings may deliberately redact staged skill bodies so one
+        // reconciliation page cannot retain hundreds of multi-megabyte rows.
+        // No provider or durable mutation may inherit that projection: reload
+        // the exact row before any settlement decision and refuse the sweep if
+        // the point-read contract is not exact.
+        if matches!(&record.skill_packs, SkillPackState::StagedSummary) {
+            record = match self.store.get(&id).await {
+                Ok(Some(exact)) if !matches!(&exact.skill_packs, SkillPackState::StagedSummary) => {
+                    exact
+                }
+                Ok(Some(_)) => {
+                    tracing::error!(
+                        session_id = %id,
+                        "exact session read returned a projected skill custody summary"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+                Ok(None) | Err(StoreError::SessionDeleted { .. }) => return,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        %error,
+                        "cannot reload exact staged skill custody before reconciliation"
+                    );
+                    reclaimed.deferred_sessions += 1;
+                    return;
+                }
+            };
+            if !record.session.wants_runtime() {
+                return;
+            }
         }
 
         // The compatibility reconciler below can record loss, rotate, readopt,
@@ -1841,6 +1969,7 @@ impl SessionService {
                         lease: Some(lease),
                         handover: None,
                         trigger_recovery,
+                        prepared_skills: None,
                         rotation_claim,
                     },
                 )
@@ -2121,6 +2250,7 @@ impl SessionService {
                         lease: None,
                         handover: None,
                         trigger_recovery,
+                        prepared_skills: None,
                         rotation_claim,
                     },
                 )

@@ -1977,6 +1977,7 @@ impl ChronoStorageTriggerWorkspaceStore {
     }
 }
 
+#[cfg(test)]
 fn reconciled_checkpoint_outcome(
     workspace: &layer2_core::WorkspaceRecord,
     intent: &WorkspaceCheckpointIntent,

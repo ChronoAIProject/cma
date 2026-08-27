@@ -423,6 +423,7 @@ fn git_blob_id(bytes: &[u8]) -> String {
     hex(&digest.finalize())
 }
 
+#[cfg(test)]
 fn is_lfs_content(path: &str, bytes: &[u8]) -> bool {
     bytes.starts_with(LFS_POINTER)
         || (path.ends_with(".gitattributes")

@@ -22,9 +22,11 @@ use serde_json::Value;
 use crate::auth::AuthState;
 
 mod workspace;
+#[cfg(test)]
+pub(crate) use workspace::WorkspaceSourceEntry;
 pub(crate) use workspace::{
     build_baseline_archive_plan, workspace_blob_metadata, WorkspaceBlobMetadata, WorkspaceContext,
-    WorkspaceSourceEntry, WorkspaceSourcePlan, WorkspaceUnsupported,
+    WorkspaceSourcePlan, WorkspaceUnsupported,
 };
 mod publication;
 #[cfg(test)]

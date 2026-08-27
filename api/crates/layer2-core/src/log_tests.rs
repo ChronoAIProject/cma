@@ -876,6 +876,7 @@ fn an_informational_event_does_not_claim_a_pending_status_change() {
         before: Box::new(base.clone()),
         fields: super::RecordFields::for_events(&[said(1, "owner-message")]),
         rotation_precondition: None,
+        terminal_lifecycle_repair: false,
     };
     let mut rival = base;
     rival.context_ref = Some("rival-state".into());
@@ -903,6 +904,7 @@ fn an_informational_event_does_not_claim_a_pending_status_change() {
             appended_at: String::new(),
         }]),
         rotation_precondition: None,
+        terminal_lifecycle_repair: false,
     };
     let after_status = status_change
         .apply(&intended, after_message)
@@ -925,6 +927,7 @@ fn an_informational_event_cannot_resurrect_runtime_authority_from_its_snapshot()
         before: Box::new(before),
         fields,
         rotation_precondition: None,
+        terminal_lifecycle_repair: false,
     };
     let mut durable = record();
     durable.runtime_id = Some("runtime-current".into());
@@ -3500,6 +3503,80 @@ async fn fresh_lane_rotation_finalizers_refuse_a_successor_claim() {
 }
 
 #[tokio::test]
+async fn claim_minting_ready_publication_refuses_a_successor_runtime() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let old_grant = Some(vec![crate::environment::GrantedSkill {
+        id: crate::SkillId::new("old-runtime-skill"),
+        version: Some("1".into()),
+    }]);
+    let mut claimed = record();
+    claimed.session.status = SessionStatus::Rotating;
+    claimed.runtime_id = Some("runtime-readopted".into());
+    claimed.session.granted_skills.clone_from(&old_grant);
+    store
+        .seed(&claimed)
+        .await
+        .expect("seed claimless readoption");
+
+    let mut successor = claimed.clone();
+    successor.runtime_id = Some("runtime-successor".into());
+    successor.context_ref = Some("successor-context".into());
+    store
+        .commit_session_idempotent("claimless-ready-successor", &successor, &[])
+        .await
+        .expect("the compatibility successor switches runtime first");
+
+    // Constructing the service after the switch gives its lane no local
+    // predecessor. Publication must retain the stale claimed boundary as its
+    // compare predicate rather than treating the newer revision as authority.
+    let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
+    let candidate_packs = vec![crate::store::SkillPack {
+        name: "successor-skill".into(),
+        version: Some("2".into()),
+        files: vec![("SKILL.md".into(), b"successor bytes".to_vec())],
+    }];
+    let candidate_grant = Some(vec![crate::environment::GrantedSkill {
+        id: crate::SkillId::new("successor-skill"),
+        version: Some("2".into()),
+    }]);
+    let mut intended = claimed.clone();
+    intended.session.status = SessionStatus::Ready;
+    intended.rotation_claim = Some("rotation-minted-by-readoption".into());
+    intended.session.granted_skills = candidate_grant;
+    intended.skill_packs = crate::store::SkillPackState::Staged(candidate_packs);
+
+    let error = service
+        .publish_ready_durably(
+            &mut intended,
+            &claimed,
+            vec![Event {
+                session_id: id(),
+                seq: 0,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Ready,
+                    stop_reason: None,
+                    detail: None,
+                    capability: None,
+                },
+                appended_at: String::new(),
+            }],
+        )
+        .await
+        .expect_err("stale Ready publication cannot inherit successor authority");
+    assert!(matches!(error, StoreError::RevisionConflict { .. }));
+
+    let durable = store.get(&id()).await.unwrap().unwrap();
+    assert_eq!(durable.session.status, SessionStatus::Rotating);
+    assert_eq!(durable.runtime_id, successor.runtime_id);
+    assert_eq!(durable.rotation_claim, None);
+    assert_eq!(durable.session.granted_skills, old_grant);
+    assert_eq!(durable.skill_packs, crate::store::SkillPackState::Legacy);
+    assert_eq!(durable.context_ref, successor.context_ref);
+    assert!(store.events_since(&id(), 0).await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn fresh_lane_compatibility_handover_inherits_unrelated_history() {
     let store = Arc::new(FakeStore::default());
     store.disable_coordination();
@@ -4045,7 +4122,8 @@ async fn an_exact_store_snapshot_does_not_redefine_the_live_snapshot_lineage() {
 #[tokio::test]
 async fn a_queued_delete_cannot_be_followed_by_an_inheriting_resurrection() {
     let store = Arc::new(FakeStore::default());
-    let base = record();
+    let mut base = record();
+    base.skill_packs = crate::store::SkillPackState::Cleaned;
     store.seed(&base).await.expect("seed record");
     let service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let lane = service.event_logs.lane(&id());
@@ -4114,7 +4192,8 @@ async fn a_dropped_delete_waiter_still_stops_after_four_completed_outages() {
 fn an_unknown_delete_outcome_is_replayed_before_its_successor_on_a_new_runtime() {
     let origin = current_thread_runtime();
     let store = Arc::new(FaultStore::default());
-    let base = record();
+    let mut base = record();
+    base.skill_packs = crate::store::SkillPackState::Cleaned;
     origin
         .block_on(store.inner.seed(&base))
         .expect("seed record");
