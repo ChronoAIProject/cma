@@ -15,10 +15,10 @@ use cma_sdk::{
     CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationRequest,
     LaunchProgress, LaunchStartRequest, MAX_PAGE_SIZE, PageWalkLimits, PublishTriggerRequest,
     PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
-    ResponseMetadata, RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session,
-    SessionId, SessionInput, SessionPageRequest, SessionStatus, TerminalGeometry,
-    TriggerConnection, TriggerContentDraft, TriggerDraft, TriggerPreview,
-    TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
+    RecoverInitialPromptRequest, ResponseMetadata, RetryPolicy, ScreenSnapshot,
+    SelectLaunchConnectionRequest, Session, SessionId, SessionInput, SessionPageRequest,
+    SessionStatus, TerminalGeometry, TriggerConnection, TriggerContentDraft, TriggerDraft,
+    TriggerPreview, TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
     UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
@@ -488,6 +488,7 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
         StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
         StubResponse::json(StatusCode::OK, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
     ])
     .await;
     let (client, _) = stub_client(&stub, 1);
@@ -619,6 +620,18 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         .cancel_launch("launch_fixture", confirmation, "exact-16")
         .await
         .unwrap();
+    client
+        .recover_initial_prompt(
+            "launch_fixture",
+            RecoverInitialPromptRequest {
+                expected_revision: 12,
+                snapshot_digest: "retained-payload-hash".into(),
+                acknowledge_duplicate_execution_risk: true,
+            },
+            "exact-17",
+        )
+        .await
+        .unwrap();
 
     let requests = stub.requests().await;
     let expected = [
@@ -675,6 +688,10 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
             "/proxy/api/v1/launches/launch_fixture/pull-request/update",
         ),
         (Method::POST, "/proxy/api/v1/launches/launch_fixture/cancel"),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/recover-initial-prompt",
+        ),
     ];
     assert_eq!(requests.len(), expected.len());
     let keys = [
@@ -695,6 +712,7 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         Some("exact-14"),
         Some("exact-15"),
         Some("exact-16"),
+        Some("exact-17"),
     ];
     for (index, ((request, (method, path)), key)) in
         requests.iter().zip(expected).zip(keys).enumerate()
@@ -706,6 +724,14 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
     assert_eq!(
         fixture(std::str::from_utf8(&requests[11].body).unwrap()),
         fixture(LAUNCH_START_REQUEST)
+    );
+    assert_eq!(
+        fixture(std::str::from_utf8(&requests[17].body).unwrap()),
+        serde_json::json!({
+            "expected_revision": 12,
+            "snapshot_digest": "retained-payload-hash",
+            "acknowledge_duplicate_execution_risk": true,
+        })
     );
 }
 

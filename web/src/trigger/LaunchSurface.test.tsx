@@ -2,13 +2,14 @@ import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { Launch } from '@chronoai/cma-sdk';
+import type { Launch, PromptDelivery } from '@chronoai/cma-sdk';
 import { TransportError } from '../api/client';
 import { LaunchSurface } from './LaunchSurface';
 
 const api = vi.hoisted(() => ({
   cancelLaunch: vi.fn(),
   createNewLaunch: vi.fn(),
+  recoverInitialPrompt: vi.fn(),
 }));
 
 const launchResource = vi.hoisted(() => ({ use: vi.fn() }));
@@ -25,6 +26,28 @@ vi.mock('./useLaunchResource', () => ({
 const FIXTURE = JSON.parse(
   readFileSync('../sdk/typescript/tests/fixtures/launch.json', 'utf8'),
 ) as Launch;
+
+const RECOVERY_DELIVERY: PromptDelivery = {
+  launch_id: FIXTURE.id,
+  session_id: 'session_fixture',
+  revision_digest: FIXTURE.revision_digest,
+  origin_key: `trigger:${FIXTURE.id}:initial-prompt`,
+  payload_hash: 'b'.repeat(64),
+  state: 'recovery_required',
+  attempt: 1,
+  recovery_generation: 0,
+  dispatch_fence_sequence: 42,
+  queued_at: '2026-08-26T12:00:00Z',
+  updated_at: '2026-08-26T12:01:00Z',
+};
+
+const RECOVERY_LAUNCH: Launch = {
+  ...FIXTURE,
+  state: 'failed_retryable',
+  revision_number: 12,
+  blocked_reason: 'recovery_required',
+  delivery: RECOVERY_DELIVERY,
+};
 
 function resource(launch: Launch) {
   return {
@@ -45,6 +68,127 @@ beforeEach(() => {
 });
 
 describe('Launch command reconciliation', () => {
+  it('offers prompt recovery only for the exact retained recovery state', () => {
+    launchResource.use.mockReturnValue(resource(RECOVERY_LAUNCH));
+    const view = render(<LaunchSurface launchId={RECOVERY_LAUNCH.id} navigate={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Recover initial task' })).toBeInTheDocument();
+
+    const ineligible = [
+      { ...RECOVERY_LAUNCH, state: 'ready' as const },
+      { ...RECOVERY_LAUNCH, blocked_reason: 'service_inactive' },
+      {
+        ...RECOVERY_LAUNCH,
+        delivery: { ...RECOVERY_DELIVERY, state: 'failed' as const },
+      },
+      {
+        ...RECOVERY_LAUNCH,
+        delivery: { ...RECOVERY_DELIVERY, payload_hash: '' },
+      },
+    ];
+    for (const launch of ineligible) {
+      launchResource.use.mockReturnValue(resource(launch));
+      view.rerender(<LaunchSurface launchId={launch.id} navigate={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: 'Recover initial task' })).toBeNull();
+    }
+  });
+
+  it('requires acknowledgement and reconciles the frozen recovery authorization', async () => {
+    api.recoverInitialPrompt.mockRejectedValue(new TransportError('response lost'));
+    const initialResource = resource(RECOVERY_LAUNCH);
+    launchResource.use.mockReturnValue(initialResource);
+    const view = render(<LaunchSurface launchId={RECOVERY_LAUNCH.id} navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    const opener = screen.getByRole('button', { name: 'Recover initial task' });
+    await user.click(opener);
+    const dialog = screen.getByRole('dialog', { name: 'Authorize another initial task?' });
+    expect(
+      within(dialog).getByText(/CMA cannot determine whether the previous initial task started/i),
+    ).toBeInTheDocument();
+    const confirm = within(dialog).getByRole('button', {
+      name: 'Authorize another dispatch',
+    });
+    expect(confirm).toBeDisabled();
+    await user.click(
+      within(dialog).getByRole('checkbox', {
+        name: /I understand that the initial task may execute twice/i,
+      }),
+    );
+    await user.click(confirm);
+
+    await waitFor(() => expect(api.recoverInitialPrompt).toHaveBeenCalledTimes(2));
+    const first = api.recoverInitialPrompt.mock.calls[0];
+    const second = api.recoverInitialPrompt.mock.calls[1];
+    expect(first?.slice(0, 3)).toEqual([
+      RECOVERY_LAUNCH.id,
+      12,
+      RECOVERY_LAUNCH.delivery?.payload_hash,
+    ]);
+    expect(first?.[3].idempotencyKey).toBe(second?.[3].idempotencyKey);
+    expect(await within(dialog).findByText(/recovery outcome is unknown/i)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: 'Authorize another initial task?' })).toBe(dialog);
+
+    const refreshedLaunch: Launch = {
+      ...RECOVERY_LAUNCH,
+      revision_number: 99,
+      delivery: { ...RECOVERY_DELIVERY, payload_hash: 'c'.repeat(64) },
+    };
+    const refreshedResource = resource(refreshedLaunch);
+    launchResource.use.mockReturnValue(refreshedResource);
+    view.rerender(<LaunchSurface launchId={refreshedLaunch.id} navigate={vi.fn()} />);
+    api.recoverInitialPrompt.mockResolvedValue({
+      ...refreshedLaunch,
+      state: 'ready',
+      blocked_reason: null,
+    });
+
+    await user.click(
+      within(dialog).getByRole('checkbox', {
+        name: /I understand that the initial task may execute twice/i,
+      }),
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Reconcile recovery' }));
+
+    await waitFor(() => expect(api.recoverInitialPrompt).toHaveBeenCalledTimes(3));
+    const third = api.recoverInitialPrompt.mock.calls[2];
+    expect(third?.slice(0, 3)).toEqual(first?.slice(0, 3));
+    expect(third?.[3].idempotencyKey).toBe(first?.[3].idempotencyKey);
+    expect(refreshedResource.accept).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('dialog', { name: 'Authorize another initial task?' })).toBeNull();
+    expect(opener).toHaveFocus();
+  });
+
+  it('renders a hostile finite recovery failure as text and keeps the dialog available', async () => {
+    const hostile = '<img src=x onerror=alert(1)> recovery refused';
+    api.recoverInitialPrompt.mockRejectedValue(new Error(hostile));
+    launchResource.use.mockReturnValue(resource(RECOVERY_LAUNCH));
+    render(<LaunchSurface launchId={RECOVERY_LAUNCH.id} navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Recover initial task' }));
+    const dialog = screen.getByRole('dialog', { name: 'Authorize another initial task?' });
+    await user.click(within(dialog).getByRole('checkbox'));
+    await user.click(within(dialog).getByRole('button', { name: 'Authorize another dispatch' }));
+
+    expect(await within(dialog).findByText(hostile)).toBeInTheDocument();
+    expect(dialog.querySelector('img')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeEnabled();
+  });
+
+  it('keeps Launch and acknowledgement targets at least 44px on narrow screens', () => {
+    const triggerCss = readFileSync('src/trigger/Trigger.css', 'utf8');
+    const riskCss = readFileSync('src/ui/RiskConfirmation.css', 'utf8');
+    expect(triggerCss).toMatch(
+      /@media \(max-width: 29\.999rem\)[\s\S]*\.trigger-workflow__actions \.button\s*\{[^}]*min-height: 44px/,
+    );
+    expect(riskCss).toMatch(
+      /@media \(max-width: 29\.999rem\)[\s\S]*\.risk__acknowledgement\s*\{[^}]*min-height: 44px/,
+    );
+  });
+
   it('retains one cancellation key and confirmation after an ambiguous response', async () => {
     api.cancelLaunch.mockRejectedValue(new TransportError('response lost'));
     const currentResource = resource(FIXTURE);

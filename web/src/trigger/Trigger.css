@@ -405,7 +405,7 @@
 }
 
 .trigger-connection:focus-within {
-  box-shadow: inset var(--focus-ring);
+  box-shadow: var(--focus-ring);
 }
 
 .trigger-connection > span:nth-child(2) {
@@ -565,6 +565,10 @@
   .trigger-checkrow,
   .trigger-checks label,
   .trigger-connection {
+    min-height: 44px;
+  }
+
+  .trigger-workflow__actions .button {
     min-height: 44px;
   }
 }

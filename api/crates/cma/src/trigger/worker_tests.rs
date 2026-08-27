@@ -780,6 +780,7 @@ fn prompt_delivery(
         payload_hash: "a".repeat(64),
         state,
         attempt: u32::from(state != layer2_core::PromptDeliveryState::Queued),
+        recovery_generation: 0,
         dispatch_fence_sequence: (state != layer2_core::PromptDeliveryState::Queued).then_some(42),
         queued_at: NOW.into(),
         updated_at: LATER.into(),

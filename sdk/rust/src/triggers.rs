@@ -686,6 +686,8 @@ pub struct PromptDelivery {
     pub payload_hash: String,
     pub state: PromptDeliveryState,
     pub attempt: u32,
+    #[serde(default)]
+    pub recovery_generation: u32,
     pub dispatch_fence_sequence: Option<u64>,
     pub queued_at: String,
     pub updated_at: String,
@@ -742,6 +744,7 @@ pub enum LaunchEventKind {
     Blocked { reason: Value },
     Failure { failure: LaunchFailure },
     EffectReconciled { effect: String },
+    RecoveryAuthorized { effect: String },
     DeliveryChanged { state: PromptDeliveryState },
     ReachChanged { reach: LaunchReachStatus },
     ConfirmationRecorded { action: String },
@@ -858,6 +861,16 @@ pub struct LaunchStartRequest {
     pub snapshot_digest: String,
     #[serde(default)]
     pub acknowledge_workflow_risk: bool,
+}
+
+/// Explicit authorization for one replacement initial-prompt dispatch.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverInitialPromptRequest {
+    pub expected_revision: u64,
+    pub snapshot_digest: String,
+    pub acknowledge_duplicate_execution_risk: bool,
 }
 
 /// Digest-bound confirmation used for diff, publication, and cancellation.
@@ -1259,6 +1272,24 @@ impl Client {
         self.command(
             Method::POST,
             &["launches", launch_id, "start"],
+            request,
+            StatusCode::ACCEPTED,
+            idempotency_key,
+        )
+        .await
+    }
+
+    /// Authorize one replacement initial-prompt dispatch after an ambiguous write.
+    pub async fn recover_initial_prompt(
+        &self,
+        launch_id: &str,
+        request: RecoverInitialPromptRequest,
+        idempotency_key: &str,
+    ) -> Result<Launch> {
+        identifier(launch_id, "Launch id")?;
+        self.command(
+            Method::POST,
+            &["launches", launch_id, "recover-initial-prompt"],
             request,
             StatusCode::ACCEPTED,
             idempotency_key,

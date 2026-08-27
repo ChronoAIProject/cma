@@ -32,6 +32,28 @@ pub struct StartLaunchCommand {
     pub correlation_id: String,
 }
 
+/// Explicit owner authorization for one replacement initial-prompt dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoverInitialPromptCommand {
+    pub expected_revision: u64,
+    pub confirmation: Confirmation,
+    pub acknowledge_duplicate_execution_risk: bool,
+    pub now: String,
+    pub correlation_id: String,
+}
+
+/// Exact operator authorization for one read-only effect reconciliation pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizeEffectReconciliationCommand {
+    pub expected_revision: u64,
+    pub effect: super::LaunchEffectKind,
+    pub intent_key: String,
+    pub expected_fence: u64,
+    pub evidence_correlation_id: String,
+    pub now: String,
+    pub correlation_id: String,
+}
+
 /// User-confirmed values for opening or updating a pull request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfirmPullRequestCommand {
@@ -686,7 +708,76 @@ impl TriggerService {
         correlation_id: impl Into<String>,
     ) -> Result<Launch, TriggerServiceError> {
         let mut launch = self.get_launch(owner, id).await?;
+        if launch.revision_number != expected_revision {
+            return Err(TriggerStoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: launch.revision_number,
+            }
+            .into());
+        }
+        let before = launch.clone();
         launch.cancel(confirmation, now, correlation_id)?;
+        if launch == before {
+            return Ok(launch);
+        }
+        persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
+    }
+
+    pub async fn recover_initial_prompt(
+        &self,
+        owner: &SubjectId,
+        id: &LaunchId,
+        command: RecoverInitialPromptCommand,
+    ) -> Result<Launch, TriggerServiceError> {
+        let RecoverInitialPromptCommand {
+            expected_revision,
+            confirmation,
+            acknowledge_duplicate_execution_risk,
+            now,
+            correlation_id,
+        } = command;
+        let mut launch = self.get_launch(owner, id).await?;
+        launch.authorize_initial_prompt_recovery(
+            confirmation,
+            acknowledge_duplicate_execution_risk,
+            now,
+            correlation_id,
+        )?;
+        persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
+    }
+
+    pub async fn authorize_effect_reconciliation(
+        &self,
+        caller: &Caller,
+        id: &LaunchId,
+        command: AuthorizeEffectReconciliationCommand,
+    ) -> Result<Launch, TriggerServiceError> {
+        caller
+            .authorization
+            .require(Capability::ControlAnySession)
+            .map_err(|_| TriggerServiceError::Forbidden)?;
+        let AuthorizeEffectReconciliationCommand {
+            expected_revision,
+            effect,
+            intent_key,
+            expected_fence,
+            evidence_correlation_id,
+            now,
+            correlation_id,
+        } = command;
+        let mut launch = self
+            .launches
+            .get_launch(id)
+            .await?
+            .ok_or(TriggerServiceError::NotFound)?;
+        launch.authorize_effect_reconciliation(
+            effect,
+            &intent_key,
+            expected_fence,
+            &evidence_correlation_id,
+            now,
+            correlation_id,
+        )?;
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
     }
 

@@ -5221,6 +5221,7 @@ mod tests {
             payload_hash: "a".repeat(64),
             state,
             attempt: u32::from(state != layer2_core::PromptDeliveryState::Queued),
+            recovery_generation: 0,
             dispatch_fence_sequence: (state != layer2_core::PromptDeliveryState::Queued)
                 .then_some(42),
             queued_at: "2026-08-27T00:00:00Z".into(),

@@ -18,6 +18,7 @@ import {
   readLaunchDiff,
   readLaunchProgress,
   readTriggerPreview,
+  recoverInitialPrompt,
   reconnectTriggerConnection,
   resolveTriggerRepository,
   requestLaunchDiff,
@@ -269,6 +270,15 @@ describe('Trigger command idempotency', () => {
             idempotencyKey: 'exact-key',
           }),
       },
+      {
+        name: 'recover initial prompt',
+        status: 202,
+        response: LAUNCH,
+        invoke: (config) =>
+          recoverInitialPrompt(config, 'launch_fixture', 12, 'retained-payload-hash', {
+            idempotencyKey: 'exact-key',
+          }),
+      },
     ];
 
     for (const entry of cases) {
@@ -277,6 +287,25 @@ describe('Trigger command idempotency', () => {
       const [, init] = calls.mock.calls[0] as unknown as [string, RequestInit];
       expect(new Headers(init.headers).get('idempotency-key'), entry.name).toBe('exact-key');
     }
+  });
+
+  it('binds prompt recovery to the retained payload and duplicate-risk acknowledgement', async () => {
+    const { fetch, calls } = responder(LAUNCH, 202);
+    const client = new Cma({ fetch });
+
+    await client.recoverInitialPrompt('launch_fixture', 12, 'retained-payload-hash', {
+      idempotencyKey: 'recovery-command',
+    });
+
+    const [url, init] = calls.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/v1/launches/launch_fixture/recover-initial-prompt');
+    expect(init.method).toBe('POST');
+    expect(new Headers(init.headers).get('idempotency-key')).toBe('recovery-command');
+    expect(JSON.parse(String(init.body))).toEqual({
+      expected_revision: 12,
+      snapshot_digest: 'retained-payload-hash',
+      acknowledge_duplicate_execution_risk: true,
+    });
   });
 
   it('uses an authenticated GET without an idempotency key for connection preflight', async () => {
@@ -420,6 +449,25 @@ describe('Trigger response validation', () => {
         revision_content: { setup: { backing_key_id: 'must-not-cross-layer-one' } },
       }),
     ).toThrow('leaked backing_key_id');
+    const delivery = {
+      launch_id: 'launch_fixture',
+      session_id: 'session_fixture',
+      revision_digest: 'revision-digest',
+      origin_key: 'cma-trigger:launch_fixture:initial',
+      payload_hash: 'a'.repeat(64),
+      state: 'recovery_required',
+      attempt: 1,
+      recovery_generation: 0,
+      dispatch_fence_sequence: 1,
+      queued_at: '2026-08-27T00:00:00Z',
+      updated_at: '2026-08-27T00:01:00Z',
+    };
+    expect(() =>
+      decodeLaunch({ ...LAUNCH, delivery: { ...delivery, state: 'delivered' } }),
+    ).toThrow('Prompt delivery carried an invalid state');
+    expect(() =>
+      decodeLaunch({ ...LAUNCH, delivery: { ...delivery, recovery_generation: -1 } }),
+    ).toThrow('Prompt delivery carried an invalid recovery_generation');
   });
 
   it('rejects malformed, unordered, and internally leaky progress', async () => {

@@ -264,6 +264,22 @@ export class Cma {
     );
   }
 
+  /** Authorize one replacement initial-prompt dispatch after an ambiguous write. */
+  recoverInitialPrompt(
+    id: string,
+    expectedRevision: number,
+    snapshotDigest: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.recoverInitialPrompt(
+      this.#config,
+      id,
+      expectedRevision,
+      snapshotDigest,
+      options,
+    );
+  }
+
   /** Request a sealed diff checkpoint without publishing it. */
   requestLaunchDiff(
     id: string,
