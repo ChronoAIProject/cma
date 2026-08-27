@@ -35,6 +35,7 @@ impl CommitFaultStore {
         inner: Arc<FakeStore>,
         matches: fn(&SessionRecord, &[Event]) -> bool,
     ) -> Self {
+        inner.disable_coordination();
         Self {
             inner,
             matches,
@@ -63,6 +64,7 @@ impl CommitFaultStore {
 
     /// Preserve compatibility setup, then expose the wrapped store's interaction fence.
     pub(crate) fn enable_interaction_coordination(&self) {
+        self.inner.enable_coordination();
         self.coordination_enabled.store(true, Ordering::SeqCst);
     }
 

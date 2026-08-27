@@ -974,7 +974,7 @@ impl SessionLog {
     /// entry backed by this lane.
     pub(crate) fn observe_tail(&self, tail: u64) {
         let _state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        self.sequences.issued(&self.id, tail);
+        self.sequences.observe_durable(&self.id, tail);
     }
 
     /// The lane-authoritative tail for a live entry snapshot.
@@ -1484,7 +1484,7 @@ impl SessionLog {
                                     None
                                 };
                             self.finalize_rejected_commit(
-                                events.len(),
+                                events,
                                 matches!(mode, CommitMode::UpdateInheriting),
                                 retained,
                             );
@@ -1549,7 +1549,7 @@ impl SessionLog {
                         .await
                     };
                     if result.is_err() {
-                        self.finalize_rejected_commit(events.len(), false, None);
+                        self.finalize_rejected_commit(events, false, None);
                     }
                     if let Some(outcome) = outcome.take() {
                         let _ = outcome.send(result.map(|()| (**record).clone()));
@@ -1812,13 +1812,13 @@ impl SessionLog {
     /// the lane lock can therefore only enqueue behind that cleanup.
     fn finalize_rejected_commit(
         &self,
-        event_count: usize,
+        events: &[Event],
         rebuild_local_lineage: bool,
         retained: Option<(Box<dyn RetainedCommitWork>, StoreError)>,
     ) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if event_count != 0 {
-            self.abandon_sequence_reservation_locked(&mut state, event_count);
+        if !events.is_empty() {
+            self.abandon_sequence_reservation_locked(&mut state, events);
         }
         if rebuild_local_lineage {
             Self::rebuild_local_lineage_locked(&mut state);
@@ -1848,7 +1848,16 @@ impl SessionLog {
     }
 
     /// Remove one failed unit's reservation and shift every successor with it.
-    fn abandon_sequence_reservation_locked(&self, state: &mut LaneState, count: usize) {
+    fn abandon_sequence_reservation_locked(&self, state: &mut LaneState, events: &[Event]) {
+        let durable_floor = self.sequences.durable_floor(&self.id);
+        // A store-authored event can take a position already reserved by this
+        // rejected unit. That occupied prefix is not abandoned: only its
+        // reservations above the durable floor can be returned and removed
+        // from queued successors.
+        let count = events
+            .iter()
+            .filter(|event| event.seq > durable_floor)
+            .count();
         let count = u64::try_from(count).unwrap_or(u64::MAX);
         for operation in &mut state.queued {
             let (mode, record, events) = match operation {
@@ -2746,6 +2755,12 @@ impl RecordFields {
                 }
                 EventKind::PlaneChanged { .. } => fields.plane = true,
                 EventKind::RuntimeLost { .. } => fields.runtime_loss = true,
+                // The compatibility marker is committed atomically with the
+                // handle it names. Coordinated starts are inserted by the
+                // coordination store itself; the handover marker rides beside
+                // a status event that owns the lifecycle mutation.
+                EventKind::RuntimeIncarnationStarted => fields.runtime = true,
+                EventKind::RuntimeHandoverStarted | EventKind::RuntimeStarted { .. } => {}
                 _ => {}
             }
         }
@@ -3098,12 +3113,15 @@ fn rebase_semantic_record(
             EventKind::RuntimeLost { .. }
             | EventKind::StatusChanged { .. }
             | EventKind::TerminalResized { .. }
-            | EventKind::PlaneChanged { .. } => {
+            | EventKind::PlaneChanged { .. }
+            | EventKind::RuntimeIncarnationStarted => {
                 return Err(StoreError::RevisionConflict {
                     expected: intended.revision,
                     actual: durable.revision,
                 });
             }
+            // These accounting markers own no independent record mutation.
+            EventKind::RuntimeHandoverStarted | EventKind::RuntimeStarted { .. } => {}
             _ => {}
         }
     }

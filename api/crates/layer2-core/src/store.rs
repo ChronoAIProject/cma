@@ -675,13 +675,16 @@ pub trait SessionStore: Send + Sync {
         Err(StoreError::CoordinationDisabled)
     }
 
-    /// Atomically switch both the session record handle and durable authority.
+    /// Atomically switch the session record, durable authority, and event log.
     ///
-    /// This changes no lifecycle or event fields, so event folds that committed
-    /// while provisioning was in flight remain intact. The candidate generation
-    /// must strictly exceed current authority. An unknown-result retry returns
-    /// its receipt only while that switch is still the durable lease boundary;
-    /// a later switch can never be mistaken for the earlier result.
+    /// The switch advances `Session.last_seq` and appends exactly one
+    /// `RuntimeStarted` marker for the candidate generation in the same commit
+    /// that changes authority. Other lifecycle fields and events remain intact,
+    /// including writes committed while provisioning was in flight. The
+    /// candidate generation must strictly exceed current authority. An
+    /// unknown-result retry returns its receipt only while that switch is still
+    /// the durable lease boundary; a later switch can never be mistaken for the
+    /// earlier result or append the marker again.
     async fn switch_runtime_authority(
         &self,
         _lease: &mut SessionLease,
@@ -852,6 +855,11 @@ pub trait SessionStore: Send + Sync {
     /// `NonContiguousAppend`. A reader advances its cursor to every event it
     /// sees, so accepting a higher sequence while a lower batch is in flight
     /// makes that lower event permanently invisible to that reader.
+    ///
+    /// `RuntimeStarted` is reserved for `switch_runtime_authority`, which
+    /// commits it with the authority receipt and session boundary. Every
+    /// ordinary batch passed to this method or any of the three idempotent
+    /// record/event commit methods must refuse that kind as `Malformed`.
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError>;
 
     /// Atomically replace a session record and append its state-change events.

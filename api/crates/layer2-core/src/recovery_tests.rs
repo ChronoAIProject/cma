@@ -204,6 +204,18 @@ async fn a_running_session_survives_the_control_plane_restarting() {
         .expect("present")
         .runtime_id
         .expect("has a runtime");
+    let markers_before = store
+        .events_since(&created.id, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                &event.kind,
+                crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { .. })
+            )
+        })
+        .count();
 
     // The process goes. The sandbox does not.
     drop(first);
@@ -224,6 +236,22 @@ async fn a_running_session_survives_the_control_plane_restarting() {
             .runtime_id,
         Some(original),
         "taking a session back over must not change the sandbox it is using"
+    );
+    let markers_after = store
+        .events_since(&created.id, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                &event.kind,
+                crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { .. })
+            )
+        })
+        .count();
+    assert_eq!(
+        markers_after, markers_before,
+        "readopting the same authority must not start another incarnation"
     );
     assert!(
         adapter.terminated.lock().await.is_empty(),
@@ -750,7 +778,20 @@ async fn the_loss_is_recorded_before_the_replacement_is_started() {
             _ => None,
         })
         .expect("the replacement becomes ready");
-    assert!(loss_seq < replacement_ready);
+    let replacement_started = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            crate::event::StoredEventKind::Known(EventKind::RuntimeStarted { generation })
+                if event.seq > loss_seq =>
+            {
+                Some((event.seq, *generation))
+            }
+            _ => None,
+        })
+        .expect("the recovered runtime becomes authoritative");
+    assert_eq!(replacement_started.1.get(), 2);
+    assert!(loss_seq < replacement_started.0);
+    assert!(replacement_started.0 < replacement_ready);
 }
 
 #[tokio::test]

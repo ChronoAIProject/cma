@@ -549,7 +549,8 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             ending: None,
         },
         // Recorded for the log's own sake and carried by other interfaces. No
-        // honest AG-UI shape exists for a resize or an attachment.
+        // honest AG-UI shape exists for an authority marker, resize or
+        // attachment.
         _ => Projected::nothing(),
     };
     projected.with_final_cursor(event.seq)
