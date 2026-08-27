@@ -14,7 +14,6 @@
 //! A kernel that needs nothing written says nothing and nothing is written.
 
 use std::{
-    collections::HashSet,
     io,
     marker::PhantomData,
     path::{Component, Path, PathBuf},
@@ -80,6 +79,11 @@ const PACK_VERSION: u32 = 1;
 pub const PACK_LIMIT: usize = 4 * 1024 * 1024;
 /// Skill files plus the optional standing-instructions document.
 const PACK_FILE_LIMIT: usize = 4_097;
+/// Largest byte length of one component accepted by the Linux runtime image.
+const PACK_COMPONENT_LIMIT: usize = 255;
+
+/// Whether this build can safely write a runtime prelude beneath its home.
+pub const SUPPORTED: bool = cfg!(unix);
 
 #[derive(serde::Deserialize)]
 struct PackHeader {
@@ -170,7 +174,6 @@ pub fn unpack(body: &[u8]) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
 
     let mut at = split + 1;
     let mut files = Vec::with_capacity(header.files.len());
-    let mut targets = HashSet::with_capacity(header.files.len());
     for entry in header.files {
         let raw = entry.path;
         let len = usize::try_from(entry.len)
@@ -188,16 +191,46 @@ pub fn unpack(body: &[u8]) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
                 "{raw} is not a canonical path inside the pod's home"
             ));
         }
-        if !targets.insert(path.clone()) {
-            return Err(format!("{raw} repeats a runtime prelude target"));
-        }
         files.push((path, body[at..end].to_vec()));
         at = end;
     }
+    validate_targets(&files)?;
     if at != body.len() {
         return Err("the runtime prelude has unclaimed trailing bytes".to_string());
     }
     Ok(files)
+}
+
+fn validate_targets(files: &[(PathBuf, Vec<u8>)]) -> Result<(), String> {
+    // Sorting borrowed paths by component makes equal targets and file/child
+    // conflicts adjacent without retaining a copy of every deep prefix.
+    let mut targets = files
+        .iter()
+        .map(|(path, _)| path.as_path())
+        .collect::<Vec<_>>();
+    targets.sort_unstable_by(|left, right| left.components().cmp(right.components()));
+    for pair in targets.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(format!(
+                "{} repeats a runtime prelude target",
+                pair[1].display()
+            ));
+        }
+        if is_component_prefix(pair[0], pair[1]) {
+            return Err(format!(
+                "{} conflicts with another runtime prelude file or directory target",
+                pair[1].display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_component_prefix(prefix: &Path, path: &Path) -> bool {
+    let mut components = path.components();
+    prefix
+        .components()
+        .all(|component| components.next() == Some(component))
 }
 
 /// Write files a kernel needs, and say how many landed.
@@ -518,7 +551,8 @@ fn contained(raw: &str) -> Option<PathBuf> {
     let mut cleaned = PathBuf::new();
     for component in path.components() {
         match component {
-            Component::Normal(part) => cleaned.push(part),
+            Component::Normal(part) if part.len() <= PACK_COMPONENT_LIMIT => cleaned.push(part),
+            Component::Normal(_) => return None,
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
         }
