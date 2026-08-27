@@ -27,9 +27,11 @@ pub const PLACEHOLDER_CREDENTIAL: &str = "local-proxy-no-credential-needed";
 
 /// Where the supervisor serves its credential-attaching proxy, inside the pod.
 const PROXY_BASE_URL: &str = "http://127.0.0.1:9091";
+const PROXY_BIND: &str = "127.0.0.1:9091";
 
 /// Where the supervisor serves the identity platform's proxy, inside the pod.
-const PLATFORM_PROXY_BASE_URL: &str = "http://127.0.0.1:9092";
+const PLATFORM_PROXY_BASE_URL: &str = "http://127.0.0.2:9092";
+const PLATFORM_PROXY_BIND: &str = "127.0.0.2:9092";
 
 /// What a deployment configures about a hosted kernel.
 ///
@@ -125,6 +127,7 @@ impl Deployment {
                     false => self.upstream_base_url.clone(),
                 },
             ),
+            ("CHRONO_UPSTREAM_BIND".to_string(), PROXY_BIND.to_string()),
             (
                 "CHRONO_UPSTREAM_MODEL".to_string(),
                 // A model the session asked for wins over the deployment's
@@ -141,6 +144,10 @@ impl Deployment {
             (
                 "CHRONO_PLATFORM_BASE_URL".to_string(),
                 self.platform_base_url.clone(),
+            ),
+            (
+                "CHRONO_PLATFORM_PROXY_BIND".to_string(),
+                PLATFORM_PROXY_BIND.to_string(),
             ),
             ("CHRONO_SESSION_ID".to_string(), spec.session_id.clone()),
             (

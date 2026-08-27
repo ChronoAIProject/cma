@@ -158,6 +158,13 @@ export function reconnectTriggerConnection(serviceId: string, options: TriggerCo
   return bot.reconnectTriggerConnection(serviceId, options);
 }
 
+export function revokeTriggerConnection(
+  serviceId: string,
+  options: TriggerCommandOptions,
+): Promise<TriggerConnection> {
+  return bot.revokeTriggerConnection(serviceId, options);
+}
+
 export function preflightTriggerConnection(
   serviceId: string,
   signal?: AbortSignal,

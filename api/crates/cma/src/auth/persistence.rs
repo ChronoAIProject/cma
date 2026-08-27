@@ -100,6 +100,8 @@ pub struct BrowserSession {
 pub struct LoginAttempt {
     /// Digest of the OAuth state returned through the browser.
     pub id: SecretDigest,
+    /// Digest of the host-only callback cookie issued to the initiating browser.
+    pub browser_binding: SecretDigest,
     /// PKCE verifier, encrypted by the concrete durable store.
     pub verifier: SecretValue,
     /// Validated relative application path restored after sign-in.
@@ -221,6 +223,15 @@ pub struct DurableCredential {
     pub expires_at: Option<SystemTime>,
     /// Hash of the frozen service grant this key represents.
     pub scope_fingerprint: String,
+    /// CAS generation that first committed this exact key into CMA custody.
+    ///
+    /// This remains stable when a pending replacement is promoted. Zero marks a
+    /// legacy row whose exact credential authority cannot be proven.
+    pub custody_generation: u64,
+    /// NyxID state version returned by the exact create-key response.
+    pub provider_state_version: i64,
+    /// Hash of the normalized grant NyxID actually returned for this key.
+    pub grant_fingerprint: String,
     /// Exact non-renewable authority that can revoke this provider key.
     ///
     /// Absent means revocation follows the owner's renewable subject token.
@@ -427,10 +438,11 @@ pub trait AuthStore: Send + Sync {
     /// Record one authorization-code flow.
     async fn put_login_attempt(&self, attempt: LoginAttempt) -> Result<(), StoreError>;
 
-    /// Atomically consume one authorization-code flow.
+    /// Atomically consume one authorization-code flow only for its initiating browser.
     async fn take_login_attempt(
         &self,
         id: &SecretDigest,
+        browser_binding: &SecretDigest,
     ) -> Result<Option<LoginAttempt>, StoreError>;
 
     /// Read one subject's complete auth state.
@@ -812,9 +824,18 @@ impl AuthStore for MemoryAuthStore {
     async fn take_login_attempt(
         &self,
         id: &SecretDigest,
+        browser_binding: &SecretDigest,
     ) -> Result<Option<LoginAttempt>, StoreError> {
         self.available()?;
-        Ok(self.login_attempts.lock().await.remove(id))
+        let mut attempts = self.login_attempts.lock().await;
+        if attempts
+            .get(id)
+            .is_some_and(|attempt| &attempt.browser_binding == browser_binding)
+        {
+            Ok(attempts.remove(id))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn subject(&self, subject: &SubjectId) -> Result<Option<SubjectAuthState>, StoreError> {

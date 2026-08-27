@@ -4,6 +4,189 @@ import type { ResolvedConfig } from './config.js';
 import { ProtocolError, ValidationError } from './errors.js';
 import { request, requestBytes, type OperationOptions } from './http.js';
 
+const TRIGGER_AVAILABILITIES = ['published', 'retired'] as const;
+const REPOSITORY_VISIBILITIES = ['public', 'private', 'internal'] as const;
+const REQUIRED_CAPABILITIES = [
+  'conversation',
+  'durable_conversation',
+  'workspace_checkpoint',
+  'restricted_service_gateway',
+  'credential_refresh',
+  'credential_revocation',
+] as const;
+const TRIGGER_KERNELS = ['codex'] as const;
+const PERMISSION_CEILINGS = ['guarded', 'autonomous'] as const;
+const BILLING_MODES = ['contributor', 'zero_cost', 'sponsored'] as const;
+const PUBLISHER_ROLES = ['owner', 'admin', 'maintain'] as const;
+const CONNECTION_STATES = ['active', 'inactive', 'disconnected', 'revoked', 'expired'] as const;
+const LAUNCH_STATES = [
+  'draft',
+  'auth_required',
+  'preflight',
+  'fork_pending',
+  'fork_ready',
+  'branch_pending',
+  'workspace_pending',
+  'sandbox_pending',
+  'session_pending',
+  'prompt_pending',
+  'ready',
+  'contributing',
+  'pr_pending',
+  'pr_open',
+  'completed',
+  'failed_retryable',
+  'failed_terminal',
+  'cancelled',
+] as const;
+const BLOCKED_REASONS = [
+  'feature_paused',
+  'owner_credential_unavailable',
+  'service_inactive',
+  'session_rotating',
+  'session_recovering',
+  'recovery_required',
+  'revocation_pending',
+] as const;
+const STEP_KEYS = [
+  'review',
+  'authentication',
+  'preflight',
+  'fork',
+  'branch',
+  'workspace',
+  'sandbox',
+  'session',
+  'reach',
+  'initial_prompt',
+  'checkpoint',
+  'diff',
+  'publish_branch',
+  'pull_request',
+  'cleanup',
+] as const;
+const STEP_STATUSES = [
+  'pending',
+  'running',
+  'completed',
+  'blocked',
+  'retryable',
+  'failed',
+  'cancelled',
+] as const;
+const FAILURE_CLASSES = [
+  'auth_required',
+  'owner_credential_unavailable',
+  'service_inactive',
+  'retryable_transient',
+  'ambiguous_external',
+  'conflict_stale_head',
+  'resource_quota',
+  'policy_user_action',
+  'recovery_required',
+  'terminal_validation',
+  'terminal_security',
+  'feature_paused',
+] as const;
+const PROMPT_DELIVERY_STATES = [
+  'queued',
+  'dispatch_fenced',
+  'write_confirmed',
+  'execution_observed',
+  'completed',
+  'failed',
+  'recovery_required',
+] as const;
+const CAPABILITY_REVOCATION_STATES = [
+  'active',
+  'revocation_pending',
+  'revoked',
+  'expired',
+] as const;
+const CAPABILITY_REFUSALS = [
+  'missing_policy',
+  'unknown_version',
+  'expired',
+  'stale_generation',
+  'revoked',
+  'malformed_request',
+  'resource_mismatch',
+  'operation_denied',
+  'audience_mismatch',
+  'signature_invalid',
+] as const;
+const DIFF_CHANGE_KINDS = [
+  'added',
+  'modified',
+  'deleted',
+  'mode_changed',
+  'symlink_changed',
+] as const;
+const DIFF_VALIDATION_OUTCOMES = [
+  'valid',
+  'no_changes',
+  'stale_head',
+  'workflow_scope_required',
+  'too_many_changes',
+  'too_many_bytes',
+  'unsupported_file',
+  'missing_baseline',
+  'corrupt_checkpoint',
+  'artifact_too_large',
+] as const;
+const PUBLICATION_STATES = [
+  'intent_recorded',
+  'objects_written',
+  'ref_update_pending',
+  'published',
+  'conflict',
+  'recovery_required',
+  'failed',
+] as const;
+const PULL_REQUEST_OPERATIONS = ['open', 'update'] as const;
+const PULL_REQUEST_STATES = [
+  'creating',
+  'updating',
+  'open',
+  'closed_unmerged',
+  'merged',
+  'recovery_required',
+] as const;
+const MERGEABILITIES = ['computing', 'mergeable', 'conflicting'] as const;
+const CHECK_SUMMARY_STATES = [
+  'pending',
+  'passing',
+  'failing',
+  'awaiting_maintainer_approval',
+  'unavailable',
+] as const;
+const LAUNCH_EFFECT_KINDS = [
+  'preflight',
+  'fork',
+  'branch',
+  'workspace_import',
+  'sandbox',
+  'session',
+  'reach',
+  'initial_dispatch',
+  'checkpoint',
+  'diff',
+  'branch_publication',
+  'pull_request',
+  'cleanup',
+] as const;
+const CONFIRMATION_ACTIONS = [
+  'start',
+  'workflow_risk',
+  'review_diff',
+  'publish_branch',
+  'open_pull_request',
+  'update_pull_request',
+  'recover_prompt',
+  'new_launch',
+  'cancel',
+] as const;
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
 export interface JsonObject {
@@ -35,8 +218,8 @@ export interface TriggerPreview {
   readonly visibility: 'public' | 'private' | 'internal';
   readonly allow_forking: boolean;
   readonly public_summary: string;
-  readonly permission_ceiling: string;
-  readonly required_capabilities: readonly string[];
+  readonly permission_ceiling: TriggerPermissionCeiling;
+  readonly required_capabilities: readonly TriggerRequiredCapability[];
   readonly resource_default: SessionSize;
   readonly resource_ceiling: SessionSize;
   readonly timeout_default_seconds: number;
@@ -113,6 +296,9 @@ export type TriggerRequiredCapability =
   | 'credential_refresh'
   | 'credential_revocation';
 
+/** Closed kernel identity admitted for a Trigger-owned session. */
+export type TriggerKernel = (typeof TRIGGER_KERNELS)[number];
+
 /** The public Trigger contract deliberately excludes unrestricted sessions. */
 export type TriggerPermissionCeiling = 'guarded' | 'autonomous';
 
@@ -173,12 +359,11 @@ export interface TriggerCommercialPolicy {
   readonly policy_reference: string;
 }
 
-export type TriggerEditableField =
-  'task_input' | 'branch_suffix' | 'resource_size' | 'timeout' | 'optional_checks';
+export type TriggerEditableField = 'task_input' | 'branch_suffix' | 'resource_size' | 'timeout';
 
 export interface TriggerOverridePolicy {
   readonly editable_fields: readonly TriggerEditableField[];
-  readonly optional_checks: readonly string[];
+  readonly optional_checks: readonly [];
 }
 
 export interface TriggerPublicProjectionPolicy {
@@ -251,17 +436,21 @@ export interface TriggerRevision {
     readonly service_state_version: number;
     readonly account_id: number;
     readonly account_login: string;
-    readonly role: string;
+    readonly role: TriggerPublisherRepositoryRole;
     readonly verified_at: string;
   };
   readonly published_at: string;
   readonly retired_at: string | null;
 }
 
+export type TriggerPublisherRepositoryRole = 'owner' | 'admin' | 'maintain';
+
+export type TriggerConnectionState = 'active' | 'inactive' | 'disconnected' | 'revoked' | 'expired';
+
 export interface TriggerConnection {
   readonly service_id: string;
   readonly state_version: number;
-  readonly state: string;
+  readonly state: TriggerConnectionState;
   readonly account_id: number | null;
   readonly account_node_id: string | null;
   readonly account_login: string | null;
@@ -296,11 +485,37 @@ export type LaunchState =
   | 'failed_terminal'
   | 'cancelled';
 
+export type LaunchBlockedReason =
+  | 'feature_paused'
+  | 'owner_credential_unavailable'
+  | 'service_inactive'
+  | 'session_rotating'
+  | 'session_recovering'
+  | 'recovery_required'
+  | 'revocation_pending';
+
 export type LaunchStepStatus =
   'pending' | 'running' | 'completed' | 'blocked' | 'retryable' | 'failed' | 'cancelled';
 
+export type LaunchStepKey =
+  | 'review'
+  | 'authentication'
+  | 'preflight'
+  | 'fork'
+  | 'branch'
+  | 'workspace'
+  | 'sandbox'
+  | 'session'
+  | 'reach'
+  | 'initial_prompt'
+  | 'checkpoint'
+  | 'diff'
+  | 'publish_branch'
+  | 'pull_request'
+  | 'cleanup';
+
 export interface LaunchStep {
-  readonly key: string;
+  readonly key: LaunchStepKey;
   readonly sequence: number;
   readonly status: LaunchStepStatus;
   readonly started_at: string | null;
@@ -312,8 +527,22 @@ export interface LaunchStep {
   readonly correlation_id: string;
 }
 
+export type LaunchFailureClass =
+  | 'auth_required'
+  | 'owner_credential_unavailable'
+  | 'service_inactive'
+  | 'retryable_transient'
+  | 'ambiguous_external'
+  | 'conflict_stale_head'
+  | 'resource_quota'
+  | 'policy_user_action'
+  | 'recovery_required'
+  | 'terminal_validation'
+  | 'terminal_security'
+  | 'feature_paused';
+
 export interface LaunchFailure {
-  readonly class: string;
+  readonly class: LaunchFailureClass;
   readonly code: string;
   readonly detail: string;
   readonly remediation: string;
@@ -345,22 +574,101 @@ export interface PromptDelivery {
   readonly updated_at: string;
 }
 
+export type LaunchCapabilityRevocationState =
+  'active' | 'revocation_pending' | 'revoked' | 'expired';
+
+export type LaunchCapabilityRefusal =
+  | 'missing_policy'
+  | 'unknown_version'
+  | 'expired'
+  | 'stale_generation'
+  | 'revoked'
+  | 'malformed_request'
+  | 'resource_mismatch'
+  | 'operation_denied'
+  | 'audience_mismatch'
+  | 'signature_invalid';
+
+export interface LaunchReachStatus {
+  readonly service_id: string;
+  readonly state: LaunchCapabilityRevocationState;
+  readonly policy_generation: number;
+  readonly policy_fence: number;
+  readonly runtime_audience: string;
+  readonly expires_at_epoch_seconds: number;
+  readonly numeric_binding_observed_at: string;
+  readonly refreshed_at: string;
+  readonly revocation_requested_at?: string;
+  readonly revocation_effective_at?: string;
+  readonly last_refusal?: LaunchCapabilityRefusal;
+  readonly tombstone_acknowledged: boolean;
+  readonly agent_key_revocation_confirmed: boolean;
+}
+
 export interface LaunchOverrides {
   readonly task_inputs: Readonly<Record<string, JsonValue>>;
   readonly branch_suffix?: string;
   readonly resource_size?: SessionSize;
   readonly timeout_seconds?: number;
-  readonly optional_checks: readonly string[];
+  readonly optional_checks: readonly [];
 }
 
 export interface EffectiveConfiguration {
   readonly rendered_prompt: string;
   readonly branch_suffix: string;
-  readonly permission: string;
+  readonly permission: TriggerPermissionCeiling;
   readonly resource_size: SessionSize;
   readonly timeout_seconds: number;
-  readonly optional_checks: readonly string[];
+  readonly optional_checks: readonly [];
   readonly digest: string;
+}
+
+export interface TriggerRate {
+  readonly cpu_micros_per_cpu_hour: number;
+  readonly memory_micros_per_gib_hour: number;
+}
+
+/** Server-owned price or explicit zero-cost promise sealed into the Launch review. */
+export interface LaunchPricingSnapshot {
+  readonly policy_reference: string;
+  readonly billing_mode: TriggerBillingMode;
+  readonly rate_card?: string;
+  readonly rate?: TriggerRate;
+  readonly currency: string;
+  readonly cpu_millis: number;
+  readonly memory_mib: number;
+  readonly micros_per_hour: number;
+  readonly estimated_micros: number;
+  readonly quoted_at: string;
+  readonly expires_at: string;
+}
+
+/** Locked kernel, pinned runtime identity, and demonstrated capabilities shown during review. */
+export interface LaunchRuntimeAdmission {
+  readonly kernel: TriggerKernel;
+  readonly runtime_version: string;
+  readonly supported_capabilities: readonly TriggerRequiredCapability[];
+  readonly observed_at: string;
+}
+
+/** Review- or Start-time observation of owner and deployment capacity. */
+export interface LaunchQuotaSnapshot {
+  readonly live_sessions: number;
+  readonly live_session_limit?: number;
+  readonly reserved_cpu_millis: number;
+  readonly reserved_memory_mib: number;
+  readonly free_cpu_millis?: number;
+  readonly free_memory_mib?: number;
+  readonly checked_at: string;
+}
+
+/** Fresh server admission recorded immediately before Start is accepted. */
+export interface LaunchStartAdmission {
+  readonly runtime_version: string;
+  readonly pricing_policy_reference: string;
+  readonly rate_card?: string;
+  readonly quota: LaunchQuotaSnapshot;
+  readonly checked_at: string;
 }
 
 export interface ForkRecord {
@@ -416,7 +724,7 @@ export interface DiffArtifact {
   readonly author: CommitIdentity;
   readonly committer: CommitIdentity;
   readonly workflow_paths: readonly string[];
-  readonly validation: string;
+  readonly validation: DiffValidationOutcome;
   readonly checks: readonly {
     readonly key: string;
     readonly passed: boolean;
@@ -427,6 +735,27 @@ export interface DiffArtifact {
   readonly download_url: string;
 }
 
+export type DiffValidationOutcome =
+  | 'valid'
+  | 'no_changes'
+  | 'stale_head'
+  | 'workflow_scope_required'
+  | 'too_many_changes'
+  | 'too_many_bytes'
+  | 'unsupported_file'
+  | 'missing_baseline'
+  | 'corrupt_checkpoint'
+  | 'artifact_too_large';
+
+export type PublicationState =
+  | 'intent_recorded'
+  | 'objects_written'
+  | 'ref_update_pending'
+  | 'published'
+  | 'conflict'
+  | 'recovery_required'
+  | 'failed';
+
 export interface ContributionRecord {
   readonly id: string;
   readonly diff_artifact_id: string;
@@ -435,7 +764,7 @@ export interface ContributionRecord {
   readonly checkpoint_digest: string;
   readonly diff_digest: string;
   readonly branch_name: string;
-  readonly state: string;
+  readonly state: PublicationState;
   readonly expected_head: string;
   readonly base_tree_id: string | null;
   readonly tree_id: string | null;
@@ -453,6 +782,8 @@ export interface ContributionRecord {
 export type Mergeability = 'computing' | 'mergeable' | 'conflicting';
 export type PullRequestState =
   'creating' | 'updating' | 'open' | 'closed_unmerged' | 'merged' | 'recovery_required';
+export type PullRequestCheckSummaryState =
+  'pending' | 'passing' | 'failing' | 'awaiting_maintainer_approval' | 'unavailable';
 
 export interface PullRequestRecord {
   readonly operation: 'open' | 'update';
@@ -486,7 +817,7 @@ export interface PullRequestRecord {
   readonly observed_title: string | null;
   readonly observed_body_digest: string | null;
   readonly mergeability: Mergeability;
-  readonly checks: string;
+  readonly checks: PullRequestCheckSummaryState;
   readonly confirmation_snapshot_digest: string;
   readonly confirmed_at: string;
   readonly created_at: string;
@@ -528,11 +859,15 @@ export interface Launch {
   readonly state: LaunchState;
   readonly revision_number: number;
   readonly revision_content: TriggerRevisionContent;
-  readonly blocked_reason: string | null;
+  readonly blocked_reason: LaunchBlockedReason | null;
   readonly failure: LaunchFailure | null;
+  readonly resume_state: LaunchState | null;
   readonly overrides: LaunchOverrides;
   readonly effective: EffectiveConfiguration;
-  readonly pricing: JsonObject | null;
+  readonly pricing: LaunchPricingSnapshot | null;
+  readonly runtime_admission: LaunchRuntimeAdmission | null;
+  readonly review_quota: LaunchQuotaSnapshot | null;
+  readonly start_admission: LaunchStartAdmission | null;
   readonly connection: TriggerConnection | null;
   readonly workflow_paths: readonly string[];
   readonly workflow_risk_acknowledged: boolean;
@@ -541,7 +876,7 @@ export interface Launch {
   readonly branch: BranchRecord | null;
   readonly workspace: JsonObject | null;
   readonly session: JsonObject | null;
-  readonly reach: JsonObject | null;
+  readonly reach: LaunchReachStatus | null;
   readonly delivery: PromptDelivery | null;
   readonly contribution_checkpoint_version: number | null;
   readonly diff: DiffArtifact | null;
@@ -549,19 +884,77 @@ export interface Launch {
   readonly pull_request: PullRequestRecord | null;
   readonly created_at: string;
   readonly updated_at: string;
+  readonly draft_expires_at: string;
   readonly started_at: string | null;
   readonly terminal_at: string | null;
 }
 
+export interface LaunchProgressState {
+  readonly state: LaunchState;
+  readonly blocked_reason: LaunchBlockedReason | null;
+  readonly failure: LaunchFailure | null;
+  readonly resume_state: LaunchState | null;
+  readonly reach: LaunchReachStatus | null;
+  readonly delivery: PromptDelivery | null;
+}
+
+export type LaunchEventKind =
+  | { readonly type: 'created'; readonly steps: readonly LaunchStep[] }
+  | { readonly type: 'draft_updated' }
+  | { readonly type: 'connection_selected' }
+  | { readonly type: 'started' }
+  | { readonly type: 'state_changed'; readonly from: LaunchState; readonly to: LaunchState }
+  | { readonly type: 'step_changed'; readonly step: LaunchStep }
+  | { readonly type: 'blocked'; readonly reason: LaunchBlockedReason }
+  | { readonly type: 'resumed'; readonly reason: LaunchBlockedReason }
+  | { readonly type: 'failure'; readonly failure: LaunchFailure }
+  | { readonly type: 'effect_reconciled'; readonly effect: LaunchEffectKind }
+  | { readonly type: 'recovery_authorized'; readonly effect: LaunchEffectKind }
+  | { readonly type: 'delivery_changed'; readonly state: PromptDeliveryState }
+  | { readonly type: 'reach_changed'; readonly reach: LaunchReachStatus }
+  | { readonly type: 'confirmation_recorded'; readonly action: LaunchConfirmationAction }
+  | { readonly type: 'cleanup_planned'; readonly target_count: number }
+  | { readonly type: 'cleanup_completed'; readonly target_count: number }
+  | { readonly type: 'cancelled' };
+
+export type LaunchEffectKind =
+  | 'preflight'
+  | 'fork'
+  | 'branch'
+  | 'workspace_import'
+  | 'sandbox'
+  | 'session'
+  | 'reach'
+  | 'initial_dispatch'
+  | 'checkpoint'
+  | 'diff'
+  | 'branch_publication'
+  | 'pull_request'
+  | 'cleanup';
+
+export type LaunchConfirmationAction =
+  | 'start'
+  | 'workflow_risk'
+  | 'review_diff'
+  | 'publish_branch'
+  | 'open_pull_request'
+  | 'update_pull_request'
+  | 'recover_prompt'
+  | 'new_launch'
+  | 'cancel';
+
+export interface LaunchEvent {
+  readonly sequence: number;
+  readonly launch_id: string;
+  readonly occurred_at: string;
+  readonly correlation_id: string;
+  readonly progress: LaunchProgressState;
+  readonly kind: LaunchEventKind;
+}
+
 export interface LaunchProgress {
   readonly launch_id: string;
-  readonly events: readonly (JsonObject & {
-    readonly sequence: number;
-    readonly launch_id: string;
-    readonly occurred_at: string;
-    readonly correlation_id: string;
-    readonly kind: JsonObject;
-  })[];
+  readonly events: readonly LaunchEvent[];
   readonly next_cursor: number;
 }
 
@@ -776,6 +1169,28 @@ export async function reconnectTriggerConnection(
       options,
     ),
   );
+}
+
+/** Revoke one exact reusable NyxID service without deleting Launch history. */
+export async function revokeTriggerConnection(
+  config: ResolvedConfig,
+  serviceId: string,
+  options: TriggerCommandOptions,
+): Promise<TriggerConnection> {
+  const connection = decodeConnection(
+    await command(
+      config,
+      `/api/v1/trigger-connections/${identifier(serviceId, 'service id')}`,
+      'DELETE',
+      {},
+      200,
+      options,
+    ),
+  );
+  if (connection.service_id !== serviceId) {
+    throw new ProtocolError('CMA returned revocation state for a different GitHub connection.');
+  }
+  return connection;
 }
 
 export async function preflightTriggerConnection(
@@ -1073,9 +1488,15 @@ export async function readLaunchProgress(
   limit = 100,
   options: OperationOptions = {},
 ): Promise<LaunchProgress> {
-  if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1)
+  if (
+    !Number.isSafeInteger(after) ||
+    after < 0 ||
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 500
+  )
     throw new ValidationError(
-      'Launch progress cursor and limit must be non-negative bounded integers',
+      'Launch progress cursor must be non-negative and limit must be from 1 through 500',
     );
   return decodeLaunchProgress(
     await request(
@@ -1083,6 +1504,8 @@ export async function readLaunchProgress(
       `${launchPath(launchId)}/events?after=${String(after)}&limit=${String(limit)}`,
       { ...options, expectedStatus: 200 },
     ),
+    launchId,
+    after,
   );
 }
 
@@ -1124,6 +1547,11 @@ function decodeTriggerPreview(raw: unknown): TriggerPreview {
   requireText(body, 'revision_digest', 'Trigger preview');
   requireText(body, 'public_summary', 'Trigger preview');
   requireInteger(body, 'repository_id', 'Trigger preview');
+  requireEnum(body, 'availability', TRIGGER_AVAILABILITIES, 'Trigger preview');
+  requireEnum(body, 'visibility', REPOSITORY_VISIBILITIES, 'Trigger preview');
+  requireEnum(body, 'permission_ceiling', PERMISSION_CEILINGS, 'Trigger preview');
+  requireEnum(body, 'billing_mode', BILLING_MODES, 'Trigger preview');
+  requireEnumArray(body, 'required_capabilities', REQUIRED_CAPABILITIES, 'Trigger preview');
   return body as unknown as TriggerPreview;
 }
 
@@ -1141,7 +1569,12 @@ function decodeTriggerRevision(raw: unknown): TriggerRevision {
   requireText(body, 'id', 'Trigger revision');
   requireText(body, 'public_id', 'Trigger revision');
   requireText(body, 'digest', 'Trigger revision');
+  requireEnum(body, 'availability', TRIGGER_AVAILABILITIES, 'Trigger revision');
   safeObject(body.content, 'Trigger revision content');
+  if (body.authority !== undefined) {
+    const authority = safeObject(body.authority, 'Trigger publisher authority');
+    requireEnum(authority, 'role', PUBLISHER_ROLES, 'Trigger publisher authority');
+  }
   return body as unknown as TriggerRevision;
 }
 
@@ -1149,7 +1582,7 @@ function decodeConnection(raw: unknown): TriggerConnection {
   const body = safeObject(raw, 'Trigger connection');
   requireText(body, 'service_id', 'Trigger connection');
   requireInteger(body, 'state_version', 'Trigger connection');
-  requireText(body, 'state', 'Trigger connection');
+  requireEnum(body, 'state', CONNECTION_STATES, 'Trigger connection');
   return body as unknown as TriggerConnection;
 }
 
@@ -1171,6 +1604,7 @@ function decodeRepositorySelection(raw: unknown): TriggerRepositorySelection {
   requireText(repository, 'owner_node_id', 'Trigger repository identity');
   requireText(repository, 'canonical_owner', 'Trigger repository identity');
   requireText(repository, 'canonical_name', 'Trigger repository identity');
+  requireEnum(repository, 'visibility', REPOSITORY_VISIBILITIES, 'Trigger repository identity');
   requireText(repository, 'default_branch', 'Trigger repository identity');
   requireText(repository, 'selected_ref', 'Trigger repository identity');
   return body as unknown as TriggerRepositorySelection;
@@ -1181,13 +1615,126 @@ export function decodeLaunch(raw: unknown): Launch {
   requireText(body, 'id', 'Launch');
   requireText(body, 'trigger_public_id', 'Launch');
   requireText(body, 'revision_digest', 'Launch');
-  requireText(body, 'state', 'Launch');
+  requireEnum(body, 'state', LAUNCH_STATES, 'Launch');
   requireInteger(body, 'revision_number', 'Launch');
+  requireText(body, 'draft_expires_at', 'Launch');
   if (!Array.isArray(body.steps)) throw new ProtocolError('Launch steps was not an array');
-  safeObject(body.revision_content, 'Launch revision content');
-  safeObject(body.effective, 'Launch effective configuration');
+  for (const step of body.steps) decodeLaunchStep(step);
+  decodeTriggerRevisionContentEnums(body.revision_content);
+  const effective = safeObject(body.effective, 'Launch effective configuration');
+  requireEnum(effective, 'permission', PERMISSION_CEILINGS, 'Launch effective configuration');
+  if (body.blocked_reason !== undefined && body.blocked_reason !== null) {
+    requireEnumValue(body.blocked_reason, BLOCKED_REASONS, 'Launch blocked_reason');
+  }
+  if (body.failure !== undefined && body.failure !== null) decodeLaunchFailure(body.failure);
+  if (body.resume_state !== undefined && body.resume_state !== null) {
+    requireEnumValue(body.resume_state, LAUNCH_STATES, 'Launch resume_state');
+  }
+  if (body.pricing !== null) {
+    const pricing = safeObject(body.pricing, 'Launch pricing');
+    requireText(pricing, 'policy_reference', 'Launch pricing');
+    requireEnum(pricing, 'billing_mode', BILLING_MODES, 'Launch pricing');
+    requireText(pricing, 'currency', 'Launch pricing');
+    requireInteger(pricing, 'cpu_millis', 'Launch pricing');
+    requireInteger(pricing, 'memory_mib', 'Launch pricing');
+    requireInteger(pricing, 'micros_per_hour', 'Launch pricing');
+    requireInteger(pricing, 'estimated_micros', 'Launch pricing');
+    requireText(pricing, 'quoted_at', 'Launch pricing');
+    requireText(pricing, 'expires_at', 'Launch pricing');
+    if (pricing.rate !== undefined) {
+      const rate = safeObject(pricing.rate, 'Launch pricing rate');
+      requireInteger(rate, 'cpu_micros_per_cpu_hour', 'Launch pricing rate');
+      requireInteger(rate, 'memory_micros_per_gib_hour', 'Launch pricing rate');
+    }
+  }
+  if (body.runtime_admission !== null) {
+    const runtime = safeObject(body.runtime_admission, 'Launch runtime admission');
+    requireEnum(runtime, 'kernel', TRIGGER_KERNELS, 'Launch runtime admission');
+    requireText(runtime, 'runtime_version', 'Launch runtime admission');
+    requireText(runtime, 'observed_at', 'Launch runtime admission');
+    if (!Array.isArray(runtime.supported_capabilities))
+      throw new ProtocolError('Launch runtime supported_capabilities was not an array');
+    for (const capability of runtime.supported_capabilities) {
+      requireEnumValue(capability, REQUIRED_CAPABILITIES, 'Launch runtime capability');
+    }
+  }
+  if (body.review_quota !== null) decodeLaunchQuota(body.review_quota, 'Launch review quota');
+  if (body.start_admission !== null) {
+    const start = safeObject(body.start_admission, 'Launch Start admission');
+    requireText(start, 'runtime_version', 'Launch Start admission');
+    requireText(start, 'pricing_policy_reference', 'Launch Start admission');
+    requireText(start, 'checked_at', 'Launch Start admission');
+    decodeLaunchQuota(start.quota, 'Launch Start quota');
+  }
   if (body.delivery !== undefined && body.delivery !== null) decodePromptDelivery(body.delivery);
+  if (body.connection !== undefined && body.connection !== null) decodeConnection(body.connection);
+  if (body.reach !== undefined && body.reach !== null) decodeLaunchReach(body.reach);
+  if (body.diff !== undefined && body.diff !== null) decodeDiffArtifact(body.diff);
+  if (body.contribution !== undefined && body.contribution !== null) {
+    decodeContributionRecord(body.contribution);
+  }
+  if (body.pull_request !== undefined && body.pull_request !== null) {
+    decodePullRequestRecord(body.pull_request);
+  }
   return body as unknown as Launch;
+}
+
+function decodeTriggerRevisionContentEnums(raw: unknown): void {
+  const content = safeObject(raw, 'Launch revision content');
+  if (content.upstream !== undefined) {
+    const upstream = safeObject(content.upstream, 'Launch upstream revision');
+    requireEnum(
+      upstream,
+      'source_mode',
+      ['pinned_commit', 'branch_head_at_launch'] as const,
+      'Launch upstream revision',
+    );
+    const repository = safeObject(upstream.repository, 'Launch upstream repository');
+    requireEnum(repository, 'visibility', REPOSITORY_VISIBILITIES, 'Launch upstream repository');
+  }
+  if (content.session !== undefined) {
+    const session = safeObject(content.session, 'Launch session policy');
+    requireEnum(session, 'permission_ceiling', PERMISSION_CEILINGS, 'Launch session policy');
+    requireEnumArray(
+      session,
+      'required_capabilities',
+      REQUIRED_CAPABILITIES,
+      'Launch session policy',
+    );
+  }
+  if (content.commercial_policy !== undefined) {
+    const commercial = safeObject(content.commercial_policy, 'Launch commercial policy');
+    requireEnum(commercial, 'billing_mode', BILLING_MODES, 'Launch commercial policy');
+  }
+}
+
+function decodeLaunchStep(raw: unknown): LaunchStep {
+  const step = safeObject(raw, 'Launch step');
+  requireEnum(step, 'key', STEP_KEYS, 'Launch step');
+  requireEnum(step, 'status', STEP_STATUSES, 'Launch step');
+  requireInteger(step, 'sequence', 'Launch step');
+  requireInteger(step, 'attempt', 'Launch step');
+  return step as unknown as LaunchStep;
+}
+
+function decodeLaunchFailure(raw: unknown): LaunchFailure {
+  const failure = safeObject(raw, 'Launch failure');
+  requireEnum(failure, 'class', FAILURE_CLASSES, 'Launch failure');
+  requireText(failure, 'code', 'Launch failure');
+  requireText(failure, 'correlation_id', 'Launch failure');
+  return failure as unknown as LaunchFailure;
+}
+
+function decodeLaunchQuota(raw: unknown, label: string): LaunchQuotaSnapshot {
+  const quota = safeObject(raw, label);
+  requireInteger(quota, 'live_sessions', label);
+  requireInteger(quota, 'reserved_cpu_millis', label);
+  requireInteger(quota, 'reserved_memory_mib', label);
+  for (const optional of ['live_session_limit', 'free_cpu_millis', 'free_memory_mib']) {
+    if (quota[optional] !== undefined) requireInteger(quota, optional, label);
+  }
+  requireText(quota, 'checked_at', label);
+  return quota as unknown as LaunchQuotaSnapshot;
 }
 
 function decodePromptDelivery(raw: unknown): PromptDelivery {
@@ -1197,20 +1744,7 @@ function decodePromptDelivery(raw: unknown): PromptDelivery {
   requireText(body, 'revision_digest', 'Prompt delivery');
   requireText(body, 'origin_key', 'Prompt delivery');
   requireText(body, 'payload_hash', 'Prompt delivery');
-  const state = requireText(body, 'state', 'Prompt delivery');
-  if (
-    ![
-      'queued',
-      'dispatch_fenced',
-      'write_confirmed',
-      'execution_observed',
-      'completed',
-      'failed',
-      'recovery_required',
-    ].includes(state)
-  ) {
-    throw new ProtocolError('Prompt delivery carried an invalid state');
-  }
+  requireEnum(body, 'state', PROMPT_DELIVERY_STATES, 'Prompt delivery');
   requireInteger(body, 'attempt', 'Prompt delivery');
   requireInteger(body, 'recovery_generation', 'Prompt delivery');
   if (body.dispatch_fence_sequence !== null)
@@ -1220,38 +1754,197 @@ function decodePromptDelivery(raw: unknown): PromptDelivery {
   return body as unknown as PromptDelivery;
 }
 
+function decodeLaunchReach(raw: unknown): LaunchReachStatus {
+  const reach = safeObject(raw, 'Launch reach status');
+  requireEnum(reach, 'state', CAPABILITY_REVOCATION_STATES, 'Launch reach status');
+  if (reach.last_refusal !== undefined) {
+    requireEnumValue(reach.last_refusal, CAPABILITY_REFUSALS, 'Launch reach last_refusal');
+  }
+  return reach as unknown as LaunchReachStatus;
+}
+
+function decodeDiffArtifact(raw: unknown): DiffArtifact {
+  const artifact = safeObject(raw, 'Launch diff artifact');
+  requireEnum(artifact, 'validation', DIFF_VALIDATION_OUTCOMES, 'Launch diff artifact');
+  if (!Array.isArray(artifact.files)) {
+    throw new ProtocolError('Launch diff artifact files was not an array');
+  }
+  for (const rawFile of artifact.files) {
+    const file = safeObject(rawFile, 'Launch diff file');
+    requireEnum(file, 'change', DIFF_CHANGE_KINDS, 'Launch diff file');
+  }
+  return artifact as unknown as DiffArtifact;
+}
+
+function decodeContributionRecord(raw: unknown): ContributionRecord {
+  const contribution = safeObject(raw, 'Launch contribution');
+  requireEnum(contribution, 'state', PUBLICATION_STATES, 'Launch contribution');
+  return contribution as unknown as ContributionRecord;
+}
+
+function decodePullRequestRecord(raw: unknown): PullRequestRecord {
+  const pullRequest = safeObject(raw, 'Launch pull request');
+  requireEnum(pullRequest, 'operation', PULL_REQUEST_OPERATIONS, 'Launch pull request');
+  requireEnum(pullRequest, 'state', PULL_REQUEST_STATES, 'Launch pull request');
+  requireEnum(pullRequest, 'mergeability', MERGEABILITIES, 'Launch pull request');
+  requireEnum(pullRequest, 'checks', CHECK_SUMMARY_STATES, 'Launch pull request');
+  return pullRequest as unknown as PullRequestRecord;
+}
+
 function decodeDiffReview(raw: unknown): DiffReview {
   const body = safeObject(raw, 'Launch diff review');
   requireText(body, 'launch_id', 'Launch diff review');
   requireInteger(body, 'revision_number', 'Launch diff review');
-  requireText(body, 'state', 'Launch diff review');
+  requireEnum(body, 'state', LAUNCH_STATES, 'Launch diff review');
+  if (body.artifact !== undefined && body.artifact !== null) decodeDiffArtifact(body.artifact);
+  if (body.contribution !== undefined && body.contribution !== null) {
+    decodeContributionRecord(body.contribution);
+  }
+  if (body.pull_request !== undefined && body.pull_request !== null) {
+    decodePullRequestRecord(body.pull_request);
+  }
   return body as unknown as DiffReview;
 }
 
 function decodePullRequestDraft(raw: unknown): PullRequestDraft {
   const body = safeObject(raw, 'pull-request draft');
   requireText(body, 'launch_id', 'pull-request draft');
-  requireText(body, 'operation', 'pull-request draft');
+  requireEnum(body, 'operation', PULL_REQUEST_OPERATIONS, 'pull-request draft');
   requireText(body, 'intent_digest', 'pull-request draft');
   requireText(body, 'expected_head_revision', 'pull-request draft');
   return body as unknown as PullRequestDraft;
 }
 
-function decodeLaunchProgress(raw: unknown): LaunchProgress {
+function decodeLaunchProgress(
+  raw: unknown,
+  requestedLaunchId: string,
+  after: number,
+): LaunchProgress {
   const body = safeObject(raw, 'Launch progress');
-  requireText(body, 'launch_id', 'Launch progress');
-  requireInteger(body, 'next_cursor', 'Launch progress');
+  const pageLaunchId = requireText(body, 'launch_id', 'Launch progress');
+  if (pageLaunchId !== requestedLaunchId) {
+    throw new ProtocolError(
+      `Launch progress response belonged to ${pageLaunchId}, not ${requestedLaunchId}`,
+    );
+  }
+  const nextCursor = requireInteger(body, 'next_cursor', 'Launch progress');
   if (!Array.isArray(body.events))
     throw new ProtocolError('Launch progress events was not an array');
-  let previous = 0;
+  const accepted: LaunchEvent[] = [];
+  let expectedSequence: number | null = after === Number.MAX_SAFE_INTEGER ? null : after + 1;
   for (const event of body.events) {
     const value = safeObject(event, 'Launch progress event');
     const sequence = requireInteger(value, 'sequence', 'Launch progress event');
-    if (sequence <= previous)
-      throw new ProtocolError('Launch progress events were not strictly ordered');
-    previous = sequence;
+    const eventLaunchId = requireText(value, 'launch_id', 'Launch progress event');
+    if (eventLaunchId !== pageLaunchId) {
+      throw new ProtocolError(
+        `Launch progress event ${String(sequence)} belonged to ${eventLaunchId}, not ${pageLaunchId}`,
+      );
+    }
+    requireText(value, 'occurred_at', 'Launch progress event');
+    requireText(value, 'correlation_id', 'Launch progress event');
+    decodeLaunchProgressState(value.progress);
+    decodeLaunchEventKind(value.kind);
+
+    const decoded = value as unknown as LaunchEvent;
+    const previous = accepted.at(-1);
+    if (previous !== undefined && sequence === previous.sequence) {
+      if (jsonEqual(previous, decoded)) continue;
+      throw new ProtocolError(
+        `Launch progress sequence ${String(sequence)} had conflicting duplicate envelopes`,
+      );
+    }
+    if (expectedSequence === null || sequence !== expectedSequence) {
+      const problem =
+        expectedSequence !== null && sequence > expectedSequence
+          ? 'contained a sequence gap'
+          : 'contained an out-of-order or unprovable duplicate event';
+      throw new ProtocolError(
+        `Launch progress ${problem}: expected ${String(expectedSequence)}, received ${String(sequence)}`,
+      );
+    }
+    accepted.push(decoded);
+    expectedSequence = sequence === Number.MAX_SAFE_INTEGER ? null : sequence + 1;
   }
-  return body as unknown as LaunchProgress;
+  const expectedCursor = accepted.at(-1)?.sequence ?? after;
+  if (nextCursor !== expectedCursor) {
+    throw new ProtocolError(
+      `Launch progress next_cursor ${String(nextCursor)} did not match accepted sequence ${String(expectedCursor)}`,
+    );
+  }
+  return { ...body, events: accepted } as unknown as LaunchProgress;
+}
+
+function decodeLaunchProgressState(raw: unknown): LaunchProgressState {
+  const progress = safeObject(raw, 'Launch progress state');
+  requireEnum(progress, 'state', LAUNCH_STATES, 'Launch progress state');
+  for (const nullable of ['blocked_reason', 'failure', 'resume_state', 'reach', 'delivery']) {
+    if (!(nullable in progress)) {
+      throw new ProtocolError(`Launch progress state omitted ${nullable}`);
+    }
+  }
+  if (progress.blocked_reason !== null) {
+    requireEnumValue(progress.blocked_reason, BLOCKED_REASONS, 'Launch progress blocked_reason');
+  }
+  if (progress.failure !== null) decodeLaunchFailure(progress.failure);
+  if (progress.resume_state !== null) {
+    requireEnumValue(progress.resume_state, LAUNCH_STATES, 'Launch progress resume_state');
+  }
+  if (progress.reach !== null) decodeLaunchReach(progress.reach);
+  if (progress.delivery !== null) decodePromptDelivery(progress.delivery);
+  return progress as unknown as LaunchProgressState;
+}
+
+function decodeLaunchEventKind(raw: unknown): LaunchEventKind {
+  const kind = safeObject(raw, 'Launch progress event kind');
+  const type = requireText(kind, 'type', 'Launch progress event kind');
+  switch (type) {
+    case 'created':
+      if (!Array.isArray(kind.steps)) {
+        throw new ProtocolError('Launch creation event omitted its initial steps');
+      }
+      for (const step of kind.steps) decodeLaunchStep(step);
+      break;
+    case 'state_changed':
+      requireEnum(kind, 'from', LAUNCH_STATES, 'Launch state-changed event');
+      requireEnum(kind, 'to', LAUNCH_STATES, 'Launch state-changed event');
+      break;
+    case 'step_changed':
+      decodeLaunchStep(kind.step);
+      break;
+    case 'blocked':
+    case 'resumed':
+      requireEnum(kind, 'reason', BLOCKED_REASONS, 'Launch blocked event');
+      break;
+    case 'failure':
+      decodeLaunchFailure(kind.failure);
+      break;
+    case 'effect_reconciled':
+    case 'recovery_authorized':
+      requireEnum(kind, 'effect', LAUNCH_EFFECT_KINDS, 'Launch effect event');
+      break;
+    case 'delivery_changed':
+      requireEnum(kind, 'state', PROMPT_DELIVERY_STATES, 'Launch delivery event');
+      break;
+    case 'reach_changed':
+      decodeLaunchReach(kind.reach);
+      break;
+    case 'confirmation_recorded':
+      requireEnum(kind, 'action', CONFIRMATION_ACTIONS, 'Launch confirmation event');
+      break;
+    case 'cleanup_planned':
+    case 'cleanup_completed':
+      requireInteger(kind, 'target_count', 'Launch cleanup event');
+      break;
+    case 'draft_updated':
+    case 'connection_selected':
+    case 'started':
+    case 'cancelled':
+      break;
+    default:
+      throw new ProtocolError('Launch progress event kind was unknown');
+  }
+  return kind as unknown as LaunchEventKind;
 }
 
 function decodeCursorPage<T>(
@@ -1274,8 +1967,21 @@ function safeObject(raw: unknown, name: string): Record<string, unknown> {
     'intent_key',
     'provider_request_id',
     'object_reference',
+    'baseline_object_reference',
     'backing_key_id',
     'worker_fencing_token',
+    'fencing_counter',
+    'subject_token_generation',
+    'session_credential_generation',
+    'session_credential_authority',
+    'custody_generation',
+    'provider_key_id',
+    'provider_state_version',
+    'grant_fingerprint',
+    'checkpoint_object',
+    'diff_artifact_object',
+    'prompt_origin_key',
+    'prompt_payload_hash',
   ]) {
     if (containsKey(object, forbidden)) throw new ProtocolError(`${name} leaked ${forbidden}`);
   }
@@ -1317,11 +2023,75 @@ function requireText(body: Record<string, unknown>, field: string, name: string)
   return value;
 }
 
+function requireEnum<const T extends string>(
+  body: Record<string, unknown>,
+  field: string,
+  allowed: readonly T[],
+  name: string,
+): T {
+  const value = requireText(body, field, name);
+  if (!allowed.includes(value as T)) {
+    throw new ProtocolError(`${name} carried an invalid ${field}`);
+  }
+  return value as T;
+}
+
+function requireEnumValue<const T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  name: string,
+): T {
+  if (typeof value !== 'string' || !allowed.includes(value as T)) {
+    throw new ProtocolError(`${name} was invalid`);
+  }
+  return value as T;
+}
+
+function requireEnumArray<const T extends string>(
+  body: Record<string, unknown>,
+  field: string,
+  allowed: readonly T[],
+  name: string,
+): readonly T[] {
+  const value = body[field];
+  if (!Array.isArray(value)) {
+    throw new ProtocolError(`${name} carried an invalid ${field}`);
+  }
+  return value.map((entry) => requireEnumValue(entry, allowed, `${name} ${field}`));
+}
+
 function requireInteger(body: Record<string, unknown>, field: string, name: string): number {
   const value = body[field];
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
     throw new ProtocolError(`${name} carried an invalid ${field}`);
   return value;
+}
+
+function jsonEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((entry, index) => jsonEqual(entry, right[index]))
+    );
+  }
+  if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) {
+    return false;
+  }
+  const leftObject = left as Record<string, unknown>;
+  const rightObject = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftObject);
+  const rightKeys = Object.keys(rightObject);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(rightObject, key) &&
+        jsonEqual(leftObject[key], rightObject[key]),
+    )
+  );
 }
 
 function identifier(value: string, name: string): string {

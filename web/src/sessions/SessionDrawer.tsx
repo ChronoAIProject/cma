@@ -365,9 +365,7 @@ function TriggerRepository({
     artifact.expected_branch_head === artifact.observed_branch_head &&
     artifact.validation === 'valid' &&
     artifact.checks.every((check) => check.passed) &&
-    reach !== 'revoked' &&
-    reach !== 'revocation_pending' &&
-    reach !== 'expired';
+    reach === 'active';
   const launchRoute = { kind: 'launch', launchId: launch.id } as const;
   const contributionRoute = { kind: 'contribute', launchId: launch.id } as const;
 

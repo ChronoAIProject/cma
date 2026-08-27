@@ -38,7 +38,7 @@ mod permission;
 
 pub use environment::ClaudeCodeSandboxSpec;
 
-use crate::hosted::{acp, HostedKernel};
+use crate::hosted::{AcpConversationBinding, HostedKernel};
 use crate::sandbox::SandboxClient;
 use crate::ConversationUpdate;
 use crate::{
@@ -67,6 +67,16 @@ impl ClaudeCodeAdapter {
             ),
             spec,
         }
+    }
+
+    /// Bind Claude Code's permission vocabulary to shared hosted ACP.
+    fn conversation_binding(&self, options: &RuntimeOptions) -> AcpConversationBinding {
+        AcpConversationBinding::new(
+            Some(permission::mode_for(options.permission).to_string()),
+            options.resume_conversation.clone(),
+            // This kernel refuses own-account sessions during provisioning.
+            false,
+        )
     }
 }
 
@@ -155,25 +165,9 @@ impl KernelAdapter for ClaudeCodeAdapter {
         options: &RuntimeOptions,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
-        let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
-        tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
-        let (conversation, control) = acp::Bridge::open(
-            stream,
-            self.hosted.workspace().to_string(),
-            Some(permission::mode_for(options.permission).to_string()),
-            options.resume_conversation.clone(),
-            Some(self.hosted.link_lifecycle(&handle.0)),
-            // Never. This kernel refuses an own-account session at
-            // provisioning, permanently and for a stated reason, so one can
-            // never reach here asking to sign in.
-            false,
-            updates,
-        )
-        .await?;
-        // Registration belongs to the bridge reader's lifecycle and already
-        // happened before that reader could observe the socket closing.
-        drop(control);
-        Ok(conversation)
+        self.hosted
+            .open_acp_conversation(handle, self.conversation_binding(options), updates)
+            .await
     }
 
     async fn refresh_credential(

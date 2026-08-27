@@ -138,9 +138,17 @@ data:
   CHRONO_TRIGGER_ENABLED: "false"
   CHRONO_TRIGGER_ORCHESTRATION_PAUSED: "true"
   CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH: "true"
+  # Closed declaration for the exact CHRONO_SANDBOX_IMAGE. Keep this empty
+  # until that image has demonstrated every named capability; Trigger Launch
+  # admission fails closed when a published requirement is absent.
+  CHRONO_TRIGGER_RUNTIME_CAPABILITIES: ""
   CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS: ""
   CHRONO_TRIGGER_REPOSITORY_IDS: ""
   CHRONO_TRIGGER_USER_COHORT_PERCENT: "0"
+  # Maximum files admitted into one reviewed publication. It cannot exceed the
+  # complete review schema's 1,000-file bound. Change it only with pinned-provider
+  # measurement evidence and keep the recorded value with the release evidence.
+  CHRONO_TRIGGER_CHANGED_FILE_LIMIT: "1000"
   # Dry-run retains the exact CMA-owned baseline/checkpoint/diff plan but has no
   # deletion port. Promote to execute only after reviewing dry-run inventory;
   # execute reuses the normal fenced effect worker. Neither mode enumerates or

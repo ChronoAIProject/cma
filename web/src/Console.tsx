@@ -62,10 +62,9 @@ import { PublisherSurface } from './publisher/PublisherSurface';
 /**
  * The authenticated surface. Same page, now driven live.
  *
- * Three views inside one page frame, per docs/Web_Style.md §1: sessions,
- * operations and Developer. There is no router and no URL — account actions
- * choose between them and nothing is pushed onto history, which is what keeps
- * the frame from becoming navigation.
+ * Utility views stay inside one page frame, per docs/Web_Style.md §1. The
+ * canonical Trigger routes select workflow surfaces; account actions choose
+ * between transient utility views without adding URLs for them.
  *
  * **The view does not persist; the arrangement does.** A view is where
  * somebody is right now, and reloading into a surface nobody asked for is how
@@ -145,8 +144,8 @@ export function Console({
   // Built once, for the same reason the profile store is.
   const [operatorStore] = useState<OperatorStore>(() => createRestOperatorStore());
   /*
-   * Which of §1's three views is showing. State rather than a route: the app
-   * carries no router, and this is deliberately not persisted — see above.
+   * Which utility view from §1 is showing. This state is outside the canonical
+   * workflow router and is deliberately not persisted; see above.
    */
   const [view, setView] = useState<ConsoleView>('sessions');
 
@@ -660,12 +659,31 @@ export function Console({
       }
       center={
         route.kind === 'trigger' ? (
-          <TriggerReview key={route.publicId} publicId={route.publicId} navigate={onNavigate} />
+          <TriggerReview
+            key={route.publicId}
+            ownerId={user.id}
+            publicId={route.publicId}
+            authError={route.authError}
+            navigate={onNavigate}
+          />
+        ) : route.kind === 'trigger_recovery' ? (
+          <TriggerReview
+            key={route.launchId}
+            ownerId={user.id}
+            recoveryLaunchId={route.launchId}
+            navigate={onNavigate}
+          />
         ) : route.kind === 'launch' ? (
-          <LaunchSurface key={route.launchId} launchId={route.launchId} navigate={onNavigate} />
+          <LaunchSurface
+            key={route.launchId}
+            ownerId={user.id}
+            launchId={route.launchId}
+            navigate={onNavigate}
+          />
         ) : route.kind === 'contribute' ? (
           <ContributionSurface
             key={route.launchId}
+            ownerId={user.id}
             launchId={route.launchId}
             navigate={onNavigate}
           />
@@ -686,7 +704,7 @@ export function Console({
         ) : view === 'developer' ? (
           <DeveloperSurface />
         ) : view === 'publisher' ? (
-          <PublisherSurface displayIdentity={user.displayName ?? user.handle} />
+          <PublisherSurface ownerId={user.id} displayIdentity={user.displayName ?? user.handle} />
         ) : (
           <main className="console__surface">
             <SessionHeader

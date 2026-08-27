@@ -92,29 +92,38 @@ GET  /api/v1/agui/events       → text/event-stream
 GET  /api/v1/agui/capabilities → application/json
 GET  /api/v1/agui/triggers/{public_id}                    → application/json
 GET  /api/v1/agui/launches/{launch_id}                    → application/json
-GET  /api/v1/agui/launches/{launch_id}/events             → application/json
+GET  /api/v1/agui/launches/{launch_id}/events             → text/event-stream
 GET  /api/v1/agui/launches/{launch_id}/diff               → application/json
 ```
 
 A run is one request. The response is an SSE stream of AG-UI events that ends when the turn ends.
 
 The four `cma:trigger` companion routes are resource reads rather than AG-UI run
-streams. Trigger preview is public and side-effect-free. Launch, progress, and
-diff reads require the Launch owner. The events companion accepts the same
-`after` cursor and bounded `limit` as REST and returns the same ordered public
-events and `next_cursor`; reconnecting clients reject regressions and reconcile
-a fresh Launch snapshot after replay. The diff response includes the sealed
-review artifact and safe repository/PR status, never credentials, internal
-effect keys, or provider request bodies. Their exact schemas are shared with
-REST and the public SDK fixtures.
+commands. Trigger preview is public and side-effect-free. Launch, progress, and
+diff reads require the Launch owner. Launch and diff return the same JSON
+projections as REST. The events companion is a resumable SSE stream: each frame's
+`id` is the durable Launch event sequence and its `data` is the exact public
+`LaunchEvent` JSON used inside REST `LaunchProgress`. It accepts
+`starting_after` (with `after` as a compatibility alias), a bounded `limit`, and
+`follow`; a valid numeric `Last-Event-ID` takes precedence over the query cursor.
+`follow=false` returns one deterministic bounded page and closes. The default
+follows new durable events. A cursor beyond the owned Launch's high-water mark
+is rejected as `400 cursor_beyond_end`; owner concealment happens first. The
+diff response includes the sealed review artifact and safe repository/PR status,
+never credentials, internal effect keys, or provider request bodies.
+
+The public Trigger preview has the same response policy as its REST companion:
+`Cache-Control: public, max-age=60` and `Referrer-Policy: no-referrer`, with no
+cookie or side effect. Owned companion responses are not made public merely
+because this preview is cacheable.
 
 `GET /api/v1/agui/events?thread_id=<session>&starting_after=<seq>` is the same event vocabulary, read rather than driven: a session's whole history and then everything after it, projected through the same mapping and never ending on its own. Every AG-UI event frame on this route carries the session id in both `threadId` and `runId`; a run response instead echoes that turn's accepted run id. Raw SSE keepalive comments are transport frames rather than AG-UI events and carry neither identifier. This route is what §7 means by recovering a dropped stream, and it exists because §7 used to send clients to `/api/v1/sessions/{id}/events` — a REST route, which answers in the core's vocabulary and not this one. A client that followed that advice received frames it could not read.
 
-Both streaming responses emit a raw SSE comment at least every **15 seconds** while otherwise idle. The comment carries neither an SSE `id:` nor an `event:` name. A fetch-based SSE reader sees those comments and should treat roughly two intervals — about 30 seconds — with no bytes as a dead connection, then reconnect to the session stream with its last complete cursor as described in §7. This is the required transport for a cross-origin Bearer client and the recommended transport for any client that needs to enforce the read timeout.
+All three streaming responses emit a raw SSE comment at least every **15 seconds** while otherwise idle. The comment carries neither an SSE `id:` nor an `event:` name. A fetch-based SSE reader sees those comments and should treat roughly two intervals — about 30 seconds — with no bytes as a dead connection, then reconnect with its last complete cursor. This is the required transport for a cross-origin Bearer client and the recommended transport for any client that needs to enforce the read timeout.
 
 The same-origin cookie clients that can use native `EventSource` do not receive SSE comments in application code. Such a client must detect a dead connection at the transport level rather than wait for a comment callback that can never occur. CMA deliberately does not emit application heartbeat events: doing so would add protocol vocabulary and require special exemptions from the durable-event cursor rules for frames that are only transport liveness.
 
-**The sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The sequence is deliberately absent from the payload so nothing in the protocol's own shape has to be ignored.
+For the two session AG-UI streams, **the sequence rides as the SSE `id`, not in the body, and only the final frame of a durable event's projection carries it.** Leading frames carry no `id`; receiving one does not yet mean the event arrived whole. A client resumes by handing back the last id it saw. The Launch companion differs deliberately: one durable Launch event maps to one frame, and its exact REST-compatible JSON includes the same sequence carried by the SSE `id`.
 
 Every accepted run stream begins with `RUN_STARTED`. For an ordinary prompt on
 an existing ready session it projects the durable `turn_started` boundary and

@@ -116,6 +116,11 @@ impl SessionService {
                 .map_err(map_readiness_error)?;
         }
 
+        // Rotation takes the write side of this fence. Preserve the established
+        // input-before-ordering lock order, then require the exact Reach-bound
+        // runtime only if the durable re-read still authorizes a queued write.
+        // A settled delivery remains readable after its runtime disappears.
+        let _runtime_fence = self.input_gates.gate(&id).read_owned().await;
         let ordering = self.conversation_order_gates.gate(&id);
         let _ordered = ordering.lock_owned().await;
         authority.require_current()?;
@@ -133,6 +138,28 @@ impl SessionService {
 
         match initial.delivery.state {
             PromptDeliveryState::Queued => {
+                let expected_runtime = launch
+                    .reach
+                    .as_ref()
+                    .map(|reach| reach.runtime_audience.as_str())
+                    .ok_or(CoreError::InvalidState)?;
+                {
+                    let entries = self.entries.read().await;
+                    let entry = entries.get(&id).ok_or_else(|| {
+                        CoreError::RuntimeUnavailable(
+                            "the Trigger session has no live runtime for initial dispatch".into(),
+                        )
+                    })?;
+                    if entry
+                        .runtime
+                        .as_ref()
+                        .is_none_or(|runtime| runtime.0 != expected_runtime)
+                    {
+                        return Err(CoreError::RuntimeUnavailable(
+                            "the Trigger runtime changed after its restricted gateway proof".into(),
+                        ));
+                    }
+                }
                 authority.require_current()?;
                 let record_owner_turn = initial.delivery.attempt == 0
                     || initial.recorded_recovery_generation < initial.delivery.recovery_generation;
@@ -260,6 +287,7 @@ impl SessionService {
                         &screen,
                         committed,
                         status,
+                        None,
                     )
                     .await;
                     (outcome, ())
@@ -355,9 +383,20 @@ impl SessionService {
             let rejected_screen = Arc::clone(&screen);
             let intended = initial.clone();
             let owner_text = initial.payload.clone();
-            let mut events = vec![EventKind::InitialPromptDeliveryChanged {
+            // ACP kernels may stream a startup warning as an agent message
+            // before any prompt. Finish that message on the pre-fence side of
+            // this same durable unit so a later message boundary cannot turn
+            // old startup text into evidence that this prompt executed.
+            let committed_assembling = entry.assembling.clone();
+            let mut events = Vec::new();
+            if let Some((_, content, _)) = committed_assembling.as_ref() {
+                events.push(EventKind::MessageCommitted {
+                    content: content.clone(),
+                });
+            }
+            events.push(EventKind::InitialPromptDeliveryChanged {
                 state: PromptDeliveryState::DispatchFenced,
-            }];
+            });
             if record_owner_turn {
                 events.extend([
                     EventKind::TurnStarted,
@@ -387,6 +426,7 @@ impl SessionService {
                         &screen,
                         committed,
                         Some(SessionStatus::Running),
+                        committed_assembling.as_ref(),
                     )
                     .await;
                     let outcome = match installed {
@@ -433,6 +473,7 @@ async fn install_committed_initial_prompt(
     screen: &Arc<tokio::sync::Mutex<Box<dyn crate::ScreenModel>>>,
     committed: SessionRecord,
     status: Option<SessionStatus>,
+    committed_pre_fence_message: Option<&(Option<String>, String, bool)>,
 ) -> Result<InitialPromptDispatch, CoreError> {
     let initial = committed.initial_prompt.clone().ok_or_else(|| {
         CoreError::RuntimeUnavailable("the committed initial prompt disappeared".into())
@@ -443,6 +484,14 @@ async fn install_committed_initial_prompt(
             .get_mut(id)
             .filter(|entry| Arc::ptr_eq(&entry.screen, screen))
             .map(|entry| {
+                if committed_pre_fence_message.is_some()
+                    && entry.assembling.as_ref() == committed_pre_fence_message
+                {
+                    // The message is no longer live only after the batch that
+                    // placed it before the dispatch fence is durable. Preserve
+                    // a different buffer defensively if the entry changed.
+                    entry.assembling = None;
+                }
                 entry.initial_prompt = Some(initial.clone());
                 if let Some(status) = status {
                     entry.session.status = committed.session.status;

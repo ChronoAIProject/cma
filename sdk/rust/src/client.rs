@@ -1015,7 +1015,7 @@ async fn decode_public_json<T: DeserializeOwned>(
 }
 
 fn reject_internal_fields(value: &serde_json::Value) -> Result<()> {
-    const FORBIDDEN: [&str; 8] = [
+    const FORBIDDEN: [&str; 19] = [
         "idempotency_key_hash",
         "intent_key",
         "provider_request_id",
@@ -1024,6 +1024,17 @@ fn reject_internal_fields(value: &serde_json::Value) -> Result<()> {
         "backing_key_id",
         "worker_fencing_token",
         "fencing_counter",
+        "subject_token_generation",
+        "session_credential_generation",
+        "session_credential_authority",
+        "custody_generation",
+        "provider_key_id",
+        "provider_state_version",
+        "grant_fingerprint",
+        "checkpoint_object",
+        "diff_artifact_object",
+        "prompt_origin_key",
+        "prompt_payload_hash",
     ];
     match value {
         serde_json::Value::Array(values) => {

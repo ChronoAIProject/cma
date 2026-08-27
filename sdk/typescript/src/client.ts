@@ -179,6 +179,14 @@ export class Cma {
     return triggers.reconnectTriggerConnection(this.#config, serviceId, options);
   }
 
+  /** Revoke one exact reusable NyxID GitHub service. */
+  revokeTriggerConnection(
+    serviceId: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.TriggerConnection> {
+    return triggers.revokeTriggerConnection(this.#config, serviceId, options);
+  }
+
   /** Revalidate one exact reusable GitHub connection. */
   preflightTriggerConnection(
     serviceId: string,

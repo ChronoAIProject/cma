@@ -19,6 +19,13 @@
   white-space: normal;
 }
 
+.contribution__actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+}
+
 .contribution__empty p {
   margin: 0;
   color: var(--dsw-alias-label-secondary);
@@ -191,6 +198,10 @@
   .contribution__summary {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .contribution__actions {
+    flex-wrap: wrap;
   }
 
   .contribution-file summary {

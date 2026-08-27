@@ -6,18 +6,32 @@ use sha2::{Digest, Sha256};
 
 use super::{
     AuthorityProvenance, CheckpointId, ConnectionSnapshot, DiffArtifact, DiffArtifactId,
-    EditableField, LaunchId, RepositoryIdentity, TriggerRevision, TriggerValidationError,
-    WorkspaceCheckpoint, WorkspaceManifest,
+    EditableField, LaunchId, RepositoryIdentity, RequiredCapability, TriggerRevision,
+    TriggerValidationError, WorkspaceCheckpoint, WorkspaceCheckpointPurpose, WorkspaceManifest,
 };
-use crate::{PermissionMode, SessionId, SessionSize, SubjectId};
+use crate::{
+    CapabilityRevocationState, PermissionMode, Rate, RateCardId, SessionId, SessionSize, SubjectId,
+};
 
+mod admission;
 mod capability;
+mod checkpoint;
 mod effect;
+mod replay;
+
+pub use admission::*;
+pub use replay::{
+    replay_launch_progress, LaunchProgressProjection, LaunchProgressState, LaunchReplayError,
+};
 
 pub const LAUNCH_SCHEMA_VERSION: u32 = 1;
-pub const MAX_LAUNCH_EVENTS: usize = 2_048;
+/// Recent events retained beside the aggregate for worker diagnostics and the
+/// bounded support timeline. The canonical stream belongs to `LaunchStore`.
+pub const LAUNCH_EVENT_TAIL_LIMIT: usize = 512;
 pub const MAX_LAUNCH_EFFECT_ATTEMPTS: u32 = 5;
 pub const MAX_LAUNCH_RECONCILIATION_ATTEMPTS: u32 = 20;
+/// A saved review remains startable for one day unless a stricter quote expires first.
+pub const LAUNCH_DRAFT_TTL_SECONDS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -149,7 +163,7 @@ pub struct LaunchStep {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LaunchEventKind {
-    Created,
+    Created { steps: Vec<LaunchStep> },
     DraftUpdated,
     ConnectionSelected,
     Started,
@@ -174,6 +188,7 @@ pub struct LaunchEvent {
     pub launch_id: LaunchId,
     pub occurred_at: String,
     pub correlation_id: String,
+    pub progress: LaunchProgressState,
     pub kind: LaunchEventKind,
 }
 
@@ -225,6 +240,10 @@ pub struct EffectRecord {
     #[serde(default)]
     pub reconciliation_attempt: u32,
     pub fence: u64,
+    /// Exact credential-free authority evidence committed before this attempt
+    /// was allowed to cross an irreversible GitHub boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_admission: Option<AuthorityAdmissionSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_request_id: Option<String>,
     #[serde(default)]
@@ -358,10 +377,72 @@ pub struct EffectiveConfiguration {
 pub struct PricingSnapshot {
     pub policy_reference: String,
     pub billing_mode: super::BillingMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_card: Option<RateCardId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<Rate>,
     pub currency: String,
+    pub cpu_millis: u32,
+    pub memory_mib: u32,
+    pub micros_per_hour: u64,
     pub estimated_micros: u64,
     pub quoted_at: String,
     pub expires_at: String,
+}
+
+/// Closed product kernel identity disclosed and accepted during Launch review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerKernel {
+    Codex,
+}
+
+fn historical_trigger_kernel() -> TriggerKernel {
+    // Every Trigger admission persisted before this field existed was created
+    // by the sole eligible Trigger profile, which the composition root pins to
+    // Codex. This default is migration compatibility, not runtime inference.
+    TriggerKernel::Codex
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeAdmissionSnapshot {
+    #[serde(default = "historical_trigger_kernel")]
+    pub kernel: TriggerKernel,
+    pub runtime_version: String,
+    #[serde(default)]
+    pub supported_capabilities: Vec<RequiredCapability>,
+    pub observed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuotaSnapshot {
+    pub live_sessions: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_session_limit: Option<u32>,
+    pub reserved_cpu_millis: u64,
+    pub reserved_memory_mib: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_cpu_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_memory_mib: Option<u64>,
+    pub checked_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartAdmissionSnapshot {
+    pub runtime_version: String,
+    pub pricing_policy_reference: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_card: Option<RateCardId>,
+    pub quota: QuotaSnapshot,
+    pub checked_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchReviewAdmission {
+    pub pricing: PricingSnapshot,
+    pub runtime: RuntimeAdmissionSnapshot,
+    pub quota: QuotaSnapshot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -418,6 +499,26 @@ pub struct WorkspaceRecord {
     pub latest_checkpoint: Option<WorkspaceCheckpoint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_checkpoint: Option<WorkspaceCheckpoint>,
+    /// Obsolete CMA-owned object awaiting idempotent post-commit deletion.
+    /// It remains durable until object deletion and a second aggregate CAS
+    /// both succeed, so a process crash cannot turn retention debt into a leak.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retired_checkpoint: Option<WorkspaceCheckpoint>,
+    /// Exact checkpoint sealed by the user's latest Review Diff command.
+    /// Lifecycle captures may advance recovery without changing this pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed_contribution_checkpoint: Option<WorkspaceCheckpoint>,
+    /// The one version currently allowed to cross the runtime/object boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_intent: Option<super::WorkspaceCheckpointIntent>,
+    /// Background durability state, deliberately separate from the explicit
+    /// contribution progress step.
+    #[serde(default)]
+    pub lifecycle_checkpoint: super::LifecycleCheckpointStatus,
+    /// Monotonic capture high-water, including coherent captures whose tree was
+    /// unchanged and therefore did not create another durable object.
+    #[serde(default)]
+    pub checkpoint_version: u64,
     pub workspace_epoch: u64,
     pub retention_policy_id: String,
     pub delete_after: String,
@@ -429,6 +530,18 @@ pub struct SessionLink {
     pub environment_profile_id: String,
     pub runtime_generation: u64,
     pub created_at: String,
+}
+
+/// Positive durable evidence that CMA credential custody retired every key
+/// assigned to this Launch's deterministic session identity.
+///
+/// This is intentionally separate from Reach: a key can be installed before a
+/// runtime policy is admitted, and settling it must not fabricate policy or
+/// tombstone evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionCredentialRetirement {
+    pub session_id: SessionId,
+    pub settled_at: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -520,6 +633,12 @@ pub struct Launch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pricing: Option<PricingSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_admission: Option<RuntimeAdmissionSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_quota: Option<QuotaSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_admission: Option<StartAdmissionSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<ConnectionSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority: Option<AuthorityProvenance>,
@@ -530,6 +649,10 @@ pub struct Launch {
     pub steps: Vec<LaunchStep>,
     #[serde(default)]
     pub effects: Vec<EffectRecord>,
+    /// Monotonic high-water for the independent Launch event stream. This is
+    /// separate from the bounded recent `events` tail and survives compaction.
+    #[serde(default)]
+    pub event_sequence: u64,
     #[serde(default)]
     pub events: Vec<LaunchEvent>,
     #[serde(default)]
@@ -543,7 +666,14 @@ pub struct Launch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionLink>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_credential_retirement: Option<SessionCredentialRetirement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reach: Option<super::ReachStatus>,
+    /// A policy generation admitted under the current capability-worker fence.
+    /// Its presence means installation may have been attempted and takeover
+    /// must not resend it blindly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_authority_admission: Option<CapabilityAuthorityAdmission>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<PromptDelivery>,
     /// Checkpoint version selected by the latest explicit diff-review request.
@@ -565,6 +695,9 @@ pub struct Launch {
     pub revision_number: u64,
     pub created_at: String,
     pub updated_at: String,
+    /// Server-derived deadline for every pre-Start mutation.
+    #[serde(default)]
+    pub draft_expires_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -580,6 +713,7 @@ impl Launch {
     ) -> Result<Self, TriggerValidationError> {
         revision.content.validate()?;
         let now = now.into();
+        let draft_expires_at = draft_expiry(&now)?;
         let effective = effective_configuration(&revision, &LaunchOverrides::default())?;
         let id = LaunchId::new();
         let correlation_id = correlation_id.into();
@@ -603,19 +737,25 @@ impl Launch {
             overrides: LaunchOverrides::default(),
             effective,
             pricing: None,
+            runtime_admission: None,
+            review_quota: None,
+            start_admission: None,
             connection: None,
             authority: None,
             workflow_paths: Vec::new(),
             workflow_risk_acknowledged: false,
             steps,
             effects: Vec::new(),
+            event_sequence: 0,
             events: Vec::new(),
             confirmations: Vec::new(),
             fork: None,
             branch: None,
             workspace: None,
             session: None,
+            session_credential_retirement: None,
             reach: None,
+            capability_authority_admission: None,
             delivery: None,
             contribution_checkpoint_version: None,
             diff: None,
@@ -627,10 +767,18 @@ impl Launch {
             revision_number: 0,
             created_at: now.clone(),
             updated_at: now.clone(),
+            draft_expires_at,
             started_at: None,
             terminal_at: None,
         };
-        launch.push_event(now, correlation_id, LaunchEventKind::Created)?;
+        let initial_steps = launch.steps.clone();
+        launch.push_event(
+            now,
+            correlation_id,
+            LaunchEventKind::Created {
+                steps: initial_steps,
+            },
+        )?;
         Ok(launch)
     }
 
@@ -640,16 +788,137 @@ impl Launch {
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
-        if self.state != LaunchState::Draft && self.state != LaunchState::AuthRequired {
+        let now = now.into();
+        self.require_live_draft(&now)?;
+        if self.started_at.is_some()
+            || (self.state != LaunchState::Draft && self.state != LaunchState::AuthRequired)
+        {
             return Err(TriggerValidationError::new(
                 "overrides can change only before Start",
             ));
         }
         self.effective = effective_configuration(&self.revision, &overrides)?;
+        self.pricing = None;
+        self.runtime_admission = None;
+        self.review_quota = None;
+        self.start_admission = None;
         self.overrides = overrides;
-        let now = now.into();
         self.updated_at = now.clone();
         self.push_event(now, correlation_id, LaunchEventKind::DraftUpdated)
+    }
+
+    /// Freeze server-owned pricing, runtime, and quota evidence into the review.
+    pub fn apply_review_admission(
+        &mut self,
+        admission: LaunchReviewAdmission,
+    ) -> Result<(), TriggerValidationError> {
+        if self.started_at.is_some()
+            || !matches!(self.state, LaunchState::Draft | LaunchState::AuthRequired)
+        {
+            return Err(TriggerValidationError::new(
+                "review admission can change only before Start",
+            ));
+        }
+        validate_review_admission(self, &admission)?;
+        self.pricing = Some(admission.pricing);
+        self.runtime_admission = Some(admission.runtime);
+        self.review_quota = Some(admission.quota);
+        self.start_admission = None;
+        self.effective.digest = effective_digest(
+            &self.revision,
+            &self.effective,
+            self.pricing.as_ref(),
+            self.runtime_admission.as_ref(),
+        )?;
+        Ok(())
+    }
+
+    pub fn record_start_admission(
+        &mut self,
+        admission: StartAdmissionSnapshot,
+    ) -> Result<(), TriggerValidationError> {
+        if self.state != LaunchState::Draft {
+            return Err(TriggerValidationError::new(
+                "Start admission can be recorded only for a draft",
+            ));
+        }
+        let pricing = self.pricing.as_ref().ok_or_else(|| {
+            TriggerValidationError::field("pricing", "the server quote is missing")
+        })?;
+        let runtime = self.runtime_admission.as_ref().ok_or_else(|| {
+            TriggerValidationError::field(
+                "runtime_admission",
+                "the server capability admission is missing",
+            )
+        })?;
+        if admission.runtime_version != runtime.runtime_version
+            || admission.pricing_policy_reference != pricing.policy_reference
+            || admission.rate_card != pricing.rate_card
+        {
+            return Err(TriggerValidationError::field(
+                "start_admission",
+                "does not revalidate the reviewed pricing and runtime",
+            ));
+        }
+        self.start_admission = Some(admission);
+        Ok(())
+    }
+
+    pub fn draft_is_expired(&self, now: &str) -> Result<bool, TriggerValidationError> {
+        let now = crate::seconds_from_rfc3339(now)
+            .ok_or_else(|| TriggerValidationError::field("now", "is not a CMA timestamp"))?;
+        let expires = crate::seconds_from_rfc3339(&self.draft_expires_at).ok_or_else(|| {
+            TriggerValidationError::field(
+                "draft_expires_at",
+                "is missing or is not a CMA timestamp",
+            )
+        })?;
+        Ok(now >= expires)
+    }
+
+    pub fn require_live_draft(&self, now: &str) -> Result<(), TriggerValidationError> {
+        if self.started_at.is_none()
+            && matches!(self.state, LaunchState::Draft | LaunchState::AuthRequired)
+            && self.draft_is_expired(now)?
+        {
+            return Err(TriggerValidationError::field(
+                "draft_expires_at",
+                "this Launch draft expired; open a New Launch to continue",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn expire_draft(
+        &mut self,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        let now = now.into();
+        if self.started_at.is_some()
+            || !matches!(self.state, LaunchState::Draft | LaunchState::AuthRequired)
+        {
+            return Ok(());
+        }
+        if !self.draft_is_expired(&now)? {
+            return Err(TriggerValidationError::field(
+                "draft_expires_at",
+                "the Launch draft has not expired",
+            ));
+        }
+        let correlation_id = correlation_id.into();
+        self.fail(
+            LaunchFailure {
+                class: FailureClass::PolicyUserAction,
+                code: "launch_draft_expired".into(),
+                detail: "The saved Launch review expired before Start.".into(),
+                remediation: "Open the README link again to create a New Launch with current policy, pricing, quota, and runtime evidence.".into(),
+                correlation_id,
+                retry_at: None,
+                observed_at: now.clone(),
+            },
+            now,
+        )
     }
 
     /// Record the explicit warning accepted before replacing a current Launch.
@@ -694,36 +963,108 @@ impl Launch {
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
-        if !matches!(self.state, LaunchState::Draft | LaunchState::AuthRequired) {
+        let mut candidate = self.clone();
+        let now = now.into();
+        candidate.require_live_draft(&now)?;
+        if !matches!(
+            candidate.state,
+            LaunchState::Draft | LaunchState::AuthRequired
+        ) {
             return Err(TriggerValidationError::new(
                 "the connection can change only before Start or during authentication recovery",
             ));
         }
         connection.validate_for(
-            &self
+            &candidate
                 .revision
                 .content
                 .repository_access
                 .required_scope_classes,
         )?;
-        let now = now.into();
         let correlation_id = correlation_id.into();
-        let recovery_target = (self.state == LaunchState::AuthRequired)
-            .then(|| self.resume_state.unwrap_or(LaunchState::Draft));
-        self.connection = Some(connection);
-        self.blocked_reason = None;
-        self.updated_at = now.clone();
-        self.push_event(
+        let recovery_target = (candidate.state == LaunchState::AuthRequired)
+            .then(|| candidate.resume_state.unwrap_or(LaunchState::Draft));
+        candidate.connection = Some(connection);
+        if recovery_target.is_none() {
+            candidate.blocked_reason = None;
+        }
+        candidate.updated_at = now.clone();
+        candidate.push_event(
             now.clone(),
             correlation_id.clone(),
             LaunchEventKind::ConnectionSelected,
         )?;
         if let Some(target) = recovery_target {
-            self.transition(target, now, correlation_id)?;
-            self.failure = None;
-            self.resume_state = None;
+            candidate.requeue_authentication_effect(target, &now, &correlation_id)?;
+            candidate.failure = None;
+            candidate.resume_state = None;
+            candidate.transition(target, now, correlation_id)?;
         }
+        *self = candidate;
         Ok(())
+    }
+
+    /// Put only the effect interrupted by authentication back on its original
+    /// intent for read-only reconciliation. A capability renewal can also
+    /// require authentication while no ordinary effect is pending, in which
+    /// case returning to the retained state is sufficient.
+    fn requeue_authentication_effect(
+        &mut self,
+        resume: LaunchState,
+        now: &str,
+        correlation_id: &str,
+    ) -> Result<(), TriggerValidationError> {
+        let mut resumed = self.clone();
+        resumed.state = resume;
+        resumed.blocked_reason = None;
+        resumed.failure = None;
+        resumed.resume_state = None;
+        let Some(kind) = effect::required_effect(&resumed) else {
+            return Ok(());
+        };
+        let index = self
+            .effects
+            .iter()
+            .rposition(|record| record.kind == kind && record.state != EffectState::Succeeded)
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "effect",
+                    "authentication recovery is missing the exact retained failed intent",
+                )
+            })?;
+        let retained_failure = self.failure.as_ref().ok_or_else(|| {
+            TriggerValidationError::field(
+                "failure",
+                "authentication recovery must retain its failure classification",
+            )
+        })?;
+        let record = &self.effects[index];
+        if record.state != EffectState::FailedRetryable
+            || record.last_failure.as_ref() != Some(retained_failure)
+            || !matches!(
+                retained_failure.class,
+                FailureClass::AuthRequired
+                    | FailureClass::OwnerCredentialUnavailable
+                    | FailureClass::ServiceInactive
+            )
+        {
+            return Err(TriggerValidationError::field(
+                "effect",
+                "authentication recovery does not match the exact retained failed intent",
+            ));
+        }
+
+        let record = &mut self.effects[index];
+        record.state = EffectState::Reconciling;
+        record.next_attempt_at = None;
+        record.updated_at = now.into();
+        let step = self.step_mut(kind)?;
+        step.status = LaunchStepStatus::Pending;
+        step.safe_detail = "GitHub authority was revalidated; the retained operation is queued for read-only reconciliation.".into();
+        step.remediation.clear();
+        step.correlation_id = correlation_id.into();
+        let step = step.clone();
+        self.push_event(now, correlation_id, LaunchEventKind::StepChanged { step })
     }
 
     pub fn start(
@@ -732,6 +1073,8 @@ impl Launch {
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
+        let now = now.into();
+        self.require_live_draft(&now)?;
         if self.state != LaunchState::Draft {
             return Err(TriggerValidationError::new(
                 "this Launch has already been started or is not startable",
@@ -765,6 +1108,16 @@ impl Launch {
                 "must be confirmed before a reused fork can run repository workflows",
             ));
         }
+        if self.pricing.is_none()
+            || self.runtime_admission.is_none()
+            || self.review_quota.is_none()
+            || self.start_admission.is_none()
+        {
+            return Err(TriggerValidationError::field(
+                "start_admission",
+                "server pricing, quota, and runtime admission must be current before Start",
+            ));
+        }
         if confirmation.action != ConfirmationAction::Start
             || confirmation.subject != self.owner
             || confirmation.snapshot_digest != self.effective.digest
@@ -774,7 +1127,6 @@ impl Launch {
                 "does not authorize this exact effective configuration",
             ));
         }
-        let now = now.into();
         self.confirmations.push(confirmation);
         self.started_at = Some(now.clone());
         self.push_event(now.clone(), correlation_id.into(), LaunchEventKind::Started)?;
@@ -788,6 +1140,7 @@ impl Launch {
         confirmation: Confirmation,
         correlation_id: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
+        self.require_live_draft(&confirmation.confirmed_at)?;
         if self.state != LaunchState::Draft
             || self.workflow_paths.is_empty()
             || confirmation.action != ConfirmationAction::WorkflowRisk
@@ -873,6 +1226,143 @@ impl Launch {
         )
     }
 
+    /// Fence work that depended on a reusable provider connection which the
+    /// owner has revoked. Existing user artifacts remain attached to the
+    /// Launch; reconnecting resumes through read-only effect reconciliation.
+    pub fn require_connection_reauthentication(
+        &mut self,
+        service_id: &str,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<bool, TriggerValidationError> {
+        if service_id.trim().is_empty() {
+            return Err(TriggerValidationError::field(
+                "connection.service_id",
+                "the revoked connection identity is empty",
+            ));
+        }
+        if self
+            .connection
+            .as_ref()
+            .is_none_or(|connection| connection.service_id != service_id)
+        {
+            return Ok(false);
+        }
+
+        let before = self.clone();
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        if self.state.is_terminal() {
+            let reach_needs_revocation = self.reach.as_ref().is_some_and(|reach| {
+                !matches!(
+                    reach.state,
+                    CapabilityRevocationState::RevocationPending
+                        | CapabilityRevocationState::Revoked
+                )
+            });
+            if self.lease.is_some() || reach_needs_revocation {
+                self.lease = None;
+                self.fencing_counter = self.fencing_counter.checked_add(1).ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "fencing_counter",
+                        "the Launch worker fence is exhausted",
+                    )
+                })?;
+            }
+            self.request_capability_revocation(&now, &correlation_id)?;
+            return Ok(*self != before);
+        }
+
+        let retained_failure = self
+            .failure
+            .as_ref()
+            .filter(|failure| failure.code == "trigger_connection_revoked")
+            .cloned();
+        let already_recorded =
+            self.state == LaunchState::AuthRequired && retained_failure.is_some();
+        let failure = retained_failure.unwrap_or_else(|| LaunchFailure {
+            class: FailureClass::ServiceInactive,
+            code: "trigger_connection_revoked".into(),
+            detail: "The selected provider connection was revoked by its owner.".into(),
+            remediation: "Reconnect or select an eligible connection to resume this Launch.".into(),
+            correlation_id: correlation_id.clone(),
+            retry_at: None,
+            observed_at: now.clone(),
+        });
+
+        let required_effect = if self.state == LaunchState::AuthRequired {
+            let mut resumed = self.clone();
+            resumed.state = self.resume_state.unwrap_or(LaunchState::Draft);
+            resumed.blocked_reason = None;
+            resumed.failure = None;
+            effect::required_effect(&resumed)
+        } else {
+            effect::required_effect(self)
+        };
+        let retained_effect_matches = required_effect.is_none_or(|kind| {
+            self.effects
+                .iter()
+                .rfind(|record| {
+                    record.kind == kind
+                        && !matches!(
+                            record.state,
+                            EffectState::Succeeded | EffectState::Cancelled
+                        )
+                })
+                .is_none_or(|record| {
+                    record.state == EffectState::FailedRetryable
+                        && record.last_failure.as_ref() == Some(&failure)
+                        && record.authority_admission.is_none()
+                })
+        });
+        let reach_needs_revocation = self.reach.as_ref().is_some_and(|reach| {
+            !matches!(
+                reach.state,
+                CapabilityRevocationState::RevocationPending | CapabilityRevocationState::Revoked
+            )
+        });
+        if self.lease.is_some()
+            || !already_recorded
+            || !retained_effect_matches
+            || reach_needs_revocation
+        {
+            self.lease = None;
+            self.fencing_counter = self.fencing_counter.checked_add(1).ok_or_else(|| {
+                TriggerValidationError::field(
+                    "fencing_counter",
+                    "the Launch worker fence is exhausted",
+                )
+            })?;
+        }
+
+        if !retained_effect_matches {
+            if let Some(kind) = required_effect {
+                if let Some(record) = self.effects.iter_mut().rfind(|record| {
+                    record.kind == kind
+                        && !matches!(
+                            record.state,
+                            EffectState::Succeeded | EffectState::Cancelled
+                        )
+                }) {
+                    // Reauthentication is allowed to resume only by reconciling this
+                    // exact retained intent. It never turns a revoked-authority write
+                    // back into a fresh execute attempt.
+                    record.state = EffectState::FailedRetryable;
+                    record.authority_admission = None;
+                    record.next_attempt_at = None;
+                    record.last_failure = Some(failure.clone());
+                    record.updated_at = now.clone();
+                }
+            }
+        }
+
+        if !already_recorded {
+            self.fail(failure, &now)?;
+        }
+        self.request_capability_revocation(&now, &correlation_id)?;
+        Ok(*self != before)
+    }
+
     /// Resume Trigger orchestration after the deployment-owned pause clears.
     /// The session and its reach are not restarted or recreated by this action.
     pub fn resume_feature_pause(
@@ -913,7 +1403,7 @@ impl Launch {
             FailureClass::OwnerCredentialUnavailable => {
                 return self.apply_blocking_failure(
                     failure,
-                    LaunchState::FailedRetryable,
+                    LaunchState::AuthRequired,
                     LaunchBlockedReason::OwnerCredentialUnavailable,
                     now,
                 );
@@ -1097,11 +1587,30 @@ impl Launch {
                 "does not request a review for this exact Launch configuration",
             ));
         }
-        let current = self
-            .workspace
+        let session = self.session.as_ref().ok_or_else(|| {
+            TriggerValidationError::field(
+                "checkpoint_intent.session_id",
+                "cannot review a diff before the deterministic session exists",
+            )
+        })?;
+        let workspace = self.workspace.as_ref().ok_or_else(|| {
+            TriggerValidationError::field(
+                "checkpoint_intent",
+                "cannot review a diff before workspace import",
+            )
+        })?;
+        if workspace.checkpoint_intent.is_some() {
+            return Err(TriggerValidationError::field(
+                "checkpoint_intent",
+                "another coherent workspace capture is still settling; retry this review",
+            ));
+        }
+        let current = workspace
+            .latest_checkpoint
             .as_ref()
-            .and_then(|workspace| workspace.latest_checkpoint.as_ref())
-            .map_or(0, |checkpoint| checkpoint.version);
+            .map_or(workspace.checkpoint_version, |checkpoint| {
+                workspace.checkpoint_version.max(checkpoint.version)
+            });
         let requested = current.checked_add(1).ok_or_else(|| {
             TriggerValidationError::field(
                 "contribution_checkpoint_version",
@@ -1111,6 +1620,19 @@ impl Launch {
         let now = now.into();
         let correlation_id = correlation_id.into();
         self.contribution_checkpoint_version = Some(requested);
+        self.workspace
+            .as_mut()
+            .expect("validated above")
+            .checkpoint_intent = Some(super::WorkspaceCheckpointIntent {
+            id: CheckpointId::new(),
+            version: requested,
+            purpose: super::WorkspaceCheckpointPurpose::ContributionReview,
+            session_id: session.session_id.clone(),
+            runtime_generation: session.runtime_generation,
+            workspace_epoch: workspace.workspace_epoch,
+            requested_at: now.clone(),
+            retry_at: None,
+        });
         self.diff = None;
         self.contribution = None;
         self.confirmations.push(confirmation.clone());
@@ -1546,6 +2068,13 @@ impl Launch {
             .collect()
     }
 
+    /// The durable stream position, including compatibility with Launches
+    /// written before `event_sequence` was materialized separately.
+    pub fn event_high_water(&self) -> u64 {
+        self.event_sequence
+            .max(self.events.last().map_or(0, |event| event.sequence))
+    }
+
     pub fn next_effect(&self) -> Option<LaunchEffectKind> {
         if self.blocked_reason.is_some() || self.state.is_terminal() || self.lease.is_some() {
             return None;
@@ -1559,23 +2088,17 @@ impl Launch {
         correlation_id: impl Into<String>,
         kind: LaunchEventKind,
     ) -> Result<(), TriggerValidationError> {
-        if self.events.len() >= MAX_LAUNCH_EVENTS {
-            return Err(TriggerValidationError::new(
-                "Launch event retention bound reached; operator compaction is required",
-            ));
-        }
-        let sequence = match self.events.last() {
-            Some(event) => event
-                .sequence
-                .checked_add(1)
-                .ok_or_else(|| TriggerValidationError::new("Launch event sequence is exhausted"))?,
-            None => 1,
-        };
+        let sequence = self
+            .event_high_water()
+            .checked_add(1)
+            .ok_or_else(|| TriggerValidationError::new("Launch event sequence is exhausted"))?;
+        self.event_sequence = sequence;
         self.events.push(LaunchEvent {
             sequence,
             launch_id: self.id.clone(),
             occurred_at: occurred_at.into(),
             correlation_id: correlation_id.into(),
+            progress: LaunchProgressState::from_launch(self),
             kind,
         });
         Ok(())
@@ -1692,60 +2215,128 @@ pub fn effective_configuration(
             "exceeds the publisher ceiling",
         ));
     }
-    if !overrides.optional_checks.is_empty() && !allowed.contains(&EditableField::OptionalChecks) {
+    if !overrides.optional_checks.is_empty() {
         return Err(TriggerValidationError::field(
             "overrides.optional_checks",
-            "optional checks are locked by the publisher",
-        ));
-    }
-    let declared: BTreeSet<&str> = revision
-        .content
-        .override_policy
-        .optional_checks
-        .iter()
-        .map(String::as_str)
-        .collect();
-    if overrides.optional_checks.len() > declared.len()
-        || overrides
-            .optional_checks
-            .iter()
-            .any(|check| !declared.contains(check.as_str()))
-        || overrides
-            .optional_checks
-            .iter()
-            .collect::<BTreeSet<_>>()
-            .len()
-            != overrides.optional_checks.len()
-    {
-        return Err(TriggerValidationError::field(
-            "overrides.optional_checks",
-            "contains an undeclared or duplicate check",
+            "configured checks are unavailable in this deployment",
         ));
     }
     let rendered_prompt = revision.content.render_prompt(&overrides.task_inputs)?;
-    let digest_input = serde_json::to_vec(&(
-        &revision.digest,
-        &rendered_prompt,
-        &branch_suffix,
-        revision.content.session.permission_ceiling,
-        resource_size,
-        timeout_seconds,
-        &overrides.optional_checks,
-    ))
-    .map_err(|_| TriggerValidationError::new("effective configuration cannot be encoded"))?;
-    let digest = Sha256::digest(digest_input)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    Ok(EffectiveConfiguration {
+    let mut effective = EffectiveConfiguration {
         rendered_prompt,
         branch_suffix,
         permission: revision.content.session.permission_ceiling,
         resource_size,
         timeout_seconds,
-        optional_checks: overrides.optional_checks.clone(),
-        digest,
-    })
+        optional_checks: Vec::new(),
+        digest: String::new(),
+    };
+    effective.digest = effective_digest(revision, &effective, None, None)?;
+    Ok(effective)
+}
+
+fn effective_digest(
+    revision: &TriggerRevision,
+    effective: &EffectiveConfiguration,
+    pricing: Option<&PricingSnapshot>,
+    runtime: Option<&RuntimeAdmissionSnapshot>,
+) -> Result<String, TriggerValidationError> {
+    let digest_input = serde_json::to_vec(&(
+        &revision.digest,
+        &effective.rendered_prompt,
+        &effective.branch_suffix,
+        effective.permission,
+        effective.resource_size,
+        effective.timeout_seconds,
+        &effective.optional_checks,
+        pricing,
+        runtime,
+    ))
+    .map_err(|_| TriggerValidationError::new("effective configuration cannot be encoded"))?;
+    Ok(Sha256::digest(digest_input)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+fn draft_expiry(now: &str) -> Result<String, TriggerValidationError> {
+    let created = crate::seconds_from_rfc3339(now)
+        .filter(|seconds| *seconds > 0)
+        .ok_or_else(|| TriggerValidationError::field("created_at", "is not a CMA timestamp"))?;
+    let expires = created
+        .checked_add(LAUNCH_DRAFT_TTL_SECONDS)
+        .ok_or_else(|| {
+            TriggerValidationError::field("draft_expires_at", "exceeds the supported clock")
+        })?;
+    Ok(crate::rfc3339_at(
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(expires),
+    ))
+}
+
+fn validate_review_admission(
+    launch: &Launch,
+    admission: &LaunchReviewAdmission,
+) -> Result<(), TriggerValidationError> {
+    let pricing = &admission.pricing;
+    let policy = &launch.revision.content.commercial_policy;
+    if pricing.policy_reference != policy.policy_reference
+        || pricing.billing_mode != policy.billing_mode
+        || pricing.currency != crate::CURRENCY
+        || pricing.cpu_millis != launch.effective.resource_size.cpu_millis()
+        || pricing.memory_mib != launch.effective.resource_size.memory_mib()
+        || crate::seconds_from_rfc3339(&pricing.quoted_at).is_none()
+        || crate::seconds_from_rfc3339(&pricing.expires_at).is_none()
+        || pricing.quoted_at >= pricing.expires_at
+        || pricing.expires_at > launch.draft_expires_at
+    {
+        return Err(TriggerValidationError::field(
+            "pricing",
+            "does not describe this exact effective configuration and draft lifetime",
+        ));
+    }
+    match pricing.billing_mode {
+        super::BillingMode::ZeroCost
+            if pricing.rate_card.is_none()
+                && pricing.rate.is_none()
+                && pricing.micros_per_hour == 0
+                && pricing.estimated_micros == 0 => {}
+        super::BillingMode::Contributor
+            if pricing.rate_card.is_some()
+                && pricing.rate.is_some()
+                && pricing.micros_per_hour > 0 => {}
+        _ => {
+            return Err(TriggerValidationError::field(
+                "pricing",
+                "contains an unsupported or incomplete billing policy",
+            ));
+        }
+    }
+
+    let runtime = &admission.runtime;
+    let supported: BTreeSet<_> = runtime.supported_capabilities.iter().copied().collect();
+    if runtime.runtime_version.trim().is_empty()
+        || runtime.supported_capabilities.len() != supported.len()
+        || crate::seconds_from_rfc3339(&runtime.observed_at).is_none()
+        || launch
+            .revision
+            .content
+            .session
+            .required_capabilities
+            .iter()
+            .any(|capability| !supported.contains(capability))
+    {
+        return Err(TriggerValidationError::field(
+            "runtime_admission",
+            "does not support the complete published capability set on a pinned runtime",
+        ));
+    }
+    if crate::seconds_from_rfc3339(&admission.quota.checked_at).is_none() {
+        return Err(TriggerValidationError::field(
+            "review_quota",
+            "does not contain a CMA timestamp",
+        ));
+    }
+    Ok(())
 }
 
 fn legal_transition(from: LaunchState, to: LaunchState) -> bool {

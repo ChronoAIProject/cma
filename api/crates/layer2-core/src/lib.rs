@@ -101,6 +101,8 @@ mod resources_tests;
 mod runtime_interaction_tests;
 #[cfg(test)]
 mod spend_tests;
+#[cfg(test)]
+mod trigger_admission_tests;
 
 #[cfg(test)]
 #[path = "persistence_tests.rs"]
@@ -114,6 +116,7 @@ mod attach_tests;
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
 pub mod options;
+mod recovery_pair;
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
@@ -134,6 +137,7 @@ mod transcript_tests;
 pub mod trigger;
 mod trigger_prompt;
 mod workspace_checkpoint;
+pub use workspace_checkpoint::{TriggerLifecycleCheckpointOutcome, WorkspaceWriterHoldReceipt};
 
 pub use activity::{
     ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityTarget,
@@ -186,13 +190,20 @@ pub use pressure::{
     InvalidPressurePolicy, MemoryPressure, MemoryPressurePolicy, PressureSample, PressureTransition,
 };
 pub use reconcile::Reclaimed;
+pub use recovery_pair::{
+    TriggerRecoveryPair, TriggerRecoveryPairCommitReceipt, TriggerRecoveryPairRef,
+    MAX_TRIGGER_CONVERSATION_SNAPSHOT_BYTES, TRIGGER_RECOVERY_PAIR_VERSION,
+};
 pub use resources::{HeldReading, ResourceReading, ResourceStatus};
+pub use runtime_policy::{
+    RuntimeGatewayReachabilityError, RuntimeGatewayReachabilityReceipt, RuntimePolicyObservation,
+};
 pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
 pub use session::{
-    CallerCredential, RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus,
-    StopReason, TriggerSessionOrigin,
+    trigger_session_id, CallerCredential, RecoveryState, RuntimeLossCause, Session,
+    SessionCredentialAuthority, SessionSpec, SessionStatus, StopReason, TriggerSessionOrigin,
 };
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;

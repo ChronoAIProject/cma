@@ -199,13 +199,23 @@ API key, GitHub token, prompt, repository credential, or mutable configuration.
 is side-effect-free and sends no `Set-Cookie`; an SDK with a configured bearer or
 cookie jar deliberately suppresses both. Crawlers, unfurlers, browser prefetch,
 and repeated GETs can therefore inspect it without creating a Launch, forking a
-repository, or starting a session.
+repository, or starting a session. Successful REST and AG-UI previews both send
+`Cache-Control: public, max-age=60` and `Referrer-Policy: no-referrer`; neither
+projection may acquire different caching or referrer semantics.
 
 Every other route requires the normal CMA subject credential. CMA never accepts a
 GitHub token from the browser. Connection commands return a NyxID OAuth handoff
 URL or a public-safe connection projection; NyxID retains the provider token.
 The OAuth callback consumes its state and returns to the Launch review. It never
-starts work.
+starts work. Each sign-in attempt also has an independent high-entropy,
+host-only, `HttpOnly`, `SameSite=Lax` browser-binding cookie scoped to
+`/auth/callback` and expiring after ten minutes (`Secure` on HTTPS). State is
+consumed atomically only when both digests match, so a copied callback cannot
+consume the initiating browser's attempt and concurrent tabs do not displace
+one another. Terminal callback handling clears that attempt's cookie. A Trigger
+return reports `auth_error=expired`, `auth_error=cancelled`, or
+`auth_error=failed` on the same `/triggers/{public_id}` review route; these are
+display states and never authorize Start.
 
 Every state-changing route below marked `required` requires one exact
 `Idempotency-Key`. The visible-ASCII, subject/operation scope, replay, body-conflict,
@@ -260,6 +270,7 @@ neither the rendered/private prompt nor configured credential material.
 |---|---|---|---|
 | `GET /api/v1/trigger-connections` | List reusable GitHub services available to the caller | absent | `200` `{"connections": [...]}` |
 | `POST /api/v1/trigger-connections` | Begin a single explicit OAuth consent attempt from `intent_id` | required | `200` `ConnectionAuthorization` |
+| `DELETE /api/v1/trigger-connections/{service_id}` | Revoke one exact caller-owned service; the command body is `{}` | required | `200` resulting `TriggerConnection` |
 | `POST /api/v1/trigger-connections/{service_id}/reconnect` | Begin new consent for one exact existing service | required | `200` `ConnectionAuthorization` |
 | `GET /api/v1/trigger-connections/{service_id}/preflight` | Revalidate one exact service and its public account/scope state | absent | `200` `TriggerConnection` |
 
@@ -273,6 +284,19 @@ Preflight is an authenticated GET and has no idempotency key. It is advisory for
 review; Start and every later irreversible effect revalidate authority at their
 own fence. A UI must not infer current write authority merely from an old
 preflight response.
+
+Revocation is an authenticated, owner-scoped command. Unknown and foreign
+service identifiers are concealed as `404`; an exact same-key/body replay
+returns the recorded public projection. The command preserves Trigger drafts,
+Launches, sessions, workspaces, forks, branches, commits, and pull requests.
+Owner-scoped durable revocation intent and receipt evidence keeps response-loss
+replay and later different-key repeats convergent when the provider's active-only
+list no longer contains the service. A bare active-list miss, without that
+evidence, is never treated as proof of ownership or successful revocation.
+Affected Launches converge to resumable `auth_required`. A returned inactive or
+revoked projection does not claim provider denial was instantaneous: capability
+use remains `revocation_pending` until CMA observes the signed tombstone,
+confirmed agent-key revocation, or the bounded credential expiry.
 
 ### Launch routes
 
@@ -315,13 +339,14 @@ schemas.
 | Fields | Meaning |
 |---|---|
 | `id`, `trigger_public_id`, `revision_digest`, `source_sha`, `revision_content` | Immutable Trigger and source captured by this Launch |
-| `state`, `revision_number`, `blocked_reason`, `failure` | Optimistic-concurrency revision and current lifecycle/failure projection |
-| `overrides`, `effective`, `pricing` | Contributor edits, exact resolved configuration/digest, and sealed price snapshot |
+| `state`, `revision_number`, `blocked_reason`, `failure`, `resume_state` | Optimistic-concurrency revision and current lifecycle/failure/recovery projection |
+| `overrides`, `effective` | Contributor edits and the exact resolved configuration and confirmation digest |
+| `pricing`, `runtime_admission`, `review_quota`, `start_admission` | Server-owned price, locked kernel, pinned runtime/capabilities, review-time quota, and fresh Start evidence |
 | `connection`, `workflow_paths`, `workflow_risk_acknowledged` | Selected public-safe NyxID service and workflow warning decision |
 | `steps` | Stable ordered progress checklist |
 | `fork`, `branch`, `workspace`, `session`, `reach`, `delivery` | Reconciled resources and public-safe capability/prompt-delivery state |
 | `contribution_checkpoint_version`, `diff`, `contribution`, `pull_request` | Current contribution review and GitHub publication records |
-| `created_at`, `updated_at`, `started_at`, `terminal_at` | Durable lifecycle times |
+| `created_at`, `updated_at`, `draft_expires_at`, `started_at`, `terminal_at` | Durable lifecycle times, including the server-derived pre-Start review deadline |
 
 `state` is one of `draft`, `auth_required`, `preflight`, `fork_pending`,
 `fork_ready`, `branch_pending`, `workspace_pending`, `sandbox_pending`,
@@ -330,12 +355,45 @@ schemas.
 Clients must not derive authority from the state name; the command performs the
 same ownership, revision, policy, and authority checks again.
 
+`draft_expires_at` is minted by CMA 24 hours after Launch creation. The exact
+deadline is expired: a pre-Start mutation first settles the Launch durably as
+`failed_terminal` with `launch_draft_expired`, then returns a typed conflict
+without calling GitHub or admitting sandbox work. A README re-click that finds
+the still-current expired draft atomically creates one replacement; if expiry
+has already been settled, use the explicit New Launch action. The old record is
+retained in either case. This deadline no longer applies after Start, so a
+started `auth_required` Launch remains recoverable.
+
+`pricing` is exact integer evidence. It carries the billing policy, optional
+rate-card id and copied rate, currency, admitted size, hourly micro-USD amount,
+maximum estimated micro-USD amount, quote time, and expiry. Zero-cost Launches
+have no rate card or rate and both amounts are zero, even on a priced
+deployment. Contributor Launches copy the accepted rate terms into the session;
+retiring that card after Start does not reprice or invalidate the promise.
+
+`runtime_admission` discloses the closed `kernel` vocabulary (`codex` for the
+public MVP), pins the deployment runtime identity, and records its canonical
+capability inventory. The value comes from the server's authoritative Trigger
+admission configuration; clients must not infer it from `runtime_version` or
+capabilities. `review_quota` shows the observed owner live-session count and
+deployment reservation headroom. Start obtains `start_admission` by checking the
+quote, current rate card, locked kernel, runtime identity/capabilities, owner
+quota, and deployment capacity again. Kernel/runtime identity and required
+capabilities are also checked immediately before provisioning. Missing or
+changed evidence fails closed.
+
 Each step carries `key`, stable `sequence`, `status`, nullable start/completion
 times, `attempt`, `safe_detail`, `remediation`, public-safe external resource ids,
 and `correlation_id`. Status is `pending`, `running`, `completed`, `blocked`,
 `retryable`, `failed`, or `cancelled`. The fixed checklist covers review,
 connection, preflight, fork, branch, workspace, sandbox, session, capability,
 prompt delivery, ready, checkpoint, diff, branch publication, and pull request.
+The resource-id map is filtered by one server-side closed allowlist for both a
+current Launch and replayed progress events. It may carry public repository,
+ref, SHA, session, sandbox, checkpoint, artifact digest, commit, and pull-request
+identities. Unknown keys, provider request IDs, object-store references,
+prompt-origin/hash/fence internals, credentials, and worker identifiers are
+removed rather than passed through.
 
 `failure` is nullable. When present it carries `class`, stable `code`, safe
 `detail`, actionable `remediation`, `correlation_id`, nullable `retry_at`, and
@@ -364,7 +422,7 @@ references.
     "branch_suffix": "docs-fix",
     "resource_size": {"cpu_millis": 1000, "memory_mib": 2048},
     "timeout_seconds": 3600,
-    "optional_checks": ["markdown"]
+    "optional_checks": []
   }
 }
 ```
@@ -373,6 +431,33 @@ Only publisher-declared editable fields within publisher and deployment ceilings
 are accepted. Each successful edit increments `revision_number` and produces a
 new `effective.digest`. Repository identity, credential route, permission ceiling,
 setup policy, kernel, and signed capability policy are not overrideable.
+Configured checks remain an empty compatibility field in the public MVP.
+Non-empty publisher declarations or Launch selections are rejected until CMA
+has a reviewed resource- and network-bounded sandbox runner.
+
+Saving an override clears all earlier admission evidence and obtains a new
+server quote, runtime snapshot, and quota observation. These server-owned
+pricing and runtime snapshots are part of `effective.digest`; even saving the
+same configuration to refresh stale evidence yields a new digest and requires a
+new explicit Start confirmation. Quota is live evidence and is not itself
+hashed into the digest.
+
+Admission failures use stable Problem Details codes:
+
+| Code | HTTP | Client action |
+|---|---:|---|
+| `trigger_admission_unavailable` | `503` | Retry later; no provider work was admitted. |
+| `trigger_pricing_unavailable` | `503` | Retry after deployment pricing is available. |
+| `trigger_price_changed` | `409` | Save the review again, inspect the new price, and reconfirm Start. |
+| `trigger_quote_expired` | `409` | Open a New Launch with current evidence. |
+| `trigger_quota_exhausted` | `409` | Release or wait for capacity, then save and review again. |
+| `trigger_capability_unsupported` | `422` | Use a Trigger/runtime combination supporting the named `capability`. |
+| `trigger_runtime_changed` | `409` | Save the review again, inspect the new runtime, and reconfirm Start. |
+| `trigger_draft_expired` | `409` | Follow `remediation` to the explicit New Launch flow. |
+
+Each response includes actionable `remediation`. Capability refusal also
+includes the canonical `capability`; draft expiry includes
+`field: "draft_expires_at"`. Clients must branch on `code`, not English detail.
 
 Every irreversible or user-significant command carries both
 `expected_revision` and `snapshot_digest`. The digest target is deliberately not
@@ -404,7 +489,13 @@ resource-count matrices.
 ### Durable progress
 
 `LaunchProgress` has `launch_id`, ordered `events`, and `next_cursor`. An event
-has `sequence`, `launch_id`, `occurred_at`, `correlation_id`, and a tagged `kind`.
+has `sequence`, `launch_id`, `occurred_at`, `correlation_id`, an authoritative
+compact `progress` snapshot, and a tagged `kind`. `progress` contains the
+current state, blocked reason, failure, resume state, reach, and initial-prompt
+delivery. The `created` kind carries the complete stable step table; later
+`step_changed` kinds carry one sanitized replacement row. Those two pieces let
+a client reconstruct the current progress projection exactly from sequence 1
+without consulting browser state.
 The closed kinds are `created`, `draft_updated`, `connection_selected`, `started`,
 `state_changed`, `step_changed`, `blocked`, `failure`, `effect_reconciled`,
 `delivery_changed`, `reach_changed`, `confirmation_recorded`, `resumed`,
@@ -413,10 +504,26 @@ The nested step, failure, blocked reason, and reach values use the same sanitize
 public projections as `Launch`.
 
 `after` defaults to `0` and means strictly after that accepted sequence. `limit`
-defaults to `100`. Persist `next_cursor`, reconnect from it, and refresh the
-Launch projection as events arrive. A transport disconnect loses no accepted
-progress. Events never contain credentials, raw provider payloads, internal
+defaults to `100` and is clamped to `1..=500`. Persist `next_cursor`, reconnect
+from it, and refresh the Launch projection as events arrive. A transport
+disconnect loses no accepted progress. An immediately repeated event with an
+identical complete envelope is harmless and may be collapsed. A conflicting
+duplicate, any sequence gap, or a mixed-Launch stream must be rejected.
+`next_cursor` is the last unique accepted sequence, or `after` for an empty
+page. Events never contain credentials, raw provider payloads, internal
 idempotency hashes, worker fences, or object references.
+
+REST `GET /api/v1/launches/{launch_id}/events` remains a bounded JSON page for
+SDK and request/response clients. AG-UI
+`GET /api/v1/agui/launches/{launch_id}/events` exposes the same public event
+projection as resumable SSE. It accepts `starting_after` (`after` is an alias),
+`limit`, and `follow`; `Last-Event-ID` takes precedence. Each frame carries the
+event sequence as its SSE `id` and the exact `LaunchEvent` JSON as `data`.
+`follow=false` drains one page and closes, while the default follows future
+events with transport keepalives. Both routes reject a cursor above the owned
+Launch's durable high-water mark as `400 cursor_beyond_end`, after applying
+normal owner concealment. Clients must resume from the returned `head` or an
+earlier accepted sequence rather than silently replaying from zero.
 
 ### Diff and pull-request representations
 

@@ -51,11 +51,83 @@ fn record() -> SessionRecord {
     })
 }
 
+#[test]
+fn trigger_prompt_execution_allowlist_matches_the_adapter_contract_exactly() {
+    let durable_activity = [
+        EventKind::MessageCommitted {
+            content: "working".into(),
+        },
+        EventKind::ToolCallStarted {
+            call_id: "call-1".into(),
+            title: "read".into(),
+            kind: "read".into(),
+            arguments: None,
+        },
+        EventKind::ToolCallUpdated {
+            call_id: "call-1".into(),
+            status: "completed".into(),
+            result: None,
+        },
+        EventKind::ApprovalRequested {
+            request_id: "approval-1".into(),
+            action: Some("write".into()),
+            detail: None,
+            locator: None,
+        },
+    ];
+    let classified: Vec<_> = durable_activity
+        .iter()
+        .filter_map(super::initial_prompt_execution_evidence)
+        .collect();
+    assert_eq!(
+        classified.as_slice(),
+        &layer3_adapter::TurnScopedEvidence::ALL
+    );
+
+    let initialization = [
+        EventKind::AvailableCommandsSet {
+            commands: Vec::new(),
+        },
+        EventKind::ModeChanged {
+            mode: "agent".into(),
+        },
+        EventKind::ConfigOptionsSet {
+            options: Vec::new(),
+        },
+        EventKind::UsageReported {
+            input_tokens: 0,
+            output_tokens: 0,
+            context_used: 0,
+            context_window: Some(200_000),
+        },
+        EventKind::SignInRequired {
+            url: "https://example.invalid/device".into(),
+            code: Some("ABCD".into()),
+            message: None,
+        },
+    ];
+    for event in &initialization {
+        assert_eq!(
+            super::initial_prompt_execution_evidence(event),
+            None,
+            "initialization event became execution evidence: {event:?}"
+        );
+    }
+    assert_eq!(
+        super::initial_prompt_execution_evidence(&EventKind::OwnerMessage {
+            content: "CMA wrote this before dispatch".into(),
+        }),
+        None,
+        "CMA-authored input is not recipient acknowledgement"
+    );
+}
+
 fn pending_plane_handover(claim: &str) -> PendingHandover {
     PendingHandover {
         claim: claim.into(),
         snapshot_ref: format!("sessions/{}/handover.snapshot", id().0),
         snapshot_at: "2026-08-24T01:00:00Z".into(),
+        trigger_recovery: None,
         rotations_from: 0,
         rotations_to: 1,
         target: PendingHandoverTarget::Plane {

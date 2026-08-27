@@ -93,6 +93,51 @@ pub struct PermissionRequest {
     pub request: RequestPermissionRequest,
 }
 
+/// Turn-scoped runtime activity that can prove a dispatched prompt executed.
+///
+/// This is deliberately a closed, small allowlist. Conversation setup and
+/// reconnect traffic shares the same ordered stream as a prompt, so merely
+/// seeing an update after a dispatch fence is not evidence that the runtime
+/// received that prompt. Only activity ACP defines inside a prompt turn is
+/// represented here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TurnScopedEvidence {
+    /// The agent emitted part of its answer.
+    AgentMessage,
+    /// The agent began a tool call.
+    ToolCallStarted,
+    /// A tool call changed state or produced output.
+    ToolCallUpdated,
+    /// The agent stopped for an owner decision.
+    ApprovalRequested,
+}
+
+impl TurnScopedEvidence {
+    /// Every activity class that may be treated as positive execution evidence.
+    pub const ALL: [Self; 4] = [
+        Self::AgentMessage,
+        Self::ToolCallStarted,
+        Self::ToolCallUpdated,
+        Self::ApprovalRequested,
+    ];
+}
+
+/// What one adapter update proves about a prompt turn.
+///
+/// Terminal outcomes are separate from activity because Layer 2 records them
+/// as completion/failure rather than the intermediate `execution_observed`
+/// state. An update returning `None` is initialization, reconnect, telemetry,
+/// liveness, or another event that must never acknowledge a prompt dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnEvidence {
+    /// Positive non-terminal execution evidence.
+    Activity(TurnScopedEvidence),
+    /// The runtime reported a terminal prompt result.
+    TerminalResult,
+    /// The runtime reported that the prompt turn failed.
+    TerminalFailure,
+}
+
 /// Something sent toward a runtime's conversation.
 #[derive(Debug, Clone)]
 pub enum ConversationInput {
@@ -349,6 +394,14 @@ pub enum PermissionDecision {
 /// neither would be visible until somebody read the history back.
 #[derive(Debug, Clone)]
 pub enum ConversationUpdate {
+    /// An update that remains part of the visible conversation but cannot
+    /// acknowledge a prompt dispatched on this link.
+    ///
+    /// Hosted adapters use this for activity received while they own no prompt
+    /// waiter, including conversation-opening and reconnect replay. Keeping the
+    /// original update inside the wrapper lets Layer 2 record it normally while
+    /// preserving the adapter's correlation fact across a delayed update queue.
+    WithoutPromptEvidence(Box<ConversationUpdate>),
     /// Something the runtime said, in the protocol's own words.
     Said(SessionUpdate),
     /// A decision the runtime is now blocked on.
@@ -399,6 +452,44 @@ pub enum ConversationUpdate {
         /// The kernel's own sentence about what it wants, where it gave one.
         message: Option<String>,
     },
+}
+
+impl ConversationUpdate {
+    /// Preserve this update while declaring that it cannot acknowledge a
+    /// prompt dispatched on the current adapter link.
+    pub fn without_prompt_evidence(self) -> Self {
+        match self {
+            already @ Self::WithoutPromptEvidence(_) => already,
+            update => Self::WithoutPromptEvidence(Box::new(update)),
+        }
+    }
+
+    /// Classify only evidence that the runtime contract makes prompt-scoped.
+    ///
+    /// In particular, available commands, mode/configuration changes, usage,
+    /// sign-in requests, and lost-frame notices remain unclassified. All can
+    /// arrive while a conversation opens or reconnects without any prompt
+    /// having reached the model.
+    pub fn turn_evidence(&self) -> Option<TurnEvidence> {
+        match self {
+            Self::WithoutPromptEvidence(_) => None,
+            Self::Said(SessionUpdate::AgentMessageChunk(_)) => {
+                Some(TurnEvidence::Activity(TurnScopedEvidence::AgentMessage))
+            }
+            Self::Said(SessionUpdate::ToolCall(_)) => {
+                Some(TurnEvidence::Activity(TurnScopedEvidence::ToolCallStarted))
+            }
+            Self::Said(SessionUpdate::ToolCallUpdate(_)) => {
+                Some(TurnEvidence::Activity(TurnScopedEvidence::ToolCallUpdated))
+            }
+            Self::Asked(_) => Some(TurnEvidence::Activity(
+                TurnScopedEvidence::ApprovalRequested,
+            )),
+            Self::TurnEnded(_) => Some(TurnEvidence::TerminalResult),
+            Self::Failed { .. } => Some(TurnEvidence::TerminalFailure),
+            Self::Said(_) | Self::Lost { .. } | Self::SignInRequired { .. } => None,
+        }
+    }
 }
 
 /// A bidirectional attachment to a runtime's conversation.

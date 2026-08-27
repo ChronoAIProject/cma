@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DiffFile, DiffReview, PullRequestDraft } from '@chronoai/cma-sdk';
+import type {
+  DiffArtifact,
+  DiffFile,
+  DiffReview,
+  DiffValidationOutcome,
+  LaunchCapabilityRevocationState,
+  PullRequestDraft,
+  PullRequestState,
+} from '@chronoai/cma-sdk';
 import {
-  TransportError,
   confirmPullRequest,
   downloadDiffArtifact,
   publishLaunchBranch,
@@ -19,6 +26,7 @@ import {
   IconCheckOutline16,
   IconChevronRightOutline14,
   IconDownloadOutline16,
+  IconLinkOutline16,
   IconRefreshOutline16,
   IconRightUpOutline16,
   IconWarningOutline16,
@@ -26,21 +34,176 @@ import {
 import {
   mergeabilityLabel,
   reachState,
+  sessionId,
   shortRevision,
   stateLabel,
   timestamp,
   upstreamRepository,
 } from './model';
 import { useLaunchResource } from './useLaunchResource';
-import { useIdempotentCommand } from './useIdempotentCommand';
+import {
+  commandOutcomeIsUnresolved,
+  retainedCommandMetadata,
+  retainedCommandRequest,
+  useIdempotentCommand,
+} from './useIdempotentCommand';
+import type { PendingBrowserCommand } from './useIdempotentCommand';
+import {
+  commandObject,
+  exactString,
+  nonEmptyString,
+  nonNegativeInteger,
+  oneOfLiterals,
+} from './commandValidation';
 import './ContributionSurface.css';
 
 interface ContributionSurfaceProps {
+  readonly ownerId: string;
   readonly launchId: string;
   readonly navigate: AppRouter['navigate'];
 }
 
 type Busy = 'capture' | 'publish' | 'proposal' | 'pr' | 'download' | null;
+
+interface PullRequestCommandMetadata {
+  readonly launchId: string;
+  readonly operation: 'open' | 'update';
+  readonly expectedRevision: number;
+  readonly snapshotDigest: string;
+}
+
+interface PullRequestCommandRequest extends PullRequestCommandMetadata {
+  readonly edits: { readonly title: string; readonly body: string };
+}
+
+interface LaunchRevisionDigestRequest {
+  readonly launchId: string;
+  readonly expectedRevision: number;
+  readonly snapshotDigest: string;
+}
+
+type RemediationAction = 'capture' | 'recover_connection' | 'refresh_reach' | 'session';
+
+interface ContributionRemediation {
+  readonly reason: string;
+  readonly action: RemediationAction;
+  readonly label: string;
+}
+
+function reachRemediation(
+  state: LaunchCapabilityRevocationState | undefined,
+): ContributionRemediation | null {
+  switch (state) {
+    case 'active':
+      return null;
+    case 'revocation_pending':
+      return {
+        reason:
+          'GitHub reach revocation is still converging. Writes stay disabled until CMA observes a tombstone acknowledgement, confirmed agent-key revocation, or bounded expiry.',
+        action: 'refresh_reach',
+        label: 'Check reach status',
+      };
+    case 'revoked':
+      return {
+        reason:
+          'GitHub reach for this Launch was revoked. Reauthorize or select another eligible GitHub connection before continuing.',
+        action: 'recover_connection',
+        label: 'Review GitHub access',
+      };
+    case 'expired':
+      return {
+        reason:
+          'GitHub reach for this Launch expired. Reauthorize or select another eligible GitHub connection before continuing.',
+        action: 'recover_connection',
+        label: 'Review GitHub access',
+      };
+    case undefined:
+      return {
+        reason:
+          'CMA has no GitHub reach status for this Launch. Select an eligible GitHub connection before continuing.',
+        action: 'recover_connection',
+        label: 'Review GitHub access',
+      };
+  }
+}
+
+function validationRemediation(artifact: DiffArtifact): ContributionRemediation | null {
+  const recapture = (reason: string, label = 'Recapture diff'): ContributionRemediation => ({
+    reason,
+    action: 'capture',
+    label,
+  });
+  const fixInSession = (reason: string): ContributionRemediation => ({
+    reason,
+    action: 'session',
+    label: 'Open session',
+  });
+
+  if (
+    artifact.validation === 'stale_head' ||
+    artifact.expected_branch_head !== artifact.observed_branch_head
+  ) {
+    return recapture(
+      'The Launch branch head changed after this diff was sealed. Recapture and review the current head; CMA will not force-push it.',
+    );
+  }
+
+  const outcome: DiffValidationOutcome = artifact.validation;
+  switch (outcome) {
+    case 'valid': {
+      if (artifact.total_changed_files === 0) {
+        return fixInSession(
+          'No workspace changes were found. Continue editing in the session, then refresh the diff.',
+        );
+      }
+      if (artifact.total_changed_files > artifact.changed_file_limit) {
+        return fixInSession(
+          `This diff changes ${String(artifact.total_changed_files)} files, above the ${String(artifact.changed_file_limit)}-file limit. Reduce the change set, then refresh the diff.`,
+        );
+      }
+      const failed = artifact.checks.find((check) => !check.passed);
+      return failed === undefined
+        ? null
+        : fixInSession(
+            `Required check ${failed.key} failed: ${failed.summary} Fix the reported workspace state, then refresh the diff.`,
+          );
+    }
+    case 'no_changes':
+      return fixInSession(
+        'No workspace changes were found. Continue editing in the session, then refresh the diff.',
+      );
+    case 'workflow_scope_required':
+      return fixInSession(
+        'Workflow-file publication is not authorized for this Launch. Remove those workflow changes in the session, then refresh the diff.',
+      );
+    case 'too_many_changes':
+      return fixInSession(
+        `This diff changes ${String(artifact.total_changed_files)} files, above the ${String(artifact.changed_file_limit)}-file limit. Reduce the change set, then refresh the diff.`,
+      );
+    case 'too_many_bytes':
+      return fixInSession(
+        "This diff exceeds CMA's changed-byte limit. Reduce the changed content in the session, then refresh the diff.",
+      );
+    case 'unsupported_file':
+      return fixInSession(
+        'This diff contains an unsupported file type. Remove or replace the unsupported file in the session, then refresh the diff.',
+      );
+    case 'artifact_too_large':
+      return fixInSession(
+        "The complete review artifact exceeds CMA's safe size limit. Reduce the change set in the session, then refresh the diff.",
+      );
+    case 'missing_baseline':
+      return recapture(
+        'CMA could not read the sealed workspace baseline. Retry diff capture; no GitHub write is authorized from this artifact.',
+        'Retry diff capture',
+      );
+    case 'corrupt_checkpoint':
+      return recapture(
+        'The captured workspace checkpoint could not be verified. Capture a new checkpoint; no GitHub write is authorized from this artifact.',
+        'Recapture diff',
+      );
+  }
+}
 
 function mode(value: number | null): string {
   return value === null ? 'none' : `0${value.toString(8)}`;
@@ -63,11 +226,100 @@ function checksLabel(value: string): string {
     : stateLabel(value);
 }
 
+interface PullRequestStatusGuidance {
+  readonly reason: string;
+  readonly refreshable: boolean;
+}
+
+function pullRequestStatusGuidance(state: PullRequestState): PullRequestStatusGuidance | null {
+  switch (state) {
+    case 'creating':
+      return {
+        reason:
+          'Pull request creation is still reconciling. CMA will not open a second pull request while this provider operation is unresolved.',
+        refreshable: true,
+      };
+    case 'updating':
+      return {
+        reason:
+          'Pull request update is still reconciling. CMA will not issue a second update while this provider operation is unresolved.',
+        refreshable: true,
+      };
+    case 'recovery_required':
+      return {
+        reason:
+          'The pull request outcome is ambiguous and requires provider reconciliation. CMA will not issue another pull request write while recovery is required.',
+        refreshable: true,
+      };
+    case 'closed_unmerged':
+      return {
+        reason: 'This pull request is closed. Create a New Launch for a separate attempt.',
+        refreshable: false,
+      };
+    case 'merged':
+      return {
+        reason: 'A merged pull request cannot be updated from CMA.',
+        refreshable: false,
+      };
+    case 'open':
+      return null;
+  }
+}
+
 function downloadableName(launchId: string, artifactId: string): string {
   return `cma-${launchId}-${artifactId}.json`;
 }
 
-export function ContributionSurface({ launchId, navigate }: ContributionSurfaceProps) {
+function launchRevisionDigestRequest(
+  value: unknown,
+  launchId: string,
+): LaunchRevisionDigestRequest | null {
+  return commandObject<LaunchRevisionDigestRequest>(value, {
+    launchId: exactString(launchId),
+    expectedRevision: nonNegativeInteger,
+    snapshotDigest: nonEmptyString,
+  });
+}
+
+function pendingPullRequestOperation(
+  pending: PendingBrowserCommand | null,
+  launchId: string,
+): 'open' | 'update' | null {
+  if (pending?.resource !== `launch:${launchId}` || pending.action !== 'confirm-pull-request') {
+    return null;
+  }
+  if (pending.slot === `launch:pull-request:${launchId}:open`) return 'open';
+  if (pending.slot === `launch:pull-request:${launchId}:update`) return 'update';
+  return null;
+}
+
+function pullRequestCommandMetadata(
+  pending: PendingBrowserCommand | null,
+  launchId: string,
+  operation: 'open' | 'update',
+): PullRequestCommandMetadata | undefined {
+  return retainedCommandMetadata<PullRequestCommandMetadata>(
+    pending,
+    {
+      slot: `launch:pull-request:${launchId}:${operation}`,
+      resource: `launch:${launchId}`,
+      action: 'confirm-pull-request',
+    },
+    (value) =>
+      commandObject<PullRequestCommandMetadata>(value, {
+        launchId: exactString(launchId),
+        operation: oneOfLiterals([operation]),
+        expectedRevision: nonNegativeInteger,
+        snapshotDigest: nonEmptyString,
+      }),
+  );
+}
+
+export function ContributionSurface(props: ContributionSurfaceProps) {
+  return <ContributionSurfaceRoute key={props.launchId} {...props} />;
+}
+
+function ContributionSurfaceRoute({ ownerId, launchId, navigate }: ContributionSurfaceProps) {
   const resource = useLaunchResource(launchId);
   const [review, setReview] = useState<DiffReview | null>(null);
   const [reviewFailure, setReviewFailure] = useState<string | null>(null);
@@ -77,16 +329,17 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
   const [proposalTitle, setProposalTitle] = useState('');
   const [proposalBody, setProposalBody] = useState('');
   const heading = useRef<HTMLHeadingElement>(null);
-  const commands = useIdempotentCommand();
+  const commands = useIdempotentCommand(ownerId, [`launch:${launchId}`]);
 
   useEffect(() => {
     heading.current?.focus();
-  }, [launchId]);
+  }, [launchId, resource.loading]);
 
   useEffect(() => {
     const controller = new AbortController();
     void readLaunchDiff(launchId, controller.signal)
       .then((next) => {
+        if (controller.signal.aborted) return;
         setReview((current) =>
           current !== null && current.revision_number > next.revision_number ? current : next,
         );
@@ -109,18 +362,33 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
     setReviewFailure(null);
     const slot = `launch:diff:${launch.id}`;
     try {
-      const next =
-        commands.pending?.slot === slot
-          ? await commands.reconcile<typeof launch>(slot, 'diff capture')
-          : await commands.execute(slot, 'diff capture', (idempotencyKey) =>
-              requestLaunchDiff(launch.id, launch.revision_number, launch.effective.digest, {
-                idempotencyKey,
-              }),
-            );
+      const identity = {
+        slot,
+        resource: `launch:${launch.id}`,
+        action: 'capture-diff',
+      } as const;
+      const request = retainedCommandRequest(
+        commands.pending,
+        identity,
+        {
+          launchId: launch.id,
+          expectedRevision: launch.revision_number,
+          snapshotDigest: launch.effective.digest,
+        },
+        (value) => launchRevisionDigestRequest(value, launch.id),
+      );
+      const next = await commands.execute(
+        { ...identity, request, persistRequest: true },
+        'diff capture',
+        (idempotencyKey, frozen) =>
+          requestLaunchDiff(frozen.launchId, frozen.expectedRevision, frozen.snapshotDigest, {
+            idempotencyKey,
+          }),
+      );
       resource.accept(next);
     } catch (cause) {
       setReviewFailure(
-        cause instanceof TransportError
+        commandOutcomeIsUnresolved(cause)
           ? 'The diff-capture outcome is unknown. CMA retained the exact command for reconciliation.'
           : cause instanceof Error
             ? cause.message
@@ -134,25 +402,47 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
   async function publish(): Promise<void> {
     const launch = resource.launch;
     const artifact = review?.artifact;
-    if (launch === null || artifact === null || artifact === undefined) return;
+    if (
+      launch === null ||
+      ((artifact === null || artifact === undefined) &&
+        commands.pending?.slot !== `launch:branch:${launch?.id}`)
+    ) {
+      return;
+    }
     setBusy('publish');
     setReviewFailure(null);
     const slot = `launch:branch:${launch.id}`;
     try {
-      const next =
-        commands.pending?.slot === slot
-          ? await commands.reconcile<typeof launch>(slot, 'branch publication')
-          : await commands.execute(slot, 'branch publication', (idempotencyKey) =>
-              publishLaunchBranch(launch.id, launch.revision_number, artifact.digest, {
-                idempotencyKey,
-              }),
-            );
+      const identity = {
+        slot,
+        resource: `launch:${launch.id}`,
+        action: 'publish-branch',
+      } as const;
+      const request = retainedCommandRequest(
+        commands.pending,
+        identity,
+        {
+          launchId: launch.id,
+          expectedRevision: launch.revision_number,
+          snapshotDigest: artifact?.digest ?? '',
+        },
+        (value) => launchRevisionDigestRequest(value, launch.id),
+      );
+      if (request.snapshotDigest === '') return;
+      const next = await commands.execute(
+        { ...identity, request, persistRequest: true },
+        'branch publication',
+        (idempotencyKey, frozen) =>
+          publishLaunchBranch(frozen.launchId, frozen.expectedRevision, frozen.snapshotDigest, {
+            idempotencyKey,
+          }),
+      );
       resource.accept(next);
       setConfirmingPublish(false);
     } catch (cause) {
-      if (!(cause instanceof TransportError)) setConfirmingPublish(false);
+      if (!commandOutcomeIsUnresolved(cause)) setConfirmingPublish(false);
       setReviewFailure(
-        cause instanceof TransportError
+        commandOutcomeIsUnresolved(cause)
           ? 'The branch-publication outcome is unknown. CMA retained the exact reviewed artifact and command for reconciliation.'
           : cause instanceof Error
             ? cause.message
@@ -204,34 +494,66 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
   async function confirmProposal(): Promise<void> {
     const launch = resource.launch;
     const current = proposal;
-    if (launch === null || current === null) return;
+    const retainedOperation = pendingPullRequestOperation(commands.pending, launchId);
+    if (launch === null || (current === null && retainedOperation === null)) return;
     setBusy('pr');
     setReviewFailure(null);
-    const slot = `launch:pull-request:${launch.id}:${current.operation}`;
+    const operation = retainedOperation ?? current?.operation;
+    if (operation === undefined) return;
+    const slot = `launch:pull-request:${launch.id}:${operation}`;
     try {
-      let next;
-      if (commands.pending?.slot === slot) {
-        next = await commands.reconcile<typeof launch>(slot, 'pull-request confirmation');
+      const identity = {
+        slot,
+        resource: `launch:${launch.id}`,
+        action: 'confirm-pull-request',
+      } as const;
+      let request: PullRequestCommandRequest;
+      const retained = pullRequestCommandMetadata(commands.pending, launchId, operation);
+      if (retained !== undefined) {
+        request = {
+          ...retained,
+          edits: { title: proposalTitle, body: proposalBody },
+        };
       } else {
+        if (current === null) return;
         const edits = { title: proposalTitle, body: proposalBody };
         const sealed = await reviewPullRequest(launch.id, current.operation, edits);
-        next = await commands.execute(slot, 'pull-request confirmation', (idempotencyKey) =>
+        request = {
+          launchId: launch.id,
+          operation: sealed.operation,
+          expectedRevision: launch.revision_number,
+          snapshotDigest: sealed.intent_digest,
+          edits,
+        };
+      }
+      const next = await commands.execute(
+        {
+          ...identity,
+          request,
+          retained: {
+            launchId: request.launchId,
+            operation: request.operation,
+            expectedRevision: request.expectedRevision,
+            snapshotDigest: request.snapshotDigest,
+          } satisfies PullRequestCommandMetadata,
+        },
+        'pull-request confirmation',
+        (idempotencyKey, frozen) =>
           confirmPullRequest(
-            launch.id,
-            sealed.operation,
-            launch.revision_number,
-            sealed.intent_digest,
-            edits,
+            frozen.launchId,
+            frozen.operation,
+            frozen.expectedRevision,
+            frozen.snapshotDigest,
+            frozen.edits,
             { idempotencyKey },
           ),
-        );
-      }
+      );
       resource.accept(next);
       setProposal(null);
     } catch (cause) {
       setReviewFailure(
-        cause instanceof TransportError
-          ? 'The pull-request outcome is unknown. CMA retained the exact reviewed title, body, head, and command for reconciliation.'
+        commandOutcomeIsUnresolved(cause)
+          ? 'The pull-request outcome is unknown. CMA retained the command fingerprint and reviewed head, but not the title or body.'
           : cause instanceof Error
             ? cause.message
             : String(cause),
@@ -277,33 +599,108 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
   const launch = resource.launch;
   const captureSlot = `launch:diff:${launch.id}`;
   const publishSlot = `launch:branch:${launch.id}`;
+  const retainedProposalOperation = pendingPullRequestOperation(commands.pending, launch.id);
+  const proposalOperation = proposal?.operation ?? retainedProposalOperation;
   const proposalSlot =
-    proposal === null ? null : `launch:pull-request:${launch.id}:${proposal.operation}`;
+    proposalOperation === undefined
+      ? null
+      : `launch:pull-request:${launch.id}:${proposalOperation}`;
   const pendingCapture = commands.pending?.slot === captureSlot;
   const pendingPublish = commands.pending?.slot === publishSlot;
-  const pendingProposal = proposalSlot !== null && commands.pending?.slot === proposalSlot;
+  const pendingProposal =
+    proposalSlot !== null &&
+    commands.pending?.slot === proposalSlot &&
+    commands.pending.action === 'confirm-pull-request';
   const repository = upstreamRepository(launch);
   const artifact = review?.artifact ?? launch.diff;
   const contribution = review?.contribution ?? launch.contribution;
   const pullRequest = review?.pull_request ?? launch.pull_request;
-  const expectedHeadMatches = artifact?.expected_branch_head === artifact?.observed_branch_head;
-  const withinLimit =
-    artifact !== null && artifact.total_changed_files <= artifact.changed_file_limit;
-  const validationPassed =
-    artifact?.validation === 'valid' && artifact.checks.every((check) => check.passed);
   const reach = reachState(launch);
-  const reachAvailable =
-    reach === undefined || !['revoked', 'revocation_pending', 'expired'].includes(reach);
+  const reachAvailable = reach === 'active';
+  const githubRemediation = reachRemediation(reach);
+  const reviewRemediation = artifact === null ? null : validationRemediation(artifact);
+  const publishRemediation = githubRemediation ?? reviewRemediation;
+  const exactReviewPublished = artifact !== null && contribution?.diff_artifact_id === artifact.id;
   const canPublish =
-    artifact !== null &&
-    artifact.total_changed_files > 0 &&
-    expectedHeadMatches &&
-    withinLimit &&
-    validationPassed &&
-    reachAvailable &&
-    contribution?.diff_artifact_id !== artifact.id;
+    artifact !== null && reviewRemediation === null && reachAvailable && !exactReviewPublished;
   const operation = pullRequest === null ? 'open' : pullRequest.state === 'open' ? 'update' : null;
+  const pullRequestGuidance =
+    pullRequest === null ? null : pullRequestStatusGuidance(pullRequest.state);
   const launchRoute = { kind: 'launch', launchId } as const;
+  const recoveryRoute = { kind: 'trigger_recovery', launchId } as const;
+  const linkedSessionId = sessionId(launch);
+  const linkedSessionRoute =
+    linkedSessionId === undefined
+      ? null
+      : ({ kind: 'session', sessionId: linkedSessionId } as const);
+  const canPrepareProposal =
+    operation !== null && reachAvailable && reviewRemediation === null && exactReviewPublished;
+  const publishReason =
+    publishRemediation?.reason ??
+    (exactReviewPublished
+      ? 'This exact reviewed artifact is already published.'
+      : 'Publishing writes exactly this reviewed artifact to the guarded Launch branch.');
+  const pullRequestReason =
+    pullRequestGuidance?.reason ??
+    publishRemediation?.reason ??
+    (artifact === null
+      ? 'Capture and review a workspace diff before preparing a pull request.'
+      : !exactReviewPublished
+        ? 'Publish this exact reviewed artifact before preparing a pull request.'
+        : `${operation === 'open' ? 'Opening' : 'Updating'} remains a separate confirmation.`);
+
+  function remediationAction(remediation: ContributionRemediation | null) {
+    if (remediation === null) return null;
+    if (remediation.action === 'capture') {
+      return (
+        <Button
+          size="sm"
+          variant="outline"
+          icon={<IconRefreshOutline16 />}
+          disabled={
+            busy !== null ||
+            launch.session === null ||
+            (commands.pending !== null && !pendingCapture)
+          }
+          onClick={() => void capture()}
+        >
+          {pendingCapture ? 'Reconcile diff capture' : remediation.label}
+        </Button>
+      );
+    }
+    if (remediation.action === 'refresh_reach') {
+      return (
+        <Button
+          size="sm"
+          variant="outline"
+          icon={<IconRefreshOutline16 />}
+          disabled={resource.loading || busy !== null}
+          onClick={() => void resource.refresh()}
+        >
+          {remediation.label}
+        </Button>
+      );
+    }
+
+    const route = remediation.action === 'recover_connection' ? recoveryRoute : linkedSessionRoute;
+    if (route === null) return null;
+    return (
+      <a
+        className="button button--outline button--sm"
+        href={routePath(route)}
+        onClick={(event) => routeClick(event, route, navigate)}
+      >
+        <span className="button__icon" aria-hidden="true">
+          {remediation.action === 'recover_connection' ? (
+            <IconLinkOutline16 />
+          ) : (
+            <IconRightUpOutline16 />
+          )}
+        </span>
+        {remediation.label}
+      </a>
+    );
+  }
 
   return (
     <main className="trigger-workflow contribution">
@@ -332,6 +729,23 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
           {resource.lastUpdated === null
             ? 'unknown'
             : new Date(resource.lastUpdated).toLocaleTimeString()}
+        </div>
+      ) : null}
+      {!resource.offline && resource.failure !== null ? (
+        <div className="notice notice--fail trigger-workflow__notice" role="alert">
+          <IconWarningOutline16 />
+          <div>
+            <p className="notice__title">Contribution data may be stale.</p>
+            <p className="notice__detail">{resource.failure}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<IconRefreshOutline16 />}
+              onClick={() => void resource.refresh()}
+            >
+              Retry refresh
+            </Button>
+          </div>
         </div>
       ) : null}
       {commands.pending === null ? null : (
@@ -548,28 +962,20 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
                 ))}
               </div>
               <div className="contribution__row">
-                <span className="control-reason">
-                  {canPublish
-                    ? 'Publishing writes exactly this reviewed artifact to the guarded Launch branch.'
-                    : artifact.total_changed_files === 0
-                      ? 'There are no changes to publish.'
-                      : !expectedHeadMatches
-                        ? 'The branch head changed. Capture and review a new diff.'
-                        : !withinLimit
-                          ? 'This diff exceeds the changed-file limit.'
-                          : !validationPassed
-                            ? 'Validation must pass before publication.'
-                            : !reachAvailable
-                              ? 'GitHub reach must be restored before publication.'
-                              : 'This reviewed artifact is already published.'}
+                <span id="contribution-publish-reason" className="control-reason">
+                  {publishReason}
                 </span>
-                <Button
-                  variant="primary"
-                  disabled={!canPublish || busy !== null || commands.pending !== null}
-                  onClick={() => setConfirmingPublish(true)}
-                >
-                  Publish branch
-                </Button>
+                <div className="contribution__actions">
+                  {remediationAction(publishRemediation)}
+                  <Button
+                    variant="primary"
+                    aria-describedby="contribution-publish-reason"
+                    disabled={!canPublish || busy !== null || commands.pending !== null}
+                    onClick={() => setConfirmingPublish(true)}
+                  >
+                    Publish branch
+                  </Button>
+                </div>
               </div>
             </section>
           </>
@@ -626,34 +1032,41 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             </dl>
           )}
           <div className="contribution__row">
-            <span className="control-reason">
-              {contribution === null
-                ? 'Publish the reviewed branch before preparing a pull request.'
-                : operation === null
-                  ? pullRequest?.state === 'closed_unmerged'
-                    ? 'This pull request is closed. Create a New Launch for a separate attempt.'
-                    : 'A merged pull request cannot be updated from CMA.'
-                  : `${operation === 'open' ? 'Opening' : 'Updating'} remains a separate confirmation.`}
+            <span id="contribution-pr-reason" className="control-reason">
+              {pullRequestReason}
             </span>
-            {operation === null ? null : (
-              <Button
-                variant="primary"
-                disabled={contribution === null || busy !== null || commands.pending !== null}
-                onClick={() => void prepareProposal(operation)}
-              >
-                {busy === 'proposal'
-                  ? 'Reviewing'
-                  : operation === 'open'
-                    ? 'Open pull request'
-                    : 'Update pull request'}
-              </Button>
-            )}
+            <div className="contribution__actions">
+              {remediationAction(publishRemediation)}
+              {pullRequestGuidance?.refreshable === true ? (
+                <Button
+                  variant="outline"
+                  icon={<IconRefreshOutline16 />}
+                  disabled={resource.loading || busy !== null}
+                  onClick={() => void resource.refresh()}
+                >
+                  Refresh status
+                </Button>
+              ) : operation === null ? null : (
+                <Button
+                  variant="primary"
+                  aria-describedby="contribution-pr-reason"
+                  disabled={!canPrepareProposal || busy !== null || commands.pending !== null}
+                  onClick={() => void prepareProposal(operation)}
+                >
+                  {busy === 'proposal'
+                    ? 'Reviewing'
+                    : operation === 'open'
+                      ? 'Open pull request'
+                      : 'Update pull request'}
+                </Button>
+              )}
+            </div>
           </div>
         </section>
       </div>
 
       <Modal
-        open={confirmingPublish}
+        open={confirmingPublish || pendingPublish}
         title="Publish this reviewed branch?"
         description="CMA will create one commit with the author and committer shown in this review, then advance only the guarded Launch branch if its head is unchanged."
         onClose={() => {
@@ -669,7 +1082,9 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             </Button>
             <Button
               variant="primary"
-              disabled={busy !== null || (commands.pending !== null && !pendingPublish)}
+              disabled={
+                !reachAvailable || busy !== null || (commands.pending !== null && !pendingPublish)
+              }
               onClick={() => void publish()}
             >
               {busy === 'publish'
@@ -685,8 +1100,8 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
       />
 
       <Modal
-        open={proposal !== null}
-        title={`${proposal?.operation === 'update' ? 'Update' : 'Open'} pull request?`}
+        open={proposal !== null || pendingProposal}
+        title={`${proposalOperation === 'update' ? 'Update' : 'Open'} pull request?`}
         description="This writes the exact reviewed head to the upstream repository's pull-request list. Review and merge remain on GitHub."
         onClose={() => {
           if (busy === null && !pendingProposal) setProposal(null);
@@ -699,6 +1114,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             <Button
               variant="primary"
               disabled={
+                !reachAvailable ||
                 busy !== null ||
                 proposalTitle.trim() === '' ||
                 (commands.pending !== null && !pendingProposal)
@@ -711,7 +1127,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
                   : 'Submitting'
                 : pendingProposal
                   ? 'Reconcile pull request'
-                  : proposal?.operation === 'update'
+                  : proposalOperation === 'update'
                     ? 'Update pull request'
                     : 'Open pull request'}
             </Button>
@@ -719,7 +1135,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
         }
       >
         <div className="contribution-proposal">
-          {proposal?.operation === 'update' ? (
+          {proposalOperation === 'update' ? (
             <p className="notice notice--quiet">
               Provider title and body are preserved unless you explicitly edit them. CMA refuses a
               concurrent provider change.
@@ -730,7 +1146,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             <Input
               placement="field__input"
               value={proposalTitle}
-              disabled={pendingProposal}
+              disabled={pendingProposal && !commands.pending?.requiresRequestReconstruction}
               onChange={(event) => setProposalTitle(event.target.value)}
             />
           </label>
@@ -739,7 +1155,7 @@ export function ContributionSurface({ launchId, navigate }: ContributionSurfaceP
             <textarea
               className="field__input"
               value={proposalBody}
-              disabled={pendingProposal}
+              disabled={pendingProposal && !commands.pending?.requiresRequestReconstruction}
               onChange={(event) => setProposalBody(event.target.value)}
             />
           </label>

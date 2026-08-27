@@ -109,6 +109,7 @@
   },
   "blocked_reason": null,
   "failure": null,
+  "resume_state": null,
   "overrides": {
     "task_inputs": {},
     "optional_checks": []
@@ -123,9 +124,42 @@
     },
     "timeout_seconds": 3600,
     "optional_checks": [],
-    "digest": "c23ff59781e162fe7c00481c5398a1d22da9b4e6626ef7b30596b780e277f4b1"
+    "digest": "73beb723be6c3ecad23e5dbcbed26a050f6211fc19cc07a77e4b72ae2765cbd0"
   },
-  "pricing": null,
+  "pricing": {
+    "policy_reference": "public-zero-cost-v1",
+    "billing_mode": "zero_cost",
+    "currency": "USD",
+    "cpu_millis": 500,
+    "memory_mib": 1024,
+    "micros_per_hour": 0,
+    "estimated_micros": 0,
+    "quoted_at": "2026-08-26T12:00:00Z",
+    "expires_at": "2026-08-27T12:00:00Z"
+  },
+  "runtime_admission": {
+    "kernel": "codex",
+    "runtime_version": "cma-trigger-test-runtime@sha256:admitted",
+    "supported_capabilities": [
+      "conversation",
+      "durable_conversation",
+      "workspace_checkpoint",
+      "restricted_service_gateway",
+      "credential_refresh",
+      "credential_revocation"
+    ],
+    "observed_at": "2026-08-26T12:00:00Z"
+  },
+  "review_quota": {
+    "live_sessions": 0,
+    "live_session_limit": 4,
+    "reserved_cpu_millis": 0,
+    "reserved_memory_mib": 0,
+    "free_cpu_millis": 4000,
+    "free_memory_mib": 8192,
+    "checked_at": "2026-08-26T12:00:00Z"
+  },
+  "start_admission": null,
   "connection": {
     "service_id": "service-1",
     "state_version": 2,
@@ -335,6 +369,7 @@
   "pull_request": null,
   "created_at": "2026-08-26T12:00:00Z",
   "updated_at": "2026-08-26T12:00:00Z",
+  "draft_expires_at": "2026-08-27T12:00:00Z",
   "started_at": null,
   "terminal_at": null
 }

@@ -20,6 +20,7 @@ import {
   readTriggerPreview,
   recoverInitialPrompt,
   reconnectTriggerConnection,
+  revokeTriggerConnection,
   resolveTriggerRepository,
   requestLaunchDiff,
   retireTriggerRevision,
@@ -40,9 +41,14 @@ const LAUNCH = {
   revision_digest: 'revision-digest',
   state: 'draft',
   revision_number: 1,
+  draft_expires_at: '2026-08-28T00:00:00Z',
   steps: [],
   revision_content: {},
-  effective: {},
+  effective: { permission: 'autonomous' },
+  pricing: null,
+  runtime_admission: null,
+  review_quota: null,
+  start_admission: null,
 };
 const TRIGGER_DRAFT = {
   id: 'trigger_fixture',
@@ -54,6 +60,7 @@ const TRIGGER_REVISION = {
   id: 'revision_fixture',
   public_id: 'public_fixture',
   digest: 'revision-digest',
+  availability: 'published',
   content: {},
 };
 const CONNECTION = { service_id: 'service_fixture', state_version: 1, state: 'active' };
@@ -70,9 +77,14 @@ const PR_DRAFT = {
 };
 const PREVIEW = {
   public_id: 'public_fixture',
+  availability: 'published',
   revision_digest: 'revision-digest',
   public_summary: 'Fix one bounded issue',
   repository_id: 42,
+  visibility: 'public',
+  permission_ceiling: 'autonomous',
+  required_capabilities: ['conversation'],
+  billing_mode: 'contributor',
 };
 
 function fixture(name: string): unknown {
@@ -163,6 +175,13 @@ describe('Trigger command idempotency', () => {
         response: AUTHORIZATION,
         invoke: (config) =>
           reconnectTriggerConnection(config, 'service_fixture', { idempotencyKey: 'exact-key' }),
+      },
+      {
+        name: 'revoke connection',
+        status: 200,
+        response: { ...CONNECTION, state_version: 2, state: 'inactive' },
+        invoke: (config) =>
+          revokeTriggerConnection(config, 'service_fixture', { idempotencyKey: 'exact-key' }),
       },
       {
         name: 'create or resume Launch',
@@ -317,6 +336,36 @@ describe('Trigger command idempotency', () => {
     expect(new Headers(init.headers).has('idempotency-key')).toBe(false);
   });
 
+  it('revokes the exact service with DELETE and an empty frozen command body', async () => {
+    const revoked = { ...CONNECTION, state_version: 2, state: 'inactive' };
+    const { fetch, calls } = responder(revoked, 200);
+
+    await expect(
+      revokeTriggerConnection(resolveConfig({ fetch }), 'service_fixture', {
+        idempotencyKey: 'revoke-exact-key',
+      }),
+    ).resolves.toMatchObject(revoked);
+
+    const [url, init] = calls.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/v1/trigger-connections/service_fixture');
+    expect(init.method).toBe('DELETE');
+    expect(new Headers(init.headers).get('idempotency-key')).toBe('revoke-exact-key');
+    expect(JSON.parse(String(init.body))).toEqual({});
+  });
+
+  it('rejects revocation state for a different service', async () => {
+    const { fetch } = responder(
+      { ...CONNECTION, service_id: 'service_other', state_version: 2, state: 'inactive' },
+      200,
+    );
+
+    await expect(
+      revokeTriggerConnection(resolveConfig({ fetch }), 'service_fixture', {
+        idempotencyKey: 'revoke-exact-key',
+      }),
+    ).rejects.toThrow('different GitHub connection');
+  });
+
   it('resolves a repository through the exact authenticated connection without a command key', async () => {
     const credential = vi.fn(() => 'private-bearer');
     const { fetch, calls } = responder(fixture('repository_selection.json'), 200);
@@ -427,6 +476,10 @@ describe('Trigger response validation', () => {
       launch.id,
     );
     expect(progress.next_cursor).toBe(3);
+    expect(progress.events[0]?.progress.state).toBe('draft');
+    const created = progress.events[0]?.kind;
+    expect(created?.type).toBe('created');
+    if (created?.type === 'created') expect(created.steps).toHaveLength(15);
 
     const diffTransport = responder(fixture('diff_review.json'), 200);
     const diff = await readLaunchDiff(resolveConfig({ fetch: diffTransport.fetch }), launch.id);
@@ -441,14 +494,55 @@ describe('Trigger response validation', () => {
     expect(pullRequest.operation).toBe('open');
   });
 
+  it('accepts omitted quota ceilings and rejects malformed present ceilings', () => {
+    const raw = fixture('launch.json') as Record<string, unknown>;
+    const quota = { ...(raw.review_quota as Record<string, unknown>) };
+    delete quota.live_session_limit;
+    delete quota.free_cpu_millis;
+    delete quota.free_memory_mib;
+
+    const launch = decodeLaunch({ ...raw, review_quota: quota });
+    expect(launch.review_quota?.live_session_limit).toBeUndefined();
+    expect(launch.review_quota?.free_cpu_millis).toBeUndefined();
+    expect(launch.review_quota?.free_memory_mib).toBeUndefined();
+
+    for (const field of ['live_session_limit', 'free_cpu_millis', 'free_memory_mib']) {
+      expect(() => decodeLaunch({ ...raw, review_quota: { ...quota, [field]: null } })).toThrow(
+        `Launch review quota carried an invalid ${field}`,
+      );
+    }
+  });
+
   it('rejects malformed Launches and internal fields at any nesting depth', () => {
     expect(() => decodeLaunch({ ...LAUNCH, steps: {} })).toThrow(ProtocolError);
-    expect(() =>
-      decodeLaunch({
-        ...LAUNCH,
-        revision_content: { setup: { backing_key_id: 'must-not-cross-layer-one' } },
-      }),
-    ).toThrow('leaked backing_key_id');
+    for (const field of [
+      'idempotency_key_hash',
+      'intent_key',
+      'provider_request_id',
+      'object_reference',
+      'baseline_object_reference',
+      'backing_key_id',
+      'worker_fencing_token',
+      'fencing_counter',
+      'subject_token_generation',
+      'session_credential_generation',
+      'session_credential_authority',
+      'custody_generation',
+      'provider_key_id',
+      'provider_state_version',
+      'grant_fingerprint',
+      'checkpoint_object',
+      'diff_artifact_object',
+      'prompt_origin_key',
+      'prompt_payload_hash',
+    ]) {
+      expect(() =>
+        decodeLaunch({
+          ...LAUNCH,
+          revision_content: { setup: { [field]: 'must-not-cross-layer-one' } },
+        }),
+      ).toThrow(`leaked ${field}`);
+    }
     const delivery = {
       launch_id: 'launch_fixture',
       session_id: 'session_fixture',
@@ -468,6 +562,113 @@ describe('Trigger response validation', () => {
     expect(() =>
       decodeLaunch({ ...LAUNCH, delivery: { ...delivery, recovery_generation: -1 } }),
     ).toThrow('Prompt delivery carried an invalid recovery_generation');
+  });
+
+  it('rejects unknown values for every representative closed Launch vocabulary', () => {
+    const cases: Record<string, unknown>[] = [];
+
+    const state = fixture('launch.json') as Record<string, unknown>;
+    state.state = 'future_state';
+    cases.push(state);
+
+    const permission = fixture('launch.json') as Record<string, unknown>;
+    (permission.effective as Record<string, unknown>).permission = 'unrestricted';
+    cases.push(permission);
+
+    const step = fixture('launch.json') as Record<string, unknown>;
+    ((step.steps as Record<string, unknown>[])[0] as Record<string, unknown>).key = 'future_step';
+    cases.push(step);
+
+    const failure = fixture('launch.json') as Record<string, unknown>;
+    failure.failure = {
+      class: 'future_failure',
+      code: 'future',
+      correlation_id: 'correlation',
+    };
+    cases.push(failure);
+
+    const connection = fixture('launch.json') as Record<string, unknown>;
+    (connection.connection as Record<string, unknown>).state = 'future_connection';
+    cases.push(connection);
+
+    const capability = fixture('launch.json') as Record<string, unknown>;
+    capability.reach = { state: 'refresh_required' };
+    cases.push(capability);
+
+    const runtime = fixture('launch.json') as Record<string, unknown>;
+    (runtime.runtime_admission as Record<string, unknown>).supported_capabilities = [
+      'future_capability',
+    ];
+    cases.push(runtime);
+
+    const kernel = fixture('launch.json') as Record<string, unknown>;
+    (kernel.runtime_admission as Record<string, unknown>).kernel = 'future_kernel';
+    cases.push(kernel);
+
+    const diff = fixture('launch.json') as Record<string, unknown>;
+    const review = fixture('diff_review.json') as Record<string, unknown>;
+    diff.diff = review.artifact;
+    (diff.diff as Record<string, unknown>).validation = 'future_validation';
+    cases.push(diff);
+
+    for (const raw of cases) expect(() => decodeLaunch(raw)).toThrow(ProtocolError);
+  });
+
+  it('normalizes identical duplicates and rejects ambiguous Launch progress', async () => {
+    const identical = fixture('launch_progress.json') as Record<string, unknown>;
+    const launchId = String(identical.launch_id);
+    const identicalEvents = identical.events as Record<string, unknown>[];
+    identicalEvents.splice(1, 0, structuredClone(identicalEvents[0] as Record<string, unknown>));
+    const acceptedTransport = responder(identical, 200);
+    const accepted = await readLaunchProgress(
+      resolveConfig({ fetch: acceptedTransport.fetch }),
+      launchId,
+    );
+    expect(accepted.events).toHaveLength(3);
+    expect(accepted.next_cursor).toBe(3);
+
+    const conflicting = fixture('launch_progress.json') as Record<string, unknown>;
+    const conflictingEvents = conflicting.events as Record<string, unknown>[];
+    const duplicate = structuredClone(conflictingEvents[0] as Record<string, unknown>);
+    duplicate.correlation_id = 'conflicting-correlation';
+    conflictingEvents.splice(1, 0, duplicate);
+
+    const gap = fixture('launch_progress.json') as Record<string, unknown>;
+    (gap.events as Record<string, unknown>[]).splice(1, 1);
+
+    const mixed = fixture('launch_progress.json') as Record<string, unknown>;
+    ((mixed.events as Record<string, unknown>[])[1] as Record<string, unknown>).launch_id =
+      'launch_other';
+
+    const badCursor = fixture('launch_progress.json') as Record<string, unknown>;
+    badCursor.next_cursor = 4;
+
+    const wrongPage = fixture('launch_progress.json') as Record<string, unknown>;
+    wrongPage.launch_id = 'launch_other';
+
+    for (const [raw, message] of [
+      [conflicting, 'conflicting duplicate'],
+      [gap, 'sequence gap'],
+      [mixed, 'belonged to launch_other'],
+      [badCursor, 'next_cursor 4'],
+      [wrongPage, 'response belonged to launch_other'],
+    ] as const) {
+      const transport = responder(raw, 200);
+      await expect(
+        readLaunchProgress(resolveConfig({ fetch: transport.fetch }), launchId),
+      ).rejects.toThrow(message);
+    }
+
+    const fetch = vi.fn();
+    await expect(
+      readLaunchProgress(
+        resolveConfig({ fetch: fetch as unknown as typeof globalThis.fetch }),
+        launchId,
+        0,
+        501,
+      ),
+    ).rejects.toThrow('1 through 500');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('rejects malformed, unordered, and internally leaky progress', async () => {
@@ -497,7 +698,7 @@ describe('configured Trigger client paths', () => {
     const responses = [
       [PREVIEW, 200],
       [LAUNCH, 201],
-      [{ launch_id: 'launch_fixture', next_cursor: 0, events: [] }, 200],
+      [{ launch_id: 'launch_fixture', next_cursor: 7, events: [] }, 200],
       [PR_DRAFT, 200],
       [LAUNCH, 202],
       [new Uint8Array([1, 2, 3]), 200],

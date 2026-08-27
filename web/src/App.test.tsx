@@ -341,6 +341,22 @@ describe('App', () => {
     expect(screen.getByLabelText(/what would you like cma to build/i)).toBeInTheDocument();
   });
 
+  it.each([
+    '/launches/launch-one',
+    '/launches/launch-one/recover',
+    '/launches/launch-one/contribute',
+    '/sessions/session-one',
+  ])('preserves the owner deep link through sign-in from %s', async (pathname) => {
+    window.history.replaceState(null, '', pathname);
+    const provider = createMockAuthProvider();
+    const signIn = vi.spyOn(provider, 'signIn').mockResolvedValue();
+    await renderApp(provider);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(signIn).toHaveBeenCalledWith(pathname);
+  });
+
   it('shows the live console to a signed-in user', async () => {
     await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     LaunchId, RepositoryIdentity, RepositoryOperationClass, ScopeClass, TriggerValidationError,
 };
-use crate::{SessionId, SubjectId};
+use crate::{SessionCredentialAuthority, SessionId, SubjectId};
 
 pub const CAPABILITY_POLICY_VERSION: u32 = 1;
 pub const CAPABILITY_MAX_LIFETIME_SECONDS: u64 = 60;
@@ -106,7 +106,7 @@ pub struct AuthorityProvenance {
     pub service_state_version: i64,
     pub backing_key_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_credential_generation: Option<u64>,
+    pub session_credential_authority: Option<SessionCredentialAuthority>,
     pub state: DelegationState,
     pub observed_at: String,
 }
