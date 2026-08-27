@@ -8,6 +8,7 @@ use std::num::NonZeroU32;
 
 use axum::http::HeaderValue;
 use ipnet::IpNet;
+use layer2_core::TriggerRolloutPolicy;
 
 use crate::auth::AuthMode;
 use crate::store::AuthEncryptionKey;
@@ -20,6 +21,132 @@ const CREATE_RATE_REQUESTS_PER_MINUTE: u32 = 10;
 const INPUT_RATE_REQUESTS_PER_MINUTE: u32 = 120;
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
 const MAX_TRUSTED_PROXY_HOPS: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriggerCleanupMode {
+    DryRun,
+    Execute,
+}
+
+impl TriggerCleanupMode {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::DryRun => "dry_run",
+            Self::Execute => "execute",
+        }
+    }
+}
+
+/// Deployment-owned Trigger rollout, scheduling, and retention controls.
+#[derive(Debug, Clone)]
+pub struct TriggerRuntimeConfig {
+    pub rollout: TriggerRolloutPolicy,
+    pub cleanup_mode: TriggerCleanupMode,
+    pub interval: std::time::Duration,
+    pub page_size: u32,
+    pub max_pages: usize,
+    pub concurrency: usize,
+}
+
+impl TriggerRuntimeConfig {
+    fn from_env() -> Result<Self, String> {
+        let environment_enabled = strict_bool(
+            "CHRONO_TRIGGER_ENABLED",
+            &var_or("CHRONO_TRIGGER_ENABLED", "false"),
+        )?;
+        let orchestration_paused = strict_bool(
+            "CHRONO_TRIGGER_ORCHESTRATION_PAUSED",
+            &var_or("CHRONO_TRIGGER_ORCHESTRATION_PAUSED", "true"),
+        )?;
+        let capability_kill_switch = strict_bool(
+            "CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH",
+            &var_or("CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH", "true"),
+        )?;
+        let publisher_subject_ids = list_or("CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS", "");
+        let repository_ids = parse_u64_list(
+            "CHRONO_TRIGGER_REPOSITORY_IDS",
+            &var_or("CHRONO_TRIGGER_REPOSITORY_IDS", ""),
+        )?;
+        let user_cohort_percent = parse_bounded_usize(
+            "CHRONO_TRIGGER_USER_COHORT_PERCENT",
+            &var_or("CHRONO_TRIGGER_USER_COHORT_PERCENT", "0"),
+            0,
+            100,
+        )? as u8;
+        let rollout = TriggerRolloutPolicy::new(
+            environment_enabled,
+            orchestration_paused,
+            capability_kill_switch,
+            publisher_subject_ids,
+            repository_ids,
+            user_cohort_percent,
+        )
+        .map_err(|error| error.to_string())?;
+        let cleanup_mode = parse_trigger_cleanup_mode(
+            "CHRONO_TRIGGER_CLEANUP_MODE",
+            &var_or("CHRONO_TRIGGER_CLEANUP_MODE", "dry_run"),
+        )?;
+        /*
+         * Keep the scheduler's operation budget bounded independently of the
+         * number of stored Launches. Values outside these ceilings fail
+         * startup rather than turning a typo into an unbounded provider pass.
+         */
+        let interval_seconds = parse_bounded_usize(
+            "CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS",
+            &var_or("CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS", "5"),
+            1,
+            300,
+        )?;
+        let page_size = parse_bounded_usize(
+            "CHRONO_TRIGGER_WORKER_PAGE_SIZE",
+            &var_or("CHRONO_TRIGGER_WORKER_PAGE_SIZE", "50"),
+            1,
+            layer2_core::MAX_TRIGGER_PAGE_SIZE as usize,
+        )? as u32;
+        let max_pages = parse_bounded_usize(
+            "CHRONO_TRIGGER_WORKER_MAX_PAGES",
+            &var_or("CHRONO_TRIGGER_WORKER_MAX_PAGES", "20"),
+            1,
+            100,
+        )?;
+        let concurrency = parse_bounded_usize(
+            "CHRONO_TRIGGER_WORKER_CONCURRENCY",
+            &var_or("CHRONO_TRIGGER_WORKER_CONCURRENCY", "4"),
+            1,
+            32,
+        )?;
+        Ok(Self {
+            rollout,
+            cleanup_mode,
+            interval: std::time::Duration::from_secs(interval_seconds as u64),
+            page_size,
+            max_pages,
+            concurrency,
+        })
+    }
+
+    #[cfg(test)]
+    fn sample() -> Self {
+        Self {
+            rollout: TriggerRolloutPolicy::allow_all(),
+            cleanup_mode: TriggerCleanupMode::DryRun,
+            interval: std::time::Duration::from_secs(5),
+            page_size: 50,
+            max_pages: 20,
+            concurrency: 4,
+        }
+    }
+}
+
+fn parse_trigger_cleanup_mode(key: &str, raw: &str) -> Result<TriggerCleanupMode, String> {
+    match raw {
+        "dry_run" => Ok(TriggerCleanupMode::DryRun),
+        "execute" => Ok(TriggerCleanupMode::Execute),
+        other => Err(format!(
+            "{key} must be \"dry_run\" or \"execute\", got {other:?}"
+        )),
+    }
+}
 
 /// Per-key request budgets enforced by this process.
 #[derive(Debug, Clone, Copy)]
@@ -239,6 +366,8 @@ pub struct Config {
     /// their own retention and deletion policy, and must never inherit the
     /// transcript lifecycle merely because both use platform object storage.
     pub trigger_workspace_bucket: String,
+    /// GitHub Trigger rollout and bounded worker controls.
+    pub trigger: TriggerRuntimeConfig,
     /// Current Ed25519 signer for short-lived runtime policies, when enabled.
     pub github_capability_signing: Option<GithubCapabilitySigningConfig>,
     /// This service's own machine identity on the identity platform, used to
@@ -414,6 +543,7 @@ impl Config {
         // guessing a name would mean writing somewhere nobody chose.
         let context_bucket = var_or("CHRONO_CONTEXT_BUCKET", "");
         let trigger_workspace_bucket = var_or("CHRONO_TRIGGER_WORKSPACE_BUCKET", "");
+        let trigger = TriggerRuntimeConfig::from_env()?;
         let capability_key_id = var_or("CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_ID", "");
         let capability_private_key = var_or("CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_PKCS8", "");
         let previous_verification_keys_json =
@@ -518,6 +648,7 @@ impl Config {
             activity_retention,
             context_bucket,
             trigger_workspace_bucket,
+            trigger,
             github_capability_signing,
             storage_client_id,
             storage_client_secret,
@@ -546,6 +677,34 @@ fn require(key: &str) -> Result<String, String> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| format!("{key} is required and was not set"))
+}
+
+fn strict_bool(key: &str, raw: &str) -> Result<bool, String> {
+    match raw {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!(
+            "{key} must be exactly \"true\" or \"false\", got {raw:?}"
+        )),
+    }
+}
+
+fn parse_u64_list(key: &str, raw: &str) -> Result<Vec<u64>, String> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    raw.split(',')
+        .map(|part| {
+            let part = part.trim();
+            let value = part.parse::<u64>().map_err(|error| {
+                format!("{key} contains invalid numeric identity {part:?}: {error}")
+            })?;
+            if value == 0 {
+                return Err(format!("{key} contains invalid numeric identity 0"));
+            }
+            Ok(value)
+        })
+        .collect()
 }
 
 fn positive_u32(key: &str, default: u32) -> Result<NonZeroU32, String> {
@@ -711,6 +870,7 @@ impl Config {
             activity_retention: std::time::Duration::from_secs(90 * 86_400),
             context_bucket: "bkt".into(),
             trigger_workspace_bucket: "trigger-bkt".into(),
+            trigger: TriggerRuntimeConfig::sample(),
             github_capability_signing: None,
             storage_client_id: "sa-id".into(),
             storage_client_secret: "sa-secret".into(),
@@ -871,6 +1031,71 @@ mod tests {
             let error = parse_cutover_drain("CUTOVER", unsafe_value)
                 .expect_err("an imprecise acknowledgement must stay closed");
             assert!(error.contains("exactly \"drained\""), "got {error}");
+        }
+    }
+
+    #[test]
+    fn trigger_rollout_values_fail_closed_instead_of_guessing() {
+        assert!(strict_bool("TRIGGER_BOOL", "true").unwrap());
+        assert!(!strict_bool("TRIGGER_BOOL", "false").unwrap());
+        for raw in ["TRUE", "False", "1", "yes", " true", ""] {
+            assert!(
+                strict_bool("TRIGGER_BOOL", raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+
+        assert_eq!(
+            parse_u64_list("CHRONO_TRIGGER_REPOSITORY_IDS", " 17,42 ").unwrap(),
+            vec![17, 42]
+        );
+        assert!(parse_u64_list("CHRONO_TRIGGER_REPOSITORY_IDS", "")
+            .unwrap()
+            .is_empty());
+        for raw in ["0", "17,", "-1", "repo"] {
+            assert!(
+                parse_u64_list("CHRONO_TRIGGER_REPOSITORY_IDS", raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+
+        assert_eq!(
+            parse_trigger_cleanup_mode("CHRONO_TRIGGER_CLEANUP_MODE", "dry_run").unwrap(),
+            TriggerCleanupMode::DryRun
+        );
+        assert_eq!(
+            parse_trigger_cleanup_mode("CHRONO_TRIGGER_CLEANUP_MODE", "execute").unwrap(),
+            TriggerCleanupMode::Execute
+        );
+        for raw in ["delete", "DRY_RUN", " dry_run", ""] {
+            assert!(
+                parse_trigger_cleanup_mode("CHRONO_TRIGGER_CLEANUP_MODE", raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_trigger_runtime_key_is_pinned_in_the_fixed_configmap() {
+        let manifest = include_str!("../../../../infra/api/configmap.yaml");
+        for (key, value) in [
+            ("CHRONO_TRIGGER_ENABLED", "false"),
+            ("CHRONO_TRIGGER_ORCHESTRATION_PAUSED", "true"),
+            ("CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH", "true"),
+            ("CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS", ""),
+            ("CHRONO_TRIGGER_REPOSITORY_IDS", ""),
+            ("CHRONO_TRIGGER_USER_COHORT_PERCENT", "0"),
+            ("CHRONO_TRIGGER_CLEANUP_MODE", "dry_run"),
+            ("CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS", "5"),
+            ("CHRONO_TRIGGER_WORKER_PAGE_SIZE", "50"),
+            ("CHRONO_TRIGGER_WORKER_MAX_PAGES", "20"),
+            ("CHRONO_TRIGGER_WORKER_CONCURRENCY", "4"),
+        ] {
+            let declaration = format!("  {key}: \"{value}\"");
+            assert!(
+                manifest.lines().any(|line| line == declaration),
+                "fixed ConfigMap is missing {declaration}"
+            );
         }
     }
 

@@ -8,13 +8,14 @@ use async_trait::async_trait;
 use layer2_core::{
     rfc3339_at, seconds_from_rfc3339, AuthorityProvenance, BaselineObjectStore, BranchRecord,
     CapabilityOperation, CapabilityRevocationState, CheckpointId, CheckpointIntegrity,
-    CheckpointObjectStore, ConnectionSnapshot, CoreError, DelegationState, DiffArtifactObjectStore,
-    DiffValidationOutcome, EffectClaim, EffectClaimMode, FailureClass, Launch, LaunchAuthority,
-    LaunchCapability, LaunchEffectKind, LaunchEffectResult, LaunchFailure, RepositoryIdentity,
-    Session, SessionId, SessionLink, SessionService, SessionStatus, TriggerAuthorityError,
-    TriggerAuthorityVerifier, TriggerServiceError, TriggerStoreError, WorkspaceCheckpoint,
-    WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord,
-    CAPABILITY_MAX_LIFETIME_SECONDS, CAPABILITY_POLICY_VERSION,
+    CheckpointObjectStore, CleanupReceipt, CleanupTarget, ConnectionSnapshot, CoreError,
+    DelegationState, DiffArtifact, DiffArtifactObjectStore, DiffValidationOutcome, EffectClaim,
+    EffectClaimMode, FailureClass, Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind,
+    LaunchEffectResult, LaunchFailure, RepositoryIdentity, Session, SessionId, SessionLink,
+    SessionService, SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier,
+    TriggerServiceError, TriggerStoreError, WorkspaceCheckpoint, WorkspaceEntry,
+    WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord, CAPABILITY_MAX_LIFETIME_SECONDS,
+    CAPABILITY_POLICY_VERSION,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -44,6 +45,13 @@ struct CapabilityAuthorityEvidence {
     upstream: RepositoryIdentity,
     fork: RepositoryIdentity,
     branch: BranchRecord,
+}
+
+#[derive(Debug, Clone)]
+enum RetainedCleanupObject {
+    Baseline { reference: String },
+    Checkpoint(WorkspaceCheckpoint),
+    DiffArtifact(DiffArtifact),
 }
 
 #[async_trait]
@@ -455,6 +463,7 @@ pub(crate) struct CapabilityRevocation {
 }
 
 impl GithubEffectExecutor {
+    #[cfg(test)]
     pub(crate) fn new(github: Arc<GithubBroker>) -> Self {
         Self {
             github,
@@ -1991,6 +2000,74 @@ impl GithubEffectExecutor {
             Err(error) => broker_failure(error, claim, reconcile_only),
         }
     }
+
+    async fn run_cleanup(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        let Some(objects) = retained_cleanup_objects(launch, claim) else {
+            return invalid_cleanup_plan(claim);
+        };
+        if objects.iter().any(|object| {
+            matches!(object, RetainedCleanupObject::Baseline { .. })
+                && self.workspace_store.is_none()
+                || matches!(object, RetainedCleanupObject::Checkpoint(_))
+                    && self.checkpoint_store.is_none()
+                || matches!(object, RetainedCleanupObject::DiffArtifact(_))
+                    && self.diff_store.is_none()
+        }) {
+            return unsupported_effect(claim);
+        }
+
+        for object in objects {
+            let result = match object {
+                RetainedCleanupObject::Baseline { reference } => {
+                    let store = self
+                        .workspace_store
+                        .as_ref()
+                        .expect("cleanup stores were validated before deletion");
+                    store
+                        .delete_baseline(&launch.owner, &launch.id, &reference)
+                        .await
+                }
+                RetainedCleanupObject::Checkpoint(checkpoint) => {
+                    let store = self
+                        .checkpoint_store
+                        .as_ref()
+                        .expect("cleanup stores were validated before deletion");
+                    store.delete_checkpoint(&launch.owner, &checkpoint).await
+                }
+                RetainedCleanupObject::DiffArtifact(artifact) => {
+                    let store = self
+                        .diff_store
+                        .as_ref()
+                        .expect("cleanup stores were validated before deletion");
+                    store.delete_diff_artifact(&launch.owner, &artifact).await
+                }
+            };
+            if let Err(error) = result {
+                return cleanup_store_failure(error, claim);
+            }
+        }
+
+        let targets = launch
+            .cleanup
+            .as_ref()
+            .expect("cleanup validation requires a retained plan")
+            .plan
+            .targets
+            .clone();
+        EffectExecution::Completed {
+            result: LaunchEffectResult::Cleanup {
+                receipt: CleanupReceipt {
+                    targets: targets.clone(),
+                    completed_at: rfc3339_at(SystemTime::now()),
+                },
+            },
+            safe_detail: "CMA-owned retained workspace objects were deleted.".into(),
+            external_resource_ids: BTreeMap::from([(
+                "cleanup_target_count".into(),
+                targets.len().to_string(),
+            )]),
+        }
+    }
 }
 
 #[async_trait]
@@ -2009,7 +2086,7 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
             LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
             LaunchEffectKind::PullRequest => self.run_pull_request(launch, claim, false).await,
-            _ => unsupported_effect(claim),
+            LaunchEffectKind::Cleanup => self.run_cleanup(launch, claim).await,
         }
     }
 
@@ -2032,8 +2109,126 @@ impl EffectExecutor for GithubEffectExecutor {
             LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
             LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
             LaunchEffectKind::PullRequest => self.run_pull_request(launch, claim, true).await,
-            _ => unsupported_effect(claim),
+            // Deletion uses owner/Launch-derived object keys and treats an
+            // absent object as success, so reconciliation repeats the exact
+            // retained plan after any ambiguous or partial attempt.
+            LaunchEffectKind::Cleanup => self.run_cleanup(launch, claim).await,
         }
+    }
+}
+
+fn retained_cleanup_objects(
+    launch: &Launch,
+    claim: &EffectClaim,
+) -> Option<Vec<RetainedCleanupObject>> {
+    if claim.kind != LaunchEffectKind::Cleanup || !launch.state.is_terminal() {
+        return None;
+    }
+    if launch
+        .reach
+        .as_ref()
+        .is_some_and(|reach| reach.state != CapabilityRevocationState::Revoked)
+    {
+        return None;
+    }
+    let workspace = launch.workspace.as_ref()?;
+    let cleanup = launch.cleanup.as_ref()?;
+    if cleanup.completed_at.is_some()
+        || cleanup.plan.retention_policy_id != workspace.retention_policy_id
+        || cleanup.plan.delete_after != workspace.delete_after
+    {
+        return None;
+    }
+
+    let mut expected = Vec::new();
+    if let Some(diff) = launch.diff.as_ref() {
+        expected.push(CleanupTarget::DiffArtifact {
+            artifact_id: diff.id.clone(),
+        });
+    }
+    let mut checkpoint_ids = std::collections::BTreeSet::new();
+    for checkpoint in [
+        workspace.previous_checkpoint.as_ref(),
+        workspace.latest_checkpoint.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if checkpoint_ids.insert(checkpoint.id.clone()) {
+            expected.push(CleanupTarget::Checkpoint {
+                checkpoint_id: checkpoint.id.clone(),
+            });
+        }
+    }
+    expected.push(CleanupTarget::Baseline);
+    if cleanup.plan.targets != expected {
+        return None;
+    }
+
+    let mut objects = Vec::with_capacity(expected.len());
+    for target in &expected {
+        match target {
+            CleanupTarget::Baseline => {
+                objects.push(RetainedCleanupObject::Baseline {
+                    reference: workspace.baseline_object_reference.clone(),
+                });
+            }
+            CleanupTarget::Checkpoint { checkpoint_id } => {
+                let checkpoint = [
+                    workspace.previous_checkpoint.as_ref(),
+                    workspace.latest_checkpoint.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                .find(|checkpoint| &checkpoint.id == checkpoint_id)
+                .cloned()?;
+                objects.push(RetainedCleanupObject::Checkpoint(checkpoint));
+            }
+            CleanupTarget::DiffArtifact { artifact_id } => {
+                let artifact = launch
+                    .diff
+                    .as_ref()
+                    .filter(|artifact| &artifact.id == artifact_id)
+                    .cloned()?;
+                objects.push(RetainedCleanupObject::DiffArtifact(artifact));
+            }
+        }
+    }
+    Some(objects)
+}
+
+fn invalid_cleanup_plan(claim: &EffectClaim) -> EffectExecution {
+    EffectExecution::Failed {
+        failure: failure(
+            FailureClass::TerminalSecurity,
+            "cleanup_plan_invalid",
+            "The retained cleanup plan does not match this Launch's CMA-owned objects.",
+            "Contact support; no retained object was deleted.",
+            claim,
+            None,
+        ),
+    }
+}
+
+fn cleanup_store_failure(error: TriggerStoreError, claim: &EffectClaim) -> EffectExecution {
+    match error {
+        TriggerStoreError::Unavailable(_) => transient_failure(
+            claim,
+            false,
+            "cleanup_store_temporarily_unavailable",
+            "A CMA-owned retained object could not be deleted yet.",
+            None,
+        ),
+        _ => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::TerminalSecurity,
+                "cleanup_store_contract_invalid",
+                "The retained cleanup object did not satisfy its tenant-bound storage contract.",
+                "Contact support; CMA stopped cleanup without widening the deletion target.",
+                claim,
+                None,
+            ),
+        },
     }
 }
 
@@ -2627,6 +2822,16 @@ fn service_failure(error: TriggerServiceError, claim: &EffectClaim) -> EffectExe
                 None,
             ),
         },
+        TriggerServiceError::Rollout(denial) => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::FeaturePaused,
+                format!("trigger_{}", denial.code()),
+                "GitHub Trigger orchestration paused at a durable boundary.",
+                "Wait for the deployment rollout policy to permit this Launch; the session remains available.",
+                claim,
+                None,
+            ),
+        },
         TriggerServiceError::Store(_) => transient_failure(
             claim,
             false,
@@ -2983,6 +3188,149 @@ mod tests {
                 diff_answers: Mutex::new(VecDeque::new()),
                 diff_writes: Mutex::new(Vec::new()),
             }
+        }
+    }
+
+    struct FakeCleanupStore {
+        baseline_answers: Mutex<VecDeque<Result<(), TriggerStoreError>>>,
+        checkpoint_answers: Mutex<VecDeque<Result<(), TriggerStoreError>>>,
+        diff_answers: Mutex<VecDeque<Result<(), TriggerStoreError>>>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FakeCleanupStore {
+        fn new(
+            baseline_answers: impl IntoIterator<Item = Result<(), TriggerStoreError>>,
+            checkpoint_answers: impl IntoIterator<Item = Result<(), TriggerStoreError>>,
+            diff_answers: impl IntoIterator<Item = Result<(), TriggerStoreError>>,
+        ) -> Self {
+            Self {
+                baseline_answers: Mutex::new(baseline_answers.into_iter().collect()),
+                checkpoint_answers: Mutex::new(checkpoint_answers.into_iter().collect()),
+                diff_answers: Mutex::new(diff_answers.into_iter().collect()),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn answer(
+            answers: &Mutex<VecDeque<Result<(), TriggerStoreError>>>,
+        ) -> Result<(), TriggerStoreError> {
+            answers.lock().unwrap().pop_front().unwrap_or(Ok(()))
+        }
+    }
+
+    #[async_trait]
+    impl BaselineObjectStore for FakeCleanupStore {
+        async fn put_baseline(
+            &self,
+            _owner: &SubjectId,
+            _launch: &layer2_core::LaunchId,
+            _manifest: &WorkspaceManifest,
+            _archive_sha256: &str,
+            _archive: &[u8],
+        ) -> Result<String, TriggerStoreError> {
+            Err(TriggerStoreError::Malformed(
+                "cleanup never writes a baseline".into(),
+            ))
+        }
+
+        async fn get_baseline(
+            &self,
+            _owner: &SubjectId,
+            _launch: &layer2_core::LaunchId,
+            _reference: &str,
+            _archive_sha256: &str,
+        ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+            Err(TriggerStoreError::Malformed(
+                "cleanup never reads baseline bytes".into(),
+            ))
+        }
+
+        async fn delete_baseline(
+            &self,
+            owner: &SubjectId,
+            launch: &layer2_core::LaunchId,
+            reference: &str,
+        ) -> Result<(), TriggerStoreError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("baseline:{}:{}:{reference}", owner.0, launch.0));
+            Self::answer(&self.baseline_answers)
+        }
+    }
+
+    #[async_trait]
+    impl CheckpointObjectStore for FakeCleanupStore {
+        async fn put_checkpoint(
+            &self,
+            _owner: &SubjectId,
+            _checkpoint: &WorkspaceCheckpoint,
+            _archive: &[u8],
+        ) -> Result<String, TriggerStoreError> {
+            Err(TriggerStoreError::Malformed(
+                "cleanup never writes a checkpoint".into(),
+            ))
+        }
+
+        async fn get_checkpoint(
+            &self,
+            _owner: &SubjectId,
+            _checkpoint: &WorkspaceCheckpoint,
+        ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+            Err(TriggerStoreError::Malformed(
+                "cleanup never reads checkpoint bytes".into(),
+            ))
+        }
+
+        async fn delete_checkpoint(
+            &self,
+            owner: &SubjectId,
+            checkpoint: &WorkspaceCheckpoint,
+        ) -> Result<(), TriggerStoreError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("checkpoint:{}:{}", owner.0, checkpoint.id.0));
+            Self::answer(&self.checkpoint_answers)
+        }
+    }
+
+    #[async_trait]
+    impl DiffArtifactObjectStore for FakeCleanupStore {
+        async fn put_diff_artifact(
+            &self,
+            _owner: &SubjectId,
+            _launch: &layer2_core::LaunchId,
+            _artifact: &layer2_core::DiffArtifactId,
+            _sha256: &str,
+            _bytes: &[u8],
+        ) -> Result<String, TriggerStoreError> {
+            Err(TriggerStoreError::Malformed(
+                "cleanup never writes a diff artifact".into(),
+            ))
+        }
+
+        async fn get_diff_artifact(
+            &self,
+            _owner: &SubjectId,
+            _artifact: &layer2_core::DiffArtifact,
+        ) -> Result<Option<Vec<u8>>, TriggerStoreError> {
+            Err(TriggerStoreError::Malformed(
+                "cleanup never reads diff bytes".into(),
+            ))
+        }
+
+        async fn delete_diff_artifact(
+            &self,
+            owner: &SubjectId,
+            artifact: &layer2_core::DiffArtifact,
+        ) -> Result<(), TriggerStoreError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("diff:{}:{}", owner.0, artifact.id.0));
+            Self::answer(&self.diff_answers)
         }
     }
 
@@ -4356,6 +4704,138 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn cleanup_deletes_only_the_exact_retained_cma_objects() {
+        let launch = cleanup_launch();
+        let targets = launch.cleanup.as_ref().unwrap().plan.targets.clone();
+        let checkpoint = launch
+            .workspace
+            .as_ref()
+            .unwrap()
+            .latest_checkpoint
+            .as_ref()
+            .unwrap();
+        let diff = launch.diff.as_ref().unwrap();
+        let baseline = &launch.workspace.as_ref().unwrap().baseline_object_reference;
+        let store = Arc::new(FakeCleanupStore::new([Ok(())], [Ok(())], [Ok(())]));
+        let github = Arc::new(FakeGithub::new([]));
+        let execution = cleanup_executor(Arc::clone(&github), Arc::clone(&store))
+            .execute(
+                &launch,
+                &claim_for(LaunchEffectKind::Cleanup, EffectClaimMode::Execute),
+            )
+            .await;
+        let EffectExecution::Completed {
+            result: LaunchEffectResult::Cleanup { receipt },
+            external_resource_ids,
+            ..
+        } = execution
+        else {
+            panic!("the exact retained cleanup plan must complete");
+        };
+        assert_eq!(receipt.targets, targets);
+        assert_eq!(external_resource_ids["cleanup_target_count"], "3");
+        assert_eq!(
+            *store.calls.lock().unwrap(),
+            vec![
+                format!("diff:{}:{}", launch.owner.0, diff.id.0),
+                format!("checkpoint:{}:{}", launch.owner.0, checkpoint.id.0),
+                format!("baseline:{}:{}:{baseline}", launch.owner.0, launch.id.0),
+            ]
+        );
+        assert_eq!(github.create_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(github.reconcile_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(github.publication_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(github.pull_request_write_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            github.pull_request_reconcile_calls.load(Ordering::SeqCst),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_reconciliation_repeats_the_same_keys_after_partial_failure() {
+        let launch = cleanup_launch();
+        let checkpoint = launch
+            .workspace
+            .as_ref()
+            .unwrap()
+            .latest_checkpoint
+            .as_ref()
+            .unwrap();
+        let diff = launch.diff.as_ref().unwrap();
+        let baseline = &launch.workspace.as_ref().unwrap().baseline_object_reference;
+        let store = Arc::new(FakeCleanupStore::new(
+            [Ok(())],
+            [
+                Err(TriggerStoreError::Unavailable("timeout".into())),
+                Ok(()),
+            ],
+            [Ok(()), Ok(())],
+        ));
+        let executor = cleanup_executor(Arc::new(FakeGithub::new([])), Arc::clone(&store));
+        let first = executor
+            .execute(
+                &launch,
+                &claim_for(LaunchEffectKind::Cleanup, EffectClaimMode::Execute),
+            )
+            .await;
+        assert!(matches!(
+            first,
+            EffectExecution::RetryLater {
+                failure: LaunchFailure {
+                    class: FailureClass::RetryableTransient,
+                    ..
+                },
+                ..
+            }
+        ));
+        let second = executor
+            .reconcile(
+                &launch,
+                &claim_for(LaunchEffectKind::Cleanup, EffectClaimMode::Reconcile),
+            )
+            .await;
+        assert!(matches!(
+            second,
+            EffectExecution::Completed {
+                result: LaunchEffectResult::Cleanup { .. },
+                ..
+            }
+        ));
+        assert_eq!(
+            *store.calls.lock().unwrap(),
+            vec![
+                format!("diff:{}:{}", launch.owner.0, diff.id.0),
+                format!("checkpoint:{}:{}", launch.owner.0, checkpoint.id.0),
+                format!("diff:{}:{}", launch.owner.0, diff.id.0),
+                format!("checkpoint:{}:{}", launch.owner.0, checkpoint.id.0),
+                format!("baseline:{}:{}:{baseline}", launch.owner.0, launch.id.0),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_rejects_a_plan_target_not_retained_by_the_launch_before_delete() {
+        let mut launch = cleanup_launch();
+        launch.cleanup.as_mut().unwrap().plan.targets[1] = CleanupTarget::Checkpoint {
+            checkpoint_id: CheckpointId::new(),
+        };
+        let store = Arc::new(FakeCleanupStore::new([Ok(())], [Ok(())], [Ok(())]));
+        let execution = cleanup_executor(Arc::new(FakeGithub::new([])), Arc::clone(&store))
+            .execute(
+                &launch,
+                &claim_for(LaunchEffectKind::Cleanup, EffectClaimMode::Execute),
+            )
+            .await;
+        let EffectExecution::Failed { failure } = execution else {
+            panic!("a widened cleanup plan must fail closed");
+        };
+        assert_eq!(failure.class, FailureClass::TerminalSecurity);
+        assert_eq!(failure.code, "cleanup_plan_invalid");
+        assert!(store.calls.lock().unwrap().is_empty());
+    }
+
     fn assert_publication_authority_unchanged(
         expected: &layer2_core::ContributionRecord,
         actual: &layer2_core::ContributionRecord,
@@ -4543,6 +5023,38 @@ mod tests {
             artifact_object: built.object,
             checkpoint_archive,
         }
+    }
+
+    fn cleanup_launch() -> Launch {
+        let mut launch = publication_launch().launch;
+        launch.state = LaunchState::Cancelled;
+        launch.terminal_at = Some("2026-07-01T00:00:00Z".into());
+        launch.updated_at = "2026-08-01T00:00:00Z".into();
+        let reach = launch.reach.as_mut().unwrap();
+        reach.state = CapabilityRevocationState::Revoked;
+        reach.tombstone_acknowledged = true;
+        reach.revocation_effective_at = Some("2026-08-01T00:00:00Z".into());
+        let workspace = launch.workspace.as_mut().unwrap();
+        workspace.delete_after = "2026-08-01T00:00:00Z".into();
+        let targets = vec![
+            CleanupTarget::DiffArtifact {
+                artifact_id: launch.diff.as_ref().unwrap().id.clone(),
+            },
+            CleanupTarget::Checkpoint {
+                checkpoint_id: workspace.latest_checkpoint.as_ref().unwrap().id.clone(),
+            },
+            CleanupTarget::Baseline,
+        ];
+        launch.cleanup = Some(layer2_core::CleanupRecord {
+            plan: layer2_core::CleanupPlan {
+                retention_policy_id: workspace.retention_policy_id.clone(),
+                delete_after: workspace.delete_after.clone(),
+                targets,
+                planned_at: "2026-08-01T00:00:00Z".into(),
+            },
+            completed_at: None,
+        });
+        launch
     }
 
     fn pull_request_launch() -> Launch {
@@ -4758,6 +5270,22 @@ mod tests {
         GithubEffectExecutor {
             github,
             workspace_store: None,
+            checkpoint_store: Some(store.clone() as Arc<dyn CheckpointObjectStore>),
+            diff_store: Some(store as Arc<dyn DiffArtifactObjectStore>),
+            sessions: None,
+            capability_signer: None,
+            fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
+            changed_file_limit: PROVISIONAL_CHANGED_FILE_LIMIT,
+        }
+    }
+
+    fn cleanup_executor(
+        github: Arc<FakeGithub>,
+        store: Arc<FakeCleanupStore>,
+    ) -> GithubEffectExecutor {
+        GithubEffectExecutor {
+            github,
+            workspace_store: Some(store.clone() as Arc<dyn BaselineObjectStore>),
             checkpoint_store: Some(store.clone() as Arc<dyn CheckpointObjectStore>),
             diff_store: Some(store as Arc<dyn DiffArtifactObjectStore>),
             sessions: None,
