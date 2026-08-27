@@ -21,6 +21,7 @@
 set -euo pipefail
 
 readonly EXPECTED=("What's New" "What's Fixed" "What's Changed")
+readonly VERSION_PATTERN='[vV]?[0-9]+[.][0-9]+[.][0-9]+([.][0-9]+)*'
 
 failed=0
 
@@ -68,6 +69,25 @@ declare -a found=()
 declare -a bullets=()
 
 while IFS= read -r line || [ -n "$line" ]; do
+  # The prohibition covers reviewer prose as well as the section that ships.
+  # Exactly four bare numeric components are left alone because they can be an
+  # IPv4 address. A v/V prefix, or any other component count, is unambiguous.
+  version_text=$line
+  while [[ $version_text =~ $VERSION_PATTERN ]]; do
+    version=${BASH_REMATCH[0]}
+    version_text=${version_text#*"$version"}
+    dots=${version//[^.]/}
+    case "$version" in
+      [vV]*) ;;
+      *)
+        if [ "${#dots}" -eq 3 ]; then
+          continue
+        fi
+        ;;
+    esac
+    fail "remove the version number '$version': the version is derived from the release label and written by the publisher, so one typed here would be a guess at what the merge decides"
+  done
+
   # A level-two heading either opens the section or closes it. "###" is not
   # matched here: the subsections have to survive.
   if [ "${line:0:3}" = "## " ] || [ "$line" = "##" ]; then
@@ -101,14 +121,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   # Between "## Release Notes" and the first subsection nothing belongs.
   if [ -z "$subsection" ]; then
     if [ -n "$stripped" ]; then
-      case "$stripped" in
-        v[0-9]*.[0-9]*|[0-9]*.[0-9]*)
-          fail "remove the version number '$stripped': the version is derived from the release label and written by the publisher, so one typed here would be a guess at what the merge decides"
-          ;;
-        *)
-          fail "nothing may sit between '## Release Notes' and '### ${EXPECTED[0]}' (found: $stripped)"
-          ;;
-      esac
+      fail "nothing may sit between '## Release Notes' and '### ${EXPECTED[0]}' (found: $stripped)"
     fi
     continue
   fi
