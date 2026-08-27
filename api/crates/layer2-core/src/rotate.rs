@@ -916,23 +916,26 @@ impl SessionService {
         ));
         rotating.pending_handover = pending_handover;
         let id = rotating.session.id.clone();
-        if let Err(e) = self
-            .persist_durably(
-                &mut rotating,
-                vec![Event {
-                    session_id: id.clone(),
-                    seq: 0,
-                    kind: EventKind::StatusChanged {
-                        status: SessionStatus::Rotating,
-                        stop_reason: None,
-                        detail: Some(change.detail().to_string()),
-                        capability: None,
-                    },
-                    appended_at: String::new(),
-                }],
-            )
-            .await
-        {
+        let events = vec![
+            Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::RuntimeHandoverStarted,
+                appended_at: String::new(),
+            },
+            Event {
+                session_id: id.clone(),
+                seq: 0,
+                kind: EventKind::StatusChanged {
+                    status: SessionStatus::Rotating,
+                    stop_reason: None,
+                    detail: Some(change.detail().to_string()),
+                    capability: None,
+                },
+                appended_at: String::new(),
+            },
+        ];
+        if let Err(e) = self.persist_durably(&mut rotating, events).await {
             tracing::error!(session_id = %id, error = %e, "cannot record the handover");
             return None;
         }

@@ -55,15 +55,47 @@ export const KNOWN_SESSION_EVENT_TYPES = [
   'plane_changed',
   'memory_pressure_opened',
   'memory_pressure_closed',
+  'runtime_handover_started',
+  'runtime_incarnation_started',
+  'runtime_started',
   'runtime_lost',
 ] as const;
 
 export type KnownSessionEventType = (typeof KNOWN_SESSION_EVENT_TYPES)[number];
 
 interface EventKindBase {
-  readonly type: KnownSessionEventType;
+  readonly type: Exclude<
+    KnownSessionEventType,
+    'runtime_handover_started' | 'runtime_incarnation_started' | 'runtime_started'
+  >;
   readonly [field: string]: unknown;
 }
+
+/** A handover began while the outgoing runtime kept its cumulative counter. */
+export interface RuntimeHandoverStartedSessionEventKind {
+  readonly type: 'runtime_handover_started';
+  readonly [field: string]: unknown;
+}
+
+/** A compatibility store durably named a newly provisioned runtime. */
+export interface RuntimeIncarnationStartedSessionEventKind {
+  readonly type: 'runtime_incarnation_started';
+  readonly [field: string]: unknown;
+}
+
+/** A runtime became this session's durable authority. */
+export interface RuntimeStartedSessionEventKind {
+  readonly type: 'runtime_started';
+  /** Positive durable fencing generation. */
+  readonly generation: number;
+  readonly [field: string]: unknown;
+}
+
+export type KnownSessionEventKind =
+  | EventKindBase
+  | RuntimeHandoverStartedSessionEventKind
+  | RuntimeIncarnationStartedSessionEventKind
+  | RuntimeStartedSessionEventKind;
 
 export interface UnknownSessionEventKind {
   readonly type: 'unknown';
@@ -71,7 +103,7 @@ export interface UnknownSessionEventKind {
   readonly raw: Readonly<Record<string, unknown>>;
 }
 
-export type SessionEventKind = EventKindBase | UnknownSessionEventKind;
+export type SessionEventKind = KnownSessionEventKind | UnknownSessionEventKind;
 
 /** One durable core event, validated at the SSE boundary. */
 export interface SessionEvent {
@@ -399,7 +431,7 @@ export function eventFromMessage(message: EventSourceMessage, sessionId: string)
     return { seq: sequence, sessionId, event: { type: 'unknown', eventType: type, raw: event } };
   }
   validateKnownEvent(type as KnownSessionEventType, event);
-  return { seq: sequence, sessionId, event: event as EventKindBase };
+  return { seq: sequence, sessionId, event: event as KnownSessionEventKind };
 }
 
 function validateKnownEvent(type: KnownSessionEventType, event: Record<string, unknown>): void {
@@ -519,6 +551,13 @@ function validateKnownEvent(type: KnownSessionEventType, event: Record<string, u
       safeInteger(event.limit_bytes, 'memory_pressure_closed limit_bytes');
       safeInteger(event.peak_permille, 'memory_pressure_closed peak_permille');
       safeInteger(event.duration_seconds, 'memory_pressure_closed duration_seconds');
+      return;
+    case 'runtime_handover_started':
+      return;
+    case 'runtime_incarnation_started':
+      return;
+    case 'runtime_started':
+      positiveSafeInteger(event.generation, 'runtime_started generation');
       return;
     case 'runtime_lost':
       nonEmptyString(event.runtime_id, 'runtime_lost runtime_id');
@@ -671,6 +710,14 @@ function safeInteger(raw: unknown, name: string): number {
     throw new ProtocolError(`${name} was not a non-negative safe integer`);
   }
   return raw;
+}
+
+function positiveSafeInteger(raw: unknown, name: string): number {
+  const value = safeInteger(raw, name);
+  if (value === 0) {
+    throw new ProtocolError(`${name} was not a positive safe integer`);
+  }
+  return value;
 }
 
 function optionalSafeInteger(raw: unknown, name: string): void {
