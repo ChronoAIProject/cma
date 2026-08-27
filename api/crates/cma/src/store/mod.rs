@@ -21,6 +21,7 @@ pub mod token;
 
 use std::time::Duration;
 
+use async_trait::async_trait;
 use layer2_core::store::StoreError;
 use mongodb::Client;
 
@@ -61,6 +62,44 @@ pub struct MongoStores {
     pub operations: MongoOperationStore,
 }
 
+#[async_trait]
+trait LegacyCutoverClient: Sized {
+    async fn stage_legacy_cutover(&self, database: &str) -> Result<(), StoreError>;
+    async fn shutdown(self);
+}
+
+struct MongoLegacyCutoverClient(Client);
+
+#[async_trait]
+impl LegacyCutoverClient for MongoLegacyCutoverClient {
+    async fn stage_legacy_cutover(&self, database: &str) -> Result<(), StoreError> {
+        MongoSessionStore::stage_legacy_cutover(&self.0, database).await
+    }
+
+    async fn shutdown(self) {
+        self.0.shutdown().await;
+    }
+}
+
+async fn run_legacy_cutover_with_client(
+    client: impl LegacyCutoverClient,
+    database: &str,
+) -> Result<(), StoreError> {
+    let result = client.stage_legacy_cutover(database).await;
+    client.shutdown().await;
+    result
+}
+
+/// Run only the legacy session-namespace cutover, then close MongoDB completely.
+pub async fn run_legacy_cutover_stage(uri: &str, database: &str) -> Result<(), StoreError> {
+    let client = MongoLegacyCutoverClient(
+        Client::with_uri_str(uri)
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("connect: {e}")))?,
+    );
+    run_legacy_cutover_with_client(client, database).await
+}
+
 /// Open every MongoDB-backed store over one connection.
 ///
 /// One client rather than one per store: they address the same database, and a
@@ -99,4 +138,74 @@ pub async fn connect(
         auth: MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
         operations: MongoOperationStore::open(&client, database).await?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    struct ProbeLegacyCutoverClient {
+        events: Arc<Mutex<Vec<&'static str>>>,
+        fail_stage: bool,
+    }
+
+    #[async_trait]
+    impl LegacyCutoverClient for ProbeLegacyCutoverClient {
+        async fn stage_legacy_cutover(&self, database: &str) -> Result<(), StoreError> {
+            assert_eq!(database, "stage_database");
+            self.events.lock().unwrap().push("stage-complete");
+            if self.fail_stage {
+                Err(StoreError::Unavailable("deliberate stage failure".into()))
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn shutdown(self) {
+            self.events.lock().unwrap().push("client-shutdown");
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_cutover_closes_the_client_after_success() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+
+        run_legacy_cutover_with_client(
+            ProbeLegacyCutoverClient {
+                events: Arc::clone(&events),
+                fail_stage: false,
+            },
+            "stage_database",
+        )
+        .await
+        .expect("the staged migration succeeds");
+
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["stage-complete", "client-shutdown"]
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_cutover_closes_the_client_after_a_stage_error() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+
+        let error = run_legacy_cutover_with_client(
+            ProbeLegacyCutoverClient {
+                events: Arc::clone(&events),
+                fail_stage: true,
+            },
+            "stage_database",
+        )
+        .await
+        .expect_err("the deliberate stage failure is returned after shutdown");
+
+        assert!(matches!(error, StoreError::Unavailable(_)));
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["stage-complete", "client-shutdown"]
+        );
+    }
 }
