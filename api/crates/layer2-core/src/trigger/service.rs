@@ -21,6 +21,27 @@ pub struct LaunchAuthority {
     pub workflow_paths: Vec<String>,
 }
 
+/// User-confirmed values consumed at the Launch start boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartLaunchCommand {
+    pub expected_revision: u64,
+    pub confirmation: Confirmation,
+    pub acknowledge_workflow_risk: bool,
+    pub now: String,
+    pub correlation_id: String,
+}
+
+/// User-confirmed values for opening or updating a pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmPullRequestCommand {
+    pub expected_revision: u64,
+    pub confirmation: Confirmation,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub now: String,
+    pub correlation_id: String,
+}
+
 #[async_trait]
 pub trait TriggerAuthorityVerifier: Send + Sync {
     async fn verify_publisher(
@@ -541,12 +562,15 @@ impl TriggerService {
         &self,
         owner: &SubjectId,
         id: &LaunchId,
-        expected_revision: u64,
-        confirmation: Confirmation,
-        acknowledge_workflow_risk: bool,
-        now: impl Into<String>,
-        correlation_id: impl Into<String>,
+        command: StartLaunchCommand,
     ) -> Result<Launch, TriggerServiceError> {
+        let StartLaunchCommand {
+            expected_revision,
+            confirmation,
+            acknowledge_workflow_risk,
+            now,
+            correlation_id,
+        } = command;
         let mut launch = self.get_launch(owner, id).await?;
         let connection = launch.connection.as_ref().ok_or_else(|| {
             TriggerValidationError::field("connection", "select an eligible connection")
@@ -571,8 +595,6 @@ impl TriggerService {
         launch.authority = Some(verified.provenance);
         launch.source_sha = verified.source_sha;
         launch.workflow_paths = verified.workflow_paths;
-        let now = now.into();
-        let correlation_id = correlation_id.into();
         if acknowledge_workflow_risk && !launch.workflow_paths.is_empty() {
             let mut workflow_confirmation = confirmation.clone();
             workflow_confirmation.action = super::ConfirmationAction::WorkflowRisk;
@@ -630,15 +652,24 @@ impl TriggerService {
         &self,
         owner: &SubjectId,
         id: &LaunchId,
-        expected_revision: u64,
-        confirmation: Confirmation,
-        title: Option<&str>,
-        body: Option<&str>,
-        now: impl Into<String>,
-        correlation_id: impl Into<String>,
+        command: ConfirmPullRequestCommand,
     ) -> Result<Launch, TriggerServiceError> {
+        let ConfirmPullRequestCommand {
+            expected_revision,
+            confirmation,
+            title,
+            body,
+            now,
+            correlation_id,
+        } = command;
         let mut launch = self.get_launch(owner, id).await?;
-        launch.confirm_pull_request(confirmation, title, body, now, correlation_id)?;
+        launch.confirm_pull_request(
+            confirmation,
+            title.as_deref(),
+            body.as_deref(),
+            now,
+            correlation_id,
+        )?;
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
     }
 

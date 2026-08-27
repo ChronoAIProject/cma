@@ -18,6 +18,7 @@ const expectedDocuments = [
   'reference.md',
   'sessions.md',
   'streaming.md',
+  'triggers.md',
 ];
 
 await access(declarations).catch(() => {

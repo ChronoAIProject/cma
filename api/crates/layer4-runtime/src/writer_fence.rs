@@ -34,9 +34,7 @@ impl WriterFence {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = roots;
-            return Err(
-                "positive workspace-writer quiescence requires Linux procfs support".into(),
-            );
+            Err("positive workspace-writer quiescence requires Linux procfs support".into())
         }
 
         #[cfg(target_os = "linux")]

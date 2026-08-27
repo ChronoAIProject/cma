@@ -11,9 +11,14 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
 use cma_sdk::{
-    ApprovalDecision, Client, Conformance, CreateSessionRequest, Error, Event, EventKind,
-    MAX_PAGE_SIZE, PageWalkLimits, ResponseMetadata, RetryPolicy, ScreenSnapshot, Session,
-    SessionId, SessionInput, SessionPageRequest, SessionStatus, TerminalGeometry, Usage,
+    ApprovalDecision, BeginConnectionRequest, Client, Conformance, CreateSessionRequest,
+    CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationRequest,
+    LaunchProgress, LaunchStartRequest, MAX_PAGE_SIZE, PageWalkLimits, PublishTriggerRequest,
+    PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
+    ResponseMetadata, RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session,
+    SessionId, SessionInput, SessionPageRequest, SessionStatus, TerminalGeometry,
+    TriggerConnection, TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerRevision,
+    UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -28,6 +33,15 @@ const EVENT: &str = include_str!("fixtures/event.json");
 const CAPABILITY_REFUSED: &str = include_str!("fixtures/capability_refused.json");
 const SCREEN: &str = include_str!("fixtures/screen.json");
 const USAGE: &str = include_str!("fixtures/usage.json");
+const TRIGGER_PREVIEW: &str = include_str!("fixtures/trigger_preview.json");
+const LAUNCH: &str = include_str!("fixtures/launch.json");
+const LAUNCH_PROGRESS: &str = include_str!("fixtures/launch_progress.json");
+const DIFF_REVIEW: &str = include_str!("fixtures/diff_review.json");
+const PULL_REQUEST_DRAFT: &str = include_str!("fixtures/pull_request_draft.json");
+const LAUNCH_START_REQUEST: &str = include_str!("fixtures/launch_start_request.json");
+const PULL_REQUEST_REVIEW_REQUEST: &str = include_str!("fixtures/pull_request_review_request.json");
+const PULL_REQUEST_CONFIRM_REQUEST: &str =
+    include_str!("fixtures/pull_request_confirm_request.json");
 const CONFORMANCE: &str = r#"{
   "conformsTo": ["https://spec.chrono-ai.fun/cma/1.0/conf/rest-core"],
   "version": "development",
@@ -112,6 +126,7 @@ struct CapturedRequest {
     uri: Uri,
     authorization: Option<String>,
     request_id: Option<String>,
+    idempotency_key: Option<String>,
     last_event_id: Option<String>,
     body: Vec<u8>,
 }
@@ -176,6 +191,10 @@ async fn capture(
             .get("x-request-id")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
+        idempotency_key: headers
+            .get("idempotency-key")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
         last_event_id: headers
             .get("last-event-id")
             .and_then(|value| value.to_str().ok())
@@ -233,6 +252,86 @@ fn event_fixture(source: &str) -> serde_json::Value {
     fixture(source)
 }
 
+fn trigger_content_draft() -> TriggerContentDraft {
+    TriggerContentDraft {
+        schema_version: 1,
+        publisher_display_identity: "Chrono Maintainer".into(),
+        repository: cma_sdk::RepositorySelectionDraft {
+            repository_id: 10,
+            selected_ref: "main".into(),
+            contribution_base_ref: "main".into(),
+            source_mode: cma_sdk::TriggerSourceMode::PinnedCommit,
+        },
+        task: Default::default(),
+        session: Default::default(),
+        repository_access: Default::default(),
+        setup: Default::default(),
+        contribution: Default::default(),
+        commercial_policy: Default::default(),
+        override_policy: Default::default(),
+        public_projection: Default::default(),
+    }
+}
+
+fn trigger_draft_response() -> String {
+    let launch = fixture(LAUNCH);
+    serde_json::json!({
+        "id": "trigger_fixture",
+        "version": 1,
+        "next_revision_number": 2,
+        "content": launch["revision_content"],
+        "created_at": "2026-08-26T12:00:00Z",
+        "updated_at": "2026-08-26T12:00:00Z"
+    })
+    .to_string()
+}
+
+fn trigger_revision_response() -> String {
+    let launch = fixture(LAUNCH);
+    serde_json::json!({
+        "id": "revision_fixture",
+        "public_id": "public_fixture",
+        "digest": launch["revision_digest"],
+        "availability": "published",
+        "content": launch["revision_content"],
+        "authority": {
+            "service_id": "service_fixture",
+            "service_state_version": 2,
+            "account_id": 20,
+            "account_login": "upstream-owner",
+            "role": "owner",
+            "verified_at": "2026-08-26T12:00:00Z"
+        },
+        "published_at": "2026-08-26T12:00:00Z",
+        "retired_at": null
+    })
+    .to_string()
+}
+
+fn trigger_connection_response() -> String {
+    serde_json::json!({
+        "service_id": "service_fixture",
+        "state_version": 2,
+        "state": "active",
+        "account_id": 21,
+        "account_node_id": "U_contributor",
+        "account_login": "contributor",
+        "avatar_url": null,
+        "granted_scopes": ["public_repo"],
+        "consent_observed_at": "2026-08-26T12:00:00Z"
+    })
+    .to_string()
+}
+
+fn connection_authorization_response() -> String {
+    serde_json::json!({
+        "service_id": "service_fixture",
+        "authorization_url": "https://identity.example.test/authorize",
+        "attempt_nonce": "attempt_fixture"
+    })
+    .to_string()
+}
+
 #[test]
 fn sdk_copies_read_every_server_owned_response_fixture() {
     let conformance: Conformance =
@@ -248,6 +347,36 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     assert_eq!(screen.lines.len(), 3);
     let usage: Usage = serde_json::from_str(USAGE).expect("usage fixture is typed");
     assert_eq!(usage.context_window, Some(200_000));
+    let preview: TriggerPreview =
+        serde_json::from_str(TRIGGER_PREVIEW).expect("Trigger preview fixture is typed");
+    assert_eq!(preview.repository_id, 10);
+    let launch: Launch = serde_json::from_str(LAUNCH).expect("Launch fixture is typed");
+    assert_eq!(launch.steps.len(), 15);
+    let progress: LaunchProgress =
+        serde_json::from_str(LAUNCH_PROGRESS).expect("Launch progress fixture is typed");
+    assert_eq!(progress.next_cursor, 3);
+    let review: DiffReview =
+        serde_json::from_str(DIFF_REVIEW).expect("diff-review fixture is typed");
+    assert_eq!(
+        review
+            .artifact
+            .expect("fixture has an artifact")
+            .files
+            .len(),
+        1
+    );
+    let draft: PullRequestDraft =
+        serde_json::from_str(PULL_REQUEST_DRAFT).expect("pull-request draft fixture is typed");
+    assert_eq!(draft.operation, PullRequestOperation::Open);
+    let start: LaunchStartRequest =
+        serde_json::from_str(LAUNCH_START_REQUEST).expect("Start request fixture is typed");
+    assert!(!start.acknowledge_workflow_risk);
+    let pr_review: PullRequestReviewRequest = serde_json::from_str(PULL_REQUEST_REVIEW_REQUEST)
+        .expect("pull-request review fixture is typed");
+    assert_eq!(pr_review.operation, PullRequestOperation::Open);
+    let pr_confirm: PullRequestConfirmRequest = serde_json::from_str(PULL_REQUEST_CONFIRM_REQUEST)
+        .expect("pull-request confirmation fixture is typed");
+    assert_eq!(pr_confirm.expected_revision, 0);
 }
 
 #[tokio::test]
@@ -304,6 +433,320 @@ async fn conformance_discovery_is_typed_anonymous_and_correlated() {
         requests[0].request_id.as_deref(),
         Some("caller-conformance-488")
     );
+}
+
+#[tokio::test]
+async fn trigger_preview_is_typed_and_always_anonymous() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, TRIGGER_PREVIEW)]).await;
+    let (client, credential_calls) = stub_client(&stub, 1);
+
+    let preview = client
+        .read_trigger_preview("33333333-3333-4333-8333-333333333333")
+        .await
+        .expect("public Trigger preview succeeds");
+
+    assert_eq!(preview.repository_id, 10);
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 0);
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].uri.path(),
+        "/proxy/api/v1/triggers/public/33333333-3333-4333-8333-333333333333"
+    );
+    assert_eq!(requests[0].authorization, None);
+    assert_eq!(requests[0].idempotency_key, None);
+}
+
+#[tokio::test]
+async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
+    let draft = trigger_draft_response();
+    let revision = trigger_revision_response();
+    let authorization = connection_authorization_response();
+    let connection = trigger_connection_response();
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::CREATED, &draft),
+        StubResponse::json(StatusCode::OK, &draft),
+        StubResponse::json(StatusCode::CREATED, &revision),
+        StubResponse::json(StatusCode::OK, &revision),
+        StubResponse::json(StatusCode::OK, &authorization),
+        StubResponse::json(StatusCode::OK, &authorization),
+        StubResponse::json(StatusCode::OK, &connection),
+        StubResponse::json(StatusCode::CREATED, LAUNCH),
+        StubResponse::json(StatusCode::CREATED, LAUNCH),
+        StubResponse::json(StatusCode::OK, LAUNCH),
+        StubResponse::json(StatusCode::OK, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::OK, LAUNCH),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+    let content = trigger_content_draft();
+
+    let _: TriggerDraft = client
+        .create_trigger(
+            CreateTriggerRequest {
+                selected_service_id: "service_fixture".into(),
+                content: content.clone(),
+            },
+            "exact-00",
+        )
+        .await
+        .unwrap();
+    let _: TriggerDraft = client
+        .update_trigger(
+            "trigger_fixture",
+            UpdateTriggerRequest {
+                expected_version: 1,
+                selected_service_id: "service_fixture".into(),
+                content,
+            },
+            "exact-01",
+        )
+        .await
+        .unwrap();
+    let _: TriggerRevision = client
+        .publish_trigger(
+            "trigger_fixture",
+            PublishTriggerRequest {
+                expected_version: 1,
+                selected_service_id: "service_fixture".into(),
+            },
+            "exact-02",
+        )
+        .await
+        .unwrap();
+    client
+        .retire_trigger_revision("revision_fixture", "exact-03")
+        .await
+        .unwrap();
+    client
+        .begin_trigger_connection(
+            BeginConnectionRequest {
+                intent_id: "intent_fixture".into(),
+            },
+            "exact-04",
+        )
+        .await
+        .unwrap();
+    client
+        .reconnect_trigger_connection("service_fixture", "exact-05")
+        .await
+        .unwrap();
+    let _: TriggerConnection = client
+        .preflight_trigger_connection("service_fixture")
+        .await
+        .unwrap();
+    client
+        .create_or_resume_launch("public_fixture", "exact-07")
+        .await
+        .unwrap();
+    client
+        .create_new_launch("public_fixture", "exact-08")
+        .await
+        .unwrap();
+    client
+        .update_launch_overrides(
+            "launch_fixture",
+            UpdateLaunchOverridesRequest {
+                expected_revision: 0,
+                overrides: Default::default(),
+            },
+            "exact-09",
+        )
+        .await
+        .unwrap();
+    client
+        .select_launch_connection(
+            "launch_fixture",
+            SelectLaunchConnectionRequest {
+                expected_revision: 0,
+                service_id: "service_fixture".into(),
+            },
+            "exact-10",
+        )
+        .await
+        .unwrap();
+    client
+        .start_launch(
+            "launch_fixture",
+            serde_json::from_str(LAUNCH_START_REQUEST).unwrap(),
+            "exact-11",
+        )
+        .await
+        .unwrap();
+    let confirmation = LaunchConfirmationRequest {
+        expected_revision: 0,
+        snapshot_digest: "snapshot_fixture".into(),
+    };
+    client
+        .request_launch_diff("launch_fixture", confirmation.clone(), "exact-12")
+        .await
+        .unwrap();
+    client
+        .publish_launch_branch("launch_fixture", confirmation.clone(), "exact-13")
+        .await
+        .unwrap();
+    client
+        .confirm_pull_request(
+            "launch_fixture",
+            PullRequestOperation::Open,
+            serde_json::from_str(PULL_REQUEST_CONFIRM_REQUEST).unwrap(),
+            "exact-14",
+        )
+        .await
+        .unwrap();
+    client
+        .confirm_pull_request(
+            "launch_fixture",
+            PullRequestOperation::Update,
+            serde_json::from_str(PULL_REQUEST_CONFIRM_REQUEST).unwrap(),
+            "exact-15",
+        )
+        .await
+        .unwrap();
+    client
+        .cancel_launch("launch_fixture", confirmation, "exact-16")
+        .await
+        .unwrap();
+
+    let requests = stub.requests().await;
+    let expected = [
+        (Method::POST, "/proxy/api/v1/triggers"),
+        (Method::PUT, "/proxy/api/v1/triggers/trigger_fixture"),
+        (
+            Method::POST,
+            "/proxy/api/v1/triggers/trigger_fixture/publish",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/trigger-revisions/revision_fixture/retire",
+        ),
+        (Method::POST, "/proxy/api/v1/trigger-connections"),
+        (
+            Method::POST,
+            "/proxy/api/v1/trigger-connections/service_fixture/reconnect",
+        ),
+        (
+            Method::GET,
+            "/proxy/api/v1/trigger-connections/service_fixture/preflight",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/triggers/public/public_fixture/launches",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/triggers/public/public_fixture/launches/new",
+        ),
+        (
+            Method::PATCH,
+            "/proxy/api/v1/launches/launch_fixture/overrides",
+        ),
+        (
+            Method::PUT,
+            "/proxy/api/v1/launches/launch_fixture/connection",
+        ),
+        (Method::POST, "/proxy/api/v1/launches/launch_fixture/start"),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/contributions/review",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/contributions/publish",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/pull-request/open",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/pull-request/update",
+        ),
+        (Method::POST, "/proxy/api/v1/launches/launch_fixture/cancel"),
+    ];
+    assert_eq!(requests.len(), expected.len());
+    let keys = [
+        Some("exact-00"),
+        Some("exact-01"),
+        Some("exact-02"),
+        Some("exact-03"),
+        Some("exact-04"),
+        Some("exact-05"),
+        None,
+        Some("exact-07"),
+        Some("exact-08"),
+        Some("exact-09"),
+        Some("exact-10"),
+        Some("exact-11"),
+        Some("exact-12"),
+        Some("exact-13"),
+        Some("exact-14"),
+        Some("exact-15"),
+        Some("exact-16"),
+    ];
+    for (index, ((request, (method, path)), key)) in
+        requests.iter().zip(expected).zip(keys).enumerate()
+    {
+        assert_eq!(request.method, method, "command {index}");
+        assert_eq!(request.uri.path(), path, "command {index}");
+        assert_eq!(request.idempotency_key.as_deref(), key, "command {index}");
+    }
+    assert_eq!(
+        fixture(std::str::from_utf8(&requests[11].body).unwrap()),
+        fixture(LAUNCH_START_REQUEST)
+    );
+}
+
+#[tokio::test]
+async fn pull_request_review_is_keyless_while_confirmation_is_keyed() {
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, PULL_REQUEST_DRAFT),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    client
+        .review_pull_request(
+            "launch_fixture",
+            serde_json::from_str(PULL_REQUEST_REVIEW_REQUEST).unwrap(),
+        )
+        .await
+        .unwrap();
+    client
+        .confirm_pull_request(
+            "launch_fixture",
+            PullRequestOperation::Open,
+            serde_json::from_str(PULL_REQUEST_CONFIRM_REQUEST).unwrap(),
+            "confirm-exact",
+        )
+        .await
+        .unwrap();
+
+    let requests = stub.requests().await;
+    assert_eq!(requests[0].idempotency_key, None);
+    assert_eq!(
+        requests[1].idempotency_key.as_deref(),
+        Some("confirm-exact")
+    );
+}
+
+#[tokio::test]
+async fn trigger_contract_rejects_internal_fields_before_typed_decoding() {
+    let mut launch = fixture(LAUNCH);
+    launch["steps"][0]["worker_fencing_token"] = serde_json::json!(99);
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &launch.to_string())]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.read_launch("launch_fixture").await,
+        Err(Error::Protocol { ref message }) if message.contains("worker_fencing_token")
+    ));
 }
 
 #[tokio::test]

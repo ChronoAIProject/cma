@@ -802,7 +802,7 @@ impl GithubEffectExecutor {
                     fork.repository.repository_node_id.clone(),
                 );
                 EffectExecution::Completed {
-                    result: LaunchEffectResult::Fork { fork },
+                    result: LaunchEffectResult::Fork { fork: *fork },
                     safe_detail: "Your GitHub fork is ready.".into(),
                     external_resource_ids: resources,
                 }
@@ -1959,7 +1959,9 @@ impl GithubEffectExecutor {
                     pull_request.intent.expected_head_revision.clone(),
                 );
                 EffectExecution::Completed {
-                    result: LaunchEffectResult::PullRequest { pull_request },
+                    result: LaunchEffectResult::PullRequest {
+                        pull_request: *pull_request,
+                    },
                     safe_detail: "The cross-fork pull request was reconciled by its CMA marker and exact repository refs."
                         .into(),
                     external_resource_ids: resources,
@@ -3195,7 +3197,7 @@ mod tests {
 
         fn answer(&self, context: &ForkContext) -> Result<ForkReconciliation, GithubBrokerError> {
             match self.answers.lock().unwrap().pop_front().unwrap() {
-                ForkAnswer::Ready => Ok(ForkReconciliation::Ready(fork(context))),
+                ForkAnswer::Ready => Ok(ForkReconciliation::Ready(Box::new(fork(context)))),
                 ForkAnswer::Absent => Ok(ForkReconciliation::Absent),
                 ForkAnswer::Ambiguous => Err(GithubBrokerError::AmbiguousWrite),
                 ForkAnswer::Occupied => Err(GithubBrokerError::ForkNetworkOccupied),
@@ -3451,7 +3453,7 @@ mod tests {
         let launch = pull_request_launch();
         let ready = reconciled_pull_request(&launch, PullRequestState::Open);
         let github = Arc::new(FakeGithub::with_pull_request_answers([Ok(
-            super::super::github::PullRequestAdvance::Ready(ready),
+            super::super::github::PullRequestAdvance::Ready(Box::new(ready)),
         )]));
         let executor = GithubEffectExecutor::with_port(github.clone(), Duration::from_secs(300));
 

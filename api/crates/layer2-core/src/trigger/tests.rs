@@ -341,13 +341,15 @@ fn checkpoint_completion_accepts_only_the_next_artifact_from_the_current_runtime
             .complete_effect(
                 &lease,
                 &claim,
-                LaunchEffectResult::Checkpoint {
-                    checkpoint: malformed,
+                EffectCompletion {
+                    result: LaunchEffectResult::Checkpoint {
+                        checkpoint: malformed,
+                    },
+                    safe_detail: "must not attach".into(),
+                    external_resource_ids: Default::default(),
+                    now: LATER.into(),
+                    correlation_id: "reject-checkpoint".into(),
                 },
-                "must not attach",
-                Default::default(),
-                LATER,
-                "reject-checkpoint",
             )
             .is_err());
         assert!(candidate
@@ -362,13 +364,15 @@ fn checkpoint_completion_accepts_only_the_next_artifact_from_the_current_runtime
         .complete_effect(
             &lease,
             &claim,
-            LaunchEffectResult::Checkpoint {
-                checkpoint: valid.clone(),
+            EffectCompletion {
+                result: LaunchEffectResult::Checkpoint {
+                    checkpoint: valid.clone(),
+                },
+                safe_detail: "checkpoint complete".into(),
+                external_resource_ids: Default::default(),
+                now: LATER.into(),
+                correlation_id: "complete-checkpoint".into(),
             },
-            "checkpoint complete",
-            Default::default(),
-            LATER,
-            "complete-checkpoint",
         )
         .unwrap();
     assert_eq!(launch.workspace.unwrap().latest_checkpoint, Some(valid));
@@ -641,18 +645,20 @@ fn publication_progress_is_monotonic_and_does_not_authorize_a_pull_request() {
         .complete_effect(
             &lease,
             &claim,
-            LaunchEffectResult::BranchPublication {
-                contribution: replaced_intent,
+            EffectCompletion {
+                result: LaunchEffectResult::BranchPublication {
+                    contribution: replaced_intent,
+                },
+                safe_detail: "branch published".into(),
+                external_resource_ids: BTreeMap::from([
+                    ("base_tree_id".into(), "b".repeat(40)),
+                    ("tree_id".into(), "c".repeat(40)),
+                    ("commit_id".into(), "d".repeat(40)),
+                    ("resulting_head".into(), "d".repeat(40)),
+                ]),
+                now: LATER.into(),
+                correlation_id: "replaced-publication-intent".into(),
             },
-            "branch published",
-            BTreeMap::from([
-                ("base_tree_id".into(), "b".repeat(40)),
-                ("tree_id".into(), "c".repeat(40)),
-                ("commit_id".into(), "d".repeat(40)),
-                ("resulting_head".into(), "d".repeat(40)),
-            ]),
-            LATER,
-            "replaced-publication-intent",
         )
         .is_err());
     assert_eq!(launch, before, "publication completion is intent-bound");
@@ -660,18 +666,20 @@ fn publication_progress_is_monotonic_and_does_not_authorize_a_pull_request() {
         .complete_effect(
             &lease,
             &claim,
-            LaunchEffectResult::BranchPublication {
-                contribution: published.clone(),
+            EffectCompletion {
+                result: LaunchEffectResult::BranchPublication {
+                    contribution: published.clone(),
+                },
+                safe_detail: "branch published".into(),
+                external_resource_ids: BTreeMap::from([
+                    ("base_tree_id".into(), "b".repeat(40)),
+                    ("tree_id".into(), "c".repeat(40)),
+                    ("commit_id".into(), "d".repeat(40)),
+                    ("resulting_head".into(), "d".repeat(40)),
+                ]),
+                now: LATER.into(),
+                correlation_id: "publication-complete".into(),
             },
-            "branch published",
-            BTreeMap::from([
-                ("base_tree_id".into(), "b".repeat(40)),
-                ("tree_id".into(), "c".repeat(40)),
-                ("commit_id".into(), "d".repeat(40)),
-                ("resulting_head".into(), "d".repeat(40)),
-            ]),
-            LATER,
-            "publication-complete",
         )
         .unwrap();
     assert_eq!(launch.contribution, Some(published));
@@ -813,13 +821,15 @@ fn pull_request_completion_cannot_replace_the_retained_intent() {
         .complete_effect(
             &lease,
             &claim,
-            LaunchEffectResult::PullRequest {
-                pull_request: replaced,
+            EffectCompletion {
+                result: LaunchEffectResult::PullRequest {
+                    pull_request: replaced,
+                },
+                safe_detail: "PR ready".into(),
+                external_resource_ids: pull_request_resources(),
+                now: LATER.into(),
+                correlation_id: "replaced-pr-intent".into(),
             },
-            "PR ready",
-            pull_request_resources(),
-            LATER,
-            "replaced-pr-intent",
         )
         .is_err());
     assert_eq!(launch, before, "rejected completion is atomic");
@@ -828,13 +838,15 @@ fn pull_request_completion_cannot_replace_the_retained_intent() {
         .complete_effect(
             &lease,
             &claim,
-            LaunchEffectResult::PullRequest {
-                pull_request: reconciled,
+            EffectCompletion {
+                result: LaunchEffectResult::PullRequest {
+                    pull_request: reconciled,
+                },
+                safe_detail: "PR ready".into(),
+                external_resource_ids: pull_request_resources(),
+                now: LATER.into(),
+                correlation_id: "complete-pr".into(),
             },
-            "PR ready",
-            pull_request_resources(),
-            LATER,
-            "complete-pr",
         )
         .unwrap();
     assert_eq!(launch.state, LaunchState::PrOpen);
@@ -1533,16 +1545,18 @@ fn effect_claims_persist_one_intent_and_reconcile_after_a_crash() {
         .complete_effect(
             &lease,
             &replay,
-            LaunchEffectResult::Preflight {
-                connection: connection(),
-                authority: launch.authority.clone().unwrap(),
-                source_sha: "a".repeat(40),
-                workflow_paths: Vec::new(),
+            EffectCompletion {
+                result: LaunchEffectResult::Preflight {
+                    connection: connection(),
+                    authority: launch.authority.clone().unwrap(),
+                    source_sha: "a".repeat(40),
+                    workflow_paths: Vec::new(),
+                },
+                safe_detail: "Authority is current.".into(),
+                external_resource_ids: Default::default(),
+                now: LATER.into(),
+                correlation_id: "complete".into(),
             },
-            "Authority is current.",
-            Default::default(),
-            LATER,
-            "complete",
         )
         .unwrap();
     assert_eq!(launch.effects[0].state, EffectState::Succeeded);
@@ -1578,16 +1592,18 @@ fn replacement_worker_reconciles_the_same_intent_and_fences_the_old_claim() {
         .complete_effect(
             &first_lease,
             &first,
-            LaunchEffectResult::Preflight {
-                connection: connection(),
-                authority: launch.authority.clone().unwrap(),
-                source_sha: "a".repeat(40),
-                workflow_paths: Vec::new(),
+            EffectCompletion {
+                result: LaunchEffectResult::Preflight {
+                    connection: connection(),
+                    authority: launch.authority.clone().unwrap(),
+                    source_sha: "a".repeat(40),
+                    workflow_paths: Vec::new(),
+                },
+                safe_detail: "must not commit".into(),
+                external_resource_ids: Default::default(),
+                now: LATER.into(),
+                correlation_id: "stale".into(),
             },
-            "must not commit",
-            Default::default(),
-            LATER,
-            "stale",
         )
         .is_err());
     let takeover = launch

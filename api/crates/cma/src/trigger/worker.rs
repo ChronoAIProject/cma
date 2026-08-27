@@ -6,8 +6,8 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use layer2_core::{
-    rfc3339_at, EffectClaim, EffectClaimMode, Launch, LaunchEffectResult, LaunchFailure, LaunchId,
-    TriggerService, TriggerServiceError,
+    rfc3339_at, EffectClaim, EffectClaimMode, EffectCompletion, Launch, LaunchEffectResult,
+    LaunchFailure, LaunchId, TriggerService, TriggerServiceError,
 };
 
 const DEFAULT_WORKER_LEASE: Duration = Duration::from_secs(120);
@@ -197,11 +197,13 @@ impl EffectWorker {
                 launch.complete_effect(
                     &lease,
                     &claim,
-                    result,
-                    safe_detail,
-                    external_resource_ids,
-                    &settled_at,
-                    correlation_id,
+                    EffectCompletion {
+                        result,
+                        safe_detail,
+                        external_resource_ids,
+                        now: settled_at.clone(),
+                        correlation_id: correlation_id.into(),
+                    },
                 )?;
                 EffectRunOutcome::Completed
             }

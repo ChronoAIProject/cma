@@ -692,7 +692,8 @@ GET /api/v1/agui/capabilities
   },
   "conformsTo": [
     "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
-    "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
+    "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/agui-trigger-read"
   ]
 }
 ```

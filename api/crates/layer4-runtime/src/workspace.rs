@@ -648,13 +648,12 @@ fn verify_materialized(root: &Path, entries: &[Entry], payload: &[u8]) -> Result
                 }
             }
             EntryKind::Symlink => {
+                let expected_target = std::str::from_utf8(entry_bytes(entry, payload)?)
+                    .map_err(|_| "workspace symlink target is not UTF-8")?;
                 if !metadata.file_type().is_symlink()
                     || std::fs::read_link(&path)
                         .map_err(|error| format!("read workspace link {}: {error}", entry.path))?
-                        != PathBuf::from(
-                            std::str::from_utf8(entry_bytes(entry, payload)?)
-                                .map_err(|_| "workspace symlink target is not UTF-8")?,
-                        )
+                        != Path::new(expected_target)
                 {
                     return Err(format!(
                         "materialized workspace link {} disagrees",

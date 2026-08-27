@@ -5,8 +5,8 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use layer2_core::{
-    rfc3339_at, CapabilityRevocationState, FailureClass, Launch, LaunchFailure, LaunchId,
-    TriggerService, TriggerServiceError,
+    rfc3339_at, CapabilityRenewalRecord, CapabilityRevocationState, FailureClass, Launch,
+    LaunchFailure, LaunchId, TriggerService, TriggerServiceError,
 };
 
 use super::github_effects::{CapabilityRenewal, CapabilityRevocation, GithubEffectExecutor};
@@ -207,10 +207,12 @@ impl CapabilityWorker {
                 let settled_at = rfc3339_at(self.clock.now());
                 launch.record_capability_renewal(
                     &lease,
-                    renewal.reach,
-                    renewal.connection,
-                    renewal.authority,
-                    renewal.branch,
+                    CapabilityRenewalRecord {
+                        reach: renewal.reach,
+                        connection: renewal.connection,
+                        authority: renewal.authority,
+                        branch: renewal.branch,
+                    },
                     &settled_at,
                     correlation_id,
                 )?;

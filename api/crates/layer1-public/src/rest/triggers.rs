@@ -9,23 +9,27 @@ use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use layer2_core::{
-    BillingMode, CommercialPolicy, Confirmation, ConfirmationAction, ContributionPolicy,
-    ContributionRecord, CredentialRoute, DiffArtifact, DiffArtifactId, EditableField,
-    ExecutorPolicy, InputFieldDefinition, Launch, LaunchId, LaunchOverrides, LaunchStep,
-    OperationStore, OverridePolicy, PublicProjectionPolicy, PublicTriggerId, PullRequestRecord,
-    RepositoryAccessPolicy, RequiredCapability, ResourcePolicy, ScopeClass, SetupPolicy,
-    SourceMode, TriggerAvailability, TriggerConnection, TriggerConnectionAuthorization,
-    TriggerConnectionManager, TriggerDraft, TriggerId, TriggerPageRequest, TriggerPreview,
-    TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent, TriggerRevisionId,
-    TriggerServiceError, TriggerSessionPolicy, TriggerStoreError, TriggerTask, UpstreamRevision,
-    WorkflowChangePolicy, WorkspaceCheckpoint, WorkspaceRecord,
+    BillingMode, BranchRecord, CheckResult, CommercialPolicy, CommitIdentity,
+    ConfirmPullRequestCommand, Confirmation, ConfirmationAction, ContributionPolicy,
+    ContributionRecord, CredentialRoute, DiffArtifact, DiffArtifactId, DiffFile, EditableField,
+    EffectiveConfiguration, ExecutorPolicy, ForkRecord, InputFieldDefinition, Launch,
+    LaunchBlockedReason, LaunchEvent, LaunchEventKind, LaunchFailure, LaunchId, LaunchOverrides,
+    LaunchStep, OperationStore, OverridePolicy, PricingSnapshot, PromptDelivery,
+    PublicProjectionPolicy, PublicTriggerId, PullRequestDraft, PullRequestOperation,
+    PullRequestRecord, ReachStatus, RepositoryAccessPolicy, RequiredCapability, ResourcePolicy,
+    ScopeClass, SessionLink, SetupPolicy, SourceMode, StartLaunchCommand, TriggerAvailability,
+    TriggerConnection, TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft,
+    TriggerId, TriggerPageRequest, TriggerPreview, TriggerRepositorySelection, TriggerRevision,
+    TriggerRevisionContent, TriggerRevisionId, TriggerServiceError, TriggerSessionPolicy,
+    TriggerStoreError, TriggerTask, UpstreamRevision, WorkflowChangePolicy, WorkspaceCheckpoint,
+    WorkspaceManifest, WorkspaceRecord,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use super::trigger_openapi_shapes as trigger_schema;
 use super::{
     idempotency, problem_document, problem_response, BodyProblem, RequestFailure, TriggersState,
 };
@@ -53,7 +57,11 @@ pub(super) fn documented_router(state: TriggersState) -> OpenApiRouter {
         .routes(routes!(select_launch_connection))
         .routes(routes!(start_launch))
         .routes(routes!(review_launch_diff))
+        .routes(routes!(read_launch_diff))
         .routes(routes!(publish_launch_branch))
+        .routes(routes!(review_pull_request))
+        .routes(routes!(open_pull_request))
+        .routes(routes!(update_pull_request))
         .routes(routes!(download_diff_artifact))
         .routes(routes!(cancel_launch))
         .routes(routes!(launch_progress))
@@ -76,21 +84,21 @@ struct TriggerContentRequest {
     schema_version: u32,
     publisher_display_identity: String,
     repository: RepositorySelectionRequest,
-    #[schema(value_type = Object)]
+    #[schema(value_type = trigger_schema::TriggerTask)]
     task: TriggerTask,
-    #[schema(value_type = Object)]
+    #[schema(value_type = trigger_schema::TriggerSessionPolicy)]
     session: TriggerSessionPolicy,
-    #[schema(value_type = Object)]
+    #[schema(value_type = trigger_schema::RepositoryAccessPolicy)]
     repository_access: RepositoryAccessPolicy,
-    #[schema(value_type = Object)]
+    #[schema(value_type = trigger_schema::SetupPolicy)]
     setup: SetupPolicy,
-    #[schema(value_type = Object)]
+    #[schema(value_type = trigger_schema::ContributionPolicy)]
     contribution: ContributionPolicy,
-    #[schema(value_type = Object)]
+    #[schema(value_type = trigger_schema::CommercialPolicy)]
     commercial_policy: CommercialPolicy,
-    #[schema(value_type = Object)]
+    #[schema(value_type = trigger_schema::OverridePolicy)]
     override_policy: OverridePolicy,
-    #[schema(value_type = Object)]
+    #[schema(value_type = trigger_schema::PublicProjectionPolicy)]
     public_projection: PublicProjectionPolicy,
 }
 
@@ -192,7 +200,7 @@ struct BeginConnectionRequest {
 #[serde(deny_unknown_fields)]
 struct UpdateOverridesRequest {
     expected_revision: u64,
-    #[schema(value_type = Object)]
+    #[schema(value_type = trigger_schema::LaunchOverrides)]
     overrides: LaunchOverrides,
 }
 
@@ -208,6 +216,43 @@ struct SelectConnectionRequest {
 struct ConfirmLaunchRequest {
     expected_revision: u64,
     snapshot_digest: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum PullRequestOperationRequest {
+    Open,
+    Update,
+}
+
+impl From<PullRequestOperationRequest> for PullRequestOperation {
+    fn from(value: PullRequestOperationRequest) -> Self {
+        match value {
+            PullRequestOperationRequest::Open => Self::Open,
+            PullRequestOperationRequest::Update => Self::Update,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct PullRequestReviewRequest {
+    operation: PullRequestOperationRequest,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct ConfirmPullRequestRequest {
+    expected_revision: u64,
+    snapshot_digest: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -276,7 +321,7 @@ impl From<layer2_core::SessionSize> for SessionSizeView {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-struct TriggerPreviewView {
+pub(crate) struct TriggerPreviewView {
     public_id: String,
     availability: String,
     publisher_display_identity: String,
@@ -331,8 +376,8 @@ struct TriggerDraftView {
     id: String,
     version: u64,
     next_revision_number: u32,
-    #[schema(value_type = Object)]
-    content: Value,
+    #[schema(value_type = trigger_schema::TriggerRevisionContent)]
+    content: TriggerRevisionContent,
     created_at: String,
     updated_at: String,
 }
@@ -343,7 +388,7 @@ impl From<TriggerDraft> for TriggerDraftView {
             id: value.id.0,
             version: value.version,
             next_revision_number: value.next_revision_number,
-            content: json_value(value.content),
+            content: value.content,
             created_at: value.created_at,
             updated_at: value.updated_at,
         }
@@ -366,8 +411,8 @@ struct TriggerRevisionView {
     public_id: String,
     digest: String,
     availability: String,
-    #[schema(value_type = Object)]
-    content: Value,
+    #[schema(value_type = trigger_schema::TriggerRevisionContent)]
+    content: TriggerRevisionContent,
     authority: PublisherAuthorityView,
     published_at: String,
     retired_at: Option<String>,
@@ -388,7 +433,7 @@ impl From<TriggerRevision> for TriggerRevisionView {
             public_id: value.public_id.0,
             digest: value.digest,
             availability: enum_name(value.availability),
-            content: json_value(value.content),
+            content: value.content,
             authority,
             published_at: value.published_at,
             retired_at: value.retired_at,
@@ -471,40 +516,40 @@ impl From<TriggerConnectionAuthorization> for ConnectionAuthorizationView {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-struct LaunchView {
+pub(crate) struct LaunchView {
     id: String,
     trigger_public_id: String,
     revision_digest: String,
     source_sha: String,
     state: String,
     revision_number: u64,
-    #[schema(value_type = Object)]
-    revision_content: Value,
-    #[schema(value_type = Object)]
-    blocked_reason: Option<Value>,
-    #[schema(value_type = Object)]
-    failure: Option<Value>,
-    #[schema(value_type = Object)]
-    overrides: Value,
-    #[schema(value_type = Object)]
-    effective: Value,
-    #[schema(value_type = Object)]
-    pricing: Option<Value>,
+    #[schema(value_type = trigger_schema::TriggerRevisionContent)]
+    revision_content: TriggerRevisionContent,
+    #[schema(value_type = Option<trigger_schema::LaunchBlockedReason>)]
+    blocked_reason: Option<LaunchBlockedReason>,
+    #[schema(value_type = Option<trigger_schema::LaunchFailure>)]
+    failure: Option<LaunchFailure>,
+    #[schema(value_type = trigger_schema::LaunchOverrides)]
+    overrides: LaunchOverrides,
+    #[schema(value_type = trigger_schema::EffectiveConfiguration)]
+    effective: EffectiveConfiguration,
+    #[schema(value_type = Option<trigger_schema::PricingSnapshot>)]
+    pricing: Option<PricingSnapshot>,
     connection: Option<TriggerConnectionView>,
     workflow_paths: Vec<String>,
     workflow_risk_acknowledged: bool,
     steps: Vec<LaunchStepView>,
-    #[schema(value_type = Object)]
-    fork: Option<Value>,
-    #[schema(value_type = Object)]
-    branch: Option<Value>,
+    #[schema(value_type = Option<trigger_schema::ForkRecord>)]
+    fork: Option<ForkRecord>,
+    #[schema(value_type = Option<trigger_schema::BranchRecord>)]
+    branch: Option<BranchRecord>,
     workspace: Option<WorkspaceRecordView>,
-    #[schema(value_type = Object)]
-    session: Option<Value>,
-    #[schema(value_type = Object)]
-    reach: Option<Value>,
-    #[schema(value_type = Object)]
-    delivery: Option<Value>,
+    #[schema(value_type = Option<trigger_schema::SessionLink>)]
+    session: Option<SessionLink>,
+    #[schema(value_type = Option<trigger_schema::ReachStatus>)]
+    reach: Option<ReachStatus>,
+    #[schema(value_type = Option<trigger_schema::PromptDelivery>)]
+    delivery: Option<PromptDelivery>,
     contribution_checkpoint_version: Option<u64>,
     diff: Option<DiffArtifactView>,
     contribution: Option<ContributionRecordView>,
@@ -516,7 +561,7 @@ struct LaunchView {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-struct DiffArtifactView {
+pub(crate) struct DiffArtifactView {
     id: String,
     checkpoint_id: String,
     baseline_digest: String,
@@ -525,19 +570,19 @@ struct DiffArtifactView {
     observed_branch_head: String,
     changed_file_limit: u32,
     total_changed_files: u32,
-    #[schema(value_type = Vec<Object>)]
-    files: Vec<Value>,
+    #[schema(value_type = Vec<trigger_schema::DiffFile>)]
+    files: Vec<DiffFile>,
     changed_bytes: u64,
     digest: String,
     object_bytes: u64,
-    #[schema(value_type = Object)]
-    author: Value,
-    #[schema(value_type = Object)]
-    committer: Value,
+    #[schema(value_type = trigger_schema::CommitIdentity)]
+    author: CommitIdentity,
+    #[schema(value_type = trigger_schema::CommitIdentity)]
+    committer: CommitIdentity,
     workflow_paths: Vec<String>,
     validation: String,
-    #[schema(value_type = Vec<Object>)]
-    checks: Vec<Value>,
+    #[schema(value_type = Vec<trigger_schema::CheckResult>)]
+    checks: Vec<CheckResult>,
     created_at: String,
     delete_after: String,
     download_url: String,
@@ -545,8 +590,8 @@ struct DiffArtifactView {
 
 #[derive(Debug, Serialize, ToSchema)]
 struct WorkspaceRecordView {
-    #[schema(value_type = Object)]
-    baseline: Value,
+    #[schema(value_type = trigger_schema::WorkspaceManifest)]
+    baseline: WorkspaceManifest,
     baseline_archive_sha256: String,
     latest_checkpoint: Option<WorkspaceCheckpointView>,
     previous_checkpoint: Option<WorkspaceCheckpointView>,
@@ -563,8 +608,8 @@ struct WorkspaceCheckpointView {
     session_id: String,
     runtime_generation: u64,
     archive_sha256: String,
-    #[schema(value_type = Object)]
-    manifest: Value,
+    #[schema(value_type = trigger_schema::WorkspaceManifest)]
+    manifest: WorkspaceManifest,
     integrity: String,
     created_at: String,
     delete_after: Option<String>,
@@ -586,10 +631,10 @@ struct ContributionRecordView {
     commit_id: Option<String>,
     resulting_head: Option<String>,
     object_ids: Vec<String>,
-    #[schema(value_type = Object)]
-    author: Value,
-    #[schema(value_type = Object)]
-    committer: Value,
+    #[schema(value_type = trigger_schema::CommitIdentity)]
+    author: CommitIdentity,
+    #[schema(value_type = trigger_schema::CommitIdentity)]
+    committer: CommitIdentity,
     confirmation_snapshot_digest: String,
     confirmed_at: String,
     created_at: String,
@@ -638,6 +683,95 @@ struct PullRequestRecordView {
     provider_updated_at: Option<String>,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct PullRequestDraftView {
+    launch_id: String,
+    operation: String,
+    marker: String,
+    upstream_repository_id: u64,
+    upstream_repository_node_id: String,
+    fork_repository_id: u64,
+    fork_repository_node_id: String,
+    base_ref: String,
+    head_owner: String,
+    head_branch: String,
+    head_ref: String,
+    expected_base_revision: String,
+    expected_head_revision: String,
+    previous_head_revision: Option<String>,
+    target_number: Option<u64>,
+    target_provider_id: Option<u64>,
+    target_provider_node_id: Option<String>,
+    update_metadata: bool,
+    expected_previous_title: Option<String>,
+    expected_previous_body_digest: Option<String>,
+    title: String,
+    body: String,
+    body_digest: String,
+    intent_digest: String,
+}
+
+impl From<PullRequestDraft> for PullRequestDraftView {
+    fn from(value: PullRequestDraft) -> Self {
+        Self {
+            launch_id: value.launch_id.0,
+            operation: enum_name(value.operation),
+            marker: value.marker,
+            upstream_repository_id: value.upstream_repository_id,
+            upstream_repository_node_id: value.upstream_repository_node_id,
+            fork_repository_id: value.fork_repository_id,
+            fork_repository_node_id: value.fork_repository_node_id,
+            base_ref: value.base_ref,
+            head_owner: value.head_owner,
+            head_branch: value.head_branch,
+            head_ref: value.head_ref,
+            expected_base_revision: value.expected_base_revision,
+            expected_head_revision: value.expected_head_revision,
+            previous_head_revision: value.previous_head_revision,
+            target_number: value.target_number,
+            target_provider_id: value.target_provider_id,
+            target_provider_node_id: value.target_provider_node_id,
+            update_metadata: value.update_metadata,
+            expected_previous_title: value.expected_previous_title,
+            expected_previous_body_digest: value.expected_previous_body_digest,
+            title: value.title,
+            body: value.body,
+            body_digest: value.body_digest,
+            intent_digest: value.intent_digest,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DiffReviewView {
+    launch_id: String,
+    revision_number: u64,
+    state: String,
+    source_sha: String,
+    workflow_paths: Vec<String>,
+    artifact: Option<DiffArtifactView>,
+    contribution: Option<ContributionRecordView>,
+    pull_request: Option<PullRequestRecordView>,
+}
+
+impl DiffReviewView {
+    fn from_launch(value: Launch) -> Self {
+        let launch_id = value.id.0;
+        Self {
+            artifact: value
+                .diff
+                .map(|artifact| DiffArtifactView::from_artifact(&launch_id, artifact)),
+            launch_id,
+            revision_number: value.revision_number,
+            state: enum_name(value.state),
+            source_sha: value.source_sha,
+            workflow_paths: value.workflow_paths,
+            contribution: value.contribution.map(Into::into),
+            pull_request: value.pull_request.map(Into::into),
+        }
+    }
+}
+
 impl From<ContributionRecord> for ContributionRecordView {
     fn from(value: ContributionRecord) -> Self {
         Self {
@@ -655,8 +789,8 @@ impl From<ContributionRecord> for ContributionRecordView {
             commit_id: value.commit_id,
             resulting_head: value.resulting_head,
             object_ids: value.object_ids,
-            author: json_value(value.author),
-            committer: json_value(value.committer),
+            author: value.author,
+            committer: value.committer,
             confirmation_snapshot_digest: value.confirmation.snapshot_digest,
             confirmed_at: value.confirmation.confirmed_at,
             created_at: value.created_at,
@@ -719,7 +853,7 @@ impl From<WorkspaceCheckpoint> for WorkspaceCheckpointView {
             session_id: value.session_id.0,
             runtime_generation: value.runtime_generation,
             archive_sha256: value.archive_sha256,
-            manifest: json_value(value.manifest),
+            manifest: value.manifest,
             integrity: enum_name(value.integrity),
             created_at: value.created_at,
             delete_after: value.delete_after,
@@ -730,7 +864,7 @@ impl From<WorkspaceCheckpoint> for WorkspaceCheckpointView {
 impl From<WorkspaceRecord> for WorkspaceRecordView {
     fn from(value: WorkspaceRecord) -> Self {
         Self {
-            baseline: json_value(value.baseline),
+            baseline: value.baseline,
             baseline_archive_sha256: value.baseline_archive_sha256,
             latest_checkpoint: value.latest_checkpoint.map(Into::into),
             previous_checkpoint: value.previous_checkpoint.map(Into::into),
@@ -753,15 +887,15 @@ impl DiffArtifactView {
             observed_branch_head: value.observed_branch_head,
             changed_file_limit: value.changed_file_limit,
             total_changed_files: value.total_changed_files,
-            files: value.files.into_iter().map(json_value).collect(),
+            files: value.files,
             changed_bytes: value.changed_bytes,
             digest: value.digest,
             object_bytes: value.object_bytes,
-            author: json_value(value.author),
-            committer: json_value(value.committer),
+            author: value.author,
+            committer: value.committer,
             workflow_paths: value.workflow_paths,
             validation: enum_name(value.validation),
-            checks: value.checks.into_iter().map(json_value).collect(),
+            checks: value.checks,
             created_at: value.created_at,
             delete_after: value.delete_after,
             download_url: format!(
@@ -825,22 +959,22 @@ impl From<Launch> for LaunchView {
             source_sha: value.source_sha,
             state: enum_name(value.state),
             revision_number: value.revision_number,
-            revision_content: json_value(value.revision.content),
-            blocked_reason: value.blocked_reason.map(json_value),
-            failure: value.failure.map(json_value),
-            overrides: json_value(value.overrides),
-            effective: json_value(value.effective),
-            pricing: value.pricing.map(json_value),
+            revision_content: value.revision.content,
+            blocked_reason: value.blocked_reason,
+            failure: value.failure,
+            overrides: value.overrides,
+            effective: value.effective,
+            pricing: value.pricing,
             connection,
             workflow_paths: value.workflow_paths,
             workflow_risk_acknowledged: value.workflow_risk_acknowledged,
             steps: value.steps.into_iter().map(Into::into).collect(),
-            fork: value.fork.map(json_value),
-            branch: value.branch.map(json_value),
+            fork: value.fork,
+            branch: value.branch,
             workspace: value.workspace.map(Into::into),
-            session: value.session.map(json_value),
-            reach: value.reach.map(json_value),
-            delivery: value.delivery.map(json_value),
+            session: value.session,
+            reach: value.reach,
+            delivery: value.delivery,
             contribution_checkpoint_version: value.contribution_checkpoint_version,
             diff,
             contribution: value.contribution.map(Into::into),
@@ -860,15 +994,102 @@ struct LaunchPageView {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-struct LaunchProgressView {
+pub(crate) struct LaunchProgressView {
     launch_id: String,
-    #[schema(value_type = Vec<Object>)]
-    events: Vec<Value>,
+    events: Vec<LaunchEventView>,
     next_cursor: u64,
 }
 
-fn json_value(value: impl Serialize) -> Value {
-    serde_json::to_value(value).expect("core Trigger projections are serializable")
+#[derive(Debug, Serialize, ToSchema)]
+struct LaunchEventView {
+    sequence: u64,
+    launch_id: String,
+    occurred_at: String,
+    correlation_id: String,
+    kind: LaunchEventKindView,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum LaunchEventKindView {
+    Created,
+    DraftUpdated,
+    ConnectionSelected,
+    Started,
+    StateChanged {
+        from: String,
+        to: String,
+    },
+    StepChanged {
+        step: LaunchStepView,
+    },
+    Blocked {
+        #[schema(value_type = trigger_schema::LaunchBlockedReason)]
+        reason: LaunchBlockedReason,
+    },
+    Failure {
+        #[schema(value_type = trigger_schema::LaunchFailure)]
+        failure: LaunchFailure,
+    },
+    EffectReconciled {
+        effect: String,
+    },
+    DeliveryChanged {
+        state: String,
+    },
+    ReachChanged {
+        #[schema(value_type = trigger_schema::ReachStatus)]
+        reach: ReachStatus,
+    },
+    ConfirmationRecorded {
+        action: String,
+    },
+    Cancelled,
+}
+
+impl From<LaunchEvent> for LaunchEventView {
+    fn from(value: LaunchEvent) -> Self {
+        Self {
+            sequence: value.sequence,
+            launch_id: value.launch_id.0,
+            occurred_at: value.occurred_at,
+            correlation_id: value.correlation_id,
+            kind: match value.kind {
+                LaunchEventKind::Created => LaunchEventKindView::Created,
+                LaunchEventKind::DraftUpdated => LaunchEventKindView::DraftUpdated,
+                LaunchEventKind::ConnectionSelected => LaunchEventKindView::ConnectionSelected,
+                LaunchEventKind::Started => LaunchEventKindView::Started,
+                LaunchEventKind::StateChanged { from, to } => LaunchEventKindView::StateChanged {
+                    from: enum_name(from),
+                    to: enum_name(to),
+                },
+                LaunchEventKind::StepChanged { step } => {
+                    LaunchEventKindView::StepChanged { step: step.into() }
+                }
+                LaunchEventKind::Blocked { reason } => LaunchEventKindView::Blocked { reason },
+                LaunchEventKind::Failure { failure } => LaunchEventKindView::Failure { failure },
+                LaunchEventKind::EffectReconciled { effect } => {
+                    LaunchEventKindView::EffectReconciled {
+                        effect: enum_name(effect),
+                    }
+                }
+                LaunchEventKind::DeliveryChanged { state } => {
+                    LaunchEventKindView::DeliveryChanged {
+                        state: enum_name(state),
+                    }
+                }
+                LaunchEventKind::ReachChanged { reach } => {
+                    LaunchEventKindView::ReachChanged { reach }
+                }
+                LaunchEventKind::ConfirmationRecorded { action } => {
+                    LaunchEventKindView::ConfirmationRecorded {
+                        action: enum_name(action),
+                    }
+                }
+                LaunchEventKind::Cancelled => LaunchEventKindView::Cancelled,
+            },
+        }
+    }
 }
 
 fn enum_name(value: impl Serialize) -> String {
@@ -953,8 +1174,7 @@ async fn public_preview(
     State(state): State<TriggersState>,
     Path(public_id): Path<String>,
 ) -> Result<Response, TriggerProblem> {
-    let preview = state.triggers.preview(&parse_public_id(public_id)?).await?;
-    let mut response = Json(TriggerPreviewView::from(preview)).into_response();
+    let mut response = Json(load_public_preview(&state, public_id).await?).into_response();
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_str(&format!("public, max-age={PUBLIC_PREVIEW_CACHE_SECONDS}"))
@@ -965,6 +1185,17 @@ async fn public_preview(
         HeaderValue::from_static("no-referrer"),
     );
     Ok(response)
+}
+
+pub(crate) async fn load_public_preview(
+    state: &TriggersState,
+    public_id: String,
+) -> Result<TriggerPreviewView, TriggerServiceError> {
+    Ok(state
+        .triggers
+        .preview(&parse_public_id(public_id)?)
+        .await?
+        .into())
 }
 
 #[utoipa::path(
@@ -1476,13 +1707,19 @@ async fn read_launch(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(launch_id): Path<String>,
 ) -> Result<Json<LaunchView>, TriggerProblem> {
-    Ok(Json(
-        state
-            .triggers
-            .get_launch(&caller.subject, &parse_launch_id(launch_id)?)
-            .await?
-            .into(),
-    ))
+    Ok(Json(load_launch(&state, &caller.subject, launch_id).await?))
+}
+
+pub(crate) async fn load_launch(
+    state: &TriggersState,
+    owner: &layer2_core::SubjectId,
+    launch_id: String,
+) -> Result<LaunchView, TriggerServiceError> {
+    Ok(state
+        .triggers
+        .get_launch(owner, &parse_launch_id(launch_id)?)
+        .await?
+        .into())
 }
 
 #[utoipa::path(
@@ -1600,17 +1837,19 @@ async fn start_launch(
             .start(
                 &caller.subject,
                 &parse_launch_id(launch_id)?,
-                body.expected_revision,
-                Confirmation {
-                    action: ConfirmationAction::Start,
-                    subject: caller.subject.clone(),
-                    snapshot_digest: body.snapshot_digest,
-                    confirmed_at: timestamp.clone(),
-                    idempotency_key_hash: confirmation_hash,
+                StartLaunchCommand {
+                    expected_revision: body.expected_revision,
+                    confirmation: Confirmation {
+                        action: ConfirmationAction::Start,
+                        subject: caller.subject.clone(),
+                        snapshot_digest: body.snapshot_digest,
+                        confirmed_at: timestamp.clone(),
+                        idempotency_key_hash: confirmation_hash,
+                    },
+                    acknowledge_workflow_risk: body.acknowledge_workflow_risk,
+                    now: timestamp,
+                    correlation_id: correlation_id(&headers),
                 },
-                body.acknowledge_workflow_risk,
-                timestamp,
-                correlation_id(&headers),
             )
             .await?;
         Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
@@ -1668,6 +1907,36 @@ async fn review_launch_diff(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/launches/{launch_id}/diff",
+    tag = "launches",
+    params(("launch_id" = String, Path)),
+    responses((status = 200, description = "Sealed contribution review and pull-request status", body = DiffReviewView))
+)]
+async fn read_launch_diff(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+) -> Result<Json<DiffReviewView>, TriggerProblem> {
+    Ok(Json(
+        load_diff_review(&state, &caller.subject, launch_id).await?,
+    ))
+}
+
+pub(crate) async fn load_diff_review(
+    state: &TriggersState,
+    owner: &layer2_core::SubjectId,
+    launch_id: String,
+) -> Result<DiffReviewView, TriggerServiceError> {
+    Ok(DiffReviewView::from_launch(
+        state
+            .triggers
+            .get_launch(owner, &parse_launch_id(launch_id)?)
+            .await?,
+    ))
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/launches/{launch_id}/contributions/publish",
     tag = "launches",
@@ -1707,6 +1976,139 @@ async fn publish_launch_branch(
                 },
                 timestamp,
                 correlation_id(&headers),
+            )
+            .await?;
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+    }
+    .await;
+    guard.finish(result).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/launches/{launch_id}/pull-request/review",
+    tag = "launches",
+    request_body = PullRequestReviewRequest,
+    params(("launch_id" = String, Path)),
+    responses((status = 200, description = "Read-only sealed Open or Update pull-request draft", body = PullRequestDraftView))
+)]
+async fn review_pull_request(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    body: Result<idempotency::RequestBody<PullRequestReviewRequest>, BodyProblem>,
+) -> Result<Json<PullRequestDraftView>, RequestFailure> {
+    let (body, _) = body?.into_parts();
+    let body = body.map_err(RequestFailure::from)?;
+    let launch = state
+        .triggers
+        .get_launch(&caller.subject, &parse_launch_id(launch_id)?)
+        .await?;
+    let draft = launch
+        .pull_request_draft(
+            body.operation.into(),
+            body.title.as_deref(),
+            body.body.as_deref(),
+        )
+        .map_err(TriggerServiceError::from)?;
+    Ok(Json(draft.into()))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/launches/{launch_id}/pull-request/open",
+    tag = "launches",
+    request_body = ConfirmPullRequestRequest,
+    params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    responses((status = 202, description = "Explicit Open pull-request confirmation accepted", body = LaunchView))
+)]
+async fn open_pull_request(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<ConfirmPullRequestRequest>, BodyProblem>,
+) -> Response {
+    confirm_pull_request(
+        state,
+        caller,
+        launch_id,
+        headers,
+        key,
+        body,
+        PullRequestOperation::Open,
+    )
+    .await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/launches/{launch_id}/pull-request/update",
+    tag = "launches",
+    request_body = ConfirmPullRequestRequest,
+    params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    responses((status = 202, description = "Explicit Update pull-request confirmation accepted", body = LaunchView))
+)]
+async fn update_pull_request(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<ConfirmPullRequestRequest>, BodyProblem>,
+) -> Response {
+    confirm_pull_request(
+        state,
+        caller,
+        launch_id,
+        headers,
+        key,
+        body,
+        PullRequestOperation::Update,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn confirm_pull_request(
+    state: TriggersState,
+    caller: layer2_core::Caller,
+    launch_id: String,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<ConfirmPullRequestRequest>, BodyProblem>,
+    operation: PullRequestOperation,
+) -> Response {
+    let operation_name = enum_name(operation);
+    let claim = format!("trigger-launch-pull-request-{operation_name}:{launch_id}");
+    let (guard, body, confirmation_hash) =
+        match command(key, Arc::clone(&state.operations), &caller, claim, body).await {
+            Ok(parts) => parts,
+            Err(response) => return response,
+        };
+    let result: Result<Response, RequestFailure> = async {
+        let body = body.map_err(RequestFailure::from)?;
+        let timestamp = now();
+        let launch = state
+            .triggers
+            .confirm_pull_request(
+                &caller.subject,
+                &parse_launch_id(launch_id)?,
+                ConfirmPullRequestCommand {
+                    expected_revision: body.expected_revision,
+                    confirmation: Confirmation {
+                        action: operation.confirmation_action(),
+                        subject: caller.subject.clone(),
+                        snapshot_digest: body.snapshot_digest,
+                        confirmed_at: timestamp.clone(),
+                        idempotency_key_hash: confirmation_hash,
+                    },
+                    title: body.title,
+                    body: body.body,
+                    now: timestamp,
+                    correlation_id: correlation_id(&headers),
+                },
             )
             .await?;
         Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
@@ -1856,23 +2258,42 @@ async fn launch_progress(
     Path(launch_id): Path<String>,
     params: Result<Query<ProgressParams>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<LaunchProgressView>, RequestFailure> {
-    let launch_id = parse_launch_id(launch_id)?;
     let Query(params) = params?;
+    Ok(Json(
+        load_launch_progress(
+            &state,
+            &caller.subject,
+            launch_id,
+            params.after,
+            params.limit,
+        )
+        .await?,
+    ))
+}
+
+pub(crate) async fn load_launch_progress(
+    state: &TriggersState,
+    owner: &layer2_core::SubjectId,
+    launch_id: String,
+    after: u64,
+    limit: usize,
+) -> Result<LaunchProgressView, TriggerServiceError> {
+    let launch_id = parse_launch_id(launch_id)?;
     let events = state
         .triggers
-        .progress(&caller.subject, &launch_id, params.after, params.limit)
+        .progress(owner, &launch_id, after, limit)
         .await?;
-    let next_cursor = events.last().map_or(params.after, |event| event.sequence);
-    Ok(Json(LaunchProgressView {
+    let next_cursor = events.last().map_or(after, |event| event.sequence);
+    Ok(LaunchProgressView {
         launch_id: launch_id.0,
-        events: events.into_iter().map(json_value).collect(),
+        events: events.into_iter().map(Into::into).collect(),
         next_cursor,
-    }))
+    })
 }
 
 /// Trigger-domain failure projected without leaking provider bodies or stored
 /// persistence diagnostics.
-pub(super) struct TriggerProblem(pub TriggerServiceError);
+pub(crate) struct TriggerProblem(pub TriggerServiceError);
 
 impl From<TriggerServiceError> for TriggerProblem {
     fn from(value: TriggerServiceError) -> Self {

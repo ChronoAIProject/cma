@@ -53,6 +53,7 @@ pub fn router(auth: Arc<AuthState>) -> Router {
         .with_state(auth)
 }
 
+#[cfg(test)]
 async fn login(State(auth): State<Arc<AuthState>>) -> Response {
     begin_login(auth, None).await
 }

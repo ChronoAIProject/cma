@@ -118,11 +118,27 @@ async fn sdk_capability_fixture_is_produced_by_the_problem_serializer() {
 }
 
 #[test]
-fn rest_projects_every_core_operation() {
+fn rest_projects_every_core_and_trigger_operation() {
     // REST has no structural constraint, so a missing operation here means
     // the facade has drifted from the core rather than that the protocol
     // cannot express it.
-    assert_eq!(RestInterface.operations().len(), 11);
+    assert_eq!(RestInterface.operations().len(), 23);
+    for operation in [
+        Operation::ReadTriggerPreview,
+        Operation::ManageTriggers,
+        Operation::ManageTriggerConnections,
+        Operation::CreateLaunch,
+        Operation::ReadLaunch,
+        Operation::UpdateLaunchDraft,
+        Operation::StartLaunch,
+        Operation::CancelLaunch,
+        Operation::ReplayLaunchProgress,
+        Operation::ReadLaunchDiff,
+        Operation::PublishLaunchContribution,
+        Operation::ManageLaunchPullRequest,
+    ] {
+        assert!(RestInterface.operations().contains(&operation));
+    }
 }
 
 /// Everything a client can observe about a refusal.
