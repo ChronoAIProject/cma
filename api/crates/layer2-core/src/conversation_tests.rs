@@ -893,6 +893,17 @@ async fn a_session_without_the_usage_capability_is_refused_by_name() {
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
 
+    let revoked_owner = Caller::new(alice.subject.clone(), Default::default());
+    assert_eq!(
+        svc.get_usage(&revoked_owner, &created.id).await.err(),
+        Some(crate::error::CoreError::Forbidden),
+        "authorization is checked before the session's capability"
+    );
+    assert_eq!(
+        svc.get_usage(&user("mallory"), &created.id).await.err(),
+        Some(crate::error::CoreError::Forbidden),
+        "ownership is checked before revealing the session's capability"
+    );
     assert_eq!(
         svc.get_usage(&alice, &created.id).await.err(),
         Some(crate::error::CoreError::CapabilityUnsupported(
