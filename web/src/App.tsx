@@ -1,6 +1,8 @@
 import { Suspense, lazy } from 'react';
 import { Landing } from './landing/Landing';
 import { useAuth } from './auth/context';
+import { PublicTriggerPreview } from './trigger/PublicTriggerPreview';
+import { routePath, useAppRouter } from './routing/routes';
 /*
  * Mount order matters — `docs/Web_Style.md` §2. The palette sheets must be
  * parsed before anything reads an alias off them, and `tokens.css` first
@@ -41,7 +43,8 @@ const Console = lazy(async () => {
  * that does.
  */
 export function App() {
-  const { state, signOut } = useAuth();
+  const { state, signIn, signOut } = useAuth();
+  const router = useAppRouter();
 
   switch (state.status) {
     case 'checking':
@@ -55,7 +58,12 @@ export function App() {
         // Web_Style.md forbids a full-page spinner; the console arrives from
         // cache or a same-origin chunk, so an empty frame is the honest wait.
         <Suspense fallback={<div className="app-checking" aria-busy="true" />}>
-          <Console user={state.user} onSignOut={() => void signOut()} />
+          <Console
+            user={state.user}
+            route={router.route}
+            onNavigate={router.navigate}
+            onSignOut={() => void signOut()}
+          />
         </Suspense>
       );
 
@@ -68,6 +76,15 @@ export function App() {
       );
 
     case 'anonymous':
+      if (router.route.kind === 'trigger') {
+        const returnTo = routePath(router.route);
+        return (
+          <PublicTriggerPreview
+            publicId={router.route.publicId}
+            onSignIn={() => void signIn(returnTo)}
+          />
+        );
+      }
       return (
         /*
          * No frame at all. §9's frame is three columns of session, and a
