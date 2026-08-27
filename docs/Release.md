@@ -93,7 +93,8 @@ Branch protection on `main` requires these contexts, and `enforce_admins` is on 
 
 ```
 Repository structure   Secret scanning   Backend   Frontend   Manifests
-Images (api)           Images (web)      Source branch
+Images (api)           Images (web)      Images (runtime)
+TypeScript SDK         Rust SDK          Source branch
 Release declaration    Commit hygiene
 ```
 
@@ -105,7 +106,9 @@ gh api -X PATCH "repos/$REPOSITORY/branches/main/protection/required_status_chec
   -F strict=true -f 'contexts[]=Release declaration' ...
 ```
 
-`Images (runtime)` is deliberately absent, matching `develop`. `ci.yml` builds it and the publisher will not release without it, so it is covered — but it is not a required check, and adding it is its own change.
+`Images (runtime)`, `TypeScript SDK`, and `Rust SDK` are required on both
+protected branches. The SDK jobs prove the repository-only packages build and
+work for source consumers; requiring them does not publish either SDK.
 
 ### Required release write fences
 

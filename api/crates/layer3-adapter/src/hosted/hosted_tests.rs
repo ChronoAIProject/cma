@@ -218,6 +218,7 @@ fn the_default_shape_requests_a_real_workload_size() {
     // A default, not a policy: the deployment sets these, because how much a
     // session costs is decided against the quota it is drawn from.
     let s = SandboxShape::default();
+    assert_eq!(s.image, "cma-runtime:dev");
     assert_eq!(s.resource_limits.get("cpu").map(String::as_str), Some("1"));
     assert_eq!(
         s.resource_limits.get("memory").map(String::as_str),
