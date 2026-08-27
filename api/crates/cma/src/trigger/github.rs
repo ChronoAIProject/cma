@@ -26,6 +26,8 @@ mod publication;
 #[cfg(test)]
 pub(crate) use publication::{PreparedGitData, PublishedGitData};
 pub(crate) use publication::{PublicationAdvance, PublicationContext};
+mod pull_request;
+pub(crate) use pull_request::{PullRequestAdvance, PullRequestContext};
 
 const GITHUB_SERVICE_SLUG: &str = "api-github";
 const GITHUB_PROVIDER_ID: &str = "github";
@@ -68,6 +70,10 @@ pub(crate) enum GithubBrokerError {
     ForkNetworkOccupied,
     #[error("the launch branch already points at a different commit")]
     BranchHeadConflict,
+    #[error("the upstream contribution base changed after the Launch snapshot")]
+    UpstreamBaseConflict,
+    #[error("the linked pull request changed outside the retained CMA intent")]
+    PullRequestChanged,
     #[error("the repository workspace is unsupported: {0}")]
     UnsupportedWorkspace(WorkspaceUnsupported),
     #[error("the provider rejected the typed request with HTTP {status} ({kind:?})")]
@@ -82,6 +88,7 @@ pub(crate) enum GithubBrokerError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GithubRejectionKind {
+    DuplicatePullRequest,
     WorkflowScope,
     NonFastForward,
     Validation,
@@ -111,6 +118,8 @@ impl From<GithubBrokerError> for TriggerServiceError {
             GithubBrokerError::ForkingDisabled => Authority::UpstreamNotForkable,
             GithubBrokerError::ForkNetworkOccupied => Authority::ForkNetworkOccupied,
             GithubBrokerError::BranchHeadConflict => Authority::ProviderRejected,
+            GithubBrokerError::UpstreamBaseConflict => Authority::ProviderRejected,
+            GithubBrokerError::PullRequestChanged => Authority::ProviderRejected,
             GithubBrokerError::UnsupportedWorkspace(_) => Authority::ProviderRejected,
             GithubBrokerError::Rejected { .. } => Authority::ProviderRejected,
             GithubBrokerError::Malformed(_) => Authority::MalformedEvidence,
@@ -1926,6 +1935,8 @@ enum GithubErrorItemWire {
         field: String,
         #[serde(default)]
         code: String,
+        #[serde(default)]
+        message: String,
     },
     Text(String),
 }
@@ -1941,6 +1952,7 @@ fn parse_rejection(bytes: &[u8]) -> Option<GithubRejectionEvidence> {
             resource,
             field,
             code,
+            ..
         } => [resource, field, code]
             .iter()
             .any(|value| value.to_ascii_lowercase().contains("workflow")),
@@ -1952,7 +1964,28 @@ fn parse_rejection(bytes: &[u8]) -> Option<GithubRejectionEvidence> {
         }
         GithubErrorItemWire::Text(value) => value.to_ascii_lowercase().contains("fast forward"),
     });
-    let kind = if workflow_detail
+    let duplicate_pull_request_detail = wire.errors.iter().any(|error| match error {
+        GithubErrorItemWire::Detail {
+            resource,
+            code,
+            message,
+            ..
+        } => {
+            resource.eq_ignore_ascii_case("PullRequest")
+                && (matches!(code.as_str(), "already_exists" | "custom")
+                    && message.to_ascii_lowercase().contains("pull request")
+                    && message.to_ascii_lowercase().contains("already exists"))
+        }
+        GithubErrorItemWire::Text(value) => {
+            let value = value.to_ascii_lowercase();
+            value.contains("pull request") && value.contains("already exists")
+        }
+    });
+    let kind = if duplicate_pull_request_detail
+        || (message.contains("pull request") && message.contains("already exists"))
+    {
+        GithubRejectionKind::DuplicatePullRequest
+    } else if workflow_detail
         || (message.contains("workflow")
             && (message.contains("scope")
                 || message.contains("oauth")

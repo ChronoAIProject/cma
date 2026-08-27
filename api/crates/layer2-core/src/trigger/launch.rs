@@ -1078,6 +1078,337 @@ impl Launch {
         self.transition(LaunchState::PrPending, now, correlation_id)
     }
 
+    /// Build the exact pull-request target and content shown for contributor
+    /// review. This performs no provider call and grants no write authority.
+    pub fn pull_request_draft(
+        &self,
+        operation: super::PullRequestOperation,
+        title: Option<&str>,
+        body: Option<&str>,
+    ) -> Result<super::PullRequestDraft, TriggerValidationError> {
+        if let Some(existing) = self.pull_request.as_ref() {
+            if existing.intent.operation == operation
+                && matches!(
+                    existing.state,
+                    super::PullRequestState::Creating
+                        | super::PullRequestState::Updating
+                        | super::PullRequestState::Open
+                        | super::PullRequestState::ClosedUnmerged
+                        | super::PullRequestState::Merged
+                        | super::PullRequestState::RecoveryRequired
+                )
+                && (matches!(
+                    existing.state,
+                    super::PullRequestState::Creating
+                        | super::PullRequestState::Updating
+                        | super::PullRequestState::RecoveryRequired
+                ) || self
+                    .contribution
+                    .as_ref()
+                    .and_then(|record| record.resulting_head.as_deref())
+                    == Some(existing.intent.expected_head_revision.as_str()))
+                && title.is_none()
+                && body.is_none()
+            {
+                return Ok(existing.intent.clone());
+            }
+        }
+        if self.state != LaunchState::PrPending {
+            return Err(TriggerValidationError::new(
+                "a pull request can be reviewed only after guarded branch publication",
+            ));
+        }
+        let contribution = self.contribution.as_ref().ok_or_else(|| {
+            TriggerValidationError::field(
+                "contribution",
+                "the Launch has no reviewed branch publication",
+            )
+        })?;
+        if contribution.state != super::PublicationState::Published {
+            return Err(TriggerValidationError::field(
+                "contribution",
+                "the reviewed branch must be published before PR review",
+            ));
+        }
+        let head_revision = contribution.resulting_head.clone().ok_or_else(|| {
+            TriggerValidationError::field(
+                "contribution.resulting_head",
+                "the published commit is missing",
+            )
+        })?;
+        let branch = self.branch.as_ref().ok_or_else(|| {
+            TriggerValidationError::field("branch", "the Launch branch is missing")
+        })?;
+        if branch.name != contribution.branch_name || branch.current_head != head_revision {
+            return Err(TriggerValidationError::field(
+                "branch",
+                "does not point at the exact reviewed publication",
+            ));
+        }
+        let connection = self.connection.as_ref().ok_or_else(|| {
+            TriggerValidationError::field("connection", "the GitHub connection is missing")
+        })?;
+        let fork = self.fork.as_ref().ok_or_else(|| {
+            TriggerValidationError::field("fork", "the reconciled fork is missing")
+        })?;
+        if fork.repository.owner_id != connection.account.account_id
+            || fork.repository.owner_node_id != connection.account.account_node_id
+        {
+            return Err(TriggerValidationError::field(
+                "fork",
+                "is not owned by the selected contributor account",
+            ));
+        }
+
+        let generated_title = self
+            .revision
+            .content
+            .contribution
+            .pull_request
+            .title_template
+            .trim()
+            .to_string();
+        let generated_body = format!(
+            "{}\n\nCMA Launch: `{}`\nTrigger revision: `{}`\nReviewed commit: `{}`",
+            self.revision
+                .content
+                .contribution
+                .pull_request
+                .body_template
+                .trim(),
+            self.id.0,
+            self.revision_digest,
+            head_revision
+        );
+        let (
+            previous_head_revision,
+            target_number,
+            target_provider_id,
+            target_provider_node_id,
+            update_metadata,
+            expected_previous_title,
+            expected_previous_body_digest,
+            approved_title,
+            approved_body,
+        ) = match operation {
+            super::PullRequestOperation::Open => {
+                if self.pull_request.is_some() {
+                    return Err(TriggerValidationError::field(
+                        "pull_request",
+                        "this Launch is already linked to a provider pull request",
+                    ));
+                }
+                (
+                    None,
+                    None,
+                    None,
+                    None,
+                    false,
+                    None,
+                    None,
+                    title.unwrap_or(&generated_title).to_string(),
+                    body.unwrap_or(&generated_body).to_string(),
+                )
+            }
+            super::PullRequestOperation::Update => {
+                let existing = self.pull_request.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "pull_request",
+                        "an update requires an existing open pull request",
+                    )
+                })?;
+                if existing.state != super::PullRequestState::Open {
+                    return Err(TriggerValidationError::field(
+                        "pull_request.state",
+                        "closed or merged pull requests cannot be updated",
+                    ));
+                }
+                let previous = existing.head_revision.clone().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "pull_request.head_revision",
+                        "the previously observed provider head is missing",
+                    )
+                })?;
+                if contribution.expected_head != previous {
+                    return Err(TriggerValidationError::field(
+                        "contribution.expected_head",
+                        "does not continue the previously reviewed PR head",
+                    ));
+                }
+                let update_metadata = title.is_some() || body.is_some();
+                (
+                    Some(previous),
+                    existing.number,
+                    existing.provider_id,
+                    existing.provider_node_id.clone(),
+                    update_metadata,
+                    update_metadata.then(|| {
+                        existing
+                            .observed_title
+                            .clone()
+                            .expect("a validated open PR retains its observed title")
+                    }),
+                    update_metadata.then(|| {
+                        existing
+                            .observed_body_digest
+                            .clone()
+                            .expect("a validated open PR retains its observed body digest")
+                    }),
+                    title.unwrap_or(&existing.intent.title).to_string(),
+                    body.unwrap_or(&existing.intent.body).to_string(),
+                )
+            }
+        };
+        super::PullRequestDraft::seal(
+            self.id.clone(),
+            operation,
+            self.revision.content.upstream.repository.repository_id,
+            self.revision
+                .content
+                .upstream
+                .repository
+                .repository_node_id
+                .clone(),
+            fork.repository.repository_id,
+            fork.repository.repository_node_id.clone(),
+            self.revision.content.upstream.contribution_base_ref.clone(),
+            fork.repository.canonical_owner.clone(),
+            branch.name.clone(),
+            self.source_sha.clone(),
+            head_revision,
+            previous_head_revision,
+            target_number,
+            target_provider_id,
+            target_provider_node_id,
+            update_metadata,
+            expected_previous_title,
+            expected_previous_body_digest,
+            approved_title,
+            approved_body,
+        )
+    }
+
+    /// Persist explicit Open/Update authority before a worker may touch the
+    /// provider. Repeated confirmation of the same sealed intent is inert.
+    pub fn confirm_pull_request(
+        &mut self,
+        confirmation: Confirmation,
+        title: Option<&str>,
+        body: Option<&str>,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        let operation = match confirmation.action {
+            ConfirmationAction::OpenPullRequest => super::PullRequestOperation::Open,
+            ConfirmationAction::UpdatePullRequest => super::PullRequestOperation::Update,
+            _ => {
+                return Err(TriggerValidationError::field(
+                    "confirmation.action",
+                    "must explicitly authorize opening or updating a pull request",
+                ))
+            }
+        };
+        if confirmation.subject != self.owner {
+            return Err(TriggerValidationError::field(
+                "confirmation.subject",
+                "does not own this Launch",
+            ));
+        }
+        if let Some(existing) = self.pull_request.as_ref() {
+            if existing.intent.operation == operation
+                && existing.intent.intent_digest == confirmation.snapshot_digest
+                && (matches!(
+                    existing.state,
+                    super::PullRequestState::Creating
+                        | super::PullRequestState::Updating
+                        | super::PullRequestState::RecoveryRequired
+                ) || self
+                    .contribution
+                    .as_ref()
+                    .and_then(|record| record.resulting_head.as_deref())
+                    == Some(existing.intent.expected_head_revision.as_str()))
+                && title.is_none()
+                && body.is_none()
+            {
+                return Ok(());
+            }
+        }
+        let draft = self.pull_request_draft(operation, title, body)?;
+        if confirmation.snapshot_digest != draft.intent_digest {
+            return Err(TriggerValidationError::field(
+                "confirmation.snapshot_digest",
+                "does not authorize the exact reviewed PR target and content",
+            ));
+        }
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        let mut record = match operation {
+            super::PullRequestOperation::Open => super::PullRequestRecord {
+                intent: draft,
+                provider_id: None,
+                provider_node_id: None,
+                number: None,
+                canonical_url: None,
+                state: super::PullRequestState::Creating,
+                base_revision: None,
+                head_revision: None,
+                observed_title: None,
+                observed_body_digest: None,
+                mergeability: super::Mergeability::Computing,
+                checks: super::CheckSummaryState::Unavailable,
+                confirmation: confirmation.clone(),
+                intent_key: String::new(),
+                created_at: confirmation.confirmed_at.clone(),
+                updated_at: now.clone(),
+                provider_created_at: None,
+                provider_updated_at: None,
+            },
+            super::PullRequestOperation::Update => {
+                let existing = self
+                    .pull_request
+                    .as_ref()
+                    .expect("a validated update has an existing provider PR");
+                super::PullRequestRecord {
+                    intent: draft,
+                    provider_id: existing.provider_id,
+                    provider_node_id: existing.provider_node_id.clone(),
+                    number: existing.number,
+                    canonical_url: existing.canonical_url.clone(),
+                    state: super::PullRequestState::Updating,
+                    base_revision: existing.base_revision.clone(),
+                    head_revision: existing.head_revision.clone(),
+                    observed_title: existing.observed_title.clone(),
+                    observed_body_digest: existing.observed_body_digest.clone(),
+                    mergeability: existing.mergeability,
+                    checks: existing.checks,
+                    confirmation: confirmation.clone(),
+                    intent_key: String::new(),
+                    created_at: confirmation.confirmed_at.clone(),
+                    updated_at: now.clone(),
+                    provider_created_at: existing.provider_created_at.clone(),
+                    provider_updated_at: existing.provider_updated_at.clone(),
+                }
+            }
+        };
+        record.intent_key = format!(
+            "cma-trigger:{}:pr:{}:{}",
+            self.id.0,
+            record.intent.operation.wire_name(),
+            record.intent.intent_digest
+        );
+        record.validate_intent(&self.id)?;
+        self.pull_request = Some(record);
+        self.confirmations.push(confirmation.clone());
+        self.updated_at = now.clone();
+        self.push_event(
+            now,
+            correlation_id,
+            LaunchEventKind::ConfirmationRecorded {
+                action: confirmation.action,
+            },
+        )
+    }
+
     pub fn events_after(&self, cursor: u64) -> Vec<LaunchEvent> {
         self.events
             .iter()

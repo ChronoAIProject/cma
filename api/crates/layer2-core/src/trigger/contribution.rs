@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use super::{
     Confirmation, ConfirmationAction, ContributionId, DiffArtifactId, LaunchId,
@@ -196,6 +197,7 @@ pub enum Mergeability {
 #[serde(rename_all = "snake_case")]
 pub enum PullRequestState {
     Creating,
+    Updating,
     Open,
     ClosedUnmerged,
     Merged,
@@ -212,48 +214,475 @@ pub enum CheckSummaryState {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestOperation {
+    Open,
+    Update,
+}
+
+impl PullRequestOperation {
+    pub fn confirmation_action(self) -> ConfirmationAction {
+        match self {
+            Self::Open => ConfirmationAction::OpenPullRequest,
+            Self::Update => ConfirmationAction::UpdatePullRequest,
+        }
+    }
+
+    pub(crate) fn wire_name(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Update => "update",
+        }
+    }
+}
+
+/// Exact pull-request write the contributor reviews before CMA records it.
+///
+/// Provider observations deliberately live outside this value. This makes the
+/// user-authorized target and content immutable while reconciliation fills in
+/// the provider result independently.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullRequestDraft {
+    pub launch_id: LaunchId,
+    pub operation: PullRequestOperation,
+    pub marker: String,
+    pub upstream_repository_id: u64,
+    pub upstream_repository_node_id: String,
+    pub fork_repository_id: u64,
+    pub fork_repository_node_id: String,
+    pub base_ref: String,
+    pub head_owner: String,
+    pub head_branch: String,
+    pub head_ref: String,
+    pub expected_base_revision: String,
+    pub expected_head_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_head_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_number: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_provider_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_provider_node_id: Option<String>,
+    /// Update the PR title/body only when the contributor explicitly edited
+    /// them and the previously observed provider content still matches.
+    pub update_metadata: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_previous_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_previous_body_digest: Option<String>,
+    pub title: String,
+    /// Human-visible body without the hidden CMA marker.
+    pub body: String,
+    /// Digest of the exact provider body, including the hidden marker.
+    pub body_digest: String,
+    /// Digest presented in the contribution review and bound by confirmation.
+    pub intent_digest: String,
+}
+
+impl PullRequestDraft {
+    #[allow(clippy::too_many_arguments)]
+    pub fn seal(
+        launch_id: LaunchId,
+        operation: PullRequestOperation,
+        upstream_repository_id: u64,
+        upstream_repository_node_id: String,
+        fork_repository_id: u64,
+        fork_repository_node_id: String,
+        base_ref: String,
+        head_owner: String,
+        head_branch: String,
+        expected_base_revision: String,
+        expected_head_revision: String,
+        previous_head_revision: Option<String>,
+        target_number: Option<u64>,
+        target_provider_id: Option<u64>,
+        target_provider_node_id: Option<String>,
+        update_metadata: bool,
+        expected_previous_title: Option<String>,
+        expected_previous_body_digest: Option<String>,
+        title: String,
+        body: String,
+    ) -> Result<Self, TriggerValidationError> {
+        let marker = pull_request_marker(&launch_id);
+        let head_ref = format!("{head_owner}:{head_branch}");
+        let body_digest = pull_request_body_digest(&body, &marker);
+        let mut draft = Self {
+            launch_id,
+            operation,
+            marker,
+            upstream_repository_id,
+            upstream_repository_node_id,
+            fork_repository_id,
+            fork_repository_node_id,
+            base_ref,
+            head_owner,
+            head_branch,
+            head_ref,
+            expected_base_revision,
+            expected_head_revision,
+            previous_head_revision,
+            target_number,
+            target_provider_id,
+            target_provider_node_id,
+            update_metadata,
+            expected_previous_title,
+            expected_previous_body_digest,
+            title,
+            body,
+            body_digest,
+            intent_digest: String::new(),
+        };
+        draft.intent_digest = draft.compute_intent_digest();
+        draft.validate()?;
+        Ok(draft)
+    }
+
+    pub fn provider_body(&self) -> String {
+        provider_pull_request_body(&self.body, &self.marker)
+    }
+
+    pub fn validate(&self) -> Result<(), TriggerValidationError> {
+        if self.upstream_repository_id == 0
+            || self.fork_repository_id == 0
+            || !valid_bounded_text(&self.upstream_repository_node_id, 255)
+            || !valid_bounded_text(&self.fork_repository_node_id, 255)
+            || !valid_ref(&self.base_ref)
+            || !valid_owner(&self.head_owner)
+            || !valid_ref(&self.head_branch)
+            || self.head_branch != format!("cma/{}", self.launch_id.0)
+            || self.head_ref != format!("{}:{}", self.head_owner, self.head_branch)
+            || self.marker != pull_request_marker(&self.launch_id)
+        {
+            return Err(TriggerValidationError::field(
+                "pull_request",
+                "does not bind the exact upstream, fork, base, and CMA head",
+            ));
+        }
+        validate_git_id(
+            "pull_request.expected_base_revision",
+            &self.expected_base_revision,
+        )?;
+        validate_git_id(
+            "pull_request.expected_head_revision",
+            &self.expected_head_revision,
+        )?;
+        if self.title.trim().is_empty()
+            || self.title.len() > 256
+            || self.title.bytes().any(|byte| byte.is_ascii_control())
+            || self.body.len() > 65_536
+            || self.body.contains("<!-- cma-trigger:")
+            || self
+                .body
+                .bytes()
+                .any(|byte| byte.is_ascii_control() && !matches!(byte, b'\n' | b'\r' | b'\t'))
+        {
+            return Err(TriggerValidationError::field(
+                "pull_request.content",
+                "is outside the approved title/body shape",
+            ));
+        }
+        if self.body_digest != pull_request_body_digest(&self.body, &self.marker)
+            || self.intent_digest != self.compute_intent_digest()
+        {
+            return Err(TriggerValidationError::field(
+                "pull_request.intent_digest",
+                "does not seal the exact pull-request content and target",
+            ));
+        }
+        match self.operation {
+            PullRequestOperation::Open
+                if self.previous_head_revision.is_some()
+                    || self.target_number.is_some()
+                    || self.target_provider_id.is_some()
+                    || self.target_provider_node_id.is_some()
+                    || self.update_metadata
+                    || self.expected_previous_title.is_some()
+                    || self.expected_previous_body_digest.is_some() =>
+            {
+                return Err(TriggerValidationError::field(
+                    "pull_request.operation",
+                    "an open intent cannot claim an existing provider pull request",
+                ));
+            }
+            PullRequestOperation::Update => {
+                let previous = self.previous_head_revision.as_deref().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "pull_request.previous_head_revision",
+                        "an update must bind the previously observed pull-request head",
+                    )
+                })?;
+                validate_git_id("pull_request.previous_head_revision", previous)?;
+                if previous.eq_ignore_ascii_case(&self.expected_head_revision)
+                    || self.target_number.is_none_or(|number| number == 0)
+                    || self.target_provider_id.is_none_or(|id| id == 0)
+                    || self
+                        .target_provider_node_id
+                        .as_deref()
+                        .is_none_or(|node| !valid_bounded_text(node, 255))
+                {
+                    return Err(TriggerValidationError::field(
+                        "pull_request.operation",
+                        "an update must target one existing PR and a new reviewed head",
+                    ));
+                }
+                if self.update_metadata {
+                    if self
+                        .expected_previous_title
+                        .as_deref()
+                        .is_none_or(|title| title.trim().is_empty() || title.len() > 256)
+                        || self
+                            .expected_previous_body_digest
+                            .as_deref()
+                            .is_none_or(|digest| !is_sha256(digest))
+                    {
+                        return Err(TriggerValidationError::field(
+                            "pull_request.update_metadata",
+                            "an explicit metadata edit must bind the previously observed title and body",
+                        ));
+                    }
+                } else if self.expected_previous_title.is_some()
+                    || self.expected_previous_body_digest.is_some()
+                {
+                    return Err(TriggerValidationError::field(
+                        "pull_request.update_metadata",
+                        "metadata expectations are valid only for an explicit metadata edit",
+                    ));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn compute_intent_digest(&self) -> String {
+        let mut digest = Sha256::new();
+        let fields = vec![
+            self.launch_id.0.clone(),
+            self.operation.wire_name().to_string(),
+            self.marker.clone(),
+            self.upstream_repository_id.to_string(),
+            self.upstream_repository_node_id.clone(),
+            self.fork_repository_id.to_string(),
+            self.fork_repository_node_id.clone(),
+            self.base_ref.clone(),
+            self.head_owner.clone(),
+            self.head_branch.clone(),
+            self.head_ref.clone(),
+            self.expected_base_revision.clone(),
+            self.expected_head_revision.clone(),
+            self.previous_head_revision.clone().unwrap_or_default(),
+            self.target_number.unwrap_or_default().to_string(),
+            self.target_provider_id.unwrap_or_default().to_string(),
+            self.target_provider_node_id.clone().unwrap_or_default(),
+            self.update_metadata.to_string(),
+            self.expected_previous_title.clone().unwrap_or_default(),
+            self.expected_previous_body_digest
+                .clone()
+                .unwrap_or_default(),
+            self.title.clone(),
+            self.body_digest.clone(),
+        ];
+        for value in fields {
+            digest.update((value.len() as u64).to_be_bytes());
+            digest.update(value.as_bytes());
+        }
+        format!("{:x}", digest.finalize())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullRequestRecord {
-    pub launch_id: LaunchId,
-    pub marker: String,
-    pub number: u64,
-    pub canonical_url: String,
+    pub intent: PullRequestDraft,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_url: Option<String>,
     pub state: PullRequestState,
-    pub upstream_repository_id: u64,
-    pub fork_repository_id: u64,
-    pub base_ref: String,
-    pub head_ref: String,
-    pub base_revision: String,
-    pub head_revision: String,
-    pub title: String,
-    pub body_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_body_digest: Option<String>,
     pub mergeability: Mergeability,
     pub checks: CheckSummaryState,
     pub confirmation: Confirmation,
     pub intent_key: String,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_created_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_updated_at: Option<String>,
 }
 
 impl PullRequestRecord {
     pub fn validate_intent(&self, launch: &LaunchId) -> Result<(), TriggerValidationError> {
-        if &self.launch_id != launch
-            || !matches!(
-                self.confirmation.action,
-                ConfirmationAction::OpenPullRequest | ConfirmationAction::UpdatePullRequest
-            )
-            || self.upstream_repository_id == 0
-            || self.fork_repository_id == 0
-            || self.base_ref.trim().is_empty()
-            || self.head_ref.trim().is_empty()
-            || self.marker.trim().is_empty()
-            || self.intent_key.trim().is_empty()
+        self.intent.validate()?;
+        if &self.intent.launch_id != launch
+            || self.confirmation.action != self.intent.operation.confirmation_action()
+            || self.confirmation.snapshot_digest != self.intent.intent_digest
+            || self.confirmation.subject.0.trim().is_empty()
+            || self.intent_key
+                != format!(
+                    "cma-trigger:{}:pr:{}:{}",
+                    launch.0,
+                    self.intent.operation.wire_name(),
+                    self.intent.intent_digest
+                )
+            || self.created_at != self.confirmation.confirmed_at
         {
             return Err(TriggerValidationError::field(
                 "pull_request",
                 "is not a valid explicit pull-request intent for this Launch",
             ));
         }
+        let complete_provider_identity = self.provider_id.is_some_and(|id| id > 0)
+            && self
+                .provider_node_id
+                .as_deref()
+                .is_some_and(|value| valid_bounded_text(value, 255))
+            && self.number.is_some_and(|number| number > 0)
+            && self
+                .canonical_url
+                .as_deref()
+                .is_some_and(valid_provider_url)
+            && self.base_revision.as_deref().is_some_and(is_git_id)
+            && self.head_revision.as_deref().is_some_and(is_git_id)
+            && self
+                .observed_title
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty() && value.len() <= 256)
+            && self.observed_body_digest.as_deref().is_some_and(is_sha256)
+            && self
+                .provider_created_at
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+            && self
+                .provider_updated_at
+                .as_deref()
+                .is_some_and(|value| !value.is_empty());
+        match self.state {
+            PullRequestState::Creating if self.intent.operation != PullRequestOperation::Open => {
+                return Err(TriggerValidationError::field(
+                    "pull_request.state",
+                    "creating requires an open intent",
+                ));
+            }
+            PullRequestState::Creating if has_any_provider_identity(self) => {
+                return Err(TriggerValidationError::field(
+                    "pull_request.state",
+                    "creating cannot claim provider result evidence",
+                ));
+            }
+            PullRequestState::Updating
+                if self.intent.operation != PullRequestOperation::Update
+                    || !complete_provider_identity
+                    || self.number != self.intent.target_number
+                    || self.provider_id != self.intent.target_provider_id
+                    || self.provider_node_id != self.intent.target_provider_node_id =>
+            {
+                return Err(TriggerValidationError::field(
+                    "pull_request.state",
+                    "updating must retain the exact existing provider PR",
+                ));
+            }
+            PullRequestState::Open
+            | PullRequestState::ClosedUnmerged
+            | PullRequestState::Merged
+                if !complete_provider_identity =>
+            {
+                return Err(TriggerValidationError::field(
+                    "pull_request.state",
+                    "a reconciled state requires complete provider evidence",
+                ));
+            }
+            PullRequestState::RecoveryRequired => {}
+            _ => {}
+        }
         Ok(())
     }
+}
+
+pub fn pull_request_marker(launch: &LaunchId) -> String {
+    format!("<!-- cma-trigger:launch:{}:v1 -->", launch.0)
+}
+
+pub fn provider_pull_request_body(body: &str, marker: &str) -> String {
+    if body.trim().is_empty() {
+        marker.to_string()
+    } else {
+        format!("{}\n\n{marker}", body.trim_end())
+    }
+}
+
+pub fn pull_request_body_digest(body: &str, marker: &str) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(provider_pull_request_body(body, marker))
+    )
+}
+
+fn valid_bounded_text(value: &str, max: usize) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= max
+        && !value.bytes().any(|byte| byte.is_ascii_control())
+}
+
+fn valid_owner(value: &str) -> bool {
+    valid_bounded_text(value, 255)
+        && !value.contains('/')
+        && !value.contains(':')
+        && !value.contains("..")
+}
+
+fn valid_ref(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.contains("..")
+        && !value.contains("@{")
+        && !value.bytes().any(|byte| {
+            byte.is_ascii_control()
+                || matches!(byte, b' ' | b'~' | b'^' | b':' | b'?' | b'*' | b'[' | b'\\')
+        })
+        && value
+            .split('/')
+            .all(|component| !component.is_empty() && !matches!(component, "." | ".."))
+}
+
+fn valid_provider_url(value: &str) -> bool {
+    value.starts_with("https://github.com/")
+        && value.len() <= 2_048
+        && !value.bytes().any(|byte| byte.is_ascii_control())
+}
+
+fn is_git_id(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn has_any_provider_identity(record: &PullRequestRecord) -> bool {
+    record.provider_id.is_some()
+        || record.provider_node_id.is_some()
+        || record.number.is_some()
+        || record.canonical_url.is_some()
+        || record.base_revision.is_some()
+        || record.head_revision.is_some()
+        || record.observed_title.is_some()
+        || record.observed_body_digest.is_some()
+        || record.provider_created_at.is_some()
+        || record.provider_updated_at.is_some()
 }
