@@ -318,8 +318,16 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime}`, tagged with the version and with the short commit SHA. Both tags are immutable and neither is ever moved.
-- An annotated tag `vX.Y.Z` and a GitHub release are created. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
+- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
+- After all three current GHCR digests pass the writer/history verification, each exact root digest is exported as
+  an OCI archive plus JSON metadata in a one-day Actions transfer artifact.
+  These unencrypted archives are an additional, ephemeral distribution
+  surface: anyone who can download this internal repository's Actions
+  artifacts can receive the private images, and that audience is not assumed
+  to equal the GHCR package ACL. Retention limits duration, not readership.
+  The artifacts are not release assets, are never committed, and contain no
+  SDK package; both SDKs remain repository-only and unpublished.
+- An annotated tag `vX.Y.Z` and a GitHub release are created. An active, GET-verified `v*` tag ruleset must reject updates and deletions without a bypass. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 
