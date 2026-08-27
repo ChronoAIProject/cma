@@ -111,6 +111,7 @@ struct ObservedStore {
 
 impl ObservedStore {
     fn new(inner: Arc<FakeStore>) -> Self {
+        inner.disable_coordination();
         Self {
             inner,
             reserved_calls: AtomicUsize::new(0),

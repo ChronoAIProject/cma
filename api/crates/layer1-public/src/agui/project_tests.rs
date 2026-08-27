@@ -699,10 +699,15 @@ fn an_open_pressure_episode_without_an_old_append_time_carries_an_absent_since()
 
 #[test]
 fn what_this_interface_cannot_carry_becomes_nothing() {
-    // The core's log is the union of what every interface needs. A resize, an
-    // attachment, a screen — none has an honest shape here, and inventing one
-    // would put events in a client's stream that mean nothing to it.
+    // The core's log is the union of what every interface needs. An authority
+    // marker, resize, attachment, or screen has no honest shape here, and
+    // inventing one would put events in a client's stream that mean nothing.
     for kind in [
+        EventKind::RuntimeHandoverStarted,
+        EventKind::RuntimeIncarnationStarted,
+        EventKind::RuntimeStarted {
+            generation: std::num::NonZeroU64::new(3).expect("the sample generation is positive"),
+        },
         EventKind::TerminalAttached,
         EventKind::TerminalDetached,
         EventKind::TerminalResized {

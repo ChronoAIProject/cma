@@ -13,10 +13,10 @@ use std::{
 use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
     ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
-    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
+    ConversationWriteAuthority, Event, EventKind, RuntimeAuthority, RuntimeAuthorityRetirement,
     RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeCleanupReason,
     RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
-    SessionLeaseRequest, SessionOperation,
+    SessionLeaseRequest, SessionOperation, StoredEventKind,
 };
 use mongodb::bson::{doc, Bson, DateTime, Document};
 use mongodb::options::{ReadConcern, ReplaceOptions, WriteConcern};
@@ -30,6 +30,7 @@ const RECEIPT_LEASE: &str = "lease";
 const RECEIPT_RESERVATION: &str = "reservation";
 const RECEIPT_RETIREMENT: &str = "retirement";
 const RECEIPT_CLEANUP: &str = "cleanup";
+const RUNTIME_STARTED_MARKER_AUDIT_BATCH_SIZE: usize = 128;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct CoordinationDoc {
@@ -116,6 +117,8 @@ struct CleanupDoc {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct AuthoritySwitchDoc {
     revision: i64,
+    #[serde(default)]
+    runtime_started_seq: i64,
     boundary: BoundaryDoc,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cleanup: Option<CleanupDoc>,
@@ -576,6 +579,11 @@ impl CoordinationReceiptDoc {
                 }
                 if let Some(completed) = stored.switch.as_ref() {
                     loaded_generation(completed.revision)?;
+                    if loaded_generation(completed.runtime_started_seq)? == 0 {
+                        return Err(StoreError::Malformed(
+                            "MongoDB completed switch has no runtime-start marker".into(),
+                        ));
+                    }
                     let boundary = completed.boundary.to_core()?;
                     if boundary.authority.generation != generation.get()
                         || boundary.authority.runtime_id.as_deref() != Some(runtime_id)
@@ -1175,6 +1183,15 @@ fn next_revision(session: &mut SessionDoc) -> Result<u64, StoreError> {
     Ok(next)
 }
 
+fn next_runtime_started_sequence(sequence_floor: u64) -> Result<(u64, i64), StoreError> {
+    let next = sequence_floor
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Malformed("session event sequence overflow".into()))?;
+    let stored = i64::try_from(next)
+        .map_err(|_| StoreError::Malformed("session event sequence cannot be stored".into()))?;
+    Ok((next, stored))
+}
+
 fn cleanup_receipt(
     id: &layer2_core::SessionId,
     cleanup: &RuntimeCleanup,
@@ -1301,6 +1318,157 @@ fn coordination_receipt_map(
     Ok(receipts)
 }
 
+fn runtime_started_marker_expectations(
+    receipts: &BTreeMap<CoordinationReceiptIdDoc, CoordinationReceiptDoc>,
+) -> Result<BTreeMap<(String, u64), NonZeroU64>, StoreError> {
+    let mut expected = BTreeMap::new();
+    for receipt in receipts.values() {
+        let CoordinationReceiptPayloadDoc::Reservation(reservation) = &receipt.payload else {
+            continue;
+        };
+        let Some(completed) = reservation.switch.as_ref() else {
+            continue;
+        };
+        let seq = NonZeroU64::new(loaded_generation(completed.runtime_started_seq)?)
+            .ok_or_else(|| {
+                StoreError::Malformed("MongoDB completed switch has no runtime-start marker".into())
+            })?
+            .get();
+        let generation =
+            NonZeroU64::new(loaded_generation(reservation.generation)?).ok_or_else(|| {
+                StoreError::Malformed("MongoDB reservation receipt generation is zero".into())
+            })?;
+        let key = (receipt.id.session_id.clone(), seq);
+        if expected.insert(key, generation).is_some() {
+            return Err(StoreError::Malformed(
+                "MongoDB completed switches name a duplicate runtime-start marker position".into(),
+            ));
+        }
+    }
+    Ok(expected)
+}
+
+fn runtime_started_marker_filter(session_id: &str, seq: u64) -> Result<Document, StoreError> {
+    let seq = i64::try_from(seq).map_err(|_| {
+        StoreError::Malformed("runtime-start marker sequence cannot be stored".into())
+    })?;
+    Ok(doc! { "session_id": session_id, "seq": seq })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RuntimeStartedMarkerAuditBatch {
+    filter: Document,
+    expectations: BTreeMap<(String, u64), NonZeroU64>,
+}
+
+fn runtime_started_marker_audit_batches(
+    expectations: &BTreeMap<(String, u64), NonZeroU64>,
+) -> Result<Vec<RuntimeStartedMarkerAuditBatch>, StoreError> {
+    let mut batches = Vec::new();
+    let mut clauses = Vec::with_capacity(RUNTIME_STARTED_MARKER_AUDIT_BATCH_SIZE);
+    let mut batch_expectations = BTreeMap::new();
+    for ((session_id, seq), generation) in expectations {
+        clauses.push(runtime_started_marker_filter(session_id, *seq)?);
+        batch_expectations.insert((session_id.clone(), *seq), *generation);
+        if clauses.len() == RUNTIME_STARTED_MARKER_AUDIT_BATCH_SIZE {
+            batches.push(RuntimeStartedMarkerAuditBatch {
+                filter: doc! { "$or": std::mem::take(&mut clauses) },
+                expectations: std::mem::take(&mut batch_expectations),
+            });
+        }
+    }
+    if !clauses.is_empty() {
+        batches.push(RuntimeStartedMarkerAuditBatch {
+            filter: doc! { "$or": clauses },
+            expectations: batch_expectations,
+        });
+    }
+    Ok(batches)
+}
+
+fn runtime_started_marker_position(document: &Document) -> Result<(String, u64), StoreError> {
+    let session_id = document.get_str("session_id").map_err(|_| {
+        StoreError::Malformed("MongoDB runtime-start marker session_id must be a string".into())
+    })?;
+    let seq = document.get_i64("seq").map_err(|_| {
+        StoreError::Malformed("MongoDB runtime-start marker seq must be a 64-bit integer".into())
+    })?;
+    let seq = u64::try_from(seq).map_err(|_| {
+        StoreError::Malformed("MongoDB runtime-start marker seq must not be negative".into())
+    })?;
+    Ok((session_id.to_owned(), seq))
+}
+
+fn validate_runtime_started_marker(
+    session_id: &str,
+    seq: u64,
+    expected_generation: NonZeroU64,
+    document: Option<Document>,
+) -> Result<(), StoreError> {
+    let document = document.ok_or_else(|| {
+        StoreError::Malformed(format!(
+            "MongoDB completed switch is missing runtime-start marker {session_id}:{seq}"
+        ))
+    })?;
+    let event = super::event_doc::from_document(document)?;
+    if event.session_id.0 != session_id || event.seq != seq {
+        return Err(StoreError::Malformed(format!(
+            "MongoDB runtime-start marker query returned another event position for {session_id}:{seq}"
+        )));
+    }
+    match event.kind {
+        StoredEventKind::Known(EventKind::RuntimeStarted { generation })
+            if generation == expected_generation =>
+        {
+            Ok(())
+        }
+        StoredEventKind::Known(EventKind::RuntimeStarted { .. }) => {
+            Err(StoreError::Malformed(format!(
+                "MongoDB completed switch disagrees with runtime-start marker {session_id}:{seq}"
+            )))
+        }
+        _ => Err(StoreError::Malformed(format!(
+            "MongoDB completed switch position {session_id}:{seq} is not a runtime-start marker"
+        ))),
+    }
+}
+
+fn validate_runtime_started_marker_batch(
+    batch: &RuntimeStartedMarkerAuditBatch,
+    documents: Vec<Document>,
+) -> Result<(), StoreError> {
+    let mut found = BTreeSet::new();
+    for document in documents {
+        let position = runtime_started_marker_position(&document)?;
+        let Some(expected_generation) = batch.expectations.get(&position).copied() else {
+            return Err(StoreError::Malformed(format!(
+                "MongoDB runtime-start marker batch returned unexpected event position {}:{}",
+                position.0, position.1
+            )));
+        };
+        if !found.insert(position.clone()) {
+            return Err(StoreError::Malformed(format!(
+                "MongoDB runtime-start marker batch returned duplicate event position {}:{}",
+                position.0, position.1
+            )));
+        }
+        validate_runtime_started_marker(
+            &position.0,
+            position.1,
+            expected_generation,
+            Some(document),
+        )?;
+    }
+    if let Some(((session_id, seq), expected_generation)) = batch
+        .expectations
+        .iter()
+        .find(|(position, _)| !found.contains(*position))
+    {
+        return validate_runtime_started_marker(session_id, *seq, *expected_generation, None);
+    }
+    Ok(())
+}
+
 pub(super) fn validate_coordination_receipt_set(
     sessions: &BTreeMap<String, SessionDoc>,
     receipts: &BTreeMap<CoordinationReceiptIdDoc, CoordinationReceiptDoc>,
@@ -1339,6 +1507,7 @@ pub(super) fn validate_coordination_receipt_set(
     }
 
     let mut referenced_cleanups = BTreeSet::new();
+    let mut referenced_runtime_started = BTreeSet::new();
     for receipt in receipts.values() {
         receipt.validate_stored()?;
         let session = sessions.get(&receipt.id.session_id).ok_or_else(|| {
@@ -1372,6 +1541,27 @@ pub(super) fn validate_coordination_receipt_set(
                         reason: RuntimeCleanupReason::UncommittedCandidate,
                     };
                     if let Some(completed) = stored.switch.as_ref() {
+                        let runtime_started_seq = loaded_generation(completed.runtime_started_seq)?;
+                        if runtime_started_seq != 0 {
+                            let session_tail = u64::try_from(session.last_seq).map_err(|_| {
+                                StoreError::Malformed(format!(
+                                    "MongoDB session {id} event tail must not be negative"
+                                ))
+                            })?;
+                            if runtime_started_seq > session_tail {
+                                return Err(StoreError::Malformed(format!(
+                                    "MongoDB completed switch {:?} names runtime-start marker {runtime_started_seq} beyond session {id}'s event tail {session_tail}",
+                                    receipt.id.token
+                                )));
+                            }
+                            if !referenced_runtime_started
+                                .insert((session.id.clone(), runtime_started_seq))
+                            {
+                                return Err(StoreError::Malformed(format!(
+                                    "MongoDB completed switches for session {id} name the same runtime-start marker {runtime_started_seq}"
+                                )));
+                            }
+                        }
                         let candidate_id = CoordinationReceiptIdDoc::new(
                             &id,
                             RECEIPT_CLEANUP,
@@ -1467,12 +1657,39 @@ pub(super) fn coordination_clock_update() -> Document {
     }
 }
 
+#[cfg(test)]
 fn apply_command(
     session: &mut SessionDoc,
     command: &CoordinationCommand,
     receipts: &[CoordinationReceiptDoc],
-) -> Result<(CoordinationOutcome, Vec<ReceiptMutation>), StoreError> {
-    let (outcome, mutations) = apply_command_transition(session, command, receipts)?;
+) -> Result<(CoordinationOutcome, Vec<ReceiptMutation>, Option<Event>), StoreError> {
+    let sequence_floor = u64::try_from(session.last_seq)
+        .map_err(|_| StoreError::Malformed("session event tail must not be negative".into()))?;
+    apply_command_at_sequence_floor(session, command, receipts, sequence_floor)
+}
+
+fn apply_command_at_sequence_floor(
+    session: &mut SessionDoc,
+    command: &CoordinationCommand,
+    receipts: &[CoordinationReceiptDoc],
+    sequence_floor: u64,
+) -> Result<(CoordinationOutcome, Vec<ReceiptMutation>, Option<Event>), StoreError> {
+    let previous_last_seq = session.last_seq;
+    let recorded_tail = u64::try_from(previous_last_seq)
+        .map_err(|_| StoreError::Malformed("session event tail must not be negative".into()))?;
+    if sequence_floor < recorded_tail {
+        return Err(StoreError::Malformed(format!(
+            "session {} event sequence floor {sequence_floor} is behind recorded tail {recorded_tail}",
+            session.id
+        )));
+    }
+    let server_now = session
+        .coordination
+        .as_ref()
+        .and_then(|state| state.server_now)
+        .ok_or_else(|| StoreError::Malformed("MongoDB coordination clock is absent".into()))?;
+    let (outcome, mutations) =
+        apply_command_transition(session, command, receipts, sequence_floor)?;
     let inserted = mutations
         .iter()
         .filter(|mutation| matches!(mutation, ReceiptMutation::Insert(_)))
@@ -1500,13 +1717,43 @@ fn apply_command(
             })?;
         state.receipt_count = stored_generation(current)?;
     }
-    Ok((outcome, mutations))
+    let runtime_started = if session.last_seq == previous_last_seq {
+        None
+    } else {
+        let (CoordinationCommand::Switch { candidate, .. }, CoordinationOutcome::Switch(switched)) =
+            (command, &outcome)
+        else {
+            return Err(StoreError::Malformed(
+                "a non-switch coordination command changed the event tail".into(),
+            ));
+        };
+        let expected = sequence_floor
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("session event sequence overflow".into()))?;
+        let expected_stored = i64::try_from(expected)
+            .map_err(|_| StoreError::Malformed("session event sequence cannot be stored".into()))?;
+        if session.last_seq != expected_stored || switched.runtime_started_seq != expected {
+            return Err(StoreError::Malformed(
+                "runtime authority switch did not allocate the next event sequence".into(),
+            ));
+        }
+        Some(Event {
+            session_id: candidate.session_id.clone(),
+            seq: expected,
+            kind: EventKind::RuntimeStarted {
+                generation: candidate.generation,
+            },
+            appended_at: layer2_core::rfc3339_at(server_now.to_system_time()),
+        })
+    };
+    Ok((outcome, mutations, runtime_started))
 }
 
 fn apply_command_transition(
     session: &mut SessionDoc,
     command: &CoordinationCommand,
     receipts: &[CoordinationReceiptDoc],
+    runtime_started_sequence_floor: u64,
 ) -> Result<(CoordinationOutcome, Vec<ReceiptMutation>), StoreError> {
     if session.id != command.id().0 {
         return Err(StoreError::SessionDeleted {
@@ -2151,6 +2398,7 @@ fn apply_command_transition(
                 return Ok((
                     CoordinationOutcome::Switch(RuntimeAuthoritySwitch {
                         revision: loaded_generation(completed.revision)?,
+                        runtime_started_seq: loaded_generation(completed.runtime_started_seq)?,
                         boundary: outcome_boundary,
                         cleanup,
                     }),
@@ -2214,7 +2462,10 @@ fn apply_command_transition(
                     });
                 }
             }
+            let (runtime_started_seq, stored_runtime_started_seq) =
+                next_runtime_started_sequence(runtime_started_sequence_floor)?;
             let revision = next_revision(session)?;
+            session.last_seq = stored_runtime_started_seq;
             session.runtime_id = Some(candidate.runtime_id.clone());
             let boundary = SessionBoundary {
                 status: parse_plain(&session.status)?,
@@ -2239,6 +2490,7 @@ fn apply_command_transition(
                 .boundary = boundary_doc.clone();
             let completed = AuthoritySwitchDoc {
                 revision: stored_generation(revision)?,
+                runtime_started_seq: stored_runtime_started_seq,
                 boundary: boundary_doc,
                 cleanup: previous_cleanup
                     .as_ref()
@@ -2262,6 +2514,7 @@ fn apply_command_transition(
             Ok((
                 CoordinationOutcome::Switch(RuntimeAuthoritySwitch {
                     revision,
+                    runtime_started_seq,
                     boundary,
                     cleanup: previous_cleanup,
                 }),
@@ -2443,6 +2696,7 @@ impl MongoSessionStore {
     pub(super) async fn validate_coordination_receipts(&self) -> Result<(), StoreError> {
         let context = (
             self.sessions.clone(),
+            self.events.clone(),
             self.receipts.clone_with_type::<Document>(),
         );
         let mut client_session = self.client.start_session().await.map_err(|error| {
@@ -2454,7 +2708,7 @@ impl MongoSessionStore {
             .write_concern(WriteConcern::majority())
             .and_run(
                 context,
-                |client_session, (sessions_collection, receipts_collection)| {
+                |client_session, (sessions_collection, events_collection, receipts_collection)| {
                     async move {
                         let mut session_cursor = sessions_collection
                             .find(doc! {})
@@ -2485,6 +2739,30 @@ impl MongoSessionStore {
                             .map_err(mongodb::error::Error::custom)?;
                         validate_coordination_receipt_set(&sessions, &receipts)
                             .map_err(mongodb::error::Error::custom)?;
+                        let expected_markers = runtime_started_marker_expectations(&receipts)
+                            .map_err(mongodb::error::Error::custom)?;
+                        let marker_batches =
+                            runtime_started_marker_audit_batches(&expected_markers)
+                                .map_err(mongodb::error::Error::custom)?;
+                        // Every `$or` clause is an exact prefix-complete lookup
+                        // through the required unique (session_id, seq) index.
+                        // Keep all bounded reads in this snapshot transaction so
+                        // a concurrent atomic switch is observed wholly before
+                        // or after it.
+                        for batch in marker_batches {
+                            let mut marker_cursor = events_collection
+                                .find(batch.filter.clone())
+                                .session(&mut *client_session)
+                                .await?;
+                            let mut markers = Vec::with_capacity(batch.expectations.len());
+                            while let Some(marker) =
+                                marker_cursor.next(&mut *client_session).await.transpose()?
+                            {
+                                markers.push(marker);
+                            }
+                            validate_runtime_started_marker_batch(&batch, markers)
+                                .map_err(mongodb::error::Error::custom)?;
+                        }
                         Ok(())
                     }
                     .boxed()
@@ -2526,7 +2804,12 @@ impl MongoSessionStore {
     ) -> Result<CoordinationOutcome, StoreError> {
         let id = command.id().clone();
         let name = command.name();
-        let context = (self.sessions.clone(), self.receipts.clone(), command);
+        let context = (
+            self.sessions.clone(),
+            self.events.clone(),
+            self.receipts.clone(),
+            command,
+        );
         let mut client_session = self.client.start_session().await.map_err(|error| {
             StoreError::Unavailable(format!("start {name} transaction: {error}"))
         })?;
@@ -2534,94 +2817,139 @@ impl MongoSessionStore {
             .start_transaction()
             .read_concern(ReadConcern::snapshot())
             .write_concern(WriteConcern::majority())
-            .and_run(context, |client_session, (sessions, receipts, command)| {
-                async move {
-                    // Every coordination transaction writes this session document, so
-                    // overlapping attempts conflict and serialize. A successful retry
-                    // with the same nonce is therefore ordered after any earlier staged
-                    // write for that nonce; the caller can exact-release that result.
-                    let clocked = sessions
-                        .update_one(doc! { "_id": &command.id().0 }, coordination_clock_update())
-                        .session(&mut *client_session)
-                        .await?;
-                    if clocked.matched_count != 1 {
-                        return Err(mongodb::error::Error::custom(StoreError::SessionDeleted {
-                            id: command.id().clone(),
-                        }));
-                    }
-                    let mut stored = sessions
-                        .find_one(doc! { "_id": &command.id().0 })
-                        .session(&mut *client_session)
-                        .await?
-                        .ok_or_else(|| {
-                            mongodb::error::Error::custom(StoreError::SessionDeleted {
-                                id: command.id().clone(),
-                            })
-                        })?;
-                    let mut found = Vec::new();
-                    for receipt_id in command.receipt_ids() {
-                        if let Some(receipt) = receipts
-                            .find_one(receipt_id.filter())
+            .and_run(
+                context,
+                |client_session, (sessions, events, receipts, command)| {
+                    async move {
+                        // Every coordination transaction writes this session document, so
+                        // overlapping attempts conflict and serialize. A successful retry
+                        // with the same nonce is therefore ordered after any earlier staged
+                        // write for that nonce; the caller can exact-release that result.
+                        let clocked = sessions
+                            .update_one(
+                                doc! { "_id": &command.id().0 },
+                                coordination_clock_update(),
+                            )
+                            .session(&mut *client_session)
+                            .await?;
+                        if clocked.matched_count != 1 {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::SessionDeleted {
+                                    id: command.id().clone(),
+                                },
+                            ));
+                        }
+                        let mut stored = sessions
+                            .find_one(doc! { "_id": &command.id().0 })
                             .session(&mut *client_session)
                             .await?
-                        {
-                            found.push(receipt);
-                        }
-                    }
-                    let (outcome, mutations) = apply_command(&mut stored, command, &found)
-                        .map_err(mongodb::error::Error::custom)?;
-                    for mutation in mutations {
-                        match mutation {
-                            ReceiptMutation::Insert(receipt) => {
-                                receipts
-                                    .insert_one(receipt)
+                            .ok_or_else(|| {
+                                mongodb::error::Error::custom(StoreError::SessionDeleted {
+                                    id: command.id().clone(),
+                                })
+                            })?;
+                        let runtime_started_sequence_floor =
+                            if matches!(&command, CoordinationCommand::Switch { .. }) {
+                                let event_tail = events
+                                    .find_one(doc! { "session_id": &command.id().0 })
+                                    .sort(doc! { "seq": -1 })
+                                    .projection(doc! { "_id": 0, "seq": 1 })
                                     .session(&mut *client_session)
                                     .await?;
-                            }
-                            ReceiptMutation::Replace(receipt) => {
-                                let filter = receipt.id.filter();
-                                let replaced = receipts
-                                    .replace_one(filter, receipt)
-                                    .with_options(ReplaceOptions::builder().upsert(false).build())
-                                    .session(&mut *client_session)
-                                    .await?;
-                                if replaced.matched_count != 1 {
-                                    return Err(mongodb::error::Error::custom(
-                                        StoreError::SessionAuthorityChanged {
-                                            id: command.id().clone(),
-                                        },
-                                    ));
-                                }
-                            }
-                            ReceiptMutation::Delete(receipt_id) => {
-                                let deleted = receipts
-                                    .delete_one(receipt_id.filter())
-                                    .session(&mut *client_session)
-                                    .await?;
-                                if deleted.deleted_count != 1 {
-                                    return Err(mongodb::error::Error::custom(
-                                        StoreError::RuntimeCleanupChanged {
-                                            id: command.id().clone(),
-                                        },
-                                    ));
-                                }
+                                let event_tail = super::stored_event_tail(event_tail)
+                                    .map_err(mongodb::error::Error::custom)?;
+                                super::durable_sequence_floor(event_tail, Some(stored.last_seq))
+                                    .map_err(mongodb::error::Error::custom)?
+                            } else {
+                                u64::try_from(stored.last_seq).map_err(|_| {
+                                    mongodb::error::Error::custom(StoreError::Malformed(
+                                        "session event tail must not be negative".into(),
+                                    ))
+                                })?
+                            };
+                        let mut found = Vec::new();
+                        for receipt_id in command.receipt_ids() {
+                            if let Some(receipt) = receipts
+                                .find_one(receipt_id.filter())
+                                .session(&mut *client_session)
+                                .await?
+                            {
+                                found.push(receipt);
                             }
                         }
+                        let (outcome, mutations, runtime_started) =
+                            apply_command_at_sequence_floor(
+                                &mut stored,
+                                command,
+                                &found,
+                                runtime_started_sequence_floor,
+                            )
+                            .map_err(mongodb::error::Error::custom)?;
+                        for mutation in mutations {
+                            match mutation {
+                                ReceiptMutation::Insert(receipt) => {
+                                    receipts
+                                        .insert_one(receipt)
+                                        .session(&mut *client_session)
+                                        .await?;
+                                }
+                                ReceiptMutation::Replace(receipt) => {
+                                    let filter = receipt.id.filter();
+                                    let replaced = receipts
+                                        .replace_one(filter, receipt)
+                                        .with_options(
+                                            ReplaceOptions::builder().upsert(false).build(),
+                                        )
+                                        .session(&mut *client_session)
+                                        .await?;
+                                    if replaced.matched_count != 1 {
+                                        return Err(mongodb::error::Error::custom(
+                                            StoreError::SessionAuthorityChanged {
+                                                id: command.id().clone(),
+                                            },
+                                        ));
+                                    }
+                                }
+                                ReceiptMutation::Delete(receipt_id) => {
+                                    let deleted = receipts
+                                        .delete_one(receipt_id.filter())
+                                        .session(&mut *client_session)
+                                        .await?;
+                                    if deleted.deleted_count != 1 {
+                                        return Err(mongodb::error::Error::custom(
+                                            StoreError::RuntimeCleanupChanged {
+                                                id: command.id().clone(),
+                                            },
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(runtime_started) = runtime_started {
+                            let document = super::event_doc::to_document(&runtime_started)
+                                .map_err(mongodb::error::Error::custom)?;
+                            events
+                                .insert_one(document)
+                                .session(&mut *client_session)
+                                .await?;
+                        }
+                        let replaced = sessions
+                            .replace_one(doc! { "_id": &stored.id }, stored)
+                            .with_options(ReplaceOptions::builder().upsert(false).build())
+                            .session(&mut *client_session)
+                            .await?;
+                        if replaced.matched_count != 1 {
+                            return Err(mongodb::error::Error::custom(
+                                StoreError::SessionDeleted {
+                                    id: command.id().clone(),
+                                },
+                            ));
+                        }
+                        Ok(outcome)
                     }
-                    let replaced = sessions
-                        .replace_one(doc! { "_id": &stored.id }, stored)
-                        .with_options(ReplaceOptions::builder().upsert(false).build())
-                        .session(&mut *client_session)
-                        .await?;
-                    if replaced.matched_count != 1 {
-                        return Err(mongodb::error::Error::custom(StoreError::SessionDeleted {
-                            id: command.id().clone(),
-                        }));
-                    }
-                    Ok(outcome)
-                }
-                .boxed()
-            })
+                    .boxed()
+                },
+            )
             .await;
         match outcome {
             Ok(outcome) => Ok(outcome),
@@ -2791,13 +3119,33 @@ mod tests {
         receipts: &mut Vec<CoordinationReceiptDoc>,
         command: CoordinationCommand,
     ) -> Result<CoordinationOutcome, StoreError> {
+        run_with_runtime_started(session, receipts, command).map(|(outcome, _)| outcome)
+    }
+
+    fn run_with_runtime_started(
+        session: &mut SessionDoc,
+        receipts: &mut Vec<CoordinationReceiptDoc>,
+        command: CoordinationCommand,
+    ) -> Result<(CoordinationOutcome, Option<Event>), StoreError> {
+        let sequence_floor = u64::try_from(session.last_seq)
+            .map_err(|_| StoreError::Malformed("session event tail must not be negative".into()))?;
+        run_with_runtime_started_at_sequence_floor(session, receipts, command, sequence_floor)
+    }
+
+    fn run_with_runtime_started_at_sequence_floor(
+        session: &mut SessionDoc,
+        receipts: &mut Vec<CoordinationReceiptDoc>,
+        command: CoordinationCommand,
+        sequence_floor: u64,
+    ) -> Result<(CoordinationOutcome, Option<Event>), StoreError> {
         session
             .coordination
             .get_or_insert_with(CoordinationDoc::default)
             .server_now = Some(DateTime::from_millis(NOW));
-        let (outcome, mutations) = apply_command(session, &command, receipts)?;
+        let (outcome, mutations, runtime_started) =
+            apply_command_at_sequence_floor(session, &command, receipts, sequence_floor)?;
         apply_mutations(receipts, mutations);
-        Ok(outcome)
+        Ok((outcome, runtime_started))
     }
 
     fn active_cleanups(receipts: &[CoordinationReceiptDoc]) -> Vec<RuntimeCleanup> {
@@ -3325,6 +3673,115 @@ mod tests {
         }
     }
 
+    fn marker_document(session_id: &str, seq: u64, generation: u64) -> Document {
+        super::super::event_doc::to_document(&Event {
+            session_id: layer2_core::SessionId(session_id.into()),
+            seq,
+            kind: EventKind::RuntimeStarted {
+                generation: NonZeroU64::new(generation).expect("test generation is positive"),
+            },
+            appended_at: "2027-01-15T08:00:00Z".into(),
+        })
+        .expect("test marker serializes")
+    }
+
+    #[test]
+    fn runtime_started_marker_audit_queries_are_exact_and_bounded() {
+        assert!(runtime_started_marker_audit_batches(&BTreeMap::new())
+            .unwrap()
+            .is_empty());
+
+        let marker_count = RUNTIME_STARTED_MARKER_AUDIT_BATCH_SIZE * 2 + 1;
+        let expectations = (1..=marker_count)
+            .map(|seq| {
+                (
+                    ("sesn_marker_batch".to_owned(), seq as u64),
+                    NonZeroU64::new(seq as u64).unwrap(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let batches = runtime_started_marker_audit_batches(&expectations).unwrap();
+        assert_eq!(batches.len(), 3);
+        assert_eq!(
+            batches
+                .iter()
+                .map(|batch| batch.expectations.len())
+                .collect::<Vec<_>>(),
+            vec![
+                RUNTIME_STARTED_MARKER_AUDIT_BATCH_SIZE,
+                RUNTIME_STARTED_MARKER_AUDIT_BATCH_SIZE,
+                1,
+            ]
+        );
+        for batch in batches {
+            let clauses = batch.filter.get_array("$or").unwrap();
+            assert!(!clauses.is_empty());
+            assert!(clauses.len() <= RUNTIME_STARTED_MARKER_AUDIT_BATCH_SIZE);
+            assert_eq!(clauses.len(), batch.expectations.len());
+            for (clause, ((session_id, seq), _)) in clauses.iter().zip(&batch.expectations) {
+                assert_eq!(
+                    clause,
+                    &Bson::Document(doc! {
+                        "session_id": session_id,
+                        "seq": *seq as i64,
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_started_marker_batch_reconciles_every_returned_position() {
+        let expectations = BTreeMap::from([
+            (("sesn_marker_a".to_owned(), 1), NonZeroU64::new(3).unwrap()),
+            (("sesn_marker_b".to_owned(), 2), NonZeroU64::new(4).unwrap()),
+        ]);
+        let batch = runtime_started_marker_audit_batches(&expectations)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let first = marker_document("sesn_marker_a", 1, 3);
+        let second = marker_document("sesn_marker_b", 2, 4);
+        validate_runtime_started_marker_batch(&batch, vec![second.clone(), first.clone()])
+            .expect("order is irrelevant when every expected marker is returned");
+
+        let missing = validate_runtime_started_marker_batch(&batch, vec![first.clone()])
+            .expect_err("a missing expected position must fail");
+        assert!(missing.to_string().contains("missing runtime-start marker"));
+
+        let duplicate =
+            validate_runtime_started_marker_batch(&batch, vec![first.clone(), first.clone()])
+                .expect_err("a duplicate returned position must fail");
+        assert!(duplicate.to_string().contains("duplicate event position"));
+
+        let unexpected = validate_runtime_started_marker_batch(
+            &batch,
+            vec![marker_document("sesn_marker_c", 3, 5)],
+        )
+        .expect_err("an unexpected returned position must fail");
+        assert!(unexpected.to_string().contains("unexpected event position"));
+
+        let wrong_generation = validate_runtime_started_marker_batch(
+            &batch,
+            vec![marker_document("sesn_marker_a", 1, 9), second.clone()],
+        )
+        .expect_err("a marker generation mismatch must fail");
+        assert!(wrong_generation.to_string().contains("disagrees"));
+
+        let wrong_kind = super::super::event_doc::to_document(&Event {
+            session_id: layer2_core::SessionId("sesn_marker_a".into()),
+            seq: 1,
+            kind: EventKind::SessionCreated,
+            appended_at: "2027-01-15T08:00:00Z".into(),
+        })
+        .unwrap();
+        let wrong_kind = validate_runtime_started_marker_batch(&batch, vec![wrong_kind, second])
+            .expect_err("a non-marker at the expected position must fail");
+        assert!(wrong_kind
+            .to_string()
+            .contains("is not a runtime-start marker"));
+    }
+
     #[test]
     fn mongo_completed_switch_and_retirement_receipts_replay_exact_outcomes() {
         let mut session = session_doc();
@@ -3367,21 +3824,132 @@ mod tests {
             CoordinationOutcome::Candidate(candidate) => candidate,
             _ => panic!("candidate expected"),
         };
+        let before_rejected_switch = session.clone();
+        let before_rejected_receipts = receipts.clone();
+        let mut changed_candidate = candidate.clone();
+        changed_candidate.runtime_id = "runtime-replay-changed".into();
+        assert!(matches!(
+            run_with_runtime_started(
+                &mut session,
+                &mut receipts,
+                CoordinationCommand::Switch {
+                    lease: lease.clone(),
+                    candidate: changed_candidate,
+                },
+            ),
+            Err(StoreError::RuntimeCandidateChanged { .. })
+        ));
+        assert_eq!(
+            session_bson(&session),
+            session_bson(&before_rejected_switch)
+        );
+        assert_eq!(receipts, before_rejected_receipts);
         let original_lease = lease.clone();
-        let first_switch = match run(
+        let existing_sequence_floor = 9;
+        let (first_switch_outcome, runtime_started) = run_with_runtime_started_at_sequence_floor(
             &mut session,
             &mut receipts,
             CoordinationCommand::Switch {
                 lease: lease.clone(),
                 candidate: candidate.clone(),
             },
+            existing_sequence_floor,
         )
-        .unwrap()
-        {
+        .unwrap();
+        let first_switch = match first_switch_outcome {
             CoordinationOutcome::Switch(switched) => switched,
             _ => panic!("switch expected"),
         };
-        let replayed_switch = match run(
+        let runtime_started = runtime_started.expect("a first switch emits its marker");
+        assert_eq!(runtime_started.seq, existing_sequence_floor + 1);
+        assert_eq!(runtime_started.seq, first_switch.runtime_started_seq);
+        assert_eq!(session.last_seq, runtime_started.seq as i64);
+        assert_eq!(
+            runtime_started.appended_at,
+            layer2_core::rfc3339_at(DateTime::from_millis(NOW).to_system_time())
+        );
+        assert!(matches!(
+            &runtime_started.kind,
+            EventKind::RuntimeStarted { generation }
+                if *generation == candidate.generation
+        ));
+        let receipt_map = receipts
+            .iter()
+            .cloned()
+            .map(|receipt| (receipt.id.clone(), receipt))
+            .collect::<BTreeMap<_, _>>();
+        let expected_markers = runtime_started_marker_expectations(&receipt_map).unwrap();
+        assert_eq!(
+            expected_markers.get(&(runtime_started.session_id.0.clone(), runtime_started.seq)),
+            Some(&candidate.generation)
+        );
+        assert_eq!(
+            runtime_started_marker_filter(&runtime_started.session_id.0, runtime_started.seq)
+                .unwrap(),
+            doc! {
+                "session_id": &runtime_started.session_id.0,
+                "seq": runtime_started.seq as i64,
+            }
+        );
+        let marker_document =
+            crate::store::event_doc::to_document(&runtime_started).expect("the marker stores");
+        validate_runtime_started_marker(
+            &runtime_started.session_id.0,
+            runtime_started.seq,
+            candidate.generation,
+            Some(marker_document),
+        )
+        .unwrap();
+        assert!(validate_runtime_started_marker(
+            &runtime_started.session_id.0,
+            runtime_started.seq,
+            candidate.generation,
+            None,
+        )
+        .is_err());
+        let mut legacy_receipt_map = receipt_map.clone();
+        let legacy_receipt = legacy_receipt_map
+            .values_mut()
+            .find(|receipt| {
+                matches!(
+                    &receipt.payload,
+                    CoordinationReceiptPayloadDoc::Reservation(_)
+                )
+            })
+            .expect("the completed reservation receipt exists");
+        legacy_receipt.coordination_protocol = super::super::LEGACY_COORDINATION_RECEIPT_PROTOCOL;
+        let CoordinationReceiptPayloadDoc::Reservation(legacy_reservation) =
+            &mut legacy_receipt.payload
+        else {
+            unreachable!("the receipt was selected by reservation payload")
+        };
+        legacy_reservation
+            .switch
+            .as_mut()
+            .expect("the reservation switch completed")
+            .runtime_started_seq = 0;
+        assert!(legacy_receipt.validate_stored().is_err());
+        let mut legacy_document =
+            mongodb::bson::serialize_to_document(legacy_receipt).expect("the receipt serializes");
+        legacy_document
+            .get_document_mut("payload")
+            .unwrap()
+            .get_document_mut("value")
+            .unwrap()
+            .get_document_mut("switch")
+            .unwrap()
+            .remove("runtime_started_seq");
+        let legacy_error = coordination_receipt_from_document(legacy_document.clone())
+            .expect_err("protocol-1 receipts are not valid in a protocol-3 store");
+        assert!(legacy_error
+            .to_string()
+            .contains("identity or protocol is invalid"));
+        legacy_document.insert(
+            super::super::COORDINATION_PROTOCOL_FIELD,
+            super::super::COORDINATION_RECEIPT_PROTOCOL,
+        );
+        assert!(coordination_receipt_from_document(legacy_document).is_err());
+        let (replayed_switch_outcome, replayed_marker) = run_with_runtime_started(
             &mut session,
             &mut receipts,
             CoordinationCommand::Switch {
@@ -3389,11 +3957,15 @@ mod tests {
                 candidate,
             },
         )
-        .unwrap()
-        {
+        .unwrap();
+        let replayed_switch = match replayed_switch_outcome {
             CoordinationOutcome::Switch(switched) => switched,
             _ => panic!("switch replay expected"),
         };
+        assert!(
+            replayed_marker.is_none(),
+            "a receipt replay cannot emit a second marker"
+        );
         assert_eq!(replayed_switch, first_switch);
         lease.boundary = first_switch.boundary;
 
@@ -3875,12 +4447,13 @@ mod tests {
         session.coordination.as_mut().unwrap().server_now =
             Some(DateTime::from_millis(NOW + 31_000));
         assert!(!has_session_lease(&session).unwrap());
-        let (outcome, mutations) = apply_command(
+        let (outcome, mutations, runtime_started) = apply_command(
             &mut session,
             &CoordinationCommand::AcquireInteraction(request),
             &receipts,
         )
         .unwrap();
+        assert!(runtime_started.is_none());
         apply_mutations(&mut receipts, mutations);
         let successor = match outcome {
             CoordinationOutcome::Lease(lease) => lease,

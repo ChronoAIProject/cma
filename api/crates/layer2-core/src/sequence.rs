@@ -35,8 +35,18 @@ use crate::store::StoreError;
 /// held across a map lookup and an addition, and never across an await.
 #[derive(Default)]
 pub(crate) struct Sequences {
-    /// The highest sequence handed out for a session, while this process runs.
-    issued: Mutex<HashMap<SessionId, u64>>,
+    /// The highest sequence handed out and the durable floor observed for each
+    /// session while this process runs.
+    issued: Mutex<HashMap<SessionId, SequenceCursor>>,
+}
+
+#[derive(Default)]
+struct SequenceCursor {
+    issued: u64,
+    /// A store-authored tail can occupy a reservation that was already handed
+    /// to an in-flight local write. Rejection cleanup must never return that
+    /// durable position to the allocator.
+    durable_floor: u64,
 }
 
 impl Sequences {
@@ -62,12 +72,14 @@ impl Sequences {
         count: u64,
     ) -> Result<u64, StoreError> {
         let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
-        let last = issued.entry(id.clone()).or_insert(0);
-        *last = (*last).max(floor);
-        let first = last
+        let cursor = issued.entry(id.clone()).or_default();
+        cursor.issued = cursor.issued.max(cursor.durable_floor).max(floor);
+        let first = cursor
+            .issued
             .checked_add(1)
             .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
-        *last = last
+        cursor.issued = cursor
+            .issued
             .checked_add(count)
             .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
         Ok(first)
@@ -81,9 +93,31 @@ impl Sequences {
     /// position behind the log is what makes the next process start too low.
     pub(crate) fn issued(&self, id: &SessionId, floor: u64) -> u64 {
         let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
-        let last = issued.entry(id.clone()).or_insert(0);
-        *last = (*last).max(floor);
-        *last
+        let cursor = issued.entry(id.clone()).or_default();
+        cursor.issued = cursor.issued.max(cursor.durable_floor).max(floor);
+        cursor.issued
+    }
+
+    /// Record a tail that is already occupied in the durable event log.
+    ///
+    /// Unlike an ordinary allocator observation, this survives rejection
+    /// rewind. Authority switches use it because their marker is committed by
+    /// the store outside the process-local event lane.
+    pub(crate) fn observe_durable(&self, id: &SessionId, tail: u64) -> u64 {
+        let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
+        let cursor = issued.entry(id.clone()).or_default();
+        cursor.durable_floor = cursor.durable_floor.max(tail);
+        cursor.issued = cursor.issued.max(cursor.durable_floor);
+        cursor.issued
+    }
+
+    /// The highest position known to be durably occupied.
+    pub(crate) fn durable_floor(&self, id: &SessionId) -> u64 {
+        self.issued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .map_or(0, |cursor| cursor.durable_floor)
     }
 
     /// The currently issued tail, without creating an allocator entry.
@@ -92,7 +126,7 @@ impl Sequences {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(id)
-            .copied()
+            .map(|cursor| cursor.issued)
     }
 
     /// Return an abandoned reservation to this session's lane.
@@ -102,8 +136,11 @@ impl Sequences {
     /// observations may only move the allocator forward.
     pub(crate) fn rewind(&self, id: &SessionId, count: u64) {
         let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(last) = issued.get_mut(id) {
-            *last = last.saturating_sub(count);
+        if let Some(cursor) = issued.get_mut(id) {
+            cursor.issued = cursor
+                .issued
+                .saturating_sub(count)
+                .max(cursor.durable_floor);
         }
     }
 
@@ -112,10 +149,9 @@ impl Sequences {
     /// Called only while the lane lock excludes allocation. Unlike `issued`,
     /// this may move backward when a missing local write is being closed.
     pub(crate) fn reconcile(&self, id: &SessionId, tail: u64) {
-        self.issued
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id.clone(), tail);
+        let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
+        let cursor = issued.entry(id.clone()).or_default();
+        cursor.issued = tail.max(cursor.durable_floor);
     }
 
     /// Drop what is remembered about a session.

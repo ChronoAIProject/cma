@@ -132,6 +132,18 @@ pub(super) fn from_document_before_context_compaction(
     })
 }
 
+#[cfg(test)]
+pub(super) fn from_document_before_runtime_markers(
+    doc: Document,
+) -> Result<StoredEvent, StoreError> {
+    from_document_recognizing(doc, |tag| {
+        !matches!(
+            tag,
+            "runtime_handover_started" | "runtime_incarnation_started" | "runtime_started"
+        ) && EventKind::recognizes_tag(tag)
+    })
+}
+
 /// Keep an unfamiliar payload in a shape the core can hold.
 ///
 /// The core must not learn the storage backend's value type, so the payload
