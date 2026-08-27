@@ -25,7 +25,7 @@ mod pty_integration_tests;
 #[path = "rate_limit_tests.rs"]
 mod rate_limit_tests;
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{future::Future, net::SocketAddr, sync::Arc};
 
 use axum::{
     body::Body,
@@ -56,10 +56,11 @@ use tracing::Level;
 
 use crate::activity::ActivityRecorder;
 use crate::auth::{AuthState, SignInRecords};
-use crate::config::Config;
+use crate::config::{Config, MongoCutoverStage, MongoCutoverStageConfig};
 use crate::screen::VtScreen;
 
 pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const DEFAULT_LOG_FILTER: &str = "info";
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
     "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
@@ -272,15 +273,162 @@ fn request_span(request: &Request) -> tracing::Span {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MongoCutoverPreparationError {
+    LegacyStage,
+    Bind,
+}
+
+async fn prepare_mongo_cutover_stage<
+    Listener,
+    RunStage,
+    StageFuture,
+    StageError,
+    Bind,
+    BindFuture,
+    BindError,
+>(
+    config: MongoCutoverStageConfig,
+    run_stage: RunStage,
+    bind: Bind,
+) -> Result<Listener, MongoCutoverPreparationError>
+where
+    RunStage: FnOnce(String, String) -> StageFuture,
+    StageFuture: Future<Output = Result<(), StageError>>,
+    Bind: FnOnce(String) -> BindFuture,
+    BindFuture: Future<Output = Result<Listener, BindError>>,
+{
+    let MongoCutoverStageConfig {
+        stage,
+        bind: bind_address,
+        mongodb_uri,
+        mongodb_database,
+    } = config;
+    match stage {
+        MongoCutoverStage::Legacy => run_stage(mongodb_uri, mongodb_database)
+            .await
+            .map_err(|_| MongoCutoverPreparationError::LegacyStage)?,
+    }
+    bind(bind_address)
+        .await
+        .map_err(|_| MongoCutoverPreparationError::Bind)
+}
+
+async fn serve_mongo_cutover_stage(config: MongoCutoverStageConfig) {
+    let bind = config.bind.clone();
+    // The store wrapper explicitly shuts its MongoDB client down before it
+    // returns. The listener bind is sequenced after that return, so successful
+    // liveness proves this process is already quiescent at the boundary.
+    let listener = match prepare_mongo_cutover_stage(
+        config,
+        |uri, database| async move {
+            crate::store::run_legacy_cutover_stage(&uri, &database).await
+        },
+        |bind| async move { tokio::net::TcpListener::bind(bind).await },
+    )
+    .await
+    {
+        Ok(listener) => listener,
+        Err(MongoCutoverPreparationError::LegacyStage) => {
+            tracing::error!("legacy MongoDB cutover stage failed; details intentionally omitted");
+            std::process::exit(2);
+        }
+        Err(MongoCutoverPreparationError::Bind) => {
+            tracing::error!(
+                "cannot bind cutover maintenance listener; details intentionally omitted"
+            );
+            std::process::exit(2);
+        }
+    };
+    tracing::info!(
+        bind = %bind,
+        reason = "legacy-cutover-staged",
+        "legacy MongoDB cutover staged; public interfaces remain unavailable"
+    );
+    if axum::serve(
+        listener,
+        health::legacy_cutover_router().into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .is_err()
+    {
+        tracing::error!(
+            "cutover maintenance server stopped with an error; details intentionally omitted"
+        );
+        std::process::exit(1);
+    }
+}
+
+struct StartupBootstrap {
+    cutover_stage: Result<Option<MongoCutoverStageConfig>, String>,
+    log_filter: tracing_subscriber::EnvFilter,
+}
+
+fn bootstrap_startup(
+    read_cutover_stage: impl FnOnce() -> Result<Option<MongoCutoverStageConfig>, String>,
+    read_normal_log_filter: impl FnOnce() -> tracing_subscriber::EnvFilter,
+) -> StartupBootstrap {
+    let cutover_stage = read_cutover_stage();
+    let log_filter = if matches!(&cutover_stage, Ok(None)) {
+        read_normal_log_filter()
+    } else {
+        // Staged and invalid-stage startup must not let an environment-provided
+        // directive expose driver or configuration details before the boundary.
+        tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER)
+    };
+    StartupBootstrap {
+        cutover_stage,
+        log_filter,
+    }
+}
+
+async fn dispatch_startup<RunStage, StageFuture, RunNormal, NormalFuture>(
+    cutover_stage: Result<Option<MongoCutoverStageConfig>, String>,
+    run_stage: RunStage,
+    run_normal: RunNormal,
+) -> Result<(), String>
+where
+    RunStage: FnOnce(MongoCutoverStageConfig) -> StageFuture,
+    StageFuture: Future<Output = ()>,
+    RunNormal: FnOnce() -> NormalFuture,
+    NormalFuture: Future<Output = ()>,
+{
+    match cutover_stage {
+        Ok(Some(config)) => run_stage(config).await,
+        Ok(None) => run_normal().await,
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    let StartupBootstrap {
+        cutover_stage,
+        log_filter,
+    } = bootstrap_startup(MongoCutoverStageConfig::from_env, || {
+        tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER))
+    });
+    tracing_subscriber::fmt().with_env_filter(log_filter).init();
 
+    if dispatch_startup(
+        cutover_stage,
+        serve_mongo_cutover_stage,
+        serve_normal_control_plane,
+    )
+    .await
+    .is_err()
+    {
+        tracing::error!(
+            "MongoDB cutover stage configuration is not usable; details intentionally omitted"
+        );
+        std::process::exit(2);
+    }
+}
+
+async fn serve_normal_control_plane() {
     let config = match Config::from_env() {
         Ok(c) => c,
         Err(e) => {
@@ -687,7 +835,168 @@ mod interface_contract_tests;
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{atomic::AtomicUsize, atomic::Ordering, Mutex};
+
     use super::*;
+
+    fn legacy_stage_config() -> MongoCutoverStageConfig {
+        MongoCutoverStageConfig {
+            stage: MongoCutoverStage::Legacy,
+            bind: "127.0.0.1:18080".into(),
+            mongodb_uri: "mongodb://stage.invalid/cma".into(),
+            mongodb_database: "stage_database".into(),
+        }
+    }
+
+    #[test]
+    fn startup_resolves_the_stage_before_reading_the_normal_log_filter() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let stage_events = Arc::clone(&events);
+        let log_events = Arc::clone(&events);
+
+        let bootstrap = bootstrap_startup(
+            move || {
+                stage_events.lock().unwrap().push("cutover-stage");
+                Ok(None)
+            },
+            move || {
+                log_events.lock().unwrap().push("rust-log");
+                tracing_subscriber::EnvFilter::new("warn")
+            },
+        );
+
+        assert!(matches!(bootstrap.cutover_stage, Ok(None)));
+        assert_eq!(bootstrap.log_filter.to_string(), "warn");
+        assert_eq!(*events.lock().unwrap(), ["cutover-stage", "rust-log"]);
+    }
+
+    #[test]
+    fn staged_and_invalid_stage_startup_never_reads_rust_log() {
+        for cutover_stage in [
+            Ok(Some(legacy_stage_config())),
+            Err("invalid nonempty cutover stage".to_owned()),
+        ] {
+            let rust_log_reads = AtomicUsize::new(0);
+            let bootstrap = bootstrap_startup(
+                move || cutover_stage,
+                || {
+                    rust_log_reads.fetch_add(1, Ordering::SeqCst);
+                    tracing_subscriber::EnvFilter::new("trace")
+                },
+            );
+
+            assert_eq!(rust_log_reads.load(Ordering::SeqCst), 0);
+            assert_eq!(bootstrap.log_filter.to_string(), "info");
+        }
+    }
+
+    #[tokio::test]
+    async fn selected_stage_never_enters_normal_configuration_or_provider_startup() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let stage_calls = Arc::clone(&calls);
+        let normal_calls = Arc::clone(&calls);
+
+        dispatch_startup(
+            Ok(Some(legacy_stage_config())),
+            move |config| {
+                assert_eq!(config.stage, MongoCutoverStage::Legacy);
+                stage_calls.lock().unwrap().push("legacy-cutover");
+                std::future::ready(())
+            },
+            move || async move {
+                normal_calls.lock().unwrap().extend([
+                    "normal-config",
+                    "kernel-registry-and-sandbox",
+                    "mongodb-stores",
+                    "storage-and-skill-catalog",
+                    "nyxid-and-auth",
+                    "renewal-and-sweep",
+                    "public-listener",
+                ]);
+                panic!("normal configuration and providers are deliberately poisoned")
+            },
+        )
+        .await
+        .expect("the selected stage completes");
+
+        assert_eq!(*calls.lock().unwrap(), ["legacy-cutover"]);
+    }
+
+    #[tokio::test]
+    async fn invalid_stage_enters_neither_startup_branch() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let stage_calls = Arc::clone(&calls);
+        let normal_calls = Arc::clone(&calls);
+
+        let error = dispatch_startup(
+            Err("invalid nonempty cutover stage".to_owned()),
+            move |_| {
+                stage_calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(())
+            },
+            move || {
+                normal_calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(())
+            },
+        )
+        .await
+        .expect_err("an invalid selector cannot choose a startup branch");
+
+        assert_eq!(error, "invalid nonempty cutover stage");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn legacy_stage_completion_and_client_shutdown_precede_listener_bind() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let stage_events = Arc::clone(&events);
+        let bind_events = Arc::clone(&events);
+
+        let listener = prepare_mongo_cutover_stage(
+            legacy_stage_config(),
+            move |uri, database| async move {
+                assert_eq!(uri, "mongodb://stage.invalid/cma");
+                assert_eq!(database, "stage_database");
+                stage_events.lock().unwrap().push("stage-complete");
+                tokio::task::yield_now().await;
+                stage_events.lock().unwrap().push("client-shutdown");
+                Ok::<(), ()>(())
+            },
+            move |bind| async move {
+                assert_eq!(bind, "127.0.0.1:18080");
+                bind_events.lock().unwrap().push("listener-bind");
+                Ok::<_, ()>("maintenance-listener")
+            },
+        )
+        .await
+        .expect("the maintenance boundary prepares");
+
+        assert_eq!(listener, "maintenance-listener");
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["stage-complete", "client-shutdown", "listener-bind"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_legacy_stage_never_binds_the_listener() {
+        let bind_calls = Arc::new(AtomicUsize::new(0));
+        let observed_bind_calls = Arc::clone(&bind_calls);
+
+        let error = prepare_mongo_cutover_stage(
+            legacy_stage_config(),
+            |_, _| std::future::ready(Err::<(), _>("deliberate stage failure")),
+            move |_| {
+                observed_bind_calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Ok::<_, ()>(()))
+            },
+        )
+        .await
+        .expect_err("a failed migration cannot expose maintenance liveness");
+
+        assert_eq!(error, MongoCutoverPreparationError::LegacyStage);
+        assert_eq!(bind_calls.load(Ordering::SeqCst), 0);
+    }
 
     #[test]
     fn request_span_records_correlation_without_query_credentials() {
