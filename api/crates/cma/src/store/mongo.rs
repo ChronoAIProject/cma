@@ -16,7 +16,7 @@ use futures_util::{FutureExt, TryStreamExt};
 use layer2_core::{
     store::{
         Page, PageCursor, PendingHandover, SessionListQuery, SessionRecord, SessionStore,
-        SkillPack, SkillPackState, StoreError,
+        SkillPack, SkillPackDigest, SkillPackState, StoreError,
     },
     ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
     ConversationWriteAuthority, Event, EventKind, Rate, RateCardId, Reserved, RuntimeAuthority,
@@ -26,8 +26,8 @@ use layer2_core::{
 };
 use mongodb::bson::{doc, Binary, Bson, Document};
 use mongodb::options::{
-    IndexOptions, InsertOneOptions, ReadConcern, ReplaceOptions, UpdateOptions, ValidationAction,
-    ValidationLevel, WriteConcern,
+    Hint, IndexOptions, InsertOneOptions, ReadConcern, ReplaceOptions, UpdateOptions,
+    ValidationAction, ValidationLevel, WriteConcern,
 };
 use mongodb::results::{CollectionSpecification, CollectionType};
 use mongodb::{Client, Collection, Database, IndexModel};
@@ -39,9 +39,11 @@ mod coordination;
 
 use coordination::{
     all_session_receipts_filter, coordination_clock_update, has_session_lease,
-    require_conversation_write_authority, runtime_authority_from_doc, validate_coordination_state,
+    require_conversation_write_authority, runtime_authority_from_doc,
+    runtime_authority_from_projection, validate_coordination_state,
     validate_session_coordination_receipts, CoordinationCommand, CoordinationDoc,
-    CoordinationOutcome, CoordinationReceiptDoc, COORDINATION_RECEIPTS,
+    CoordinationOutcome, CoordinationReceiptDoc, RuntimeAuthorityProjectionDoc,
+    COORDINATION_RECEIPTS,
 };
 
 const LEGACY_SESSIONS: &str = "sessions";
@@ -71,6 +73,8 @@ const COORDINATION_RECEIPTS_PROVENANCE_ID: &str = "session-coordination-receipts
 const COORDINATION_RECEIPTS_PROVENANCE_PROTOCOL: i32 = 1;
 pub(super) const WRITE_PROTOCOL: i32 = 1;
 const WRITE_PROTOCOL_FIELD: &str = "_cma_write_protocol";
+/// Session-document writer that preserves explicit skill grant and custody ownership.
+pub(super) const SESSION_WRITE_PROTOCOL: i32 = 2;
 // This marker fences stale document writers after collMod, but Mongo validators
 // cannot fence deletes or provider calls. Enabling coordination still requires
 // an offline drain of every older coordination writer and its in-flight work.
@@ -88,6 +92,10 @@ const COORDINATION_PROTOCOL_FIELD: &str = "_cma_coordination_protocol";
 /// covers the rest of the session plus BSON framing without relying on an
 /// estimate of how binary values are encoded.
 const MAX_STAGED_SESSION_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+const OWNER_SESSION_PAGE_INDEX: &str = "owner_1_created_at_-1__id_-1";
+const OWNER_STATUS_SESSION_PAGE_INDEX: &str = "owner_1_status_1_created_at_-1__id_-1";
+const ALL_SESSION_PAGE_INDEX: &str = "created_at_-1__id_-1";
+const STATUS_SESSION_PAGE_INDEX: &str = "status_1_created_at_-1__id_-1";
 
 /// A granted skill as it is stored.
 ///
@@ -160,8 +168,21 @@ impl StoredSkill {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum SkillPackStateDoc {
-    Staged { packs: Vec<SkillPackDoc> },
-    Stored,
+    Staged {
+        packs: Vec<SkillPackDoc>,
+    },
+    LegacyHandover {
+        source_runtime_id: String,
+        source_generation: i64,
+        packs: Vec<SkillPackDoc>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stored_digest: Option<Binary>,
+    },
+    /// Listing-only representation; authoritative documents never store it.
+    StagedSummary,
+    Stored {
+        digest: Binary,
+    },
     CleanupPending,
     Cleaned,
 }
@@ -182,7 +203,29 @@ impl std::fmt::Debug for SkillPackStateDoc {
                     .field("bytes", &bytes)
                     .finish()
             }
-            Self::Stored => f.write_str("Stored"),
+            Self::LegacyHandover {
+                source_runtime_id,
+                source_generation,
+                packs,
+                stored_digest,
+            } => {
+                let files = packs.iter().map(|pack| pack.files.len()).sum::<usize>();
+                let bytes = packs
+                    .iter()
+                    .flat_map(|pack| &pack.files)
+                    .map(|file| file.body.bytes.len())
+                    .sum::<usize>();
+                f.debug_struct("LegacyHandover")
+                    .field("source_runtime_id", source_runtime_id)
+                    .field("source_generation", source_generation)
+                    .field("packs", &packs.len())
+                    .field("files", &files)
+                    .field("bytes", &bytes)
+                    .field("stored_digest", &stored_digest.is_some())
+                    .finish()
+            }
+            Self::StagedSummary => f.write_str("StagedSummary"),
+            Self::Stored { .. } => f.write_str("Stored"),
             Self::CleanupPending => f.write_str("CleanupPending"),
             Self::Cleaned => f.write_str("Cleaned"),
         }
@@ -552,6 +595,12 @@ enum NamespaceAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionWriteContract {
+    Current,
+    Previous,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CutoverOwnerLookup {
     Retry,
     Present,
@@ -661,17 +710,32 @@ impl MongoSessionStore {
                 .complete_coordination_receipts_provenance(&coordination_receipts_id)
                 .await?;
         }
-
         let collection_ids = store.authoritative_collection_ids().await?;
         validate_migrated_namespace_ids(&cutover_collection_ids, &collection_ids)?;
+        if !namespace_activation_in_progress {
+            // A completed activation marker is the authority for the protected
+            // UUIDs. Verify it before the session validator can be changed.
+            store
+                .verify_coordination_activation(&collection_ids)
+                .await?;
+        }
         store.verify_coordinated_namespaces().await?;
         store
             .verify_coordination_receipts_provenance_ids(&collection_ids)
             .await?;
         store
-            .verify_collection_contracts(Some(&collection_ids))
+            .verify_non_session_collection_contracts(Some(&collection_ids))
             .await?;
         store.verify_required_indexes().await?;
+        store
+            .ensure_session_write_protocol(
+                coordination_cutover_confirmed,
+                required_activation_uuid(&collection_ids, SESSIONS)?,
+            )
+            .await?;
+        store
+            .verify_collection_contracts(Some(&collection_ids))
+            .await?;
         store.validate_coordination_receipts().await?;
         let snapshot = store.validate_post_fence_state().await?;
         if namespace_activation_in_progress {
@@ -982,8 +1046,13 @@ impl MongoSessionStore {
         let sessions = self
             .namespace_pair(PRE_COORDINATION_SESSIONS, SESSIONS)
             .await?;
-        if next_namespace_action(&sessions, PRE_COORDINATION_SESSIONS, SESSIONS)?
-            != NamespaceAction::Ready
+        // This check owns only the immutable view topology. The exact session
+        // validator is classified separately after every protected UUID and
+        // non-session contract has been verified, so a legitimate predecessor
+        // reaches its explicit drain gate and an unknown contract fails closed
+        // without being mistaken for an incomplete namespace migration.
+        if !namespace_is_empty_view(sessions.legacy.as_ref(), SESSIONS)
+            || !matches!(sessions.authoritative, Some(NamespaceKind::Collection))
         {
             return Err(StoreError::Unavailable(format!(
                 "MongoDB pre-coordination namespace {PRE_COORDINATION_SESSIONS} is no longer a read-only view of {SESSIONS}"
@@ -2027,7 +2096,7 @@ impl MongoSessionStore {
                     "MongoDB cutover session cursor in {collection}: {error}"
                 ))
             })? {
-                let (id, tail) = validate_stored_session_document(&document)?;
+                let (id, tail) = validate_compatible_stored_session_document(&document)?;
                 tails
                     .entry(id)
                     .and_modify(|existing| *existing = (*existing).max(tail))
@@ -2143,7 +2212,6 @@ impl MongoSessionStore {
         Ok(())
     }
 
-    #[cfg(test)]
     async fn install_session_protocol_validator(&self) -> Result<(), StoreError> {
         self.install_protocol_validator(SESSIONS, session_protocol_validator())
             .await
@@ -2224,6 +2292,82 @@ impl MongoSessionStore {
         Ok(())
     }
 
+    async fn migrate_previous_session_write_protocol(&self) -> Result<(), StoreError> {
+        self.sessions
+            .clone_with_type::<Document>()
+            .update_many(
+                previous_session_protocol_filter(),
+                session_write_protocol_migration_update(),
+            )
+            .with_options(
+                UpdateOptions::builder()
+                    .upsert(false)
+                    .write_concern(WriteConcern::majority())
+                    .build(),
+            )
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "migrate MongoDB sessions to write protocol {SESSION_WRITE_PROTOCOL}: {error}"
+                ))
+            })?;
+
+        let stale = self
+            .sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "$nor": [current_session_protocol_filter()] })
+            .projection(doc! { "_id": 1 })
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!(
+                    "audit MongoDB session write protocol migration: {error}"
+                ))
+            })?;
+        if let Some(stale) = stale {
+            return Err(StoreError::Unavailable(format!(
+                "MongoDB session {} did not reach write protocol {SESSION_WRITE_PROTOCOL} and coordination protocol {SESSION_COORDINATION_PROTOCOL}",
+                stale
+                    .get_str("_id")
+                    .unwrap_or("<invalid session identity>")
+            )));
+        }
+        Ok(())
+    }
+
+    /// Fence whole-document predecessors before promoting existing rows.
+    ///
+    /// Installing the final validator first makes a crash resumable and rejects
+    /// protocol-1 session replacements before any row claims protocol 2. A
+    /// pristine activation already installed that validator; an existing
+    /// protocol-3 deployment requires the same explicit offline drain used for
+    /// coordination activation because rejecting a still-running predecessor
+    /// would otherwise interrupt its sessions.
+    async fn ensure_session_write_protocol(
+        &self,
+        coordination_cutover_confirmed: bool,
+        expected_uuid: &Binary,
+    ) -> Result<(), StoreError> {
+        let contracts = self.collection_contracts().await?;
+        let session = contracts.get(SESSIONS).ok_or_else(|| {
+            StoreError::Unavailable(format!(
+                "authoritative MongoDB collection {SESSIONS} is missing"
+            ))
+        })?;
+        match classify_session_write_contract(session, expected_uuid)? {
+            SessionWriteContract::Current => {}
+            SessionWriteContract::Previous => {
+                if !coordination_cutover_confirmed {
+                    return Err(StoreError::Unavailable(
+                        "MongoDB session write protocol 2 requires an offline writer drain: stop every older CMA process, wait for its MongoDB and external operations to finish, then start exactly one replacement with CHRONO_MONGODB_COORDINATION_CUTOVER=drained"
+                            .into(),
+                    ));
+                }
+                self.install_session_protocol_validator().await?;
+            }
+        }
+        self.migrate_previous_session_write_protocol().await
+    }
+
     async fn collection_contracts(
         &self,
     ) -> Result<BTreeMap<String, CollectionContract>, StoreError> {
@@ -2278,6 +2422,29 @@ impl MongoSessionStore {
     ) -> Result<(), StoreError> {
         let contracts = self.collection_contracts().await?;
         for collection in AUTHORITATIVE_COLLECTIONS {
+            let contract = contracts.get(collection).ok_or_else(|| {
+                StoreError::Unavailable(format!(
+                    "authoritative MongoDB collection {collection} is missing"
+                ))
+            })?;
+            validate_collection_contract(
+                collection,
+                contract,
+                expected_ids.and_then(|ids| ids.get(collection)),
+            )?;
+        }
+        Ok(())
+    }
+
+    async fn verify_non_session_collection_contracts(
+        &self,
+        expected_ids: Option<&BTreeMap<String, Binary>>,
+    ) -> Result<(), StoreError> {
+        let contracts = self.collection_contracts().await?;
+        for collection in AUTHORITATIVE_COLLECTIONS
+            .into_iter()
+            .filter(|collection| *collection != SESSIONS)
+        {
             let contract = contracts.get(collection).ok_or_else(|| {
                 StoreError::Unavailable(format!(
                     "authoritative MongoDB collection {collection} is missing"
@@ -2677,6 +2844,36 @@ fn validate_collection_contract_against(
     Ok(())
 }
 
+fn classify_session_write_contract(
+    actual: &CollectionContract,
+    expected_uuid: &Binary,
+) -> Result<SessionWriteContract, StoreError> {
+    if validate_collection_contract_against(
+        SESSIONS,
+        actual,
+        &session_protocol_validator(),
+        Some(expected_uuid),
+    )
+    .is_ok()
+    {
+        return Ok(SessionWriteContract::Current);
+    }
+    if validate_collection_contract_against(
+        SESSIONS,
+        actual,
+        &previous_session_protocol_validator(),
+        Some(expected_uuid),
+    )
+    .is_ok()
+    {
+        return Ok(SessionWriteContract::Previous);
+    }
+    Err(StoreError::Unavailable(
+        "authoritative MongoDB session collection is neither the exact current nor previous write-protocol contract; refusing to replace an unknown validator"
+            .into(),
+    ))
+}
+
 fn documents_equivalent(left: &Document, right: &Document) -> bool {
     left.len() == right.len()
         && left.iter().all(|(key, left)| {
@@ -2716,25 +2913,25 @@ fn required_indexes() -> Vec<RequiredIndex> {
         },
         RequiredIndex {
             collection: SESSIONS,
-            name: "owner_1_created_at_-1__id_-1",
+            name: OWNER_SESSION_PAGE_INDEX,
             keys: doc! { "owner": 1, "created_at": -1, "_id": -1 },
             unique: false,
         },
         RequiredIndex {
             collection: SESSIONS,
-            name: "owner_1_status_1_created_at_-1__id_-1",
+            name: OWNER_STATUS_SESSION_PAGE_INDEX,
             keys: doc! { "owner": 1, "status": 1, "created_at": -1, "_id": -1 },
             unique: false,
         },
         RequiredIndex {
             collection: SESSIONS,
-            name: "created_at_-1__id_-1",
+            name: ALL_SESSION_PAGE_INDEX,
             keys: doc! { "created_at": -1, "_id": -1 },
             unique: false,
         },
         RequiredIndex {
             collection: SESSIONS,
-            name: "status_1_created_at_-1__id_-1",
+            name: STATUS_SESSION_PAGE_INDEX,
             keys: doc! { "status": 1, "created_at": -1, "_id": -1 },
             unique: false,
         },
@@ -3838,19 +4035,36 @@ fn protocol_validator(mut required: Vec<&str>, long_fields: &[&str]) -> Document
 }
 
 fn session_protocol_validator() -> Document {
-    session_protocol_validator_for(SESSION_COORDINATION_PROTOCOL)
+    session_protocol_validator_for(SESSION_WRITE_PROTOCOL, SESSION_COORDINATION_PROTOCOL)
 }
 
 #[cfg(test)]
 fn legacy_session_protocol_validator() -> Document {
-    session_protocol_validator_for(LEGACY_SESSION_COORDINATION_PROTOCOL)
+    session_protocol_validator_for(WRITE_PROTOCOL, LEGACY_SESSION_COORDINATION_PROTOCOL)
 }
 
-fn session_protocol_validator_for(protocol: i32) -> Document {
-    coordination_protocol_validator(
+fn previous_session_protocol_validator() -> Document {
+    session_protocol_validator_for(WRITE_PROTOCOL, SESSION_COORDINATION_PROTOCOL)
+}
+
+fn session_protocol_validator_for(write_protocol: i32, coordination_protocol: i32) -> Document {
+    let mut validator = coordination_protocol_validator(
         protocol_validator(vec!["revision", COORDINATION_PROTOCOL_FIELD], &["revision"]),
-        &[protocol],
-    )
+        &[coordination_protocol],
+    );
+    validator
+        .get_document_mut("$jsonSchema")
+        .expect("the protocol validator has a JSON schema")
+        .get_document_mut("properties")
+        .expect("the protocol validator has properties")
+        .insert(
+            WRITE_PROTOCOL_FIELD,
+            Bson::Document(doc! {
+                "bsonType": "int",
+                "enum": [write_protocol],
+            }),
+        );
+    validator
 }
 
 fn pre_coordination_session_protocol_validator() -> Document {
@@ -3944,16 +4158,31 @@ fn coordination_protocol_validator(mut validator: Document, protocols: &[i32]) -
 
 fn current_session_protocol_filter() -> Document {
     doc! {
-        WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+        WRITE_PROTOCOL_FIELD: SESSION_WRITE_PROTOCOL,
         COORDINATION_PROTOCOL_FIELD: SESSION_COORDINATION_PROTOCOL,
         "revision": { "$type": "long" },
     }
 }
 
+fn previous_session_protocol_filter() -> Document {
+    doc! {
+        WRITE_PROTOCOL_FIELD: { "$eq": WRITE_PROTOCOL, "$type": "int" },
+        COORDINATION_PROTOCOL_FIELD: {
+            "$eq": SESSION_COORDINATION_PROTOCOL,
+            "$type": "int",
+        },
+        "revision": { "$type": "long" },
+    }
+}
+
+fn session_write_protocol_migration_update() -> Document {
+    doc! { "$set": { WRITE_PROTOCOL_FIELD: SESSION_WRITE_PROTOCOL } }
+}
+
 fn session_protocol_migration_update() -> Document {
     doc! {
         "$set": {
-            WRITE_PROTOCOL_FIELD: WRITE_PROTOCOL,
+            WRITE_PROTOCOL_FIELD: SESSION_WRITE_PROTOCOL,
             COORDINATION_PROTOCOL_FIELD: SESSION_COORDINATION_PROTOCOL,
         },
         "$max": { "revision": 0_i64 },
@@ -3962,7 +4191,7 @@ fn session_protocol_migration_update() -> Document {
 
 fn appended_event_session_update(record: &Document, tail: i64) -> Document {
     let mut set = Document::new();
-    set.insert(WRITE_PROTOCOL_FIELD, WRITE_PROTOCOL);
+    set.insert(WRITE_PROTOCOL_FIELD, SESSION_WRITE_PROTOCOL);
     set.insert(COORDINATION_PROTOCOL_FIELD, SESSION_COORDINATION_PROTOCOL);
     if !record.contains_key("revision") {
         // The first write touching a pre-revision record gives its absent
@@ -4009,7 +4238,10 @@ impl StoredEventSequence {
     }
 }
 
-fn validate_stored_session_document(document: &Document) -> Result<(String, u64), StoreError> {
+fn validate_stored_session_identity_and_tail(
+    document: &Document,
+    revision_required: bool,
+) -> Result<(String, u64), StoreError> {
     let id = document
         .get_str("_id")
         .map(str::to_owned)
@@ -4030,7 +4262,12 @@ fn validate_stored_session_document(document: &Document) -> Result<(String, u64)
             })
         })?;
     match document.get("revision") {
-        None => {}
+        None if !revision_required => {}
+        None => {
+            return Err(StoreError::Malformed(format!(
+                "session {id} revision is absent"
+            )))
+        }
         Some(Bson::Int64(revision)) if *revision >= 0 => {}
         Some(Bson::Int64(_)) => {
             return Err(StoreError::Malformed(format!(
@@ -4043,12 +4280,46 @@ fn validate_stored_session_document(document: &Document) -> Result<(String, u64)
             )))
         }
     }
-    if let Some(protocol) = document.get(WRITE_PROTOCOL_FIELD) {
-        if protocol != &Bson::Int32(WRITE_PROTOCOL) {
+    Ok((id, tail))
+}
+
+fn validate_compatible_stored_session_document(
+    document: &Document,
+) -> Result<(String, u64), StoreError> {
+    let (id, tail) = validate_stored_session_identity_and_tail(document, false)?;
+    match document.get(WRITE_PROTOCOL_FIELD) {
+        None | Some(Bson::Int32(WRITE_PROTOCOL)) => {}
+        Some(_) => {
             return Err(StoreError::Malformed(format!(
-                "session {id} carries an unknown write protocol"
-            )));
+                "session {id} carries an unknown compatibility write protocol"
+            )))
         }
+    }
+    match document.get(COORDINATION_PROTOCOL_FIELD) {
+        None | Some(Bson::Int32(SESSION_COORDINATION_PROTOCOL)) => {}
+        Some(_) => {
+            return Err(StoreError::Malformed(format!(
+                "session {id} carries an unknown compatibility coordination protocol"
+            )))
+        }
+    }
+    // Validate the exact payload that migration will retain, with only the
+    // legacy protocol markers promoted to their current fenced values.
+    let mut promoted = document.clone();
+    promoted.insert(WRITE_PROTOCOL_FIELD, SESSION_WRITE_PROTOCOL);
+    promoted.insert(COORDINATION_PROTOCOL_FIELD, SESSION_COORDINATION_PROTOCOL);
+    let stored: SessionDoc = mongodb::bson::deserialize_from_document(promoted)
+        .map_err(|error| StoreError::Malformed(format!("session {id}: {error}")))?;
+    from_doc(stored)?;
+    Ok((id, tail))
+}
+
+fn validate_stored_session_document(document: &Document) -> Result<(String, u64), StoreError> {
+    let (id, tail) = validate_stored_session_identity_and_tail(document, true)?;
+    if document.get(WRITE_PROTOCOL_FIELD) != Some(&Bson::Int32(SESSION_WRITE_PROTOCOL)) {
+        return Err(StoreError::Malformed(format!(
+            "session {id} does not carry the current write protocol"
+        )));
     }
     let stored: SessionDoc = mongodb::bson::deserialize_from_document(document.clone())
         .map_err(|error| StoreError::Malformed(format!("session {id}: {error}")))?;
@@ -4276,33 +4547,53 @@ fn stored_event_cursor(after: u64) -> Option<i64> {
     i64::try_from(after).ok()
 }
 
-fn skill_pack_state_to_doc(state: &SkillPackState) -> Option<SkillPackStateDoc> {
-    match state {
+fn skill_pack_state_to_doc(
+    state: &SkillPackState,
+) -> Result<Option<SkillPackStateDoc>, StoreError> {
+    Ok(match state {
         SkillPackState::Legacy => None,
         SkillPackState::Staged(packs) => Some(SkillPackStateDoc::Staged {
-            packs: packs
-                .iter()
-                .map(|pack| SkillPackDoc {
-                    name: pack.name.clone(),
-                    version: pack.version.clone(),
-                    files: pack
-                        .files
-                        .iter()
-                        .map(|(path, body)| SkillPackFileDoc {
-                            path: path.clone(),
-                            body: Binary {
-                                subtype: mongodb::bson::spec::BinarySubtype::Generic,
-                                bytes: body.clone(),
-                            },
-                        })
-                        .collect(),
-                })
-                .collect(),
+            packs: skill_packs_to_docs(packs),
         }),
-        SkillPackState::Stored => Some(SkillPackStateDoc::Stored),
+        SkillPackState::LegacyHandover {
+            source_runtime_id,
+            source_generation,
+            packs,
+            stored_digest,
+        } => {
+            if source_runtime_id.is_empty() {
+                return Err(StoreError::Malformed(
+                    "a legacy skill handover has no exact source runtime".into(),
+                ));
+            }
+            if stored_digest.is_some_and(|digest| SkillPackDigest::for_packs(packs) != digest) {
+                return Err(StoreError::Malformed(
+                    "a legacy skill handover receipt does not match its exact bytes".into(),
+                ));
+            }
+            Some(SkillPackStateDoc::LegacyHandover {
+                source_runtime_id: source_runtime_id.clone(),
+                source_generation: i64::try_from(*source_generation).map_err(|_| {
+                    StoreError::Malformed(format!(
+                        "legacy skill handover generation {source_generation} cannot be stored"
+                    ))
+                })?,
+                packs: skill_packs_to_docs(packs),
+                stored_digest: stored_digest.map(skill_pack_digest_to_binary),
+            })
+        }
+        SkillPackState::StagedSummary => {
+            return Err(StoreError::Malformed(
+                "a projected staged skill summary cannot be persisted; reload the exact session"
+                    .into(),
+            ))
+        }
+        SkillPackState::Stored { digest } => Some(SkillPackStateDoc::Stored {
+            digest: skill_pack_digest_to_binary(*digest),
+        }),
         SkillPackState::CleanupPending => Some(SkillPackStateDoc::CleanupPending),
         SkillPackState::Cleaned => Some(SkillPackStateDoc::Cleaned),
-    }
+    })
 }
 
 fn skill_pack_state_from_doc(
@@ -4310,43 +4601,134 @@ fn skill_pack_state_from_doc(
 ) -> Result<SkillPackState, StoreError> {
     match state {
         None => Ok(SkillPackState::Legacy),
-        Some(SkillPackStateDoc::Staged { packs }) => Ok(SkillPackState::Staged(
-            packs
-                .into_iter()
-                .map(|pack| {
-                    let files = pack
-                        .files
-                        .into_iter()
-                        .map(|file| {
-                            if file.body.subtype != mongodb::bson::spec::BinarySubtype::Generic {
-                                return Err(StoreError::Malformed(format!(
-                                    "staged skill file {} is not generic binary data",
-                                    file.path
-                                )));
-                            }
-                            Ok((file.path, file.body.bytes))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    Ok(SkillPack {
-                        name: pack.name,
-                        version: pack.version,
-                        files,
-                    })
-                })
-                .collect::<Result<Vec<_>, StoreError>>()?,
+        Some(SkillPackStateDoc::Staged { packs }) => {
+            Ok(SkillPackState::Staged(skill_packs_from_docs(packs)?))
+        }
+        Some(SkillPackStateDoc::LegacyHandover {
+            source_runtime_id,
+            source_generation,
+            packs,
+            stored_digest,
+        }) => {
+            if source_runtime_id.is_empty() {
+                return Err(StoreError::Malformed(
+                    "a legacy skill handover has no exact source runtime".into(),
+                ));
+            }
+            let source_generation = u64::try_from(source_generation).map_err(|_| {
+                StoreError::Malformed(
+                    "a legacy skill handover generation must not be negative".into(),
+                )
+            })?;
+            let packs = skill_packs_from_docs(packs)?;
+            let stored_digest = stored_digest
+                .map(|digest| skill_pack_digest_from_binary(digest, "legacy handover"))
+                .transpose()?;
+            if stored_digest.is_some_and(|digest| SkillPackDigest::for_packs(&packs) != digest) {
+                return Err(StoreError::Malformed(
+                    "a legacy skill handover receipt does not match its exact bytes".into(),
+                ));
+            }
+            Ok(SkillPackState::LegacyHandover {
+                source_runtime_id,
+                source_generation,
+                packs,
+                stored_digest,
+            })
+        }
+        Some(SkillPackStateDoc::StagedSummary) => Err(StoreError::Malformed(
+            "an authoritative session contains a listing-only staged skill summary".into(),
         )),
-        Some(SkillPackStateDoc::Stored) => Ok(SkillPackState::Stored),
+        Some(SkillPackStateDoc::Stored { digest }) => Ok(SkillPackState::Stored {
+            digest: skill_pack_digest_from_binary(digest, "stored skill pack")?,
+        }),
         Some(SkillPackStateDoc::CleanupPending) => Ok(SkillPackState::CleanupPending),
         Some(SkillPackStateDoc::Cleaned) => Ok(SkillPackState::Cleaned),
     }
 }
 
+fn skill_packs_to_docs(packs: &[SkillPack]) -> Vec<SkillPackDoc> {
+    packs
+        .iter()
+        .map(|pack| SkillPackDoc {
+            name: pack.name.clone(),
+            version: pack.version.clone(),
+            files: pack
+                .files
+                .iter()
+                .map(|(path, body)| SkillPackFileDoc {
+                    path: path.clone(),
+                    body: Binary {
+                        subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                        bytes: body.clone(),
+                    },
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn skill_packs_from_docs(packs: Vec<SkillPackDoc>) -> Result<Vec<SkillPack>, StoreError> {
+    let packs = packs
+        .into_iter()
+        .map(|pack| {
+            let files = pack
+                .files
+                .into_iter()
+                .map(|file| {
+                    if file.body.subtype != mongodb::bson::spec::BinarySubtype::Generic {
+                        return Err(StoreError::Malformed(format!(
+                            "skill file {} is not generic binary data",
+                            file.path
+                        )));
+                    }
+                    Ok((file.path, file.body.bytes))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(SkillPack {
+                name: pack.name,
+                version: pack.version,
+                files,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    layer2_core::store::validate_skill_packs(&packs).map_err(|error| {
+        StoreError::Malformed(format!(
+            "invalid inline skill packs in session BSON: {error}"
+        ))
+    })?;
+    Ok(packs)
+}
+
+fn skill_pack_digest_to_binary(digest: SkillPackDigest) -> Binary {
+    Binary {
+        subtype: mongodb::bson::spec::BinarySubtype::Generic,
+        bytes: digest.as_bytes().to_vec(),
+    }
+}
+
+fn skill_pack_digest_from_binary(
+    digest: Binary,
+    description: &str,
+) -> Result<SkillPackDigest, StoreError> {
+    if digest.subtype != mongodb::bson::spec::BinarySubtype::Generic {
+        return Err(StoreError::Malformed(format!(
+            "{description} digest is not generic binary data"
+        )));
+    }
+    SkillPackDigest::from_slice(&digest.bytes)
+        .ok_or_else(|| StoreError::Malformed(format!("{description} digest must be 32 bytes")))
+}
+
 fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
     let s = &r.session;
-    let contains_staged_skills = matches!(&r.skill_packs, SkillPackState::Staged(_));
+    let contains_staged_skills = matches!(
+        &r.skill_packs,
+        SkillPackState::Staged(_) | SkillPackState::LegacyHandover { .. }
+    );
     let document = SessionDoc {
         id: s.id.0.clone(),
-        write_protocol: WRITE_PROTOCOL,
+        write_protocol: SESSION_WRITE_PROTOCOL,
         coordination_protocol: SESSION_COORDINATION_PROTOCOL,
         owner: s.owner.0.clone(),
         kernel: s.kernel.0.clone(),
@@ -4374,7 +4756,7 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         context_ref: r.context_ref.clone(),
         rotation_claim: r.rotation_claim.clone(),
         pending_handover: r.pending_handover.clone(),
-        skill_packs: skill_pack_state_to_doc(&r.skill_packs),
+        skill_packs: skill_pack_state_to_doc(&r.skill_packs)?,
         runtime_version: s.runtime_version.clone(),
         rotations: Some(i64::from(s.rotations)),
         rotated_at: s.rotated_at.clone(),
@@ -4607,13 +4989,27 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
     validate_coordination_state(&d)?;
     let geometry = TerminalGeometry::new(d.columns as u16, d.rows as u16)
         .map_err(|e| StoreError::Malformed(e.to_string()))?;
+    let status: layer2_core::SessionStatus = parse_plain(&d.status)?;
     let skill_packs = skill_pack_state_from_doc(d.skill_packs)?;
+    if status.is_interactive()
+        && matches!(
+            &skill_packs,
+            SkillPackState::LegacyHandover {
+                source_runtime_id,
+                ..
+            } if d.runtime_id.as_deref() != Some(source_runtime_id.as_str())
+        )
+    {
+        return Err(StoreError::Malformed(
+            "an interactive legacy skill handover does not belong to its current runtime".into(),
+        ));
+    }
     Ok(SessionRecord {
         session: Session {
             id: SessionId(d.id),
             owner: SubjectId(d.owner),
             kernel: layer2_core::KernelId::new(d.kernel),
-            status: parse_plain(&d.status)?,
+            status,
             recovery_state: parse_plain(&d.recovery_state)?,
             stop_reason: match d.stop_reason {
                 Some(v) => Some(parse_plain(&v)?),
@@ -4654,6 +5050,24 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
     })
 }
 
+/// Decode a bounded listing row whose staged bytes were intentionally removed.
+///
+/// Every other custody shape still goes through the exact decoder. In
+/// particular, stored receipts retain and validate their digest. The summary
+/// is restored only after the remaining authoritative document has decoded,
+/// so it cannot hide a malformed session field.
+fn from_list_doc(mut d: SessionDoc) -> Result<SessionRecord, StoreError> {
+    let staged_summary = matches!(d.skill_packs, Some(SkillPackStateDoc::StagedSummary));
+    if staged_summary {
+        d.skill_packs = None;
+    }
+    let mut record = from_doc(d)?;
+    if staged_summary {
+        record.skill_packs = SkillPackState::StagedSummary;
+    }
+    Ok(record)
+}
+
 #[async_trait::async_trait]
 impl SessionStore for MongoSessionStore {
     async fn ping(&self) -> Result<(), StoreError> {
@@ -4667,12 +5081,22 @@ impl SessionStore for MongoSessionStore {
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        Ok(self
-            .query(doc! { "_id": &id.0 }, &SessionListQuery::default())
-            .await?
-            .items
-            .into_iter()
-            .next())
+        let mut cursor = self
+            .sessions
+            .aggregate(exact_session_pipeline(id))
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("read exact session record: {error}"))
+            })?;
+        let found = cursor.try_next().await.map_err(|error| {
+            StoreError::Unavailable(format!("read exact session record cursor: {error}"))
+        })?;
+        found
+            .map(mongodb::bson::deserialize_from_document)
+            .transpose()
+            .map_err(|error| StoreError::Malformed(format!("session document: {error}")))?
+            .map(from_doc)
+            .transpose()
     }
 
     async fn runtime_authority(
@@ -4681,12 +5105,17 @@ impl SessionStore for MongoSessionStore {
     ) -> Result<Option<RuntimeAuthority>, StoreError> {
         let stored = self
             .sessions
+            .clone_with_type::<RuntimeAuthorityProjectionDoc>()
             .find_one(doc! { "_id": &id.0 })
+            .projection(runtime_authority_projection())
             .await
             .map_err(|error| {
                 StoreError::Unavailable(format!("read MongoDB runtime authority: {error}"))
             })?;
-        stored.as_ref().map(runtime_authority_from_doc).transpose()
+        stored
+            .as_ref()
+            .map(runtime_authority_from_projection)
+            .transpose()
     }
 
     async fn acquire_session_lease(
@@ -5573,6 +6002,13 @@ impl MongoSessionStore {
                                     },
                                 ));
                             }
+                            let skill_packs = skill_pack_state_from_doc(stored.skill_packs.clone())
+                                .map_err(mongodb::error::Error::custom)?;
+                            if skill_packs != SkillPackState::Cleaned {
+                                return Err(mongodb::error::Error::custom(
+                                    StoreError::SessionSkillCleanupPending { id: id.clone() },
+                                ));
+                            }
                         } else if cleanup_debts != 0 {
                             return Err(mongodb::error::Error::custom(
                                 StoreError::SessionCleanupPending {
@@ -5663,9 +6099,11 @@ impl MongoSessionStore {
         filter: Document,
         query: &SessionListQuery,
     ) -> Result<Page<SessionRecord>, StoreError> {
+        let hint = session_page_hint(&filter, query)?;
         let mut cursor = self
             .sessions
             .aggregate(session_page_pipeline(filter, query)?)
+            .hint(hint)
             .await
             .map_err(|e| StoreError::Unavailable(format!("list: {e}")))?;
         let mut out = Vec::new();
@@ -5676,7 +6114,7 @@ impl MongoSessionStore {
         {
             let stored = mongodb::bson::deserialize_from_document(d)
                 .map_err(|e| StoreError::Malformed(format!("session document: {e}")))?;
-            out.push(from_doc(stored)?);
+            out.push(from_list_doc(stored)?);
         }
         let has_more = out.len() > query.page.limit() as usize;
         if has_more {
@@ -5708,13 +6146,66 @@ fn session_page_fetch_limit(query: &SessionListQuery) -> i64 {
     i64::from(query.page.limit().saturating_add(1))
 }
 
+fn session_page_hint(filter: &Document, query: &SessionListQuery) -> Result<Hint, StoreError> {
+    let owner_scoped = match filter.len() {
+        0 => false,
+        1 if filter.get_str("owner").is_ok() => true,
+        _ => {
+            return Err(StoreError::Malformed(
+                "session listing has an unsupported base filter for its required index".into(),
+            ))
+        }
+    };
+    let index = match (owner_scoped, query.status.is_some()) {
+        (true, true) => OWNER_STATUS_SESSION_PAGE_INDEX,
+        (true, false) => OWNER_SESSION_PAGE_INDEX,
+        (false, true) => STATUS_SESSION_PAGE_INDEX,
+        (false, false) => ALL_SESSION_PAGE_INDEX,
+    };
+    Ok(Hint::Name(index.to_owned()))
+}
+
 fn session_page_pipeline(
     filter: Document,
     query: &SessionListQuery,
 ) -> Result<Vec<Document>, StoreError> {
     let mut pipeline = visible_sessions_pipeline(session_page_filter(filter, query)?);
+    // Redact before the tombstone join. A page can ask Mongo for 201 rows and
+    // each exact staged row may approach 4 MiB; no later pipeline stage or
+    // client cursor should ever retain those bodies for a listing.
+    pipeline.insert(2, staged_skill_summary_stage());
     pipeline.push(doc! { "$limit": session_page_fetch_limit(query) });
     Ok(pipeline)
+}
+
+fn exact_session_pipeline(id: &SessionId) -> Vec<Document> {
+    let mut pipeline = visible_sessions_pipeline(doc! { "_id": &id.0 });
+    pipeline.push(doc! { "$limit": 1_i64 });
+    pipeline
+}
+
+fn runtime_authority_projection() -> Document {
+    doc! {
+        "_id": 1_i32,
+        WRITE_PROTOCOL_FIELD: 1_i32,
+        COORDINATION_PROTOCOL_FIELD: 1_i32,
+        "runtime_id": 1_i32,
+        "coordination": 1_i32,
+    }
+}
+
+fn staged_skill_summary_stage() -> Document {
+    doc! {
+        "$set": {
+            "skill_packs": {
+                "$cond": [
+                    { "$in": ["$skill_packs.state", ["staged", "legacy_handover"]] },
+                    { "state": "staged_summary" },
+                    "$skill_packs",
+                ]
+            }
+        }
+    }
 }
 
 fn session_page_filter(

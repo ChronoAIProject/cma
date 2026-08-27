@@ -20,8 +20,8 @@ use crate::ids::{SessionId, SubjectId};
 use crate::session::{ProvisioningStage, SessionStatus, StopReason};
 use crate::store::{Page, SessionListQuery, SessionRecord, SessionStore, StoreError};
 use crate::test_support::{
-    await_settled, service_on_version, service_on_version_with_skills, spec,
-    terminal_input_channel, user, FakeAdapter, FakeStore,
+    await_settled, fixture_skill_ports, service_on_version, service_on_version_with_skill_store,
+    service_on_version_with_skills, spec, terminal_input_channel, user, FakeAdapter, FakeStore,
 };
 use crate::{
     ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
@@ -512,7 +512,6 @@ async fn failed_handover_upload_drains_admitted_input_and_leaves_h1_usable() {
     let before = store.inner.get(&created.id).await.unwrap().unwrap();
     let h1 = before.runtime_id.clone().expect("H1 is durable");
     let provisions_before = adapter.provision_calls.load(Ordering::SeqCst);
-    let input_gate = svc.input_gates.gate(&created.id);
 
     adapter.pause_next_terminal_input();
     let admitted = tokio::spawn({
@@ -543,14 +542,14 @@ async fn failed_handover_upload_drains_admitted_input_and_leaves_h1_usable() {
                 0,
                 "the snapshot must wait for already admitted input"
             );
-            if input_gate.try_read().is_err() {
+            if svc.starting.read().await.contains(&created.id) {
                 break;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("the handover queues behind admitted input");
+    .expect("the handover claims the session behind admitted input");
 
     adapter.resume_terminal_input();
     admitted
@@ -2094,7 +2093,6 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
     let adapter = switch_capable();
     let (svc, alice, created, _) =
         started_adversarial(Arc::clone(&store), Arc::clone(&adapter)).await;
-    let input_gate = svc.input_gates.gate(&created.id);
     let (outgoing_input, mut outgoing_runtime) = terminal_input_channel(1);
     outgoing_input
         .send(TerminalInput::Signal("already queued".into()))
@@ -2145,14 +2143,14 @@ async fn a_real_rotation_window_never_delivers_input_to_the_outgoing_runtime() {
                 0,
                 "rotation must wait for accepted input before publishing Rotating"
             );
-            if input_gate.try_read().is_err() {
+            if svc.starting.read().await.contains(&created.id) {
                 break;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("rotation queues behind the accepted input");
+    .expect("rotation claims the session behind the accepted input");
     assert_eq!(
         adapter.snapshot_calls.load(Ordering::SeqCst),
         0,
@@ -3393,12 +3391,14 @@ async fn a_rotation_replays_staged_skills_without_refetching_them() {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
     let alice = user("alice");
+    let (_, skill_packs) = fixture_skill_ports(&store);
 
-    let first = service_on_version_with_skills(
+    let first = service_on_version_with_skill_store(
         Arc::clone(&store),
         Arc::clone(&adapter),
         "runtime:1",
         Arc::new(WorkingSkills),
+        Arc::clone(&skill_packs),
     );
     let session = first.create_session(&alice, spec()).await.expect("created");
     await_settled(&first, &alice, &session.id).await;
@@ -3419,11 +3419,12 @@ async fn a_rotation_replays_staged_skills_without_refetching_them() {
         "a session that got its skills should say so"
     );
 
-    let newer = service_on_version_with_skills(
+    let newer = service_on_version_with_skill_store(
         Arc::clone(&store),
         Arc::clone(&adapter),
         "runtime:2",
         Arc::new(RefusingSkills),
+        skill_packs,
     );
     newer.reconcile().await;
     await_usable(&newer, &alice, &session.id).await;
@@ -3450,21 +3451,24 @@ async fn a_rotation_that_keeps_its_skills_keeps_them_in_the_record() {
     let store = Arc::new(FakeStore::default());
     let adapter = Arc::new(FakeAdapter::default());
     let alice = user("alice");
+    let (_, skill_packs) = fixture_skill_ports(&store);
 
-    let first = service_on_version_with_skills(
+    let first = service_on_version_with_skill_store(
         Arc::clone(&store),
         Arc::clone(&adapter),
         "runtime:1",
         Arc::new(WorkingSkills),
+        Arc::clone(&skill_packs),
     );
     let session = first.create_session(&alice, spec()).await.expect("created");
     await_settled(&first, &alice, &session.id).await;
 
-    let newer = service_on_version_with_skills(
+    let newer = service_on_version_with_skill_store(
         Arc::clone(&store),
         Arc::clone(&adapter),
         "runtime:2",
         Arc::new(WorkingSkills),
+        skill_packs,
     );
     newer.reconcile().await;
     await_usable(&newer, &alice, &session.id).await;
@@ -3482,6 +3486,6 @@ async fn a_rotation_that_keeps_its_skills_keeps_them_in_the_record() {
                 version: Some("1.0".to_string()),
             }][..]
         ),
-        "a rotation that refetched its skills still has them"
+        "a rotation that replayed its skills still has them"
     );
 }

@@ -122,9 +122,19 @@ impl SessionService {
                     "this session's environment could not be prepared: {e}"
                 ))
             })?;
-        let Some(skills) = self.prepare_skill_packs(session, prepared_skills).await? else {
+        let Some(prepared) = self
+            .prepare_skill_packs(
+                session,
+                &environment.skills,
+                prepared_skills,
+                true,
+                lease.as_ref(),
+            )
+            .await?
+        else {
             return Ok(());
         };
+        let skills = &prepared.packs;
         self.note_progress(&id, ProvisioningStage::RuntimeRequested)
             .await;
         // What the runtime is told, translated once. Some kernels settle how
@@ -617,6 +627,7 @@ impl SessionService {
                 }
             }
         };
+        let ready_claimed = current.clone();
         let mut ready = current;
         ready.session.geometry = geometry;
         ready.session.status = SessionStatus::Ready;
@@ -624,6 +635,15 @@ impl SessionService {
         // `recovering` would be a state a replacement session never leaves.
         ready.session.recovery_state = RecoveryState::Normal;
         ready.session.stop_reason = None;
+        // The grant becomes public in the same commit that makes this exact
+        // runtime interactive. Legacy fallback may legitimately have produced
+        // a different answer; before Ready the session remains noninteractive.
+        ready.session.granted_skills = Some(Self::granted_skills_for(skills));
+        ready.skill_packs = if let Some(digest) = prepared.stored_digest {
+            crate::store::SkillPackState::Stored { digest }
+        } else {
+            crate::store::SkillPackState::Staged(skills.clone())
+        };
         ready.session.runtime_version = match ready.pending_handover.as_ref().map(|pending| {
             &pending.target
         }) {
@@ -668,7 +688,10 @@ impl SessionService {
                 self.complete_handover_durably(&mut ready, &handover.rotating, ready_events)
                     .await
             }
-            None => self.persist_durably(&mut ready, ready_events).await,
+            None => {
+                self.publish_ready_durably(&mut ready, &ready_claimed, ready_events)
+                    .await
+            }
         };
         readiness.map_err(|error| {
             StartFailure::transient(format!(

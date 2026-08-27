@@ -367,9 +367,11 @@ async fn main() {
         "every request is recorded, and entries older than this are removed"
     );
 
-    // Object storage is optional: without it a session still works, but it
-    // cannot persist its transcript, its claim-bound handover snapshot, or the
-    // exact skill bytes installed in a runtime.
+    // Object storage is optional only for sessions that resolve no skill packs.
+    // Without it those sessions still work, but cannot persist a transcript or
+    // claim-bound handover snapshot. A session with packs is refused before its
+    // row is created because its exact private bytes could neither be recovered
+    // nor erased safely.
     //
     // It needs both an address and an identity, and switches off unless both
     // are present. Half a configuration would build a store that authenticates
@@ -411,7 +413,8 @@ async fn main() {
                  CHRONO_STORAGE_CLIENT_ID, CHRONO_STORAGE_CLIENT_SECRET and \
                  CHRONO_CONTEXT_BUCKET are all required. The bucket must already \
                  exist and be owned by this identity — nothing here creates one. \
-                 No other service's credential is valid here."
+                 No other service's credential is valid here. Session creation \
+                 will refuse every resolved nonempty skill-pack set until this is configured."
             );
             None
         }
@@ -419,11 +422,10 @@ async fn main() {
     let context = storage
         .as_ref()
         .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::ContextStore>);
-    let handovers = storage.as_ref().map(|(store, _)| {
-        Arc::clone(store) as Arc<dyn layer2_core::store::HandoverStore>
-    });
-    let skill_packs = storage
-        .map(|(_, store)| store as Arc<dyn layer2_core::SkillPackStore>);
+    let handovers = storage
+        .as_ref()
+        .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::store::HandoverStore>);
+    let skill_packs = storage.map(|(_, store)| store as Arc<dyn layer2_core::SkillPackStore>);
 
     // Built before the service because the service asks it for an owner's
     // credential whenever it has to put a runtime back under a session that
