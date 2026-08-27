@@ -5,9 +5,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    AuthorityProvenance, ConnectionSnapshot, DiffArtifact, EditableField, LaunchId,
-    RepositoryIdentity, TriggerRevision, TriggerValidationError, WorkspaceCheckpoint,
-    WorkspaceManifest,
+    AuthorityProvenance, CheckpointId, ConnectionSnapshot, DiffArtifact, DiffArtifactId,
+    EditableField, LaunchId, RepositoryIdentity, TriggerRevision, TriggerValidationError,
+    WorkspaceCheckpoint, WorkspaceManifest,
 };
 use crate::{PermissionMode, SessionId, SessionSize, SubjectId};
 
@@ -156,11 +156,14 @@ pub enum LaunchEventKind {
     StateChanged { from: LaunchState, to: LaunchState },
     StepChanged { step: LaunchStep },
     Blocked { reason: LaunchBlockedReason },
+    Resumed { reason: LaunchBlockedReason },
     Failure { failure: LaunchFailure },
     EffectReconciled { effect: LaunchEffectKind },
     DeliveryChanged { state: PromptDeliveryState },
     ReachChanged { reach: super::ReachStatus },
     ConfirmationRecorded { action: ConfirmationAction },
+    CleanupPlanned { target_count: usize },
+    CleanupCompleted { target_count: usize },
     Cancelled,
 }
 
@@ -318,7 +321,9 @@ pub enum LaunchEffectResult {
     PullRequest {
         pull_request: super::PullRequestRecord,
     },
-    Cleanup,
+    Cleanup {
+        receipt: CleanupReceipt,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -451,6 +456,39 @@ pub struct PromptDelivery {
     pub updated_at: String,
 }
 
+/// A machine-owned object class that retention cleanup is allowed to delete.
+///
+/// The closed vocabulary is the safety property. It contains no sandbox and
+/// no GitHub fork, branch, commit, pull request, or other provider resource.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CleanupTarget {
+    Baseline,
+    Checkpoint { checkpoint_id: CheckpointId },
+    DiffArtifact { artifact_id: DiffArtifactId },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CleanupPlan {
+    pub retention_policy_id: String,
+    pub delete_after: String,
+    pub targets: Vec<CleanupTarget>,
+    pub planned_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CleanupReceipt {
+    pub targets: Vec<CleanupTarget>,
+    pub completed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CleanupRecord {
+    pub plan: CleanupPlan,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Launch {
     pub schema_version: u32,
@@ -511,6 +549,8 @@ pub struct Launch {
     pub contribution: Option<super::ContributionRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pull_request: Option<super::PullRequestRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<CleanupRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease: Option<WorkerLease>,
     pub fencing_counter: u64,
@@ -573,6 +613,7 @@ impl Launch {
             diff: None,
             contribution: None,
             pull_request: None,
+            cleanup: None,
             lease: None,
             fencing_counter: 0,
             revision_number: 0,
@@ -812,6 +853,9 @@ impl Launch {
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
+        if self.blocked_reason == Some(reason) {
+            return Ok(());
+        }
         self.blocked_reason = Some(reason);
         self.updated_at = now.into();
         self.push_event(
@@ -819,6 +863,36 @@ impl Launch {
             correlation_id,
             LaunchEventKind::Blocked { reason },
         )
+    }
+
+    /// Resume Trigger orchestration after the deployment-owned pause clears.
+    /// The session and its reach are not restarted or recreated by this action.
+    pub fn resume_feature_pause(
+        &mut self,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<bool, TriggerValidationError> {
+        if self.blocked_reason != Some(LaunchBlockedReason::FeaturePaused) {
+            return Ok(false);
+        }
+        self.blocked_reason = None;
+        if self
+            .failure
+            .as_ref()
+            .is_some_and(|failure| failure.class == FailureClass::FeaturePaused)
+        {
+            self.failure = None;
+        }
+        let now = now.into();
+        self.updated_at = now.clone();
+        self.push_event(
+            now,
+            correlation_id,
+            LaunchEventKind::Resumed {
+                reason: LaunchBlockedReason::FeaturePaused,
+            },
+        )?;
+        Ok(true)
     }
 
     pub fn fail(

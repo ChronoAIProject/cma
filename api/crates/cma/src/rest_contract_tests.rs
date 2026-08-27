@@ -1397,6 +1397,7 @@ fn test_surface(authenticated: bool) -> TestSurface {
             activity: Arc::clone(&activity),
             users,
             settings,
+            triggers: None,
         }),
     );
     let app = Router::new()

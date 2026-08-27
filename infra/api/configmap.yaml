@@ -128,6 +128,31 @@ data:
   # same machine-identity-owned bucket under CMA's subject/Launch-scoped object
   # prefix; changing either policy does not implicitly change this selection.
   CHRONO_TRIGGER_WORKSPACE_BUCKET: "chrono-platform-bot"
+  # GitHub Trigger rollout is deployment-owned and starts fail-closed. Enabling
+  # the environment alone is insufficient: the publisher and numeric upstream
+  # repository must both be allowlisted, the deterministic user cohort must be
+  # non-zero, and orchestration must be unpaused. The capability kill switch is
+  # independent so disabling admission still converges existing delegated reach
+  # toward tombstone acknowledgement or confirmed agent-key revocation without
+  # terminating its session.
+  CHRONO_TRIGGER_ENABLED: "false"
+  CHRONO_TRIGGER_ORCHESTRATION_PAUSED: "true"
+  CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH: "true"
+  CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS: ""
+  CHRONO_TRIGGER_REPOSITORY_IDS: ""
+  CHRONO_TRIGGER_USER_COHORT_PERCENT: "0"
+  # Dry-run retains the exact CMA-owned baseline/checkpoint/diff plan but has no
+  # deletion port. Promote to execute only after reviewing dry-run inventory;
+  # execute reuses the normal fenced effect worker. Neither mode enumerates or
+  # removes sandboxes, forks, branches, commits, or pull requests.
+  CHRONO_TRIGGER_CLEANUP_MODE: "dry_run"
+  # Each independent in-process lane has a bounded page and concurrency budget.
+  # Missed ticks are skipped, page cursors are cycle-checked, and durable Launch
+  # leases remain the authority when more than one control plane sees a row.
+  CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS: "5"
+  CHRONO_TRIGGER_WORKER_PAGE_SIZE: "50"
+  CHRONO_TRIGGER_WORKER_MAX_PAGES: "20"
+  CHRONO_TRIGGER_WORKER_CONCURRENCY: "4"
   # This service's own machine identity on the identity platform, used to store
   # session context. The identifier is not secret; its secret half lives in the
   # Secret, and they are delivered separately for that reason.

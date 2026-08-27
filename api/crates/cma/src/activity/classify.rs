@@ -18,7 +18,7 @@
 use axum::http::Method;
 use layer2_core::{
     ActivityAction as Action, ActivityDetail, ActivityTarget, DetailKey, EnvironmentProfileId,
-    SessionId,
+    LaunchId, PublicTriggerId, SessionId, TriggerId, TriggerRevisionId,
 };
 use serde::Deserialize;
 
@@ -68,6 +68,11 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
     let session = |id: &str| ActivityTarget::Session(SessionId(id.to_string()));
     let profile =
         |id: &str| ActivityTarget::EnvironmentProfile(EnvironmentProfileId(id.to_string()));
+    let trigger = |id: &str| ActivityTarget::Trigger(TriggerId(id.to_string()));
+    let revision = |id: &str| ActivityTarget::TriggerRevision(TriggerRevisionId(id.to_string()));
+    let public_trigger = |id: &str| ActivityTarget::PublicTrigger(PublicTriggerId(id.to_string()));
+    let launch = |id: &str| ActivityTarget::Launch(LaunchId(id.to_string()));
+    let connection = |id: &str| ActivityTarget::TriggerConnection(id.to_string());
 
     match segments.as_slice() {
         // Signing in is recorded by the flow that completes it, which is the
@@ -75,6 +80,98 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
         // carries no identity yet, and attributing it to nobody would leave
         // the entry that matters unattributed.
         ["auth", "logout"] => Some(Classified::new(Action::SignOut)),
+
+        ["api", "v1", "triggers", "public", id] if method == Method::GET => {
+            Some(Classified::new(Action::TriggerPreviewRead).on(public_trigger(id)))
+        }
+        ["api", "v1", "triggers", "public", id, "launches"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchCreate).on(public_trigger(id)))
+        }
+        ["api", "v1", "triggers", "public", id, "launches", "new"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchCreate).on(public_trigger(id)))
+        }
+        ["api", "v1", "triggers"] => match *method {
+            Method::GET => Some(Classified::new(Action::TriggerDraftList)),
+            Method::POST => Some(Classified::new(Action::TriggerDraftCreate)),
+            _ => None,
+        },
+        ["api", "v1", "triggers", id, "publish"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerRevisionPublish).on(trigger(id)))
+        }
+        ["api", "v1", "triggers", id] => match *method {
+            Method::GET => Some(Classified::new(Action::TriggerDraftRead).on(trigger(id))),
+            Method::PUT => Some(Classified::new(Action::TriggerDraftUpdate).on(trigger(id))),
+            _ => None,
+        },
+        ["api", "v1", "trigger-revisions"] if method == Method::GET => {
+            Some(Classified::new(Action::TriggerRevisionList))
+        }
+        ["api", "v1", "trigger-revisions", id, "retire"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerRevisionRetire).on(revision(id)))
+        }
+        ["api", "v1", "trigger-revisions", id] if method == Method::GET => {
+            Some(Classified::new(Action::TriggerRevisionRead).on(revision(id)))
+        }
+        ["api", "v1", "trigger-connections"] => match *method {
+            Method::GET => Some(Classified::new(Action::TriggerConnectionList)),
+            Method::POST => Some(Classified::new(Action::TriggerConnectionBegin)),
+            _ => None,
+        },
+        ["api", "v1", "trigger-connections", id, "reconnect"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerConnectionReconnect).on(connection(id)))
+        }
+        ["api", "v1", "trigger-connections", id, "preflight"] if method == Method::GET => {
+            Some(Classified::new(Action::TriggerConnectionPreflight).on(connection(id)))
+        }
+        ["api", "v1", "trigger-connections", id, "repositories", "resolve"]
+            if method == Method::GET =>
+        {
+            Some(Classified::new(Action::TriggerRepositoryResolve).on(connection(id)))
+        }
+        ["api", "v1", "launches"] if method == Method::GET => {
+            Some(Classified::new(Action::TriggerLaunchList))
+        }
+        ["api", "v1", "launches", id] if method == Method::GET => {
+            Some(Classified::new(Action::TriggerLaunchRead).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "overrides"] if method == Method::PUT => {
+            Some(Classified::new(Action::TriggerLaunchDraftUpdate).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "connection"] if method == Method::PUT => {
+            Some(Classified::new(Action::TriggerLaunchConnectionSelect).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "start"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchStart).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "contributions", "review"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchDiffReview).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "diff"] if method == Method::GET => {
+            Some(Classified::new(Action::TriggerLaunchDiffRead).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "contributions", "publish"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchContributionPublish).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "pull-request", "review"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchPullRequestReview).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "pull-request", "open"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchPullRequestOpen).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "pull-request", "update"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchPullRequestUpdate).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "diff-artifacts", _artifact, "download"]
+            if method == Method::GET =>
+        {
+            Some(Classified::new(Action::TriggerLaunchDiffDownload).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "cancel"] if method == Method::POST => {
+            Some(Classified::new(Action::TriggerLaunchCancel).on(launch(id)))
+        }
+        ["api", "v1", "launches", id, "events"] if method == Method::GET => {
+            Some(Classified::new(Action::TriggerLaunchEventsRead).on(launch(id)))
+        }
 
         ["api", "v1", "sessions"] => match *method {
             Method::GET => Some(Classified::new(Action::SessionList)),
@@ -128,6 +225,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
 
         ["api", "v1", "admin", "users"] => Some(Classified::new(Action::UserDirectoryRead)),
         ["api", "v1", "admin", "activity"] => Some(Classified::new(Action::ActivityLogRead)),
+        ["api", "v1", "admin", "triggers", "support"] if method == Method::GET => {
+            Some(Classified::new(Action::TriggerLaunchSupportRead))
+        }
         ["api", "v1", "admin", "runtimes"] => Some(Classified::new(Action::RuntimeInventoryRead)),
         ["api", "v1", "admin", "sessions"] => Some(Classified::new(Action::SessionList)),
         ["api", "v1", "admin", "settings"] => match *method {

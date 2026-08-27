@@ -7,9 +7,10 @@ use super::{
     Launch, LaunchEvent, LaunchId, LaunchOverrides, LaunchQuery, LaunchStore, PublicTriggerId,
     PublishedRevision, PublisherAuthority, TriggerAvailability, TriggerDraft, TriggerId,
     TriggerPage, TriggerPageRequest, TriggerPreview, TriggerRevision, TriggerRevisionContent,
-    TriggerRevisionId, TriggerStore, TriggerStoreError, TriggerValidationError, WorkerLease,
+    TriggerRevisionId, TriggerRolloutDenial, TriggerRolloutPolicy, TriggerStore, TriggerStoreError,
+    TriggerSupportLookup, TriggerSupportSnapshot, TriggerValidationError, WorkerLease,
 };
-use crate::SubjectId;
+use crate::{Caller, Capability, SubjectId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchAuthority {
@@ -183,12 +184,15 @@ pub enum TriggerServiceError {
     Store(#[from] TriggerStoreError),
     #[error("trigger authority could not be verified: {0}")]
     Authority(#[from] TriggerAuthorityError),
+    #[error("trigger rollout refused this operation: {0}")]
+    Rollout(#[from] TriggerRolloutDenial),
 }
 
 pub struct TriggerService {
     triggers: Arc<dyn TriggerStore>,
     launches: Arc<dyn LaunchStore>,
     authority: Arc<dyn TriggerAuthorityVerifier>,
+    rollout: Arc<TriggerRolloutPolicy>,
 }
 
 impl TriggerService {
@@ -201,7 +205,17 @@ impl TriggerService {
             triggers,
             launches,
             authority,
+            rollout: Arc::new(TriggerRolloutPolicy::allow_all()),
         }
+    }
+
+    pub fn with_rollout(mut self, rollout: Arc<TriggerRolloutPolicy>) -> Self {
+        self.rollout = rollout;
+        self
+    }
+
+    pub fn rollout_policy(&self) -> Arc<TriggerRolloutPolicy> {
+        Arc::clone(&self.rollout)
     }
 
     pub async fn create_draft(
@@ -211,6 +225,8 @@ impl TriggerService {
         mut content: TriggerRevisionContent,
         now: impl Into<String>,
     ) -> Result<TriggerDraft, TriggerServiceError> {
+        self.rollout
+            .publisher_admission(&owner, content.upstream.repository.repository_id)?;
         let id = TriggerId::new();
         content.trigger_id = id.clone();
         content.publisher_subject_id = owner.clone();
@@ -270,6 +286,8 @@ impl TriggerService {
             }
             .into());
         }
+        self.rollout
+            .publisher_admission(owner, content.upstream.repository.repository_id)?;
         content.trigger_id = current.id.clone();
         content.publisher_subject_id = current.owner.clone();
         content.revision_number = current.next_revision_number;
@@ -296,6 +314,8 @@ impl TriggerService {
         now: impl Into<String>,
     ) -> Result<PublishedRevision, TriggerServiceError> {
         let mut draft = self.get_draft(owner, id).await?;
+        self.rollout
+            .publisher_admission(owner, draft.content.upstream.repository.repository_id)?;
         if draft.version != expected_version {
             return Err(TriggerStoreError::RevisionConflict {
                 expected: expected_version,
@@ -408,9 +428,21 @@ impl TriggerService {
             .get_public_revision(public_id)
             .await?
             .ok_or(TriggerServiceError::NotFound)?;
+        if let Some(current) = self
+            .launches
+            .get_current_launch(&owner, &revision.id)
+            .await?
+        {
+            return Ok(current);
+        }
         if revision.availability != TriggerAvailability::Published {
             return Err(TriggerValidationError::new("this Trigger revision is retired").into());
         }
+        self.rollout.launch_admission(
+            &owner,
+            &revision.content.publisher_subject_id,
+            revision.content.upstream.repository.repository_id,
+        )?;
         let launch = Launch::new(owner, revision, now, correlation_id)?;
         Ok(self.launches.insert_or_get_current(&launch).await?)
     }
@@ -431,6 +463,11 @@ impl TriggerService {
         if revision.availability != TriggerAvailability::Published {
             return Err(TriggerValidationError::new("this Trigger revision is retired").into());
         }
+        self.rollout.launch_admission(
+            &owner,
+            &revision.content.publisher_subject_id,
+            revision.content.upstream.repository.repository_id,
+        )?;
         let now = now.into();
         let correlation_id = correlation_id.into();
         let mut launch = Launch::new(owner.clone(), revision, now.clone(), correlation_id.clone())?;
@@ -485,6 +522,29 @@ impl TriggerService {
             .collect())
     }
 
+    /// Redacted cross-owner support read, gated by the existing narrow activity
+    /// capability rather than the broader session-operator grants.
+    pub async fn support(
+        &self,
+        caller: &Caller,
+        lookup: TriggerSupportLookup,
+    ) -> Result<TriggerSupportSnapshot, TriggerServiceError> {
+        caller
+            .authorization
+            .require(Capability::ReadActivityLog)
+            .map_err(|_| TriggerServiceError::Forbidden)?;
+        let launch = match lookup {
+            TriggerSupportLookup::Launch(id) => self.launches.get_launch(&id).await?,
+            TriggerSupportLookup::CorrelationId(correlation_id) => {
+                self.launches
+                    .find_launch_by_correlation_id(&correlation_id)
+                    .await?
+            }
+        }
+        .ok_or(TriggerServiceError::NotFound)?;
+        Ok(TriggerSupportSnapshot::from_launch(&launch))
+    }
+
     /// Internal bounded inventory for the in-process Launch worker.
     ///
     /// The store remains authoritative; callers must still acquire each
@@ -496,24 +556,7 @@ impl TriggerService {
     ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
         Ok(self
             .launches
-            .list_launches(&LaunchQuery {
-                owner: None,
-                states: vec![
-                    super::LaunchState::Preflight,
-                    super::LaunchState::ForkPending,
-                    super::LaunchState::ForkReady,
-                    super::LaunchState::BranchPending,
-                    super::LaunchState::WorkspacePending,
-                    super::LaunchState::SandboxPending,
-                    super::LaunchState::SessionPending,
-                    super::LaunchState::PromptPending,
-                    super::LaunchState::Contributing,
-                    super::LaunchState::PrPending,
-                    super::LaunchState::FailedRetryable,
-                ],
-                updated_before,
-                page,
-            })
+            .list_worker_candidates(updated_before, &page)
             .await?)
     }
 
@@ -523,25 +566,17 @@ impl TriggerService {
         &self,
         page: TriggerPageRequest,
     ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
+        Ok(self.launches.list_capability_candidates(&page).await?)
+    }
+
+    pub async fn cleanup_candidates(
+        &self,
+        delete_before: &str,
+        page: &TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
         Ok(self
             .launches
-            .list_launches(&LaunchQuery {
-                owner: None,
-                states: vec![
-                    super::LaunchState::PromptPending,
-                    super::LaunchState::Ready,
-                    super::LaunchState::Contributing,
-                    super::LaunchState::PrPending,
-                    super::LaunchState::PrOpen,
-                    super::LaunchState::Completed,
-                    super::LaunchState::AuthRequired,
-                    super::LaunchState::FailedRetryable,
-                    super::LaunchState::FailedTerminal,
-                    super::LaunchState::Cancelled,
-                ],
-                updated_before: None,
-                page,
-            })
+            .list_cleanup_candidates(delete_before, page)
             .await?)
     }
 
@@ -595,6 +630,18 @@ impl TriggerService {
             correlation_id,
         } = command;
         let mut launch = self.get_launch(owner, id).await?;
+        if let Err(denial) = self.rollout.launch_orchestration(&launch) {
+            if launch.blocked_reason.is_none() {
+                launch.block(
+                    super::LaunchBlockedReason::FeaturePaused,
+                    now.clone(),
+                    correlation_id.clone(),
+                )?;
+                persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await?;
+            }
+            return Err(denial.into());
+        }
+        launch.resume_feature_pause(now.clone(), correlation_id.clone())?;
         let connection = launch.connection.as_ref().ok_or_else(|| {
             TriggerValidationError::field("connection", "select an eligible connection")
         })?;

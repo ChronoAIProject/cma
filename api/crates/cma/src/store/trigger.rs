@@ -2,9 +2,10 @@
 
 use futures_util::TryStreamExt as _;
 use layer2_core::{
-    Launch, LaunchId, LaunchQuery, LaunchState, LaunchStore, PublicTriggerId, PublishedRevision,
-    SubjectId, TriggerDraft, TriggerId, TriggerPage, TriggerPageRequest, TriggerRevision,
-    TriggerRevisionId, TriggerStore, TriggerStoreError, WorkerLease,
+    CapabilityRevocationState, Launch, LaunchId, LaunchQuery, LaunchState, LaunchStore,
+    PublicTriggerId, PublishedRevision, SubjectId, TriggerDraft, TriggerId, TriggerPage,
+    TriggerPageRequest, TriggerRevision, TriggerRevisionId, TriggerStore, TriggerStoreError,
+    WorkerLease, TRIGGER_CAPABILITY_STATES, TRIGGER_WORKER_STATES,
 };
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::error::{Error, ErrorKind, WriteFailure, UNKNOWN_TRANSACTION_COMMIT_RESULT};
@@ -127,6 +128,40 @@ impl MongoTriggerStore {
             IndexModel::builder()
                 .keys(doc! { "state": 1, "lease_expires_at": 1, "updated_at": 1 })
                 .options(named("trigger_launches_runnable"))
+                .build(),
+            IndexModel::builder()
+                .keys(doc! {
+                    "current": 1,
+                    "state": 1,
+                    "updated_at": 1,
+                    "created_at": -1,
+                    "_id": -1,
+                })
+                .options(named("trigger_launches_worker_inventory"))
+                .build(),
+            IndexModel::builder()
+                .keys(doc! {
+                    "current": 1,
+                    "state": 1,
+                    "launch.reach.state": 1,
+                    "created_at": -1,
+                    "_id": -1,
+                })
+                .options(named("trigger_launches_capability_inventory"))
+                .build(),
+            IndexModel::builder()
+                .keys(doc! { "launch.events.correlation_id": 1 })
+                .options(named("trigger_launches_by_correlation"))
+                .build(),
+            IndexModel::builder()
+                .keys(doc! {
+                    "current": 1,
+                    "state": 1,
+                    "launch.workspace.delete_after": 1,
+                    "launch.cleanup.completed_at": 1,
+                    "created_at": -1,
+                })
+                .options(named("trigger_launches_retention"))
                 .build(),
         ] {
             self.launches
@@ -422,6 +457,23 @@ impl LaunchStore for MongoTriggerStore {
         }
     }
 
+    async fn get_current_launch(
+        &self,
+        owner: &SubjectId,
+        revision: &TriggerRevisionId,
+    ) -> Result<Option<Launch>, TriggerStoreError> {
+        self.launches
+            .find_one(doc! {
+                "owner": &owner.0,
+                "revision_id": &revision.0,
+                "current": true,
+            })
+            .await
+            .map_err(|error| unavailable("read current Launch", error))?
+            .map(read_launch)
+            .transpose()
+    }
+
     async fn insert_new(&self, launch: &Launch) -> Result<(), TriggerStoreError> {
         let mut session = self
             .client
@@ -473,6 +525,25 @@ impl LaunchStore for MongoTriggerStore {
             .transpose()
     }
 
+    async fn find_launch_by_correlation_id(
+        &self,
+        correlation_id: &str,
+    ) -> Result<Option<Launch>, TriggerStoreError> {
+        self.launches
+            .find_one(doc! {
+                "$or": [
+                    { "launch.events.correlation_id": correlation_id },
+                    { "launch.steps.correlation_id": correlation_id },
+                    { "launch.failure.correlation_id": correlation_id },
+                    { "launch.effects.last_failure.correlation_id": correlation_id },
+                ]
+            })
+            .await
+            .map_err(|error| unavailable("read Launch by correlation", error))?
+            .map(read_launch)
+            .transpose()
+    }
+
     async fn list_launches(
         &self,
         query: &LaunchQuery,
@@ -504,6 +575,119 @@ impl LaunchStore for MongoTriggerStore {
             .await
             .map_err(|error| unavailable("read Launch page", error))?;
         map_page(docs, query.page.limit, |doc| {
+            let cursor = encode_cursor(&doc.created_at, &doc.id);
+            Ok((read_launch(doc)?, cursor))
+        })
+    }
+
+    async fn list_worker_candidates(
+        &self,
+        updated_before: Option<String>,
+        page: &TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
+        let states = mongodb::bson::serialize_to_bson(&TRIGGER_WORKER_STATES).map_err(|error| {
+            TriggerStoreError::Malformed(format!("encode worker Launch states: {error}"))
+        })?;
+        let mut filter = doc! {
+            "current": true,
+            "state": { "$in": states },
+        };
+        if let Some(bound) = updated_before {
+            filter.insert("updated_at", doc! { "$lt": bound });
+        }
+        let filter = page_filter(filter, page.cursor.as_deref(), "created_at")?;
+        let docs = self
+            .launches
+            .find(filter)
+            .sort(doc! { "created_at": -1, "_id": -1 })
+            .limit(i64::from(page.limit) + 1)
+            .await
+            .map_err(|error| unavailable("list worker Launch candidates", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| unavailable("read worker Launch candidate page", error))?;
+        map_page(docs, page.limit, |doc| {
+            let cursor = encode_cursor(&doc.created_at, &doc.id);
+            Ok((read_launch(doc)?, cursor))
+        })
+    }
+
+    async fn list_capability_candidates(
+        &self,
+        page: &TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
+        let states =
+            mongodb::bson::serialize_to_bson(&TRIGGER_CAPABILITY_STATES).map_err(|error| {
+                TriggerStoreError::Malformed(format!("encode capability Launch states: {error}"))
+            })?;
+        let revoked = mongodb::bson::serialize_to_bson(&CapabilityRevocationState::Revoked)
+            .map_err(|error| {
+                TriggerStoreError::Malformed(format!("encode revoked reach state: {error}"))
+            })?;
+        let filter = page_filter(
+            doc! {
+                "current": true,
+                "state": { "$in": states },
+                "launch.reach.state": { "$exists": true, "$ne": revoked },
+            },
+            page.cursor.as_deref(),
+            "created_at",
+        )?;
+        let docs = self
+            .launches
+            .find(filter)
+            .sort(doc! { "created_at": -1, "_id": -1 })
+            .limit(i64::from(page.limit) + 1)
+            .await
+            .map_err(|error| unavailable("list capability Launch candidates", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| unavailable("read capability Launch candidate page", error))?;
+        map_page(docs, page.limit, |doc| {
+            let cursor = encode_cursor(&doc.created_at, &doc.id);
+            Ok((read_launch(doc)?, cursor))
+        })
+    }
+
+    async fn list_cleanup_candidates(
+        &self,
+        delete_before: &str,
+        page: &TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
+        let states = mongodb::bson::serialize_to_bson(&[
+            LaunchState::Completed,
+            LaunchState::FailedTerminal,
+            LaunchState::Cancelled,
+        ])
+        .map_err(|error| {
+            TriggerStoreError::Malformed(format!("encode terminal states: {error}"))
+        })?;
+        let filter = page_filter(
+            doc! {
+                "current": true,
+                "state": { "$in": states },
+                "launch.workspace.delete_after": { "$lte": delete_before },
+                "$or": [
+                    { "launch.cleanup": { "$exists": false } },
+                    { "launch.cleanup": Bson::Null },
+                    { "launch.cleanup.completed_at": { "$exists": false } },
+                    { "launch.cleanup.completed_at": Bson::Null },
+                ],
+            },
+            page.cursor.as_deref(),
+            "created_at",
+        )?;
+        let docs = self
+            .launches
+            .find(filter)
+            .sort(doc! { "created_at": -1, "_id": -1 })
+            .limit(i64::from(page.limit) + 1)
+            .await
+            .map_err(|error| unavailable("list cleanup candidates", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| unavailable("read cleanup candidate page", error))?;
+        map_page(docs, page.limit, |doc| {
             let cursor = encode_cursor(&doc.created_at, &doc.id);
             Ok((read_launch(doc)?, cursor))
         })

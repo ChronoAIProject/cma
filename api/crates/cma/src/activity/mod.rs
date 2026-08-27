@@ -35,9 +35,12 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use layer1_public::{rest::HttpProblem, ActedUpon, AuthenticatedSubject, SettingsTouched};
+use layer1_public::{
+    rest::HttpProblem, ActedUpon, AuthenticatedSubject, SettingsTouched, TriggerSupportObserved,
+};
 use layer2_core::{
-    ActivityDetail, ActivityOutcome, ActivityRecord, ActivityService, DetailKey, SubjectId,
+    ActivityDetail, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget, DetailKey,
+    SubjectId,
 };
 
 use crate::activity::classify::{classify, detail_from_body, detail_from_query, Classified};
@@ -60,7 +63,7 @@ pub async fn record(
     req: Request,
     next: Next,
 ) -> Response {
-    let Some(classified) = classify(req.method(), req.uri().path()) else {
+    let Some(mut classified) = classify(req.method(), req.uri().path()) else {
         // Not something this service serves, or something it serves to nobody
         // in particular. Passed through untouched, body included.
         return next.run(req).await;
@@ -122,6 +125,12 @@ pub async fn record(
         }
         if let Some(card) = &touched.rate_card {
             detail.record(DetailKey::RateCard, card.clone());
+        }
+    }
+    if let Some(observed) = response.extensions().get::<TriggerSupportObserved>() {
+        classified.target = Some(ActivityTarget::Launch(observed.launch_id.clone()));
+        if let Some(correlation_id) = observed.correlation_id.as_ref() {
+            detail.record(DetailKey::CorrelationId, correlation_id);
         }
     }
     store(&recorder, &classified, actor, detail, outcome).await;

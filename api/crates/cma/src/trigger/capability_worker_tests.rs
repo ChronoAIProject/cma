@@ -9,7 +9,10 @@ use layer2_core::{
     LaunchFailure, LaunchState, ReachStatus, SessionId, SessionLink, TriggerService,
 };
 
-use super::super::worker::tests::{launch_fixture, service_for_launch};
+use super::super::worker::tests::{
+    launch_fixture, rollout_policy, service_for_launch, service_for_launch_with_rollout,
+    RecordingActivityStore,
+};
 use super::*;
 
 const NOW: &str = "2026-08-27T00:00:00Z";
@@ -291,6 +294,109 @@ async fn renews_inside_the_expiry_margin_without_an_extra_runtime_probe() {
 }
 
 #[tokio::test]
+async fn capability_maintenance_audit_is_closed_and_never_retains_authority_values() {
+    let activity_store = Arc::new(RecordingActivityStore::default());
+    let activity = layer2_core::ActivityService::new(activity_store.clone());
+
+    let renewal_launch = launch_with_active_reach(epoch(NOW) + 20);
+    let renewal_service = service_for_launch(renewal_launch.clone());
+    let renewal_executor = Arc::new(ScriptedExecutor::new(
+        Vec::new(),
+        vec![successful_renewal("runtime-v1", &"a".repeat(40))],
+        Vec::new(),
+    ));
+    let renewal_worker = test_worker(
+        renewal_service,
+        renewal_executor,
+        "renewal-audit-worker",
+        &[NOW, ONE_SECOND_LATER],
+    )
+    .with_activity(Arc::clone(&activity));
+    assert_eq!(
+        renewal_worker
+            .run_once(
+                &renewal_launch.id,
+                renewal_launch.revision_number,
+                "renewal-audit",
+            )
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::Renewed
+    );
+
+    let revocation_launch = launch_with_pending_revocation();
+    let revocation_service = service_for_launch(revocation_launch.clone());
+    let revocation_executor = Arc::new(ScriptedExecutor::new(
+        Vec::new(),
+        Vec::new(),
+        vec![RevocationStep::Acknowledge {
+            runtime_audience: "runtime-v1".into(),
+            tombstone: true,
+            agent_key: false,
+        }],
+    ));
+    let revocation_worker = test_worker(
+        revocation_service,
+        revocation_executor,
+        "revocation-audit-worker",
+        &[NOW, ONE_SECOND_LATER],
+    )
+    .with_activity(activity);
+    assert_eq!(
+        revocation_worker
+            .run_once(
+                &revocation_launch.id,
+                revocation_launch.revision_number,
+                "revocation-audit",
+            )
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::Revoked
+    );
+
+    let records = activity_store.records.lock().await;
+    assert_eq!(records.len(), 2);
+    assert_eq!(
+        records[0].action,
+        layer2_core::ActivityAction::TriggerCapabilityRenew
+    );
+    assert_eq!(
+        records[1].action,
+        layer2_core::ActivityAction::TriggerCapabilityRevoke
+    );
+    for record in records.iter() {
+        assert_eq!(
+            record.detail.iter().map(|(key, _)| key).collect::<Vec<_>>(),
+            vec![
+                layer2_core::DetailKey::Subject,
+                layer2_core::DetailKey::CorrelationId,
+                layer2_core::DetailKey::RevisionDigest,
+                layer2_core::DetailKey::RepositoryId,
+                layer2_core::DetailKey::GithubAccountId,
+                layer2_core::DetailKey::ServiceId,
+                layer2_core::DetailKey::LaunchState,
+                layer2_core::DetailKey::FencingToken,
+                layer2_core::DetailKey::PolicyGeneration,
+            ]
+        );
+        let wire = serde_json::to_string(record).unwrap();
+        for forbidden in [
+            "credential",
+            "access_token",
+            "github_token",
+            "signed_policy",
+            "provider_body",
+            "repository_path",
+        ] {
+            assert!(
+                !wire.contains(forbidden),
+                "capability audit admitted {forbidden}: {wire}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn runtime_rotation_forces_immediate_renewal() {
     let launch = launch_with_active_reach(epoch(NOW) + 60);
     let service = service_for_launch(launch.clone());
@@ -494,6 +600,85 @@ async fn no_enforcement_acknowledgement_stays_revocation_pending() {
     );
     let reach = stored(&service, &launch).await.reach.unwrap();
     assert_eq!(reach.state, CapabilityRevocationState::RevocationPending);
+    assert!(reach.revocation_effective_at.is_none());
+}
+
+#[tokio::test]
+async fn capability_kill_switch_persists_revocation_before_enforcement() {
+    let launch = launch_with_active_reach(epoch(NOW) + 600);
+    let original_session = launch.session.clone();
+    let service =
+        service_for_launch_with_rollout(launch.clone(), rollout_policy(&launch, false, true));
+    let executor = Arc::new(ScriptedExecutor::new(
+        Vec::new(),
+        Vec::new(),
+        vec![RevocationStep::Acknowledge {
+            runtime_audience: "runtime-v1".into(),
+            tombstone: true,
+            agent_key: false,
+        }],
+    ));
+    let worker = test_worker(
+        service.clone(),
+        executor.clone(),
+        "kill-switch-worker",
+        &[NOW, ONE_SECOND_LATER],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, launch.revision_number, "kill-switch")
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::Revoked
+    );
+    assert_eq!(executor.revocation_calls.load(Ordering::SeqCst), 1);
+    assert!(executor.renewal_calls.lock().unwrap().is_empty());
+    let current = stored(&service, &launch).await;
+    assert_eq!(current.state, LaunchState::Ready);
+    assert_eq!(current.session, original_session);
+    let reach = current.reach.unwrap();
+    assert_eq!(reach.state, CapabilityRevocationState::Revoked);
+    assert_eq!(reach.revocation_requested_at.as_deref(), Some(NOW));
+    assert_eq!(
+        reach.revocation_effective_at.as_deref(),
+        Some(ONE_SECOND_LATER)
+    );
+}
+
+#[tokio::test]
+async fn failed_kill_switch_enforcement_remains_durably_revocation_pending() {
+    let launch = launch_with_active_reach(epoch(NOW) + 600);
+    let original_session = launch.session.clone();
+    let service =
+        service_for_launch_with_rollout(launch.clone(), rollout_policy(&launch, false, true));
+    let executor = Arc::new(ScriptedExecutor::new(
+        Vec::new(),
+        Vec::new(),
+        vec![RevocationStep::Fail(retryable_failure(
+            "trigger_revocation_pending",
+        ))],
+    ));
+    let worker = test_worker(
+        service.clone(),
+        executor,
+        "failed-kill-switch-worker",
+        &[NOW],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, launch.revision_number, "kill-switch-no-ack")
+            .await
+            .unwrap(),
+        CapabilityRunOutcome::Deferred
+    );
+    let current = stored(&service, &launch).await;
+    assert_eq!(current.state, LaunchState::Ready);
+    assert_eq!(current.session, original_session);
+    let reach = current.reach.unwrap();
+    assert_eq!(reach.state, CapabilityRevocationState::RevocationPending);
+    assert_eq!(reach.revocation_requested_at.as_deref(), Some(NOW));
     assert!(reach.revocation_effective_at.is_none());
 }
 

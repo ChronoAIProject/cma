@@ -512,11 +512,14 @@ async fn main() {
                 (unavailable.clone(), unavailable, None)
             }
         };
-    let trigger_service = Arc::new(TriggerService::new(
-        trigger_store.clone() as Arc<dyn layer2_core::TriggerStore>,
-        trigger_store as Arc<dyn layer2_core::LaunchStore>,
-        trigger_authority,
-    ));
+    let trigger_service = Arc::new(
+        TriggerService::new(
+            trigger_store.clone() as Arc<dyn layer2_core::TriggerStore>,
+            trigger_store as Arc<dyn layer2_core::LaunchStore>,
+            trigger_authority,
+        )
+        .with_rollout(Arc::new(config.trigger.rollout.clone())),
+    );
     if !auth_state.requires_credential() {
         tracing::warn!(
             "running with a trusted fixed subject; every request is attributed \
@@ -624,31 +627,65 @@ async fn main() {
 
     // Assembled only after the session service exists: Sandbox is the single
     // creator of the deterministic Trigger session, and Session is its
-    // read-only attachment check. Scheduler activation remains gated on the
-    // rest of the closed effect vocabulary.
-    let _trigger_effect_executor = trigger_github.and_then(|github| {
-        trigger_workspace_store
-            .as_ref()
-            .and_then(|workspace_store| {
-                github_capability_signer.as_ref().map(|signer| {
-                    let baseline_store: Arc<dyn layer2_core::BaselineObjectStore> =
-                        Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
-                    let checkpoint_store: Arc<dyn layer2_core::CheckpointObjectStore> =
-                        Arc::clone(workspace_store) as Arc<dyn layer2_core::CheckpointObjectStore>;
-                    let diff_store: Arc<dyn layer2_core::DiffArtifactObjectStore> =
-                        Arc::clone(workspace_store)
-                            as Arc<dyn layer2_core::DiffArtifactObjectStore>;
-                    Arc::new(trigger::github_effects::GithubEffectExecutor::with_runtime(
-                        github,
-                        baseline_store,
-                        checkpoint_store,
-                        diff_store,
-                        Arc::clone(&service),
-                        Arc::clone(signer),
-                    ))
-                })
-            })
-    });
+    // read-only attachment check. No partial worker starts: every closed effect
+    // shares one executor, so a missing provider, durable workspace store, or
+    // policy signer disables all three scheduler lanes by construction.
+    let mut missing_trigger_worker_prerequisites = Vec::new();
+    if trigger_github.is_none() {
+        missing_trigger_worker_prerequisites.push("provider_github_broker");
+    }
+    if trigger_workspace_store.is_none() {
+        missing_trigger_worker_prerequisites.push("durable_trigger_workspace_store");
+    }
+    if github_capability_signer.is_none() {
+        missing_trigger_worker_prerequisites.push("github_capability_signer");
+    }
+    let trigger_effect_executor = match (
+        trigger_github,
+        trigger_workspace_store.as_ref(),
+        github_capability_signer.as_ref(),
+    ) {
+        (Some(github), Some(workspace_store), Some(signer)) => {
+            let baseline_store: Arc<dyn layer2_core::BaselineObjectStore> =
+                Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
+            let checkpoint_store: Arc<dyn layer2_core::CheckpointObjectStore> =
+                Arc::clone(workspace_store) as Arc<dyn layer2_core::CheckpointObjectStore>;
+            let diff_store: Arc<dyn layer2_core::DiffArtifactObjectStore> =
+                Arc::clone(workspace_store) as Arc<dyn layer2_core::DiffArtifactObjectStore>;
+            Some(Arc::new(
+                trigger::github_effects::GithubEffectExecutor::with_runtime(
+                    github,
+                    baseline_store,
+                    checkpoint_store,
+                    diff_store,
+                    Arc::clone(&service),
+                    Arc::clone(signer),
+                ),
+            ))
+        }
+        _ => None,
+    };
+    match trigger_effect_executor {
+        Some(executor) => {
+            if let Err(error) = trigger::scheduler::spawn(
+                Arc::clone(&trigger_service),
+                executor,
+                Arc::clone(&activity),
+                &config.deployment_id,
+                &config.trigger,
+            ) {
+                tracing::error!(
+                    error = %error,
+                    "cannot construct the fenced Trigger scheduler"
+                );
+                std::process::exit(2);
+            }
+        }
+        None => tracing::warn!(
+            missing_prerequisites = ?missing_trigger_worker_prerequisites,
+            "Trigger provider workers are disabled"
+        ),
+    }
 
     // Keeps delegated credentials valid underneath running sessions, and pushes
     // each renewal into the runtimes already using the old value.
@@ -685,7 +722,7 @@ async fn main() {
         environments: Arc::clone(&environments),
         operations: Arc::clone(&operation_store),
         triggers: Some(layer1_public::rest::TriggersState {
-            triggers: trigger_service,
+            triggers: Arc::clone(&trigger_service),
             connections: trigger_connections,
             operations: operation_store,
             diff_artifacts: trigger_workspace_store
@@ -700,6 +737,7 @@ async fn main() {
             activity: Arc::clone(&activity),
             users: Arc::clone(&users),
             settings: Arc::clone(&settings),
+            triggers: Some(trigger_service),
         }),
     );
     let rate_limits =

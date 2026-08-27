@@ -327,6 +327,8 @@ ownership, delete CMA-owned snapshot objects, and leave safe audit tombstones.
 They never enumerate a sandbox or any GitHub fork, branch, commit, or PR. No
 legal-hold capability is claimed. #672 owns the workers, dry-run, observability,
 and privacy/export procedure; #662 owns snapshot manifests and integrity.
+The concrete rollout, alert, support, cleanup, privacy, and rollback procedure
+is [CMA Trigger operations](./CMA_Trigger_Operations.md).
 
 ## 6. Locked and editable configuration
 
