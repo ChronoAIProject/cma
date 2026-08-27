@@ -44,6 +44,7 @@ import type {
   TriggerContentDraft,
   TriggerDraft,
   TriggerPreview,
+  TriggerRepositorySelection,
   TriggerRevision,
 } from '@chronoai/cma-sdk';
 import { isStage, type Stage } from '../sessions/progress';
@@ -152,6 +153,15 @@ export function preflightTriggerConnection(
   signal?: AbortSignal,
 ): Promise<TriggerConnection> {
   return bot.preflightTriggerConnection(serviceId, { signal });
+}
+
+export function resolveTriggerRepository(
+  serviceId: string,
+  owner: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<TriggerRepositorySelection> {
+  return bot.resolveTriggerRepository(serviceId, owner, name, { signal });
 }
 
 export function createOrResumeLaunch(

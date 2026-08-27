@@ -581,6 +581,28 @@ impl GithubBroker {
         repository_evidence(response.value, response.token_generation)
     }
 
+    pub(crate) async fn repository_by_name(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+        owner: &str,
+        name: &str,
+    ) -> Result<RepositoryEvidence, GithubBrokerError> {
+        validate_repository_locator(owner, "repository owner")?;
+        validate_repository_locator(name, "repository name")?;
+        let response: Observed<GithubRepositoryWire> = self
+            .github_json(
+                subject,
+                service_id,
+                Method::GET,
+                &["repos", owner, name],
+                &[],
+                None,
+            )
+            .await?;
+        repository_evidence(response.value, response.token_generation)
+    }
+
     /// Reconcile the connected account's single compatible fork-network slot
     /// and prove the exact Launch source commit is addressable there.
     pub(crate) async fn reconcile_fork(
@@ -1464,6 +1486,29 @@ impl TriggerConnectionManager for GithubBroker {
             source_sha,
         })
     }
+
+    async fn resolve_repository_locator(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+        owner: &str,
+        name: &str,
+    ) -> Result<TriggerRepositorySelection, TriggerServiceError> {
+        GithubBroker::preflight_connection(self, subject, service_id).await?;
+        let mut repository = self
+            .repository_by_name(subject, service_id, owner, name)
+            .await?;
+        let selected_ref = repository.identity.default_branch.clone();
+        repository.identity.selected_ref = selected_ref.clone();
+        repository.identity.validate_public_upstream()?;
+        let source_sha = self
+            .resolve_branch_sha(subject, service_id, &repository.identity, &selected_ref)
+            .await?;
+        Ok(TriggerRepositorySelection {
+            repository: repository.identity,
+            source_sha,
+        })
+    }
 }
 
 impl From<GithubOAuthStart> for TriggerConnectionAuthorization {
@@ -1667,6 +1712,21 @@ fn repository_ref_components(value: &str) -> Result<Vec<&str>, GithubBrokerError
         ));
     }
     Ok(components)
+}
+
+fn validate_repository_locator(value: &str, field: &str) -> Result<(), GithubBrokerError> {
+    if value.is_empty()
+        || value.len() > 100
+        || matches!(value, "." | "..")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(GithubBrokerError::Malformed(format!(
+            "the {field} is not canonical"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_commit_sha(value: &str) -> Result<(), GithubBrokerError> {
@@ -3716,6 +3776,16 @@ mod tests {
             repository_ref_components("feature/cma-trigger").unwrap(),
             vec!["feature", "cma-trigger"]
         );
+    }
+
+    #[test]
+    fn repository_locators_are_single_bounded_provider_segments() {
+        for valid in ["ChronoAIProject", "chrono-bot", ".github"] {
+            assert!(validate_repository_locator(valid, "repository").is_ok());
+        }
+        for invalid in ["", ".", "..", "owner/repo", "owner?x", " owner", "repo\n"] {
+            assert!(validate_repository_locator(invalid, "repository").is_err());
+        }
     }
 
     #[test]
