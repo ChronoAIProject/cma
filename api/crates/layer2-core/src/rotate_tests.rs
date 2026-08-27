@@ -224,7 +224,8 @@ fn is_plane_changed(_record: &SessionRecord, events: &[Event]) -> bool {
         .any(|event| matches!(event.kind, EventKind::PlaneChanged { .. }))
 }
 
-/// Wait for a session to leave the states that mean "in progress".
+/// Wait for a session to leave the states that mean "in progress" and finish
+/// publishing its replacement runtime.
 async fn await_usable(
     svc: &Arc<crate::service::SessionService>,
     caller: &crate::authz::Caller,
@@ -232,7 +233,10 @@ async fn await_usable(
 ) -> crate::session::Session {
     for _ in 0..400 {
         if let Ok(s) = svc.get_session(caller, id).await {
-            if s.status != SessionStatus::Provisioning && s.status != SessionStatus::Rotating {
+            if s.status != SessionStatus::Provisioning
+                && s.status != SessionStatus::Rotating
+                && !svc.starting.read().await.contains(id)
+            {
                 return s;
             }
         }
