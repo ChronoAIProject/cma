@@ -170,6 +170,7 @@ function isAttached(id: string): boolean {
 }
 
 beforeEach(() => {
+  window.history.replaceState(null, '', '/');
   sockets.length = 0;
   created = 0;
   streams.length = 0;
@@ -781,5 +782,59 @@ describe('App', () => {
       'true',
     );
     expect(isAttached('sesn_0')).toBe(true);
+  });
+
+  it('restores the owner-visible session named by a canonical deep link', async () => {
+    seedSessions(2);
+    window.history.replaceState(null, '', '/sessions/sesn_1');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    const requested = screen.getByRole('tab', { name: /14 Aug 11:01/ });
+    expect(requested).toHaveAttribute('aria-selected', 'true');
+    expect(window.location.pathname).toBe('/sessions/sesn_1');
+    expect(await screen.findByRole('button', { name: 'Manage lifecycle' })).toBeEnabled();
+  });
+
+  it('keeps an unknown or wrong-owner session route as a typed read-only view', async () => {
+    seedSessions(1);
+    window.history.replaceState(null, '', '/sessions/sesn_not_owned');
+
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This session does not exist or is not available to this account.',
+    );
+    expect(screen.getByRole('tab')).toHaveAttribute('aria-selected', 'false');
+    expect(sockets).toHaveLength(0);
+    expect(window.location.pathname).toBe('/sessions/sesn_not_owned');
+  });
+
+  it('writes session selections to history and restores them with browser Back', async () => {
+    seedSessions(2);
+    window.history.replaceState(null, '', '/sessions/sesn_0');
+    const user = userEvent.setup();
+    await renderApp(createMockAuthProvider({ initiallyAuthenticated: true }));
+    await waitForConsole();
+
+    await user.click(screen.getByRole('tab', { name: /14 Aug 11:01/ }));
+    expect(window.location.pathname).toBe('/sessions/sesn_1');
+    expect(screen.getByRole('tab', { name: /14 Aug 11:01/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+
+    await act(async () => {
+      window.history.back();
+    });
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/sessions/sesn_0');
+      expect(screen.getByRole('tab', { name: /14 Aug 11:00/ })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+    });
   });
 });
