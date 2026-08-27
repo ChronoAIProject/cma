@@ -207,6 +207,7 @@ pub struct TriggerContentDraft {
 #[serde(deny_unknown_fields)]
 pub struct TriggerDraft {
     pub id: String,
+    pub selected_service_id: String,
     pub version: u64,
     pub next_revision_number: u32,
     pub content: TriggerRevisionContent,

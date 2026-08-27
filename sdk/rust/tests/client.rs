@@ -279,6 +279,7 @@ fn trigger_draft_response() -> String {
     let launch = fixture(LAUNCH);
     serde_json::json!({
         "id": "trigger_fixture",
+        "selected_service_id": "service_fixture",
         "version": 1,
         "next_revision_number": 2,
         "content": launch["revision_content"],

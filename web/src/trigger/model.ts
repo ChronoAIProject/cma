@@ -45,61 +45,51 @@ export interface TaskField {
 export function taskFields(launch: Launch): readonly TaskField[] {
   const fields: TaskField[] = [];
   for (const raw of launch.revision_content.task.input_fields) {
-    const key = jsonText(raw.key);
-    const kind = jsonObject(raw.kind);
-    if (key === undefined || kind === undefined) {
-      continue;
-    }
-    const text = jsonObject(kind.text);
-    if (text !== undefined) {
+    if (raw.kind === 'boolean') {
       fields.push({
-        key,
-        required: jsonBoolean(raw.required) === true,
-        editable: jsonBoolean(raw.editable) === true,
-        defaultValue: raw.default,
-        kind: {
-          type: 'text',
-          minimum: jsonNumber(text.min_bytes) ?? 0,
-          maximum: jsonNumber(text.max_bytes) ?? 4096,
-        },
-      });
-      continue;
-    }
-    const integer = jsonObject(kind.integer);
-    if (integer !== undefined) {
-      fields.push({
-        key,
-        required: jsonBoolean(raw.required) === true,
-        editable: jsonBoolean(raw.editable) === true,
-        defaultValue: raw.default,
-        kind: {
-          type: 'integer',
-          minimum: jsonNumber(integer.minimum) ?? Number.MIN_SAFE_INTEGER,
-          maximum: jsonNumber(integer.maximum) ?? Number.MAX_SAFE_INTEGER,
-        },
-      });
-      continue;
-    }
-    if ('boolean' in kind) {
-      fields.push({
-        key,
-        required: jsonBoolean(raw.required) === true,
-        editable: jsonBoolean(raw.editable) === true,
+        key: raw.key,
+        required: raw.required,
+        editable: raw.editable,
         defaultValue: raw.default,
         kind: { type: 'boolean' },
       });
       continue;
     }
-    const choice = jsonObject(kind.choice);
-    if (choice !== undefined) {
+    if ('text' in raw.kind) {
       fields.push({
-        key,
-        required: jsonBoolean(raw.required) === true,
-        editable: jsonBoolean(raw.editable) === true,
+        key: raw.key,
+        required: raw.required,
+        editable: raw.editable,
         defaultValue: raw.default,
-        kind: { type: 'choice', values: jsonStrings(choice.values) },
+        kind: {
+          type: 'text',
+          minimum: raw.kind.text.min_bytes,
+          maximum: raw.kind.text.max_bytes,
+        },
       });
+      continue;
     }
+    if ('integer' in raw.kind) {
+      fields.push({
+        key: raw.key,
+        required: raw.required,
+        editable: raw.editable,
+        defaultValue: raw.default,
+        kind: {
+          type: 'integer',
+          minimum: raw.kind.integer.minimum,
+          maximum: raw.kind.integer.maximum,
+        },
+      });
+      continue;
+    }
+    fields.push({
+      key: raw.key,
+      required: raw.required,
+      editable: raw.editable,
+      defaultValue: raw.default,
+      kind: { type: 'choice', values: raw.kind.choice.values },
+    });
   }
   return fields;
 }

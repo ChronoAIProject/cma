@@ -43,7 +43,12 @@ const LAUNCH = {
   revision_content: {},
   effective: {},
 };
-const TRIGGER_DRAFT = { id: 'trigger_fixture', version: 1, content: {} };
+const TRIGGER_DRAFT = {
+  id: 'trigger_fixture',
+  selected_service_id: 'service_fixture',
+  version: 1,
+  content: {},
+};
 const TRIGGER_REVISION = {
   id: 'revision_fixture',
   public_id: 'public_fixture',
