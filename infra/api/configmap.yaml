@@ -70,6 +70,16 @@ data:
   # then refused on first write — which reads as a permissions problem rather
   # than the typo it is.
   CHRONO_MONGODB_DATABASE: "chrono-bot"
+  # Temporary maintenance mode for the recovery boundary between the two
+  # one-time MongoDB migrations. Leave empty during every ordinary startup.
+  #
+  # The only accepted value is `legacy`, and that value is accepted only while
+  # CHRONO_MONGODB_LEGACY_CUTOVER is exactly `drained` and
+  # CHRONO_MONGODB_COORDINATION_CUTOVER is empty. The process then opens only
+  # the session store, completes and verifies sessions/session_events -> v2,
+  # closes MongoDB, answers /livez, keeps /ready at 503, and refuses every
+  # public route. Clear this key before enabling coordination activation.
+  CHRONO_MONGODB_CUTOVER_STAGE: ""
   # One-time acknowledgement for upgrading writable `sessions` and
   # `session_events` collections to their fenced v2 namespaces.
   #

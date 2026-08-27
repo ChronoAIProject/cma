@@ -12,6 +12,7 @@ use ipnet::IpNet;
 use crate::auth::AuthMode;
 use crate::store::AuthEncryptionKey;
 
+const MONGODB_CUTOVER_STAGE: &str = "CHRONO_MONGODB_CUTOVER_STAGE";
 const ADMISSION_RATE_REQUESTS_PER_MINUTE: u32 = 6_000;
 const HEALTH_RATE_REQUESTS_PER_MINUTE: u32 = 120;
 const MINIMUM_HEALTH_RATE_REQUESTS_PER_MINUTE: u32 = 30;
@@ -20,6 +21,73 @@ const CREATE_RATE_REQUESTS_PER_MINUTE: u32 = 10;
 const INPUT_RATE_REQUESTS_PER_MINUTE: u32 = 120;
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
 const MAX_TRUSTED_PROXY_HOPS: usize = 16;
+
+/// A deliberately incomplete control-plane startup used at a recovery boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MongoCutoverStage {
+    /// Migrate only the legacy session namespaces, then remain quiescent.
+    Legacy,
+}
+
+/// The only configuration a staged MongoDB cutover is allowed to observe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MongoCutoverStageConfig {
+    /// The stage selected by the operator.
+    pub stage: MongoCutoverStage,
+    /// Address for the maintenance-only health listener.
+    pub bind: String,
+    /// Connection string for the one store the stage opens.
+    pub mongodb_uri: String,
+    /// Database whose legacy namespaces are migrated.
+    pub mongodb_database: String,
+}
+
+impl MongoCutoverStageConfig {
+    /// Read a staged startup before the normal control-plane configuration.
+    pub fn from_env() -> Result<Option<Self>, String> {
+        Self::from_lookup(strict_env)
+    }
+
+    fn from_lookup(
+        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<Option<Self>, String> {
+        let stage = lookup(MONGODB_CUTOVER_STAGE)?.unwrap_or_default();
+        let stage = match stage.as_str() {
+            "" => return Ok(None),
+            "legacy" => MongoCutoverStage::Legacy,
+            _ => {
+                return Err(format!(
+                    "{MONGODB_CUTOVER_STAGE} must be unset or exactly \"legacy\""
+                ))
+            }
+        };
+
+        let legacy = lookup("CHRONO_MONGODB_LEGACY_CUTOVER")?.unwrap_or_default();
+        if legacy != "drained" {
+            return Err(
+                "CHRONO_MONGODB_CUTOVER_STAGE=legacy requires CHRONO_MONGODB_LEGACY_CUTOVER=drained after every legacy writer and its in-flight work have stopped"
+                    .into(),
+            );
+        }
+        let coordination = lookup("CHRONO_MONGODB_COORDINATION_CUTOVER")?.unwrap_or_default();
+        if !coordination.is_empty() {
+            return Err(
+                "CHRONO_MONGODB_CUTOVER_STAGE=legacy requires CHRONO_MONGODB_COORDINATION_CUTOVER to be unset so coordination activation cannot begin"
+                    .into(),
+            );
+        }
+
+        let bind = lookup_or(&mut lookup, "CHRONO_SERVER_BIND", "0.0.0.0:8080")?;
+        let mongodb_uri = require_from(&mut lookup, "CHRONO_MONGODB_URI")?;
+        let mongodb_database = lookup_or(&mut lookup, "CHRONO_MONGODB_DATABASE", "chrono_bot")?;
+        Ok(Some(Self {
+            stage,
+            bind,
+            mongodb_uri,
+            mongodb_database,
+        }))
+    }
+}
 
 /// Per-key request budgets enforced by this process.
 #[derive(Debug, Clone, Copy)]
@@ -487,6 +555,35 @@ fn var_or(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
+fn strict_env(key: &str) -> Result<Option<String>, String> {
+    match std::env::var(key) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{key} is not valid UTF-8 and cannot be interpreted"
+        )),
+    }
+}
+
+fn lookup_or(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    key: &str,
+    default: &str,
+) -> Result<String, String> {
+    Ok(lookup(key)?
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default.to_owned()))
+}
+
+fn require_from(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    key: &str,
+) -> Result<String, String> {
+    lookup(key)?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("{key} is required and was not set"))
+}
+
 fn require(key: &str) -> Result<String, String> {
     std::env::var(key)
         .ok()
@@ -667,7 +764,17 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
+
+    fn staged_config(values: &[(&str, &str)]) -> Result<Option<MongoCutoverStageConfig>, String> {
+        let values = values
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect::<BTreeMap<_, _>>();
+        MongoCutoverStageConfig::from_lookup(|key| Ok(values.get(key).cloned()))
+    }
 
     #[test]
     fn a_blank_value_falls_back_to_the_default() {
@@ -816,6 +923,112 @@ mod tests {
                 .expect_err("an imprecise acknowledgement must stay closed");
             assert!(error.contains("exactly \"drained\""), "got {error}");
         }
+    }
+
+    #[test]
+    fn the_legacy_cutover_stage_accepts_only_its_exact_flag_tuple() {
+        let config = staged_config(&[
+            (MONGODB_CUTOVER_STAGE, "legacy"),
+            ("CHRONO_MONGODB_LEGACY_CUTOVER", "drained"),
+            ("CHRONO_MONGODB_COORDINATION_CUTOVER", ""),
+            ("CHRONO_MONGODB_URI", "mongodb://stage.invalid/cma"),
+        ])
+        .expect("the exact staged tuple is usable")
+        .expect("the legacy stage is selected");
+        assert_eq!(config.stage, MongoCutoverStage::Legacy);
+        assert_eq!(config.bind, "0.0.0.0:8080");
+        assert_eq!(config.mongodb_database, "chrono_bot");
+
+        for stage in ["unknown", " Legacy", "legacy ", "LEGACY"] {
+            let error = staged_config(&[(MONGODB_CUTOVER_STAGE, stage)])
+                .expect_err("an unknown stage must fail before other configuration");
+            assert!(error.contains(MONGODB_CUTOVER_STAGE), "got {error}");
+        }
+        let secret_stage = "mongodb://operator:do-not-log-this@invalid";
+        let error = staged_config(&[(MONGODB_CUTOVER_STAGE, secret_stage)])
+            .expect_err("an invalid stage is refused without echoing its value");
+        assert!(!error.contains("do-not-log-this"), "got {error}");
+        for legacy in ["", "drain", " drained", "drained ", "DRAINED"] {
+            let error = staged_config(&[
+                (MONGODB_CUTOVER_STAGE, "legacy"),
+                ("CHRONO_MONGODB_LEGACY_CUTOVER", legacy),
+            ])
+            .expect_err("the stage requires an exact legacy drain acknowledgement");
+            assert!(
+                error.contains("CHRONO_MONGODB_LEGACY_CUTOVER=drained"),
+                "got {error}"
+            );
+        }
+        for coordination in ["drained", " ", "false"] {
+            let error = staged_config(&[
+                (MONGODB_CUTOVER_STAGE, "legacy"),
+                ("CHRONO_MONGODB_LEGACY_CUTOVER", "drained"),
+                ("CHRONO_MONGODB_COORDINATION_CUTOVER", coordination),
+            ])
+            .expect_err("coordination must remain structurally disabled in this stage");
+            assert!(
+                error.contains("CHRONO_MONGODB_COORDINATION_CUTOVER"),
+                "got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unselected_stage_observes_no_control_plane_configuration() {
+        let mut accessed = Vec::new();
+        let stage = MongoCutoverStageConfig::from_lookup(|key| {
+            accessed.push(key.to_owned());
+            Ok(None)
+        })
+        .expect("an absent stage is normal startup");
+        assert!(stage.is_none());
+        assert_eq!(accessed, [MONGODB_CUTOVER_STAGE]);
+    }
+
+    #[test]
+    fn the_legacy_stage_reads_only_its_six_narrow_keys() {
+        let values = BTreeMap::from([
+            (MONGODB_CUTOVER_STAGE, "legacy"),
+            ("CHRONO_MONGODB_LEGACY_CUTOVER", "drained"),
+            ("CHRONO_MONGODB_COORDINATION_CUTOVER", ""),
+            ("CHRONO_SERVER_BIND", "127.0.0.1:18080"),
+            ("CHRONO_MONGODB_URI", "mongodb://stage.invalid/cma"),
+            ("CHRONO_MONGODB_DATABASE", "stage_boundary"),
+        ]);
+        let mut accessed = Vec::new();
+        let config = MongoCutoverStageConfig::from_lookup(|key| {
+            accessed.push(key.to_owned());
+            values
+                .get(key)
+                .map(|value| Some((*value).to_owned()))
+                .ok_or_else(|| format!("stage read forbidden configuration key {key}"))
+        })
+        .expect("the narrow configuration is sufficient")
+        .expect("stage is selected");
+        assert_eq!(config.bind, "127.0.0.1:18080");
+        assert_eq!(config.mongodb_database, "stage_boundary");
+        assert_eq!(
+            accessed,
+            [
+                MONGODB_CUTOVER_STAGE,
+                "CHRONO_MONGODB_LEGACY_CUTOVER",
+                "CHRONO_MONGODB_COORDINATION_CUTOVER",
+                "CHRONO_SERVER_BIND",
+                "CHRONO_MONGODB_URI",
+                "CHRONO_MONGODB_DATABASE",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_stage_refuses_an_unreadable_environment_value() {
+        let error = MongoCutoverStageConfig::from_lookup(|key| {
+            Err(format!(
+                "{key} is not valid UTF-8 and cannot be interpreted"
+            ))
+        })
+        .expect_err("a non-text selector must not silently become normal startup");
+        assert!(error.contains(MONGODB_CUTOVER_STAGE), "got {error}");
     }
 
     #[test]
