@@ -464,6 +464,17 @@ impl SessionService {
                 &resolved_environment.skills,
             )
             .await?;
+        crate::store::validate_skill_packs(&skill_packs)
+            .map_err(CoreError::SkillCatalogUnavailable)?;
+        if !skill_packs.is_empty() && self.skill_packs.is_none() {
+            return Err(CoreError::RuntimeUnavailable(
+                "durable skill pack storage is not configured; refusing to create a session whose skills could not be recovered or erased"
+                    .into(),
+            ));
+        }
+        if let Some(store) = self.skill_packs.as_ref() {
+            store.validate(&skill_packs).map_err(store_failed)?;
+        }
         let granted_skills = Self::granted_skills_for(&skill_packs);
 
         let (settings, settings_fallback) = self.settings.for_provisioning_observed().await;

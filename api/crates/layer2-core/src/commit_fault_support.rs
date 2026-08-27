@@ -22,6 +22,9 @@ pub(crate) struct CommitFaultStore {
     matches: fn(&SessionRecord, &[Event]) -> bool,
     pause_next: AtomicBool,
     pause_after_next: AtomicBool,
+    project_staged_listings: AtomicBool,
+    project_staged_gets: AtomicBool,
+    get_calls: AtomicUsize,
     coordination_enabled: AtomicBool,
     failures: AtomicUsize,
     matched_calls: AtomicUsize,
@@ -41,6 +44,9 @@ impl CommitFaultStore {
             matches,
             pause_next: AtomicBool::new(false),
             pause_after_next: AtomicBool::new(false),
+            project_staged_listings: AtomicBool::new(false),
+            project_staged_gets: AtomicBool::new(false),
+            get_calls: AtomicUsize::new(0),
             coordination_enabled: AtomicBool::new(false),
             failures: AtomicUsize::new(0),
             matched_calls: AtomicUsize::new(0),
@@ -60,6 +66,19 @@ impl CommitFaultStore {
 
     pub(crate) fn fail_next(&self, count: usize) {
         self.failures.store(count, Ordering::SeqCst);
+    }
+
+    pub(crate) fn project_staged_listings(&self, enabled: bool) {
+        self.project_staged_listings
+            .store(enabled, Ordering::SeqCst);
+    }
+
+    pub(crate) fn project_staged_gets(&self, enabled: bool) {
+        self.project_staged_gets.store(enabled, Ordering::SeqCst);
+    }
+
+    pub(crate) fn get_calls(&self) -> usize {
+        self.get_calls.load(Ordering::SeqCst)
     }
 
     /// Preserve compatibility setup, then expose the wrapped store's interaction fence.
@@ -127,6 +146,17 @@ impl CommitFaultStore {
             self.release.notified().await;
         }
     }
+
+    fn project_staged_record(mut record: SessionRecord) -> SessionRecord {
+        if matches!(
+            record.skill_packs,
+            crate::store::SkillPackState::Staged(_)
+                | crate::store::SkillPackState::LegacyHandover { .. }
+        ) {
+            record.skill_packs = crate::store::SkillPackState::StagedSummary;
+        }
+        record
+    }
 }
 
 #[async_trait::async_trait]
@@ -136,7 +166,13 @@ impl SessionStore for CommitFaultStore {
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
-        self.inner.get(id).await
+        self.get_calls.fetch_add(1, Ordering::SeqCst);
+        let record = self.inner.get(id).await?;
+        Ok(if self.project_staged_gets.load(Ordering::SeqCst) {
+            record.map(Self::project_staged_record)
+        } else {
+            record
+        })
     }
 
     async fn runtime_authority(
@@ -182,7 +218,12 @@ impl SessionStore for CommitFaultStore {
         owner: &SubjectId,
         query: &SessionListQuery,
     ) -> Result<Page<SessionRecord>, StoreError> {
-        self.inner.list_for(owner, query).await
+        let page = self.inner.list_for(owner, query).await?;
+        Ok(if self.project_staged_listings.load(Ordering::SeqCst) {
+            page.map(Self::project_staged_record)
+        } else {
+            page
+        })
     }
 
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError> {
@@ -190,7 +231,12 @@ impl SessionStore for CommitFaultStore {
     }
 
     async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError> {
-        self.inner.list_all(query).await
+        let page = self.inner.list_all(query).await?;
+        Ok(if self.project_staged_listings.load(Ordering::SeqCst) {
+            page.map(Self::project_staged_record)
+        } else {
+            page
+        })
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {

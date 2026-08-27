@@ -199,8 +199,8 @@ pub use store::{
     ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, HandoverSnapshot,
     HandoverStore, OperationClaim, OperationReservation, OperationStore, Page, PageCursor,
     PageRequest, PendingHandover, PendingHandoverTarget, SessionListQuery, SessionRecord,
-    SessionStore, SkillPack, SkillPackState, SkillPackStore, SkillSource, StoreError,
-    UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+    SessionStore, SkillPack, SkillPackDigest, SkillPackState, SkillPackStore, SkillSource,
+    StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};
