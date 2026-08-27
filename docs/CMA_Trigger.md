@@ -437,22 +437,26 @@ ADR and changes to consent, identity, refresh, fork, and recovery contracts.
 
 ## 9. Interface projection
 
-REST is the canonical resource projection. AG-UI projects the same operations
-and replay state for browser clients. An interface marked absent must return a
+REST is the canonical resource projection and the sole mutation path. AG-UI
+provides a read-only `cma:trigger` companion for preview, owned snapshots,
+progress replay, and diff review. It does not project a second write path:
+browser commands use the same public REST/TypeScript SDK contract and landed
+OperationStore as third-party clients. An interface marked absent must return a
 typed unsupported-operation/capability result if called; no dashboard-private
-route may fill the gap.
+route may fill the gap. A Launch identifier never appears as an AG-UI session
+`threadId` or turn `runId`.
 
 | Operation | REST | AG-UI | PTY | MCP | A2A |
 |---|---|---|---|---|---|
-| Anonymous Trigger preview | Full, subject-free GET | Public preview event/snapshot | Absent | Absent | Absent |
-| Publisher draft/publish/retire | Full authenticated resource API | Full form/action projection | Absent | Absent in MVP | Absent in MVP |
-| GitHub connect/callback | Full auth start/callback/status | Full browser projection | Absent | Absent | Absent |
-| Launch draft/review/Start/cancel | Full authenticated commands | Full state/action projection | Absent | Read status only; no confirmation command in MVP | Read status only; no confirmation command in MVP |
-| Launch progress/replay | Cursor-based resource/event API | Cursor-based event replay | Absent | Read snapshot/status | Read snapshot/status |
+| Anonymous Trigger preview | Full, subject-free GET | Read-only companion snapshot | Absent | Absent | Absent |
+| Publisher draft/publish/retire | Full authenticated resource API | Absent; browser uses REST/SDK | Absent | Absent in MVP | Absent in MVP |
+| GitHub connect/callback | Full auth start/callback/status | Absent; browser uses REST/SDK | Absent | Absent | Absent |
+| Launch draft/review/Start/cancel | Full authenticated commands | Read-only review snapshot; commands use REST/SDK | Absent | Absent in MVP | Absent in MVP |
+| Launch progress/replay | Cursor-based resource/event API | Read-only cursor replay | Absent | Absent | Absent |
 | Session conversation | Existing REST subset | Existing full conversation projection | Existing terminal projection | Existing protocol projection | Existing protocol projection |
-| Repository/checkpoint/reach status | Full safe projection | Full session-side panel state | Absent | Read safe status | Read safe status |
-| Diff review and branch publication | Full read plus explicit publish command | Full diff and confirmation projection | Absent | Read diff metadata only | Read diff metadata only |
-| Open/update PR | Explicit idempotent command | Explicit confirmation action | Absent | Absent in MVP | Absent in MVP |
+| Repository/checkpoint/reach status | Full safe projection | Read-only companion snapshot | Absent | Absent | Absent |
+| Diff review and branch publication | Full read plus explicit publish command | Read-only diff; publish uses REST/SDK | Absent | Absent | Absent |
+| Open/update PR | Explicit idempotent command | Absent; browser uses REST/SDK | Absent | Absent | Absent |
 
 The README path is a frontend deep link backed by the subject-free Layer 1
 preview handler. The OAuth return and authenticated review use the existing SPA

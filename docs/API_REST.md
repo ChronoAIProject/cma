@@ -2,7 +2,7 @@
 
 **Priority 2 — for backend server clients.**
 
-REST is the **superset interface**: it projects all nine core operations and is the reference realisation of the core session model. Every other interface is a projection of the same model; where a question about semantics is ambiguous elsewhere, this document is the answer.
+REST is the **superset interface**: it projects all ten core operations and is the reference realisation of the core session model. Every other interface is a projection of the same model; where a question about semantics is ambiguous elsewhere, this document is the answer.
 
 See [API_Overview.md](./API_Overview.md) for the core operation set, session lifecycle, and event model.
 
@@ -158,6 +158,26 @@ starts. The service never falls back to unprotected execution. If recording the
 result fails after the operation, the response is `503` and the pending claim
 continues to block duplicate execution. After 24 hours the claim expires and
 the key may be used again.
+
+### Trigger and Launch projection
+
+REST is the canonical and sole write projection for the Trigger workflow. The
+public preview under `/api/v1/triggers/public/{public_id}` is subject-free and
+side-effect-free. Authenticated resources under `/api/v1/triggers`,
+`/api/v1/github/connections`, and `/api/v1/launches` cover publisher drafts and
+revisions, reusable NyxID GitHub connections, immutable Launch review,
+repository/progress/diff state, cancellation, branch publication, and explicit
+Open or Update pull-request confirmation.
+
+Every workflow mutation requires `Idempotency-Key` and reserves through the
+same durable operation store described above. There is no dashboard-only route,
+query-string credential, or AG-UI write path. Reads project provider-neutral
+Layer 2 models and public-safe reach/refusal status; GitHub HTTP payloads,
+credential values, internal effect keys, and provider request bodies never
+cross this interface. The TypeScript and Rust SDK fixtures are the executable
+contract for these resources, and `/openapi.json` contains every served route.
+The complete route and representation catalogue is in the Trigger section
+added with that fixture contract.
 
 ---
 
