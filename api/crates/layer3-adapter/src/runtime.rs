@@ -213,6 +213,9 @@ pub struct RuntimeSpec {
     /// before this field existed, so `None` reproduces today's behaviour
     /// exactly.
     pub capacity: Option<RuntimeCapacity>,
+    /// Provider-enforced runtime lifetime, or `None` for the deployment's
+    /// default. Trigger sessions pin this in their durable Launch authority.
+    pub timeout_seconds: Option<u64>,
     /// Credential the runtime should present when calling out on the owner's
     /// behalf, if the caller has one to delegate.
     ///
@@ -311,6 +314,22 @@ pub struct WorkspaceCheckpointRequest {
     pub version: u64,
     pub source_revision: String,
     pub baseline_manifest_digest: String,
+    pub disposition: WorkspaceCheckpointDisposition,
+}
+
+/// Whether a coherent capture reopens the runtime or leaves its writers
+/// fenced for the immediately following provider teardown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorkspaceCheckpointDisposition {
+    #[default]
+    ResumeAfterCapture,
+    HoldForTeardown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceWriterState {
+    Resumed,
+    HeldForTeardown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,6 +361,8 @@ pub struct WorkspaceCheckpointPackage {
     pub entries: Vec<WorkspaceEntryPackage>,
     pub total_bytes: u64,
     pub quiesced_writers: u32,
+    pub writer_state: WorkspaceWriterState,
+    pub writer_resume_token: Option<String>,
     pub archive: Vec<u8>,
 }
 
@@ -368,6 +389,12 @@ pub struct RuntimeOptions {
     /// Whether the agent authenticates with the owner's own vendor account
     /// instead of being handed a delegated credential.
     pub own_credential: bool,
+    /// Whether this conversation must use a deployment-owned restricted
+    /// service-gateway policy rather than ordinary interactive permissions.
+    ///
+    /// The adapter maps this provider-neutral requirement into its own named
+    /// mode. It never means unrestricted filesystem or network access.
+    pub restricted_service_gateway: bool,
     /// A conversation to rejoin rather than begin.
     ///
     /// Set when a control plane is taking back over a runtime that kept
@@ -417,6 +444,72 @@ pub struct RuntimePolicyReceipt {
     pub generation: u64,
     pub fence: u64,
     pub revoked: bool,
+}
+
+/// Closed runtime refusal vocabulary exposed by the policy readiness lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimePolicyRefusal {
+    MissingPolicy,
+    UnknownVersion,
+    Expired,
+    StaleGeneration,
+    Revoked,
+    MalformedRequest,
+    ResourceMismatch,
+    OperationDenied,
+    AudienceMismatch,
+    SignatureInvalid,
+}
+
+/// Non-secret policy state observed from one exact live runtime.
+///
+/// The runtime handle is deliberately not repeated here. The adapter method
+/// is already addressed to one opaque handle and Layer 2 pairs the returned
+/// snapshot with that handle while holding the session lifecycle fence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimePolicyObservation {
+    pub required: bool,
+    pub supported: bool,
+    pub installed: bool,
+    pub revoked: bool,
+    pub launch_id: Option<String>,
+    pub generation: Option<u64>,
+    pub fence: Option<u64>,
+    pub expires_at_epoch_seconds: Option<u64>,
+    pub last_refusal: Option<RuntimePolicyRefusal>,
+}
+
+/// Version of the runtime-side restricted gateway probe protocol.
+pub const RUNTIME_GATEWAY_PROBE_VERSION: u32 = 1;
+
+/// One non-secret target for a runtime-side restricted gateway read.
+///
+/// Layer 3 carries this provider-neutral shape to the exact runtime. The
+/// runtime owns the concrete loopback route and never returns its response
+/// body, credential, or headers to the control plane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeGatewayProbeRequest {
+    pub version: u32,
+    pub service_id: String,
+    pub resource_id: u64,
+}
+
+/// Closed result of traversing the command sandbox and restricted gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeGatewayProbeOutcome {
+    Allowed,
+    CommandSandboxInitializationFailed,
+    GatewayNetworkInitializationFailed,
+    PolicyDenied,
+    ProviderDenied,
+    TransientBrokerFailure,
+}
+
+/// A runtime acknowledgement that contains no provider response data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeGatewayProbeReceipt {
+    pub version: u32,
+    pub outcome: RuntimeGatewayProbeOutcome,
 }
 
 /// Exact provider identity required for a fenced destructive operation.

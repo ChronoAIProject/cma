@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   publishTrigger: vi.fn(),
   readTrigger: vi.fn(),
   reconnectTriggerConnection: vi.fn(),
+  revokeTriggerConnection: vi.fn(),
   resolveTriggerRepository: vi.fn(),
   retireTriggerRevision: vi.fn(),
   updateTrigger: vi.fn(),
@@ -66,6 +67,12 @@ const ACTIVE: TriggerConnection = {
   avatar_url: null,
   granted_scopes: ['public_repo'],
   consent_observed_at: '2026-08-27T00:00:00Z',
+};
+
+const INACTIVE: TriggerConnection = {
+  ...ACTIVE,
+  state_version: ACTIVE.state_version + 1,
+  state: 'inactive',
 };
 
 const HANDOFF = {
@@ -165,20 +172,21 @@ beforeEach(() => {
   );
   api.publishTrigger.mockResolvedValue(revision());
   api.retireTriggerRevision.mockResolvedValue(revision('retired'));
+  api.revokeTriggerConnection.mockResolvedValue(INACTIVE);
   flow.authorizeTriggerConnection.mockResolvedValue(ACTIVE);
 });
 
 describe('publisher loading and empty states', () => {
   it('shows bounded skeletons while the initial reads are pending', () => {
     api.listTriggers.mockReturnValue(new Promise(() => {}));
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     expect(screen.getByLabelText('GitHub Triggers')).toHaveAttribute('aria-busy', 'true');
     expect(document.querySelectorAll('.publisher__loading .skeleton')).toHaveLength(3);
   });
 
   it('offers a retry after an initial read fails', async () => {
     api.listTriggers.mockRejectedValueOnce(new Error('draft catalogue unavailable'));
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('draft catalogue unavailable');
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -189,7 +197,7 @@ describe('publisher loading and empty states', () => {
 
   it('draws the new editor and a real empty-state sentence with no drafts', async () => {
     api.listTriggers.mockResolvedValue([]);
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     expect(await screen.findByText('No Trigger drafts yet.')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Fix one bounded issue' })).toBeInTheDocument();
   });
@@ -198,7 +206,7 @@ describe('publisher loading and empty states', () => {
 describe('exact connection and repository selection', () => {
   it('preflights only the selected service and resolves a canonical repository URL', async () => {
     api.listTriggers.mockResolvedValue([]);
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     const user = userEvent.setup();
 
     const selector = await screen.findByLabelText('UserService');
@@ -224,7 +232,7 @@ describe('exact connection and repository selection', () => {
   });
 
   it('keeps the form in CMA while reconnecting the exact inactive service', async () => {
-    const inactive = { ...ACTIVE, state: 'inactive' };
+    const inactive: TriggerConnection = { ...ACTIVE, state: 'inactive' };
     api.listTriggers.mockResolvedValue([draft(undefined, 3, inactive.service_id)]);
     api.listTriggerConnections.mockResolvedValue([inactive]);
     api.preflightTriggerConnection.mockRejectedValue(
@@ -234,11 +242,39 @@ describe('exact connection and repository selection', () => {
       options.onService?.(inactive.service_id);
       return ACTIVE;
     });
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
     expect(flow.authorizeTriggerConnection).toHaveBeenCalledOnce();
     expect(screen.getByLabelText('Public summary')).toHaveValue('Fix one bounded issue');
+    expect(screen.queryByRole('button', { name: 'Revoke connection' })).toBeNull();
+  });
+
+  it('requires confirmation before revoking and retains the Trigger draft', async () => {
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Revoke connection' }));
+    let dialog = screen.getByRole('dialog', { name: 'Revoke GitHub connection?' });
+    expect(dialog).toHaveTextContent('Trigger drafts, published revisions, Launches');
+    expect(api.revokeTriggerConnection).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Keep connection' }));
+    expect(api.revokeTriggerConnection).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Revoke connection' }));
+    dialog = screen.getByRole('dialog', { name: 'Revoke GitHub connection?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Revoke connection' }));
+
+    await waitFor(() =>
+      expect(api.revokeTriggerConnection).toHaveBeenCalledWith(
+        ACTIVE.service_id,
+        expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+      ),
+    );
+    expect(screen.getByLabelText('Public summary')).toHaveValue('Fix one bounded issue');
+    expect(await screen.findByText('GitHub connection revoked')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Verify repository' })).toBeDisabled();
   });
 
   it('reconciles an ambiguous OAuth begin with one intent and command key', async () => {
@@ -250,7 +286,7 @@ describe('exact connection and repository selection', () => {
       options.onService?.(handoff.service_id);
       return ACTIVE;
     });
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     const user = userEvent.setup();
 
     await user.click(await screen.findByRole('button', { name: 'Connect GitHub' }));
@@ -271,7 +307,7 @@ describe('exact connection and repository selection', () => {
 describe('draft mutations', () => {
   it('creates a draft with canonical numeric repository identity', async () => {
     api.listTriggers.mockResolvedValue([]);
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     const user = userEvent.setup();
     await user.selectOptions(await screen.findByLabelText('UserService'), ACTIVE.service_id);
     await waitFor(() => expect(api.preflightTriggerConnection).toHaveBeenCalled());
@@ -289,7 +325,7 @@ describe('draft mutations', () => {
   });
 
   it('updates under the version read and retains validation failures', async () => {
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     const user = userEvent.setup();
     const summary = await screen.findByLabelText('Public summary');
     await user.clear(summary);
@@ -313,7 +349,7 @@ describe('draft mutations', () => {
           savedFrom(content, 5),
       );
     api.readTrigger.mockResolvedValue(draft('Changed elsewhere', 4));
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     const user = userEvent.setup();
     const summary = await screen.findByLabelText('Public summary');
     await user.clear(summary);
@@ -332,7 +368,7 @@ describe('draft mutations', () => {
 
   it('freezes and reconciles the exact draft after repeated transport loss', async () => {
     api.updateTrigger.mockRejectedValue(new TransportError('response lost'));
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     const user = userEvent.setup();
     const summary = await screen.findByLabelText('Public summary');
     await user.clear(summary);
@@ -355,7 +391,7 @@ describe('immutable publication and retirement', () => {
   it('confirms immutable publication and rereads the advanced mutable draft', async () => {
     const refreshed = { ...draft(), version: 4, next_revision_number: 3 };
     api.readTrigger.mockResolvedValue(refreshed);
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     await waitFor(() => expect(api.preflightTriggerConnection).toHaveBeenCalled());
 
     await userEvent.click(await screen.findByRole('button', { name: 'Publish' }));
@@ -375,7 +411,7 @@ describe('immutable publication and retirement', () => {
 
   it('copies public and README destinations and retires only after inline confirmation', async () => {
     api.listTriggerRevisions.mockResolvedValue([revision()]);
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     const user = userEvent.setup();
     const row = (await screen.findByText('Revision 1')).closest('li');
     expect(row).not.toBeNull();
@@ -400,7 +436,7 @@ describe('immutable publication and retirement', () => {
 
   it('retains publication confirmation until the exact command reconciles', async () => {
     api.publishTrigger.mockRejectedValue(new TransportError('response lost'));
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     const user = userEvent.setup();
     await waitFor(() => expect(api.preflightTriggerConnection).toHaveBeenCalled());
     await user.click(await screen.findByRole('button', { name: 'Publish' }));
@@ -408,7 +444,9 @@ describe('immutable publication and retirement', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Publish immutable revision' }));
 
     await waitFor(() => expect(api.publishTrigger).toHaveBeenCalledTimes(2));
-    expect(within(dialog).getByRole('button', { name: 'Reconcile publication' })).toBeEnabled();
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Reconcile publication' })).toBeEnabled(),
+    );
     expect(within(dialog).getByRole('button', { name: 'Keep editing' })).toBeDisabled();
     expect(api.publishTrigger.mock.calls[1]).toEqual(api.publishTrigger.mock.calls[0]);
 
@@ -421,7 +459,7 @@ describe('immutable publication and retirement', () => {
   it('pins retirement confirmation while its outcome is ambiguous', async () => {
     api.listTriggerRevisions.mockResolvedValue([revision()]);
     api.retireTriggerRevision.mockRejectedValue(new TransportError('response lost'));
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     const user = userEvent.setup();
     const row = (await screen.findByText('Revision 1')).closest('li');
     expect(row).not.toBeNull();
@@ -430,7 +468,9 @@ describe('immutable publication and retirement', () => {
 
     await waitFor(() => expect(api.retireTriggerRevision).toHaveBeenCalledTimes(2));
     expect(within(row!).getByRole('button', { name: 'Keep it' })).toBeDisabled();
-    expect(within(row!).getByRole('button', { name: 'Reconcile retirement' })).toBeEnabled();
+    await waitFor(() =>
+      expect(within(row!).getByRole('button', { name: 'Reconcile retirement' })).toBeEnabled(),
+    );
 
     api.retireTriggerRevision.mockResolvedValue(revision('retired'));
     await user.click(within(row!).getByRole('button', { name: 'Reconcile retirement' }));
@@ -444,13 +484,13 @@ describe('immutable publication and retirement', () => {
 describe('rendering and responsive contracts', () => {
   it('renders repository and prompt-derived labels as text, never markup', async () => {
     api.listTriggers.mockResolvedValue([draft('<img src=x onerror=alert(1)>')]);
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     expect(await screen.findAllByText('<img src=x onerror=alert(1)>')).not.toHaveLength(0);
     expect(document.querySelector('img[src="x"]')).toBeNull();
   });
 
   it('ships the native narrow draft selector and single-column breakpoint', async () => {
-    render(<PublisherSurface displayIdentity="Chrono Maintainer" />);
+    render(<PublisherSurface ownerId="test-owner" displayIdentity="Chrono Maintainer" />);
     expect(await screen.findByLabelText('Draft')).toBeInstanceOf(HTMLSelectElement);
     const css = readFileSync('src/publisher/PublisherSurface.css', 'utf8');
     expect(css).toMatch(/@media \(max-width: 48rem\)/);

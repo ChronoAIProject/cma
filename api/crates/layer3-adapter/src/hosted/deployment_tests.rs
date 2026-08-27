@@ -22,6 +22,7 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
             rows: 40,
         },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: Default::default(),
     }
@@ -52,6 +53,23 @@ fn no_credential_travels_as_environment() {
     assert!(
         env.values().all(|v| !v.contains("Bearer")),
         "no credential-shaped value may be handed to a sandbox"
+    );
+}
+
+#[test]
+fn trigger_sensitive_proxies_have_distinct_fixed_loopback_bindings() {
+    let env = deployed().base_environment(&spec_with(Default::default()));
+    assert_eq!(
+        env.get("CHRONO_UPSTREAM_BIND").map(String::as_str),
+        Some("127.0.0.1:9091")
+    );
+    assert_eq!(
+        env.get("CHRONO_PLATFORM_PROXY_BIND").map(String::as_str),
+        Some("127.0.0.2:9092")
+    );
+    assert_eq!(
+        env.get("NYXID_URL").map(String::as_str),
+        Some("http://127.0.0.2:9092")
     );
 }
 

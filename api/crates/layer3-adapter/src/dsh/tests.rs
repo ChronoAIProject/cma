@@ -32,6 +32,7 @@ fn conversation() -> RuntimeSpec {
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: RuntimeOptions {
             mode: RuntimeMode::Conversation,

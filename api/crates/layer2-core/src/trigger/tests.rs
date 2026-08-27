@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -11,6 +12,9 @@ use crate::{seconds_from_rfc3339, PermissionMode, SessionId, SessionSize, Subjec
 
 const NOW: &str = "2026-08-26T12:00:00Z";
 const LATER: &str = "2026-08-26T12:01:00Z";
+const DRAFT_EXPIRY: &str = "2026-08-27T12:00:00Z";
+const AFTER_DRAFT_EXPIRY: &str = "2026-08-27T12:00:01Z";
+pub(crate) const TEST_TRIGGER_RUNTIME_VERSION: &str = "cma-trigger-test-runtime@sha256:admitted";
 
 pub(crate) fn session_launch(archive_sha256: &str) -> Launch {
     let owner = SubjectId("trigger-contributor".into());
@@ -24,6 +28,7 @@ pub(crate) fn session_launch(archive_sha256: &str) -> Launch {
     launch
         .select_connection(connection(), NOW, "select-session-connection")
         .unwrap();
+    admit_launch_for_test(&mut launch, NOW);
     let baseline = WorkspaceManifest::seal(launch.source_sha.clone(), Vec::new()).unwrap();
     launch.workspace = Some(WorkspaceRecord {
         baseline,
@@ -31,6 +36,11 @@ pub(crate) fn session_launch(archive_sha256: &str) -> Launch {
         baseline_archive_sha256: archive_sha256.into(),
         latest_checkpoint: None,
         previous_checkpoint: None,
+        retired_checkpoint: None,
+        sealed_contribution_checkpoint: None,
+        checkpoint_intent: None,
+        lifecycle_checkpoint: Default::default(),
+        checkpoint_version: 0,
         workspace_epoch: 1,
         retention_policy_id: "trigger-test-retention".into(),
         delete_after: "2026-09-26T12:00:00Z".into(),
@@ -112,6 +122,7 @@ pub(crate) fn prompt_launch(mut launch: Launch, session: &crate::Session) -> (La
         attempt: claim.attempt,
         reconciliation_attempt: claim.reconciliation_attempt,
         fence: claim.fence,
+        authority_admission: None,
         provider_request_id: None,
         external_resource_ids: Default::default(),
         next_attempt_at: None,
@@ -265,6 +276,47 @@ fn terminal_cleanup_waits_for_retention_and_capability_revocation_then_is_fenced
 }
 
 #[test]
+fn terminal_partial_import_uses_its_terminal_boundary_and_existing_baseline_target() {
+    let mut launch = reviewed_launch();
+    launch.state = LaunchState::Cancelled;
+    launch.terminal_at = Some(NOW.into());
+    launch.workspace = None;
+    launch.diff = None;
+    launch.reach = None;
+    launch.cleanup = None;
+    launch.effects.push(EffectRecord {
+        kind: LaunchEffectKind::WorkspaceImport,
+        state: EffectState::FailedTerminal,
+        intent_key: "cma-trigger:partial-import".into(),
+        attempt: 1,
+        reconciliation_attempt: 0,
+        fence: 17,
+        authority_admission: None,
+        provider_request_id: None,
+        external_resource_ids: BTreeMap::new(),
+        next_attempt_at: None,
+        last_failure: None,
+        updated_at: NOW.into(),
+    });
+    launch.fencing_counter = 18;
+    launch.lease = Some(WorkerLease {
+        holder: "partial-import-cleanup".into(),
+        fencing_token: 18,
+        acquired_at: NOW.into(),
+        expires_at: LATER.into(),
+    });
+    let lease = launch.lease.clone().unwrap();
+
+    assert!(launch.cleanup_due(NOW).unwrap());
+    let plan = launch
+        .plan_cleanup(&lease, NOW, "plan-partial-import-cleanup")
+        .unwrap();
+    assert_eq!(plan.retention_policy_id, "trigger-workspace-import-v1");
+    assert_eq!(plan.delete_after, NOW);
+    assert_eq!(plan.targets, vec![CleanupTarget::Baseline]);
+}
+
+#[test]
 fn prompt_delivery_progress_is_identity_bound_monotonic_and_evented() {
     let session_launch = session_launch(&"a".repeat(64));
     let session_id = crate::service::trigger_session_origin(&session_launch)
@@ -275,7 +327,7 @@ fn prompt_delivery_progress_is_identity_bound_monotonic_and_evented() {
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
-        kernel: crate::KernelId::new("codex"),
+        kernel: crate::KernelId::new("trigger-test-kernel"),
         status: crate::SessionStatus::Ready,
         recovery_state: crate::RecoveryState::Normal,
         stop_reason: None,
@@ -385,6 +437,18 @@ fn checkpoint_completion_accepts_only_the_next_artifact_from_the_current_runtime
     launch.session = Some(session.clone());
     launch.state = LaunchState::Contributing;
     launch.contribution_checkpoint_version = Some(1);
+    let checkpoint_id = CheckpointId("checkpoint-current-runtime".into());
+    let workspace_epoch = launch.workspace.as_ref().unwrap().workspace_epoch;
+    launch.workspace.as_mut().unwrap().checkpoint_intent = Some(WorkspaceCheckpointIntent {
+        id: checkpoint_id.clone(),
+        version: 1,
+        purpose: WorkspaceCheckpointPurpose::ContributionReview,
+        session_id: session.session_id.clone(),
+        runtime_generation: session.runtime_generation,
+        workspace_epoch,
+        requested_at: NOW.into(),
+        retry_at: None,
+    });
     launch.fencing_counter = 1;
     let lease = WorkerLease {
         holder: "checkpoint-worker".into(),
@@ -400,16 +464,17 @@ fn checkpoint_completion_accepts_only_the_next_artifact_from_the_current_runtime
     assert_eq!(claim.kind, LaunchEffectKind::Checkpoint);
     let workspace = launch.workspace.as_ref().unwrap();
     let valid = WorkspaceCheckpoint {
-        id: CheckpointId("checkpoint-current-runtime".into()),
+        id: checkpoint_id,
         launch_id: launch.id.clone(),
         version: 1,
         workspace_epoch: workspace.workspace_epoch,
         session_id: session.session_id.clone(),
-        runtime_generation: session.runtime_generation + 1,
+        runtime_generation: session.runtime_generation,
         object_reference: "trigger-test/checkpoint-v1.pack".into(),
         archive_sha256: "b".repeat(64),
         manifest: WorkspaceManifest::seal(launch.source_sha.clone(), Vec::new()).unwrap(),
         integrity: CheckpointIntegrity::Complete,
+        recovery_pair: None,
         created_at: NOW.into(),
         delete_after: Some(workspace.delete_after.clone()),
     };
@@ -423,6 +488,11 @@ fn checkpoint_completion_accepts_only_the_next_artifact_from_the_current_runtime
         {
             let mut value = valid.clone();
             value.runtime_generation = session.runtime_generation - 1;
+            value
+        },
+        {
+            let mut value = valid.clone();
+            value.runtime_generation = session.runtime_generation + 1;
             value
         },
         {
@@ -481,7 +551,148 @@ fn checkpoint_completion_accepts_only_the_next_artifact_from_the_current_runtime
         )
         .unwrap();
     assert_eq!(launch.workspace.unwrap().latest_checkpoint, Some(valid));
-    assert_eq!(launch.session.unwrap().runtime_generation, 4);
+    assert_eq!(launch.session.unwrap().runtime_generation, 3);
+}
+
+#[test]
+fn launch_runtime_generation_advances_only_from_monotonic_session_authority() {
+    let mut launch = session_launch(&"a".repeat(64));
+    let owner = launch.owner.clone();
+    let session_id = SessionId("sesn_generation_sync".into());
+    launch.session = Some(SessionLink {
+        session_id: session_id.clone(),
+        environment_profile_id: "envp_generation_sync".into(),
+        runtime_generation: 3,
+        created_at: NOW.into(),
+    });
+    launch.state = LaunchState::Ready;
+
+    assert!(launch
+        .synchronize_runtime_generation(&session_id, &owner, 5, LATER)
+        .unwrap());
+    assert_eq!(launch.session.as_ref().unwrap().runtime_generation, 5);
+    assert!(!launch
+        .synchronize_runtime_generation(&session_id, &owner, 5, LATER)
+        .unwrap());
+
+    let advanced = launch.clone();
+    assert!(launch
+        .synchronize_runtime_generation(&session_id, &owner, 4, LATER)
+        .is_err());
+    assert_eq!(
+        launch, advanced,
+        "a stale generation cannot mutate the Launch"
+    );
+
+    let workspace_epoch = launch.workspace.as_ref().unwrap().workspace_epoch;
+    launch.workspace.as_mut().unwrap().checkpoint_intent = Some(WorkspaceCheckpointIntent {
+        id: CheckpointId("checkpoint-old-runtime".into()),
+        version: 1,
+        purpose: WorkspaceCheckpointPurpose::Periodic,
+        session_id: session_id.clone(),
+        runtime_generation: 5,
+        workspace_epoch,
+        requested_at: LATER.into(),
+        retry_at: None,
+    });
+    let pending = launch.clone();
+    assert!(launch
+        .synchronize_runtime_generation(&session_id, &owner, 6, LATER)
+        .is_err());
+    assert_eq!(
+        launch, pending,
+        "runtime authority cannot strand an old-generation checkpoint intent"
+    );
+}
+
+#[test]
+fn lifecycle_checkpoint_cadence_and_recovery_intent_are_fail_closed() {
+    let mut launch = session_launch(&"a".repeat(64));
+    let session = SessionLink {
+        session_id: SessionId("sesn_lifecycle_checkpoint".into()),
+        environment_profile_id: "envp_lifecycle_checkpoint".into(),
+        runtime_generation: 1,
+        created_at: NOW.into(),
+    };
+    launch.session = Some(session.clone());
+    launch.state = LaunchState::Ready;
+    let owner = launch.owner.clone();
+    assert_eq!(
+        launch
+            .reserve_lifecycle_checkpoint(
+                WorkspaceCheckpointPurpose::Periodic,
+                &session.session_id,
+                &owner,
+                session.runtime_generation,
+                LATER,
+            )
+            .unwrap(),
+        WorkspaceCheckpointReservation::NotDue
+    );
+    let intent = match launch
+        .reserve_lifecycle_checkpoint(
+            WorkspaceCheckpointPurpose::Periodic,
+            &session.session_id,
+            &owner,
+            session.runtime_generation,
+            "2026-08-26T12:05:00Z",
+        )
+        .unwrap()
+    {
+        WorkspaceCheckpointReservation::Capture(intent) => intent,
+        other => panic!("the five-minute boundary must reserve: {other:?}"),
+    };
+    launch
+        .fail_lifecycle_checkpoint(
+            &intent,
+            WorkspaceCheckpointFailure {
+                code: "writer_resume_unproven".into(),
+                detail: "the transport outcome is ambiguous".into(),
+                observed_at: "2026-08-26T12:05:01Z".into(),
+                retry_at: None,
+            },
+            true,
+        )
+        .unwrap();
+    let workspace = launch.workspace.as_ref().unwrap();
+    assert_eq!(workspace.checkpoint_intent.as_ref(), Some(&intent));
+    assert_eq!(
+        workspace.lifecycle_checkpoint.state,
+        LifecycleCheckpointState::RecoveryRequired
+    );
+    assert_eq!(
+        launch
+            .reserve_lifecycle_checkpoint(
+                WorkspaceCheckpointPurpose::Periodic,
+                &session.session_id,
+                &owner,
+                session.runtime_generation,
+                "2026-08-26T12:06:00Z",
+            )
+            .unwrap(),
+        WorkspaceCheckpointReservation::Busy,
+        "recovery-required intent cannot be replaced by an automatic retry"
+    );
+
+    launch.workspace.as_mut().unwrap().checkpoint_intent = None;
+    for purpose in [
+        WorkspaceCheckpointPurpose::Periodic,
+        WorkspaceCheckpointPurpose::PreTeardown,
+    ] {
+        assert_eq!(
+            launch
+                .reserve_lifecycle_checkpoint(
+                    purpose,
+                    &session.session_id,
+                    &owner,
+                    session.runtime_generation,
+                    "2026-08-26T12:07:00Z",
+                )
+                .unwrap(),
+            WorkspaceCheckpointReservation::Busy,
+            "a committed recovery-required pair remains fenced without an intent"
+        );
+    }
 }
 
 #[test]
@@ -495,7 +706,7 @@ fn a_long_initial_turn_uses_its_session_deadline_not_the_generic_poll_budget() {
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
-        kernel: crate::KernelId::new("codex"),
+        kernel: crate::KernelId::new("trigger-test-kernel"),
         status: crate::SessionStatus::Running,
         recovery_state: crate::RecoveryState::Normal,
         stop_reason: None,
@@ -628,6 +839,7 @@ fn prompt_recovery_is_payload_bound_explicit_and_one_use() {
             effect: LaunchEffectKind::InitialDispatch
         }
     )));
+    launch.validate_progress_replay().unwrap();
 
     launch.state = LaunchState::FailedRetryable;
     launch.blocked_reason = Some(LaunchBlockedReason::RecoveryRequired);
@@ -660,6 +872,17 @@ fn operator_recovery_can_only_schedule_read_only_reconciliation() {
     launch.blocked_reason = Some(LaunchBlockedReason::RecoveryRequired);
     launch.resume_state = Some(LaunchState::Preflight);
     launch.failure = Some(recovery_failure("operator-evidence"));
+    let replayed_from = launch.replay_progress().unwrap().state;
+    launch
+        .push_event(
+            NOW,
+            "operator-recovery-fixture",
+            LaunchEventKind::StateChanged {
+                from: replayed_from,
+                to: LaunchState::FailedRetryable,
+            },
+        )
+        .unwrap();
 
     for (intent, fence, evidence) in [
         ("wrong-intent", claim.fence, "operator-evidence"),
@@ -704,6 +927,7 @@ fn operator_recovery_can_only_schedule_read_only_reconciliation() {
         attempt: 1,
         reconciliation_attempt: 1,
         fence: claim.fence,
+        authority_admission: None,
         provider_request_id: None,
         external_resource_ids: BTreeMap::new(),
         next_attempt_at: None,
@@ -758,6 +982,7 @@ fn operator_recovery_can_only_schedule_read_only_reconciliation() {
     assert_eq!(recovered.mode, EffectClaimMode::Reconcile);
     assert_eq!(recovered.intent_key, claim.intent_key);
     assert_eq!(recovered.attempt, claim.attempt);
+    launch.validate_progress_replay().unwrap();
 }
 
 fn recovery_required_prompt_launch() -> Launch {
@@ -770,7 +995,7 @@ fn recovery_required_prompt_launch() -> Launch {
         options: Default::default(),
         id: session_id,
         owner: session_launch.owner.clone(),
-        kernel: crate::KernelId::new("codex"),
+        kernel: crate::KernelId::new("trigger-test-kernel"),
         status: crate::SessionStatus::Running,
         recovery_state: crate::RecoveryState::Normal,
         stop_reason: None,
@@ -799,6 +1024,17 @@ fn recovery_required_prompt_launch() -> Launch {
     launch.blocked_reason = Some(LaunchBlockedReason::RecoveryRequired);
     launch.resume_state = Some(LaunchState::PromptPending);
     launch.failure = Some(recovery_failure("prompt-ambiguity"));
+    let replayed_from = launch.replay_progress().unwrap().state;
+    launch
+        .push_event(
+            NOW,
+            "prompt-recovery-fixture",
+            LaunchEventKind::StateChanged {
+                from: replayed_from,
+                to: LaunchState::FailedRetryable,
+            },
+        )
+        .unwrap();
     launch
 }
 
@@ -946,14 +1182,28 @@ fn publication_progress_is_monotonic_and_does_not_authorize_a_pull_request() {
         PublicationState::ObjectsWritten
     );
 
+    launch.lease = None;
+    launch.fencing_counter = 2;
+    let phase_two_lease = WorkerLease {
+        holder: "publication-worker-phase-two".into(),
+        fencing_token: 2,
+        acquired_at: LATER.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.lease = Some(phase_two_lease.clone());
+    let phase_two_claim = launch
+        .claim_next_effect(&phase_two_lease, LATER, "claim-publication-phase-two")
+        .unwrap()
+        .unwrap();
+
     let mut changed_objects = objects.clone();
     changed_objects.state = PublicationState::RefUpdatePending;
     changed_objects.commit_id = Some("f".repeat(40));
     let before = launch.clone();
     assert!(launch
         .observe_effect_progress(
-            &lease,
-            &claim,
+            &phase_two_lease,
+            &phase_two_claim,
             LaunchEffectResult::BranchPublication {
                 contribution: changed_objects,
             },
@@ -967,14 +1217,27 @@ fn publication_progress_is_monotonic_and_does_not_authorize_a_pull_request() {
     pending.state = PublicationState::RefUpdatePending;
     launch
         .observe_effect_progress(
-            &lease,
-            &claim,
+            &phase_two_lease,
+            &phase_two_claim,
             LaunchEffectResult::BranchPublication {
                 contribution: pending.clone(),
             },
             LATER,
             "ref-pending",
         )
+        .unwrap();
+    launch.lease = None;
+    launch.fencing_counter = 3;
+    let phase_three_lease = WorkerLease {
+        holder: "publication-worker-phase-three".into(),
+        fencing_token: 3,
+        acquired_at: LATER.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.lease = Some(phase_three_lease.clone());
+    let phase_three_claim = launch
+        .claim_next_effect(&phase_three_lease, LATER, "claim-publication-phase-three")
+        .unwrap()
         .unwrap();
     let mut published = pending;
     published.state = PublicationState::Published;
@@ -984,8 +1247,8 @@ fn publication_progress_is_monotonic_and_does_not_authorize_a_pull_request() {
     let before = launch.clone();
     assert!(launch
         .complete_effect(
-            &lease,
-            &claim,
+            &phase_three_lease,
+            &phase_three_claim,
             EffectCompletion {
                 result: LaunchEffectResult::BranchPublication {
                     contribution: replaced_intent,
@@ -1005,8 +1268,8 @@ fn publication_progress_is_monotonic_and_does_not_authorize_a_pull_request() {
     assert_eq!(launch, before, "publication completion is intent-bound");
     launch
         .complete_effect(
-            &lease,
-            &claim,
+            &phase_three_lease,
+            &phase_three_claim,
             EffectCompletion {
                 result: LaunchEffectResult::BranchPublication {
                     contribution: published.clone(),
@@ -1028,10 +1291,10 @@ fn publication_progress_is_monotonic_and_does_not_authorize_a_pull_request() {
     assert!(launch.pull_request.is_none());
 
     launch.lease = None;
-    launch.fencing_counter = 2;
+    launch.fencing_counter = 4;
     let next_lease = WorkerLease {
         holder: "next-worker".into(),
-        fencing_token: 2,
+        fencing_token: 4,
         acquired_at: NOW.into(),
         expires_at: "2026-08-26T12:10:00Z".into(),
     };
@@ -1294,6 +1557,31 @@ fn pull_request_template_rejects_the_reserved_marker_prefix() {
     assert!(candidate.validate().is_err());
 }
 
+#[test]
+fn trigger_sandbox_profile_is_closed_to_the_supported_mvp_policy() {
+    let mut candidate = content(SubjectId("publisher".into()));
+    candidate.session.sandbox_profile = CMA_TRIGGER_SANDBOX_PROFILE_V1.into();
+    candidate
+        .validate()
+        .expect("the exact supported profile is publishable");
+
+    for unsupported in [
+        "",
+        "custom-profile",
+        "CMA-TRIGGER-V1",
+        " cma-trigger-v1",
+        "cma-trigger-v1 ",
+        "cma-trigger-v2",
+    ] {
+        candidate.session.sandbox_profile = unsupported.into();
+        let error = candidate
+            .validate()
+            .expect_err("unknown or non-canonical profiles fail closed");
+        assert_eq!(error.field.as_deref(), Some("session.sandbox_profile"));
+        assert!(error.detail.contains(CMA_TRIGGER_SANDBOX_PROFILE_V1));
+    }
+}
+
 fn reconciled_pull_request(mut record: PullRequestRecord) -> PullRequestRecord {
     record.provider_id = Some(70);
     record.provider_node_id = Some("PR_node_7".into());
@@ -1376,6 +1664,7 @@ fn reviewed_launch() -> Launch {
         archive_sha256: "a".repeat(64),
         manifest: checkpoint_manifest,
         integrity: CheckpointIntegrity::Complete,
+        recovery_pair: None,
         created_at: NOW.into(),
         delete_after: Some("2026-09-26T12:00:00Z".into()),
     };
@@ -1385,6 +1674,11 @@ fn reviewed_launch() -> Launch {
         baseline_archive_sha256: "b".repeat(64),
         latest_checkpoint: Some(checkpoint.clone()),
         previous_checkpoint: None,
+        retired_checkpoint: None,
+        sealed_contribution_checkpoint: Some(checkpoint.clone()),
+        checkpoint_intent: None,
+        lifecycle_checkpoint: Default::default(),
+        checkpoint_version: 1,
         workspace_epoch: 1,
         retention_policy_id: "trigger-test-retention".into(),
         delete_after: "2026-09-26T12:00:00Z".into(),
@@ -1489,6 +1783,182 @@ fn preview_is_an_allowlist_and_never_projects_the_prompt() {
 }
 
 #[test]
+fn configured_checks_are_rejected_until_a_bounded_runner_exists() {
+    let owner = SubjectId("publisher".into());
+    let mut candidate = content(owner.clone());
+    candidate.override_policy.optional_checks = vec!["cargo-test".into()];
+    let error = candidate
+        .validate()
+        .expect_err("a publisher cannot advertise checks that will not run");
+    assert_eq!(
+        error.field.as_deref(),
+        Some("override_policy.optional_checks")
+    );
+
+    let revision = revision(owner);
+    let selected = LaunchOverrides {
+        optional_checks: vec!["cargo-test".into()],
+        ..LaunchOverrides::default()
+    };
+    let error = effective_configuration(&revision, &selected)
+        .expect_err("a retained client cannot select an unavailable check");
+    assert_eq!(error.field.as_deref(), Some("overrides.optional_checks"));
+}
+
+fn leased_prompt_launch_for_connection_revocation() -> Launch {
+    let session_launch = session_launch(&"e".repeat(64));
+    let session_id = crate::service::trigger_session_origin(&session_launch)
+        .unwrap()
+        .session_id()
+        .unwrap();
+    let session = crate::Session {
+        options: Default::default(),
+        id: session_id,
+        owner: session_launch.owner.clone(),
+        kernel: crate::KernelId::new("trigger-test-kernel"),
+        status: crate::SessionStatus::Running,
+        recovery_state: crate::RecoveryState::Normal,
+        stop_reason: None,
+        geometry: Default::default(),
+        last_seq: 0,
+        environment_profile: Some(crate::EnvironmentProfileId("envp-revocation-test".into())),
+        runtime_version: Some("trigger-runtime-test".into()),
+        rotations: 0,
+        rotated_at: None,
+        capabilities: Default::default(),
+        granted_services: Some(Vec::new()),
+        granted_skills: Some(Vec::new()),
+        pricing: None,
+        created_at: NOW.into(),
+    };
+    prompt_launch(session_launch, &session).0
+}
+
+#[test]
+fn connection_revocation_fences_one_worker_and_preserves_exact_recovery_intent() {
+    let mut launch = leased_prompt_launch_for_connection_revocation();
+    let retained = (
+        launch.fork.clone(),
+        launch.branch.clone(),
+        launch.workspace.clone(),
+        launch.session.clone(),
+        launch.delivery.clone(),
+        launch.diff.clone(),
+        launch.contribution.clone(),
+        launch.pull_request.clone(),
+    );
+    let original_fence = launch.fencing_counter;
+    let original_effect = launch.effects.last().unwrap().clone();
+
+    assert!(launch
+        .require_connection_reauthentication("service-1", LATER, "owner-revoked")
+        .unwrap());
+    assert_eq!(launch.state, LaunchState::AuthRequired);
+    assert_eq!(launch.resume_state, Some(LaunchState::PromptPending));
+    assert_eq!(
+        launch.blocked_reason,
+        Some(LaunchBlockedReason::ServiceInactive)
+    );
+    assert!(launch.lease.is_none());
+    assert_eq!(launch.fencing_counter, original_fence + 1);
+    let failure = launch.failure.as_ref().unwrap();
+    assert_eq!(failure.class, FailureClass::ServiceInactive);
+    assert_eq!(failure.code, "trigger_connection_revoked");
+    let effect = launch.effects.last().unwrap();
+    assert_eq!(effect.intent_key, original_effect.intent_key);
+    assert_eq!(effect.attempt, original_effect.attempt);
+    assert_eq!(effect.state, EffectState::FailedRetryable);
+    assert_eq!(effect.last_failure.as_ref(), Some(failure));
+    assert!(effect.authority_admission.is_none());
+    let reach = launch.reach.as_ref().unwrap();
+    assert_eq!(reach.state, CapabilityRevocationState::RevocationPending);
+    assert_eq!(reach.revocation_requested_at.as_deref(), Some(LATER));
+    assert_eq!(
+        retained,
+        (
+            launch.fork.clone(),
+            launch.branch.clone(),
+            launch.workspace.clone(),
+            launch.session.clone(),
+            launch.delivery.clone(),
+            launch.diff.clone(),
+            launch.contribution.clone(),
+            launch.pull_request.clone(),
+        )
+    );
+
+    let settled = launch.clone();
+    assert!(!launch
+        .require_connection_reauthentication(
+            "service-1",
+            "2026-08-26T12:02:00Z",
+            "owner-revoked-replay",
+        )
+        .unwrap());
+    assert_eq!(launch, settled);
+
+    launch
+        .select_connection(
+            connection(),
+            "2026-08-26T12:03:00Z",
+            "reconnect-after-owner-revoke",
+        )
+        .unwrap();
+    assert_eq!(launch.state, LaunchState::PromptPending);
+    let effect = launch.effects.last().unwrap();
+    assert_eq!(effect.state, EffectState::Reconciling);
+    assert_eq!(effect.intent_key, original_effect.intent_key);
+    assert_eq!(effect.attempt, original_effect.attempt);
+}
+
+#[test]
+fn terminal_connection_revocation_only_requests_reach_and_preserves_work() {
+    let mut launch = leased_prompt_launch_for_connection_revocation();
+    launch.state = LaunchState::Cancelled;
+    launch.terminal_at = Some(NOW.into());
+    let retained = (
+        launch.fork.clone(),
+        launch.branch.clone(),
+        launch.workspace.clone(),
+        launch.session.clone(),
+        launch.delivery.clone(),
+    );
+    let original_fence = launch.fencing_counter;
+
+    assert!(launch
+        .require_connection_reauthentication("service-1", LATER, "terminal-owner-revoked")
+        .unwrap());
+    assert_eq!(launch.state, LaunchState::Cancelled);
+    assert!(launch.failure.is_none());
+    assert!(launch.resume_state.is_none());
+    assert!(launch.lease.is_none());
+    assert_eq!(launch.fencing_counter, original_fence + 1);
+    assert_eq!(
+        launch.reach.as_ref().unwrap().state,
+        CapabilityRevocationState::RevocationPending
+    );
+    assert_eq!(
+        retained,
+        (
+            launch.fork.clone(),
+            launch.branch.clone(),
+            launch.workspace.clone(),
+            launch.session.clone(),
+            launch.delivery.clone(),
+        )
+    );
+    let settled = launch.clone();
+    assert!(!launch
+        .require_connection_reauthentication(
+            "service-1",
+            "2026-08-26T12:02:00Z",
+            "terminal-owner-revoked-replay",
+        )
+        .unwrap());
+    assert_eq!(launch, settled);
+}
+
+#[test]
 fn locked_overrides_and_cross_dimension_resource_ceilings_fail_closed() {
     let mut revision = revision(SubjectId("publisher".into()));
     let locked = LaunchOverrides {
@@ -1512,22 +1982,16 @@ fn locked_overrides_and_cross_dimension_resource_ceilings_fail_closed() {
 
 #[test]
 fn authentication_recovery_returns_to_the_recorded_durable_step() {
-    let owner = SubjectId("contributor".into());
-    let mut launch = Launch::new(owner.clone(), revision(owner.clone()), NOW, "create").unwrap();
-    launch
-        .select_connection(connection(), NOW, "connection")
-        .unwrap();
-    launch
-        .start(
-            confirmation(ConfirmationAction::Start, &owner, &launch.effective.digest),
-            NOW,
-            "start",
-        )
-        .unwrap();
+    let (mut launch, lease) = leased_started_launch();
     assert_eq!(launch.state, LaunchState::Preflight);
-
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "auth-claim")
+        .unwrap()
+        .unwrap();
     launch
-        .fail(
+        .fail_effect(
+            &lease,
+            &claim,
             LaunchFailure {
                 class: FailureClass::AuthRequired,
                 code: "github_reauthorization_required".into(),
@@ -1537,18 +2001,115 @@ fn authentication_recovery_returns_to_the_recorded_durable_step() {
                 retry_at: None,
                 observed_at: LATER.into(),
             },
+            None,
             LATER,
         )
         .unwrap();
+    launch.lease = None;
     assert_eq!(launch.state, LaunchState::AuthRequired);
     assert_eq!(launch.resume_state, Some(LaunchState::Preflight));
 
     launch
-        .select_connection(connection(), LATER, "reauthorized")
-        .unwrap();
+        .select_connection(connection(), AFTER_DRAFT_EXPIRY, "reauthorized")
+        .expect("a started Launch remains recoverable after its original draft deadline");
     assert_eq!(launch.state, LaunchState::Preflight);
     assert_eq!(launch.resume_state, None);
     assert_eq!(launch.failure, None);
+}
+
+#[test]
+fn owner_credential_recovery_requeues_the_exact_fenced_effect() {
+    let (mut launch, lease) = leased_started_launch();
+    let started_at = launch.started_at.clone();
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "credential-expiry-claim")
+        .unwrap()
+        .unwrap();
+    let intent_key = claim.intent_key.clone();
+    let failure = LaunchFailure {
+        class: FailureClass::OwnerCredentialUnavailable,
+        code: "owner_credential_unavailable".into(),
+        detail: "CMA no longer holds usable sign-in authority for this operation.".into(),
+        remediation: "Sign in again to resume the same Launch.".into(),
+        correlation_id: "credential-expired".into(),
+        retry_at: None,
+        observed_at: LATER.into(),
+    };
+    launch
+        .fail_effect(&lease, &claim, failure.clone(), None, LATER)
+        .unwrap();
+    launch.lease = None;
+
+    assert_eq!(launch.state, LaunchState::AuthRequired);
+    assert_eq!(launch.resume_state, Some(LaunchState::Preflight));
+    assert_eq!(
+        launch.blocked_reason,
+        Some(LaunchBlockedReason::OwnerCredentialUnavailable)
+    );
+    assert_eq!(launch.failure, Some(failure.clone()));
+    assert_eq!(launch.effects.len(), 1);
+    assert_eq!(launch.effects[0].state, EffectState::FailedRetryable);
+    assert_eq!(launch.effects[0].intent_key, intent_key);
+    assert_eq!(launch.effects[0].attempt, 1);
+    let frozen = launch.effective.clone();
+    assert!(launch
+        .update_overrides(LaunchOverrides::default(), LATER, "recovery-override")
+        .is_err());
+    assert_eq!(launch.effective, frozen);
+
+    let mut missing_intent = launch.clone();
+    missing_intent.effects.clear();
+    let before_revalidation = missing_intent.clone();
+    assert!(missing_intent
+        .select_connection(connection(), LATER, "missing-retained-intent")
+        .is_err());
+    assert_eq!(missing_intent, before_revalidation);
+
+    let selected_service_id = launch.connection.as_ref().unwrap().service_id.clone();
+    launch
+        .select_connection(connection(), LATER, "owner-signed-in")
+        .unwrap();
+    assert_eq!(
+        launch.connection.as_ref().unwrap().service_id,
+        selected_service_id
+    );
+    assert_eq!(launch.state, LaunchState::Preflight);
+    assert_eq!(launch.resume_state, None);
+    assert_eq!(launch.failure, None);
+    assert_eq!(launch.blocked_reason, None);
+    assert_eq!(launch.started_at, started_at);
+    assert_eq!(launch.effects.len(), 1);
+    assert_eq!(launch.effects[0].state, EffectState::Reconciling);
+    assert_eq!(launch.effects[0].intent_key, intent_key);
+    assert_eq!(launch.effects[0].attempt, 1);
+    assert_eq!(launch.effects[0].last_failure, Some(failure));
+
+    let replacement_lease = WorkerLease {
+        holder: "worker-b".into(),
+        fencing_token: 2,
+        acquired_at: LATER.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = replacement_lease.fencing_token;
+    launch.lease = Some(replacement_lease.clone());
+    let resumed_claim = launch
+        .claim_next_effect(&replacement_lease, LATER, "resume-original-intent")
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed_claim.mode, EffectClaimMode::Reconcile);
+    assert_eq!(resumed_claim.intent_key, intent_key);
+    assert_eq!(resumed_claim.attempt, 1);
+    assert_eq!(resumed_claim.reconciliation_attempt, 1);
+    assert_eq!(launch.effects.len(), 1);
+    let replay = launch
+        .claim_next_effect(&replacement_lease, LATER, "replayed-worker")
+        .unwrap()
+        .unwrap();
+    assert_eq!(replay.mode, EffectClaimMode::Reconcile);
+    assert_eq!(replay.intent_key, intent_key);
+    assert_eq!(replay.attempt, 1);
+    assert_eq!(replay.reconciliation_attempt, 2);
+    assert_eq!(launch.effects.len(), 1);
 }
 
 #[test]
@@ -1558,6 +2119,7 @@ fn workflow_paths_require_an_explicit_reviewed_confirmation_before_start() {
     launch
         .select_connection(connection(), NOW, "connection")
         .unwrap();
+    admit_launch_for_test(&mut launch, NOW);
     launch.workflow_paths = vec![".github/workflows/checks.yml".into()];
     let start = confirmation(ConfirmationAction::Start, &owner, &launch.effective.digest);
 
@@ -1597,6 +2159,7 @@ fn cancellation_is_idempotent_but_never_skips_ambiguous_pr_reconciliation() {
         attempt: 1,
         reconciliation_attempt: 1,
         fence: 1,
+        authority_admission: None,
         provider_request_id: None,
         external_resource_ids: Default::default(),
         next_attempt_at: None,
@@ -1648,6 +2211,7 @@ fn cancellation_settles_pending_work_and_preserves_every_external_record() {
                 attempt: 1,
                 reconciliation_attempt: 0,
                 fence: 3,
+                authority_admission: None,
                 provider_request_id: Some("provider-fork".into()),
                 external_resource_ids: BTreeMap::from([("fork_repository_id".into(), "20".into())]),
                 next_attempt_at: None,
@@ -1661,6 +2225,7 @@ fn cancellation_settles_pending_work_and_preserves_every_external_record() {
                 attempt: 0,
                 reconciliation_attempt: 0,
                 fence: 3,
+                authority_admission: None,
                 provider_request_id: None,
                 external_resource_ids: BTreeMap::new(),
                 next_attempt_at: Some(LATER.into()),
@@ -1674,6 +2239,7 @@ fn cancellation_settles_pending_work_and_preserves_every_external_record() {
                 attempt: 1,
                 reconciliation_attempt: 0,
                 fence: 3,
+                authority_admission: None,
                 provider_request_id: None,
                 external_resource_ids: BTreeMap::new(),
                 next_attempt_at: Some(LATER.into()),
@@ -1754,6 +2320,7 @@ fn cancellation_refuses_every_unsettled_external_outcome_atomically() {
             attempt: 1,
             reconciliation_attempt: 1,
             fence: 7,
+            authority_admission: None,
             provider_request_id: None,
             external_resource_ids: BTreeMap::new(),
             next_attempt_at: None,
@@ -1827,6 +2394,199 @@ fn cancellation_records_pending_capability_revocation_without_stopping_the_sessi
         Some(LATER)
     );
     assert!(launch.session.is_some());
+}
+
+#[test]
+fn capability_admission_and_renewal_refresh_canonical_locators_without_weakening_identity() {
+    let mut launch = reviewed_launch();
+    let mut reach = launch.reach.take().unwrap();
+    launch.delivery = None;
+    launch.state = LaunchState::PromptPending;
+    launch.effects.clear();
+    let lease = WorkerLease {
+        holder: "capability-admission".into(),
+        fencing_token: 9,
+        acquired_at: NOW.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = lease.fencing_token;
+    launch.lease = Some(lease.clone());
+    let claim = launch
+        .claim_next_effect(&lease, NOW, "claim-renamed-reach")
+        .unwrap()
+        .expect("Reach remains the next effect");
+    assert_eq!(claim.kind, LaunchEffectKind::Reach);
+
+    let mut connection = launch.connection.clone().unwrap();
+    connection.account.login = "contributor-renamed".into();
+    connection.preflight_observed_at = LATER.into();
+    let authority = AuthorityProvenance {
+        subject: launch.owner.clone(),
+        subject_token_generation: 2,
+        service_id: connection.service_id.clone(),
+        service_state_version: connection.service_state_version,
+        backing_key_id: connection.backing_key_id.clone(),
+        session_credential_authority: Some(crate::SessionCredentialAuthority {
+            session_id: launch.session.as_ref().unwrap().session_id.clone(),
+            custody_generation: 1,
+            provider_key_id: "provider-session-key-1".into(),
+            provider_state_version: 1,
+            provider_expires_at_epoch_milliseconds: 2_000_000_000_000,
+            grant_fingerprint: "a".repeat(64),
+        }),
+        state: DelegationState::Available,
+        observed_at: LATER.into(),
+    };
+    let mut renamed_branch = launch.branch.clone().unwrap();
+    renamed_branch.canonical_url = format!(
+        "https://github.com/contributor-renamed/project-renamed/tree/{}",
+        renamed_branch.name
+    );
+    reach.policy_fence = lease.fencing_token;
+    reach.numeric_binding_observed_at = LATER.into();
+    reach.refreshed_at = LATER.into();
+    launch
+        .complete_effect(
+            &lease,
+            &claim,
+            EffectCompletion {
+                result: LaunchEffectResult::Reach {
+                    reach: reach.clone(),
+                    connection: connection.clone(),
+                    authority: authority.clone(),
+                    branch: renamed_branch.clone(),
+                },
+                safe_detail: "renamed numeric binding admitted".into(),
+                external_resource_ids: BTreeMap::new(),
+                now: LATER.into(),
+                correlation_id: "complete-renamed-reach".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(launch.connection, Some(connection));
+    assert_eq!(launch.branch, Some(renamed_branch.clone()));
+
+    let renewal_now = "2026-08-26T12:02:00Z";
+    let renewal_lease = WorkerLease {
+        holder: "capability-renewal".into(),
+        fencing_token: 10,
+        acquired_at: renewal_now.into(),
+        expires_at: "2026-08-26T12:12:00Z".into(),
+    };
+    launch.fencing_counter = renewal_lease.fencing_token;
+    launch.lease = Some(renewal_lease.clone());
+    let mut renewed_reach = reach;
+    renewed_reach.policy_generation += 1;
+    renewed_reach.policy_fence = renewal_lease.fencing_token;
+    renewed_reach.expires_at_epoch_seconds = seconds_from_rfc3339(renewal_now).unwrap() + 60;
+    renewed_reach.numeric_binding_observed_at = renewal_now.into();
+    renewed_reach.refreshed_at = renewal_now.into();
+    let mut renewed_connection = launch.connection.clone().unwrap();
+    renewed_connection.account.login = "contributor-renamed-again".into();
+    renewed_connection.preflight_observed_at = renewal_now.into();
+    let mut renewed_authority = authority;
+    renewed_authority.subject_token_generation += 1;
+    renewed_authority.observed_at = renewal_now.into();
+    let mut renewed_branch = renamed_branch;
+    renewed_branch.current_head = "b".repeat(40);
+    renewed_branch.canonical_url = format!(
+        "https://github.com/contributor-renamed-again/project-renamed/tree/{}",
+        renewed_branch.name
+    );
+    let mut wrong_ref = renewed_branch.clone();
+    wrong_ref.name = format!("{}-other", wrong_ref.name);
+    assert!(AuthorityAdmissionSnapshot::for_capability_renewal(
+        &launch,
+        renewal_lease.fencing_token,
+        renewed_reach.policy_generation,
+        renewed_connection.clone(),
+        renewed_authority.clone(),
+        launch.revision.content.upstream.repository.clone(),
+        launch.fork.as_ref().unwrap().repository.clone(),
+        wrong_ref,
+        renewal_now,
+    )
+    .is_err());
+    let mut wrong_numeric_fork = launch.fork.as_ref().unwrap().repository.clone();
+    wrong_numeric_fork.repository_id += 1;
+    assert!(AuthorityAdmissionSnapshot::for_capability_renewal(
+        &launch,
+        renewal_lease.fencing_token,
+        renewed_reach.policy_generation,
+        renewed_connection.clone(),
+        renewed_authority.clone(),
+        launch.revision.content.upstream.repository.clone(),
+        wrong_numeric_fork,
+        renewed_branch.clone(),
+        renewal_now,
+    )
+    .is_err());
+    let renewal_snapshot = AuthorityAdmissionSnapshot::for_capability_renewal(
+        &launch,
+        renewal_lease.fencing_token,
+        renewed_reach.policy_generation,
+        renewed_connection.clone(),
+        renewed_authority.clone(),
+        launch.revision.content.upstream.repository.clone(),
+        launch.fork.as_ref().unwrap().repository.clone(),
+        renewed_branch.clone(),
+        renewal_now,
+    )
+    .unwrap();
+    launch
+        .record_capability_authority_admission(
+            &renewal_lease,
+            CapabilityAuthorityAdmission {
+                snapshot: renewal_snapshot,
+                target_policy_generation: renewed_reach.policy_generation,
+                target_policy_expires_at_epoch_seconds: renewed_reach.expires_at_epoch_seconds,
+            },
+            renewal_now,
+        )
+        .unwrap();
+    assert!(launch
+        .capability_authority_admission_for_at(&renewal_lease, renewal_now)
+        .is_ok());
+    let expired = launch
+        .capability_authority_admission_for_at(&renewal_lease, &renewal_lease.expires_at)
+        .unwrap_err();
+    assert_eq!(expired.field.as_deref(), Some("worker_lease"));
+    launch
+        .record_capability_renewal(
+            &renewal_lease,
+            CapabilityRenewalRecord {
+                reach: renewed_reach,
+                connection: renewed_connection.clone(),
+                authority: renewed_authority,
+                branch: renewed_branch.clone(),
+            },
+            renewal_now,
+            "renew-renamed-reach",
+        )
+        .unwrap();
+    assert_eq!(launch.connection, Some(renewed_connection));
+    assert_eq!(launch.branch, Some(renewed_branch.clone()));
+    assert_eq!(launch.branch.as_ref().unwrap().current_head, "b".repeat(40));
+
+    let before = launch.clone();
+    let mut changed_identity = renewed_branch;
+    changed_identity.created_at = renewal_now.into();
+    let mut third_reach = launch.reach.clone().unwrap();
+    third_reach.policy_generation += 1;
+    assert!(launch
+        .record_capability_renewal(
+            &renewal_lease,
+            CapabilityRenewalRecord {
+                reach: third_reach,
+                connection: launch.connection.clone().unwrap(),
+                authority: launch.authority.clone().unwrap(),
+                branch: changed_identity,
+            },
+            renewal_now,
+            "reject-branch-replacement",
+        )
+        .is_err());
+    assert_eq!(launch, before, "a rejected renewal must remain atomic");
 }
 
 #[test]
@@ -2045,6 +2805,24 @@ async fn a_legacy_draft_binds_its_first_authorized_publication_connection() {
     );
 }
 
+#[test]
+fn launch_draft_expiry_is_exact_and_stops_applying_after_start() {
+    let owner = SubjectId("contributor".into());
+    let mut launch = Launch::new(owner.clone(), revision(owner), NOW, "create-expiry-test")
+        .expect("the Launch is valid");
+    assert_eq!(launch.draft_expires_at, DRAFT_EXPIRY);
+    assert!(!launch.draft_is_expired("2026-08-27T11:59:59Z").unwrap());
+    assert!(launch.draft_is_expired(DRAFT_EXPIRY).unwrap());
+    assert!(launch.draft_is_expired(AFTER_DRAFT_EXPIRY).unwrap());
+    assert!(launch.require_live_draft(DRAFT_EXPIRY).is_err());
+
+    launch.started_at = Some(NOW.into());
+    launch.state = LaunchState::AuthRequired;
+    launch
+        .require_live_draft(AFTER_DRAFT_EXPIRY)
+        .expect("the original review TTL cannot strand a started recovery");
+}
+
 #[tokio::test]
 async fn a_readme_reclick_resumes_current_and_new_launch_explicitly_supersedes_it() {
     let publisher = SubjectId("publisher".into());
@@ -2112,13 +2890,353 @@ async fn a_readme_reclick_resumes_current_and_new_launch_explicitly_supersedes_i
             .id,
         next.id
     );
+    let replaced = store
+        .replace_launch(first.revision_number, None, &first)
+        .await
+        .expect("superseding the click target does not freeze exact-ID settlement");
+    assert_eq!(replaced.id, first.id);
     assert_eq!(
         store
-            .replace_launch(first.revision_number, None, &first)
+            .get_current_launch(&first.owner, &first.revision.id)
             .await
-            .unwrap_err(),
-        TriggerStoreError::Superseded
+            .unwrap()
+            .unwrap()
+            .id,
+        next.id
     );
+
+    let leased = store
+        .acquire_lease(
+            &first.id,
+            replaced.revision_number,
+            "superseded-launch-worker",
+            LATER,
+            "2026-08-26T12:10:00Z",
+        )
+        .await
+        .unwrap()
+        .expect("a superseded Launch remains eligible for exact worker settlement");
+    let lease = leased.lease.clone().unwrap();
+    let released = store
+        .release_lease(&first.id, leased.revision_number, &lease)
+        .await
+        .unwrap();
+    assert!(released.lease.is_none());
+    assert_eq!(
+        store
+            .get_current_launch(&first.owner, &first.revision.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        next.id,
+        "exact-ID settlement must not make the predecessor current again"
+    );
+}
+
+#[tokio::test]
+async fn superseded_launches_remain_in_background_settlement_inventories() {
+    let (_service, store) = service();
+
+    let mut worker = reviewed_launch();
+    worker.state = LaunchState::Preflight;
+    let worker_id = worker.id.clone();
+    store.insert_new(&worker).await.unwrap();
+    let worker_successor = Launch::new(
+        worker.owner.clone(),
+        worker.revision.clone(),
+        LATER,
+        "supersede-worker",
+    )
+    .unwrap();
+    store.insert_new(&worker_successor).await.unwrap();
+
+    let mut capability = reviewed_launch();
+    capability.state = LaunchState::Cancelled;
+    capability.terminal_at = Some(NOW.into());
+    capability.session_credential_retirement = None;
+    let capability_id = capability.id.clone();
+    store.insert_new(&capability).await.unwrap();
+    let capability_successor = Launch::new(
+        capability.owner.clone(),
+        capability.revision.clone(),
+        LATER,
+        "supersede-capability",
+    )
+    .unwrap();
+    store.insert_new(&capability_successor).await.unwrap();
+
+    let mut cleanup = reviewed_launch();
+    cleanup.state = LaunchState::Cancelled;
+    cleanup.terminal_at = Some(NOW.into());
+    cleanup.workspace.as_mut().unwrap().delete_after = NOW.into();
+    cleanup.cleanup = None;
+    let cleanup_id = cleanup.id.clone();
+    store.insert_new(&cleanup).await.unwrap();
+    let cleanup_successor = Launch::new(
+        cleanup.owner.clone(),
+        cleanup.revision.clone(),
+        LATER,
+        "supersede-cleanup",
+    )
+    .unwrap();
+    store.insert_new(&cleanup_successor).await.unwrap();
+
+    let worker_ids = store
+        .list_worker_candidates(None, &TriggerPageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|launch| launch.id)
+        .collect::<Vec<_>>();
+    assert!(worker_ids.contains(&worker_id));
+
+    let capability_ids = store
+        .list_capability_candidates(&TriggerPageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|launch| launch.id)
+        .collect::<Vec<_>>();
+    assert!(capability_ids.contains(&capability_id));
+
+    let cleanup_ids = store
+        .list_cleanup_candidates(NOW, &TriggerPageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|launch| launch.id)
+        .collect::<Vec<_>>();
+    assert!(cleanup_ids.contains(&cleanup_id));
+}
+
+#[tokio::test]
+async fn an_expired_readme_reclick_atomically_replaces_the_draft() {
+    let publisher = SubjectId("publisher".into());
+    let contributor = SubjectId("contributor".into());
+    let (service, store) = service();
+    let draft = service
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = service
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    let expired = service
+        .create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            NOW,
+            "first-click",
+        )
+        .await
+        .unwrap();
+
+    let replacement = service
+        .create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            DRAFT_EXPIRY,
+            "expired-reclick",
+        )
+        .await
+        .expect("the README click creates one current review");
+    assert_ne!(replacement.id, expired.id);
+    assert_eq!(replacement.created_at, DRAFT_EXPIRY);
+    assert_eq!(replacement.state, LaunchState::Draft);
+    let retained = service
+        .get_launch(&contributor, &expired.id)
+        .await
+        .expect("the expired audit record is retained");
+    assert_eq!(retained.state, LaunchState::FailedTerminal);
+    assert_eq!(
+        retained
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("launch_draft_expired")
+    );
+    assert_eq!(store.inner.lock().unwrap().launches.len(), 2);
+}
+
+#[tokio::test]
+async fn concurrent_expired_readme_reclicks_return_one_replacement() {
+    let publisher = SubjectId("publisher".into());
+    let contributor = SubjectId("contributor".into());
+    let (service, store) = service();
+    let service = Arc::new(service);
+    let draft = service
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = service
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    let expired = service
+        .create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            NOW,
+            "first-click",
+        )
+        .await
+        .unwrap();
+
+    let (left, right) = tokio::join!(
+        service.create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            DRAFT_EXPIRY,
+            "expired-reclick-left",
+        ),
+        service.create_or_resume_launch(
+            contributor,
+            &published.revision.public_id,
+            DRAFT_EXPIRY,
+            "expired-reclick-right",
+        )
+    );
+    let left = left.unwrap();
+    let right = right.unwrap();
+    assert_eq!(left.id, right.id);
+    assert_ne!(left.id, expired.id);
+    assert_eq!(store.inner.lock().unwrap().launches.len(), 2);
+}
+
+#[tokio::test]
+async fn an_override_requires_a_fresh_quote_and_confirmation_digest() {
+    let publisher = SubjectId("publisher".into());
+    let contributor = SubjectId("contributor".into());
+    let (service, _) = service();
+    let draft = service
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = service
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    let launch = service
+        .create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            NOW,
+            "first-click",
+        )
+        .await
+        .unwrap();
+    let initial_digest = launch.effective.digest.clone();
+    let overrides = LaunchOverrides {
+        task_inputs: BTreeMap::from([("topic".into(), json!("the quota race"))]),
+        ..LaunchOverrides::default()
+    };
+    let updated = service
+        .update_overrides(
+            &contributor,
+            &launch.id,
+            launch.revision_number,
+            overrides.clone(),
+            LATER,
+            "save-override",
+        )
+        .await
+        .unwrap();
+    assert_ne!(updated.effective.digest, initial_digest);
+    assert_eq!(updated.pricing.as_ref().unwrap().quoted_at, LATER);
+    assert_eq!(
+        updated.runtime_admission.as_ref().unwrap().observed_at,
+        LATER
+    );
+    assert_eq!(updated.review_quota.as_ref().unwrap().checked_at, LATER);
+    assert_eq!(updated.start_admission, None);
+
+    let requoted = service
+        .update_overrides(
+            &contributor,
+            &launch.id,
+            updated.revision_number,
+            overrides,
+            "2026-08-26T12:02:00Z",
+            "refresh-unchanged-review",
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        requoted.effective.digest, updated.effective.digest,
+        "server-owned quote and runtime evidence require explicit reconfirmation"
+    );
+}
+
+#[tokio::test]
+async fn expired_pre_start_mutations_never_call_authority_or_admission_providers() {
+    let (service, launch, admission, authority) = expired_mutation_fixture().await;
+    assert!(service
+        .update_overrides(
+            &launch.owner,
+            &launch.id,
+            launch.revision_number,
+            LaunchOverrides::default(),
+            DRAFT_EXPIRY,
+            "expired-override",
+        )
+        .await
+        .is_err());
+    assert_expiry_was_fenced(&service, &launch, &admission, &authority).await;
+
+    let (service, launch, admission, authority) = expired_mutation_fixture().await;
+    assert!(service
+        .select_connection(
+            &launch.owner,
+            &launch.id,
+            launch.revision_number,
+            "service-1",
+            DRAFT_EXPIRY,
+            "expired-connection",
+        )
+        .await
+        .is_err());
+    assert_expiry_was_fenced(&service, &launch, &admission, &authority).await;
+
+    let (service, launch, admission, authority) = expired_mutation_fixture().await;
+    assert!(service
+        .start(
+            &launch.owner,
+            &launch.id,
+            StartLaunchCommand {
+                expected_revision: launch.revision_number,
+                confirmation: confirmation(
+                    ConfirmationAction::Start,
+                    &launch.owner,
+                    &launch.effective.digest,
+                ),
+                acknowledge_workflow_risk: false,
+                now: DRAFT_EXPIRY.into(),
+                correlation_id: "expired-start".into(),
+            },
+        )
+        .await
+        .is_err());
+    assert_expiry_was_fenced(&service, &launch, &admission, &authority).await;
 }
 
 #[tokio::test]
@@ -2373,7 +3491,7 @@ async fn repeated_paused_start_preserves_the_first_durable_pause_revision() {
 }
 
 #[tokio::test]
-async fn capability_inventory_excludes_absent_and_effectively_revoked_reach() {
+async fn capability_inventory_includes_reachless_terminal_credential_retirement() {
     let (service, store) = service();
     let active = reviewed_launch();
     let active_id = active.id.clone();
@@ -2394,6 +3512,12 @@ async fn capability_inventory_excludes_absent_and_effectively_revoked_reach() {
     absent.reach = None;
     store.insert_new(&absent).await.unwrap();
 
+    let mut terminal = reviewed_launch();
+    let terminal_id = terminal.id.clone();
+    terminal.state = LaunchState::Cancelled;
+    terminal.reach = None;
+    store.insert_new(&terminal).await.unwrap();
+
     let page = service
         .capability_candidates(TriggerPageRequest::default())
         .await
@@ -2404,6 +3528,7 @@ async fn capability_inventory_excludes_absent_and_effectively_revoked_reach() {
         .map(|launch| launch.id)
         .collect::<Vec<_>>();
     assert!(ids.contains(&active_id));
+    assert!(ids.contains(&terminal_id));
     assert!(!ids.contains(&revoked_id));
     assert!(!ids.contains(&absent_id));
 }
@@ -2470,6 +3595,7 @@ fn effect_claims_persist_one_intent_and_reconcile_after_a_crash() {
         .unwrap();
     assert_eq!(step.status, LaunchStepStatus::Running);
     assert_eq!(step.worker_fencing_token, lease.fencing_token);
+    launch.validate_progress_replay().unwrap();
 
     let replay = launch
         .claim_next_effect(&lease, LATER, "reconcile")
@@ -2480,6 +3606,7 @@ fn effect_claims_persist_one_intent_and_reconcile_after_a_crash() {
     assert_eq!(replay.attempt, first.attempt);
     assert_eq!(replay.reconciliation_attempt, 1);
     assert_eq!(launch.effects.len(), 1);
+    launch.validate_progress_replay().unwrap();
 
     launch
         .complete_effect(
@@ -2510,6 +3637,7 @@ fn effect_claims_persist_one_intent_and_reconcile_after_a_crash() {
             .status,
         LaunchStepStatus::Completed
     );
+    launch.validate_progress_replay().unwrap();
 }
 
 #[test]
@@ -2558,6 +3686,238 @@ fn replacement_worker_reconciles_the_same_intent_and_fences_the_old_claim() {
 }
 
 #[test]
+fn replacement_worker_fences_workspace_import_completion_after_object_finalization() {
+    let (mut launch, first_lease) = leased_started_launch();
+    launch.fork = Some(ForkRecord {
+        repository: fork(),
+        reused: false,
+        source_revision: launch.source_sha.clone(),
+        canonical_url: "https://github.com/contributor/project".into(),
+        ready_at: NOW.into(),
+    });
+    launch.branch = Some(BranchRecord {
+        name: format!("cma/{}", launch.id.0),
+        expected_head: launch.source_sha.clone(),
+        current_head: launch.source_sha.clone(),
+        canonical_url: format!(
+            "https://github.com/contributor/project/tree/cma/{}",
+            launch.id.0
+        ),
+        created_at: NOW.into(),
+    });
+    launch.state = LaunchState::WorkspacePending;
+    let first = launch
+        .claim_next_effect(&first_lease, NOW, "claim-workspace-import")
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.kind, LaunchEffectKind::WorkspaceImport);
+    assert_eq!(first.mode, EffectClaimMode::Execute);
+
+    let baseline = WorkspaceManifest::seal(launch.source_sha.clone(), Vec::new()).unwrap();
+    let workspace = WorkspaceRecord {
+        baseline,
+        baseline_object_reference: "trigger-test/finalized-baseline.pack".into(),
+        baseline_archive_sha256: "b".repeat(64),
+        latest_checkpoint: None,
+        previous_checkpoint: None,
+        retired_checkpoint: None,
+        sealed_contribution_checkpoint: None,
+        checkpoint_intent: None,
+        lifecycle_checkpoint: Default::default(),
+        checkpoint_version: 0,
+        workspace_epoch: 1,
+        retention_policy_id: "trigger-workspace-v1".into(),
+        delete_after: "2026-09-26T12:00:00Z".into(),
+    };
+
+    let second_lease = WorkerLease {
+        holder: "workspace-worker-b".into(),
+        fencing_token: 2,
+        acquired_at: LATER.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = 2;
+    launch.lease = Some(second_lease.clone());
+    let before_stale_completion = launch.clone();
+
+    assert!(launch
+        .complete_effect(
+            &first_lease,
+            &first,
+            EffectCompletion {
+                result: LaunchEffectResult::WorkspaceImport {
+                    workspace: workspace.clone(),
+                },
+                safe_detail: "must not attach the finalized baseline".into(),
+                external_resource_ids: BTreeMap::new(),
+                now: LATER.into(),
+                correlation_id: "stale-workspace-import".into(),
+            },
+        )
+        .is_err());
+    assert_eq!(
+        launch, before_stale_completion,
+        "a stale worker must not attach even a fully verified object"
+    );
+    assert!(launch.workspace.is_none());
+
+    let takeover = launch
+        .claim_next_effect(&second_lease, LATER, "reconcile-workspace-import")
+        .unwrap()
+        .unwrap();
+    assert_eq!(takeover.kind, LaunchEffectKind::WorkspaceImport);
+    assert_eq!(takeover.mode, EffectClaimMode::Reconcile);
+    assert_eq!(takeover.intent_key, first.intent_key);
+    assert_eq!(takeover.fence, second_lease.fencing_token);
+    launch
+        .complete_effect(
+            &second_lease,
+            &takeover,
+            EffectCompletion {
+                result: LaunchEffectResult::WorkspaceImport {
+                    workspace: workspace.clone(),
+                },
+                safe_detail: "The exact repository baseline is stored and verified.".into(),
+                external_resource_ids: BTreeMap::new(),
+                now: LATER.into(),
+                correlation_id: "reconciled-workspace-import".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(launch.workspace, Some(workspace));
+    assert_eq!(launch.state, LaunchState::SandboxPending);
+}
+
+#[test]
+fn admitted_effect_takeover_retains_audit_evidence_without_reusing_write_authority() {
+    let (mut launch, first_lease) = leased_started_launch();
+    let preflight = launch
+        .claim_next_effect(&first_lease, NOW, "claim-preflight")
+        .unwrap()
+        .unwrap();
+    launch
+        .complete_effect(
+            &first_lease,
+            &preflight,
+            EffectCompletion {
+                result: LaunchEffectResult::Preflight {
+                    connection: launch.connection.clone().unwrap(),
+                    authority: launch.authority.clone().unwrap(),
+                    source_sha: "a".repeat(40),
+                    workflow_paths: Vec::new(),
+                },
+                safe_detail: "Authority is current.".into(),
+                external_resource_ids: BTreeMap::new(),
+                now: NOW.into(),
+                correlation_id: "complete-preflight".into(),
+            },
+        )
+        .unwrap();
+    let first = launch
+        .claim_next_effect(&first_lease, NOW, "claim-fork")
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.kind, LaunchEffectKind::Fork);
+    let admission = AuthorityAdmissionSnapshot::for_effect(
+        &launch,
+        &first,
+        launch.connection.clone().unwrap(),
+        launch.authority.clone().unwrap(),
+        launch.revision.content.upstream.repository.clone(),
+        None,
+        None,
+        NOW,
+    )
+    .unwrap();
+    launch
+        .record_effect_authority_admission(&first_lease, &first, admission.clone(), NOW)
+        .unwrap();
+    assert!(launch
+        .effect_authority_admission_at(&first, "2026-08-26T12:09:59Z")
+        .is_ok());
+    let expired = launch
+        .effect_authority_admission_at(&first, &first_lease.expires_at)
+        .unwrap_err();
+    assert_eq!(expired.field.as_deref(), Some("worker_lease"));
+
+    let replacement_lease = WorkerLease {
+        holder: "worker-b".into(),
+        fencing_token: 2,
+        acquired_at: LATER.into(),
+        expires_at: "2026-08-26T12:10:00Z".into(),
+    };
+    launch.fencing_counter = replacement_lease.fencing_token;
+    launch.lease = Some(replacement_lease.clone());
+    let takeover = launch
+        .claim_next_effect(&replacement_lease, LATER, "takeover-admitted-fork")
+        .unwrap()
+        .unwrap();
+    assert_eq!(takeover.mode, EffectClaimMode::Reconcile);
+    assert_eq!(takeover.intent_key, first.intent_key);
+    assert_eq!(takeover.fence, replacement_lease.fencing_token);
+    assert_eq!(
+        launch.effects.last().unwrap().authority_admission,
+        Some(admission.clone())
+    );
+    assert_eq!(admission.fence, first_lease.fencing_token);
+
+    let forged_execute = EffectClaim {
+        mode: EffectClaimMode::Execute,
+        ..takeover.clone()
+    };
+    assert!(admission
+        .validate_effect_for(&launch, &forged_execute)
+        .is_err());
+    assert!(launch.effect_authority_admission(&takeover).is_err());
+
+    let mut recovery = launch.clone();
+    recovery
+        .fail_effect(
+            &replacement_lease,
+            &takeover,
+            recovery_failure("unknown-fork-outcome"),
+            None,
+            LATER,
+        )
+        .unwrap();
+    assert_eq!(
+        recovery.effects.last().unwrap().state,
+        EffectState::RecoveryRequired
+    );
+    assert_eq!(
+        recovery.effects.last().unwrap().authority_admission,
+        Some(admission.clone())
+    );
+
+    launch
+        .complete_effect(
+            &replacement_lease,
+            &takeover,
+            EffectCompletion {
+                result: LaunchEffectResult::Fork {
+                    fork: ForkRecord {
+                        repository: fork(),
+                        reused: false,
+                        source_revision: launch.source_sha.clone(),
+                        canonical_url: "https://github.com/contributor/project".into(),
+                        ready_at: LATER.into(),
+                    },
+                },
+                safe_detail: "The admitted fork was reconciled.".into(),
+                external_resource_ids: BTreeMap::new(),
+                now: LATER.into(),
+                correlation_id: "complete-reconciled-fork".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(launch.effects.last().unwrap().state, EffectState::Succeeded);
+    assert_eq!(
+        launch.effects.last().unwrap().authority_admission,
+        Some(admission)
+    );
+}
+
+#[test]
 fn retry_deadlines_and_budgets_are_durable_and_do_not_spend_early() {
     let (mut launch, lease) = leased_started_launch();
     let claim = launch
@@ -2575,6 +3935,7 @@ fn retry_deadlines_and_budgets_are_durable_and_do_not_spend_early() {
         .unwrap();
     assert_eq!(launch.state, LaunchState::FailedRetryable);
     assert_eq!(launch.effects[0].attempt, 1);
+    launch.validate_progress_replay().unwrap();
 
     assert_eq!(
         launch
@@ -2592,6 +3953,7 @@ fn retry_deadlines_and_budgets_are_durable_and_do_not_spend_early() {
     assert_eq!(retry.mode, EffectClaimMode::Execute);
     assert_eq!(retry.attempt, 2);
     assert_eq!(launch.state, LaunchState::Preflight);
+    launch.validate_progress_replay().unwrap();
 
     launch.effects[0].state = EffectState::FailedRetryable;
     launch.effects[0].attempt = MAX_LAUNCH_EFFECT_ATTEMPTS;
@@ -2615,13 +3977,14 @@ fn leased_started_launch() -> (Launch, WorkerLease) {
     launch
         .select_connection(connection(), NOW, "connection")
         .unwrap();
+    admit_launch_for_test(&mut launch, NOW);
     launch.authority = Some(AuthorityProvenance {
         subject: owner.clone(),
         subject_token_generation: 1,
         service_id: "service-1".into(),
         service_state_version: 2,
         backing_key_id: "key-1".into(),
-        session_credential_generation: None,
+        session_credential_authority: None,
         state: DelegationState::Available,
         observed_at: NOW.into(),
     });
@@ -2632,6 +3995,7 @@ fn leased_started_launch() -> (Launch, WorkerLease) {
             "start",
         )
         .unwrap();
+    launch.validate_progress_replay().unwrap();
     let lease = WorkerLease {
         holder: "worker-a".into(),
         fencing_token: 1,
@@ -2641,6 +4005,89 @@ fn leased_started_launch() -> (Launch, WorkerLease) {
     launch.fencing_counter = 1;
     launch.lease = Some(lease.clone());
     (launch, lease)
+}
+
+#[test]
+fn deterministic_session_waits_do_not_spend_the_reconciliation_budget() {
+    let (mut launch, lease) = leased_started_launch();
+    launch.state = LaunchState::SandboxPending;
+    let first = launch
+        .claim_next_effect(&lease, NOW, "sandbox-wait-first")
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.kind, LaunchEffectKind::Sandbox);
+    assert_eq!(first.mode, EffectClaimMode::Execute);
+    launch
+        .defer_waiting(
+            &lease,
+            &first,
+            "2026-08-26T12:00:02Z".into(),
+            "The deterministic runtime is provisioning.".into(),
+            "CMA will check the same session again.".into(),
+            Default::default(),
+            "2026-08-26T12:00:01Z",
+            "sandbox-wait-first",
+        )
+        .unwrap();
+    assert_eq!(launch.effects[0].attempt, 1);
+    assert_eq!(launch.effects[0].reconciliation_attempt, 0);
+    assert_eq!(launch.effects[0].state, EffectState::Reconciling);
+
+    for (now, next) in [
+        ("2026-08-26T12:00:02Z", "2026-08-26T12:00:03Z"),
+        ("2026-08-26T12:00:03Z", "2026-08-26T12:00:04Z"),
+        ("2026-08-26T12:00:04Z", "2026-08-26T12:00:05Z"),
+    ] {
+        let claim = launch
+            .claim_next_effect(&lease, now, "sandbox-wait-reconcile")
+            .unwrap()
+            .unwrap();
+        assert_eq!(claim.mode, EffectClaimMode::Reconcile);
+        assert_eq!(claim.reconciliation_attempt, 1);
+        launch
+            .defer_waiting(
+                &lease,
+                &claim,
+                next.into(),
+                "The deterministic runtime is recovering.".into(),
+                "CMA will check the same session again.".into(),
+                Default::default(),
+                now,
+                "sandbox-wait-reconcile",
+            )
+            .unwrap();
+        assert_eq!(
+            launch.effects[0].reconciliation_attempt, 0,
+            "an observed runtime wait must restore the pre-claim counter"
+        );
+        assert_eq!(launch.effects[0].attempt, 1);
+        assert_eq!(launch.state, LaunchState::SandboxPending);
+        assert!(launch.failure.is_none());
+    }
+}
+
+#[tokio::test]
+async fn launch_progress_rejects_a_cursor_beyond_the_owned_event_head() {
+    let (service, store) = service();
+    let launch = reviewed_launch();
+    let owner = launch.owner.clone();
+    let id = launch.id.clone();
+    let head = launch.event_high_water();
+    store.insert_new(&launch).await.unwrap();
+
+    assert!(matches!(
+        service.progress(&owner, &id, head + 1, 100).await,
+        Err(TriggerServiceError::CursorBeyondEnd {
+            cursor,
+            head: observed_head,
+        }) if cursor == head + 1 && observed_head == head
+    ));
+    assert!(matches!(
+        service
+            .progress(&SubjectId("foreign".into()), &id, head + 1, 100)
+            .await,
+        Err(TriggerServiceError::Forbidden)
+    ));
 }
 
 fn retryable_failure(observed_at: &str) -> LaunchFailure {
@@ -2693,7 +4140,7 @@ fn content(owner: SubjectId) -> TriggerRevisionContent {
                 RequiredCapability::CredentialRevocation,
             ],
             permission_ceiling: PermissionMode::Autonomous,
-            sandbox_profile: "cma-trigger-v1".into(),
+            sandbox_profile: CMA_TRIGGER_SANDBOX_PROFILE_V1.into(),
             resources: ResourcePolicy {
                 default: SessionSize::new(500, 1_024).unwrap(),
                 ceiling: SessionSize::new(1_000, 2_048).unwrap(),
@@ -2857,8 +4304,231 @@ fn capability() -> LaunchCapability {
 
 fn service() -> (TriggerService, Arc<MemoryTriggerStore>) {
     let store = Arc::new(MemoryTriggerStore::default());
-    let service = TriggerService::new(store.clone(), store.clone(), Arc::new(TestAuthority));
+    let service = TriggerService::new(store.clone(), store.clone(), Arc::new(TestAuthority))
+        .with_launch_admission(Arc::new(TestAdmission));
     (service, store)
+}
+
+struct TestAdmission;
+
+#[async_trait]
+impl TriggerLaunchAdmission for TestAdmission {
+    async fn review(
+        &self,
+        _owner: &SubjectId,
+        launch: &Launch,
+        now: &str,
+    ) -> Result<LaunchReviewAdmission, TriggerAdmissionError> {
+        Ok(review_admission(launch, now))
+    }
+
+    async fn start(
+        &self,
+        _owner: &SubjectId,
+        launch: &Launch,
+        now: &str,
+    ) -> Result<StartAdmissionSnapshot, TriggerAdmissionError> {
+        Ok(start_admission(launch, now))
+    }
+}
+
+#[derive(Default)]
+struct CountingAdmission {
+    review_calls: AtomicUsize,
+    start_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl TriggerLaunchAdmission for CountingAdmission {
+    async fn review(
+        &self,
+        _owner: &SubjectId,
+        launch: &Launch,
+        now: &str,
+    ) -> Result<LaunchReviewAdmission, TriggerAdmissionError> {
+        self.review_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(review_admission(launch, now))
+    }
+
+    async fn start(
+        &self,
+        _owner: &SubjectId,
+        launch: &Launch,
+        now: &str,
+    ) -> Result<StartAdmissionSnapshot, TriggerAdmissionError> {
+        self.start_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(start_admission(launch, now))
+    }
+}
+
+#[derive(Default)]
+struct CountingAuthority {
+    launch_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl TriggerAuthorityVerifier for CountingAuthority {
+    async fn verify_publisher(
+        &self,
+        subject: &SubjectId,
+        content: &TriggerRevisionContent,
+        selected_service_id: &str,
+    ) -> Result<PublisherAuthority, TriggerServiceError> {
+        TestAuthority
+            .verify_publisher(subject, content, selected_service_id)
+            .await
+    }
+
+    async fn verify_launch(
+        &self,
+        subject: &SubjectId,
+        revision: &TriggerRevision,
+        selected_service_id: &str,
+        previous: Option<&ConnectionSnapshot>,
+    ) -> Result<LaunchAuthority, TriggerServiceError> {
+        self.launch_calls.fetch_add(1, Ordering::SeqCst);
+        TestAuthority
+            .verify_launch(subject, revision, selected_service_id, previous)
+            .await
+    }
+}
+
+async fn expired_mutation_fixture() -> (
+    TriggerService,
+    Launch,
+    Arc<CountingAdmission>,
+    Arc<CountingAuthority>,
+) {
+    let publisher = SubjectId("publisher".into());
+    let contributor = SubjectId("contributor".into());
+    let (setup, store) = service();
+    let draft = setup
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = setup
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    let launch = setup
+        .create_or_resume_launch(
+            contributor,
+            &published.revision.public_id,
+            NOW,
+            "first-click",
+        )
+        .await
+        .unwrap();
+    let admission = Arc::new(CountingAdmission::default());
+    let authority = Arc::new(CountingAuthority::default());
+    let service = TriggerService::new(store.clone(), store, authority.clone())
+        .with_launch_admission(admission.clone());
+    (service, launch, admission, authority)
+}
+
+async fn assert_expiry_was_fenced(
+    service: &TriggerService,
+    original: &Launch,
+    admission: &CountingAdmission,
+    authority: &CountingAuthority,
+) {
+    assert_eq!(admission.review_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(admission.start_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(authority.launch_calls.load(Ordering::SeqCst), 0);
+    let retained = service
+        .get_launch(&original.owner, &original.id)
+        .await
+        .expect("expiry is durably settled before returning the refusal");
+    assert_eq!(retained.state, LaunchState::FailedTerminal);
+    assert_eq!(
+        retained
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("launch_draft_expired")
+    );
+}
+
+fn review_admission(launch: &Launch, now: &str) -> LaunchReviewAdmission {
+    LaunchReviewAdmission {
+        pricing: PricingSnapshot {
+            policy_reference: CMA_TRIGGER_ZERO_COST_POLICY_V1.into(),
+            billing_mode: BillingMode::ZeroCost,
+            rate_card: None,
+            rate: None,
+            currency: crate::CURRENCY.into(),
+            cpu_millis: launch.effective.resource_size.cpu_millis(),
+            memory_mib: launch.effective.resource_size.memory_mib(),
+            micros_per_hour: 0,
+            estimated_micros: 0,
+            quoted_at: now.into(),
+            expires_at: launch.draft_expires_at.clone(),
+        },
+        runtime: RuntimeAdmissionSnapshot {
+            kernel: TriggerKernel::Codex,
+            runtime_version: TEST_TRIGGER_RUNTIME_VERSION.into(),
+            supported_capabilities: launch
+                .revision
+                .content
+                .session
+                .required_capabilities
+                .clone(),
+            observed_at: now.into(),
+        },
+        quota: QuotaSnapshot {
+            live_sessions: 0,
+            live_session_limit: Some(5),
+            reserved_cpu_millis: 0,
+            reserved_memory_mib: 0,
+            free_cpu_millis: Some(4_000),
+            free_memory_mib: Some(8_192),
+            checked_at: now.into(),
+        },
+    }
+}
+
+#[test]
+fn historical_runtime_admission_defaults_only_the_preexisting_kernel_field_to_codex() {
+    let historical = serde_json::json!({
+        "runtime_version": TEST_TRIGGER_RUNTIME_VERSION,
+        "supported_capabilities": ["conversation"],
+        "observed_at": "2026-08-26T12:00:00Z"
+    });
+    let decoded: RuntimeAdmissionSnapshot =
+        serde_json::from_value(historical).expect("the historical admission remains readable");
+    assert_eq!(decoded.kernel, TriggerKernel::Codex);
+
+    let future = serde_json::json!({
+        "kernel": "future_kernel",
+        "runtime_version": TEST_TRIGGER_RUNTIME_VERSION,
+        "supported_capabilities": ["conversation"],
+        "observed_at": "2026-08-26T12:00:00Z"
+    });
+    assert!(serde_json::from_value::<RuntimeAdmissionSnapshot>(future).is_err());
+}
+
+fn start_admission(launch: &Launch, now: &str) -> StartAdmissionSnapshot {
+    let pricing = launch.pricing.as_ref().unwrap();
+    let runtime = launch.runtime_admission.as_ref().unwrap();
+    StartAdmissionSnapshot {
+        runtime_version: runtime.runtime_version.clone(),
+        pricing_policy_reference: pricing.policy_reference.clone(),
+        rate_card: pricing.rate_card.clone(),
+        quota: review_admission(launch, now).quota,
+        checked_at: now.into(),
+    }
+}
+
+fn admit_launch_for_test(launch: &mut Launch, now: &str) {
+    let review = review_admission(launch, now);
+    launch.apply_review_admission(review).unwrap();
+    let start = start_admission(launch, now);
+    launch.record_start_admission(start).unwrap();
 }
 
 struct TestAuthority;
@@ -2896,7 +4566,7 @@ impl TriggerAuthorityVerifier for TestAuthority {
                 service_id: connection.service_id.clone(),
                 service_state_version: connection.service_state_version,
                 backing_key_id: connection.backing_key_id.clone(),
-                session_credential_generation: None,
+                session_credential_authority: None,
                 state: DelegationState::Available,
                 observed_at: NOW.into(),
             },
@@ -3109,6 +4779,36 @@ impl LaunchStore for MemoryTriggerStore {
         Ok(())
     }
 
+    async fn expire_current_and_insert(
+        &self,
+        expired: &Launch,
+        replacement: &Launch,
+    ) -> Result<Launch, TriggerStoreError> {
+        let mut data = self.inner.lock().unwrap();
+        let key = current_key(expired);
+        let expected = expired.revision_number.checked_sub(1).ok_or_else(|| {
+            TriggerStoreError::Malformed("expired Launch revision did not advance".into())
+        })?;
+        if data.current.get(&key) != Some(&expired.id)
+            || data
+                .launches
+                .get(&expired.id)
+                .is_none_or(|current| current.revision_number != expected)
+        {
+            return data
+                .current
+                .get(&key)
+                .and_then(|id| data.launches.get(id))
+                .cloned()
+                .ok_or(TriggerStoreError::Superseded);
+        }
+        data.launches.insert(expired.id.clone(), expired.clone());
+        data.current.insert(key, replacement.id.clone());
+        data.launches
+            .insert(replacement.id.clone(), replacement.clone());
+        Ok(replacement.clone())
+    }
+
     async fn get_launch(&self, id: &LaunchId) -> Result<Option<Launch>, TriggerStoreError> {
         Ok(self.inner.lock().unwrap().launches.get(id).cloned())
     }
@@ -3127,6 +4827,10 @@ impl LaunchStore for MemoryTriggerStore {
                         .owner
                         .as_ref()
                         .is_none_or(|owner| &launch.owner == owner)
+                        && query
+                            .public_id
+                            .as_ref()
+                            .is_none_or(|public_id| &launch.revision.public_id == public_id)
                         && (query.states.is_empty() || query.states.contains(&launch.state))
                 })
                 .cloned()
@@ -3142,9 +4846,6 @@ impl LaunchStore for MemoryTriggerStore {
         launch: &Launch,
     ) -> Result<Launch, TriggerStoreError> {
         let mut data = self.inner.lock().unwrap();
-        if data.current.get(&current_key(launch)) != Some(&launch.id) {
-            return Err(TriggerStoreError::Superseded);
-        }
         let current = data
             .launches
             .get(&launch.id)
@@ -3182,8 +4883,7 @@ impl LaunchStore for MemoryTriggerStore {
         let Some(current) = data.launches.get(id) else {
             return Ok(None);
         };
-        if data.current.get(&current_key(current)) != Some(id)
-            || current.revision_number != expected_revision
+        if current.revision_number != expected_revision
             || current
                 .lease
                 .as_ref()

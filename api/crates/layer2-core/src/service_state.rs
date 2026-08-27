@@ -122,13 +122,14 @@ pub(crate) struct SessionEntry {
     pub(crate) readings_unreported: bool,
     /// Input toward the session's conversation, when it holds one.
     pub(crate) conversation: Option<layer3_adapter::ConversationInputSender>,
-    /// The message the agent is still assembling, and which one it is.
+    /// The message the agent is still assembling, which one it is, and whether
+    /// its adapter positively correlated it with a prompt on this link.
     ///
     /// A runtime streams a message in pieces and says nothing to mark the end
     /// of one; what marks it is the next message starting, or the turn ending.
     /// Held here so the finished message can be committed at that moment
     /// rather than each piece being written down as though it were history.
-    pub(crate) assembling: Option<(Option<String>, String)>,
+    pub(crate) assembling: Option<(Option<String>, String, bool)>,
     /// The last context reading this runtime gave, if it has given one.
     ///
     /// Held per entry rather than per session on purpose: an entry is built
@@ -181,6 +182,17 @@ pub struct Deployment {
     /// True for the deployment that owns a provider. False for any additional
     /// control plane sharing it, which must confine itself to what it created.
     pub adopts_untagged: bool,
+    /// Trigger capabilities declared by the exact pinned runtime image.
+    ///
+    /// Empty is fail-closed: ordinary sessions remain available, but no Trigger
+    /// Launch may claim a capability that the deployment did not explicitly pin.
+    pub trigger_runtime_capabilities: Vec<crate::RequiredCapability>,
+    /// Opaque kernel selected by the deployment for the closed Trigger profile.
+    ///
+    /// `None` disables Trigger session admission. The core never assigns a
+    /// product runtime itself; the composition root must bind this identifier
+    /// to an installed adapter.
+    pub trigger_kernel: Option<KernelId>,
 }
 
 /// Per-session operation gates.
@@ -338,6 +350,9 @@ pub struct SessionService {
     /// on anything else is carried forward. `None` disables rotation entirely,
     /// which is what a deployment that does not version its runtime image wants.
     pub(crate) runtime_version: Option<String>,
+    pub(crate) trigger_runtime_capabilities: Vec<crate::RequiredCapability>,
+    /// Opaque deployment-selected kernel for Trigger-owned sessions.
+    pub(crate) trigger_kernel: Option<KernelId>,
     /// Sessions this process is currently bringing up.
     ///
     /// Detached bring-up can outlive its request while no live entry exists;

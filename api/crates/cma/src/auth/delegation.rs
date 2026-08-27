@@ -419,15 +419,18 @@ async fn commit_mint(
 
         let value = credential.value.expose().to_string();
         let before = current.clone();
+        let custody_generation = next_generation(before.generation)?;
+        let mut committed = credential.clone();
+        committed.custody_generation = custody_generation;
         current.lease = None;
         if replacement {
             if let Some(displaced) = current.pending.take() {
                 queue_debt(&mut current, &displaced);
             }
             current.pending_target = None;
-            current.pending = Some(credential.clone());
+            current.pending = Some(committed);
         } else if current.current.is_none() {
-            current.current = Some(credential.clone());
+            current.current = Some(committed);
         } else {
             queue_debt(&mut current, &credential);
             if replace_state(store, &before, current, budget).await? {
@@ -476,6 +479,9 @@ async fn finish_mint(
         issued_at: SystemTime::now(),
         expires_at: Some(minted.expires_at),
         scope_fingerprint: fingerprint,
+        custody_generation: 0,
+        provider_state_version: minted.state_version,
+        grant_fingerprint: minted.grant_fingerprint,
         revocation_credential: revocation_credential.map(SecretValue::new),
     };
 
@@ -1770,6 +1776,63 @@ impl AuthState {
 
 #[async_trait::async_trait]
 impl layer2_core::CredentialSource for AuthState {
+    async fn credential_authority(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<layer2_core::SessionCredentialAuthority>, StoreError> {
+        let Some(state) = self.store.credential(session).await? else {
+            return Ok(None);
+        };
+        if state.retired {
+            return Ok(None);
+        }
+        let Some(current) = state.current else {
+            return Ok(None);
+        };
+        let Some(expires_at) = current.expires_at else {
+            return Ok(None);
+        };
+        let Ok(expires_at) = expires_at.duration_since(SystemTime::UNIX_EPOCH) else {
+            return Ok(None);
+        };
+        let Ok(expires_at) = u64::try_from(expires_at.as_millis()) else {
+            return Ok(None);
+        };
+        let authority = layer2_core::SessionCredentialAuthority {
+            session_id: session.clone(),
+            custody_generation: current.custody_generation,
+            provider_key_id: current.id,
+            provider_state_version: current.provider_state_version,
+            provider_expires_at_epoch_milliseconds: expires_at,
+            grant_fingerprint: current.grant_fingerprint,
+        };
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let now = u64::try_from(now).unwrap_or(u64::MAX);
+        Ok(authority.is_valid_at(now).then_some(authority))
+    }
+
+    async fn exact_services_available(
+        &self,
+        subject: &SubjectId,
+        services: &[ServiceId],
+    ) -> Result<bool, StoreError> {
+        if services.is_empty() {
+            return Ok(true);
+        }
+        let issuer = self.issuer.read().await.clone().ok_or_else(|| {
+            StoreError::Unavailable("no identity-platform issuer can verify exact services".into())
+        })?;
+        let owner_token = self.access_token(subject).await?.ok_or_else(|| {
+            StoreError::Unavailable(
+                "the subject has no current delegated token for service verification".into(),
+            )
+        })?;
+        issuer.resolves_all(&owner_token, services).await
+    }
+
     async fn credential_for(
         &self,
         session: &SessionId,

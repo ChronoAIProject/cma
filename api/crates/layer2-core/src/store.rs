@@ -138,6 +138,28 @@ impl SessionRecord {
     pub(crate) fn is_effectively_rotating(&self) -> bool {
         self.session.status.is_rotating() || self.rotation_claim.is_some()
     }
+
+    /// Unsettled machine-owned Trigger prompt state that reserves owner input.
+    ///
+    /// Trigger records created before the durable outbox was installed still
+    /// reserve the first turn: absence of an outbox is the initial `Queued`
+    /// state, not permission for an owner message to race its creation.
+    pub(crate) fn reserved_initial_prompt_state(&self) -> Option<crate::PromptDeliveryState> {
+        if self.trigger_origin.is_none() {
+            return None;
+        }
+        let state = self
+            .initial_prompt
+            .as_ref()
+            .map_or(crate::PromptDeliveryState::Queued, |prompt| {
+                prompt.delivery.state
+            });
+        (!matches!(
+            state,
+            crate::PromptDeliveryState::Completed | crate::PromptDeliveryState::Failed
+        ))
+        .then_some(state)
+    }
 }
 
 /// Durable instructions for completing one compatibility runtime handover.
@@ -149,6 +171,10 @@ pub struct PendingHandover {
     pub snapshot_ref: String,
     /// Conservative time at which the first usable snapshot was captured.
     pub snapshot_at: String,
+    /// Exact Launch-authorized workspace/conversation pair for a Trigger
+    /// handover. Ordinary sessions have no repository recovery authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_recovery: Option<crate::TriggerRecoveryPairRef>,
     /// Rotation count at the exact source boundary.
     pub rotations_from: u32,
     /// Rotation count to publish with the target semantics.
@@ -1121,6 +1147,36 @@ pub trait UserDirectoryStore: Send + Sync {
 /// the core cannot know where credentials come from, so it asks through this.
 #[async_trait::async_trait]
 pub trait CredentialSource: Send + Sync {
+    /// Exact non-secret authority of the current provider credential.
+    ///
+    /// `Ok(None)` is deliberately conservative for sources without durable
+    /// provider-key custody and for legacy rows that predate exact authority
+    /// metadata. Callers must not infer authority from a mutable record CAS.
+    async fn credential_authority(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<crate::SessionCredentialAuthority>, StoreError> {
+        Ok(None)
+    }
+
+    /// Prove that every named service is currently active for this subject.
+    ///
+    /// Ordinary profile provisioning may narrow when an optional service was
+    /// removed. Trigger provisioning cannot: its selected GitHub connection is
+    /// part of the reviewed authority and a session without it is a different,
+    /// degraded session. A source that cannot consult authoritative service
+    /// state must fail closed rather than treating absence of evidence as a
+    /// grant.
+    async fn exact_services_available(
+        &self,
+        _subject: &SubjectId,
+        _services: &[ServiceId],
+    ) -> Result<bool, StoreError> {
+        Err(StoreError::Unavailable(
+            "this credential source cannot verify exact service grants".into(),
+        ))
+    }
+
     /// The credential a session should present on its owner's behalf.
     ///
     /// Named per session rather than per subject because two of one owner's
@@ -1242,6 +1298,7 @@ pub trait ContextStore: Send + Sync {
 /// Implementations authorize the read from the session owner and the durable
 /// Launch identity. The sandbox receives only the returned bytes and integrity
 /// metadata, never object-storage authority.
+#[allow(clippy::too_many_arguments)] // Lifecycle commits carry one exact authority tuple.
 #[async_trait::async_trait]
 pub trait SessionWorkspaceSource: Send + Sync {
     async fn load_workspace(
@@ -1269,6 +1326,103 @@ pub trait SessionWorkspaceSource: Send + Sync {
                 archive,
             }
         }))
+    }
+
+    /// Resolve one complete, immutable conversation/workspace pair. A
+    /// workspace-only legacy checkpoint is not a recovery point. When
+    /// `expected` is supplied, implementations must select exactly that
+    /// descriptor rather than silently advancing to another version.
+    async fn resolve_recovery_pair(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _expected: Option<&crate::TriggerRecoveryPairRef>,
+    ) -> Result<Option<crate::TriggerRecoveryPair>, StoreError> {
+        Ok(None)
+    }
+
+    /// Publish the exact runtime generation that became durably ready for a
+    /// Trigger session.
+    ///
+    /// The caller obtains this value from session runtime authority, not from
+    /// a browser or checkpoint request. Launch-aware implementations use it to
+    /// advance the cross-store session link after rotation or recovery. A
+    /// source that only serves immutable baseline bytes has no aggregate to
+    /// update and therefore keeps the no-op default.
+    async fn synchronize_runtime_generation(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _runtime_generation: u64,
+        _now: &str,
+    ) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    /// Durably reserve one monotonic checkpoint version before a runtime is
+    /// asked to seal bytes. Implementations return an existing matching intent
+    /// after process loss and never infer a second concurrent writer.
+    async fn reserve_checkpoint(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _runtime_generation: u64,
+        _purpose: crate::WorkspaceCheckpointPurpose,
+        _now: &str,
+    ) -> Result<crate::WorkspaceCheckpointReservation, StoreError> {
+        Err(StoreError::Malformed(
+            "this workspace source cannot reserve lifecycle checkpoints".into(),
+        ))
+    }
+
+    /// Verify, upload, and commit one runtime-sealed checkpoint. The previous
+    /// complete checkpoint remains authoritative until this method returns.
+    #[allow(clippy::too_many_arguments)]
+    async fn commit_checkpoint(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _intent: &crate::WorkspaceCheckpointIntent,
+        _runtime_generation: u64,
+        _checkpoint: &layer3_adapter::WorkspaceCheckpointPackage,
+        _conversation: &[u8],
+        _now: &str,
+    ) -> Result<crate::TriggerRecoveryPairCommitReceipt, StoreError> {
+        Err(StoreError::Malformed(
+            "this workspace source cannot commit lifecycle checkpoints".into(),
+        ))
+    }
+
+    /// Mark an already committed exact pair as requiring operator recovery.
+    /// Used when publication succeeded but the runtime's post-commit writer
+    /// state cannot be proven. Implementations must compare the complete pair
+    /// descriptor so a stale capture cannot fence a newer recovery point.
+    async fn mark_checkpoint_recovery_required(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _reference: &crate::TriggerRecoveryPairRef,
+        _failure: crate::WorkspaceCheckpointFailure,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Malformed(
+            "this workspace source cannot mark committed checkpoint recovery".into(),
+        ))
+    }
+
+    /// Record a capture failure proven to precede object upload. This is
+    /// separate from commit failure because an unknown upload must retain its
+    /// exact intent for idempotent reconciliation.
+    async fn fail_checkpoint(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _intent: &crate::WorkspaceCheckpointIntent,
+        _failure: crate::WorkspaceCheckpointFailure,
+        _recovery_required: bool,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Malformed(
+            "this workspace source cannot record lifecycle checkpoint failure".into(),
+        ))
     }
 }
 

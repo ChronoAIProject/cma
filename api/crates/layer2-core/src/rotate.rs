@@ -44,6 +44,10 @@ use crate::session::{Session, SessionSpec, SessionStatus};
 use crate::store::{
     HandoverSnapshot, PendingHandover, PendingHandoverTarget, SessionRecord, StoreError,
 };
+use crate::{
+    TriggerLifecycleCheckpointOutcome, TriggerRecoveryPairRef, WorkspaceCheckpointFailure,
+    WorkspaceCheckpointPurpose, WorkspaceWriterHoldReceipt,
+};
 
 /// What a handover changes about the session it carries.
 ///
@@ -73,6 +77,23 @@ pub(crate) struct CoordinatedHandover {
     pub(crate) rotating_boundary: SessionBoundary,
     pub(crate) completion_events: Vec<Event>,
     pub(crate) detached: crate::lease::Detached,
+    /// Exact H1 writer hold retained from the same capture supplied to H2.
+    /// It is resumed only when the coordinated switch is proven not to have
+    /// happened; an ambiguous switch keeps it fenced.
+    pub(crate) writer_hold: Option<WorkspaceWriterHoldReceipt>,
+    /// Descriptor captured under `writer_hold`; H2 must consume this exact
+    /// pair rather than resolving another latest checkpoint.
+    pub(crate) trigger_recovery: Option<crate::TriggerRecoveryPairRef>,
+}
+
+struct TriggerHandoverCheckpoint {
+    writer_hold: WorkspaceWriterHoldReceipt,
+    recovery_pair: crate::TriggerRecoveryPair,
+}
+
+pub(crate) struct PendingHandoverRecovery {
+    pub(crate) restore: Option<Vec<u8>>,
+    pub(crate) trigger_recovery: Option<crate::TriggerRecoveryPair>,
 }
 
 impl Handover {
@@ -105,6 +126,99 @@ impl Handover {
 }
 
 impl SessionService {
+    async fn checkpoint_trigger_before_teardown(
+        &self,
+        record: &SessionRecord,
+        old: &RuntimeHandle,
+    ) -> Result<Option<TriggerHandoverCheckpoint>, CoreError> {
+        if record.trigger_origin.is_none() {
+            return Ok(None);
+        }
+        match self
+            .checkpoint_trigger_lifecycle(
+                &record.session.id,
+                WorkspaceCheckpointPurpose::PreTeardown,
+                &now_rfc3339(),
+            )
+            .await?
+        {
+            TriggerLifecycleCheckpointOutcome::Complete {
+                writer_hold: Some(hold),
+                recovery_pair,
+                ..
+            } if &hold.runtime == old => Ok(Some(TriggerHandoverCheckpoint {
+                writer_hold: hold,
+                recovery_pair: *recovery_pair,
+            })),
+            TriggerLifecycleCheckpointOutcome::Busy => Err(CoreError::RuntimeUnavailable(
+                "another workspace checkpoint owns the Trigger session".into(),
+            )),
+            _ => Err(CoreError::RuntimeRefused(
+                "the pre-teardown checkpoint did not hold the exact old runtime".into(),
+            )),
+        }
+    }
+
+    async fn resume_trigger_workspace_hold(
+        &self,
+        adapter: &Arc<dyn layer3_adapter::KernelAdapter>,
+        hold: Option<&WorkspaceWriterHoldReceipt>,
+    ) -> Result<(), CoreError> {
+        let Some(hold) = hold else {
+            return Ok(());
+        };
+        adapter
+            .resume_workspace_writers(&hold.runtime, &hold.resume_token)
+            .await
+            .map_err(|error| {
+                CoreError::RuntimeRefused(format!(
+                    "the old runtime's workspace writers could not be reopened: {error}"
+                ))
+            })
+    }
+
+    /// Reopen H1 after a pre-switch failure, or durably fence the exact pair
+    /// whose writer state is no longer provable. A stale task is deliberately
+    /// unable to mark a newer pair through the source's descriptor comparison.
+    async fn resume_trigger_workspace_hold_or_fence(
+        &self,
+        adapter: &Arc<dyn layer3_adapter::KernelAdapter>,
+        record: &SessionRecord,
+        hold: Option<&WorkspaceWriterHoldReceipt>,
+        recovery: Option<&TriggerRecoveryPairRef>,
+        detail: &'static str,
+    ) -> Result<(), CoreError> {
+        let result = self.resume_trigger_workspace_hold(adapter, hold).await;
+        let Err(resume_error) = result else {
+            return Ok(());
+        };
+        let (Some(_), Some(recovery), Some(origin), Some(source)) = (
+            hold,
+            recovery,
+            record.trigger_origin.as_ref(),
+            self.workspaces.as_ref(),
+        ) else {
+            return Err(resume_error);
+        };
+        let failure = WorkspaceCheckpointFailure {
+            code: "workspace_writer_resume_unproven".into(),
+            detail: detail.into(),
+            observed_at: now_rfc3339(),
+            retry_at: None,
+        };
+        if let Err(mark_error) = source
+            .mark_checkpoint_recovery_required(&record.session.owner, origin, recovery, failure)
+            .await
+        {
+            tracing::error!(
+                session_id = %record.session.id,
+                %mark_error,
+                "the unproven Trigger writer hold could not be projected into Launch recovery state"
+            );
+        }
+        Err(resume_error)
+    }
+
     /// Whether this session is running something other than what it should be.
     ///
     /// A session with no recorded version counts as behind: it predates
@@ -178,6 +292,9 @@ impl SessionService {
     ) -> Result<Session, CoreError> {
         let record = self.record(id).await?;
         caller.require_own_control_of(&record.session.owner)?;
+        if let Some(state) = record.reserved_initial_prompt_state() {
+            return Err(CoreError::InitialPromptReserved(state));
+        }
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
         }
@@ -332,21 +449,42 @@ impl SessionService {
         // descriptor are published. A failed capture, upload, or record write
         // releases the fence with H1 and its public status untouched.
         let input_fence = self.input_gates.gate(&id).write_owned().await;
-        let snapshot_at = now_rfc3339();
-        let snapshot = match adapter.snapshot(&old).await {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                // The session cannot be carried across, so it stays exactly
-                // where it is. A stale image is bad; losing the conversation
-                // is worse. Remembered so this is not retried every few
-                // minutes against a runtime that has already said it cannot.
-                tracing::warn!(session_id = %id, error = %e, "cannot move this session; leaving it in place");
-                self.rotation_refused.write().await.insert(id.clone());
+        let trigger_checkpoint = match self.checkpoint_trigger_before_teardown(&record, &old).await
+        {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                tracing::warn!(session_id = %id, %error, "cannot capture the exact Trigger recovery pair; leaving H1 in place");
                 drop(input_fence);
                 self.finish_start(&id).await;
-                return Err(CoreError::RuntimeUnavailable(format!(
-                    "this session's conversation could not be captured, so it has not been moved: {e}"
-                )));
+                return Err(error);
+            }
+        };
+        let (snapshot_at, snapshot, writer_hold, trigger_recovery) = match trigger_checkpoint {
+            Some(checkpoint) => (
+                checkpoint.recovery_pair.reference.captured_at.clone(),
+                Some(checkpoint.recovery_pair.conversation.clone()),
+                Some(checkpoint.writer_hold),
+                Some(checkpoint.recovery_pair.reference),
+            ),
+            None => {
+                let snapshot_at = now_rfc3339();
+                let snapshot = match adapter.snapshot(&old).await {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        // The session cannot be carried across, so it stays exactly
+                        // where it is. A stale image is bad; losing the conversation
+                        // is worse. Remembered so this is not retried every few
+                        // minutes against a runtime that has already said it cannot.
+                        tracing::warn!(session_id = %id, error = %e, "cannot move this session; leaving it in place");
+                        self.rotation_refused.write().await.insert(id.clone());
+                        drop(input_fence);
+                        self.finish_start(&id).await;
+                        return Err(CoreError::RuntimeUnavailable(format!(
+                            "this session's conversation could not be captured, so it has not been moved: {e}"
+                        )));
+                    }
+                };
+                (snapshot_at, snapshot, None, None)
             }
         };
         let claim = format!("rotn_{}", uuid::Uuid::new_v4().simple());
@@ -365,6 +503,18 @@ impl SessionService {
             Ok(reference) => reference,
             Err(error) => {
                 tracing::warn!(session_id = %id, %error, "cannot stage the handover snapshot; leaving the runtime in place");
+                if let Err(resume_error) = self
+                    .resume_trigger_workspace_hold_or_fence(
+                        &adapter,
+                        &record,
+                        writer_hold.as_ref(),
+                        trigger_recovery.as_ref(),
+                        "The recovery pair committed, but snapshot staging failed and CMA could not prove that H1 workspace writers reopened.",
+                    )
+                    .await
+                {
+                    tracing::error!(session_id = %id, %resume_error, "failed snapshot staging left the Trigger writer hold unproven");
+                }
                 drop(input_fence);
                 self.finish_start(&id).await;
                 return Err(CoreError::RuntimeUnavailable(
@@ -377,6 +527,7 @@ impl SessionService {
             claim,
             snapshot_ref,
             snapshot_at,
+            trigger_recovery: trigger_recovery.clone(),
             rotations_from: record.session.rotations,
             rotations_to: record.session.rotations.saturating_add(1),
             target,
@@ -389,6 +540,18 @@ impl SessionService {
             .await;
         drop(input_fence);
         let Some(rotating) = marked else {
+            if let Err(error) = self
+                .resume_trigger_workspace_hold_or_fence(
+                    &adapter,
+                    &record,
+                    writer_hold.as_ref(),
+                    trigger_recovery.as_ref(),
+                    "The recovery pair committed, but handover recording failed and CMA could not prove that H1 workspace writers reopened.",
+                )
+                .await
+            {
+                tracing::error!(session_id = %id, %error, "failed handover recording left the Trigger writer hold unproven");
+            }
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
                 "this session's handover could not be recorded, so it has not been moved".into(),
@@ -401,11 +564,23 @@ impl SessionService {
         // single-writer fallback; even there, require a claim-matching readback
         // before the irreversible provider operation. Coordinated stores use
         // the lease-aware path above instead.
-        let restore = match self.load_pending_handover_snapshot(&rotating).await {
-            Ok(restore) => restore,
+        let recovery = match self.load_pending_handover_recovery(&rotating).await {
+            Ok(recovery) => recovery,
             Err(error) => {
                 tracing::warn!(session_id = %id, %error, "the staged handover snapshot cannot be verified; leaving H1 in place");
-                let _ = self.restore_after_failed_move(&record, &rotating).await;
+                if self
+                    .resume_trigger_workspace_hold_or_fence(
+                        &adapter,
+                        &record,
+                        writer_hold.as_ref(),
+                        trigger_recovery.as_ref(),
+                        "The recovery pair committed, but staged handover verification failed and CMA could not prove that H1 workspace writers reopened.",
+                    )
+                    .await
+                    .is_ok()
+                {
+                    let _ = self.restore_after_failed_move(&record, &rotating).await;
+                }
                 self.finish_start(&id).await;
                 return Err(CoreError::RuntimeUnavailable(
                     "this session's stored handover could not be verified, so it has not been moved"
@@ -413,6 +588,11 @@ impl SessionService {
                 ));
             }
         };
+        let trigger_recovery_reference = trigger_recovery.clone();
+        let PendingHandoverRecovery {
+            restore,
+            trigger_recovery,
+        } = recovery;
 
         // Credential delivery uses this same legacy lifecycle gate from exact
         // runtime selection through durable promotion and entry evidence. The
@@ -429,6 +609,15 @@ impl SessionService {
                 current
             }
             Ok(_) => {
+                let _ = self
+                    .resume_trigger_workspace_hold_or_fence(
+                        &adapter,
+                        &record,
+                        writer_hold.as_ref(),
+                        trigger_recovery_reference.as_ref(),
+                        "The recovery pair committed, but handover authority changed and CMA could not prove that H1 workspace writers reopened.",
+                    )
+                    .await;
                 drop(lifecycle);
                 self.finish_start(&id).await;
                 return Err(CoreError::RuntimeUnavailable(
@@ -437,6 +626,15 @@ impl SessionService {
             }
             Err(error) => {
                 tracing::warn!(session_id = %id, %error, "cannot verify handover authority before H1 teardown");
+                let _ = self
+                    .resume_trigger_workspace_hold_or_fence(
+                        &adapter,
+                        &record,
+                        writer_hold.as_ref(),
+                        trigger_recovery_reference.as_ref(),
+                        "The recovery pair committed, but handover authority could not be verified and CMA could not prove that H1 workspace writers reopened.",
+                    )
+                    .await;
                 drop(lifecycle);
                 self.finish_start(&id).await;
                 return Err(CoreError::RuntimeUnavailable(
@@ -471,6 +669,18 @@ impl SessionService {
                     %error,
                     "could not release the old runtime; leaving the handover fenced"
                 );
+                if let Err(resume_error) = self
+                    .resume_trigger_workspace_hold_or_fence(
+                        &adapter,
+                        &record,
+                        writer_hold.as_ref(),
+                        trigger_recovery_reference.as_ref(),
+                        "The recovery pair committed, but H1 teardown failed and CMA could not prove that its workspace writers reopened.",
+                    )
+                    .await
+                {
+                    tracing::error!(session_id = %id, %resume_error, "failed teardown also left workspace writer resumption unproven");
+                }
                 drop(lifecycle);
                 self.finish_start(&id).await;
                 return Err(error);
@@ -512,10 +722,13 @@ impl SessionService {
                     adapter,
                     geometry,
                     restore,
-                    crate::provision_support::BringUpContext::compatibility(
-                        crate::provision_failure::Abandonment::Keep,
+                    crate::provision_support::BringUpContext {
+                        outcome: crate::provision_failure::Abandonment::Keep,
+                        lease: None,
+                        handover: None,
+                        trigger_recovery,
                         rotation_claim,
-                    ),
+                    },
                 )
                 .await;
         });
@@ -523,10 +736,10 @@ impl SessionService {
     }
 
     /// Load only the claim-bound object named by this durable descriptor.
-    pub(crate) async fn load_pending_handover_snapshot(
+    pub(crate) async fn load_pending_handover_recovery(
         &self,
         record: &SessionRecord,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
+    ) -> Result<PendingHandoverRecovery, StoreError> {
         let envelope = self.read_pending_handover_snapshot(record).await?;
         let pending = record.pending_handover.as_ref().ok_or_else(|| {
             StoreError::Malformed("a compatibility handover has no durable descriptor".into())
@@ -536,7 +749,43 @@ impl SessionService {
                 "the stored handover timestamp does not match its descriptor".into(),
             ));
         }
-        Ok(envelope.restore)
+        let trigger_recovery = if record.trigger_origin.is_some() {
+            let expected = pending.trigger_recovery.as_ref().ok_or_else(|| {
+                StoreError::Malformed(
+                    "a Trigger handover has no exact workspace/conversation descriptor".into(),
+                )
+            })?;
+            if pending.snapshot_at != expected.captured_at {
+                return Err(StoreError::Malformed(
+                    "the Trigger handover timestamp differs from its recovery pair".into(),
+                ));
+            }
+            let pair = self
+                .resolve_trigger_recovery_pair_for(record, Some(expected))
+                .await?
+                .ok_or_else(|| {
+                    StoreError::Malformed(
+                        "the Trigger handover recovery pair is no longer complete".into(),
+                    )
+                })?;
+            if envelope.restore.as_deref() != Some(pair.conversation.as_slice()) {
+                return Err(StoreError::Malformed(
+                    "the handover conversation differs from its retained recovery pair".into(),
+                ));
+            }
+            Some(pair)
+        } else {
+            if pending.trigger_recovery.is_some() {
+                return Err(StoreError::Malformed(
+                    "a non-Trigger handover names Trigger recovery authority".into(),
+                ));
+            }
+            None
+        };
+        Ok(PendingHandoverRecovery {
+            restore: envelope.restore,
+            trigger_recovery,
+        })
     }
 
     async fn read_pending_handover_snapshot(
@@ -700,24 +949,58 @@ impl SessionService {
             )));
         }
         let input_fence = self.input_gates.gate(&id).write_owned().await;
-        let taken_at = now_rfc3339();
-        let restore = match adapter.snapshot(&old).await {
-            Ok(bytes) => bytes,
+        let trigger_checkpoint = match self.checkpoint_trigger_before_teardown(&record, &old).await
+        {
+            Ok(checkpoint) => checkpoint,
             Err(error) => {
-                tracing::warn!(session_id = %id, %error, "cannot move this session; leaving it in place");
-                self.rotation_refused.write().await.insert(id.clone());
+                tracing::warn!(session_id = %id, %error, "cannot capture the exact Trigger recovery pair; leaving H1 in place");
                 drop(input_fence);
                 let _ = self.store.release_session_lease(&lease).await;
                 self.finish_start(&id).await;
-                return Err(CoreError::RuntimeUnavailable(format!(
-                    "this session's conversation could not be captured, so it has not been moved: {error}"
-                )));
+                return Err(error);
+            }
+        };
+        let (taken_at, restore, trigger_recovery, writer_hold) = match trigger_checkpoint {
+            Some(checkpoint) => (
+                checkpoint.recovery_pair.reference.captured_at.clone(),
+                None,
+                Some(checkpoint.recovery_pair),
+                Some(checkpoint.writer_hold),
+            ),
+            None => {
+                let taken_at = now_rfc3339();
+                let restore = match adapter.snapshot(&old).await {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        tracing::warn!(session_id = %id, %error, "cannot move this session; leaving it in place");
+                        self.rotation_refused.write().await.insert(id.clone());
+                        drop(input_fence);
+                        let _ = self.store.release_session_lease(&lease).await;
+                        self.finish_start(&id).await;
+                        return Err(CoreError::RuntimeUnavailable(format!(
+                            "this session's conversation could not be captured, so it has not been moved: {error}"
+                        )));
+                    }
+                };
+                (taken_at, restore, None, None)
             }
         };
 
         let marked = self.mark_rotating(&record, &change, None).await;
         drop(input_fence);
         let Some(rotating) = marked else {
+            if let Err(error) = self
+                .resume_trigger_workspace_hold_or_fence(
+                    &adapter,
+                    &record,
+                    writer_hold.as_ref(),
+                    trigger_recovery.as_ref().map(|pair| &pair.reference),
+                    "The recovery pair committed, but coordinated handover recording failed and CMA could not prove that H1 workspace writers reopened.",
+                )
+                .await
+            {
+                tracing::error!(session_id = %id, %error, "failed handover recording left the Trigger writer hold unproven");
+            }
             let _ = self.store.release_session_lease(&lease).await;
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
@@ -731,7 +1014,19 @@ impl SessionService {
             .await
         {
             tracing::error!(session_id = %id, %error, "cannot advance the handover lease");
-            let _ = self.restore_after_failed_move(&record, &rotating).await;
+            if self
+                .resume_trigger_workspace_hold_or_fence(
+                    &adapter,
+                    &record,
+                    writer_hold.as_ref(),
+                    trigger_recovery.as_ref().map(|pair| &pair.reference),
+                    "The recovery pair committed, but coordinated handover authority changed and CMA could not prove that H1 workspace writers reopened.",
+                )
+                .await
+                .is_ok()
+            {
+                let _ = self.restore_after_failed_move(&record, &rotating).await;
+            }
             let _ = self.store.release_session_lease(&lease).await;
             self.finish_start(&id).await;
             return Err(CoreError::RuntimeUnavailable(
@@ -741,8 +1036,14 @@ impl SessionService {
         self.rotations_in_progress.write().await.insert(id.clone());
 
         if let Err(error) = self.renew_runtime_lease(Some(&lease)).await {
-            self.rollback_coordinated_handover(&record, &rotating, &mut lease)
-                .await;
+            self.rollback_coordinated_handover(
+                &record,
+                &rotating,
+                &mut lease,
+                writer_hold.as_ref(),
+                trigger_recovery.as_ref().map(|pair| &pair.reference),
+            )
+            .await;
             return Err(CoreError::RuntimeUnavailable(format!(
                 "the handover lease expired before replacement provisioning: {error}"
             )));
@@ -782,6 +1083,8 @@ impl SessionService {
             rotating_boundary,
             completion_events,
             detached,
+            writer_hold,
+            trigger_recovery: trigger_recovery.as_ref().map(|pair| pair.reference.clone()),
         };
         let geometry = moved.session.geometry;
         let spec = SessionSpec {
@@ -808,6 +1111,7 @@ impl SessionService {
                         outcome: crate::provision_failure::Abandonment::Keep,
                         lease: Some(lease),
                         handover: Some(handover),
+                        trigger_recovery,
                         rotation_claim,
                     },
                 )
@@ -822,7 +1126,60 @@ impl SessionService {
         original: &SessionRecord,
         rotating: &SessionRecord,
         lease: &mut SessionLease,
+        writer_hold: Option<&WorkspaceWriterHoldReceipt>,
+        trigger_recovery: Option<&TriggerRecoveryPairRef>,
     ) {
+        if let Some(hold) = writer_hold {
+            let Some(adapter) = self.adapters.get(&original.session.kernel) else {
+                tracing::error!(
+                    session_id = %lease.session_id,
+                    "the old Trigger runtime remains writer-fenced because its adapter is unavailable"
+                );
+                if let (Some(origin), Some(recovery), Some(source)) = (
+                    original.trigger_origin.as_ref(),
+                    trigger_recovery,
+                    self.workspaces.as_ref(),
+                ) {
+                    let failure = WorkspaceCheckpointFailure {
+                        code: "workspace_writer_resume_unproven".into(),
+                        detail: "The recovery pair committed, but H1's adapter became unavailable before its workspace writers could be reopened."
+                            .into(),
+                        observed_at: now_rfc3339(),
+                        retry_at: None,
+                    };
+                    let _ = source
+                        .mark_checkpoint_recovery_required(
+                            &original.session.owner,
+                            origin,
+                            recovery,
+                            failure,
+                        )
+                        .await;
+                }
+                let _ = self.store.release_session_lease(lease).await;
+                self.finish_start(&lease.session_id).await;
+                return;
+            };
+            if let Err(error) = self
+                .resume_trigger_workspace_hold_or_fence(
+                    adapter,
+                    original,
+                    Some(hold),
+                    trigger_recovery,
+                    "The recovery pair committed, but replacement rollback could not prove that H1 workspace writers reopened.",
+                )
+                .await
+            {
+                tracing::error!(
+                    session_id = %lease.session_id,
+                    %error,
+                    "the old Trigger runtime remains writer-fenced after replacement failure"
+                );
+                let _ = self.store.release_session_lease(lease).await;
+                self.finish_start(&lease.session_id).await;
+                return;
+            }
+        }
         if let Some(restored) = self.restore_after_failed_move(original, rotating).await {
             let boundary =
                 SessionBoundary::for_record(&restored, lease.boundary.authority.generation);

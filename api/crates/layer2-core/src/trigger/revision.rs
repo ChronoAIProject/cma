@@ -7,7 +7,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::ConnectionSnapshot;
-use crate::{PermissionMode, SessionSize, SubjectId};
+use crate::{
+    AgentConfiguration, CredentialMode, KernelId, PermissionMode, SessionMode, SessionSize,
+    SubjectId,
+};
 
 pub const TRIGGER_SCHEMA_VERSION: u32 = 1;
 pub const PROMPT_RENDERER_VERSION: u32 = 1;
@@ -18,6 +21,52 @@ pub const MAX_INPUT_FIELDS: usize = 32;
 pub const MAX_FIELD_KEY_BYTES: usize = 64;
 pub const MAX_FIELD_TEXT_BYTES: usize = 8 * 1024;
 pub const MAX_CAPABILITIES: usize = 32;
+pub const CMA_TRIGGER_SANDBOX_PROFILE_V1: &str = "cma-trigger-v1";
+pub const CMA_TRIGGER_ZERO_COST_POLICY_V1: &str = "public-zero-cost-v1";
+pub const CMA_TRIGGER_CONTRIBUTOR_POLICY_V1: &str = "platform-rate-card-v1";
+
+/// A deployment-owned Trigger execution policy understood by this binary.
+///
+/// The revision keeps the wire value as a string so stored revisions remain
+/// compatible. Execution always passes through this closed resolver, making a
+/// newly named profile unsupported until its complete policy is implemented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TriggerSandboxProfile {
+    V1,
+}
+
+impl TriggerSandboxProfile {
+    pub(crate) fn parse(value: &str) -> Result<Self, TriggerValidationError> {
+        match value {
+            CMA_TRIGGER_SANDBOX_PROFILE_V1 => Ok(Self::V1),
+            _ => Err(TriggerValidationError::field(
+                "session.sandbox_profile",
+                format!("only {CMA_TRIGGER_SANDBOX_PROFILE_V1} is supported"),
+            )),
+        }
+    }
+
+    pub(crate) fn resolve_agent(
+        self,
+        deployment_default: &AgentConfiguration,
+        trigger_kernel: &KernelId,
+        permission: PermissionMode,
+        size: SessionSize,
+    ) -> AgentConfiguration {
+        let mut agent = deployment_default.clone();
+        match self {
+            Self::V1 => {
+                agent.kernel = trigger_kernel.clone();
+                agent.mode = SessionMode::Conversation;
+                agent.permission = permission;
+                agent.credential = CredentialMode::Delegated;
+                agent.size = Some(size);
+                agent.record_tool_bodies = false;
+            }
+        }
+        agent
+    }
+}
 
 macro_rules! opaque_id {
     ($name:ident) => {
@@ -507,10 +556,17 @@ impl TriggerRevisionContent {
                 "sponsored credentials are disabled in the public MVP",
             ));
         }
-        if self.commercial_policy.policy_reference.trim().is_empty() {
+        let expected_pricing_policy = match self.commercial_policy.billing_mode {
+            BillingMode::ZeroCost => CMA_TRIGGER_ZERO_COST_POLICY_V1,
+            BillingMode::Contributor => CMA_TRIGGER_CONTRIBUTOR_POLICY_V1,
+            BillingMode::Sponsored => unreachable!("sponsorship is refused above"),
+        };
+        if self.commercial_policy.policy_reference != expected_pricing_policy {
             return Err(TriggerValidationError::field(
                 "commercial_policy.policy_reference",
-                "a server-owned pricing policy reference is required",
+                format!(
+                    "must be the deployment-owned {expected_pricing_policy} policy for this billing mode"
+                ),
             ));
         }
         let editable: BTreeSet<_> = self
@@ -525,16 +581,12 @@ impl TriggerRevisionContent {
                 "contains a duplicate field",
             ));
         }
-        if self.override_policy.optional_checks.len() > 16
-            || self
-                .override_policy
-                .optional_checks
-                .iter()
-                .any(|check| check.trim().is_empty() || check.len() > 128)
+        if editable.contains(&EditableField::OptionalChecks)
+            || !self.override_policy.optional_checks.is_empty()
         {
             return Err(TriggerValidationError::field(
                 "override_policy.optional_checks",
-                "contains too many or invalid check identifiers",
+                "configured checks are unavailable until a bounded sandbox runner is enabled",
             ));
         }
         if self.public_projection.version != 1 {
@@ -669,12 +721,7 @@ fn validate_session(session: &TriggerSessionPolicy) -> Result<(), TriggerValidat
             "unrestricted permission is outside the public MVP",
         ));
     }
-    if session.sandbox_profile.trim().is_empty() || session.sandbox_profile.len() > 128 {
-        return Err(TriggerValidationError::field(
-            "session.sandbox_profile",
-            "must name a deployment-owned profile",
-        ));
-    }
+    TriggerSandboxProfile::parse(&session.sandbox_profile)?;
     if session.resources.default.cpu_millis() > session.resources.ceiling.cpu_millis()
         || session.resources.default.memory_mib() > session.resources.ceiling.memory_mib()
     {

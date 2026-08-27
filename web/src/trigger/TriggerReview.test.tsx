@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ConnectionAuthorization, Launch, TriggerConnection } from '@chronoai/cma-sdk';
 import { ApiError, TransportError } from '../api/client';
@@ -11,7 +11,9 @@ const api = vi.hoisted(() => ({
   createOrResumeLaunch: vi.fn(),
   listTriggerConnections: vi.fn(),
   preflightTriggerConnection: vi.fn(),
+  readLaunch: vi.fn(),
   reconnectTriggerConnection: vi.fn(),
+  revokeTriggerConnection: vi.fn(),
   selectLaunchConnection: vi.fn(),
   startLaunch: vi.fn(),
   updateLaunchOverrides: vi.fn(),
@@ -45,6 +47,12 @@ const ACTIVE: TriggerConnection = {
   consent_observed_at: '2026-08-27T00:00:00Z',
 };
 
+const INACTIVE: TriggerConnection = {
+  ...ACTIVE,
+  state_version: ACTIVE.state_version + 1,
+  state: 'inactive',
+};
+
 const HANDOFF: ConnectionAuthorization = {
   service_id: ACTIVE.service_id,
   authorization_url:
@@ -56,13 +64,64 @@ function launch(connection: TriggerConnection | null): Launch {
   return { ...FIXTURE, connection };
 }
 
+function namedLaunch(name: string, id: string, connection: TriggerConnection | null): Launch {
+  const current = launch(connection);
+  return {
+    ...current,
+    id,
+    trigger_public_id: `trigger-${id}`,
+    revision_content: {
+      ...current.revision_content,
+      task: { ...current.revision_content.task, public_summary: name },
+    },
+    overrides: {
+      ...current.overrides,
+      task_inputs: { ...current.overrides.task_inputs, topic: `${name} topic` },
+    },
+    effective: { ...current.effective, rendered_prompt: `${name} private prompt` },
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function storageText(): string {
+  return Array.from({ length: window.localStorage.length }, (_, index) => {
+    const key = window.localStorage.key(index);
+    return key === null ? '' : (window.localStorage.getItem(key) ?? '');
+  }).join('\n');
+}
+
+function mutateRetainedReview(change: (retained: Record<string, unknown>) => void): void {
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key === null || !key.startsWith('cma:trigger-command-ledger:')) continue;
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? 'null') as {
+      commands?: Array<{ action?: string; retained?: Record<string, unknown> }>;
+    };
+    const command = envelope.commands?.find((item) => item.action === 'update-review');
+    if (command?.retained === undefined) continue;
+    change(command.retained);
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+    return;
+  }
+  throw new Error('No retained review command was found.');
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   api.createOrResumeLaunch.mockResolvedValue(launch(ACTIVE));
+  api.readLaunch.mockResolvedValue(launch(ACTIVE));
   api.listTriggerConnections.mockResolvedValue([ACTIVE]);
   api.preflightTriggerConnection.mockResolvedValue(ACTIVE);
   api.beginTriggerConnection.mockResolvedValue(HANDOFF);
   api.reconnectTriggerConnection.mockResolvedValue(HANDOFF);
+  api.revokeTriggerConnection.mockResolvedValue(INACTIVE);
   api.selectLaunchConnection.mockImplementation(async () => launch(ACTIVE));
   api.updateLaunchOverrides.mockImplementation(async () => launch(ACTIVE));
   api.startLaunch.mockImplementation(async () => ({ ...launch(ACTIVE), state: 'preflight' }));
@@ -77,7 +136,7 @@ describe('Trigger contributor GitHub authorization', () => {
   it('begins with a bare UUID intent while retaining CMA in the review', async () => {
     api.createOrResumeLaunch.mockResolvedValue(launch(null));
     api.listTriggerConnections.mockResolvedValue([]);
-    render(<TriggerReview publicId="public-trigger" navigate={vi.fn()} />);
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Connect GitHub' }));
 
@@ -96,16 +155,17 @@ describe('Trigger contributor GitHub authorization', () => {
   });
 
   it('reconnects only the selected inactive service without losing edits', async () => {
-    const inactive = { ...ACTIVE, state: 'inactive' };
+    const inactive: TriggerConnection = { ...ACTIVE, state: 'inactive' };
     api.createOrResumeLaunch.mockResolvedValue(launch(inactive));
     api.listTriggerConnections.mockResolvedValue([inactive]);
     api.preflightTriggerConnection.mockRejectedValue(
       new ApiError(409, 'inactive', 'trigger_connection_inactive'),
     );
-    render(<TriggerReview publicId="public-trigger" navigate={vi.fn()} />);
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
     const user = userEvent.setup();
 
     const task = await screen.findByLabelText(/topic/i);
+    expect(screen.queryByRole('button', { name: 'Revoke connection' })).toBeNull();
     await user.clear(task);
     await user.type(task, 'my retained task');
     await user.click(screen.getByRole('button', { name: 'Reconnect' }));
@@ -119,8 +179,77 @@ describe('Trigger contributor GitHub authorization', () => {
     expect(task).toHaveValue('my retained task');
   });
 
+  it('confirms an exact revocation, preserves edits, and never claims immediate provider denial', async () => {
+    api.readLaunch.mockResolvedValue(launch(INACTIVE));
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    const task = await screen.findByLabelText(/topic/i);
+    await user.clear(task);
+    await user.type(task, 'keep this local review');
+    await user.click(screen.getByRole('button', { name: 'Revoke connection' }));
+
+    let dialog = screen.getByRole('dialog', { name: 'Revoke GitHub connection?' });
+    expect(dialog).toHaveTextContent('workspace, fork, branch, commits, pull request');
+    expect(dialog).toHaveTextContent('bounded credential lifetime expires');
+    expect(api.revokeTriggerConnection).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Keep connection' }));
+    expect(screen.queryByRole('dialog', { name: 'Revoke GitHub connection?' })).toBeNull();
+    expect(api.revokeTriggerConnection).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Revoke connection' }));
+    dialog = screen.getByRole('dialog', { name: 'Revoke GitHub connection?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Revoke connection' }));
+
+    await waitFor(() =>
+      expect(api.revokeTriggerConnection).toHaveBeenCalledWith(
+        ACTIVE.service_id,
+        expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+      ),
+    );
+    expect(task).toHaveValue('keep this local review');
+    expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Revoke GitHub connection?' })).toBeNull();
+  });
+
+  it('recovers an unresolved revocation after reload with the same service and command key', async () => {
+    api.revokeTriggerConnection
+      .mockRejectedValueOnce(new TransportError('response lost'))
+      .mockRejectedValueOnce(new TransportError('response lost again'));
+    const first = render(
+      <TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />,
+    );
+    const user = userEvent.setup();
+
+    await screen.findByText('Verified');
+    await user.click(await screen.findByRole('button', { name: 'Revoke connection' }));
+    await user.click(
+      within(screen.getByRole('dialog', { name: 'Revoke GitHub connection?' })).getByRole(
+        'button',
+        { name: 'Revoke connection' },
+      ),
+    );
+    await waitFor(() => expect(api.revokeTriggerConnection).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('alert')).toHaveTextContent('outcome is unknown');
+    expect(api.revokeTriggerConnection.mock.calls[1]).toEqual(
+      api.revokeTriggerConnection.mock.calls[0],
+    );
+    const retainedCall = api.revokeTriggerConnection.mock.calls[1];
+
+    first.unmount();
+    api.revokeTriggerConnection.mockResolvedValue(INACTIVE);
+    api.readLaunch.mockResolvedValue(launch(INACTIVE));
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    const recovered = await screen.findByRole('dialog', { name: 'Revoke GitHub connection?' });
+    await user.click(within(recovered).getByRole('button', { name: 'Reconcile revocation' }));
+    await waitFor(() => expect(api.revokeTriggerConnection).toHaveBeenCalledTimes(3));
+    expect(api.revokeTriggerConnection.mock.calls[2]).toEqual(retainedCall);
+    expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+  });
+
   it('manually checks only the selected service', async () => {
-    render(<TriggerReview publicId="public-trigger" navigate={vi.fn()} />);
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
     await screen.findByRole('heading', { name: 'Fix one bounded issue' });
     api.preflightTriggerConnection.mockClear();
 
@@ -130,12 +259,368 @@ describe('Trigger contributor GitHub authorization', () => {
       expect(api.preflightTriggerConnection).toHaveBeenCalledWith(ACTIVE.service_id),
     );
   });
+
+  it('deep-links to an older started Launch and revalidates it without calling Start again', async () => {
+    const navigate = vi.fn();
+    const recovery: Launch = {
+      ...launch(ACTIVE),
+      state: 'auth_required',
+      blocked_reason: 'owner_credential_unavailable',
+      failure: {
+        class: 'owner_credential_unavailable',
+        code: 'owner_credential_unavailable',
+        detail: 'CMA no longer holds usable sign-in authority for this operation.',
+        remediation: 'Sign in again to resume the same Launch.',
+        correlation_id: 'owner-credential-expired',
+        observed_at: '2026-08-27T00:01:00Z',
+      },
+      resume_state: 'preflight',
+      started_at: '2026-08-27T00:00:00Z',
+    };
+    const resumed: Launch = {
+      ...recovery,
+      state: 'preflight',
+      blocked_reason: null,
+      failure: null,
+      resume_state: null,
+      revision_number: recovery.revision_number + 1,
+    };
+    const newerCurrent = { ...launch(ACTIVE), id: 'newer-current-launch' };
+    api.createOrResumeLaunch.mockResolvedValue(newerCurrent);
+    api.readLaunch.mockResolvedValue(recovery);
+    api.selectLaunchConnection.mockResolvedValue(resumed);
+    render(
+      <TriggerReview ownerId="test-owner" recoveryLaunchId={recovery.id} navigate={navigate} />,
+    );
+
+    const resume = await screen.findByRole('button', { name: 'Resume Launch' });
+    await waitFor(() => expect(resume).toBeEnabled());
+    expect(api.readLaunch).toHaveBeenCalledWith(recovery.id);
+    expect(api.createOrResumeLaunch).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Start Launch' })).toBeNull();
+    expect(screen.getByLabelText(/topic/i)).toBeDisabled();
+    await userEvent.click(resume);
+
+    await waitFor(() => expect(api.selectLaunchConnection).toHaveBeenCalledOnce());
+    expect(api.selectLaunchConnection).toHaveBeenCalledWith(
+      recovery.id,
+      recovery.revision_number,
+      ACTIVE.service_id,
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+    );
+    expect(api.updateLaunchOverrides).not.toHaveBeenCalled();
+    expect(api.startLaunch).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ kind: 'launch', launchId: recovery.id }),
+    );
+  });
+
+  it('redirects a stale recovery deep link without exposing Start', async () => {
+    const navigate = vi.fn();
+    const recovered = { ...launch(ACTIVE), id: 'older-recovered-launch', state: 'ready' as const };
+    api.readLaunch.mockResolvedValue(recovered);
+
+    render(
+      <TriggerReview ownerId="test-owner" recoveryLaunchId={recovered.id} navigate={navigate} />,
+    );
+
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith(
+        { kind: 'launch', launchId: recovered.id },
+        { replace: true },
+      ),
+    );
+    expect(api.createOrResumeLaunch).not.toHaveBeenCalled();
+    expect(api.startLaunch).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Start Launch' })).toBeNull();
+  });
+
+  it('clears a dirty failed review before a recovery route loads', async () => {
+    const launchA = namedLaunch('Trigger A', 'launch-a', ACTIVE);
+    const connectionB: TriggerConnection = {
+      ...ACTIVE,
+      service_id: 'service-b',
+      account_login: 'contributor-b',
+    };
+    const launchB: Launch = {
+      ...namedLaunch('Trigger B', 'launch-b', connectionB),
+      state: 'auth_required',
+      blocked_reason: 'owner_credential_unavailable',
+      resume_state: 'preflight',
+      started_at: '2026-08-27T00:00:00Z',
+    };
+    const bRead = deferred<Launch>();
+    api.createOrResumeLaunch.mockResolvedValue(launchA);
+    api.readLaunch.mockReturnValue(bRead.promise);
+    api.listTriggerConnections.mockResolvedValueOnce([ACTIVE]).mockResolvedValueOnce([connectionB]);
+    api.updateLaunchOverrides.mockRejectedValueOnce(new Error('Trigger A review failed'));
+    const view = render(
+      <TriggerReview ownerId="test-owner" publicId="trigger-a" navigate={vi.fn()} />,
+    );
+    const user = userEvent.setup();
+
+    const topic = await screen.findByLabelText(/topic/i);
+    await user.clear(topic);
+    await user.type(topic, 'dirty Trigger A edit');
+    await user.click(screen.getByRole('button', { name: 'Save review' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Trigger A review failed');
+    expect(screen.getByRole('button', { name: 'Start Launch' })).toBeDisabled();
+    const aPreflightSignal = api.preflightTriggerConnection.mock.calls[0]?.[1] as AbortSignal;
+
+    view.rerender(
+      <TriggerReview ownerId="test-owner" recoveryLaunchId={launchB.id} navigate={vi.fn()} />,
+    );
+    expect(aPreflightSignal.aborted).toBe(true);
+    expect(screen.queryByRole('heading', { name: 'Trigger A' })).toBeNull();
+    expect(screen.queryByText('dirty Trigger A edit')).toBeNull();
+    expect(screen.queryByText('Trigger A review failed')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Review Trigger' })).toBeInTheDocument();
+
+    await act(async () => {
+      bRead.resolve(launchB);
+    });
+    expect(await screen.findByRole('heading', { name: 'Trigger B' })).toBeInTheDocument();
+    expect(screen.getByLabelText(/topic/i)).toHaveValue('Trigger B topic');
+    expect(screen.getByText('contributor-b')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resume Launch' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start Launch' })).toBeNull();
+    expect(api.startLaunch).not.toHaveBeenCalled();
+  });
+
+  it('ignores a late Trigger A review response after Trigger B is current', async () => {
+    const pendingA = deferred<Launch>();
+    const launchA = namedLaunch('Trigger A', 'launch-a', ACTIVE);
+    const launchB = namedLaunch('Trigger B', 'launch-b', ACTIVE);
+    api.createOrResumeLaunch.mockImplementation((publicId: string) =>
+      publicId === 'trigger-a' ? pendingA.promise : Promise.resolve(launchB),
+    );
+    const view = render(
+      <TriggerReview ownerId="test-owner" publicId="trigger-a" navigate={vi.fn()} />,
+    );
+
+    view.rerender(<TriggerReview ownerId="test-owner" publicId="trigger-b" navigate={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Trigger B' })).toBeInTheDocument();
+    await act(async () => {
+      pendingA.resolve(launchA);
+    });
+
+    expect(screen.queryByRole('heading', { name: 'Trigger A' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Trigger B' })).toBeInTheDocument();
+    expect(screen.getByLabelText(/topic/i)).toHaveValue('Trigger B topic');
+  });
 });
 
 describe('Trigger contributor command reconciliation', () => {
+  it('shows the exact server-owned price, runtime, capability, quota, and expiry evidence', async () => {
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    await screen.findByRole('heading', { name: 'Fix one bounded issue' });
+    expect(screen.getByText('Zero cost')).toBeInTheDocument();
+    expect(screen.getByText('cma-trigger-test-runtime@sha256:admitted')).toBeInTheDocument();
+    expect(
+      screen.getByText(/conversation, durable conversation, workspace checkpoint/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('0 of 4 active')).toBeInTheDocument();
+    expect(screen.getByText(/4000m CPU, 8192 MiB free at review/)).toBeInTheDocument();
+    expect(screen.getByText(/Aug 27, 2026/)).toBeInTheDocument();
+  });
+
+  it('names omitted and partially declared quota ceilings without inventing zero capacity', async () => {
+    api.createOrResumeLaunch.mockResolvedValue({
+      ...launch(ACTIVE),
+      review_quota: {
+        live_sessions: 2,
+        reserved_cpu_millis: 500,
+        reserved_memory_mib: 1024,
+        free_memory_mib: 4096,
+        checked_at: '2026-08-27T00:00:00Z',
+      },
+    });
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    await screen.findByRole('heading', { name: 'Fix one bounded issue' });
+    expect(screen.getByText('2 active · no owner limit declared')).toBeInTheDocument();
+    expect(
+      screen.getByText('No CPU ceiling declared, 4096 MiB free at review'),
+    ).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('undefined');
+  });
+
+  it('labels a wholly undeclared deployment ceiling without manufacturing capacity', async () => {
+    api.createOrResumeLaunch.mockResolvedValue({
+      ...launch(ACTIVE),
+      review_quota: {
+        live_sessions: 2,
+        reserved_cpu_millis: 500,
+        reserved_memory_mib: 1024,
+        checked_at: '2026-08-27T00:00:00Z',
+      },
+    });
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    await screen.findByRole('heading', { name: 'Fix one bounded issue' });
+    expect(screen.getByText('No deployment ceiling declared')).toBeInTheDocument();
+    expect(screen.queryByText('0m CPU, 0 MiB free at review')).toBeNull();
+  });
+
+  it('shows a fixed sign-in return failure without automatically starting the Launch', async () => {
+    render(
+      <TriggerReview
+        ownerId="test-owner"
+        publicId="public-trigger"
+        authError="expired"
+        navigate={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole('heading', { name: 'Fix one bounded issue' });
+    expect(screen.getByRole('alert')).toHaveTextContent('Sign-in expired');
+    expect(screen.getByRole('alert')).toHaveTextContent('Sign in again to continue.');
+    expect(api.startLaunch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when server admission evidence is incomplete', async () => {
+    api.createOrResumeLaunch.mockResolvedValue({
+      ...launch(ACTIVE),
+      runtime_admission: null,
+    });
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    const start = await screen.findByRole('button', { name: 'Start Launch' });
+    await waitFor(() => expect(start).toBeDisabled());
+    expect(screen.getAllByText('Admission unavailable').length).toBeGreaterThan(0);
+  });
+
+  it('discloses the locked session kernel before Start', async () => {
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+
+    await screen.findByRole('heading', { name: 'Fix one bounded issue' });
+    const kernel = screen.getByText('Kernel').closest('div');
+    expect(kernel).not.toBeNull();
+    expect(within(kernel as HTMLElement).getByText('Codex')).toBeInTheDocument();
+  });
+
+  it('requires an explicit same-configuration review refresh after Start admission drifts', async () => {
+    api.startLaunch.mockRejectedValueOnce(
+      new ApiError(409, 'the reviewed price changed', 'trigger_price_changed'),
+    );
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Start Launch' }));
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Start Launch' }),
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Admission changed before Start/i);
+    expect(screen.getByRole('button', { name: 'Start Launch' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Save review' }));
+
+    await waitFor(() => expect(api.updateLaunchOverrides).toHaveBeenCalledOnce());
+    expect(api.updateLaunchOverrides.mock.calls[0]?.[2]).toEqual({
+      task_inputs: { topic: 'the selected issue' },
+      branch_suffix: 'work',
+      resource_size: { cpu_millis: 500, memory_mib: 1024 },
+      timeout_seconds: 3600,
+      optional_checks: [],
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start Launch' })).toBeEnabled());
+  });
+
+  it('requires saving and reviewing recalculated admission before Start', async () => {
+    const base = launch(ACTIVE);
+    const original: Launch = {
+      ...base,
+      revision_content: {
+        ...base.revision_content,
+        override_policy: {
+          ...base.revision_content.override_policy,
+          editable_fields: [
+            ...base.revision_content.override_policy.editable_fields,
+            'resource_size',
+          ],
+        },
+      },
+    };
+    const reviewed: Launch = {
+      ...original,
+      revision_number: original.revision_number + 1,
+      overrides: {
+        ...original.overrides,
+        resource_size: { cpu_millis: 750, memory_mib: 1024 },
+      },
+      effective: {
+        ...original.effective,
+        resource_size: { cpu_millis: 750, memory_mib: 1024 },
+        digest: 'f'.repeat(64),
+      },
+      pricing: {
+        ...original.pricing!,
+        billing_mode: 'contributor',
+        cpu_millis: 750,
+        estimated_micros: 9_000_000,
+      },
+    };
+    api.createOrResumeLaunch.mockResolvedValue(original);
+    api.updateLaunchOverrides.mockResolvedValue(reviewed);
+    api.startLaunch.mockResolvedValue({ ...reviewed, state: 'preflight' });
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+    const user = userEvent.setup();
+
+    const cpu = await screen.findByLabelText('CPU millis');
+    await user.clear(cpu);
+    await user.type(cpu, '750');
+
+    expect(screen.getByRole('button', { name: 'Start Launch' })).toBeDisabled();
+    expect(screen.getByText(/Save the review to recalculate pricing/i)).toBeInTheDocument();
+    expect(api.startLaunch).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Save review' }));
+    await waitFor(() => expect(api.updateLaunchOverrides).toHaveBeenCalledOnce());
+    expect(screen.getByText('Price').parentElement).toHaveTextContent(/9\.00 maximum/);
+    expect(screen.getByRole('button', { name: 'Start Launch' })).toBeEnabled();
+    expect(api.startLaunch).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Start Launch' }));
+    await user.click(
+      within(screen.getByRole('dialog', { name: 'Start this Launch?' })).getByRole('button', {
+        name: 'Start Launch',
+      }),
+    );
+
+    await waitFor(() => expect(api.startLaunch).toHaveBeenCalledOnce());
+    expect(api.startLaunch).toHaveBeenCalledWith(
+      reviewed.id,
+      reviewed.revision_number,
+      reviewed.effective.digest,
+      reviewed.workflow_risk_acknowledged,
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^cma-web-/) }),
+    );
+  });
+
+  it('hands an expired draft to the retained Launch New Launch recovery flow', async () => {
+    const navigate = vi.fn();
+    api.startLaunch.mockRejectedValueOnce(
+      new ApiError(409, 'the review expired', 'trigger_draft_expired'),
+    );
+    const current = launch(ACTIVE);
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={navigate} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Start Launch' }));
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Start Launch' }),
+    );
+
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ kind: 'launch', launchId: current.id }),
+    );
+  });
+
   it('reconciles an ambiguous create-or-resume with the original key', async () => {
     api.createOrResumeLaunch.mockRejectedValue(new TransportError('response lost'));
-    render(<TriggerReview publicId="public-trigger" navigate={vi.fn()} />);
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
 
     await waitFor(() => expect(api.createOrResumeLaunch).toHaveBeenCalledTimes(2));
     expect(
@@ -157,7 +642,7 @@ describe('Trigger contributor command reconciliation', () => {
   it('keeps Start confirmation and the exact request after repeated transport loss', async () => {
     const navigate = vi.fn();
     api.startLaunch.mockRejectedValue(new TransportError('response lost'));
-    render(<TriggerReview publicId="public-trigger" navigate={navigate} />);
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={navigate} />);
     const user = userEvent.setup();
 
     await user.click(await screen.findByRole('button', { name: 'Start Launch' }));
@@ -176,7 +661,78 @@ describe('Trigger contributor command reconciliation', () => {
 
     await waitFor(() => expect(api.startLaunch).toHaveBeenCalledTimes(3));
     expect(api.startLaunch.mock.calls[2]).toEqual(api.startLaunch.mock.calls[0]);
-    expect(navigate).toHaveBeenCalledWith({ kind: 'launch', launchId: started.id });
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ kind: 'launch', launchId: started.id }),
+    );
+  });
+
+  it('reconstructs a private review after reload only with the original request and key', async () => {
+    const privateTopic = 'private reload review text';
+    api.updateLaunchOverrides.mockRejectedValue(new TransportError('response lost'));
+    const first = render(
+      <TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />,
+    );
+    const user = userEvent.setup();
+    const original = await screen.findByLabelText(/topic/i);
+    await user.clear(original);
+    await user.type(original, privateTopic);
+    await user.click(screen.getByRole('button', { name: 'Save review' }));
+
+    await waitFor(() => expect(api.updateLaunchOverrides).toHaveBeenCalledTimes(2));
+    const originalKey = api.updateLaunchOverrides.mock.calls[0]?.[3].idempotencyKey as string;
+    expect(storageText()).not.toContain(privateTopic);
+    first.unmount();
+
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+    const reconstructed = await screen.findByLabelText(/topic/i);
+    await screen.findByRole('button', { name: 'Reconcile review' });
+    await waitFor(() => expect(reconstructed).toBeEnabled());
+
+    await user.clear(reconstructed);
+    await user.type(reconstructed, 'changed private review text');
+    await user.click(screen.getByRole('button', { name: 'Reconcile review' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/private text/i);
+    expect(api.updateLaunchOverrides).toHaveBeenCalledTimes(2);
+
+    api.updateLaunchOverrides.mockResolvedValue(launch(ACTIVE));
+    await user.clear(reconstructed);
+    await user.type(reconstructed, privateTopic);
+    await user.click(screen.getByRole('button', { name: 'Reconcile review' }));
+
+    await waitFor(() => expect(api.updateLaunchOverrides).toHaveBeenCalledTimes(3));
+    expect(api.updateLaunchOverrides.mock.calls[2]?.[3].idempotencyKey).toBe(originalKey);
+    expect(api.updateLaunchOverrides.mock.calls[2]?.[2].task_inputs).toEqual({
+      topic: privateTopic,
+    });
+  });
+
+  it('rejects tampered private-review metadata without another API call', async () => {
+    const privateTopic = 'private review bound to this launch';
+    api.updateLaunchOverrides.mockRejectedValue(new TransportError('response lost'));
+    const first = render(
+      <TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />,
+    );
+    const user = userEvent.setup();
+    const topic = await screen.findByLabelText(/topic/i);
+    await user.clear(topic);
+    await user.type(topic, privateTopic);
+    await user.click(screen.getByRole('button', { name: 'Save review' }));
+    await waitFor(() => expect(api.updateLaunchOverrides).toHaveBeenCalledTimes(2));
+    first.unmount();
+
+    mutateRetainedReview((retained) => {
+      retained.launchId = 'attacker-selected-launch';
+    });
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
+    const reconstructed = await screen.findByLabelText(/topic/i);
+    await screen.findByRole('button', { name: 'Reconcile review' });
+    await waitFor(() => expect(reconstructed).toBeEnabled());
+    await user.clear(reconstructed);
+    await user.type(reconstructed, privateTopic);
+    await user.click(screen.getByRole('button', { name: 'Reconcile review' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/current resource/i);
+    expect(api.updateLaunchOverrides).toHaveBeenCalledTimes(2);
   });
 
   it('joins duplicate Start clicks to one in-flight command', async () => {
@@ -187,7 +743,7 @@ describe('Trigger contributor command reconciliation', () => {
           finish = resolve;
         }),
     );
-    render(<TriggerReview publicId="public-trigger" navigate={vi.fn()} />);
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
     const user = userEvent.setup();
 
     await user.click(await screen.findByRole('button', { name: 'Start Launch' }));
@@ -206,7 +762,7 @@ describe('Trigger contributor command reconciliation', () => {
     api.updateLaunchOverrides.mockRejectedValue(
       new ApiError(409, 'revision conflict', 'revision_conflict'),
     );
-    render(<TriggerReview publicId="public-trigger" navigate={vi.fn()} />);
+    render(<TriggerReview ownerId="test-owner" publicId="public-trigger" navigate={vi.fn()} />);
     const user = userEvent.setup();
     const topic = await screen.findByLabelText(/topic/i);
     await user.clear(topic);

@@ -14,9 +14,13 @@ use crate::RuntimePermission;
 /// configuration file uses, and it starts every session in `agent` regardless
 /// of that file — which is why this is sent explicitly and why failing to send
 /// it fails the session.
-pub(super) fn mode_for(permission: RuntimePermission) -> &'static str {
+pub(super) fn mode_for(
+    permission: RuntimePermission,
+    restricted_service_gateway: bool,
+) -> &'static str {
     match permission {
         RuntimePermission::Guarded => "read-only",
+        RuntimePermission::Autonomous if restricted_service_gateway => "cma-trigger",
         RuntimePermission::Autonomous => "agent",
         // No approvals and no confinement inside the sandbox. Survivable only
         // because the sandbox is still the boundary.

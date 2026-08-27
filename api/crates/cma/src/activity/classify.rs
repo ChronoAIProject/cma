@@ -117,6 +117,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Classified> {
             Method::POST => Some(Classified::new(Action::TriggerConnectionBegin)),
             _ => None,
         },
+        ["api", "v1", "trigger-connections", id] if method == Method::DELETE => {
+            Some(Classified::new(Action::TriggerConnectionRevoke).on(connection(id)))
+        }
         ["api", "v1", "trigger-connections", id, "reconnect"] if method == Method::POST => {
             Some(Classified::new(Action::TriggerConnectionReconnect).on(connection(id)))
         }

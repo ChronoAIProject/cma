@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "base_url": "https://cma.example.invalid",
+  "expected_build_sha": "0000000000000000000000000000000000000000",
+  "public_id": "00000000-0000-4000-8000-000000000000",
+  "revision_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "source_sha": "0000000000000000000000000000000000000000",
+  "upstream": {
+    "repository_id": 1,
+    "owner": "ChronoAIProject",
+    "repository": "cma-trigger-fixture",
+    "default_branch": "main"
+  },
+  "contributor": {
+    "login": "cma-trigger-smoke-user",
+    "fork_repository": "cma-trigger-fixture",
+    "expected_fork_mode": "new"
+  },
+  "task": {
+    "marker_input": "smoke_marker",
+    "expected_path_template": "cma-trigger-smoke/{marker}.txt",
+    "expected_content_template": "CMA Trigger provider smoke {marker}\n"
+  },
+  "fixture_policy": {
+    "repository_owner": "ChronoAIProject",
+    "lifecycle": "persistent_public_fixture",
+    "secrets": "forbidden",
+    "github_cleanup": "preserve",
+    "session_cleanup": "stop_runtime_preserve_session"
+  },
+  "timeouts": {
+    "launch_seconds": 2400,
+    "effect_seconds": 600,
+    "poll_seconds": 5
+  },
+  "github_api_url": "https://api.github.com"
+}

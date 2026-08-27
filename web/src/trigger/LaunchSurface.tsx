@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { TransportError, cancelLaunch, createNewLaunch, recoverInitialPrompt } from '../api/client';
+import { cancelLaunch, createNewLaunch, recoverInitialPrompt } from '../api/client';
 import type { AppRouter } from '../routing/routes';
 import { routeClick, routePath } from '../routing/routes';
 import { Button } from '../ui/Button';
@@ -32,10 +32,21 @@ import {
   workspaceCheckpoint,
 } from './model';
 import { useLaunchResource } from './useLaunchResource';
-import { useIdempotentCommand } from './useIdempotentCommand';
+import {
+  commandOutcomeIsUnresolved,
+  retainedCommandRequest,
+  useIdempotentCommand,
+} from './useIdempotentCommand';
+import {
+  commandObject,
+  exactString,
+  nonEmptyString,
+  nonNegativeInteger,
+} from './commandValidation';
 import './LaunchSurface.css';
 
 interface LaunchSurfaceProps {
+  readonly ownerId: string;
   readonly launchId: string;
   readonly navigate: AppRouter['navigate'];
 }
@@ -64,7 +75,24 @@ function checksLabel(value: string): string {
     : stateLabel(value);
 }
 
-export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
+interface LaunchRevisionDigestRequest {
+  readonly launchId: string;
+  readonly expectedRevision: number;
+  readonly snapshotDigest: string;
+}
+
+function launchRevisionDigestRequest(
+  value: unknown,
+  launchId: string,
+): LaunchRevisionDigestRequest | null {
+  return commandObject<LaunchRevisionDigestRequest>(value, {
+    launchId: exactString(launchId),
+    expectedRevision: nonNegativeInteger,
+    snapshotDigest: nonEmptyString,
+  });
+}
+
+export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProps) {
   const resource = useLaunchResource(launchId);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [confirmingNew, setConfirmingNew] = useState(false);
@@ -73,11 +101,11 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
   const [actionFailure, setActionFailure] = useState<string | null>(null);
   const [recoveryFailure, setRecoveryFailure] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  const commands = useIdempotentCommand();
+  const commands = useIdempotentCommand(ownerId, [`launch:${launchId}`]);
 
   useEffect(() => {
     heading.current?.focus();
-  }, [launchId]);
+  }, [launchId, resource.loading]);
 
   async function cancel(): Promise<void> {
     const current = resource.launch;
@@ -85,18 +113,33 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
     setBusy('cancel');
     setActionFailure(null);
     try {
+      const identity = {
+        slot: `launch:cancel:${current.id}`,
+        resource: `launch:${current.id}`,
+        action: 'cancel',
+      } as const;
+      const request = retainedCommandRequest(
+        commands.pending,
+        identity,
+        {
+          launchId: current.id,
+          expectedRevision: current.revision_number,
+          snapshotDigest: current.effective.digest,
+        },
+        (value) => launchRevisionDigestRequest(value, current.id),
+      );
       const next = await commands.execute(
-        `launch:cancel:${current.id}`,
+        { ...identity, request, persistRequest: true },
         'Launch cancellation',
-        (idempotencyKey) =>
-          cancelLaunch(current.id, current.revision_number, current.effective.digest, {
+        (idempotencyKey, frozen) =>
+          cancelLaunch(frozen.launchId, frozen.expectedRevision, frozen.snapshotDigest, {
             idempotencyKey,
           }),
       );
       resource.accept(next);
       setConfirmingCancel(false);
     } catch (cause) {
-      if (cause instanceof TransportError) {
+      if (commandOutcomeIsUnresolved(cause)) {
         setActionFailure(
           'The cancellation outcome is unknown. CMA retained the exact command; reconcile it before another Launch action.',
         );
@@ -116,18 +159,28 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
     setBusy('new');
     setActionFailure(null);
     try {
+      const identity = {
+        slot: `launch:new:${current.id}`,
+        resource: `launch:${current.id}`,
+        action: 'new-launch',
+      } as const;
+      const request = retainedCommandRequest(
+        commands.pending,
+        identity,
+        {
+          publicId: current.trigger_public_id,
+        },
+        (value) => commandObject(value, { publicId: exactString(current.trigger_public_id) }),
+      );
       const next = await commands.execute(
-        `launch:new:${current.id}`,
+        { ...identity, request, persistRequest: true },
         'New Launch creation',
-        (idempotencyKey) =>
-          createNewLaunch(current.trigger_public_id, {
-            idempotencyKey,
-          }),
+        (idempotencyKey, frozen) => createNewLaunch(frozen.publicId, { idempotencyKey }),
       );
       setConfirmingNew(false);
       navigate({ kind: 'trigger', publicId: next.trigger_public_id });
     } catch (cause) {
-      if (cause instanceof TransportError) {
+      if (commandOutcomeIsUnresolved(cause)) {
         setActionFailure(
           'The New Launch outcome is unknown. CMA retained the exact command; reconcile it before another Launch action.',
         );
@@ -156,22 +209,40 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
     setBusy('recover');
     setRecoveryFailure(null);
     try {
-      let next: typeof current;
-      if (pending) {
-        next = await commands.reconcile<typeof current>(slot, 'initial-task recovery');
-      } else {
-        if (delivery === undefined) return;
-        const expectedRevision = current.revision_number;
-        const payloadHash = delivery.payload_hash;
-        next = await commands.execute(slot, 'initial-task recovery', (idempotencyKey) =>
-          recoverInitialPrompt(current.id, expectedRevision, payloadHash, { idempotencyKey }),
-        );
-      }
+      const identity = {
+        slot,
+        resource: `launch:${current.id}`,
+        action: 'recover-initial-prompt',
+      } as const;
+      const request = retainedCommandRequest(
+        commands.pending,
+        identity,
+        {
+          launchId: current.id,
+          expectedRevision: current.revision_number,
+          payloadHash: delivery?.payload_hash ?? '',
+        },
+        (value) =>
+          commandObject(value, {
+            launchId: exactString(current.id),
+            expectedRevision: nonNegativeInteger,
+            payloadHash: nonEmptyString,
+          }),
+      );
+      if (request.payloadHash === '') return;
+      const next = await commands.execute(
+        { ...identity, request, persistRequest: true },
+        'initial-task recovery',
+        (idempotencyKey, frozen) =>
+          recoverInitialPrompt(frozen.launchId, frozen.expectedRevision, frozen.payloadHash, {
+            idempotencyKey,
+          }),
+      );
       resource.accept(next);
       setConfirmingRecovery(false);
     } catch (cause) {
       setRecoveryFailure(
-        cause instanceof TransportError
+        commandOutcomeIsUnresolved(cause)
           ? 'The recovery outcome is unknown. CMA retained the exact authorization; reconcile it before another Launch action.'
           : cause instanceof Error
             ? cause.message
@@ -236,6 +307,10 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
         ? 'CMA has not returned a finite result. Only the retained recovery authorization can be reconciled.'
         : undefined;
   const contributionRoute = { kind: 'contribute', launchId: launch.id } as const;
+  const authenticationRoute =
+    launch.state === 'auth_required'
+      ? ({ kind: 'trigger_recovery', launchId: launch.id } as const)
+      : undefined;
   const sessionRoute =
     linkedSession === undefined
       ? undefined
@@ -260,6 +335,23 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
           {resource.lastUpdated === null
             ? 'unknown'
             : new Date(resource.lastUpdated).toLocaleTimeString()}
+        </div>
+      ) : null}
+      {!resource.offline && resource.failure !== null ? (
+        <div className="notice notice--fail trigger-workflow__notice" role="alert">
+          <IconWarningOutline16 />
+          <div>
+            <p className="notice__title">Launch data may be stale.</p>
+            <p className="notice__detail">{resource.failure}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<IconRefreshOutline16 />}
+              onClick={() => void resource.refresh()}
+            >
+              Retry refresh
+            </Button>
+          </div>
         </div>
       ) : null}
       <p className="launch__live" aria-live="polite" aria-atomic="true">
@@ -401,6 +493,15 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
               <div>
                 <p className="notice__title">{stateLabel(launch.blocked_reason)}</p>
                 <p className="notice__detail">This Launch remains resumable.</p>
+                {authenticationRoute === undefined ? null : (
+                  <a
+                    className="button button--outline button--sm"
+                    href={routePath(authenticationRoute)}
+                    onClick={(event) => routeClick(event, authenticationRoute, navigate)}
+                  >
+                    Resume GitHub access
+                  </a>
+                )}
               </div>
             </div>
           )}
@@ -532,15 +633,14 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
             Recover initial task
           </Button>
         ) : null}
-        {terminal ? (
-          <Button
-            variant="outline"
-            disabled={busy !== null || commands.pending !== null}
-            onClick={() => setConfirmingNew(true)}
-          >
-            New Launch
-          </Button>
-        ) : (
+        <Button
+          variant="outline"
+          disabled={busy !== null || commands.pending !== null}
+          onClick={() => setConfirmingNew(true)}
+        >
+          New Launch
+        </Button>
+        {terminal ? null : (
           <Button
             variant="danger"
             disabled={busy !== null || commands.pending !== null}
@@ -552,7 +652,7 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
       </footer>
 
       <Modal
-        open={confirmingCancel}
+        open={confirmingCancel || pendingCancel}
         title="Cancel this Launch?"
         description="CMA will stop new orchestration and revoke Launch reach where safe. Your fork, branch, commits, pull request, session history, and workspace record are not deleted."
         onClose={() => {
@@ -583,7 +683,7 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
         }
       />
       <RiskConfirmation
-        open={confirmingRecovery}
+        open={confirmingRecovery || pendingRecovery}
         title="Authorize another initial task?"
         description="CMA cannot determine whether the previous initial task started. Authorizing another dispatch may execute the task twice."
         acknowledgeLabel="I understand that the initial task may execute twice."
@@ -607,7 +707,7 @@ export function LaunchSurface({ launchId, navigate }: LaunchSurfaceProps) {
         onConfirm={() => void recoverPrompt()}
       />
       <Modal
-        open={confirmingNew}
+        open={confirmingNew || pendingNew}
         title="Create a separate Launch?"
         description="This creates a new Launch-owned branch and may allocate another sandbox and session. The current Launch, session, branch, and pull request stay unchanged."
         onClose={() => {

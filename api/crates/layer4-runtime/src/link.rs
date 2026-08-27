@@ -44,7 +44,6 @@ use tokio::sync::mpsc;
 
 use crate::lanes::{self, Ready, LANE_TERMINAL};
 use crate::pty::PtySession;
-use crate::upstream::PLACEHOLDER_KEY;
 use crate::AppState;
 
 /// What the control plane asks for when it opens a link.
@@ -255,16 +254,10 @@ async fn relay_terminal(
     let rows = params.rows.unwrap_or(24).max(1);
     let framed = params.framed();
 
-    let startup = state.startup_gate.read().await;
-    let started: std::io::Result<(
+    let (session, mut output): (
         std::sync::Arc<PtySession>,
         tokio::sync::broadcast::Receiver<Vec<u8>>,
-    )> = state
-        .registry
-        .get_or_start(&id, &state.agent_command(), cols, rows, PLACEHOLDER_KEY)
-        .await;
-    drop(startup);
-    let (session, mut output) = started?;
+    ) = state.terminal_session(&id, cols, rows).await?;
 
     let mut exited = session.subscribe_exit();
     session.resize(cols, rows)?;

@@ -125,7 +125,9 @@ pub struct Bridge {
     /// it is the one where somebody is waiting for an answer that is never
     /// coming — so it is the case that must not be missed.
     ended: tokio::sync::watch::Sender<bool>,
-    /// Dedicated process session containing the bridge and supported descendants.
+    /// Dedicated process session containing the bridge and supported
+    /// descendants. The root remains checkpoint authority after the primary
+    /// exits because a descendant may still hold the workspace open.
     writer_session_root: Option<i32>,
 }
 
@@ -223,9 +225,7 @@ impl Bridge {
     }
 
     pub(crate) fn writer_session_root(&self) -> Option<i32> {
-        (!self.is_ended())
-            .then_some(self.writer_session_root)
-            .flatten()
+        self.writer_session_root
     }
 
     /// Resolves when the bridge process has ended, including when it already

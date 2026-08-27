@@ -1,0 +1,248 @@
+name: CMA Trigger provider smoke
+
+# This is deliberately outside pull-request and push CI. It writes durable
+# resources through CMA, NyxID, and GitHub and therefore runs only after an
+# operator chooses it, confirms the preservation policy, and passes a
+# pre-provisioned, non-bypassable cma-trigger-smoke environment gate. Merely
+# naming an environment in this file does not prove that GitHub has protection
+# rules for it, so the plan job verifies the live configuration before any
+# credential-bearing job can start.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_fork_mode:
+        description: Require the contributor fork to be absent or already reusable before the run
+        required: true
+        type: choice
+        options: [new, reuse]
+      preservation_confirmation:
+        description: Type PRESERVE to retain the fork, branch, commit, and pull request after the run
+        required: true
+        type: string
+
+# One disposable identity owns one fork-network slot. Concurrent runs would
+# make exact resource deltas unknowable even if their Launch ids differed.
+concurrency:
+  group: cma-trigger-provider-smoke
+  cancel-in-progress: false
+
+permissions:
+  # GitHub's environment-read endpoint advertises actions=read. Keep this
+  # read-only permission so the plan job can prove the live protection rules;
+  # the workflow token still cannot mutate repository or provider state.
+  actions: read
+  contents: read
+
+jobs:
+  plan:
+    name: Validate smoke plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the deployed develop workflow and preservation consent
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+          PRESERVATION_CONFIRMATION: ${{ inputs.preservation_confirmation }}
+        run: |
+          set -euo pipefail
+          if [ "$DISPATCH_REF" != "refs/heads/develop" ]; then
+            echo "::error::provider smoke runs only from refs/heads/develop (got '$DISPATCH_REF')"
+            exit 1
+          fi
+          if [ "$PRESERVATION_CONFIRMATION" != "PRESERVE" ]; then
+            echo "::error::preservation_confirmation must be exactly PRESERVE"
+            exit 1
+          fi
+
+      - name: Require the live protected smoke environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          environment="$RUNNER_TEMP/cma-trigger-smoke-environment.json"
+          if ! gh api \
+            "repos/$GITHUB_REPOSITORY/environments/cma-trigger-smoke" \
+            > "$environment"; then
+            echo "::error::cma-trigger-smoke must be created and protected before this workflow is dispatched"
+            exit 1
+          fi
+          if ! jq -e '
+            .name == "cma-trigger-smoke"
+            and .can_admins_bypass == false
+            and (.protection_rules | type == "array")
+            and any(.protection_rules[];
+              .type == "required_reviewers"
+              and .prevent_self_review == true
+              and (.reviewers | type == "array")
+              and (.reviewers | length) > 0)
+            and .deployment_branch_policy.protected_branches == true
+            and .deployment_branch_policy.custom_branch_policies == false
+          ' "$environment" >/dev/null; then
+            echo "::error::cma-trigger-smoke must require independent review, forbid administrator bypass, and admit only protected branches"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+
+      - name: Validate the checked-in harness contract
+        run: |
+          set -euo pipefail
+          node --check .github/scripts/cma-trigger-provider-smoke.mjs
+          node .github/scripts/cma-trigger-provider-smoke.mjs --self-test
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --validate-config .github/cma-trigger-provider-smoke.example.json
+
+  provider:
+    name: Real GitHub and NyxID smoke
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: cma-trigger-smoke
+    env:
+      CMA_TRIGGER_SMOKE_BASE_URL: ${{ vars.CMA_TRIGGER_SMOKE_BASE_URL }}
+      CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA: ${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA }}
+      CMA_TRIGGER_SMOKE_PUBLIC_ID: ${{ vars.CMA_TRIGGER_SMOKE_PUBLIC_ID }}
+      CMA_TRIGGER_SMOKE_REVISION_DIGEST: ${{ vars.CMA_TRIGGER_SMOKE_REVISION_DIGEST }}
+      CMA_TRIGGER_SMOKE_SOURCE_SHA: ${{ vars.CMA_TRIGGER_SMOKE_SOURCE_SHA }}
+      CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID }}
+      CMA_TRIGGER_SMOKE_UPSTREAM_OWNER: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_OWNER }}
+      CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY }}
+      CMA_TRIGGER_SMOKE_UPSTREAM_DEFAULT_BRANCH: ${{ vars.CMA_TRIGGER_SMOKE_UPSTREAM_DEFAULT_BRANCH }}
+      CMA_TRIGGER_SMOKE_CONTRIBUTOR_LOGIN: ${{ vars.CMA_TRIGGER_SMOKE_CONTRIBUTOR_LOGIN }}
+      CMA_TRIGGER_SMOKE_FORK_REPOSITORY: ${{ vars.CMA_TRIGGER_SMOKE_FORK_REPOSITORY }}
+      CMA_TRIGGER_SMOKE_MARKER_INPUT: ${{ vars.CMA_TRIGGER_SMOKE_MARKER_INPUT }}
+      CMA_TRIGGER_SMOKE_EXPECTED_PATH_TEMPLATE: ${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_PATH_TEMPLATE }}
+      CMA_TRIGGER_SMOKE_EXPECTED_CONTENT_TEMPLATE: ${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_CONTENT_TEMPLATE }}
+      CMA_TRIGGER_SMOKE_EXPECTED_FORK_MODE: ${{ inputs.expected_fork_mode }}
+      CMA_TRIGGER_SMOKE_RUN_MARKER: gha-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      # Recheck after the environment approval. The plan check prevents an
+      # unprotected job from being queued; this closes a protection-change
+      # race before any step is given a provider credential.
+      - name: Revalidate the protected smoke environment after approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          environment="$RUNNER_TEMP/cma-trigger-smoke-environment.json"
+          gh api \
+            "repos/$GITHUB_REPOSITORY/environments/cma-trigger-smoke" \
+            > "$environment"
+          jq -e '
+            .name == "cma-trigger-smoke"
+            and .can_admins_bypass == false
+            and (.protection_rules | type == "array")
+            and any(.protection_rules[];
+              .type == "required_reviewers"
+              and .prevent_self_review == true
+              and (.reviewers | type == "array")
+              and (.reviewers | length) > 0)
+            and .deployment_branch_policy.protected_branches == true
+            and .deployment_branch_policy.custom_branch_policies == false
+          ' "$environment" >/dev/null
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+
+      - name: Install and build the reviewed CMA SDK
+        working-directory: sdk/typescript
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Materialize the non-secret pinned fixture contract
+        env:
+          CONFIG_PATH: ${{ runner.temp }}/cma-trigger-smoke-config.json
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg base_url "$CMA_TRIGGER_SMOKE_BASE_URL" \
+            --arg build_sha "$CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA" \
+            --arg public_id "$CMA_TRIGGER_SMOKE_PUBLIC_ID" \
+            --arg revision_digest "$CMA_TRIGGER_SMOKE_REVISION_DIGEST" \
+            --arg source_sha "$CMA_TRIGGER_SMOKE_SOURCE_SHA" \
+            --argjson repository_id "$CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY_ID" \
+            --arg upstream_owner "$CMA_TRIGGER_SMOKE_UPSTREAM_OWNER" \
+            --arg upstream_repository "$CMA_TRIGGER_SMOKE_UPSTREAM_REPOSITORY" \
+            --arg default_branch "$CMA_TRIGGER_SMOKE_UPSTREAM_DEFAULT_BRANCH" \
+            --arg contributor_login "$CMA_TRIGGER_SMOKE_CONTRIBUTOR_LOGIN" \
+            --arg fork_repository "$CMA_TRIGGER_SMOKE_FORK_REPOSITORY" \
+            --arg expected_fork_mode "$CMA_TRIGGER_SMOKE_EXPECTED_FORK_MODE" \
+            --arg marker_input "$CMA_TRIGGER_SMOKE_MARKER_INPUT" \
+            --arg path_template "$CMA_TRIGGER_SMOKE_EXPECTED_PATH_TEMPLATE" \
+            --arg content_template "$CMA_TRIGGER_SMOKE_EXPECTED_CONTENT_TEMPLATE" \
+            '{
+              schema_version: 1,
+              base_url: $base_url,
+              expected_build_sha: $build_sha,
+              public_id: $public_id,
+              revision_digest: $revision_digest,
+              source_sha: $source_sha,
+              upstream: {
+                repository_id: $repository_id,
+                owner: $upstream_owner,
+                repository: $upstream_repository,
+                default_branch: $default_branch
+              },
+              contributor: {
+                login: $contributor_login,
+                fork_repository: $fork_repository,
+                expected_fork_mode: $expected_fork_mode
+              },
+              task: {
+                marker_input: $marker_input,
+                expected_path_template: $path_template,
+                expected_content_template: $content_template
+              },
+              fixture_policy: {
+                repository_owner: "ChronoAIProject",
+                lifecycle: "persistent_public_fixture",
+                secrets: "forbidden",
+                github_cleanup: "preserve",
+                session_cleanup: "stop_runtime_preserve_session"
+              },
+              timeouts: {launch_seconds: 2400, effect_seconds: 600, poll_seconds: 5},
+              github_api_url: "https://api.github.com"
+            }' > "$CONFIG_PATH"
+
+      - name: Run one exact provider path
+        env:
+          CONFIG_PATH: ${{ runner.temp }}/cma-trigger-smoke-config.json
+          EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
+          CMA_TRIGGER_SMOKE_ACCESS_TOKEN: ${{ secrets.CMA_TRIGGER_SMOKE_ACCESS_TOKEN }}
+          CMA_TRIGGER_SMOKE_SERVICE_ID: ${{ secrets.CMA_TRIGGER_SMOKE_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --run "$CONFIG_PATH" "$EVIDENCE_PATH"
+
+      - name: Reject credentials or unbounded response data in evidence
+        id: evidence_audit
+        if: always()
+        env:
+          EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
+          CMA_TRIGGER_SMOKE_ACCESS_TOKEN: ${{ secrets.CMA_TRIGGER_SMOKE_ACCESS_TOKEN }}
+          CMA_TRIGGER_SMOKE_SERVICE_ID: ${{ secrets.CMA_TRIGGER_SMOKE_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --audit-evidence "$EVIDENCE_PATH"
+
+      - name: Upload redacted provider evidence
+        if: ${{ always() && steps.evidence_audit.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cma-trigger-provider-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
+          if-no-files-found: error
+          retention-days: 30

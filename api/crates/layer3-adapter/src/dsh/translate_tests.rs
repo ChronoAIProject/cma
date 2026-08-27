@@ -303,6 +303,104 @@ fn read_all(records: Vec<serde_json::Value>) -> Vec<ConversationUpdate> {
 }
 
 #[test]
+fn dsh_translation_uses_the_shared_turn_evidence_boundary() {
+    // DSH owns this translation because its session log is not ACP. What it
+    // emits still has exactly the evidence meaning Layer 3 gives the shared
+    // conversation vocabulary.
+    let updates = read_all(vec![
+        record(
+            "request/context",
+            serde_json::json!({ "contextWindow": 200000 }),
+        ),
+        record(
+            "assistant/message",
+            serde_json::json!({
+                "message": { "role": "assistant", "content": [] },
+                "usage": { "inputTokens": 5, "outputTokens": 1 }
+            }),
+        ),
+        record(
+            "assistant/chunk",
+            serde_json::json!({
+                "chunk": { "type": "text-delta", "index": 0, "text": "working" }
+            }),
+        ),
+        record(
+            "tool/call",
+            serde_json::json!({ "callId": "call-1", "name": "read", "arguments": "{}" }),
+        ),
+        record(
+            "tool/result",
+            serde_json::json!({
+                "message": { "role": "tool", "content": [{ "id": "call-1" }] }
+            }),
+        ),
+        record(
+            "turn/end",
+            serde_json::json!({ "reason": { "kind": "completed" } }),
+        ),
+    ]);
+
+    let evidence: Vec<_> = updates
+        .iter()
+        .filter_map(ConversationUpdate::turn_evidence)
+        .collect();
+    assert_eq!(
+        evidence,
+        vec![
+            crate::TurnEvidence::Activity(crate::TurnScopedEvidence::AgentMessage),
+            crate::TurnEvidence::Activity(crate::TurnScopedEvidence::ToolCallStarted),
+            crate::TurnEvidence::Activity(crate::TurnScopedEvidence::ToolCallUpdated),
+            crate::TurnEvidence::TerminalResult,
+        ]
+    );
+}
+
+#[test]
+fn dsh_initialization_replay_and_failed_endings_do_not_invent_execution_activity() {
+    let initialization = [
+        record(
+            "permission/preset",
+            serde_json::json!({ "preset": "workspace-write" }),
+        ),
+        record(
+            "sandbox/mode",
+            serde_json::json!({ "mode": "workspace-write" }),
+        ),
+        record("approval/policy", serde_json::json!({ "policy": "ask" })),
+        record("turn/start", serde_json::json!({ "turn": 1 })),
+        record(
+            "request/context",
+            serde_json::json!({ "contextWindow": 200000 }),
+        ),
+    ];
+    let replayed = initialization
+        .iter()
+        .chain(initialization.iter())
+        .cloned()
+        .collect();
+    assert!(
+        read_all(replayed)
+            .iter()
+            .all(|update| update.turn_evidence().is_none()),
+        "DSH initialization/reconnect records cannot acknowledge a prompt"
+    );
+
+    let failed = read_all(vec![record(
+        "turn/end",
+        serde_json::json!({ "reason": { "kind": "error" } }),
+    )]);
+    let [update] = &failed[..] else {
+        panic!("a failed DSH turn has one terminal update, got {failed:?}");
+    };
+    assert_eq!(
+        update.turn_evidence(),
+        Some(crate::TurnEvidence::TerminalResult),
+        "DSH represents its typed refusal as a terminal prompt response"
+    );
+}
+
+#[test]
 fn a_streamed_text_delta_becomes_a_message_chunk() {
     let updates = read_all(vec![record(
         "assistant/chunk",

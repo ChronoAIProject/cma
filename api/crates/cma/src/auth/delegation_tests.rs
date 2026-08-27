@@ -52,6 +52,9 @@ fn credential(id: &str, value: &str, owner: &SubjectId, scope: &str) -> DurableC
         issued_at: SystemTime::now(),
         expires_at: None,
         scope_fingerprint: scope.into(),
+        custody_generation: 0,
+        provider_state_version: 0,
+        grant_fingerprint: String::new(),
         revocation_credential: None,
     }
 }
@@ -167,6 +170,7 @@ impl AuthStore for TerminalInsertRaceStore {
     async fn take_login_attempt(
         &self,
         _id: &SecretDigest,
+        _browser_binding: &SecretDigest,
     ) -> Result<Option<LoginAttempt>, StoreError> {
         unreachable!("terminal insert race does not use login attempts")
     }
@@ -387,6 +391,12 @@ async fn mint_key(
     Json(serde_json::json!({
         "id": format!("provider-key-{mint}"),
         "full_key": format!("full-key-{mint}"),
+        "scopes": "proxy read",
+        "state_version": mint,
+        "allowed_service_ids": ["resolved-model"],
+        "allowed_node_ids": [],
+        "allow_all_services": false,
+        "allow_all_nodes": false,
     }))
 }
 
@@ -460,6 +470,12 @@ async fn mint_response_loss_key(
     Json(serde_json::json!({
         "id": id,
         "full_key": format!("full-key-{mint}"),
+        "scopes": "proxy read",
+        "state_version": mint,
+        "allowed_service_ids": ["resolved-model"],
+        "allowed_node_ids": [],
+        "allow_all_services": false,
+        "allow_all_nodes": false,
     }))
 }
 
@@ -619,6 +635,10 @@ async fn a_lost_mongo_ack_does_not_revoke_or_remint_recorded_initial_custody() {
         durable.current.as_ref().map(|held| held.id.as_str()),
         Some("provider-key-1")
     );
+    let held = durable.current.as_ref().unwrap();
+    assert_ne!(held.custody_generation, 0);
+    assert_eq!(held.provider_state_version, 1);
+    assert_eq!(held.grant_fingerprint.len(), 64);
     assert!(durable.lease.is_none());
 
     store.clear_credential_replace_failure();
@@ -638,6 +658,15 @@ async fn a_lost_mongo_ack_does_not_revoke_or_remint_recorded_initial_custody() {
             .expect("restart reads recorded custody"),
         Some("full-key-1".into())
     );
+    let authority = restarted
+        .credential_authority(&session)
+        .await
+        .expect("authority custody read works")
+        .expect("the exact current provider authority survives restart");
+    assert_eq!(authority.custody_generation, held.custody_generation);
+    assert_eq!(authority.provider_key_id, "provider-key-1");
+    assert_eq!(authority.provider_state_version, 1);
+    assert_eq!(authority.grant_fingerprint, held.grant_fingerprint);
     assert_eq!(platform.mints.load(Ordering::SeqCst), 1);
     assert_eq!(platform.delete_attempts.load(Ordering::SeqCst), 0);
     server.abort();
@@ -690,6 +719,10 @@ async fn a_lost_mongo_ack_does_not_revoke_or_remint_recorded_pending_custody() {
     assert_eq!(
         durable.pending.as_ref().map(|held| held.id.as_str()),
         Some("provider-key-2")
+    );
+    assert!(
+        durable.pending.as_ref().unwrap().custody_generation
+            > durable.current.as_ref().unwrap().custody_generation
     );
     assert!(durable.lease.is_none());
 
@@ -1556,6 +1589,12 @@ async fn a_pending_replacement_survives_replica_restart_until_confirmation() {
         2,
         "pending is not minted twice"
     );
+    let pending_custody_generation = store
+        .credential(&session)
+        .await
+        .expect("store works")
+        .and_then(|state| state.pending.map(|held| held.custody_generation))
+        .expect("replacement has exact pending custody metadata");
     assert!(first
         .confirm_reissue(&session)
         .await
@@ -1565,7 +1604,12 @@ async fn a_pending_replacement_survives_replica_restart_until_confirmation() {
         .await
         .expect("store works")
         .expect("state exists");
-    assert_eq!(state.current.unwrap().id, "provider-key-2");
+    let current = state.current.unwrap();
+    assert_eq!(current.id, "provider-key-2");
+    assert_eq!(
+        current.custody_generation, pending_custody_generation,
+        "promotion must not replace stable credential identity with the later document CAS"
+    );
     assert!(state.pending.is_none());
     assert_eq!(state.revoke_debt[0].id, "provider-key-1");
     server.abort();

@@ -10,8 +10,9 @@ use serde_json::json;
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    connection_drifted, validate_commit_sha, validate_repository_url, GithubBroker,
-    GithubBrokerError, GithubRejectionKind, Observed, RepositoryEvidence,
+    connection_drifted, validate_commit_sha, validate_repository_rebinding,
+    validate_repository_url, GithubBroker, GithubBrokerError, GithubRejectionKind, Observed,
+    RepositoryEvidence,
 };
 
 const MAX_PULL_REQUEST_PAGES: u32 = 10;
@@ -203,28 +204,9 @@ impl GithubBroker {
         reconcile_only: bool,
     ) -> Result<PullRequestAdvance, GithubBrokerError> {
         let repositories = self.current_pull_request_repositories(context).await?;
-        let base_revision = self
-            .resolve_branch_sha(
-                &context.owner,
-                &context.connection.service_id,
-                &repositories.upstream,
-                &context.record.intent.base_ref,
-            )
+        let (base_revision, head_revision) = self
+            .current_pull_request_revisions(context, &repositories)
             .await?;
-        let head_revision = self
-            .resolve_branch_sha(
-                &context.owner,
-                &context.connection.service_id,
-                &repositories.fork,
-                &context.record.intent.head_branch,
-            )
-            .await?;
-        if !base_revision.eq_ignore_ascii_case(&context.record.intent.expected_base_revision) {
-            return Err(GithubBrokerError::UpstreamBaseConflict);
-        }
-        if !head_revision.eq_ignore_ascii_case(&context.record.intent.expected_head_revision) {
-            return Err(GithubBrokerError::BranchHeadConflict);
-        }
 
         let existing = self.discover_pull_request(context, &repositories).await?;
         match context.record.intent.operation {
@@ -258,6 +240,7 @@ impl GithubBroker {
                     existing,
                     &base_revision,
                     &head_revision,
+                    reconcile_only,
                 )
                 .await
             }
@@ -311,6 +294,36 @@ impl GithubBroker {
             upstream: upstream.identity,
             fork: fork.identity,
         })
+    }
+
+    async fn current_pull_request_revisions(
+        &self,
+        context: &PullRequestContext,
+        repositories: &CurrentRepositories,
+    ) -> Result<(String, String), GithubBrokerError> {
+        let base_revision = self
+            .resolve_branch_sha(
+                &context.owner,
+                &context.connection.service_id,
+                &repositories.upstream,
+                &context.record.intent.base_ref,
+            )
+            .await?;
+        let head_revision = self
+            .resolve_branch_sha(
+                &context.owner,
+                &context.connection.service_id,
+                &repositories.fork,
+                &context.record.intent.head_branch,
+            )
+            .await?;
+        if !base_revision.eq_ignore_ascii_case(&context.record.intent.expected_base_revision) {
+            return Err(GithubBrokerError::UpstreamBaseConflict);
+        }
+        if !head_revision.eq_ignore_ascii_case(&context.record.intent.expected_head_revision) {
+            return Err(GithubBrokerError::BranchHeadConflict);
+        }
+        Ok((base_revision, head_revision))
     }
 
     async fn discover_pull_request(
@@ -382,10 +395,16 @@ impl GithubBroker {
     async fn create_pull_request(
         &self,
         context: &PullRequestContext,
-        repositories: &CurrentRepositories,
+        _repositories: &CurrentRepositories,
         base_revision: &str,
         head_revision: &str,
     ) -> Result<PullRequestAdvance, GithubBrokerError> {
+        // The search above is only an absence proof. Resolve both numeric
+        // repositories again at the write boundary and use these canonical
+        // names for the cross-fork POST.
+        let repositories = self.current_pull_request_repositories(context).await?;
+        self.current_pull_request_revisions(context, &repositories)
+            .await?;
         let head = format!(
             "{}:{}",
             repositories.fork.canonical_owner, context.record.intent.head_branch
@@ -417,11 +436,12 @@ impl GithubBroker {
                 kind: GithubRejectionKind::DuplicatePullRequest,
                 ..
             }) => {
-                return match self.discover_pull_request(context, repositories).await? {
+                let repositories = self.current_pull_request_repositories(context).await?;
+                return match self.discover_pull_request(context, &repositories).await? {
                     Some(existing) => self
                         .reconciled_record(
                             context,
-                            repositories,
+                            &repositories,
                             existing,
                             base_revision,
                             head_revision,
@@ -441,7 +461,7 @@ impl GithubBroker {
         }
         self.reconciled_record(
             context,
-            repositories,
+            &repositories,
             created,
             base_revision,
             head_revision,
@@ -458,6 +478,7 @@ impl GithubBroker {
         existing: PullRequestWire,
         base_revision: &str,
         head_revision: &str,
+        reconcile_only: bool,
     ) -> Result<PullRequestAdvance, GithubBrokerError> {
         validate_pull_request_wire(
             context,
@@ -495,8 +516,8 @@ impl GithubBroker {
         let desired_body = context.record.intent.provider_body();
         let current_matches = existing.title == context.record.intent.title
             && existing.body.as_deref() == Some(desired_body.as_str());
-        let updated = if current_matches {
-            existing
+        let (updated, rebound_repositories) = if current_matches {
+            (existing, None)
         } else {
             let current_body_digest = format!(
                 "{:x}",
@@ -513,12 +534,21 @@ impl GithubBroker {
             {
                 return Err(GithubBrokerError::PullRequestChanged);
             }
+            if reconcile_only {
+                return Ok(PullRequestAdvance::Absent);
+            }
             let number = context
                 .record
                 .intent
                 .target_number
                 .expect("a validated update has a target number")
                 .to_string();
+            // Rebind after discovery and optimistic metadata checks. A rename
+            // can change only the address; a transfer or ID/node mismatch is
+            // rejected by `current_pull_request_repositories`.
+            let repositories = self.current_pull_request_repositories(context).await?;
+            self.current_pull_request_revisions(context, &repositories)
+                .await?;
             let response: Observed<PullRequestWire> = self
                 .github_json(
                     &context.owner,
@@ -544,8 +574,9 @@ impl GithubBroker {
             {
                 return Err(GithubBrokerError::PullRequestChanged);
             }
-            response.value
+            (response.value, Some(repositories))
         };
+        let repositories = rebound_repositories.as_ref().unwrap_or(repositories);
         self.reconciled_record(
             context,
             repositories,
@@ -700,17 +731,10 @@ fn validate_current_repository(
     observed: &RepositoryEvidence,
     fork: bool,
 ) -> Result<(), GithubBrokerError> {
-    let actual = &observed.identity;
-    if actual.repository_id != expected.repository_id
-        || actual.repository_node_id != expected.repository_node_id
-        || actual.owner_id != expected.owner_id
-        || actual.owner_node_id != expected.owner_node_id
-        || actual.visibility != expected.visibility
-        || actual.fork_parent_id != expected.fork_parent_id
-        || actual.fork_source_id != expected.fork_source_id
-        || observed.archived
-        || observed.disabled
-        || (fork && (actual.fork_parent_id.is_none() || actual.fork_source_id.is_none()))
+    validate_repository_rebinding(expected, observed)?;
+    if fork
+        && (observed.identity.fork_parent_id.is_none()
+            || observed.identity.fork_source_id.is_none())
     {
         return Err(GithubBrokerError::AuthorityDrift);
     }
@@ -860,7 +884,7 @@ fn summarize_checks(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
     use async_trait::async_trait;
@@ -907,15 +931,43 @@ mod tests {
         body: Option<Value>,
     }
 
+    #[derive(Debug, Clone)]
+    enum ReboundAuthority {
+        Unchanged,
+        ServiceInactive,
+        ServiceStateVersion(i64),
+        BackingKey(String),
+        GrantedScopes(Vec<String>),
+        AccountIdentity {
+            id: u64,
+            node_id: String,
+            login: String,
+        },
+        AccountLogin(String),
+    }
+
     #[derive(Clone)]
     struct ProviderFixture {
         requests: Arc<Mutex<Vec<RecordedRequest>>>,
         pull_request: Arc<Mutex<Option<ProviderPullRequest>>>,
         create_behavior: CreateBehavior,
         fork_name: String,
+        upstream_repository_lookups: Arc<AtomicUsize>,
+        fork_repository_lookups: Arc<AtomicUsize>,
+        upstream_ref_lookups: Arc<AtomicUsize>,
+        fork_ref_lookups: Arc<AtomicUsize>,
+        connection_preflights: Arc<AtomicUsize>,
+        rebound_authority: ReboundAuthority,
+        rebound_upstream_name: Option<String>,
+        rebound_fork_name: Option<String>,
+        rebound_fork_owner_id: Option<u64>,
+        rebound_fork_owner_login: Option<String>,
+        rebound_base_head: Option<String>,
+        rebound_branch_head: Option<String>,
         branch_head: String,
         base_head: String,
         patch_ambiguous_once: Arc<AtomicBool>,
+        patch_unapplied_ambiguous_once: Arc<AtomicBool>,
         workflow_approval_pending: bool,
     }
 
@@ -926,10 +978,152 @@ mod tests {
                 pull_request: Arc::new(Mutex::new(None)),
                 create_behavior: CreateBehavior::Confirmed,
                 fork_name: "project".into(),
+                upstream_repository_lookups: Arc::new(AtomicUsize::new(0)),
+                fork_repository_lookups: Arc::new(AtomicUsize::new(0)),
+                upstream_ref_lookups: Arc::new(AtomicUsize::new(0)),
+                fork_ref_lookups: Arc::new(AtomicUsize::new(0)),
+                connection_preflights: Arc::new(AtomicUsize::new(0)),
+                rebound_authority: ReboundAuthority::Unchanged,
+                rebound_upstream_name: None,
+                rebound_fork_name: None,
+                rebound_fork_owner_id: None,
+                rebound_fork_owner_login: None,
+                rebound_base_head: None,
+                rebound_branch_head: None,
                 branch_head: "d".repeat(40),
                 base_head: "a".repeat(40),
                 patch_ambiguous_once: Arc::new(AtomicBool::new(false)),
+                patch_unapplied_ambiguous_once: Arc::new(AtomicBool::new(false)),
                 workflow_approval_pending: false,
+            }
+        }
+    }
+
+    impl ProviderFixture {
+        fn authority_rebound(&self) -> bool {
+            self.connection_preflights.load(Ordering::SeqCst) > 1
+        }
+
+        fn observe_connection_preflight(&self) -> bool {
+            self.connection_preflights.fetch_add(1, Ordering::SeqCst) > 0
+        }
+
+        fn service_is_active(&self, rebound: bool) -> bool {
+            !(rebound && matches!(&self.rebound_authority, ReboundAuthority::ServiceInactive))
+        }
+
+        fn service_state_version(&self, rebound: bool) -> i64 {
+            if rebound {
+                if let ReboundAuthority::ServiceStateVersion(version) = &self.rebound_authority {
+                    return *version;
+                }
+            }
+            2
+        }
+
+        fn backing_key_id(&self, rebound: bool) -> &str {
+            if rebound {
+                if let ReboundAuthority::BackingKey(key) = &self.rebound_authority {
+                    return key;
+                }
+            }
+            "key-1"
+        }
+
+        fn granted_scopes(&self) -> Vec<String> {
+            if self.authority_rebound() {
+                if let ReboundAuthority::GrantedScopes(scopes) = &self.rebound_authority {
+                    return scopes.clone();
+                }
+            }
+            vec![PUBLIC_REPOSITORY_SCOPE.into()]
+        }
+
+        fn current_account(&self) -> (u64, &str, &str) {
+            if self.authority_rebound() {
+                match &self.rebound_authority {
+                    ReboundAuthority::AccountIdentity { id, node_id, login } => {
+                        return (*id, node_id, login)
+                    }
+                    ReboundAuthority::AccountLogin(login) => return (21, "U_contributor", login),
+                    _ => {}
+                }
+            }
+            (21, "U_contributor", "contributor")
+        }
+
+        fn current_upstream_name(&self) -> &str {
+            if self.upstream_repository_lookups.load(Ordering::SeqCst) > 1 {
+                self.rebound_upstream_name.as_deref().unwrap_or("project")
+            } else {
+                "project"
+            }
+        }
+
+        fn observe_upstream_name(&self) -> &str {
+            let prior = self
+                .upstream_repository_lookups
+                .fetch_add(1, Ordering::SeqCst);
+            if prior > 0 {
+                self.rebound_upstream_name.as_deref().unwrap_or("project")
+            } else {
+                "project"
+            }
+        }
+
+        fn current_fork_name(&self) -> &str {
+            if self.fork_repository_lookups.load(Ordering::SeqCst) > 1 {
+                self.rebound_fork_name.as_deref().unwrap_or(&self.fork_name)
+            } else {
+                &self.fork_name
+            }
+        }
+
+        fn current_fork_owner_id(&self) -> u64 {
+            if self.fork_repository_lookups.load(Ordering::SeqCst) > 1 {
+                self.rebound_fork_owner_id.unwrap_or(21)
+            } else {
+                21
+            }
+        }
+
+        fn current_fork_owner_login(&self) -> &str {
+            if self.fork_repository_lookups.load(Ordering::SeqCst) > 1 {
+                self.rebound_fork_owner_login
+                    .as_deref()
+                    .unwrap_or("contributor")
+            } else {
+                "contributor"
+            }
+        }
+
+        fn observe_fork_binding(&self) -> (&str, u64) {
+            let prior = self.fork_repository_lookups.fetch_add(1, Ordering::SeqCst);
+            if prior > 0 {
+                (
+                    self.rebound_fork_name.as_deref().unwrap_or(&self.fork_name),
+                    self.rebound_fork_owner_id.unwrap_or(21),
+                )
+            } else {
+                (&self.fork_name, 21)
+            }
+        }
+
+        fn observe_base_head(&self) -> &str {
+            if self.upstream_ref_lookups.fetch_add(1, Ordering::SeqCst) > 0 {
+                self.rebound_base_head.as_deref().unwrap_or(&self.base_head)
+            } else {
+                &self.base_head
+            }
+        }
+
+        fn observe_branch_head(&self) -> &str {
+            if self.fork_ref_lookups.fetch_add(1, Ordering::SeqCst) > 0 {
+                self.rebound_branch_head
+                    .as_deref()
+                    .unwrap_or(&self.branch_head)
+            } else {
+                &self.branch_head
             }
         }
     }
@@ -966,84 +1160,107 @@ mod tests {
             body: body.clone(),
         });
 
+        let upstream_name = fixture.current_upstream_name().to_string();
+        let fork_name = fixture.current_fork_name().to_string();
+        let fork_owner = fixture.current_fork_owner_login().to_string();
         let fork_ref_path = format!(
-            "/api/v1/proxy/s/api-github/repos/contributor/{}/git/ref/heads/{}",
-            fixture.fork_name,
+            "/api/v1/proxy/s/api-github/repos/{fork_owner}/{}/git/ref/heads/{}",
+            fork_name,
             provider_launch_id_branch()
         );
+        let upstream_prefix = format!("/api/v1/proxy/s/api-github/repos/upstream/{upstream_name}");
+        let upstream_ref_path = format!("{upstream_prefix}/git/ref/heads/main");
+        let pulls_path = format!("{upstream_prefix}/pulls");
+        let pull_path = format!("{pulls_path}/7");
+        let check_d_path = format!(
+            "{upstream_prefix}/commits/dddddddddddddddddddddddddddddddddddddddd/check-runs"
+        );
+        let check_e_path = format!(
+            "{upstream_prefix}/commits/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/check-runs"
+        );
+        let actions_path = format!("{upstream_prefix}/actions/runs");
         match (method.as_str(), path.as_str()) {
-            ("GET", "/api/v1/user-services") => (
-                StatusCode::OK,
-                Json(json!({
-                    "services": [{
+            ("GET", "/api/v1/user-services") => {
+                let rebound = fixture.observe_connection_preflight();
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "services": [{
+                            "id": "service-1",
+                            "slug": "api-github",
+                            "resource_uri": "https://nyxid.test/api/v1/proxy/s/api-github",
+                            "api_key_id": fixture.backing_key_id(rebound),
+                            "is_active": fixture.service_is_active(rebound),
+                            "state_version": fixture.service_state_version(rebound),
+                            "credential_source": { "type": "personal" }
+                        }]
+                    })),
+                )
+            }
+            ("GET", "/api/v1/keys/service-1/authorization") => {
+                let rebound = fixture.authority_rebound();
+                let active = fixture.service_is_active(rebound);
+                (
+                    StatusCode::OK,
+                    Json(json!({
                         "id": "service-1",
-                        "slug": "api-github",
-                        "resource_uri": "https://nyxid.test/api/v1/proxy/s/api-github",
-                        "api_key_id": "key-1",
-                        "is_active": true,
-                        "state_version": 2,
-                        "credential_source": { "type": "personal" }
-                    }]
-                })),
-            ),
-            ("GET", "/api/v1/keys/service-1/authorization") => (
-                StatusCode::OK,
-                Json(json!({
-                    "id": "service-1",
-                    "api_key_id": "key-1",
-                    "is_active": true,
-                    "status": "active",
-                    "connection_status": "active",
-                    "granted_scopes": [PUBLIC_REPOSITORY_SCOPE],
-                    "last_authorized_at": "2026-08-27T00:00:00Z",
-                    "state_version": 2
-                })),
-            ),
-            ("GET", "/api/v1/proxy/s/api-github/user") => (
-                StatusCode::OK,
-                Json(json!({
-                    "id": 21,
-                    "node_id": "U_contributor",
-                    "login": "contributor"
-                })),
-            ),
+                        "api_key_id": fixture.backing_key_id(rebound),
+                        "is_active": active,
+                        "status": if active { "active" } else { "inactive" },
+                        "connection_status": if active { "active" } else { "inactive" },
+                        "granted_scopes": fixture.granted_scopes(),
+                        "last_authorized_at": "2026-08-27T00:00:00Z",
+                        "state_version": fixture.service_state_version(rebound)
+                    })),
+                )
+            }
+            ("GET", "/api/v1/proxy/s/api-github/user") => {
+                let (id, node_id, login) = fixture.current_account();
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "id": id,
+                        "node_id": node_id,
+                        "login": login
+                    })),
+                )
+            }
             ("GET", "/api/v1/proxy/s/api-github/repositories/10") => (
                 StatusCode::OK,
                 Json(repository_wire(
                     10,
                     "R_upstream",
                     (20, "U_owner", "upstream"),
-                    "project",
+                    fixture.observe_upstream_name(),
                     None,
                     false,
                 )),
             ),
-            ("GET", "/api/v1/proxy/s/api-github/repositories/30") => (
+            ("GET", "/api/v1/proxy/s/api-github/repositories/30") => {
+                let (name, owner_id) = fixture.observe_fork_binding();
+                let current_owner = fixture.current_fork_owner_login();
+                let owner = if owner_id == 21 {
+                    (21, "U_contributor", current_owner)
+                } else {
+                    (owner_id, "U_transferred", "transferred-owner")
+                };
+                (
+                    StatusCode::OK,
+                    Json(repository_wire(30, "R_fork", owner, name, Some(10), true)),
+                )
+            }
+            ("GET", actual) if actual == upstream_ref_path => (
                 StatusCode::OK,
-                Json(repository_wire(
-                    30,
-                    "R_fork",
-                    (21, "U_contributor", "contributor"),
-                    &fixture.fork_name,
-                    Some(10),
-                    true,
-                )),
-            ),
-            (
-                "GET",
-                "/api/v1/proxy/s/api-github/repos/upstream/project/git/ref/heads/main",
-            ) => (
-                StatusCode::OK,
-                Json(ref_wire("main", &fixture.base_head)),
+                Json(ref_wire("main", fixture.observe_base_head())),
             ),
             ("GET", actual) if actual == fork_ref_path => (
                 StatusCode::OK,
                 Json(ref_wire(
                     &provider_launch_id_branch(),
-                    &fixture.branch_head,
+                    fixture.observe_branch_head(),
                 )),
             ),
-            ("GET", "/api/v1/proxy/s/api-github/repos/upstream/project/pulls") => {
+            ("GET", actual) if actual == pulls_path => {
                 let value = fixture
                     .pull_request
                     .lock()
@@ -1053,7 +1270,7 @@ mod tests {
                     .unwrap_or_default();
                 (StatusCode::OK, Json(Value::Array(value)))
             }
-            ("GET", "/api/v1/proxy/s/api-github/repos/upstream/project/pulls/7") => {
+            ("GET", actual) if actual == pull_path => {
                 match fixture.pull_request.lock().await.as_ref() {
                     Some(pull_request) => (
                         StatusCode::OK,
@@ -1065,7 +1282,7 @@ mod tests {
                     ),
                 }
             }
-            ("POST", "/api/v1/proxy/s/api-github/repos/upstream/project/pulls") => {
+            ("POST", actual) if actual == pulls_path => {
                 if matches!(fixture.create_behavior, CreateBehavior::ValidationRejected) {
                     return (
                         StatusCode::UNPROCESSABLE_ENTITY,
@@ -1113,17 +1330,23 @@ mod tests {
                     CreateBehavior::ValidationRejected => unreachable!(),
                 }
             }
-            ("PATCH", "/api/v1/proxy/s/api-github/repos/upstream/project/pulls/7") => {
+            ("PATCH", actual) if actual == pull_path => {
+                if fixture
+                    .patch_unapplied_ambiguous_once
+                    .swap(false, Ordering::SeqCst)
+                {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "message": "request outcome unavailable" })),
+                    );
+                }
                 let body = body.expect("update request body");
                 let mut pull_request = fixture.pull_request.lock().await;
                 let pull_request = pull_request.as_mut().expect("existing PR");
                 pull_request.title = body["title"].as_str().unwrap().to_string();
                 pull_request.body = body["body"].as_str().unwrap().to_string();
                 let response = pull_request_wire(&fixture, pull_request);
-                if fixture
-                    .patch_ambiguous_once
-                    .swap(false, Ordering::SeqCst)
-                {
+                if fixture.patch_ambiguous_once.swap(false, Ordering::SeqCst) {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(json!({ "message": "response lost after update" })),
@@ -1132,15 +1355,11 @@ mod tests {
                     (StatusCode::OK, Json(response))
                 }
             }
-            (
-                "GET",
-                "/api/v1/proxy/s/api-github/repos/upstream/project/commits/dddddddddddddddddddddddddddddddddddddddd/check-runs",
-            )
-            | (
-                "GET",
-                "/api/v1/proxy/s/api-github/repos/upstream/project/commits/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/check-runs",
-            ) => (StatusCode::OK, Json(json!({ "total_count": 0, "check_runs": [] }))),
-            ("GET", "/api/v1/proxy/s/api-github/repos/upstream/project/actions/runs") => {
+            ("GET", actual) if actual == check_d_path || actual == check_e_path => (
+                StatusCode::OK,
+                Json(json!({ "total_count": 0, "check_runs": [] })),
+            ),
+            ("GET", actual) if actual == actions_path => {
                 let runs = if fixture.workflow_approval_pending {
                     vec![json!({
                         "status": "completed",
@@ -1193,11 +1412,19 @@ mod tests {
     }
 
     fn pull_request_wire(fixture: &ProviderFixture, pull_request: &ProviderPullRequest) -> Value {
+        let upstream_name = fixture.current_upstream_name();
+        let fork_name = fixture.current_fork_name();
+        let fork_owner_id = fixture.current_fork_owner_id();
+        let (fork_owner_node_id, fork_owner) = if fork_owner_id == 21 {
+            ("U_contributor", fixture.current_fork_owner_login())
+        } else {
+            ("U_transferred", "transferred-owner")
+        };
         json!({
             "id": 70,
             "node_id": "PR_node_7",
             "number": 7,
-            "html_url": "https://github.com/upstream/project/pull/7",
+            "html_url": format!("https://github.com/upstream/{upstream_name}/pull/7"),
             "state": pull_request.state,
             "title": pull_request.title,
             "body": pull_request.body,
@@ -1209,11 +1436,11 @@ mod tests {
                 "repo": {
                     "id": 30,
                     "node_id": "R_fork",
-                    "name": fixture.fork_name,
+                    "name": fork_name,
                     "owner": {
-                        "id": 21,
-                        "node_id": "U_contributor",
-                        "login": "contributor"
+                        "id": fork_owner_id,
+                        "node_id": fork_owner_node_id,
+                        "login": fork_owner
                     }
                 }
             },
@@ -1223,7 +1450,7 @@ mod tests {
                 "repo": {
                     "id": 10,
                     "node_id": "R_upstream",
-                    "name": "project",
+                    "name": upstream_name,
                     "owner": {
                         "id": 20,
                         "node_id": "U_owner",
@@ -1442,6 +1669,156 @@ mod tests {
         launch
     }
 
+    fn assert_write_boundary_preflight(requests: &[RecordedRequest], write_index: usize) {
+        let boundary = &requests[write_index - 7..write_index];
+        assert_eq!(boundary[0].uri, "/api/v1/user-services");
+        assert_eq!(boundary[1].uri, "/api/v1/keys/service-1/authorization");
+        assert!(boundary[2]
+            .uri
+            .starts_with("/api/v1/proxy/s/api-github/user?"));
+        assert!(boundary[3]
+            .uri
+            .starts_with("/api/v1/proxy/s/api-github/repositories/10?"));
+        assert!(boundary[4]
+            .uri
+            .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+        assert!(boundary[5].uri.contains("/git/ref/heads/main?"));
+        assert!(boundary[6]
+            .uri
+            .contains(format!("/git/ref/heads/{}?", provider_launch_id_branch()).as_str()));
+        assert!(boundary.iter().all(|request| request.method == "GET"));
+    }
+
+    async fn assert_rebound_authority_blocks_mutation(
+        operation: PullRequestOperation,
+        rebound_authority: ReboundAuthority,
+    ) {
+        let update = operation == PullRequestOperation::Update;
+        let launch = provider_launch_with_metadata_update(operation, update);
+        let marker = launch.pull_request.as_ref().unwrap().intent.marker.clone();
+        let fixture = ProviderFixture {
+            branch_head: if update {
+                "e".repeat(40)
+            } else {
+                "d".repeat(40)
+            },
+            rebound_authority: rebound_authority.clone(),
+            ..ProviderFixture::default()
+        };
+        if update {
+            *fixture.pull_request.lock().await = Some(ProviderPullRequest {
+                title: "CMA contribution".into(),
+                body: format!("Created by CMA\n\n{marker}"),
+                state: "open".into(),
+                merged_at: None,
+                head_sha: "e".repeat(40),
+                mergeable: Some(true),
+            });
+        }
+        let requests = Arc::clone(&fixture.requests);
+        let (base_url, server) = provider_server(fixture).await;
+        let context = PullRequestContext::try_from(&launch).unwrap();
+
+        let result = provider_broker(&base_url)
+            .write_pull_request(&context)
+            .await;
+        server.abort();
+
+        assert!(
+            matches!(
+                result,
+                Err(GithubBrokerError::AuthorityDrift) | Err(GithubBrokerError::ConnectionInactive)
+            ),
+            "{operation:?} with {rebound_authority:?} returned {result:?}"
+        );
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| !matches!(request.method.as_str(), "POST" | "PATCH")));
+    }
+
+    async fn assert_rebound_revision_blocks_mutation(
+        operation: PullRequestOperation,
+        upstream_drift: bool,
+    ) {
+        let update = operation == PullRequestOperation::Update;
+        let launch = provider_launch_with_metadata_update(operation, update);
+        let marker = launch.pull_request.as_ref().unwrap().intent.marker.clone();
+        let fixture = ProviderFixture {
+            branch_head: if update {
+                "e".repeat(40)
+            } else {
+                "d".repeat(40)
+            },
+            rebound_base_head: upstream_drift.then(|| "9".repeat(40)),
+            rebound_branch_head: (!upstream_drift).then(|| "8".repeat(40)),
+            ..ProviderFixture::default()
+        };
+        if update {
+            *fixture.pull_request.lock().await = Some(ProviderPullRequest {
+                title: "CMA contribution".into(),
+                body: format!("Created by CMA\n\n{marker}"),
+                state: "open".into(),
+                merged_at: None,
+                head_sha: "e".repeat(40),
+                mergeable: Some(true),
+            });
+        }
+        let requests = Arc::clone(&fixture.requests);
+        let (base_url, server) = provider_server(fixture).await;
+        let context = PullRequestContext::try_from(&launch).unwrap();
+
+        let result = provider_broker(&base_url)
+            .write_pull_request(&context)
+            .await;
+        server.abort();
+
+        if upstream_drift {
+            assert!(matches!(
+                result,
+                Err(GithubBrokerError::UpstreamBaseConflict)
+            ));
+        } else {
+            assert!(matches!(result, Err(GithubBrokerError::BranchHeadConflict)));
+        }
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| !matches!(request.method.as_str(), "POST" | "PATCH")));
+    }
+
+    #[tokio::test]
+    async fn create_and_update_revalidate_complete_authority_before_the_write() {
+        for operation in [PullRequestOperation::Open, PullRequestOperation::Update] {
+            for rebound_authority in [
+                ReboundAuthority::ServiceInactive,
+                ReboundAuthority::ServiceStateVersion(3),
+                ReboundAuthority::BackingKey("key-replaced".into()),
+                ReboundAuthority::GrantedScopes(vec![
+                    PUBLIC_REPOSITORY_SCOPE.into(),
+                    "workflow".into(),
+                ]),
+                ReboundAuthority::AccountIdentity {
+                    id: 99,
+                    node_id: "U_other".into(),
+                    login: "other".into(),
+                },
+            ] {
+                assert_rebound_authority_blocks_mutation(operation, rebound_authority).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn create_and_update_recheck_exact_revisions_at_the_write_boundary() {
+        for operation in [PullRequestOperation::Open, PullRequestOperation::Update] {
+            assert_rebound_revision_blocks_mutation(operation, true).await;
+            assert_rebound_revision_blocks_mutation(operation, false).await;
+        }
+    }
+
     #[tokio::test]
     async fn create_uses_cross_fork_head_and_repeated_calls_return_the_marker_match() {
         let fixture = ProviderFixture::default();
@@ -1613,6 +1990,125 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_rebinds_both_names_between_discovery_and_post() {
+        let fixture = ProviderFixture {
+            rebound_authority: ReboundAuthority::AccountLogin("contributor-renamed".into()),
+            rebound_upstream_name: Some("project-renamed".into()),
+            rebound_fork_name: Some("fork-renamed".into()),
+            rebound_fork_owner_login: Some("contributor-renamed".into()),
+            ..ProviderFixture::default()
+        };
+        let requests = Arc::clone(&fixture.requests);
+        let (base_url, server) = provider_server(fixture).await;
+        let context =
+            PullRequestContext::try_from(&provider_launch(PullRequestOperation::Open)).unwrap();
+
+        assert!(matches!(
+            provider_broker(&base_url)
+                .write_pull_request(&context)
+                .await,
+            Ok(PullRequestAdvance::Ready(_))
+        ));
+        server.abort();
+
+        let requests = requests.lock().await;
+        let post_index = requests
+            .iter()
+            .position(|request| request.method == "POST")
+            .expect("pull-request create");
+        assert!(requests[post_index]
+            .uri
+            .contains("/repos/upstream/project-renamed/pulls"));
+        assert_eq!(
+            requests[post_index].body.as_ref().unwrap()["head"],
+            format!("contributor-renamed:{}", provider_launch_id_branch())
+        );
+        assert_write_boundary_preflight(&requests, post_index);
+    }
+
+    #[tokio::test]
+    async fn create_rejects_fork_transfer_between_discovery_and_post() {
+        let fixture = ProviderFixture {
+            rebound_fork_owner_id: Some(99),
+            ..ProviderFixture::default()
+        };
+        let requests = Arc::clone(&fixture.requests);
+        let (base_url, server) = provider_server(fixture).await;
+        let context =
+            PullRequestContext::try_from(&provider_launch(PullRequestOperation::Open)).unwrap();
+
+        assert!(matches!(
+            provider_broker(&base_url)
+                .write_pull_request(&context)
+                .await,
+            Err(GithubBrokerError::AuthorityDrift)
+        ));
+        server.abort();
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.method != "POST"));
+    }
+
+    #[tokio::test]
+    async fn ambiguous_create_reconciliation_resolves_numeric_names_again() {
+        let fixture = ProviderFixture {
+            create_behavior: CreateBehavior::AmbiguousApplied,
+            rebound_upstream_name: Some("project-renamed".into()),
+            rebound_fork_name: Some("fork-renamed".into()),
+            rebound_fork_owner_login: Some("contributor-renamed".into()),
+            ..ProviderFixture::default()
+        };
+        let requests = Arc::clone(&fixture.requests);
+        let (base_url, server) = provider_server(fixture).await;
+        let context =
+            PullRequestContext::try_from(&provider_launch(PullRequestOperation::Open)).unwrap();
+        let broker = provider_broker(&base_url);
+
+        assert!(matches!(
+            broker.write_pull_request(&context).await,
+            Err(GithubBrokerError::AmbiguousWrite)
+        ));
+        assert!(matches!(
+            broker.reconcile_pull_request(&context).await,
+            Ok(PullRequestAdvance::Ready(_))
+        ));
+        server.abort();
+
+        let requests = requests.lock().await;
+        let post_index = requests
+            .iter()
+            .position(|request| request.method == "POST")
+            .unwrap();
+        let reconciliation = &requests[post_index + 1..];
+        let upstream_lookup = reconciliation
+            .iter()
+            .position(|request| request.uri.contains("/repositories/10?"))
+            .expect("reconciliation upstream numeric lookup");
+        let fork_lookup = reconciliation
+            .iter()
+            .position(|request| request.uri.contains("/repositories/30?"))
+            .expect("reconciliation fork numeric lookup");
+        let discovery = reconciliation
+            .iter()
+            .position(|request| {
+                request
+                    .uri
+                    .contains("/repos/upstream/project-renamed/pulls?")
+            })
+            .expect("reconciliation discovery");
+        assert!(upstream_lookup < fork_lookup && fork_lookup < discovery);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.method == "POST")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn closed_and_merged_pull_requests_are_returned_without_mutation() {
         for (provider_state, merged_at, expected) in [
             ("closed", None, PullRequestState::ClosedUnmerged),
@@ -1697,6 +2193,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_rebinds_numeric_names_immediately_before_patch() {
+        let launch = provider_launch_with_metadata_update(PullRequestOperation::Update, true);
+        let marker = launch.pull_request.as_ref().unwrap().intent.marker.clone();
+        let fixture = ProviderFixture {
+            branch_head: "e".repeat(40),
+            rebound_authority: ReboundAuthority::AccountLogin("contributor-renamed".into()),
+            rebound_upstream_name: Some("project-renamed".into()),
+            rebound_fork_name: Some("fork-renamed".into()),
+            rebound_fork_owner_login: Some("contributor-renamed".into()),
+            ..ProviderFixture::default()
+        };
+        *fixture.pull_request.lock().await = Some(ProviderPullRequest {
+            title: "CMA contribution".into(),
+            body: format!("Created by CMA\n\n{marker}"),
+            state: "open".into(),
+            merged_at: None,
+            head_sha: "e".repeat(40),
+            mergeable: Some(true),
+        });
+        let requests = Arc::clone(&fixture.requests);
+        let (base_url, server) = provider_server(fixture).await;
+        let context = PullRequestContext::try_from(&launch).unwrap();
+
+        assert!(matches!(
+            provider_broker(&base_url)
+                .write_pull_request(&context)
+                .await,
+            Ok(PullRequestAdvance::Ready(_))
+        ));
+        server.abort();
+
+        let requests = requests.lock().await;
+        let patch_index = requests
+            .iter()
+            .position(|request| request.method == "PATCH")
+            .expect("pull-request update");
+        assert!(requests[patch_index]
+            .uri
+            .contains("/repos/upstream/project-renamed/pulls/7"));
+        assert_write_boundary_preflight(&requests, patch_index);
+    }
+
+    #[tokio::test]
+    async fn update_rejects_transfer_between_discovery_and_patch() {
+        let launch = provider_launch_with_metadata_update(PullRequestOperation::Update, true);
+        let marker = launch.pull_request.as_ref().unwrap().intent.marker.clone();
+        let fixture = ProviderFixture {
+            branch_head: "e".repeat(40),
+            rebound_fork_owner_id: Some(99),
+            ..ProviderFixture::default()
+        };
+        *fixture.pull_request.lock().await = Some(ProviderPullRequest {
+            title: "CMA contribution".into(),
+            body: format!("Created by CMA\n\n{marker}"),
+            state: "open".into(),
+            merged_at: None,
+            head_sha: "e".repeat(40),
+            mergeable: Some(true),
+        });
+        let requests = Arc::clone(&fixture.requests);
+        let (base_url, server) = provider_server(fixture).await;
+        let context = PullRequestContext::try_from(&launch).unwrap();
+
+        assert!(matches!(
+            provider_broker(&base_url)
+                .write_pull_request(&context)
+                .await,
+            Err(GithubBrokerError::AuthorityDrift)
+        ));
+        server.abort();
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.method != "PATCH"));
+    }
+
+    #[tokio::test]
     async fn ambiguous_explicit_metadata_update_reconciles_without_a_second_patch() {
         let launch = provider_launch_with_metadata_update(PullRequestOperation::Update, true);
         let marker = launch.pull_request.as_ref().unwrap().intent.marker.clone();
@@ -1727,6 +2301,48 @@ mod tests {
             PullRequestAdvance::Ready(record)
                 if record.head_revision.as_deref() == Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
         ));
+        server.abort();
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.method == "PATCH")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn unapplied_ambiguous_update_recovery_never_sends_a_second_patch() {
+        let launch = provider_launch_with_metadata_update(PullRequestOperation::Update, true);
+        let marker = launch.pull_request.as_ref().unwrap().intent.marker.clone();
+        let fixture = ProviderFixture {
+            branch_head: "e".repeat(40),
+            patch_unapplied_ambiguous_once: Arc::new(AtomicBool::new(true)),
+            ..ProviderFixture::default()
+        };
+        *fixture.pull_request.lock().await = Some(ProviderPullRequest {
+            title: "CMA contribution".into(),
+            body: format!("Created by CMA\n\n{marker}"),
+            state: "open".into(),
+            merged_at: None,
+            head_sha: "e".repeat(40),
+            mergeable: Some(true),
+        });
+        let requests = Arc::clone(&fixture.requests);
+        let (base_url, server) = provider_server(fixture).await;
+        let context = PullRequestContext::try_from(&launch).unwrap();
+        let broker = provider_broker(&base_url);
+
+        assert!(matches!(
+            broker.write_pull_request(&context).await,
+            Err(GithubBrokerError::AmbiguousWrite)
+        ));
+        assert_eq!(
+            broker.reconcile_pull_request(&context).await.unwrap(),
+            PullRequestAdvance::Absent
+        );
         server.abort();
         assert_eq!(
             requests

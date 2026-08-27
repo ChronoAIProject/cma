@@ -2,6 +2,7 @@ import type {
   JsonObject,
   JsonValue,
   Launch,
+  LaunchCapabilityRevocationState,
   LaunchStepStatus,
   Mergeability,
   PromptDelivery,
@@ -100,12 +101,17 @@ export function editableFields(launch: Launch): ReadonlySet<string> {
   return new Set(jsonStrings(launch.revision_content.override_policy.editable_fields));
 }
 
-export function optionalCheckChoices(launch: Launch): readonly string[] {
-  return jsonStrings(launch.revision_content.override_policy.optional_checks);
-}
-
 export function upstreamRepository(launch: Launch) {
   return launch.revision_content.upstream.repository;
+}
+
+export function triggerKernelLabel(launch: Launch): string | undefined {
+  switch (launch.runtime_admission?.kernel) {
+    case 'codex':
+      return 'Codex';
+    default:
+      return undefined;
+  }
 }
 
 export function sessionId(launch: Launch): string | undefined {
@@ -120,10 +126,8 @@ export function workspaceCheckpoint(launch: Launch): string | undefined {
   return checkpoint === undefined ? undefined : jsonText(checkpoint.id);
 }
 
-export function reachState(launch: Launch): string | undefined {
-  return launch.reach === null
-    ? undefined
-    : jsonText(launch.reach.revocation_state ?? launch.reach.state);
+export function reachState(launch: Launch): LaunchCapabilityRevocationState | undefined {
+  return launch.reach?.state;
 }
 
 export function deliveryState(launch: Launch): PromptDeliveryState | undefined {

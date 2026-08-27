@@ -10,7 +10,6 @@ import type {
 } from '@chronoai/cma-sdk';
 import {
   ApiError,
-  TransportError,
   beginTriggerConnection,
   createTrigger,
   listTriggerConnections,
@@ -20,12 +19,23 @@ import {
   publishTrigger,
   readTrigger,
   reconnectTriggerConnection,
+  revokeTriggerConnection,
   resolveTriggerRepository,
   retireTriggerRevision,
   updateTrigger,
 } from '../api/client';
 import { authorizeTriggerConnection, isActiveTriggerConnection } from '../trigger/connectionFlow';
-import { useIdempotentCommand } from '../trigger/useIdempotentCommand';
+import {
+  commandObject,
+  exactString,
+  nonEmptyString,
+  nonNegativeInteger,
+} from '../trigger/commandValidation';
+import {
+  commandOutcomeIsUnresolved,
+  retainedCommandRequest,
+  useIdempotentCommand,
+} from '../trigger/useIdempotentCommand';
 import { Button } from '../ui/Button';
 import { InlineConfirm } from '../ui/InlineConfirm';
 import { Input } from '../ui/Input';
@@ -58,13 +68,21 @@ import {
 import './PublisherSurface.css';
 
 type Operation =
-  'loading' | 'connecting' | 'checking' | 'resolving' | 'saving' | 'publishing' | 'retiring';
+  | 'loading'
+  | 'connecting'
+  | 'checking'
+  | 'revoking'
+  | 'resolving'
+  | 'saving'
+  | 'publishing'
+  | 'retiring';
 
 interface Conflict {
   readonly current: TriggerDraft;
 }
 
 interface PublisherSurfaceProps {
+  readonly ownerId: string;
   readonly displayIdentity: string;
 }
 
@@ -101,7 +119,7 @@ function inputNumber(event: ChangeEvent<HTMLInputElement>): number {
   return Number.isNaN(event.target.valueAsNumber) ? 0 : event.target.valueAsNumber;
 }
 
-export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
+export function PublisherSurface({ ownerId, displayIdentity }: PublisherSurfaceProps) {
   const [drafts, setDrafts] = useState<readonly TriggerDraft[]>([]);
   const [revisions, setRevisions] = useState<readonly TriggerRevision[]>([]);
   const [connections, setConnections] = useState<readonly TriggerConnection[]>([]);
@@ -112,6 +130,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null);
   const [retiringId, setRetiringId] = useState<string | null>(null);
   const [discardEditor, setDiscardEditor] = useState<PublisherEditor | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -119,7 +138,15 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
   const [loaded, setLoaded] = useState(false);
   const authorization = useRef<AbortController | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  const { execute: executeCommand, pending } = useIdempotentCommand();
+  const commandResources = useMemo(
+    () => [
+      'publisher',
+      ...drafts.map((draft) => `trigger:${draft.id}`),
+      ...revisions.map((revision) => `revision:${revision.id}`),
+    ],
+    [drafts, revisions],
+  );
+  const { execute: executeCommand, pending } = useIdempotentCommand(ownerId, commandResources);
 
   const validation = useMemo(() => validatePublisherEditor(editor), [editor]);
   const dirty = editorIsDirty(editor);
@@ -131,6 +158,14 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     isActiveTriggerConnection(checkedConnection);
   const pendingBegin = pending?.slot === 'connection:begin';
   const pendingReconnect = pending?.slot === `connection:reconnect:${editor.selectedServiceId}`;
+  const pendingRevoke = pending?.action === 'revoke-connection';
+  const pendingRevokeRequest = pendingRevoke
+    ? commandObject(pending.request, { serviceId: nonEmptyString })
+    : null;
+  const revokeServiceId = pendingRevokeRequest?.serviceId ?? confirmingRevoke;
+  const revokeConnectionAccount =
+    connections.find((connection) => connection.service_id === revokeServiceId)?.account_login ??
+    null;
   const pendingSave =
     pending?.slot.startsWith('trigger:create') || pending?.slot.startsWith('trigger:update:');
   const pendingPublish = pending?.slot.startsWith('trigger:publish:') ?? false;
@@ -243,20 +278,53 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     setFailure(null);
     setStatus('Waiting for GitHub authorization');
     try {
-      const intentId = crypto.randomUUID();
       const connection = await authorizeTriggerConnection({
         signal: controller.signal,
-        begin: () =>
-          mode === 'begin'
-            ? executeCommand('connection:begin', 'GitHub connection', (idempotencyKey) =>
-                beginTriggerConnection(intentId, { idempotencyKey }),
-              )
-            : executeCommand(
-                `connection:reconnect:${editor.selectedServiceId}`,
-                'GitHub reconnection',
-                (idempotencyKey) =>
-                  reconnectTriggerConnection(editor.selectedServiceId, { idempotencyKey }),
-              ),
+        begin: () => {
+          if (mode === 'begin') {
+            const identity = {
+              slot: 'connection:begin',
+              resource: 'publisher',
+              action: 'begin-connection',
+            } as const;
+            const request = retainedCommandRequest(
+              pending,
+              identity,
+              {
+                intentId: crypto.randomUUID(),
+              },
+              (value) => commandObject(value, { intentId: nonEmptyString }),
+            );
+            return executeCommand(
+              { ...identity, request, persistRequest: true },
+              'GitHub connection',
+              (idempotencyKey, frozen) =>
+                beginTriggerConnection(frozen.intentId, { idempotencyKey }),
+            );
+          }
+          const identity = {
+            slot: `connection:reconnect:${editor.selectedServiceId}`,
+            resource: 'publisher',
+            action: 'reconnect-connection',
+          } as const;
+          const request = retainedCommandRequest(
+            pending,
+            identity,
+            {
+              serviceId: editor.selectedServiceId,
+            },
+            (value) =>
+              commandObject(value, {
+                serviceId: exactString(editor.selectedServiceId),
+              }),
+          );
+          return executeCommand(
+            { ...identity, request, persistRequest: true },
+            'GitHub reconnection',
+            (idempotencyKey, frozen) =>
+              reconnectTriggerConnection(frozen.serviceId, { idempotencyKey }),
+          );
+        },
         preflight: preflightTriggerConnection,
         onService: (serviceId) => {
           setCheckedConnection(null);
@@ -273,7 +341,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     } catch (cause) {
       if (!controller.signal.aborted) {
         setFailure(
-          cause instanceof TransportError
+          commandOutcomeIsUnresolved(cause)
             ? 'The connection outcome is unknown. CMA retained the exact command for reconciliation.'
             : message(cause),
         );
@@ -298,6 +366,50 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
       setFailure(message(cause));
     } finally {
       setOperation((current) => (current === 'checking' ? null : current));
+    }
+  }
+
+  async function revokeConnection(serviceId: string | null): Promise<void> {
+    if (serviceId === null) return;
+    setOperation('revoking');
+    setFailure(null);
+    setStatus(null);
+    const identity = {
+      slot: `connection:revoke:${serviceId}`,
+      resource: 'publisher',
+      action: 'revoke-connection',
+    } as const;
+    try {
+      const request = retainedCommandRequest(pending, identity, { serviceId }, (value) =>
+        commandObject(value, { serviceId: exactString(serviceId) }),
+      );
+      const revoked = await executeCommand(
+        { ...identity, request, persistRequest: true },
+        'GitHub connection revocation',
+        (idempotencyKey, frozen) => revokeTriggerConnection(frozen.serviceId, { idempotencyKey }),
+      );
+      if (revoked.service_id !== serviceId) {
+        throw new Error('CMA returned revocation state for a different GitHub connection.');
+      }
+      setConnections((items) => [
+        revoked,
+        ...items.filter((item) => item.service_id !== revoked.service_id),
+      ]);
+      setCheckedConnection(null);
+      setEditor((current) =>
+        current.selectedServiceId === serviceId ? { ...current, repository: null } : current,
+      );
+      setConfirmingRevoke(null);
+      setStatus('GitHub connection revoked');
+    } catch (cause) {
+      if (!commandOutcomeIsUnresolved(cause)) setConfirmingRevoke(null);
+      setFailure(
+        commandOutcomeIsUnresolved(cause)
+          ? 'The revocation outcome is unknown. CMA retained the exact connection and command key for reconciliation.'
+          : message(cause),
+      );
+    } finally {
+      setOperation((current) => (current === 'revoking' ? null : current));
     }
   }
 
@@ -355,16 +467,39 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     const server = editor.server;
     const slot = server === null ? 'trigger:create' : `trigger:update:${server.id}`;
     try {
-      const saved = await executeCommand(slot, 'Trigger draft save', (idempotencyKey) =>
-        server === null
-          ? createTrigger(editor.selectedServiceId, editor.content, { idempotencyKey })
-          : updateTrigger(
-              server.id,
-              expectedVersion ?? server.version,
-              editor.selectedServiceId,
-              editor.content,
-              { idempotencyKey },
-            ),
+      const request = {
+        draftId: server?.id ?? null,
+        expectedVersion: server === null ? null : (expectedVersion ?? server.version),
+        serviceId: editor.selectedServiceId,
+        content: editor.content,
+      };
+      const saved = await executeCommand(
+        {
+          slot,
+          resource: server === null ? 'publisher' : `trigger:${server.id}`,
+          action: server === null ? 'create-trigger' : 'update-trigger',
+          request,
+          retained:
+            server === null
+              ? { draftId: null }
+              : { draftId: server.id, expectedVersion: request.expectedVersion },
+        },
+        'Trigger draft save',
+        (idempotencyKey, frozen) => {
+          if (frozen.draftId === null) {
+            return createTrigger(frozen.serviceId, frozen.content, { idempotencyKey });
+          }
+          if (frozen.expectedVersion === null) {
+            throw new Error('The retained Trigger update has no draft version.');
+          }
+          return updateTrigger(
+            frozen.draftId,
+            frozen.expectedVersion,
+            frozen.serviceId,
+            frozen.content,
+            { idempotencyKey },
+          );
+        },
       );
       acceptDraft(saved, server === null ? 'Trigger draft created' : 'Draft saved');
       return saved;
@@ -379,7 +514,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
         }
       } else {
         setFailure(
-          cause instanceof TransportError
+          commandOutcomeIsUnresolved(cause)
             ? 'The save outcome is still unknown. Your edits and command key are retained; retry to reconcile it.'
             : message(cause),
         );
@@ -396,11 +531,33 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     setOperation('publishing');
     setFailure(null);
     try {
+      const identity = {
+        slot: `trigger:publish:${server.id}:${String(server.next_revision_number)}`,
+        resource: `trigger:${server.id}`,
+        action: 'publish-trigger',
+      } as const;
+      const request = retainedCommandRequest(
+        pending,
+        identity,
+        {
+          triggerId: server.id,
+          expectedVersion: server.version,
+          serviceId: editor.selectedServiceId,
+        },
+        (value) =>
+          commandObject(value, {
+            triggerId: exactString(server.id),
+            expectedVersion: nonNegativeInteger,
+            serviceId: exactString(editor.selectedServiceId),
+          }),
+      );
       const revision = await executeCommand(
-        `trigger:publish:${server.id}:${String(server.next_revision_number)}`,
+        { ...identity, request, persistRequest: true },
         'Trigger publication',
-        (idempotencyKey) =>
-          publishTrigger(server.id, server.version, editor.selectedServiceId, { idempotencyKey }),
+        (idempotencyKey, frozen) =>
+          publishTrigger(frozen.triggerId, frozen.expectedVersion, frozen.serviceId, {
+            idempotencyKey,
+          }),
       );
       const refreshed = await readTrigger(server.id);
       setRevisions((items) => [revision, ...items.filter((item) => item.id !== revision.id)]);
@@ -408,7 +565,7 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
       setPublishOpen(false);
     } catch (cause) {
       setFailure(
-        cause instanceof TransportError
+        commandOutcomeIsUnresolved(cause)
           ? 'The publish outcome is still unknown. The command key is retained for reconciliation.'
           : message(cause),
       );
@@ -421,17 +578,28 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
     setOperation('retiring');
     setFailure(null);
     try {
+      const identity = {
+        slot: `trigger:retire:${revision.id}`,
+        resource: `revision:${revision.id}`,
+        action: 'retire-trigger',
+      } as const;
+      const request = retainedCommandRequest(
+        pending,
+        identity,
+        { revisionId: revision.id },
+        (value) => commandObject(value, { revisionId: exactString(revision.id) }),
+      );
       const retired = await executeCommand(
-        `trigger:retire:${revision.id}`,
+        { ...identity, request, persistRequest: true },
         'Trigger retirement',
-        (idempotencyKey) => retireTriggerRevision(revision.id, { idempotencyKey }),
+        (idempotencyKey, frozen) => retireTriggerRevision(frozen.revisionId, { idempotencyKey }),
       );
       setRevisions((items) => items.map((item) => (item.id === retired.id ? retired : item)));
       setRetiringId(null);
       setStatus(`Revision ${String(retired.content.revision_number)} retired`);
     } catch (cause) {
       setFailure(
-        cause instanceof TransportError
+        commandOutcomeIsUnresolved(cause)
           ? 'The retirement outcome is still unknown. Retry to reconcile the retained command.'
           : message(cause),
       );
@@ -721,6 +889,23 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
                       {pendingBegin ? 'Reconcile connection' : 'Connect another'}
                     </Button>
                   )}
+                  {selectedConnection?.state === 'active' || pendingRevoke ? (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      icon={<IconTrashOutline16 />}
+                      disabled={
+                        busy ||
+                        (revokeServiceId === null && editor.selectedServiceId === '') ||
+                        (pending !== null && !pendingRevoke)
+                      }
+                      onClick={() =>
+                        setConfirmingRevoke(revokeServiceId ?? editor.selectedServiceId)
+                      }
+                    >
+                      {pendingRevoke ? 'Reconcile revocation' : 'Revoke connection'}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
               {selectedConnection === null ? null : (
@@ -1149,22 +1334,6 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
                     </label>
                   ))}
                 </fieldset>
-                <label className="publisher-field">
-                  <span>Optional check identifiers, one per line</span>
-                  <textarea
-                    className="field__input publisher-textarea publisher-textarea--short"
-                    value={editor.content.override_policy.optional_checks.join('\n')}
-                    onChange={(event) => {
-                      changeContent((content) => ({
-                        ...content,
-                        override_policy: {
-                          ...content.override_policy,
-                          optional_checks: event.target.value.split('\n').filter(Boolean),
-                        },
-                      }));
-                    }}
-                  />
-                </label>
               </section>
             </fieldset>
 
@@ -1280,6 +1449,44 @@ export function PublisherSurface({ displayIdentity }: PublisherSurfaceProps) {
           </div>
         </div>
       </div>
+
+      <Modal
+        open={confirmingRevoke !== null || pendingRevoke}
+        title="Revoke GitHub connection?"
+        description="CMA will deactivate this exact NyxID connection. Trigger drafts, published revisions, Launches, workspaces, forks, branches, commits, pull requests, and sessions are not deleted."
+        dismissible={operation !== 'revoking' && !pendingRevoke}
+        onClose={() => {
+          if (!busy && !pendingRevoke) setConfirmingRevoke(null);
+        }}
+        footer={
+          <>
+            <Button disabled={busy || pendingRevoke} onClick={() => setConfirmingRevoke(null)}>
+              Keep connection
+            </Button>
+            <Button
+              variant="danger"
+              disabled={busy || revokeServiceId === null || (pending !== null && !pendingRevoke)}
+              onClick={() => void revokeConnection(revokeServiceId)}
+            >
+              {operation === 'revoking'
+                ? pendingRevoke
+                  ? 'Reconciling'
+                  : 'Submitting'
+                : pendingRevoke
+                  ? 'Reconcile revocation'
+                  : 'Revoke connection'}
+            </Button>
+          </>
+        }
+      >
+        <p>
+          {revokeConnectionAccount === null
+            ? 'Affected Launches will require another eligible GitHub connection before more GitHub work can continue.'
+            : `${revokeConnectionAccount} will no longer be eligible for new CMA GitHub work.`}{' '}
+          Provider access may remain usable until revocation is acknowledged or the bounded
+          credential lifetime expires.
+        </p>
+      </Modal>
 
       <Modal
         open={publishOpen}

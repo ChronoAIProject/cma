@@ -12,6 +12,11 @@ use crate::SessionId;
 pub const WORKSPACE_MANIFEST_VERSION: u32 = 1;
 pub const MAX_REPOSITORY_FILES: usize = 100_000;
 pub const MAX_REPOSITORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Fixed storage checkpoint unit for restartable baseline imports.
+pub const BASELINE_IMPORT_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
+/// GitHub's JSON blob route materializes one base64 value. Refuse a single
+/// provider object above this bound before allocating or requesting it.
+pub const MAX_PROVIDER_BLOB_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_PATH_BYTES: usize = 1_024;
 /// Absolute schema safety ceiling. The lower deployment-owned publication
 /// limit is captured in every artifact after measurement against the pinned
@@ -21,6 +26,11 @@ pub const MAX_DIFF_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_DIFF_SUMMARY_FILES: usize = 1_000;
 pub const MAX_DIFF_SUMMARY_PATCH_BYTES: usize = 256 * 1024;
 pub const MAX_DIFF_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
+/// Maximum time a healthy Trigger workspace may remain without another
+/// coherent capture attempt. Unchanged captures advance the deadline without
+/// writing another object.
+pub const LIFECYCLE_CHECKPOINT_INTERVAL_SECONDS: u64 = 5 * 60;
+pub const LIFECYCLE_CHECKPOINT_RETRY_SECONDS: u64 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +38,82 @@ pub enum WorkspaceEntryKind {
     Regular,
     Symlink,
     Submodule,
+}
+
+/// Immutable provider object inventory persisted before any blob is fetched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaselineImportBlob {
+    pub provider_object_id: String,
+    pub bytes: u64,
+    pub chunk_count: u32,
+}
+
+impl BaselineImportBlob {
+    pub fn new(
+        provider_object_id: impl Into<String>,
+        bytes: u64,
+    ) -> Result<Self, TriggerValidationError> {
+        let provider_object_id = provider_object_id.into().to_ascii_lowercase();
+        if provider_object_id.len() != 40
+            || !provider_object_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(TriggerValidationError::field(
+                "baseline_import.provider_object_id",
+                "must be a Git SHA-1",
+            ));
+        }
+        if bytes > MAX_PROVIDER_BLOB_BYTES {
+            return Err(TriggerValidationError::field(
+                "baseline_import.bytes",
+                format!("exceeds the {MAX_PROVIDER_BLOB_BYTES}-byte provider blob limit"),
+            ));
+        }
+        let chunk_count = if bytes == 0 {
+            0
+        } else {
+            u32::try_from(bytes.div_ceil(BASELINE_IMPORT_CHUNK_BYTES)).map_err(|_| {
+                TriggerValidationError::field(
+                    "baseline_import.chunk_count",
+                    "exceeds the durable import bound",
+                )
+            })?
+        };
+        Ok(Self {
+            provider_object_id,
+            bytes,
+            chunk_count,
+        })
+    }
+}
+
+/// One verified immutable checkpoint used to assemble the canonical archive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaselineImportChunk {
+    pub provider_object_id: String,
+    pub ordinal: u32,
+    pub bytes: u64,
+    pub sha256: String,
+}
+
+/// Ordered, bounded recipe for the final whole-baseline object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaselineArchivePlan {
+    pub source_revision: String,
+    pub tree_digest: String,
+    pub preamble: Vec<u8>,
+    pub chunks: Vec<BaselineImportChunk>,
+    pub archive_bytes: u64,
+}
+
+/// Durable evidence that the canonical baseline object is complete.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaselineImportOutcome {
+    pub manifest: WorkspaceManifest,
+    pub object_reference: String,
+    pub archive_sha256: String,
+    pub archive_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,6 +307,82 @@ pub enum CheckpointIntegrity {
     Deleted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceCheckpointPurpose {
+    Periodic,
+    PreTeardown,
+    ContributionReview,
+}
+
+impl WorkspaceCheckpointPurpose {
+    pub fn is_lifecycle(self) -> bool {
+        matches!(self, Self::Periodic | Self::PreTeardown)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleCheckpointState {
+    #[default]
+    Idle,
+    Capturing,
+    RetryScheduled,
+    RecoveryRequired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceCheckpointFailure {
+    pub code: String,
+    pub detail: String,
+    pub observed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<String>,
+}
+
+/// One durable version reservation. A process may disappear after capture or
+/// upload and another process will still address the same immutable object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceCheckpointIntent {
+    pub id: CheckpointId,
+    pub version: u64,
+    pub purpose: WorkspaceCheckpointPurpose,
+    pub session_id: SessionId,
+    pub runtime_generation: u64,
+    /// Exact Launch workspace authority this reservation may mutate.
+    #[serde(default)]
+    pub workspace_epoch: u64,
+    pub requested_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleCheckpointStatus {
+    pub state: LifecycleCheckpointState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_due_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failure: Option<WorkspaceCheckpointFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceCheckpointReservation {
+    NotDue,
+    Busy,
+    Capture(WorkspaceCheckpointIntent),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceCheckpointCommitOutcome {
+    Unchanged,
+    Committed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceCheckpoint {
     pub id: CheckpointId,
@@ -233,6 +395,10 @@ pub struct WorkspaceCheckpoint {
     pub archive_sha256: String,
     pub manifest: WorkspaceManifest,
     pub integrity: CheckpointIntegrity,
+    /// Present only when this workspace was committed with the exact opaque
+    /// conversation object needed to recover the same runtime boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_pair: Option<crate::TriggerRecoveryPairRef>,
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_after: Option<String>,
@@ -264,7 +430,11 @@ impl WorkspaceCheckpoint {
             ));
         }
         validate_sha256("checkpoint.archive_sha256", &self.archive_sha256)?;
-        self.manifest.validate()
+        self.manifest.validate()?;
+        if let Some(pair) = self.recovery_pair.as_ref() {
+            pair.validate_checkpoint(self)?;
+        }
+        Ok(())
     }
 }
 
@@ -544,9 +714,15 @@ impl DiffArtifact {
         let workspace = launch.workspace.as_ref().ok_or_else(|| {
             TriggerValidationError::field("diff.baseline_digest", "has no retained baseline")
         })?;
-        let checkpoint = workspace.latest_checkpoint.as_ref().ok_or_else(|| {
-            TriggerValidationError::field("diff.checkpoint_id", "has no retained checkpoint")
-        })?;
+        let checkpoint = workspace
+            .sealed_contribution_checkpoint
+            .as_ref()
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "diff.checkpoint_id",
+                    "has no sealed contribution checkpoint",
+                )
+            })?;
         let branch = launch.branch.as_ref().ok_or_else(|| {
             TriggerValidationError::field("diff.expected_branch_head", "has no Launch branch")
         })?;

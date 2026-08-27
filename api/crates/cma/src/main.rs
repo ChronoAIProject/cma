@@ -498,6 +498,7 @@ async fn main() {
                 let broker = match trigger::github::GithubBroker::new(
                     base_url,
                     Arc::clone(&auth_state),
+                    trigger_store.clone() as Arc<dyn layer2_core::ConnectionRevocationStore>,
                 ) {
                     Ok(broker) => Arc::new(broker),
                     Err(error) => {
@@ -512,14 +513,6 @@ async fn main() {
                 (unavailable.clone(), unavailable, None)
             }
         };
-    let trigger_service = Arc::new(
-        TriggerService::new(
-            trigger_store.clone() as Arc<dyn layer2_core::TriggerStore>,
-            trigger_store as Arc<dyn layer2_core::LaunchStore>,
-            trigger_authority,
-        )
-        .with_rollout(Arc::new(config.trigger.rollout.clone())),
-    );
     if !auth_state.requires_credential() {
         tracing::warn!(
             "running with a trusted fixed subject; every request is attributed \
@@ -616,7 +609,20 @@ async fn main() {
             runtime_version: Some(config.sandbox_image.clone()),
             identity: Some(config.deployment_id.clone()),
             adopts_untagged: config.adopts_untagged_runtimes,
+            trigger_runtime_capabilities: config.trigger.runtime_capabilities.clone(),
+            // The versioned Trigger profile selects this adapter explicitly;
+            // Layer 2 treats the identifier as opaque and remains kernel-neutral.
+            trigger_kernel: Some(layer2_core::KernelId::new("codex")),
         },
+    );
+    let trigger_service = Arc::new(
+        TriggerService::new(
+            trigger_store.clone() as Arc<dyn layer2_core::TriggerStore>,
+            trigger_store as Arc<dyn layer2_core::LaunchStore>,
+            trigger_authority,
+        )
+        .with_launch_admission(Arc::clone(&service) as Arc<dyn layer2_core::TriggerLaunchAdmission>)
+        .with_rollout(Arc::new(config.trigger.rollout.clone())),
     );
     tracing::info!(
         runtime_version = %config.sandbox_image,
@@ -660,6 +666,7 @@ async fn main() {
                     diff_store,
                     Arc::clone(&service),
                     Arc::clone(signer),
+                    config.trigger.changed_file_limit,
                 ),
             ))
         }
@@ -670,6 +677,7 @@ async fn main() {
             if let Err(error) = trigger::scheduler::spawn(
                 Arc::clone(&trigger_service),
                 executor,
+                Arc::clone(&service),
                 Arc::clone(&activity),
                 &config.deployment_id,
                 &config.trigger,
