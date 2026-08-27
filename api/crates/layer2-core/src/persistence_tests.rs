@@ -11,7 +11,7 @@ use crate::error::CoreError;
 use crate::event::{Event, EventKind, StoredEvent, StoredEventKind};
 use crate::ids::SubjectId;
 use crate::session::SessionStatus;
-use crate::store::SessionStore;
+use crate::store::{SessionListQuery, SessionStore};
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{admin, await_settled, service, spec, user, FakeAdapter, FakeStore};
 
@@ -186,8 +186,12 @@ async fn a_caller_without_capabilities_cannot_create_a_session() {
             .await,
         Err(CoreError::Forbidden)
     ));
+    let persisted = store
+        .list_all(&SessionListQuery::default())
+        .await
+        .expect("readable");
     assert!(
-        store.scan_all().await.expect("readable").is_empty(),
+        persisted.items.is_empty() && persisted.next.is_none(),
         "a refused request must write nothing"
     );
 }

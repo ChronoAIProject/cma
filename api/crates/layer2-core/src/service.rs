@@ -55,6 +55,7 @@ impl SessionService {
             credentials,
             skills,
             workspaces,
+            skill_packs,
             settings,
         } = ports;
         let sequences = Arc::new(crate::sequence::Sequences::default());
@@ -71,6 +72,7 @@ impl SessionService {
             prompt_gates: Default::default(),
             skills,
             workspaces,
+            skill_packs,
             sequences,
             event_logs,
             starting: RwLock::new(HashSet::new()),
@@ -386,7 +388,8 @@ impl SessionService {
         // use, or a store that cannot be read, must fail the request rather
         // than leave a session provisioning towards an environment it will
         // never get.
-        self.environments
+        let resolved_environment = self
+            .environments
             .resolve(caller, spec.environment_profile.as_ref())
             .await?;
 
@@ -474,6 +477,29 @@ impl SessionService {
             .refuse_ungranted(caller, spec.caller_credential.as_deref(), &granted_services)
             .await?;
 
+        // Resolved while the caller's delegated authority still exists, then
+        // staged in the same atomic create as the grant derived from these exact
+        // bytes. Reconciliation therefore never needs to recreate a private
+        // answer from a request credential that disappeared with this call.
+        let skill_packs = self
+            .resolve_skill_packs_for_creation(
+                spec.caller_credential.as_deref(),
+                &resolved_environment.skills,
+            )
+            .await?;
+        crate::store::validate_skill_packs(&skill_packs)
+            .map_err(CoreError::SkillCatalogUnavailable)?;
+        if !skill_packs.is_empty() && self.skill_packs.is_none() {
+            return Err(CoreError::RuntimeUnavailable(
+                "durable skill pack storage is not configured; refusing to create a session whose skills could not be recovered or erased"
+                    .into(),
+            ));
+        }
+        if let Some(store) = self.skill_packs.as_ref() {
+            store.validate(&skill_packs).map_err(store_failed)?;
+        }
+        let granted_skills = Self::granted_skills_for(&skill_packs);
+
         let (settings, settings_fallback) = self.settings.for_provisioning_observed().await;
         if trigger_origin.is_none() && settings_fallback.is_none() {
             if let Some(quoted) = spec.quoted_rate_card.as_ref() {
@@ -530,27 +556,14 @@ impl SessionService {
             rotated_at: None,
             capabilities,
             granted_services: Some(granted_services),
-            /*
-             * Not known yet, and deliberately not guessed.
-             *
-             * `agent.skills` here is the configuration's own list, before the
-             * baseline's mandated entries are folded in and before the
-             * registry has been asked — so writing it would record a set that
-             * is neither what was requested nor what arrives. Provisioning is
-             * the only place that knows which packs were actually fetched, and
-             * it is the only writer of this field.
-             *
-             * `None` until then says "not recorded", which is true for the
-             * seconds a session spends provisioning and stays true for one
-             * that never finished.
-             */
-            granted_skills: None,
+            granted_skills: Some(granted_skills),
             pricing,
             created_at: now_rfc3339(),
         };
 
         let mut record = SessionRecord::new(session.clone());
         record.trigger_origin = trigger_origin;
+        record.skill_packs = crate::store::SkillPackState::Staged(skill_packs);
         if let Err(error) = self
             .create_durably(
                 &mut record,

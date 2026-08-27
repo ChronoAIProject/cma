@@ -12,7 +12,13 @@
 //! lease exist only while a runtime is running and are rebuilt on attach;
 //! persisting them would be persisting a snapshot of something already gone.
 
-use std::{collections::HashSet, time::SystemTime};
+use std::{
+    collections::HashSet,
+    path::{Component, Path, PathBuf},
+    time::SystemTime,
+};
+
+use sha2::{Digest, Sha256};
 
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +68,16 @@ pub struct InitialPromptDispatch {
     pub recorded_recovery_generation: u32,
 }
 
+/// Maximum bounded representation of all skill metadata and file bodies.
+pub const SKILL_PACK_PAYLOAD_LIMIT: usize = 4 * 1024 * 1024;
+/// Maximum number of separately granted skill directories in one session.
+pub const SKILL_PACK_COUNT_LIMIT: usize = 256;
+/// Maximum number of files materialized for all of a session's skills.
+pub const SKILL_PACK_FILE_LIMIT: usize = 4_096;
+const SKILL_PACK_NAME_LIMIT: usize = 255;
+const SKILL_PACK_PATH_LIMIT: usize = 4_096;
+const SKILL_PACK_VERSION_LIMIT: usize = 1_024;
+
 /// A session as it is stored.
 #[derive(Debug, Clone)]
 pub struct SessionRecord {
@@ -105,6 +121,15 @@ pub struct SessionRecord {
     /// after H2 is published.
     #[doc(hidden)]
     pub pending_handover: Option<PendingHandover>,
+    /// Durable custody of the exact skill bytes this session was granted.
+    ///
+    /// This is internal work state, not part of the caller-visible session.
+    /// [`SkillPackState::Staged`] closes the gap between the atomic session
+    /// create and the separate object store: until the latter confirms its
+    /// write, the database still carries the exact bytes reconciliation needs.
+    /// Bounded list reads may carry [`SkillPackState::StagedSummary`] instead;
+    /// [`SessionStore::get`] remains the exact-read boundary.
+    pub skill_packs: SkillPackState,
     /// Store-owned optimistic revision.
     ///
     /// Zero means the record has not been created yet. Stores increment this
@@ -126,6 +151,7 @@ impl SessionRecord {
             initial_prompt: None,
             rotation_claim: None,
             pending_handover: None,
+            skill_packs: SkillPackState::Legacy,
             revision: 0,
         }
     }
@@ -213,6 +239,164 @@ pub struct HandoverSnapshot {
     pub snapshot_at: String,
     /// Opaque adapter state, when the envelope contains a captured snapshot.
     pub restore: Option<Vec<u8>>,
+}
+
+/// Where the exact skill bytes belonging to a session can be recovered.
+///
+/// The database remains the authority throughout the object-store handoff.
+/// Every transition is an optimistic session-record write, and external writes
+/// use a deterministic per-session key so replaying a committed intent is safe.
+/// SHA-256 over the exact ordered skill-pack representation installed in a runtime.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SkillPackDigest([u8; 32]);
+
+impl SkillPackDigest {
+    /// Hash a canonical, unambiguous sequence of pack metadata, paths, and bodies.
+    pub fn for_packs(packs: &[SkillPack]) -> Self {
+        fn length(hasher: &mut Sha256, value: usize) {
+            hasher.update((value as u64).to_be_bytes());
+        }
+
+        fn bytes(hasher: &mut Sha256, value: &[u8]) {
+            length(hasher, value.len());
+            hasher.update(value);
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"cma-skill-packs-sha256-v1\0");
+        length(&mut hasher, packs.len());
+        for pack in packs {
+            bytes(&mut hasher, pack.name.as_bytes());
+            match pack.version.as_deref() {
+                Some(version) => {
+                    hasher.update([1]);
+                    bytes(&mut hasher, version.as_bytes());
+                }
+                None => hasher.update([0]),
+            }
+            length(&mut hasher, pack.files.len());
+            for (path, body) in &pack.files {
+                bytes(&mut hasher, path.as_bytes());
+                bytes(&mut hasher, body);
+            }
+        }
+        Self(hasher.finalize().into())
+    }
+
+    /// Rebuild a digest read from persistence only when it has the exact width.
+    pub fn from_slice(bytes: &[u8]) -> Option<Self> {
+        <[u8; 32]>::try_from(bytes).ok().map(Self)
+    }
+
+    /// Exact binary representation used by persistence adapters.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for SkillPackDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for SkillPackDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SkillPackDigest")
+            .field(&self.to_string())
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Default)]
+pub enum SkillPackState {
+    /// No custody state was recorded by the version that wrote this session.
+    #[default]
+    Legacy,
+    /// Exact bytes remain in the session record until external custody lands.
+    Staged(Vec<SkillPack>),
+    /// A legacy runtime is still authoritative while these exact bytes are
+    /// prepared for its replacement.
+    ///
+    /// The source identity lets reconciliation distinguish H1 from H2 after an
+    /// authority switch whose Ready commit was interrupted. A generation of
+    /// zero is the compatibility boundary and is paired with the exact handle;
+    /// coordinated runtimes require the monotonic nonzero generation too.
+    LegacyHandover {
+        /// Exact provider handle of H1 at the handover boundary.
+        source_runtime_id: String,
+        /// Durable authority generation of H1, or zero in compatibility mode.
+        source_generation: u64,
+        /// Exact bytes already chosen for H2. They are never registry-refetched.
+        packs: Vec<SkillPack>,
+        /// Receipt for the same bytes in external custody, when available.
+        stored_digest: Option<SkillPackDigest>,
+    },
+    /// A bounded listing observed inline custody but deliberately omitted its bytes.
+    ///
+    /// This is a read projection, never durable state. It preserves the fact
+    /// that cleanup or recovery work remains without allowing a caller to
+    /// mistake redacted bytes for an exact empty grant. Any operation that
+    /// needs to mutate the session must reload it through [`SessionStore::get`].
+    StagedSummary,
+    /// The deterministic object-store key holds bytes matching this digest.
+    Stored {
+        /// Integrity receipt for every ordered name, version, path, and body.
+        digest: SkillPackDigest,
+    },
+    /// The session is terminal but its external bytes have not been removed.
+    CleanupPending,
+    /// Cleanup completed; no skill bytes remain for this session.
+    Cleaned,
+}
+
+impl std::fmt::Debug for SkillPackState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Legacy => f.write_str("Legacy"),
+            Self::Staged(packs) => {
+                let files = packs.iter().map(|pack| pack.files.len()).sum::<usize>();
+                let bytes = packs
+                    .iter()
+                    .flat_map(|pack| &pack.files)
+                    .map(|(_, body)| body.len())
+                    .sum::<usize>();
+                f.debug_struct("Staged")
+                    .field("packs", &packs.len())
+                    .field("files", &files)
+                    .field("bytes", &bytes)
+                    .finish()
+            }
+            Self::LegacyHandover {
+                source_runtime_id,
+                source_generation,
+                packs,
+                stored_digest,
+            } => {
+                let files = packs.iter().map(|pack| pack.files.len()).sum::<usize>();
+                let bytes = packs
+                    .iter()
+                    .flat_map(|pack| &pack.files)
+                    .map(|(_, body)| body.len())
+                    .sum::<usize>();
+                f.debug_struct("LegacyHandover")
+                    .field("source_runtime_id", source_runtime_id)
+                    .field("source_generation", source_generation)
+                    .field("packs", &packs.len())
+                    .field("files", &files)
+                    .field("bytes", &bytes)
+                    .field("stored_digest", stored_digest)
+                    .finish()
+            }
+            Self::StagedSummary => f.write_str("StagedSummary"),
+            Self::Stored { digest } => f.debug_struct("Stored").field("digest", digest).finish(),
+            Self::CleanupPending => f.write_str("CleanupPending"),
+            Self::Cleaned => f.write_str("Cleaned"),
+        }
+    }
 }
 
 /// The stable position after which a newest-first listing continues.
@@ -312,6 +496,105 @@ impl<T> Page<T> {
             next: self.next,
         }
     }
+}
+
+/// Constant-space cursor for a complete walk of durable sessions.
+///
+/// Each store read is bounded, and only the last accepted key is retained
+/// between reads. The ordering checks are part of the authority boundary: a
+/// malformed continuation must fail closed instead of silently skipping rows
+/// or cycling forever while reconciliation infers that a record is absent.
+#[derive(Debug, Default)]
+pub(crate) struct SessionScan {
+    cursor: Option<PageCursor>,
+    finished: bool,
+}
+
+impl SessionScan {
+    /// Start a newest-first walk of every durable session.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Read and validate the next bounded page, or `None` after the complete set.
+    pub(crate) async fn next_page(
+        &mut self,
+        store: &dyn SessionStore,
+    ) -> Result<Option<Vec<SessionRecord>>, StoreError> {
+        if self.finished {
+            return Ok(None);
+        }
+        let requested = self.cursor.clone();
+        let page = store
+            .list_all(&SessionListQuery::new(
+                PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, requested.clone()),
+                None,
+            ))
+            .await?;
+        self.accept_page(requested.as_ref(), page)
+    }
+
+    fn accept_page(
+        &mut self,
+        requested: Option<&PageCursor>,
+        page: Page<SessionRecord>,
+    ) -> Result<Option<Vec<SessionRecord>>, StoreError> {
+        if page.items.len() > INTERNAL_SCAN_PAGE_SIZE as usize {
+            return Err(StoreError::Malformed(format!(
+                "session scan returned {} rows for a {INTERNAL_SCAN_PAGE_SIZE}-row request",
+                page.items.len()
+            )));
+        }
+        if page.items.is_empty() {
+            if page.next.is_some() {
+                return Err(StoreError::Malformed(
+                    "session scan returned a continuation after an empty page".into(),
+                ));
+            }
+            self.finished = true;
+            return Ok(None);
+        }
+
+        if requested
+            .is_some_and(|cursor| session_record_key(&page.items[0]) >= page_cursor_key(cursor))
+        {
+            return Err(StoreError::Malformed(
+                "session scan did not continue strictly below its requested cursor".into(),
+            ));
+        }
+        if page
+            .items
+            .windows(2)
+            .any(|rows| session_record_key(&rows[0]) <= session_record_key(&rows[1]))
+        {
+            return Err(StoreError::Malformed(
+                "session scan rows are not in strictly descending order".into(),
+            ));
+        }
+        if let Some(next) = page.next.as_ref() {
+            let last = page.items.last().expect("a non-empty page has a final row");
+            if page_cursor_key(next) != session_record_key(last) {
+                return Err(StoreError::Malformed(
+                    "session scan continuation does not name its final row".into(),
+                ));
+            }
+        }
+
+        self.cursor = page.next;
+        self.finished = self.cursor.is_none();
+        Ok(Some(page.items))
+    }
+}
+
+fn session_record_key(record: &SessionRecord) -> (&str, &str) {
+    (
+        record.session.created_at.as_str(),
+        record.session.id.as_str(),
+    )
+}
+
+fn page_cursor_key(cursor: &PageCursor) -> (&str, &str) {
+    (cursor.created_at.as_str(), cursor.id.as_str())
 }
 
 /// Failures a store may report.
@@ -450,6 +733,12 @@ pub enum StoreError {
         runtime_id: Option<String>,
         /// Number of unacknowledged cleanup debts.
         cleanup_debts: usize,
+    },
+    /// Removing the session would erase ownership of exact external skill bytes.
+    #[error("session {id} still has unacknowledged skill pack cleanup")]
+    SessionSkillCleanupPending {
+        /// Session that must retain its row until skill cleanup is acknowledged.
+        id: SessionId,
     },
 }
 
@@ -789,6 +1078,11 @@ pub trait SessionStore: Send + Sync {
     }
 
     /// One bounded page of a subject's sessions, newest first.
+    ///
+    /// Stores whose exact records can carry large staged blobs may return
+    /// [`SkillPackState::StagedSummary`] here. The public session fields remain
+    /// exact; code that will mutate a returned record must first reload it with
+    /// [`Self::get`].
     async fn list_for(
         &self,
         owner: &SubjectId,
@@ -850,36 +1144,10 @@ pub trait SessionStore: Send + Sync {
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError>;
 
     /// One bounded page of every session, newest first.
-    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError>;
-
-    /// Walk every record through bounded store reads.
     ///
-    /// Reconciliation and provider inventory need the complete authority. They
-    /// use this explicit scan so no public listing can acquire the same cost by
-    /// forgetting to pass a bound.
-    async fn scan_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
-        let mut records = Vec::new();
-        let mut cursor = None;
-        let mut seen = HashSet::new();
-        loop {
-            let page = self
-                .list_all(&SessionListQuery::new(
-                    PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, cursor.clone()),
-                    None,
-                ))
-                .await?;
-            records.extend(page.items);
-            match page.next {
-                Some(next) if seen.insert(next.clone()) => cursor = Some(next),
-                Some(_) => {
-                    return Err(StoreError::Malformed(
-                        "session listing repeated its continuation cursor".into(),
-                    ))
-                }
-                None => return Ok(records),
-            }
-        }
-    }
+    /// As with [`Self::list_for`], staged skill bytes may be represented by
+    /// [`SkillPackState::StagedSummary`] and must be reloaded before mutation.
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError>;
 
     /// Remove a session and its history permanently.
     ///
@@ -887,7 +1155,9 @@ pub trait SessionStore: Send + Sync {
     /// owner chooses to remove it. A coordination-enabled store keeps cleanup
     /// authority with the live session row, so it must refuse with
     /// [`StoreError::SessionCleanupPending`] while a runtime remains authoritative
-    /// or any exact cleanup debt is unacknowledged.
+    /// or any exact runtime cleanup debt is unacknowledged, and
+    /// [`StoreError::SessionSkillCleanupPending`] until external skill custody is
+    /// explicitly [`SkillPackState::Cleaned`].
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError>;
 
     /// Append durable events.
@@ -1479,6 +1749,13 @@ mod tests {
         }
     }
 
+    fn listed_record(created_at: &str, id: &str) -> SessionRecord {
+        let mut session = session();
+        session.created_at = created_at.into();
+        session.id = SessionId(id.into());
+        SessionRecord::new(session)
+    }
+
     #[test]
     fn a_new_record_references_no_runtime_and_no_context() {
         // Both are acquired later: a session exists before a sandbox does, and
@@ -1486,6 +1763,7 @@ mod tests {
         let r = SessionRecord::new(session());
         assert!(r.runtime_id.is_none());
         assert!(r.context_ref.is_none());
+        assert_eq!(r.skill_packs, SkillPackState::Legacy);
     }
 
     #[test]
@@ -1494,6 +1772,207 @@ mod tests {
         let r = SessionRecord::new(s.clone());
         assert_eq!(r.session.id, s.id);
         assert_eq!(r.session.owner, s.owner);
+    }
+
+    #[test]
+    fn session_scan_accepts_strict_continuations_and_finishes() {
+        let mut scan = SessionScan::new();
+        let first = scan
+            .accept_page(
+                None,
+                Page {
+                    items: vec![
+                        listed_record("2026-01-02T00:00:00Z", "sesn_3"),
+                        listed_record("2026-01-02T00:00:00Z", "sesn_2"),
+                    ],
+                    next: Some(PageCursor::new("2026-01-02T00:00:00Z", "sesn_2")),
+                },
+            )
+            .expect("the first page is valid")
+            .expect("the first page has rows");
+        assert_eq!(first.len(), 2);
+
+        let requested = scan.cursor.clone().expect("the scan retained one cursor");
+        let last = scan
+            .accept_page(
+                Some(&requested),
+                Page {
+                    items: vec![listed_record("2026-01-02T00:00:00Z", "sesn_1")],
+                    next: None,
+                },
+            )
+            .expect("the final page is valid")
+            .expect("the final page has a row");
+        assert_eq!(last[0].session.id.as_str(), "sesn_1");
+        assert!(scan.finished);
+        assert!(scan.cursor.is_none());
+    }
+
+    #[test]
+    fn session_scan_rejects_pages_that_cannot_prove_progress() {
+        let malformed = |requested: Option<PageCursor>, page: Page<SessionRecord>| {
+            matches!(
+                SessionScan::new().accept_page(requested.as_ref(), page),
+                Err(StoreError::Malformed(_))
+            )
+        };
+
+        assert!(malformed(
+            None,
+            Page {
+                items: (0..=INTERNAL_SCAN_PAGE_SIZE)
+                    .rev()
+                    .map(|index| {
+                        listed_record("2026-01-02T00:00:00Z", &format!("sesn_{index:03}"))
+                    })
+                    .collect(),
+                next: None,
+            }
+        ));
+        assert!(malformed(
+            None,
+            Page {
+                items: Vec::new(),
+                next: Some(PageCursor::new("2026-01-02T00:00:00Z", "sesn_2")),
+            }
+        ));
+        assert!(malformed(
+            None,
+            Page {
+                items: vec![
+                    listed_record("2026-01-02T00:00:00Z", "sesn_1"),
+                    listed_record("2026-01-02T00:00:00Z", "sesn_2"),
+                ],
+                next: None,
+            }
+        ));
+        assert!(malformed(
+            Some(PageCursor::new("2026-01-02T00:00:00Z", "sesn_2")),
+            Page {
+                items: vec![listed_record("2026-01-02T00:00:00Z", "sesn_3")],
+                next: None,
+            }
+        ));
+        assert!(malformed(
+            None,
+            Page {
+                items: vec![listed_record("2026-01-02T00:00:00Z", "sesn_2")],
+                next: Some(PageCursor::new("2026-01-02T00:00:00Z", "sesn_1")),
+            }
+        ));
+    }
+
+    #[test]
+    fn staged_skill_bytes_are_redacted_from_debug_output() {
+        let pack = SkillPack {
+            name: "private-review".into(),
+            version: Some("1".into()),
+            files: vec![("SKILL.md".into(), b"private-body-marker".to_vec())],
+        };
+
+        let pack_debug = format!("{pack:?}");
+        assert!(
+            pack_debug.contains("19"),
+            "body length is useful: {pack_debug}"
+        );
+        assert!(!pack_debug.contains("112, 114, 105, 118, 97, 116, 101"));
+
+        let staged_debug = format!("{:?}", SkillPackState::Staged(vec![pack]));
+        assert_eq!(staged_debug, "Staged { packs: 1, files: 1, bytes: 19 }");
+    }
+
+    #[test]
+    fn skill_pack_digest_has_a_stable_known_vector() {
+        let packs = vec![SkillPack {
+            name: "ab".into(),
+            version: Some("1".into()),
+            files: vec![("c".into(), b"de".to_vec())],
+        }];
+
+        assert_eq!(
+            SkillPackDigest::for_packs(&packs).to_string(),
+            "95f7b8402925276b2738d192f9e36f57252ad7184cb8318ba16611bc98a02976"
+        );
+    }
+
+    #[test]
+    fn skill_pack_digest_frames_every_field_and_preserves_order() {
+        let pack = |name: &str, version: Option<&str>, path: &str, body: &[u8]| SkillPack {
+            name: name.into(),
+            version: version.map(str::to_owned),
+            files: vec![(path.into(), body.to_vec())],
+        };
+        let baseline = vec![pack("ab", None, "c", b"de"), pack("f", Some(""), "g", b"h")];
+
+        assert_ne!(
+            SkillPackDigest::for_packs(&baseline),
+            SkillPackDigest::for_packs(&[
+                pack("a", None, "bc", b"de"),
+                pack("f", Some(""), "g", b"h"),
+            ])
+        );
+        assert_ne!(
+            SkillPackDigest::for_packs(&baseline),
+            SkillPackDigest::for_packs(
+                &[pack("ab", None, "c", b"de"), pack("f", None, "g", b"h"),]
+            )
+        );
+        let mut reordered = baseline.clone();
+        reordered.reverse();
+        assert_ne!(
+            SkillPackDigest::for_packs(&baseline),
+            SkillPackDigest::for_packs(&reordered)
+        );
+    }
+
+    #[test]
+    fn skill_pack_validation_rejects_paths_that_change_or_collide_on_disk() {
+        let pack = |name: &str, paths: &[&str]| SkillPack {
+            name: name.into(),
+            version: None,
+            files: paths
+                .iter()
+                .map(|path| ((*path).into(), Vec::new()))
+                .collect(),
+        };
+
+        for invalid in [
+            pack("../review", &["SKILL.md"]),
+            pack("review", &["../SKILL.md"]),
+            pack("review", &["/tmp/SKILL.md"]),
+            pack("review", &["references//api.md"]),
+            pack("review", &["references/./api.md"]),
+            pack("review", &["SKILL.md", "SKILL.md"]),
+        ] {
+            assert!(validate_skill_packs(&[invalid]).is_err());
+        }
+        assert!(validate_skill_packs(&[
+            pack("review", &["SKILL.md"]),
+            pack("review", &["references/api.md"]),
+        ])
+        .is_err());
+        assert!(
+            validate_skill_packs(&[pack("review", &["SKILL.md", "references/api.md"],)]).is_ok()
+        );
+    }
+
+    #[test]
+    fn skill_pack_validation_bounds_metadata_and_zero_length_files() {
+        let too_many = SkillPack {
+            name: "review".into(),
+            version: None,
+            files: (0..=SKILL_PACK_FILE_LIMIT)
+                .map(|index| (format!("references/{index}.md"), Vec::new()))
+                .collect(),
+        };
+        assert!(validate_skill_packs(&[too_many]).is_err());
+
+        let oversized = SkillPack {
+            name: "review".into(),
+            version: None,
+            files: vec![("SKILL.md".into(), vec![0; SKILL_PACK_PAYLOAD_LIMIT])],
+        };
+        assert!(validate_skill_packs(&[oversized]).is_err());
     }
 }
 
@@ -1553,7 +2032,7 @@ pub struct StoredSettings {
 }
 
 /// One skill, fetched and ready to be written.
-#[derive(Debug, Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SkillPack {
     /// The directory it occupies, which is the name the agent invokes.
     pub name: String,
@@ -1566,6 +2045,165 @@ pub struct SkillPack {
     pub version: Option<String>,
     /// Each file, relative to that directory, exactly as the registry names it.
     pub files: Vec<(String, Vec<u8>)>,
+}
+
+impl std::fmt::Debug for SkillPack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let files = self
+            .files
+            .iter()
+            .map(|(path, body)| (path, body.len()))
+            .collect::<Vec<_>>();
+        f.debug_struct("SkillPack")
+            .field("name", &self.name)
+            .field("version", &self.version)
+            .field("files", &files)
+            .finish()
+    }
+}
+
+/// Validate the bounded, unambiguous file tree represented by resolved packs.
+///
+/// The size budget uses a conservative upper bound for escaped metadata plus
+/// fixed framing, so any accepted collection can be staged and encoded without
+/// first cloning an attacker-controlled number of paths or header fields.
+pub fn validate_skill_packs(packs: &[SkillPack]) -> Result<(), String> {
+    if packs.len() > SKILL_PACK_COUNT_LIMIT {
+        return Err(format!(
+            "a session may carry at most {SKILL_PACK_COUNT_LIMIT} skill packs"
+        ));
+    }
+
+    let mut names = HashSet::with_capacity(packs.len());
+    let mut file_count = 0_usize;
+    let mut representation = 64_usize;
+    for pack in packs {
+        if pack.name.len() > SKILL_PACK_NAME_LIMIT || !is_canonical_skill_path(&pack.name, true) {
+            return Err(format!(
+                "skill pack name {:?} is not a safe single path component",
+                pack.name
+            ));
+        }
+        if !names.insert(pack.name.as_str()) {
+            return Err(format!("skill pack name {:?} is duplicated", pack.name));
+        }
+        if pack.files.is_empty() {
+            return Err(format!("skill pack {:?} carries no files", pack.name));
+        }
+        if pack.version.as_ref().is_some_and(|version| {
+            version.len() > SKILL_PACK_VERSION_LIMIT || version.chars().any(char::is_control)
+        }) {
+            return Err(format!(
+                "skill pack {:?} carries an invalid version",
+                pack.name
+            ));
+        }
+
+        representation = add_skill_metadata_bound(representation, pack.name.len(), 64)?;
+        if let Some(version) = pack.version.as_ref() {
+            representation = add_skill_metadata_bound(representation, version.len(), 0)?;
+        }
+        let mut paths = HashSet::with_capacity(pack.files.len());
+        for (path, body) in &pack.files {
+            file_count = file_count.checked_add(1).ok_or_else(skill_pack_too_large)?;
+            if file_count > SKILL_PACK_FILE_LIMIT {
+                return Err(format!(
+                    "a session may carry at most {SKILL_PACK_FILE_LIMIT} skill files"
+                ));
+            }
+            if path.len() > SKILL_PACK_PATH_LIMIT || !is_canonical_skill_path(path, false) {
+                return Err(format!(
+                    "skill file path {path:?} in pack {:?} is not a safe canonical relative path",
+                    pack.name
+                ));
+            }
+            if !paths.insert(path.as_str()) {
+                return Err(format!(
+                    "skill file path {path:?} in pack {:?} is duplicated",
+                    pack.name
+                ));
+            }
+            representation = add_skill_metadata_bound(representation, path.len(), 64)?;
+            representation = representation
+                .checked_add(body.len())
+                .ok_or_else(skill_pack_too_large)?;
+            if representation > SKILL_PACK_PAYLOAD_LIMIT {
+                return Err(skill_pack_too_large());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn add_skill_metadata_bound(total: usize, bytes: usize, framing: usize) -> Result<usize, String> {
+    total
+        .checked_add(framing)
+        .and_then(|total| {
+            bytes
+                .checked_mul(6)
+                .and_then(|bytes| total.checked_add(bytes))
+        })
+        .filter(|total| *total <= SKILL_PACK_PAYLOAD_LIMIT)
+        .ok_or_else(skill_pack_too_large)
+}
+
+fn skill_pack_too_large() -> String {
+    format!("skill packs exceed the {SKILL_PACK_PAYLOAD_LIMIT}-byte bounded representation")
+}
+
+fn is_canonical_skill_path(raw: &str, single_component: bool) -> bool {
+    if raw.is_empty() || raw.chars().any(char::is_control) {
+        return false;
+    }
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        return false;
+    }
+    let mut normalized = PathBuf::new();
+    let mut count = 0_usize;
+    for component in path.components() {
+        let Component::Normal(part) = component else {
+            return false;
+        };
+        normalized.push(part);
+        count += 1;
+    }
+    count > 0 && (!single_component || count == 1) && normalized.as_os_str() == path.as_os_str()
+}
+
+/// Durable custody for the exact skill packs a session was given.
+///
+/// Separate from [`SkillSource`]: the source resolves a caller-visible choice
+/// once, while this store replays those already-resolved opaque bytes when no
+/// caller is present. The port accepts no credential, so an implementation
+/// cannot accidentally persist the authority used to fetch a private pack.
+///
+/// Implementations must bound both writes and reads before materializing the
+/// stored representation. A missing value is a real legacy state and is
+/// distinct from a store failure: only the former permits the core to fall back
+/// to the source.
+#[async_trait::async_trait]
+pub trait SkillPackStore: Send + Sync {
+    /// Reject a deterministic representation failure before a session is recorded.
+    ///
+    /// The default enforces the core's structural and allocation bounds. A
+    /// concrete adapter should additionally validate its exact wire encoding.
+    fn validate(&self, packs: &[SkillPack]) -> Result<(), StoreError> {
+        validate_skill_packs(packs)
+            .map_err(|error| StoreError::Malformed(format!("invalid skill packs: {error}")))
+    }
+
+    /// Atomically replace the packs held for this session.
+    async fn put(&self, id: &SessionId, packs: &[SkillPack]) -> Result<(), StoreError>;
+
+    /// Read the exact packs held for this session, if any were ever stored.
+    async fn get(&self, id: &SessionId) -> Result<Option<Vec<SkillPack>>, StoreError>;
+
+    /// Remove the packs held for a session that has ended.
+    ///
+    /// Deleting an already-absent value must succeed so termination and repair
+    /// can safely replay cleanup.
+    async fn delete(&self, id: &SessionId) -> Result<(), StoreError>;
 }
 
 /// Where a session's skills come from.

@@ -12,7 +12,7 @@
 //! operator shown "nothing is running" when the truth is "nobody could be
 //! asked" will conclude the fleet is idle, and act on it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::authz::{Caller, Capability};
 use crate::coordination::{RuntimeAuthority, RuntimeCleanup, RuntimeCleanupReason};
@@ -20,7 +20,7 @@ use crate::error::CoreError;
 use crate::ids::{KernelId, SessionId, SubjectId};
 use crate::service::{store_failed, SessionService};
 use crate::session::SessionStatus;
-use crate::store::StoreError;
+use crate::store::{SkillPackState, StoreError};
 
 /// What provider metadata says about a runtime's durable generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,10 +178,47 @@ impl SessionService {
             .authorization
             .require(Capability::ReadRuntimeInventory)?;
 
-        // Read before asking the providers. A record that cannot be read means
-        // no runtime can be attributed to anybody, and an inventory of
-        // anonymous sandboxes would be worse than saying so.
-        let records = self.store.scan_all().await.map_err(store_failed)?;
+        enum ListedProviderView {
+            Observed(Vec<layer3_adapter::RuntimeListing>),
+            Unobservable(String),
+        }
+
+        struct ListedProvider {
+            kernel: KernelId,
+            view: ListedProviderView,
+        }
+
+        // The provider rows define the only durable sessions this response can
+        // reference. Keep those rows, then exact-read each unique identifier
+        // once. A failed durable read still discards every provider observation
+        // rather than returning anonymous runtimes.
+        let mut referenced_sessions = HashSet::new();
+        let mut listed_providers = Vec::with_capacity(self.adapters.len());
+        for (kernel, adapter) in &self.adapters {
+            let view = match adapter.list_runtimes().await {
+                Ok(runtimes) => {
+                    referenced_sessions.extend(
+                        runtimes
+                            .iter()
+                            .filter_map(|runtime| runtime.session.as_ref().cloned()),
+                    );
+                    ListedProviderView::Observed(runtimes)
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        kernel = %kernel,
+                        error = %error,
+                        "a provider cannot say what it is running; the inventory will say so"
+                    );
+                    ListedProviderView::Unobservable(error.to_string())
+                }
+            };
+            listed_providers.push(ListedProvider {
+                kernel: kernel.clone(),
+                view,
+            });
+        }
+
         enum AuthorityKnowledge {
             CoordinationDisabled,
             Present(RuntimeAuthority),
@@ -195,8 +232,27 @@ impl SessionService {
             cleanup_debts: Vec<RuntimeCleanup>,
         }
 
-        let mut known_sessions = HashMap::with_capacity(records.len());
-        for record in records {
+        let mut known_sessions = HashMap::with_capacity(referenced_sessions.len());
+        for referenced in referenced_sessions {
+            let id = SessionId(referenced);
+            let record = match self.store.get(&id).await {
+                Ok(Some(record)) if record.session.id != id => {
+                    return Err(store_failed(StoreError::Malformed(format!(
+                        "session point read for {id} returned {}",
+                        record.session.id
+                    ))))
+                }
+                Ok(Some(record))
+                    if matches!(&record.skill_packs, SkillPackState::StagedSummary) =>
+                {
+                    return Err(store_failed(StoreError::Malformed(format!(
+                        "exact session read for {id} returned a projected skill custody summary"
+                    ))))
+                }
+                Ok(Some(record)) => record,
+                Ok(None) => continue,
+                Err(error) => return Err(store_failed(error)),
+            };
             let (authority, cleanup_debts) =
                 match self.store.runtime_authority(&record.session.id).await {
                     Ok(Some(authority)) => (
@@ -229,10 +285,10 @@ impl SessionService {
             );
         }
 
-        let mut providers = Vec::with_capacity(self.adapters.len());
-        for (kernel, adapter) in &self.adapters {
-            let view = match adapter.list_runtimes().await {
-                Ok(runtimes) => ProviderView::Observed(
+        let mut providers = Vec::with_capacity(listed_providers.len());
+        for listed in listed_providers {
+            let view = match listed.view {
+                ListedProviderView::Observed(runtimes) => ProviderView::Observed(
                     runtimes
                         .into_iter()
                         .map(|listing| {
@@ -268,7 +324,7 @@ impl SessionService {
                                     authority: AuthorityKnowledge::Present(authority),
                                     ..
                                 }) => {
-                                    let same_runtime = durable_kernel == kernel
+                                    let same_runtime = durable_kernel == &listed.kernel
                                         && authority.runtime_id.as_deref()
                                             == Some(listing.handle.0.as_str());
                                     let comparison = match (
@@ -309,18 +365,10 @@ impl SessionService {
                         })
                         .collect(),
                 ),
-                Err(e) => {
-                    tracing::warn!(
-                        kernel = %kernel,
-                        error = %e,
-                        "a provider cannot say what it is running; the inventory will say so \
-                         rather than report it as running nothing"
-                    );
-                    ProviderView::Unobservable(e.to_string())
-                }
+                ListedProviderView::Unobservable(error) => ProviderView::Unobservable(error),
             };
             providers.push(ProviderInventory {
-                kernel: kernel.clone(),
+                kernel: listed.kernel,
                 view,
             });
         }
