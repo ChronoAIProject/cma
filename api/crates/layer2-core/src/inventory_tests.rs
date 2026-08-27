@@ -8,12 +8,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::authz::{Authorization, Caller, Capability};
+use crate::commit_fault_support::CommitFaultStore;
 use crate::coordination::{SessionBoundary, SessionLeaseRequest, SessionOperation};
 use crate::error::CoreError;
-use crate::ids::SubjectId;
+use crate::event::Event;
+use crate::ids::{SessionId, SubjectId};
 use crate::inventory::{ProviderView, RuntimeAuthorityComparison};
-use crate::store::SessionStore;
-use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+use crate::store::{SessionRecord, SessionStore, SkillPackState};
+use crate::test_support::{
+    await_settled, service, service_over, spec, user, FakeAdapter, FakeStore,
+};
 use crate::RuntimeCleanupReason;
 
 fn operator() -> Caller {
@@ -21,6 +25,10 @@ fn operator() -> Caller {
         SubjectId("operator".into()),
         Authorization::from_capabilities([Capability::ReadRuntimeInventory]),
     )
+}
+
+fn no_commits(_record: &SessionRecord, _events: &[Event]) -> bool {
+    false
 }
 
 #[tokio::test]
@@ -59,6 +67,75 @@ async fn a_running_session_appears_with_its_owner() {
         RuntimeAuthorityComparison::Matches,
         "provider and durable generations agree for coordinated provisioning"
     );
+}
+
+#[tokio::test]
+async fn provider_attribution_point_reads_only_referenced_sessions() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), no_commits));
+    let adapter = Arc::new(FakeAdapter::default());
+    let owner = user("alice");
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    let created = svc.create_session(&owner, spec()).await.expect("created");
+    await_settled(&svc, &owner, &created.id).await;
+
+    let template = inner
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("the provider-linked session exists");
+    for index in 0..200 {
+        let mut unrelated = template.clone();
+        unrelated.session.id = SessionId(format!("sesn_z{index:04}"));
+        unrelated.session.owner = SubjectId("unrelated".into());
+        inner
+            .seed(&unrelated)
+            .await
+            .expect("seed unrelated session");
+    }
+
+    let reads_before = store.get_calls();
+    let inventory = svc
+        .runtime_inventory(&operator())
+        .await
+        .expect("the referenced durable row is readable");
+    assert_eq!(
+        store.get_calls() - reads_before,
+        1,
+        "unrelated durable history must not cause point reads"
+    );
+    let ProviderView::Observed(runtimes) = &inventory.providers[0].view else {
+        panic!("the provider answered and must be reported as having answered");
+    };
+    let linked = runtimes
+        .iter()
+        .find(|runtime| runtime.session.as_ref() == Some(&created.id))
+        .expect("the provider-linked runtime is present");
+    assert_eq!(
+        linked.owner.as_ref().map(SubjectId::as_str),
+        Some("alice"),
+        "the unique provider-referenced session is still attributed"
+    );
+}
+
+#[tokio::test]
+async fn provider_attribution_rejects_a_projected_exact_read() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(Arc::clone(&inner), no_commits));
+    let adapter = Arc::new(FakeAdapter::default());
+    let owner = user("projected-inventory-owner");
+    let svc = service_over(store.clone(), Arc::clone(&adapter));
+    let created = svc.create_session(&owner, spec()).await.expect("created");
+    await_settled(&svc, &owner, &created.id).await;
+    let mut exact = inner.get(&created.id).await.unwrap().unwrap();
+    exact.skill_packs = SkillPackState::Staged(Vec::new());
+    inner.seed(&exact).await.expect("seed exact staged custody");
+    store.project_staged_gets(true);
+
+    assert!(matches!(
+        svc.runtime_inventory(&operator()).await,
+        Err(CoreError::RuntimeUnavailable(_))
+    ));
 }
 
 #[tokio::test]

@@ -60,6 +60,25 @@ pub(super) struct CoordinationDoc {
     server_now: Option<DateTime>,
 }
 
+/// Minimal session shape needed to read runtime authority.
+///
+/// Keeping this distinct from `SessionDoc` makes it impossible for the
+/// high-frequency authority read to deserialize staged skill bodies by
+/// accident.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct RuntimeAuthorityProjectionDoc {
+    #[serde(rename = "_id")]
+    id: String,
+    #[serde(rename = "_cma_write_protocol", default)]
+    write_protocol: i32,
+    #[serde(rename = "_cma_coordination_protocol", default)]
+    coordination_protocol: i32,
+    #[serde(default)]
+    runtime_id: Option<String>,
+    #[serde(default)]
+    coordination: Option<CoordinationDoc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct BoundaryDoc {
     status: String,
@@ -777,14 +796,52 @@ pub(super) fn runtime_authority_from_doc(
     })
 }
 
+pub(super) fn runtime_authority_from_projection(
+    session: &RuntimeAuthorityProjectionDoc,
+) -> Result<RuntimeAuthority, StoreError> {
+    validate_coordination_parts(
+        &session.id,
+        session.write_protocol,
+        session.coordination_protocol,
+        session.coordination.as_ref(),
+    )?;
+    Ok(RuntimeAuthority {
+        generation: session
+            .coordination
+            .as_ref()
+            .map_or(Ok(0), |state| loaded_generation(state.authority_generation))?,
+        runtime_id: session.runtime_id.clone(),
+    })
+}
+
 pub(super) fn validate_coordination_state(session: &SessionDoc) -> Result<(), StoreError> {
-    if session.coordination_protocol != super::SESSION_COORDINATION_PROTOCOL {
+    validate_coordination_parts(
+        &session.id,
+        session.write_protocol,
+        session.coordination_protocol,
+        session.coordination.as_ref(),
+    )
+}
+
+fn validate_coordination_parts(
+    id: &str,
+    write_protocol: i32,
+    coordination_protocol: i32,
+    coordination: Option<&CoordinationDoc>,
+) -> Result<(), StoreError> {
+    if write_protocol != super::SESSION_WRITE_PROTOCOL {
         return Err(StoreError::Malformed(format!(
-            "session {} carries an unknown coordination protocol",
-            session.id
+            "session {} carries an unknown write protocol",
+            id
         )));
     }
-    let Some(state) = session.coordination.as_ref() else {
+    if coordination_protocol != super::SESSION_COORDINATION_PROTOCOL {
+        return Err(StoreError::Malformed(format!(
+            "session {} carries an unknown coordination protocol",
+            id
+        )));
+    }
+    let Some(state) = coordination else {
         return Ok(());
     };
     let generation = loaded_generation(state.authority_generation)?;
@@ -797,40 +854,40 @@ pub(super) fn validate_coordination_state(session: &SessionDoc) -> Result<(), St
         (0, Some(_)) => {
             return Err(StoreError::Malformed(format!(
                 "session {} conversation epoch and link token disagree",
-                session.id
+                id
             )))
         }
         (_, Some("")) => {
             return Err(StoreError::Malformed(format!(
                 "session {} conversation link token is empty",
-                session.id
+                id
             )))
         }
         (_, Some(_)) => {}
     }
     if let Some(opening) = state.conversation_opening.as_ref() {
-        opening.to_core(&layer2_core::SessionId(session.id.clone()))?;
+        opening.to_core(&layer2_core::SessionId(id.to_owned()))?;
         if state.server_now.is_none() {
             return Err(StoreError::Malformed(format!(
                 "session {} conversation opening has no coordination clock",
-                session.id
+                id
             )));
         }
     }
     if next < generation {
         return Err(StoreError::Malformed(format!(
             "session {} runtime generation floor is behind current authority",
-            session.id
+            id
         )));
     }
     if let Some(lease) = state.lease.as_ref() {
-        let lease = lease.to_core(&layer2_core::SessionId(session.id.clone()))?;
+        let lease = lease.to_core(&layer2_core::SessionId(id.to_owned()))?;
         if lease.operation == SessionOperation::Interact {
             let lease_epoch = interaction_token_epoch(&lease.token)?;
             if lease_epoch == 0 || lease_epoch != interaction_epoch {
                 return Err(StoreError::Malformed(format!(
                     "session {} interaction lease has an invalid epoch",
-                    session.id
+                    id
                 )));
             }
         }
@@ -1649,7 +1706,7 @@ pub(super) fn validate_session_coordination_receipts(
 pub(super) fn coordination_clock_update() -> Document {
     doc! {
         "$set": {
-            super::WRITE_PROTOCOL_FIELD: super::WRITE_PROTOCOL,
+            super::WRITE_PROTOCOL_FIELD: super::SESSION_WRITE_PROTOCOL,
             super::COORDINATION_PROTOCOL_FIELD: super::SESSION_COORDINATION_PROTOCOL,
         },
         "$max": { "revision": 0_i64 },
@@ -2968,15 +3025,7 @@ impl MongoSessionStore {
         &self,
         id: &layer2_core::SessionId,
     ) -> Result<Vec<RuntimeCleanup>, StoreError> {
-        if self
-            .sessions
-            .find_one(doc! { "_id": &id.0 })
-            .await
-            .map_err(|error| {
-                StoreError::Unavailable(format!("read session before cleanup debt: {error}"))
-            })?
-            .is_none()
-        {
+        if self.mongo_session_identity(id).await?.is_none() {
             return Ok(Vec::new());
         }
         let mut cursor = self
@@ -2995,6 +3044,27 @@ impl MongoSessionStore {
         cleanups.sort_by(|left, right| left.token.cmp(&right.token));
         Ok(cleanups)
     }
+
+    /// Read only the identity needed to distinguish an absent session before
+    /// querying its cleanup receipts. Session documents can carry staged skill
+    /// bodies, none of which belongs in this per-sweep existence check.
+    pub(super) async fn mongo_session_identity(
+        &self,
+        id: &layer2_core::SessionId,
+    ) -> Result<Option<Document>, StoreError> {
+        self.sessions
+            .clone_with_type::<Document>()
+            .find_one(doc! { "_id": &id.0 })
+            .projection(session_identity_projection())
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("read session before cleanup debt: {error}"))
+            })
+    }
+}
+
+fn session_identity_projection() -> Document {
+    doc! { "_id": 1_i32 }
 }
 
 pub(super) fn active_cleanup_filter(id: &layer2_core::SessionId) -> Document {
@@ -4661,7 +4731,7 @@ mod tests {
             coordination_clock_update(),
             doc! {
                 "$set": {
-                    super::super::WRITE_PROTOCOL_FIELD: super::super::WRITE_PROTOCOL,
+                    super::super::WRITE_PROTOCOL_FIELD: super::super::SESSION_WRITE_PROTOCOL,
                     super::super::COORDINATION_PROTOCOL_FIELD:
                         super::super::SESSION_COORDINATION_PROTOCOL,
                 },

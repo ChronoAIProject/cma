@@ -897,7 +897,8 @@ async fn two_queued_writers_keep_each_event_with_its_own_record_snapshot() {
 #[tokio::test]
 async fn deletion_in_another_service_prevents_stale_resurrection() {
     let store = Arc::new(FakeStore::default());
-    let base = base_record();
+    let mut base = base_record();
+    base.skill_packs = crate::store::SkillPackState::Cleaned;
     store.seed(&base).await.expect("seed record");
     let stale_service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
     let deleting_service = service_over(store.clone(), Arc::new(FakeAdapter::default()));
