@@ -64,6 +64,14 @@ Beginning or reconnecting consent returns a NyxID authorization URL; the caller
 redirects the browser there and resumes the same Launch after CMA's callback. The
 callback itself never starts work.
 
+`revoke_trigger_connection` is a keyed command over one exact owned UserService.
+Reuse the same key only to reconcile the same unresolved request. The returned
+public connection projection proves CMA accepted the command, but does not claim
+that every previously issued provider credential stopped working at that exact
+instant. Revocation preserves Launch, workspace, branch, commit, and pull-request
+history; affected Launches recover through `AuthRequired` after another eligible
+connection is selected and preflighted.
+
 ```rust,no_run
 use cma_sdk::{
     Client, Launch, LaunchStartRequest, SelectLaunchConnectionRequest,
@@ -79,6 +87,13 @@ println!("{}", preview.public_summary);
 let mut launch = client
     .create_or_resume_launch(public_id, "launch-create-01")
     .await?;
+let runtime = launch
+    .runtime_admission
+    .as_ref()
+    .ok_or_else(|| std::io::Error::other("runtime admission is unavailable"))?;
+if runtime.kernel != cma_sdk::TriggerKernel::Codex {
+    return Err(std::io::Error::other("unsupported locked Trigger kernel").into());
+}
 let connections = client.list_trigger_connections().await?;
 let connection = connections
     .first()
@@ -117,16 +132,22 @@ client
 
 `Start` is bound to `launch.effective.digest`. A stale `revision_number` or
 digest is refused instead of starting a configuration the contributor did not
-review. Workflow acknowledgement is required only when `workflow_paths` is
+review. `runtime_admission.kernel` is the closed, server-owned kernel selection
+shown before Start; it is independent of the runtime image string and capability
+inventory. Workflow acknowledgement is required only when `workflow_paths` is
 nonempty and does not grant additional GitHub scope.
 
 ## Progress, failure, and recovery
 
 `read_launch_progress` replays durable events strictly after the supplied cursor.
-Persist `next_cursor`, reconnect from it, and refresh `read_launch` when state
-changes. Use the structured `LaunchFailure` class, code, remediation, correlation
-id, and retry time. Resume the same Launch after a retryable or authentication
-failure. Never create a duplicate Launch as automatic recovery.
+Its limit accepts `1..=500`. Persist `next_cursor`, reconnect from it, and refresh
+`read_launch` when state changes. The SDK collapses an immediately repeated event
+only when its complete envelope is identical. It rejects conflicting duplicates,
+sequence gaps, mixed-Launch pages, and a `next_cursor` that does not equal the
+last unique accepted sequence (or the supplied cursor for an empty page). Use the
+structured `LaunchFailure` class, code, remediation, correlation id, and retry
+time. Resume the same Launch after a retryable or authentication failure. Never
+create a duplicate Launch as automatic recovery.
 
 `RecoveryRequired` means CMA cannot prove that an unsafe external effect did not
 happen. The fence intentionally prevents blind automatic retry. Cancellation is

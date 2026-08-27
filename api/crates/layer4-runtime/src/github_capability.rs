@@ -26,6 +26,11 @@ pub const MAX_QUERY_FIELDS: usize = 8;
 pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 pub const GITHUB_SERVICE_SLUG: &str = "api-github";
 
+pub(crate) const AUDIT_EVENT_NAME: &str = "cma_trigger_github_capability_decision";
+pub(crate) const AUDIT_SCHEMA_VERSION: u64 = 1;
+pub(crate) const AUDIT_ALLOWED_CODE: &str = "allowed";
+pub(crate) const AUDIT_UNCLASSIFIED_OPERATION: &str = "unclassified";
+
 const SIGNING_DOMAIN: &[u8] = b"CMA_GITHUB_CAPABILITY_V1\0";
 const PLATFORM_PROXY_PREFIX: &[&str] = &["api", "v1", "proxy"];
 
@@ -254,12 +259,35 @@ pub struct CanonicalGithubRequest {
     pub body: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct CapabilityAuditResources {
+    upstream_repository_id: Option<u64>,
+    upstream_owner_id: Option<u64>,
+    fork_repository_id: Option<u64>,
+    fork_owner_id: Option<u64>,
+}
+
+impl CapabilityAuditResources {
+    fn from_document(document: &CapabilityDocument) -> Self {
+        match document {
+            CapabilityDocument::Policy { upstream, fork, .. } => Self {
+                upstream_repository_id: Some(upstream.repository_id),
+                upstream_owner_id: Some(upstream.owner_id),
+                fork_repository_id: Some(fork.repository_id),
+                fork_owner_id: Some(fork.owner_id),
+            },
+            CapabilityDocument::Tombstone { .. } => Self::default(),
+        }
+    }
+}
+
 /// Per-runtime evaluator. Public keys are immutable; policy replacement is one
 /// atomic write under a monotonic generation/fence comparison.
 #[derive(Clone)]
 pub struct GithubCapabilityGate {
     required: bool,
     expected_session_id: String,
+    expected_launch_id: String,
     passthrough_service_slugs: Arc<BTreeSet<String>>,
     verification_keys: Arc<BTreeMap<String, Vec<u8>>>,
     installed: Arc<RwLock<Option<InstalledDocument>>>,
@@ -274,9 +302,12 @@ impl GithubCapabilityGate {
         verification_keys_json: &str,
     ) -> Result<Self, String> {
         let expected_session_id = expected_session_id.into();
-        if required && !usable_identifier(&expected_session_id, 256) {
-            return Err("a capability-required runtime needs a usable session ID".into());
-        }
+        let expected_launch_id = match required {
+            true => launch_id_from_trigger_session(&expected_session_id).ok_or_else(|| {
+                "a capability-required runtime needs a deterministic Trigger session ID".to_string()
+            })?,
+            false => String::new(),
+        };
         let mut verification_keys = BTreeMap::new();
         if !verification_keys_json.trim().is_empty() {
             let encoded: BTreeMap<String, String> = serde_json::from_str(verification_keys_json)
@@ -311,6 +342,7 @@ impl GithubCapabilityGate {
         Ok(Self {
             required,
             expected_session_id,
+            expected_launch_id,
             passthrough_service_slugs: Arc::new(passthrough_service_slugs),
             verification_keys: Arc::new(verification_keys),
             installed: Arc::new(RwLock::new(None)),
@@ -387,12 +419,23 @@ impl GithubCapabilityGate {
         let route = match classify_platform_route(uri.path(), &self.passthrough_service_slugs) {
             Ok(PlatformRoute::Passthrough) => return Ok(None),
             Ok(PlatformRoute::Github(path)) => path,
-            Err(refusal) => return self.refuse(refusal).await,
+            Err(refusal) => {
+                return self
+                    .refuse_request(refusal, None, self.current_audit_resources().await)
+                    .await;
+            }
         };
         let installed = self.installed.read().await.clone();
         let Some(installed) = installed.as_ref() else {
-            return self.refuse(CapabilityRefusal::MissingPolicy).await;
+            return self
+                .refuse_request(
+                    CapabilityRefusal::MissingPolicy,
+                    None,
+                    CapabilityAuditResources::default(),
+                )
+                .await;
         };
+        let audit_resources = CapabilityAuditResources::from_document(&installed.document);
         let CapabilityDocument::Policy {
             service_id,
             fork,
@@ -403,24 +446,32 @@ impl GithubCapabilityGate {
             ..
         } = &installed.document
         else {
-            return self.refuse(CapabilityRefusal::Revoked).await;
+            return self
+                .refuse_request(CapabilityRefusal::Revoked, None, audit_resources)
+                .await;
         };
         if now_epoch_seconds.saturating_add(MAX_CLOCK_SKEW_SECONDS) < *not_before_epoch_seconds
             || now_epoch_seconds > expires_at_epoch_seconds.saturating_add(MAX_CLOCK_SKEW_SECONDS)
         {
-            return self.refuse(CapabilityRefusal::Expired).await;
+            return self
+                .refuse_request(CapabilityRefusal::Expired, None, audit_resources)
+                .await;
         }
         let query = match parse_query(uri.query()) {
             Ok(query) => query,
             Err(refusal) => {
-                return self.refuse(refusal).await;
+                return self.refuse_request(refusal, None, audit_resources).await;
             }
         };
         if query.get("_nyxid_via").map(String::as_str) != Some(service_id.as_str()) {
-            return self.refuse(CapabilityRefusal::ResourceMismatch).await;
+            return self
+                .refuse_request(CapabilityRefusal::ResourceMismatch, None, audit_resources)
+                .await;
         }
         if body.len() > MAX_BODY_BYTES {
-            return self.refuse(CapabilityRefusal::MalformedRequest).await;
+            return self
+                .refuse_request(CapabilityRefusal::MalformedRequest, None, audit_resources)
+                .await;
         }
         let allowed: BTreeSet<_> = github_operation_classes.iter().copied().collect();
         let canonical = match validate_github_request(
@@ -433,14 +484,38 @@ impl GithubCapabilityGate {
             service_id,
         ) {
             Ok(request) if allowed.contains(&request.operation) => request,
-            Ok(_) => {
-                return self.refuse(CapabilityRefusal::OperationDenied).await;
+            Ok(request) => {
+                return self
+                    .refuse_request(
+                        CapabilityRefusal::OperationDenied,
+                        Some(request.operation),
+                        audit_resources,
+                    )
+                    .await;
             }
             Err(refusal) => {
-                return self.refuse(refusal).await;
+                return self.refuse_request(refusal, None, audit_resources).await;
             }
         };
+        self.audit_allowed(canonical.operation, audit_resources);
         Ok(Some(canonical))
+    }
+
+    /// Record a body failure that occurred before the normal policy evaluator
+    /// could run. Entitled non-GitHub services remain outside this audit stream.
+    pub async fn refuse_unreadable_body(&self, uri: &Uri) -> Option<CapabilityRefusal> {
+        if !self.required
+            || matches!(
+                classify_platform_route(uri.path(), &self.passthrough_service_slugs),
+                Ok(PlatformRoute::Passthrough)
+            )
+        {
+            return None;
+        }
+        let refusal = CapabilityRefusal::MalformedRequest;
+        self.record_request_refusal(refusal, None, self.current_audit_resources().await)
+            .await;
+        Some(refusal)
     }
 
     pub async fn snapshot(&self) -> CapabilitySnapshot {
@@ -535,6 +610,7 @@ impl GithubCapabilityGate {
         }
         let (session_id, audience) = document.session_and_runtime();
         if session_id != self.expected_session_id
+            || document.launch_id() != self.expected_launch_id
             || audience != runtime_audience
             || document.audience() != POLICY_AUDIENCE
         {
@@ -558,7 +634,7 @@ impl GithubCapabilityGate {
                     || !usable_identifier(service_id, 256)
                     || !usable_identifier(issuer, 256)
                     || numeric_binding_observed_at.is_empty()
-                    || !valid_ref(allowed_ref)
+                    || !valid_head_ref(allowed_ref)
                     || !valid_repository_binding(upstream, false)
                     || !valid_repository_binding(fork, true)
                     || fork.fork_parent_id != Some(upstream.repository_id)
@@ -609,6 +685,69 @@ impl GithubCapabilityGate {
     async fn refuse<T>(&self, refusal: CapabilityRefusal) -> Result<T, CapabilityRefusal> {
         *self.last_refusal.lock().await = Some(refusal);
         Err(refusal)
+    }
+
+    async fn current_audit_resources(&self) -> CapabilityAuditResources {
+        self.installed
+            .read()
+            .await
+            .as_ref()
+            .map(|installed| CapabilityAuditResources::from_document(&installed.document))
+            .unwrap_or_default()
+    }
+
+    async fn refuse_request<T>(
+        &self,
+        refusal: CapabilityRefusal,
+        operation: Option<GithubOperationClass>,
+        resources: CapabilityAuditResources,
+    ) -> Result<T, CapabilityRefusal> {
+        self.record_request_refusal(refusal, operation, resources)
+            .await;
+        Err(refusal)
+    }
+
+    async fn record_request_refusal(
+        &self,
+        refusal: CapabilityRefusal,
+        operation: Option<GithubOperationClass>,
+        resources: CapabilityAuditResources,
+    ) {
+        *self.last_refusal.lock().await = Some(refusal);
+        let operation = operation.map_or(AUDIT_UNCLASSIFIED_OPERATION, |value| value.wire_name());
+        tracing::warn!(
+            target: "cma_trigger::github_capability_audit",
+            event_name = AUDIT_EVENT_NAME,
+            schema_version = AUDIT_SCHEMA_VERSION,
+            session_id = %self.expected_session_id,
+            launch_id = %self.expected_launch_id,
+            operation_class = operation,
+            decision = "deny",
+            decision_code = refusal.wire_name(),
+            upstream_repository_id = resources.upstream_repository_id,
+            upstream_owner_id = resources.upstream_owner_id,
+            fork_repository_id = resources.fork_repository_id,
+            fork_owner_id = resources.fork_owner_id,
+            "CMA Trigger GitHub capability decision"
+        );
+    }
+
+    fn audit_allowed(&self, operation: GithubOperationClass, resources: CapabilityAuditResources) {
+        tracing::info!(
+            target: "cma_trigger::github_capability_audit",
+            event_name = AUDIT_EVENT_NAME,
+            schema_version = AUDIT_SCHEMA_VERSION,
+            session_id = %self.expected_session_id,
+            launch_id = %self.expected_launch_id,
+            operation_class = operation.wire_name(),
+            decision = "allow",
+            decision_code = AUDIT_ALLOWED_CODE,
+            upstream_repository_id = resources.upstream_repository_id,
+            upstream_owner_id = resources.upstream_owner_id,
+            fork_repository_id = resources.fork_repository_id,
+            fork_owner_id = resources.fork_owner_id,
+            "CMA Trigger GitHub capability decision"
+        );
     }
 }
 
@@ -712,6 +851,7 @@ fn validate_github_request(
     allowed_ref: &str,
     service_id: &str,
 ) -> Result<CanonicalGithubRequest, CapabilityRefusal> {
+    let allowed_branch = allowed_branch(allowed_ref)?;
     query.remove("_nyxid_via");
     if route.len() == 2 && route[0] == "repositories" {
         if method != Method::GET
@@ -751,7 +891,7 @@ fn validate_github_request(
     }
 
     if method == Method::GET && body.is_empty() {
-        if let Some(operation) = validate_read_route(tail, &query, allowed_ref)? {
+        if let Some(operation) = validate_read_route(tail, &query, allowed_branch)? {
             return canonical(operation, route, &query, Vec::new(), service_id);
         }
     }
@@ -799,7 +939,7 @@ fn validate_github_request(
     if method == Method::PATCH
         && tail.len() >= 4
         && tail[..3] == ["git", "refs", "heads"]
-        && tail[3..].join("/") == allowed_ref
+        && tail[3..].join("/") == allowed_branch
         && query.is_empty()
     {
         let canonical_body = canonical_json::<RefUpdate>(body, RefUpdate::validate)?;
@@ -817,7 +957,7 @@ fn validate_github_request(
 fn validate_read_route(
     tail: &[String],
     query: &BTreeMap<String, String>,
-    allowed_ref: &str,
+    allowed_branch: &str,
 ) -> Result<Option<GithubOperationClass>, CapabilityRefusal> {
     if tail.len() == 3 && tail[0] == "git" && matches!(tail[1].as_str(), "blobs" | "commits") {
         return if valid_sha(&tail[2]) && query.is_empty() {
@@ -837,25 +977,27 @@ fn validate_read_route(
     }
     if tail.len() >= 4
         && tail[..3] == ["git", "ref", "heads"]
-        && tail[3..].join("/") == allowed_ref
+        && tail[3..].join("/") == allowed_branch
         && query.is_empty()
     {
         return Ok(Some(GithubOperationClass::StatusRead));
     }
     if tail.len() >= 2
         && tail[0] == "branches"
-        && tail[1..].join("/") == allowed_ref
+        && tail[1..].join("/") == allowed_branch
         && query.is_empty()
     {
         return Ok(Some(GithubOperationClass::StatusRead));
     }
     if tail.len() == 3
         && tail[0] == "commits"
-        && valid_sha(&tail[1])
         && matches!(tail[2].as_str(), "status" | "check-runs" | "check-suites")
-        && query.is_empty()
     {
-        return Ok(Some(GithubOperationClass::StatusRead));
+        return if valid_sha(&tail[1]) && query.is_empty() {
+            Ok(Some(GithubOperationClass::StatusRead))
+        } else {
+            Err(CapabilityRefusal::MalformedRequest)
+        };
     }
     Ok(None)
 }
@@ -1021,7 +1163,7 @@ struct RefCreate {
 
 impl RefCreate {
     fn validate(&self, allowed_ref: &str) -> Result<(), CapabilityRefusal> {
-        if self.reference != format!("refs/heads/{allowed_ref}") || !valid_sha(&self.sha) {
+        if self.reference != allowed_ref || !valid_sha(&self.sha) {
             return Err(CapabilityRefusal::ResourceMismatch);
         }
         Ok(())
@@ -1058,6 +1200,25 @@ fn valid_repository_binding(binding: &RepositoryBinding, fork: bool) -> bool {
         }
 }
 
+fn launch_id_from_trigger_session(session_id: &str) -> Option<String> {
+    let simple = session_id.strip_prefix("sesn_trg_")?;
+    if simple.len() != 32
+        || !simple
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return None;
+    }
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &simple[..8],
+        &simple[8..12],
+        &simple[12..16],
+        &simple[16..20],
+        &simple[20..]
+    ))
+}
+
 fn usable_identifier(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
@@ -1084,6 +1245,21 @@ fn valid_ref(value: &str) -> bool {
         && !value.contains('%')
         && !value.contains('\\')
         && value.split('/').all(usable_slug)
+}
+
+fn valid_head_ref(value: &str) -> bool {
+    allowed_branch(value).is_ok()
+}
+
+fn allowed_branch(value: &str) -> Result<&str, CapabilityRefusal> {
+    let branch = value
+        .strip_prefix("refs/heads/")
+        .ok_or(CapabilityRefusal::ResourceMismatch)?;
+    if valid_ref(branch) {
+        Ok(branch)
+    } else {
+        Err(CapabilityRefusal::ResourceMismatch)
+    }
 }
 
 fn valid_sha(value: &str) -> bool {

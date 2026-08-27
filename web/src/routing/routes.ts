@@ -2,9 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 
 /** The complete browser-route vocabulary defined by Web_Style.md section 13b. */
+export type TriggerAuthError = 'expired' | 'cancelled' | 'failed';
+
 export type AppRoute =
   | { readonly kind: 'home' }
-  | { readonly kind: 'trigger'; readonly publicId: string }
+  | {
+      readonly kind: 'trigger';
+      readonly publicId: string;
+      readonly authError?: TriggerAuthError;
+    }
+  | { readonly kind: 'trigger_recovery'; readonly launchId: string }
   | { readonly kind: 'launch'; readonly launchId: string }
   | { readonly kind: 'contribute'; readonly launchId: string }
   | { readonly kind: 'session'; readonly sessionId: string }
@@ -21,8 +28,15 @@ function segment(value: string): string | undefined {
   }
 }
 
-/** Parse one pathname without granting query or fragment data any authority. */
-export function parseRoute(pathname: string): AppRoute {
+function triggerAuthError(search: string): TriggerAuthError | undefined {
+  const values = new URLSearchParams(search).getAll('auth_error');
+  if (values.length !== 1) return undefined;
+  const [value] = values;
+  return value === 'expired' || value === 'cancelled' || value === 'failed' ? value : undefined;
+}
+
+/** Parse one location; query data is retained only as a closed, display-only error hint. */
+export function parseRoute(pathname: string, search = ''): AppRoute {
   if (pathname === '/' || pathname === '') {
     return { kind: 'home' };
   }
@@ -33,10 +47,21 @@ export function parseRoute(pathname: string): AppRoute {
 
   const identifier = parts[2] === undefined ? undefined : segment(parts[2]);
   if (parts.length === 3 && parts[1] === 'triggers' && identifier !== undefined) {
-    return { kind: 'trigger', publicId: identifier };
+    const authError = triggerAuthError(search);
+    return authError === undefined
+      ? { kind: 'trigger', publicId: identifier }
+      : { kind: 'trigger', publicId: identifier, authError };
   }
   if (parts.length === 3 && parts[1] === 'launches' && identifier !== undefined) {
     return { kind: 'launch', launchId: identifier };
+  }
+  if (
+    parts.length === 4 &&
+    parts[1] === 'launches' &&
+    identifier !== undefined &&
+    parts[3] === 'recover'
+  ) {
+    return { kind: 'trigger_recovery', launchId: identifier };
   }
   if (
     parts.length === 4 &&
@@ -58,6 +83,8 @@ export function routePath(route: Exclude<AppRoute, { readonly kind: 'not_found' 
       return '/';
     case 'trigger':
       return `/triggers/${encodeURIComponent(route.publicId)}`;
+    case 'trigger_recovery':
+      return `/launches/${encodeURIComponent(route.launchId)}/recover`;
     case 'launch':
       return `/launches/${encodeURIComponent(route.launchId)}`;
     case 'contribute':
@@ -80,11 +107,13 @@ export interface AppRouter {
 
 /** A deliberately small History API router: navigation changes views and nothing else. */
 export function useAppRouter(): AppRouter {
-  const [route, setRoute] = useState<AppRoute>(() => parseRoute(window.location.pathname));
+  const [route, setRoute] = useState<AppRoute>(() =>
+    parseRoute(window.location.pathname, window.location.search),
+  );
 
   useEffect(() => {
     const onPopState = () => {
-      setRoute(parseRoute(window.location.pathname));
+      setRoute(parseRoute(window.location.pathname, window.location.search));
     };
     window.addEventListener('popstate', onPopState);
     return () => {
@@ -94,7 +123,7 @@ export function useAppRouter(): AppRouter {
 
   const navigate = useCallback<AppRouter['navigate']>((next, options) => {
     const path = routePath(next);
-    if (path === window.location.pathname) {
+    if (path === window.location.pathname && window.location.search === '') {
       setRoute(next);
       return;
     }

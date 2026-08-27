@@ -13,13 +13,13 @@ use axum::routing::any;
 use cma_sdk::{
     ApprovalDecision, BeginConnectionRequest, Client, Conformance, CreateSessionRequest,
     CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationRequest,
-    LaunchProgress, LaunchStartRequest, MAX_PAGE_SIZE, PageWalkLimits, PublishTriggerRequest,
-    PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
-    RecoverInitialPromptRequest, ResponseMetadata, RetryPolicy, ScreenSnapshot,
-    SelectLaunchConnectionRequest, Session, SessionId, SessionInput, SessionPageRequest,
-    SessionStatus, TerminalGeometry, TriggerConnection, TriggerContentDraft, TriggerDraft,
-    TriggerPreview, TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
-    UpdateTriggerRequest, Usage,
+    LaunchEventKind, LaunchProgress, LaunchStartRequest, LaunchState, MAX_PAGE_SIZE,
+    PageWalkLimits, PublishTriggerRequest, PullRequestConfirmRequest, PullRequestDraft,
+    PullRequestOperation, PullRequestReviewRequest, RecoverInitialPromptRequest, ResponseMetadata,
+    RetryPolicy, ScreenSnapshot, SelectLaunchConnectionRequest, Session, SessionId, SessionInput,
+    SessionPageRequest, SessionStatus, TerminalGeometry, TriggerConnection, TriggerConnectionState,
+    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerRepositorySelection, TriggerRevision,
+    UpdateLaunchOverridesRequest, UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -326,6 +326,13 @@ fn trigger_connection_response() -> String {
     .to_string()
 }
 
+fn revoked_trigger_connection_response() -> String {
+    let mut connection = fixture(&trigger_connection_response());
+    connection["state_version"] = serde_json::json!(3);
+    connection["state"] = serde_json::json!("inactive");
+    connection.to_string()
+}
+
 fn connection_authorization_response() -> String {
     serde_json::json!({
         "service_id": "service_fixture",
@@ -359,9 +366,24 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     assert_eq!(repository.source_sha, "a".repeat(40));
     let launch: Launch = serde_json::from_str(LAUNCH).expect("Launch fixture is typed");
     assert_eq!(launch.steps.len(), 15);
+    assert_eq!(
+        launch
+            .runtime_admission
+            .as_ref()
+            .map(|runtime| runtime.kernel),
+        Some(cma_sdk::TriggerKernel::Codex)
+    );
+    let mut unknown_kernel = fixture(LAUNCH);
+    unknown_kernel["runtime_admission"]["kernel"] = serde_json::json!("future_kernel");
+    assert!(serde_json::from_value::<Launch>(unknown_kernel).is_err());
     let progress: LaunchProgress =
         serde_json::from_str(LAUNCH_PROGRESS).expect("Launch progress fixture is typed");
     assert_eq!(progress.next_cursor, 3);
+    assert_eq!(progress.events[0].progress.state, LaunchState::Draft);
+    assert!(matches!(
+        &progress.events[0].kind,
+        LaunchEventKind::Created { steps } if steps.len() == 15
+    ));
     let review: DiffReview =
         serde_json::from_str(DIFF_REVIEW).expect("diff-review fixture is typed");
     assert_eq!(
@@ -470,6 +492,7 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
     let revision = trigger_revision_response();
     let authorization = connection_authorization_response();
     let connection = trigger_connection_response();
+    let revoked_connection = revoked_trigger_connection_response();
     let stub = Stub::start([
         StubResponse::json(StatusCode::CREATED, &draft),
         StubResponse::json(StatusCode::OK, &draft),
@@ -477,6 +500,7 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         StubResponse::json(StatusCode::OK, &revision),
         StubResponse::json(StatusCode::OK, &authorization),
         StubResponse::json(StatusCode::OK, &authorization),
+        StubResponse::json(StatusCode::OK, &revoked_connection),
         StubResponse::json(StatusCode::OK, &connection),
         StubResponse::json(StatusCode::CREATED, LAUNCH),
         StubResponse::json(StatusCode::CREATED, LAUNCH),
@@ -544,6 +568,11 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         .reconnect_trigger_connection("service_fixture", "exact-05")
         .await
         .unwrap();
+    let revoked: TriggerConnection = client
+        .revoke_trigger_connection("service_fixture", "exact-06")
+        .await
+        .unwrap();
+    assert_eq!(revoked.state, TriggerConnectionState::Inactive);
     let _: TriggerConnection = client
         .preflight_trigger_connection("service_fixture")
         .await
@@ -651,6 +680,10 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
             "/proxy/api/v1/trigger-connections/service_fixture/reconnect",
         ),
         (
+            Method::DELETE,
+            "/proxy/api/v1/trigger-connections/service_fixture",
+        ),
+        (
             Method::GET,
             "/proxy/api/v1/trigger-connections/service_fixture/preflight",
         ),
@@ -701,6 +734,7 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         Some("exact-03"),
         Some("exact-04"),
         Some("exact-05"),
+        Some("exact-06"),
         None,
         Some("exact-07"),
         Some("exact-08"),
@@ -722,17 +756,33 @@ async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
         assert_eq!(request.idempotency_key.as_deref(), key, "command {index}");
     }
     assert_eq!(
-        fixture(std::str::from_utf8(&requests[11].body).unwrap()),
+        fixture(std::str::from_utf8(&requests[12].body).unwrap()),
         fixture(LAUNCH_START_REQUEST)
     );
     assert_eq!(
-        fixture(std::str::from_utf8(&requests[17].body).unwrap()),
+        fixture(std::str::from_utf8(&requests[18].body).unwrap()),
         serde_json::json!({
             "expected_revision": 12,
             "snapshot_digest": "retained-payload-hash",
             "acknowledge_duplicate_execution_risk": true,
         })
     );
+}
+
+#[tokio::test]
+async fn trigger_connection_revocation_rejects_a_different_service_projection() {
+    let mut connection = fixture(&trigger_connection_response());
+    connection["service_id"] = serde_json::json!("service_other");
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &connection.to_string())]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client
+            .revoke_trigger_connection("service_fixture", "revoke-exact-key")
+            .await,
+        Err(Error::Protocol { ref message })
+            if message.contains("different GitHub connection")
+    ));
 }
 
 #[tokio::test]
@@ -820,15 +870,128 @@ async fn pull_request_review_is_keyless_while_confirmation_is_keyed() {
 
 #[tokio::test]
 async fn trigger_contract_rejects_internal_fields_before_typed_decoding() {
+    let forbidden = [
+        "idempotency_key_hash",
+        "intent_key",
+        "provider_request_id",
+        "object_reference",
+        "baseline_object_reference",
+        "backing_key_id",
+        "worker_fencing_token",
+        "fencing_counter",
+        "subject_token_generation",
+        "session_credential_generation",
+        "session_credential_authority",
+        "custody_generation",
+        "provider_key_id",
+        "provider_state_version",
+        "grant_fingerprint",
+        "checkpoint_object",
+        "diff_artifact_object",
+        "prompt_origin_key",
+        "prompt_payload_hash",
+    ];
+    let responses = forbidden.iter().map(|field| {
+        let mut launch = fixture(LAUNCH);
+        launch["steps"][0][*field] = serde_json::json!(99);
+        StubResponse::json(StatusCode::OK, &launch.to_string())
+    });
+    let stub = Stub::start(responses).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    for field in forbidden {
+        assert!(matches!(
+            client.read_launch("launch_fixture").await,
+            Err(Error::Protocol { ref message }) if message.contains(field)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn trigger_contract_rejects_unknown_closed_enum_values() {
     let mut launch = fixture(LAUNCH);
-    launch["steps"][0]["worker_fencing_token"] = serde_json::json!(99);
+    launch["effective"]["permission"] = serde_json::json!("future_permission");
     let stub = Stub::start([StubResponse::json(StatusCode::OK, &launch.to_string())]).await;
     let (client, _) = stub_client(&stub, 1);
 
     assert!(matches!(
         client.read_launch("launch_fixture").await,
-        Err(Error::Protocol { ref message }) if message.contains("worker_fencing_token")
+        Err(Error::Protocol { ref message })
+            if message.contains("future_permission") && message.contains("unknown variant")
     ));
+}
+
+#[tokio::test]
+async fn launch_progress_normalizes_identical_duplicates_and_rejects_unsafe_replay() {
+    let base = fixture(LAUNCH_PROGRESS);
+    let launch_id = base["launch_id"]
+        .as_str()
+        .expect("progress fixture has a Launch id")
+        .to_owned();
+
+    let mut identical = base.clone();
+    let duplicate = identical["events"][0].clone();
+    identical["events"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, duplicate);
+
+    let mut conflicting = base.clone();
+    let mut duplicate = conflicting["events"][0].clone();
+    duplicate["correlation_id"] = serde_json::json!("conflicting-correlation");
+    conflicting["events"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, duplicate);
+
+    let mut gap = base.clone();
+    gap["events"].as_array_mut().unwrap().remove(1);
+
+    let mut mixed_launch = base.clone();
+    mixed_launch["events"][1]["launch_id"] = serde_json::json!("launch_other");
+
+    let mut bad_cursor = base.clone();
+    bad_cursor["next_cursor"] = serde_json::json!(4);
+
+    let mut wrong_page = base.clone();
+    wrong_page["launch_id"] = serde_json::json!("launch_other");
+
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, &identical.to_string()),
+        StubResponse::json(StatusCode::OK, &conflicting.to_string()),
+        StubResponse::json(StatusCode::OK, &gap.to_string()),
+        StubResponse::json(StatusCode::OK, &mixed_launch.to_string()),
+        StubResponse::json(StatusCode::OK, &bad_cursor.to_string()),
+        StubResponse::json(StatusCode::OK, &wrong_page.to_string()),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let progress = client
+        .read_launch_progress(&launch_id, 0, 100)
+        .await
+        .expect("an identical adjacent duplicate is harmless");
+    assert_eq!(progress.events.len(), 3);
+    assert_eq!(progress.next_cursor, 3);
+
+    for expected in [
+        "conflicting duplicate",
+        "sequence gap",
+        "belongs to launch_other",
+        "next_cursor 4",
+        "response belongs to launch_other",
+    ] {
+        assert!(matches!(
+            client.read_launch_progress(&launch_id, 0, 500).await,
+            Err(Error::Protocol { ref message }) if message.contains(expected)
+        ));
+    }
+
+    assert!(matches!(
+        client.read_launch_progress(&launch_id, 0, 501).await,
+        Err(Error::Protocol { ref message }) if message.contains("1 through 500")
+    ));
+    assert_eq!(stub.requests().await.len(), 6);
 }
 
 #[tokio::test]

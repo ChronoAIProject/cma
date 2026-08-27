@@ -3246,22 +3246,47 @@ fn observed_initial_prompt_state(
             },
         );
     }
-    if observing
-        && matches!(
-            kind,
-            EventKind::MessageCommitted { .. }
-                | EventKind::ToolCallStarted { .. }
-                | EventKind::ToolCallUpdated { .. }
-                | EventKind::ApprovalRequested { .. }
-        )
-    {
+    if observing && initial_prompt_execution_evidence(kind).is_some() {
         return Some(State::ExecutionObserved);
     }
     None
 }
 
+/// Map Layer 2's durable events onto Layer 3's closed turn-activity contract.
+///
+/// This function is the production allowlist used by initial-prompt recovery.
+/// Keeping the semantic class in the return value, rather than reducing it to
+/// a boolean, lets tests assert exact parity with every ACP/DSH activity class.
+pub(crate) fn initial_prompt_execution_evidence(
+    kind: &EventKind,
+) -> Option<layer3_adapter::TurnScopedEvidence> {
+    use layer3_adapter::TurnScopedEvidence as Evidence;
+
+    match kind {
+        EventKind::MessageCommitted { .. } => Some(Evidence::AgentMessage),
+        EventKind::ToolCallStarted { .. } => Some(Evidence::ToolCallStarted),
+        EventKind::ToolCallUpdated { .. } => Some(Evidence::ToolCallUpdated),
+        EventKind::ApprovalRequested { .. } => Some(Evidence::ApprovalRequested),
+        _ => None,
+    }
+}
+
 /// Record an inbound conversation event under the entry's durable link epoch.
 pub(crate) fn append_conversation(entry: &mut SessionEntry, kind: EventKind) {
+    append_conversation_with_prompt_evidence(entry, kind, true);
+}
+
+/// Record an inbound event while preserving the adapter's prompt-correlation
+/// decision.
+///
+/// An uncorrelated event is still durable conversation history. It simply
+/// cannot advance the Trigger initial-prompt outbox if queueing delayed it
+/// until after the dispatch fence.
+pub(crate) fn append_conversation_with_prompt_evidence(
+    entry: &mut SessionEntry,
+    kind: EventKind,
+    prompt_evidence: bool,
+) {
     let Some(authority) = entry.conversation_authority.clone() else {
         tracing::error!(
             session_id = %entry.session.id,
@@ -3270,14 +3295,16 @@ pub(crate) fn append_conversation(entry: &mut SessionEntry, kind: EventKind) {
         return;
     };
     let mut kinds = vec![kind];
-    if let Some(state) = observed_initial_prompt_state(entry, &kinds[0]) {
-        let initial = entry
-            .initial_prompt
-            .as_mut()
-            .expect("an observed initial prompt state has a durable outbox");
-        initial.delivery.state = state;
-        initial.delivery.updated_at = crate::clock::now_rfc3339();
-        kinds.push(EventKind::InitialPromptDeliveryChanged { state });
+    if prompt_evidence {
+        if let Some(state) = observed_initial_prompt_state(entry, &kinds[0]) {
+            let initial = entry
+                .initial_prompt
+                .as_mut()
+                .expect("an observed initial prompt state has a durable outbox");
+            initial.delivery.state = state;
+            initial.delivery.updated_at = crate::clock::now_rfc3339();
+            kinds.push(EventKind::InitialPromptDeliveryChanged { state });
+        }
     }
     let events = kinds
         .into_iter()

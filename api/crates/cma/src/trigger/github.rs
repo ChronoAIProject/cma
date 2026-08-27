@@ -6,7 +6,8 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use layer2_core::{
-    AuthorityProvenance, BranchRecord, ConnectedAccount, ConnectionSnapshot, ConnectionState,
+    AuthorityProvenance, BranchRecord, ConnectedAccount, ConnectionRevocationLease,
+    ConnectionRevocationRecord, ConnectionRevocationStore, ConnectionSnapshot, ConnectionState,
     DelegationState, ForkRecord, Launch, LaunchAuthority, PublisherAuthority,
     PublisherRepositoryRole, RepositoryIdentity, RepositoryVisibility, ScopeClass, SourceMode,
     SubjectId, TriggerAuthorityVerifier, TriggerConnection, TriggerConnectionAuthorization,
@@ -21,7 +22,10 @@ use serde_json::Value;
 use crate::auth::AuthState;
 
 mod workspace;
-pub(crate) use workspace::{ImportedWorkspace, WorkspaceContext, WorkspaceUnsupported};
+pub(crate) use workspace::{
+    build_baseline_archive_plan, workspace_blob_metadata, WorkspaceBlobMetadata, WorkspaceContext,
+    WorkspaceSourceEntry, WorkspaceSourcePlan, WorkspaceUnsupported,
+};
 mod publication;
 #[cfg(test)]
 pub(crate) use publication::{PreparedGitData, PublishedGitData};
@@ -37,6 +41,8 @@ const MAX_GITHUB_BODY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_USER_REPOSITORY_PAGES: u32 = 100;
 const USER_REPOSITORY_PAGE_SIZE: usize = 100;
 const MAX_GITHUB_TREE_ENTRIES: usize = 100_000;
+const CONNECTION_REVOCATION_LEASE_SECONDS: u64 = 30;
+const CONNECTION_REVOCATION_JOIN_ATTEMPTS: usize = 40;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum GithubBrokerError {
@@ -133,6 +139,7 @@ pub(crate) struct GithubBroker {
     base_url: Url,
     http: reqwest::Client,
     authority: Arc<dyn SubjectAuthoritySource>,
+    revocations: Arc<dyn ConnectionRevocationStore>,
 }
 
 #[derive(Clone)]
@@ -164,6 +171,235 @@ impl SubjectAuthoritySource for AuthState {
                     token_generation: authority.token_generation,
                 })
             })
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct TestConnectionRevocationStore {
+    records:
+        std::sync::Mutex<std::collections::BTreeMap<(String, String), ConnectionRevocationRecord>>,
+    fenced: std::sync::atomic::AtomicUsize,
+    fail_fencing_once: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(test)]
+impl TestConnectionRevocationStore {
+    fn key(owner: &SubjectId, service_id: &str) -> (String, String) {
+        (owner.0.clone(), service_id.to_string())
+    }
+
+    fn fenced(&self) -> usize {
+        self.fenced.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn fail_fencing_once(&self) {
+        self.fail_fencing_once
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl ConnectionRevocationStore for TestConnectionRevocationStore {
+    async fn insert_or_get_connection_revocation(
+        &self,
+        record: &ConnectionRevocationRecord,
+    ) -> Result<ConnectionRevocationRecord, layer2_core::TriggerStoreError> {
+        let mut records = self.records.lock().unwrap();
+        Ok(records
+            .entry(Self::key(&record.owner, &record.service_id))
+            .or_insert_with(|| record.clone())
+            .clone())
+    }
+
+    async fn get_connection_revocation(
+        &self,
+        owner: &SubjectId,
+        service_id: &str,
+    ) -> Result<Option<ConnectionRevocationRecord>, layer2_core::TriggerStoreError> {
+        Ok(self
+            .records
+            .lock()
+            .unwrap()
+            .get(&Self::key(owner, service_id))
+            .cloned())
+    }
+
+    async fn restart_connection_revocation(
+        &self,
+        expected_revision: u64,
+        record: &ConnectionRevocationRecord,
+    ) -> Result<ConnectionRevocationRecord, layer2_core::TriggerStoreError> {
+        let mut records = self.records.lock().unwrap();
+        let key = Self::key(&record.owner, &record.service_id);
+        let Some(current) = records.get(&key) else {
+            return Err(layer2_core::TriggerStoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: 0,
+            });
+        };
+        if current.revision != expected_revision
+            || current.settled_at.is_none()
+            || current
+                .provider_receipt
+                .as_ref()
+                .is_none_or(|receipt| receipt.state_version >= record.active_snapshot.state_version)
+        {
+            return Err(layer2_core::TriggerStoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: current.revision,
+            });
+        }
+        records.insert(key, record.clone());
+        Ok(record.clone())
+    }
+
+    async fn claim_connection_revocation(
+        &self,
+        owner: &SubjectId,
+        service_id: &str,
+        lease: &ConnectionRevocationLease,
+    ) -> Result<Option<ConnectionRevocationRecord>, layer2_core::TriggerStoreError> {
+        let mut records = self.records.lock().unwrap();
+        let Some(record) = records.get_mut(&Self::key(owner, service_id)) else {
+            return Ok(None);
+        };
+        if record.settled_at.is_some()
+            || record
+                .dispatch_lease
+                .as_ref()
+                .is_some_and(|held| held.expires_at > lease.acquired_at)
+        {
+            return Ok(None);
+        }
+        record.revision = record.revision.checked_add(1).ok_or_else(|| {
+            layer2_core::TriggerStoreError::Malformed(
+                "test connection revocation revision is exhausted".into(),
+            )
+        })?;
+        record.dispatch_lease = Some(lease.clone());
+        Ok(Some(record.clone()))
+    }
+
+    async fn record_connection_revocation_receipt(
+        &self,
+        expected_revision: u64,
+        lease_holder: &str,
+        record: &ConnectionRevocationRecord,
+    ) -> Result<ConnectionRevocationRecord, layer2_core::TriggerStoreError> {
+        self.replace_test_record(expected_revision, lease_holder, record, false)
+    }
+
+    async fn fence_launches_for_connection_revocation(
+        &self,
+        _owner: &SubjectId,
+        _service_id: &str,
+        _now: &str,
+        _correlation_id: &str,
+    ) -> Result<(), layer2_core::TriggerStoreError> {
+        if self
+            .fail_fencing_once
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(layer2_core::TriggerStoreError::Unavailable(
+                "injected Launch fencing failure".into(),
+            ));
+        }
+        self.fenced
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn settle_connection_revocation(
+        &self,
+        expected_revision: u64,
+        lease_holder: &str,
+        record: &ConnectionRevocationRecord,
+    ) -> Result<ConnectionRevocationRecord, layer2_core::TriggerStoreError> {
+        self.replace_test_record(expected_revision, lease_holder, record, true)
+    }
+
+    async fn release_connection_revocation(
+        &self,
+        expected_revision: u64,
+        lease_holder: &str,
+        owner: &SubjectId,
+        service_id: &str,
+    ) -> Result<(), layer2_core::TriggerStoreError> {
+        let mut records = self.records.lock().unwrap();
+        let Some(record) = records.get_mut(&Self::key(owner, service_id)) else {
+            return Err(layer2_core::TriggerStoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: 0,
+            });
+        };
+        if record.revision != expected_revision
+            || record
+                .dispatch_lease
+                .as_ref()
+                .is_none_or(|lease| lease.holder != lease_holder)
+        {
+            return Err(layer2_core::TriggerStoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: record.revision,
+            });
+        }
+        record.revision += 1;
+        record.dispatch_lease = None;
+        Ok(())
+    }
+
+    async fn list_settled_connection_revocations(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Vec<ConnectionRevocationRecord>, layer2_core::TriggerStoreError> {
+        let mut records = self
+            .records
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|record| &record.owner == owner && record.settled_at.is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| left.service_id.cmp(&right.service_id));
+        Ok(records)
+    }
+}
+
+#[cfg(test)]
+impl TestConnectionRevocationStore {
+    fn replace_test_record(
+        &self,
+        expected_revision: u64,
+        lease_holder: &str,
+        record: &ConnectionRevocationRecord,
+        settling: bool,
+    ) -> Result<ConnectionRevocationRecord, layer2_core::TriggerStoreError> {
+        let mut records = self.records.lock().unwrap();
+        let key = Self::key(&record.owner, &record.service_id);
+        let Some(current) = records.get(&key) else {
+            return Err(layer2_core::TriggerStoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: 0,
+            });
+        };
+        if current.revision != expected_revision
+            || current
+                .dispatch_lease
+                .as_ref()
+                .is_none_or(|lease| lease.holder != lease_holder)
+            || record.revision != expected_revision + 1
+            || record.provider_receipt.is_none()
+            || settling != record.settled_at.is_some()
+        {
+            return Err(layer2_core::TriggerStoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: current.revision,
+            });
+        }
+        records.insert(key, record.clone());
+        Ok(record.clone())
     }
 }
 
@@ -286,13 +522,30 @@ pub(crate) struct RepositoryPermissions {
 }
 
 impl GithubBroker {
-    pub(crate) fn new(base_url: &str, auth: Arc<AuthState>) -> Result<Self, GithubBrokerError> {
-        Self::with_authority(base_url, auth)
+    pub(crate) fn new(
+        base_url: &str,
+        auth: Arc<AuthState>,
+        revocations: Arc<dyn ConnectionRevocationStore>,
+    ) -> Result<Self, GithubBrokerError> {
+        Self::with_ports(base_url, auth, revocations)
     }
 
+    #[cfg(test)]
     fn with_authority(
         base_url: &str,
         authority: Arc<dyn SubjectAuthoritySource>,
+    ) -> Result<Self, GithubBrokerError> {
+        Self::with_ports(
+            base_url,
+            authority,
+            Arc::new(TestConnectionRevocationStore::default()),
+        )
+    }
+
+    fn with_ports(
+        base_url: &str,
+        authority: Arc<dyn SubjectAuthoritySource>,
+        revocations: Arc<dyn ConnectionRevocationStore>,
     ) -> Result<Self, GithubBrokerError> {
         let base_url = Url::parse(base_url)
             .map_err(|_| GithubBrokerError::Malformed("NyxID base URL is invalid".into()))?;
@@ -314,6 +567,7 @@ impl GithubBroker {
             base_url,
             http,
             authority,
+            revocations,
         })
     }
 
@@ -371,6 +625,319 @@ impl GithubBroker {
         }
         result.sort_by(|left, right| left.service_id.cmp(&right.service_id));
         Ok(result)
+    }
+
+    /// Exact owner-concealing management-plane projection for revocation.
+    /// This deliberately avoids GitHub `/user`: deactivating a NyxID service
+    /// must remain possible while the downstream provider is unavailable.
+    async fn connection_for_management_revocation(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<Option<TriggerConnection>, GithubBrokerError> {
+        validate_opaque_id(service_id, "UserService ID")?;
+        let services: Observed<UserServiceListWire> = self
+            .nyxid_json(
+                subject,
+                Method::GET,
+                &["api", "v1", "user-services"],
+                &[],
+                None,
+                MAX_MANAGEMENT_BODY_BYTES,
+            )
+            .await?;
+        let Some(service) = services
+            .value
+            .services
+            .into_iter()
+            .find(|service| service.id == service_id && service.slug == GITHUB_SERVICE_SLUG)
+        else {
+            return Ok(None);
+        };
+        validate_resource_uri(&service.resource_uri)?;
+        if service.state_version <= 0 {
+            return Err(GithubBrokerError::Malformed(
+                "the UserService has no usable state version".into(),
+            ));
+        }
+        let personal = matches!(service.credential_source, CredentialSourceWire::Personal);
+        let evidence = match self.authorization_evidence(subject, service_id).await {
+            Ok(evidence) => Some(evidence),
+            Err(GithubBrokerError::NotFound) => None,
+            Err(error) => return Err(error),
+        };
+        let (state, granted_scopes, consent_observed_at) = match evidence {
+            Some(evidence) => {
+                if evidence.id != service.id
+                    || evidence
+                        .state_version
+                        .is_some_and(|version| version != service.state_version)
+                {
+                    return Err(GithubBrokerError::AuthorityDrift);
+                }
+                (
+                    connection_state(&service, &evidence),
+                    normalize_scopes(evidence.granted_scopes.unwrap_or_default())?,
+                    evidence.last_authorized_at,
+                )
+            }
+            None => (ConnectionState::Disconnected, Vec::new(), None),
+        };
+        Ok(Some(TriggerConnection {
+            service_id: service.id,
+            state_version: service.state_version,
+            state: if personal {
+                state
+            } else {
+                ConnectionState::Disconnected
+            },
+            account: None,
+            granted_scopes,
+            consent_observed_at,
+        }))
+    }
+
+    async fn revoke_connection_durably(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<TriggerConnection, TriggerServiceError> {
+        validate_opaque_id(service_id, "UserService ID")?;
+        let mut record = self
+            .revocations
+            .get_connection_revocation(subject, service_id)
+            .await?;
+        if record.is_none() {
+            let active_snapshot = self
+                .connection_for_management_revocation(subject, service_id)
+                .await?
+                .ok_or(GithubBrokerError::ConnectionNotFound)?;
+            let intent = ConnectionRevocationRecord {
+                owner: subject.clone(),
+                service_id: service_id.to_string(),
+                revision: 1,
+                active_snapshot,
+                requested_at: layer2_core::rfc3339_at(SystemTime::now()),
+                provider_receipt: None,
+                settled_at: None,
+                dispatch_lease: None,
+            };
+            record = Some(
+                self.revocations
+                    .insert_or_get_connection_revocation(&intent)
+                    .await?,
+            );
+        }
+        let mut record = record.expect("a connection revocation intent now exists");
+        validate_revocation_record(subject, service_id, &record)?;
+        if let Some(settled) = settled_revocation_receipt(&record)? {
+            if let Some(current) = self
+                .connection_for_management_revocation(subject, service_id)
+                .await?
+            {
+                if current.state_version > settled.state_version
+                    && current.state != ConnectionState::Inactive
+                {
+                    let expected = record.revision;
+                    let restarted = ConnectionRevocationRecord {
+                        owner: subject.clone(),
+                        service_id: service_id.to_string(),
+                        revision: expected.checked_add(1).ok_or_else(|| {
+                            layer2_core::TriggerStoreError::Malformed(
+                                "connection revocation revision is exhausted".into(),
+                            )
+                        })?,
+                        active_snapshot: current,
+                        requested_at: layer2_core::rfc3339_at(SystemTime::now()),
+                        provider_receipt: None,
+                        settled_at: None,
+                        dispatch_lease: None,
+                    };
+                    record = match self
+                        .revocations
+                        .restart_connection_revocation(expected, &restarted)
+                        .await
+                    {
+                        Ok(record) => record,
+                        Err(layer2_core::TriggerStoreError::RevisionConflict { .. }) => self
+                            .revocations
+                            .get_connection_revocation(subject, service_id)
+                            .await?
+                            .ok_or(GithubBrokerError::AuthorityDrift)?,
+                        Err(error) => return Err(error.into()),
+                    };
+                    validate_revocation_record(subject, service_id, &record)?;
+                    if record.active_snapshot.state_version
+                        != restarted.active_snapshot.state_version
+                    {
+                        return Err(GithubBrokerError::AuthorityDrift.into());
+                    }
+                    if let Some(receipt) = settled_revocation_receipt(&record)? {
+                        return Ok(receipt);
+                    }
+                } else if current.state != ConnectionState::Inactive {
+                    return Err(GithubBrokerError::AuthorityDrift.into());
+                } else {
+                    return Ok(settled);
+                }
+            } else {
+                return Ok(settled);
+            }
+        }
+
+        let acquired = SystemTime::now();
+        let lease = ConnectionRevocationLease {
+            holder: uuid::Uuid::new_v4().hyphenated().to_string(),
+            acquired_at: layer2_core::rfc3339_at(acquired),
+            expires_at: layer2_core::rfc3339_at(
+                acquired + std::time::Duration::from_secs(CONNECTION_REVOCATION_LEASE_SECONDS),
+            ),
+        };
+        let Some(claimed) = self
+            .revocations
+            .claim_connection_revocation(subject, service_id, &lease)
+            .await?
+        else {
+            return self.join_connection_revocation(subject, service_id).await;
+        };
+        validate_revocation_record(subject, service_id, &claimed)?;
+        let result = self
+            .finish_connection_revocation(claimed.clone(), &lease)
+            .await;
+        if result.is_err() {
+            if let Ok(Some(current)) = self
+                .revocations
+                .get_connection_revocation(subject, service_id)
+                .await
+            {
+                let still_held = current
+                    .dispatch_lease
+                    .as_ref()
+                    .is_some_and(|held| held.holder == lease.holder);
+                if still_held {
+                    if let Err(error) = self
+                        .revocations
+                        .release_connection_revocation(
+                            current.revision,
+                            &lease.holder,
+                            subject,
+                            service_id,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            service_id,
+                            error = %error,
+                            "connection revocation writer lease will expire before retry"
+                        );
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    async fn join_connection_revocation(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<TriggerConnection, TriggerServiceError> {
+        for _ in 0..CONNECTION_REVOCATION_JOIN_ATTEMPTS {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let Some(record) = self
+                .revocations
+                .get_connection_revocation(subject, service_id)
+                .await?
+            else {
+                return Err(GithubBrokerError::AuthorityDrift.into());
+            };
+            validate_revocation_record(subject, service_id, &record)?;
+            if let Some(settled) = settled_revocation_receipt(&record)? {
+                return Ok(settled);
+            }
+        }
+        Err(GithubBrokerError::Transient { status: None }.into())
+    }
+
+    async fn finish_connection_revocation(
+        &self,
+        mut record: ConnectionRevocationRecord,
+        lease: &ConnectionRevocationLease,
+    ) -> Result<TriggerConnection, TriggerServiceError> {
+        if record
+            .dispatch_lease
+            .as_ref()
+            .is_none_or(|held| held != lease)
+        {
+            return Err(GithubBrokerError::AuthorityDrift.into());
+        }
+        let receipt = match record.provider_receipt.clone() {
+            Some(receipt) => receipt,
+            None => {
+                let before = self
+                    .authorization_evidence(&record.owner, &record.service_id)
+                    .await?;
+                validate_revocation_evidence_identity(&record, &before)?;
+                let receipt = if before.is_active {
+                    match self
+                        .delete_user_service(&record.owner, &record.service_id)
+                        .await
+                    {
+                        Ok(())
+                        | Err(GithubBrokerError::AmbiguousWrite)
+                        | Err(GithubBrokerError::NotFound) => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                    let after = self
+                        .authorization_evidence(&record.owner, &record.service_id)
+                        .await?;
+                    inactive_connection_receipt(&record, after)?
+                } else {
+                    inactive_connection_receipt(&record, before)?
+                };
+                let expected = record.revision;
+                record.revision = expected.checked_add(1).ok_or_else(|| {
+                    layer2_core::TriggerStoreError::Malformed(
+                        "connection revocation revision is exhausted".into(),
+                    )
+                })?;
+                record.provider_receipt = Some(receipt.clone());
+                record = self
+                    .revocations
+                    .record_connection_revocation_receipt(expected, &lease.holder, &record)
+                    .await?;
+                receipt
+            }
+        };
+
+        let settled_at = layer2_core::rfc3339_at(SystemTime::now());
+        let correlation_id = format!("connection-revocation:{}", lease.holder);
+        self.revocations
+            .fence_launches_for_connection_revocation(
+                &record.owner,
+                &record.service_id,
+                &settled_at,
+                &correlation_id,
+            )
+            .await?;
+        let expected = record.revision;
+        record.revision = expected.checked_add(1).ok_or_else(|| {
+            layer2_core::TriggerStoreError::Malformed(
+                "connection revocation revision is exhausted".into(),
+            )
+        })?;
+        record.settled_at = Some(settled_at);
+        record.dispatch_lease = None;
+        let settled = self
+            .revocations
+            .settle_connection_revocation(expected, &lease.holder, &record)
+            .await?;
+        let stable =
+            settled_revocation_receipt(&settled)?.ok_or(GithubBrokerError::AuthorityDrift)?;
+        if stable != receipt {
+            return Err(GithubBrokerError::AuthorityDrift.into());
+        }
+        Ok(stable)
     }
 
     /// Create a deterministic personal OAuth placeholder.
@@ -699,9 +1266,11 @@ impl GithubBroker {
         if !upstream.identity.allow_forking {
             return Err(GithubBrokerError::ForkingDisabled);
         }
-        if upstream.identity != *expected || upstream.archived || upstream.disabled {
+        validate_repository_rebinding(expected, &upstream)?;
+        if !upstream.permissions.pull {
             return Err(GithubBrokerError::AuthorityDrift);
         }
+        validate_repository_url(&upstream.html_url, &upstream.identity)?;
         let response: Observed<GithubRepositoryWire> = self
             .github_json(
                 &context.owner,
@@ -880,6 +1449,9 @@ impl GithubBroker {
             return Err(GithubBrokerError::AuthorityDrift);
         }
 
+        // Rebind the numeric repository after every intervening authority/read
+        // call so the POST cannot be steered by a retained owner/name.
+        let repository = self.current_branch_fork(context).await?;
         let branch = context.branch_name();
         let response: Observed<GithubRefWire> = self
             .github_json(
@@ -942,12 +1514,10 @@ impl GithubBroker {
             )
             .await?;
         observed.identity.selected_ref = expected.selected_ref.clone();
-        if observed.identity != *expected
-            || observed.archived
-            || observed.disabled
-            || observed.html_url != context.fork.canonical_url
-            || observed.identity.owner_id != context.connection.account.account_id
+        validate_repository_rebinding(expected, &observed)?;
+        if observed.identity.owner_id != context.connection.account.account_id
             || observed.identity.owner_node_id != context.connection.account.account_node_id
+            || !observed.permissions.push
         {
             return Err(GithubBrokerError::AuthorityDrift);
         }
@@ -1126,6 +1696,65 @@ impl GithubBroker {
             )
             .await?;
         Ok(response.value)
+    }
+
+    async fn delete_user_service(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<(), GithubBrokerError> {
+        validate_opaque_id(service_id, "UserService ID")?;
+        let authority = self
+            .authority
+            .current(subject)
+            .await?
+            .ok_or(GithubBrokerError::OwnerCredentialUnavailable)?;
+        let url = endpoint(
+            &self.base_url,
+            &["api", "v1", "user-services", service_id],
+            &[],
+        )?;
+        let response = self
+            .http
+            .delete(url)
+            .bearer_auth(&authority.bearer)
+            .header("accept", "application/json")
+            .send()
+            .await
+            .map_err(|_| GithubBrokerError::AmbiguousWrite)?;
+        let status = response.status();
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| value.len() <= 128)
+            .map(str::to_string);
+        let rate_limit_exhausted = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.trim() == "0");
+        if status == StatusCode::NO_CONTENT {
+            return Ok(());
+        }
+        if status.is_success() {
+            let _ = bounded_body(response, 16 * 1024).await;
+            return Err(GithubBrokerError::Malformed(
+                "NyxID returned an unexpected connection-revocation status".into(),
+            ));
+        }
+        let evidence = bounded_body(response, 16 * 1024)
+            .await
+            .ok()
+            .and_then(|bytes| parse_rejection(&bytes));
+        let classified = classify_status(status, retry_after, rate_limit_exhausted, evidence);
+        Err(
+            if matches!(classified, GithubBrokerError::Transient { .. }) {
+                GithubBrokerError::AmbiguousWrite
+            } else {
+                classified
+            },
+        )
     }
 
     async fn github_user(
@@ -1398,7 +2027,7 @@ impl TriggerAuthorityVerifier for GithubBroker {
                 service_id: connection.snapshot.service_id.clone(),
                 service_state_version: connection.snapshot.service_state_version,
                 backing_key_id: connection.snapshot.backing_key_id.clone(),
-                session_credential_generation: None,
+                session_credential_authority: None,
                 state: DelegationState::Available,
                 observed_at: layer2_core::rfc3339_at(SystemTime::now()),
             },
@@ -1415,18 +2044,64 @@ impl TriggerConnectionManager for GithubBroker {
         &self,
         subject: &SubjectId,
     ) -> Result<Vec<TriggerConnection>, TriggerServiceError> {
-        Ok(GithubBroker::list_connections(self, subject)
+        let live = GithubBroker::list_connections(self, subject)
             .await?
             .into_iter()
-            .map(|connection| TriggerConnection {
-                service_id: connection.service_id,
-                state_version: connection.state_version,
-                state: connection.state,
-                account: connection.account,
-                granted_scopes: connection.granted_scopes,
-                consent_observed_at: connection.consent_observed_at,
-            })
-            .collect())
+            .map(trigger_connection);
+        let mut merged = live
+            .map(|connection| (connection.service_id.clone(), connection))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for record in self
+            .revocations
+            .list_settled_connection_revocations(subject)
+            .await?
+        {
+            validate_revocation_record(subject, &record.service_id, &record)?;
+            let receipt =
+                settled_revocation_receipt(&record)?.ok_or(GithubBrokerError::AuthorityDrift)?;
+            match merged.get(&receipt.service_id) {
+                Some(live) if live.state_version > receipt.state_version => {}
+                _ => {
+                    merged.insert(receipt.service_id.clone(), receipt);
+                }
+            }
+        }
+        Ok(merged.into_values().collect())
+    }
+
+    async fn connection_for_revocation(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<Option<TriggerConnection>, TriggerServiceError> {
+        validate_opaque_id(service_id, "UserService ID")?;
+        if let Some(record) = self
+            .revocations
+            .get_connection_revocation(subject, service_id)
+            .await?
+        {
+            validate_revocation_record(subject, service_id, &record)?;
+            if let Some(receipt) = settled_revocation_receipt(&record)? {
+                if let Ok(Some(current)) = self
+                    .connection_for_management_revocation(subject, service_id)
+                    .await
+                {
+                    if current.state_version > receipt.state_version
+                        && current.state != ConnectionState::Inactive
+                    {
+                        return Ok(Some(current));
+                    }
+                }
+                // The durable receipt is sufficient to admit operation-store
+                // replay. A new backend execution still performs the live
+                // version check above before treating this epoch as current.
+                return Ok(Some(receipt));
+            }
+            return Ok(Some(record.active_snapshot));
+        }
+        Ok(self
+            .connection_for_management_revocation(subject, service_id)
+            .await?)
     }
 
     async fn begin_connection(
@@ -1447,6 +2122,14 @@ impl TriggerConnectionManager for GithubBroker {
         service_id: &str,
     ) -> Result<TriggerConnectionAuthorization, TriggerServiceError> {
         Ok(self.begin_oauth(subject, service_id).await?.into())
+    }
+
+    async fn revoke_connection(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<TriggerConnection, TriggerServiceError> {
+        self.revoke_connection_durably(subject, service_id).await
     }
 
     async fn preflight_connection(
@@ -1686,6 +2369,86 @@ fn connection_state(service: &UserServiceWire, evidence: &KeyAuthorizationWire) 
     }
 }
 
+fn trigger_connection(connection: GithubConnectionView) -> TriggerConnection {
+    TriggerConnection {
+        service_id: connection.service_id,
+        state_version: connection.state_version,
+        state: connection.state,
+        account: connection.account,
+        granted_scopes: connection.granted_scopes,
+        consent_observed_at: connection.consent_observed_at,
+    }
+}
+
+fn validate_revocation_record(
+    subject: &SubjectId,
+    service_id: &str,
+    record: &ConnectionRevocationRecord,
+) -> Result<(), TriggerServiceError> {
+    let valid_receipt = record.provider_receipt.as_ref().is_none_or(|receipt| {
+        receipt.service_id == service_id
+            && receipt.state == ConnectionState::Inactive
+            && receipt.state_version > record.active_snapshot.state_version
+    });
+    if &record.owner != subject
+        || record.service_id != service_id
+        || record.revision == 0
+        || record.active_snapshot.service_id != service_id
+        || record.active_snapshot.state_version <= 0
+        || !valid_receipt
+        || (record.settled_at.is_some()
+            && (record.provider_receipt.is_none() || record.dispatch_lease.is_some()))
+    {
+        return Err(GithubBrokerError::AuthorityDrift.into());
+    }
+    Ok(())
+}
+
+fn settled_revocation_receipt(
+    record: &ConnectionRevocationRecord,
+) -> Result<Option<TriggerConnection>, TriggerServiceError> {
+    match (&record.settled_at, &record.provider_receipt) {
+        (Some(_), Some(receipt)) if record.dispatch_lease.is_none() => Ok(Some(receipt.clone())),
+        (None, _) => Ok(None),
+        _ => Err(GithubBrokerError::AuthorityDrift.into()),
+    }
+}
+
+fn validate_revocation_evidence_identity(
+    record: &ConnectionRevocationRecord,
+    evidence: &KeyAuthorizationWire,
+) -> Result<(), GithubBrokerError> {
+    if evidence.id != record.service_id || evidence.state_version.is_none_or(|version| version <= 0)
+    {
+        return Err(GithubBrokerError::AuthorityDrift);
+    }
+    Ok(())
+}
+
+fn inactive_connection_receipt(
+    record: &ConnectionRevocationRecord,
+    evidence: KeyAuthorizationWire,
+) -> Result<TriggerConnection, GithubBrokerError> {
+    validate_revocation_evidence_identity(record, &evidence)?;
+    if evidence.is_active {
+        return Err(GithubBrokerError::Transient { status: None });
+    }
+    let state_version = evidence
+        .state_version
+        .filter(|version| *version > record.active_snapshot.state_version)
+        .ok_or(GithubBrokerError::AuthorityDrift)?;
+    Ok(TriggerConnection {
+        service_id: record.service_id.clone(),
+        state_version,
+        state: ConnectionState::Inactive,
+        account: record.active_snapshot.account.clone(),
+        granted_scopes: normalize_scopes(evidence.granted_scopes.unwrap_or_default())?,
+        consent_observed_at: evidence
+            .last_authorized_at
+            .or_else(|| record.active_snapshot.consent_observed_at.clone()),
+    })
+}
+
 fn repository_ref_components(value: &str) -> Result<Vec<&str>, GithubBrokerError> {
     if value.is_empty()
         || value.len() > 255
@@ -1764,20 +2527,46 @@ fn validate_repository_url(
     Ok(())
 }
 
+/// Validate the immutable half of a numeric repository binding.
+///
+/// Canonical owner/name, the default branch, and the selected ref are mutable
+/// locators rather than authority. Callers must use the producer-returned
+/// values from `observed` for the immediately following request.
+pub(super) fn validate_repository_rebinding(
+    expected: &RepositoryIdentity,
+    observed: &RepositoryEvidence,
+) -> Result<(), GithubBrokerError> {
+    let actual = &observed.identity;
+    if actual.repository_id != expected.repository_id
+        || actual.repository_node_id != expected.repository_node_id
+        || actual.owner_id != expected.owner_id
+        || actual.owner_node_id != expected.owner_node_id
+        || actual.visibility != expected.visibility
+        || actual.fork_parent_id != expected.fork_parent_id
+        || actual.fork_source_id != expected.fork_source_id
+        || observed.archived
+        || observed.disabled
+    {
+        return Err(GithubBrokerError::AuthorityDrift);
+    }
+    Ok(())
+}
+
 fn branch_record(
     context: &BranchContext,
     repository: &RepositoryIdentity,
     current_head: String,
 ) -> Result<BranchRecord, GithubBrokerError> {
     let branch = context.branch_name();
-    let mut url = Url::parse(&context.fork.canonical_url)
-        .map_err(|_| GithubBrokerError::Malformed("the fork URL is invalid".into()))?;
-    validate_repository_url(url.as_str(), repository)?;
+    let mut url = Url::parse("https://github.com/")
+        .map_err(|_| GithubBrokerError::Malformed("the GitHub URL is invalid".into()))?;
     {
         let mut segments = url.path_segments_mut().map_err(|_| {
             GithubBrokerError::Malformed("the fork URL cannot carry a branch path".into())
         })?;
         segments.pop_if_empty();
+        segments.push(&repository.canonical_owner);
+        segments.push(&repository.canonical_name);
         segments.push("tree");
         for component in repository_ref_components(&branch)? {
             segments.push(component);
@@ -2105,7 +2894,8 @@ fn validate_github_authorization_url(value: &str, nonce: &str) -> Result<(), Git
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -2188,10 +2978,44 @@ mod tests {
     }
 
     #[derive(Clone)]
+    struct RevocationFixture {
+        active: Arc<AtomicBool>,
+        state_version: Arc<AtomicI64>,
+        delete_calls: Arc<AtomicUsize>,
+        lose_delete_response_once: Arc<AtomicBool>,
+        delete_returns_not_found_once: Arc<AtomicBool>,
+        management_available: Arc<AtomicBool>,
+        github_user_available: bool,
+    }
+
+    impl Default for RevocationFixture {
+        fn default() -> Self {
+            Self {
+                active: Arc::new(AtomicBool::new(true)),
+                state_version: Arc::new(AtomicI64::new(4)),
+                delete_calls: Arc::new(AtomicUsize::new(0)),
+                lose_delete_response_once: Arc::new(AtomicBool::new(false)),
+                delete_returns_not_found_once: Arc::new(AtomicBool::new(false)),
+                management_available: Arc::new(AtomicBool::new(true)),
+                github_user_available: true,
+            }
+        }
+    }
+
+    impl RevocationFixture {
+        fn reactivate(&self) {
+            self.state_version.fetch_add(1, Ordering::SeqCst);
+            self.active.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Clone)]
     struct Fixture {
         requests: Arc<Mutex<Vec<RecordedRequest>>>,
         service_state_version: i64,
         authorization_state_version: i64,
+        authority_preflight_reads: Arc<AtomicUsize>,
+        authority_drift_after: Option<usize>,
         scopes: Vec<String>,
         resource_uri: String,
         label: Option<String>,
@@ -2200,6 +3024,7 @@ mod tests {
         tree_truncated: bool,
         workspace_tree: bool,
         workspace_lfs: bool,
+        workspace_oversize_blob: bool,
         ambiguous_fork_post: bool,
         fork_appears_after_post: bool,
         post_seen: Arc<AtomicBool>,
@@ -2208,6 +3033,13 @@ mod tests {
         branch_appears_after_post: bool,
         branch_post_seen: Arc<AtomicBool>,
         publication: Option<PublicationFixture>,
+        upstream_name: String,
+        upstream_owner_id: u64,
+        upstream_pull: bool,
+        fork_repository_lookups: Arc<AtomicUsize>,
+        rebound_fork_name: Option<String>,
+        rebound_fork_owner_id: Option<u64>,
+        revocation: Option<RevocationFixture>,
     }
 
     impl Default for Fixture {
@@ -2216,6 +3048,8 @@ mod tests {
                 requests: Arc::new(Mutex::new(Vec::new())),
                 service_state_version: 4,
                 authorization_state_version: 4,
+                authority_preflight_reads: Arc::new(AtomicUsize::new(0)),
+                authority_drift_after: None,
                 scopes: vec![PUBLIC_REPOSITORY_SCOPE.to_string()],
                 resource_uri: "https://nyxid.test/api/v1/proxy/s/api-github".to_string(),
                 label: None,
@@ -2224,6 +3058,7 @@ mod tests {
                 tree_truncated: false,
                 workspace_tree: false,
                 workspace_lfs: false,
+                workspace_oversize_blob: false,
                 ambiguous_fork_post: false,
                 fork_appears_after_post: false,
                 post_seen: Arc::new(AtomicBool::new(false)),
@@ -2232,6 +3067,59 @@ mod tests {
                 branch_appears_after_post: false,
                 branch_post_seen: Arc::new(AtomicBool::new(false)),
                 publication: None,
+                upstream_name: "upstream".into(),
+                upstream_owner_id: 11,
+                upstream_pull: true,
+                fork_repository_lookups: Arc::new(AtomicUsize::new(0)),
+                rebound_fork_name: None,
+                rebound_fork_owner_id: None,
+                revocation: None,
+            }
+        }
+    }
+
+    impl Fixture {
+        fn authority_has_drifted(&self, read_index: usize) -> bool {
+            self.authority_drift_after
+                .is_some_and(|threshold| read_index >= threshold)
+        }
+
+        fn observe_service_state_version(&self) -> i64 {
+            let read_index = self
+                .authority_preflight_reads
+                .fetch_add(1, Ordering::SeqCst);
+            self.service_state_version + i64::from(self.authority_has_drifted(read_index))
+        }
+
+        fn current_authorization_state_version(&self) -> i64 {
+            let read_index = self
+                .authority_preflight_reads
+                .load(Ordering::SeqCst)
+                .saturating_sub(1);
+            self.authorization_state_version + i64::from(self.authority_has_drifted(read_index))
+        }
+
+        fn fork_is_rebound(&self) -> bool {
+            self.fork_repository_lookups.load(Ordering::SeqCst) > 1
+        }
+
+        fn current_fork_name(&self) -> &str {
+            if self.fork_is_rebound() {
+                self.rebound_fork_name.as_deref().unwrap_or("upstream")
+            } else {
+                "upstream"
+            }
+        }
+
+        fn observe_fork_binding(&self) -> (&str, u64) {
+            let prior = self.fork_repository_lookups.fetch_add(1, Ordering::SeqCst);
+            if prior > 0 {
+                (
+                    self.rebound_fork_name.as_deref().unwrap_or("upstream"),
+                    self.rebound_fork_owner_id.unwrap_or(21),
+                )
+            } else {
+                ("upstream", 21)
             }
         }
     }
@@ -2256,8 +3144,66 @@ mod tests {
             body: parsed_body,
         });
 
+        let fork_name = fixture.current_fork_name().to_string();
+        let upstream_owner = if fixture.upstream_owner_id == 11 {
+            "owner"
+        } else {
+            "transferred-owner"
+        };
+        let upstream_owner_node = if fixture.upstream_owner_id == 11 {
+            "U_kgDOAQ"
+        } else {
+            "U_transferred"
+        };
+        let fork_main_ref_path =
+            format!("/api/v1/proxy/s/api-github/repos/contributor/{fork_name}/git/ref/heads/main");
+        let fork_launch_ref_path = format!(
+            "/api/v1/proxy/s/api-github/repos/contributor/{fork_name}/git/ref/heads/cma/lnch_test"
+        );
+        let fork_git_path = format!("/api/v1/proxy/s/api-github/repos/contributor/{fork_name}/git");
+        let fork_base_commit_path =
+            format!("{fork_git_path}/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let fork_result_commit_path =
+            format!("{fork_git_path}/commits/dddddddddddddddddddddddddddddddddddddddd");
+        let fork_result_tree_path =
+            format!("{fork_git_path}/trees/cccccccccccccccccccccccccccccccccccccccc");
+        let fork_blob_write_path = format!("{fork_git_path}/blobs");
+        let fork_tree_write_path = format!("{fork_git_path}/trees");
+        let fork_commit_write_path = format!("{fork_git_path}/commits");
+        let fork_ref_patch_path = format!("{fork_git_path}/refs/heads/cma/lnch_test");
+        let fork_ref_create_path = format!("{fork_git_path}/refs");
+        let upstream_fork_create_path = format!(
+            "/api/v1/proxy/s/api-github/repos/{upstream_owner}/{}/forks",
+            fixture.upstream_name
+        );
+
         let response = match (method.as_str(), parts.uri.path()) {
-            ("GET", "/api/v1/user-services") => json!({
+            ("GET", "/api/v1/user-services") => {
+                if let Some(revocation) = fixture.revocation.as_ref() {
+                    if !revocation.management_available.load(Ordering::SeqCst) {
+                        return (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({ "error": "management unavailable" })),
+                        );
+                    }
+                    let services = if revocation.active.load(Ordering::SeqCst) {
+                        vec![json!({
+                            "id": "service-1",
+                            "slug": GITHUB_SERVICE_SLUG,
+                            "label": fixture.label,
+                            "resource_uri": fixture.resource_uri,
+                            "api_key_id": "key-1",
+                            "is_active": true,
+                            "state_version": revocation.state_version.load(Ordering::SeqCst),
+                            "credential_source": { "type": "personal" }
+                        })]
+                    } else {
+                        Vec::new()
+                    };
+                    return (StatusCode::OK, Json(json!({ "services": services })));
+                }
+                let state_version = fixture.observe_service_state_version();
+                json!({
                 "services": [{
                     "id": "service-1",
                     "slug": GITHUB_SERVICE_SLUG,
@@ -2265,11 +3211,36 @@ mod tests {
                     "resource_uri": fixture.resource_uri,
                     "api_key_id": "key-1",
                     "is_active": true,
-                    "state_version": fixture.service_state_version,
+                    "state_version": state_version,
                     "credential_source": { "type": "personal" }
                 }]
-            }),
-            ("GET", "/api/v1/keys/service-1/authorization") => json!({
+                })
+            }
+            ("GET", "/api/v1/keys/service-1/authorization") => {
+                if let Some(revocation) = fixture.revocation.as_ref() {
+                    if !revocation.management_available.load(Ordering::SeqCst) {
+                        return (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({ "error": "management unavailable" })),
+                        );
+                    }
+                    let active = revocation.active.load(Ordering::SeqCst);
+                    return (
+                        StatusCode::OK,
+                        Json(json!({
+                            "id": "service-1",
+                            "api_key_id": "key-1",
+                            "is_active": active,
+                            "status": if active { "active" } else { "inactive" },
+                            "connection_status": if active { "active" } else { "inactive" },
+                            "granted_scopes": fixture.scopes,
+                            "last_authorized_at": "2026-08-26T01:02:03Z",
+                            "state_version": revocation.state_version.load(Ordering::SeqCst)
+                        })),
+                    );
+                }
+                let state_version = fixture.current_authorization_state_version();
+                json!({
                 "id": "service-1",
                 "api_key_id": "key-1",
                 "is_active": true,
@@ -2277,27 +3248,80 @@ mod tests {
                 "connection_status": "active",
                 "granted_scopes": fixture.scopes,
                 "last_authorized_at": "2026-08-26T01:02:03Z",
-                "state_version": fixture.authorization_state_version
-            }),
-            ("GET", "/api/v1/proxy/s/api-github/user") => json!({
-                "id": 21,
-                "node_id": "U_kgDOBQ",
-                "login": "contributor",
-                "avatar_url": "https://avatars.githubusercontent.com/u/21"
-            }),
+                "state_version": state_version
+                })
+            }
+            ("DELETE", "/api/v1/user-services/service-1") => {
+                let Some(revocation) = fixture.revocation.as_ref() else {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "revocation fixture is not configured" })),
+                    );
+                };
+                if !revocation.management_available.load(Ordering::SeqCst) {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({ "error": "management unavailable" })),
+                    );
+                }
+                revocation.delete_calls.fetch_add(1, Ordering::SeqCst);
+                revocation.active.store(false, Ordering::SeqCst);
+                revocation.state_version.fetch_add(1, Ordering::SeqCst);
+                if revocation
+                    .lose_delete_response_once
+                    .swap(false, Ordering::SeqCst)
+                {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "response lost" })),
+                    );
+                }
+                if revocation
+                    .delete_returns_not_found_once
+                    .swap(false, Ordering::SeqCst)
+                {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({ "error": "concurrent deactivate won" })),
+                    );
+                }
+                return (StatusCode::NO_CONTENT, Json(Value::Null));
+            }
+            ("GET", "/api/v1/proxy/s/api-github/user") => {
+                if fixture
+                    .revocation
+                    .as_ref()
+                    .is_some_and(|revocation| !revocation.github_user_available)
+                {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({ "error": "github unavailable" })),
+                    );
+                }
+                json!({
+                    "id": 21,
+                    "node_id": "U_kgDOBQ",
+                    "login": "contributor",
+                    "avatar_url": "https://avatars.githubusercontent.com/u/21"
+                })
+            }
             ("GET", "/api/v1/proxy/s/api-github/repositories/10") => json!({
                 "id": 10,
                 "node_id": "R_kgDOAA",
-                "name": "upstream",
-                "owner": { "id": 11, "node_id": "U_kgDOAQ", "login": "owner" },
+                "name": fixture.upstream_name,
+                "owner": {
+                    "id": fixture.upstream_owner_id,
+                    "node_id": upstream_owner_node,
+                    "login": upstream_owner
+                },
                 "private": false,
                 "visibility": "public",
                 "default_branch": "main",
                 "allow_forking": fixture.allow_forking,
                 "archived": false,
                 "disabled": false,
-                "html_url": "https://github.com/owner/upstream",
-                "permissions": { "pull": true }
+                "html_url": format!("https://github.com/{upstream_owner}/{}", fixture.upstream_name),
+                "permissions": { "pull": fixture.upstream_pull }
             }),
             ("GET", "/api/v1/proxy/s/api-github/repos/owner/upstream/git/ref/heads/main") => {
                 json!({
@@ -2326,7 +3350,15 @@ mod tests {
                 "GET",
                 "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ) if fixture.workspace_tree => {
-                let tree = if fixture.workspace_lfs {
+                let tree = if fixture.workspace_oversize_blob {
+                    vec![json!({
+                        "path": "oversize.bin",
+                        "type": "blob",
+                        "mode": "100644",
+                        "sha": "1111111111111111111111111111111111111111",
+                        "size": layer2_core::MAX_PROVIDER_BLOB_BYTES + 1
+                    })]
+                } else if fixture.workspace_lfs {
                     vec![json!({
                         "path": ".gitattributes",
                         "type": "blob",
@@ -2413,9 +3445,10 @@ mod tests {
                 .map(|parent| json!([fork_repository(parent)]))
                 .unwrap_or_else(|| json!([])),
             ("GET", "/api/v1/proxy/s/api-github/repositories/30") => {
-                json!(fork_repository(10))
+                let (name, owner_id) = fixture.observe_fork_binding();
+                json!(fork_repository_binding(10, name, owner_id))
             }
-            ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/main") => {
+            ("GET", actual) if actual == fork_main_ref_path => {
                 json!({
                     "ref": "refs/heads/main",
                     "object": {
@@ -2424,7 +3457,7 @@ mod tests {
                     }
                 })
             }
-            ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") => {
+            ("GET", actual) if actual == fork_base_commit_path => {
                 json!({
                     "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "tree": {
@@ -2438,8 +3471,8 @@ mod tests {
             }
             (
                 "GET",
-                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test",
-            ) => {
+                actual,
+            ) if actual == fork_launch_ref_path => {
                 let head = if let Some(publication) = fixture.publication.as_ref() {
                     Some(publication.head.lock().await.clone())
                 } else {
@@ -2457,24 +3490,18 @@ mod tests {
                     "object": { "sha": head, "type": "commit" }
                 })
             }
-            (
-                "POST",
-                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/blobs",
-            ) if fixture.publication.is_some() => {
+            ("POST", actual)
+                if actual == fork_blob_write_path && fixture.publication.is_some() => {
                 let publication = fixture.publication.as_ref().unwrap();
                 json!({ "sha": publication.binary_blob_id })
             }
-            (
-                "POST",
-                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees",
-            ) if fixture.publication.is_some() => {
+            ("POST", actual)
+                if actual == fork_tree_write_path && fixture.publication.is_some() => {
                 let publication = fixture.publication.as_ref().unwrap();
                 json!({ "sha": publication.tree_id })
             }
-            (
-                "POST",
-                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits",
-            ) if fixture.publication.is_some() => {
+            ("POST", actual)
+                if actual == fork_commit_write_path && fixture.publication.is_some() => {
                 let publication = fixture.publication.as_ref().unwrap();
                 json!({
                     "sha": publication.commit_id,
@@ -2482,10 +3509,8 @@ mod tests {
                     "parents": [{ "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
                 })
             }
-            (
-                "GET",
-                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/dddddddddddddddddddddddddddddddddddddddd",
-            ) if fixture.publication.is_some() => {
+            ("GET", actual)
+                if actual == fork_result_commit_path && fixture.publication.is_some() => {
                 let publication = fixture.publication.as_ref().unwrap();
                 json!({
                     "sha": publication.commit_id,
@@ -2493,10 +3518,8 @@ mod tests {
                     "parents": [{ "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
                 })
             }
-            (
-                "PATCH",
-                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/refs/heads/cma/lnch_test",
-            ) if fixture.publication.is_some() => {
+            ("PATCH", actual)
+                if actual == fork_ref_patch_path && fixture.publication.is_some() => {
                 let publication = fixture.publication.as_ref().unwrap();
                 match publication.patch {
                     PublicationPatch::Confirmed => {
@@ -2533,10 +3556,8 @@ mod tests {
                     "object": { "sha": publication.commit_id, "type": "commit" }
                 })
             }
-            (
-                "GET",
-                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees/cccccccccccccccccccccccccccccccccccccccc",
-            ) if fixture.publication.is_some() => {
+            ("GET", actual)
+                if actual == fork_result_tree_path && fixture.publication.is_some() => {
                 let publication = fixture.publication.as_ref().unwrap();
                 json!({
                     "truncated": false,
@@ -2548,10 +3569,7 @@ mod tests {
                     ]
                 })
             }
-            (
-                "POST",
-                "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/refs",
-            ) => {
+            ("POST", actual) if actual == fork_ref_create_path => {
                 fixture.branch_post_seen.store(true, Ordering::SeqCst);
                 if fixture.ambiguous_branch_post {
                     return (
@@ -2567,7 +3585,7 @@ mod tests {
                     }
                 })
             }
-            ("POST", "/api/v1/proxy/s/api-github/repos/owner/upstream/forks") => {
+            ("POST", actual) if actual == upstream_fork_create_path => {
                 fixture.post_seen.store(true, Ordering::SeqCst);
                 if fixture.ambiguous_fork_post {
                     return (
@@ -2599,14 +3617,23 @@ mod tests {
     }
 
     fn fork_repository(parent_id: u64) -> Value {
+        fork_repository_binding(parent_id, "upstream", 21)
+    }
+
+    fn fork_repository_binding(parent_id: u64, name: &str, owner_id: u64) -> Value {
+        let (owner_node_id, owner) = if owner_id == 21 {
+            ("U_kgDOBQ", "contributor")
+        } else {
+            ("U_transferred", "transferred-owner")
+        };
         json!({
             "id": 30,
             "node_id": "R_fork",
-            "name": "upstream",
+            "name": name,
             "owner": {
-                "id": 21,
-                "node_id": "U_kgDOBQ",
-                "login": "contributor"
+                "id": owner_id,
+                "node_id": owner_node_id,
+                "login": owner
             },
             "private": false,
             "visibility": "public",
@@ -2614,7 +3641,7 @@ mod tests {
             "allow_forking": true,
             "archived": false,
             "disabled": false,
-            "html_url": "https://github.com/contributor/upstream",
+            "html_url": format!("https://github.com/{owner}/{name}"),
             "permissions": { "pull": true, "push": true },
             "parent": { "id": parent_id },
             "source": { "id": 10 }
@@ -2649,6 +3676,23 @@ mod tests {
         });
         GithubBroker::with_authority(base_url, Arc::new(TestAuthority { value: authority }))
             .expect("construct broker")
+    }
+
+    fn broker_with_revocations(
+        base_url: &str,
+        store: Arc<TestConnectionRevocationStore>,
+    ) -> GithubBroker {
+        GithubBroker::with_ports(
+            base_url,
+            Arc::new(TestAuthority {
+                value: Some(SubjectRequestAuthority {
+                    bearer: "subject-token".to_string(),
+                    token_generation: 7,
+                }),
+            }),
+            store,
+        )
+        .expect("construct broker with durable revocations")
     }
 
     fn subject() -> SubjectId {
@@ -3161,6 +4205,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fork_create_uses_the_numeric_lookup_canonical_name_after_rename() {
+        let fixture = Fixture {
+            fork_parent_id: None,
+            upstream_name: "upstream-renamed".into(),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+
+        assert!(matches!(
+            broker(&base_url, true).create_fork(&fork_context()).await,
+            Ok(ForkReconciliation::Ready(_))
+        ));
+        server.abort();
+
+        let requests = requests.lock().await;
+        let create = requests
+            .iter()
+            .find(|request| request.method == "POST")
+            .expect("fork create request");
+        assert_eq!(
+            create.uri,
+            "/api/v1/proxy/s/api-github/repos/owner/upstream-renamed/forks?_nyxid_via=service-1"
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_create_rejects_numeric_owner_transfer_before_the_write() {
+        let fixture = Fixture {
+            fork_parent_id: None,
+            upstream_owner_id: 99,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+
+        assert!(matches!(
+            broker(&base_url, true).create_fork(&fork_context()).await,
+            Err(GithubBrokerError::AuthorityDrift)
+        ));
+        server.abort();
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
+    async fn fork_create_rejects_missing_current_read_authority_before_the_write() {
+        let fixture = Fixture {
+            fork_parent_id: None,
+            upstream_pull: false,
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+
+        assert!(matches!(
+            broker(&base_url, true).create_fork(&fork_context()).await,
+            Err(GithubBrokerError::AuthorityDrift)
+        ));
+        server.abort();
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
     async fn disabled_forking_fails_before_the_provider_write() {
         let fixture = Fixture {
             fork_parent_id: None,
@@ -3304,6 +4416,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn branch_create_rebinds_a_rename_between_absence_proof_and_post() {
+        let fixture = Fixture {
+            rebound_fork_name: Some("upstream-renamed".into()),
+            ..Fixture::default()
+        };
+        let lookups = Arc::clone(&fixture.fork_repository_lookups);
+        let (base_url, requests, server) = fixture_server(fixture).await;
+
+        let result = broker(&base_url, true)
+            .create_branch(&branch_context())
+            .await
+            .expect("create branch after canonical rename");
+        server.abort();
+
+        let BranchReconciliation::Ready(branch) = result else {
+            panic!("expected a ready branch");
+        };
+        assert_eq!(lookups.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            branch.canonical_url,
+            "https://github.com/contributor/upstream-renamed/tree/cma/lnch_test"
+        );
+        let requests = requests.lock().await;
+        let create = requests
+            .iter()
+            .find(|request| request.method == "POST")
+            .expect("branch create request");
+        assert_eq!(
+            create.uri,
+            "/api/v1/proxy/s/api-github/repos/contributor/upstream-renamed/git/refs?_nyxid_via=service-1"
+        );
+        let create_index = requests
+            .iter()
+            .position(|request| request.method == "POST")
+            .unwrap();
+        assert!(requests[create_index - 1]
+            .uri
+            .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+    }
+
+    #[tokio::test]
+    async fn branch_create_rejects_transfer_between_absence_proof_and_post() {
+        let fixture = Fixture {
+            rebound_fork_owner_id: Some(99),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+
+        assert!(matches!(
+            broker(&base_url, true)
+                .create_branch(&branch_context())
+                .await,
+            Err(GithubBrokerError::AuthorityDrift)
+        ));
+        server.abort();
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
     async fn ambiguous_branch_create_is_reconciled_without_a_second_post() {
         let fixture = Fixture {
             ambiguous_branch_post: true,
@@ -3407,45 +4582,33 @@ mod tests {
         assert_eq!(*provider.head.lock().await, provider.commit_id);
 
         let requests = requests.lock().await;
-        let sequence = requests
+        let writes = requests
             .iter()
-            .map(|request| {
-                (
-                    request.method.as_str(),
-                    request.uri.split('?').next().unwrap(),
-                )
-            })
+            .enumerate()
+            .filter(|(_, request)| matches!(request.method.as_str(), "POST" | "PATCH"))
             .collect::<Vec<_>>();
+        assert_eq!(writes.len(), 4);
+        for (index, _) in &writes {
+            let index = *index;
+            assert!(index >= 4);
+            assert_eq!(requests[index - 4].uri, "/api/v1/user-services");
+            assert_eq!(
+                requests[index - 3].uri,
+                "/api/v1/keys/service-1/authorization"
+            );
+            assert!(requests[index - 2]
+                .uri
+                .starts_with("/api/v1/proxy/s/api-github/user?"));
+            assert!(requests[index - 1]
+                .uri
+                .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+        }
         assert_eq!(
-            sequence,
-            vec![
-                ("GET", "/api/v1/proxy/s/api-github/repositories/30"),
-                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test"),
-                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-                ("POST", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/blobs"),
-                ("POST", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees"),
-                ("POST", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits"),
-                ("GET", "/api/v1/proxy/s/api-github/repositories/30"),
-                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test"),
-                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/dddddddddddddddddddddddddddddddddddddddd"),
-                ("GET", "/api/v1/proxy/s/api-github/repositories/30"),
-                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test"),
-                ("GET", "/api/v1/user-services"),
-                ("GET", "/api/v1/keys/service-1/authorization"),
-                ("GET", "/api/v1/proxy/s/api-github/user"),
-                ("PATCH", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/refs/heads/cma/lnch_test"),
-                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/ref/heads/cma/lnch_test"),
-                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/commits/dddddddddddddddddddddddddddddddddddddddd"),
-                ("GET", "/api/v1/proxy/s/api-github/repos/contributor/upstream/git/trees/cccccccccccccccccccccccccccccccccccccccc"),
-            ]
-        );
-        assert_eq!(
-            requests[3].body,
+            writes[0].1.body,
             Some(json!({ "content": "AP8B", "encoding": "base64" }))
         );
         assert_eq!(
-            requests[4].body,
+            writes[1].1.body,
             Some(json!({
                 "base_tree": provider.base_tree_id,
                 "tree": [
@@ -3458,7 +4621,7 @@ mod tests {
             }))
         );
         assert_eq!(
-            requests[5].body,
+            writes[2].1.body,
             Some(json!({
                 "message": "CMA Trigger contribution\n\nLaunch: lnch_test\nReviewed diff: 4444444444444444444444444444444444444444444444444444444444444444",
                 "tree": provider.tree_id,
@@ -3476,7 +4639,7 @@ mod tests {
             }))
         );
         assert_eq!(
-            requests[14].body,
+            writes[3].1.body,
             Some(json!({ "sha": provider.commit_id, "force": false }))
         );
         assert!(requests
@@ -3485,10 +4648,109 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publication_rebinds_each_object_write_after_a_canonical_rename() {
+        let provider = PublicationFixture::new(PublicationPatch::Confirmed);
+        let fixture = Fixture {
+            publication: Some(provider),
+            rebound_fork_name: Some("upstream-renamed".into()),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let branch = branch_context();
+        let record = publication_record();
+        let plan = publication_plan(&record);
+
+        assert!(matches!(
+            broker(&base_url, true)
+                .publish_branch(&PublicationContext::fixture(&branch, record), &plan)
+                .await,
+            Ok(PublicationAdvance::ObjectsWritten(_))
+        ));
+        server.abort();
+
+        let requests = requests.lock().await;
+        let writes = requests
+            .iter()
+            .enumerate()
+            .filter(|(_, request)| request.method == "POST")
+            .collect::<Vec<_>>();
+        assert_eq!(writes.len(), 3);
+        for (index, request) in writes {
+            assert!(request
+                .uri
+                .contains("/repos/contributor/upstream-renamed/git/"));
+            assert!(requests[index - 1]
+                .uri
+                .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+        }
+    }
+
+    #[tokio::test]
+    async fn publication_repreflights_connection_before_each_object_write() {
+        // Preflight zero is the entry guard. Subsequent preflights guard the
+        // blob, tree, and commit writes respectively.
+        for (drift_after, expected_writes) in [(0, 0), (1, 0), (2, 1), (3, 2)] {
+            let fixture = Fixture {
+                publication: Some(PublicationFixture::new(PublicationPatch::Confirmed)),
+                authority_drift_after: Some(drift_after),
+                ..Fixture::default()
+            };
+            let (base_url, requests, server) = fixture_server(fixture).await;
+            let branch = branch_context();
+            let record = publication_record();
+            let plan = publication_plan(&record);
+
+            let result = broker(&base_url, true)
+                .publish_branch(&PublicationContext::fixture(&branch, record), &plan)
+                .await;
+            server.abort();
+
+            assert!(matches!(result, Err(GithubBrokerError::AuthorityDrift)));
+            assert_eq!(
+                requests
+                    .lock()
+                    .await
+                    .iter()
+                    .filter(|request| request.method == "POST")
+                    .count(),
+                expected_writes,
+                "authority drift after preflight {drift_after} admitted an extra object write"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn publication_rejects_transfer_between_preflight_and_first_object_write() {
+        let fixture = Fixture {
+            publication: Some(PublicationFixture::new(PublicationPatch::Confirmed)),
+            rebound_fork_owner_id: Some(99),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let branch = branch_context();
+        let record = publication_record();
+        let plan = publication_plan(&record);
+
+        assert!(matches!(
+            broker(&base_url, true)
+                .publish_branch(&PublicationContext::fixture(&branch, record), &plan)
+                .await,
+            Err(GithubBrokerError::AuthorityDrift)
+        ));
+        server.abort();
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
     async fn ambiguous_ref_response_is_reconciled_without_a_second_patch() {
         let provider = PublicationFixture::new(PublicationPatch::AmbiguousApplied);
         let fixture = Fixture {
             publication: Some(provider.clone()),
+            rebound_fork_name: Some("upstream-renamed".into()),
             ..Fixture::default()
         };
         let (base_url, requests, server) = fixture_server(fixture).await;
@@ -3521,15 +4783,27 @@ mod tests {
             Ok(PublicationAdvance::Published(_))
         ));
         server.abort();
+        let requests = requests.lock().await;
+        let patch_index = requests
+            .iter()
+            .position(|request| request.method == "PATCH")
+            .expect("ref patch request");
         assert_eq!(
             requests
-                .lock()
-                .await
                 .iter()
                 .filter(|request| request.method == "PATCH")
                 .count(),
             1
         );
+        assert!(requests[patch_index]
+            .uri
+            .contains("/repos/contributor/upstream-renamed/git/refs/"));
+        assert!(requests[patch_index + 1]
+            .uri
+            .starts_with("/api/v1/proxy/s/api-github/repositories/30?"));
+        assert!(requests[patch_index + 2]
+            .uri
+            .contains("/repos/contributor/upstream-renamed/git/ref/"));
     }
 
     #[tokio::test]
@@ -3621,27 +4895,26 @@ mod tests {
             ..Fixture::default()
         };
         let (base_url, requests, server) = fixture_server(fixture).await;
-        let imported = broker(&base_url, true)
-            .import_workspace(&WorkspaceContext {
-                branch: branch_context(),
-            })
+        let github = broker(&base_url, true);
+        let context = WorkspaceContext {
+            branch: branch_context(),
+        };
+        let (_source, manifest, plan, staged) = materialize_workspace(&github, &context)
             .await
             .expect("import workspace");
         server.abort();
 
-        imported.manifest.validate().expect("sealed manifest");
-        assert_eq!(imported.manifest.source_revision, "a".repeat(40));
-        assert_eq!(imported.manifest.entries.len(), 3);
-        assert_eq!(imported.manifest.total_bytes, 18);
-        let executable = imported
-            .manifest
+        manifest.validate().expect("sealed manifest");
+        assert_eq!(manifest.source_revision, "a".repeat(40));
+        assert_eq!(manifest.entries.len(), 3);
+        assert_eq!(manifest.total_bytes, 18);
+        let executable = manifest
             .entries
             .iter()
             .find(|entry| entry.path == "README.md")
             .unwrap();
         assert_eq!(executable.mode, 0o100755);
-        let binary = imported
-            .manifest
+        let binary = manifest
             .entries
             .iter()
             .find(|entry| entry.path == "bin/data.bin")
@@ -3650,17 +4923,28 @@ mod tests {
             binary.provider_object_id.as_deref(),
             Some("046f393ee9d8a6a0754b8ddadce727b4ce35f272")
         );
-        let symlink = imported
-            .manifest
+        let symlink = manifest
             .entries
             .iter()
             .find(|entry| entry.path == "readme-link")
             .unwrap();
         assert_eq!(symlink.kind, layer2_core::WorkspaceEntryKind::Symlink);
         assert_eq!(symlink.symlink_target.as_deref(), Some("README.md"));
+        let mut archive = plan.preamble.clone();
+        for chunk in &plan.chunks {
+            let bytes = staged.get(&chunk.provider_object_id).unwrap();
+            let start = chunk.ordinal as usize * layer2_core::BASELINE_IMPORT_CHUNK_BYTES as usize;
+            let end = start + chunk.bytes as usize;
+            assert_eq!(
+                chunk.sha256,
+                format!("{:x}", Sha256::digest(&bytes[start..end]))
+            );
+            archive.extend_from_slice(&bytes[start..end]);
+        }
+        assert_eq!(archive.len() as u64, plan.archive_bytes);
         assert_eq!(
-            imported.archive_sha256,
-            format!("{:x}", sha2::Sha256::digest(&imported.archive))
+            &archive[plan.preamble.len()..],
+            b"hello\n\x00\xff\x01README.md"
         );
         let requests = requests.lock().await;
         assert_eq!(
@@ -3703,14 +4987,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_import_refuses_lfs_attributes() {
+    async fn workspace_import_refuses_an_oversize_provider_blob_before_requesting_it() {
         let fixture = Fixture {
             branch_head: Some("a".repeat(40)),
             workspace_tree: true,
-            workspace_lfs: true,
+            workspace_oversize_blob: true,
             ..Fixture::default()
         };
-        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let (base_url, requests, server) = fixture_server(fixture).await;
         let result = broker(&base_url, true)
             .import_workspace(&WorkspaceContext {
                 branch: branch_context(),
@@ -3721,9 +5005,341 @@ mod tests {
         assert!(matches!(
             result,
             Err(GithubBrokerError::UnsupportedWorkspace(
+                WorkspaceUnsupported::FileSize
+            ))
+        ));
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| !request.uri.contains("/git/blobs/")));
+    }
+
+    #[tokio::test]
+    async fn workspace_import_refuses_lfs_attributes() {
+        let fixture = Fixture {
+            branch_head: Some("a".repeat(40)),
+            workspace_tree: true,
+            workspace_lfs: true,
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let github = broker(&base_url, true);
+        let result = materialize_workspace(
+            &github,
+            &WorkspaceContext {
+                branch: branch_context(),
+            },
+        )
+        .await;
+        server.abort();
+
+        assert!(matches!(
+            result,
+            Err(GithubBrokerError::UnsupportedWorkspace(
                 WorkspaceUnsupported::LargeFileStorage
             ))
         ));
+    }
+
+    async fn materialize_workspace(
+        github: &GithubBroker,
+        context: &WorkspaceContext,
+    ) -> Result<
+        (
+            WorkspaceSourcePlan,
+            layer2_core::WorkspaceManifest,
+            layer2_core::BaselineArchivePlan,
+            BTreeMap<String, Vec<u8>>,
+        ),
+        GithubBrokerError,
+    > {
+        let source = github.import_workspace(context).await?;
+        let mut metadata = BTreeMap::new();
+        let mut staged = BTreeMap::new();
+        for blob in &source.blobs {
+            let bytes = github.read_workspace_blob(context, blob).await?;
+            let chunks = bytes
+                .chunks(layer2_core::BASELINE_IMPORT_CHUNK_BYTES as usize)
+                .enumerate()
+                .map(|(ordinal, part)| layer2_core::BaselineImportChunk {
+                    provider_object_id: blob.provider_object_id.clone(),
+                    ordinal: ordinal as u32,
+                    bytes: part.len() as u64,
+                    sha256: format!("{:x}", Sha256::digest(part)),
+                })
+                .collect();
+            let needs_symlink_target = source.entries.iter().any(|entry| {
+                entry.provider_object_id == blob.provider_object_id && entry.mode == 0o120000
+            });
+            metadata.insert(
+                blob.provider_object_id.clone(),
+                workspace_blob_metadata(blob, &bytes, chunks, needs_symlink_target)?,
+            );
+            staged.insert(blob.provider_object_id.clone(), bytes);
+        }
+        let (manifest, plan) = build_baseline_archive_plan(&source, &metadata)?;
+        Ok((source, manifest, plan, staged))
+    }
+
+    #[tokio::test]
+    async fn connection_revocation_is_stable_across_replay_restart_and_github_outage() {
+        let revocation = RevocationFixture {
+            github_user_available: false,
+            ..RevocationFixture::default()
+        };
+        let fixture = Fixture {
+            revocation: Some(revocation.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, requests, server) = fixture_server(fixture).await;
+        let store = Arc::new(TestConnectionRevocationStore::default());
+        let broker = broker_with_revocations(&base_url, Arc::clone(&store));
+
+        let first = TriggerConnectionManager::revoke_connection(&broker, &subject(), "service-1")
+            .await
+            .expect("first revoke settles");
+        assert_eq!(first.service_id, "service-1");
+        assert_eq!(first.state, ConnectionState::Inactive);
+        assert_eq!(first.state_version, 5);
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(store.fenced(), 1);
+
+        let replay = TriggerConnectionManager::revoke_connection(&broker, &subject(), "service-1")
+            .await
+            .expect("different command key converges at the backend");
+        assert_eq!(replay, first);
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 1);
+
+        let restarted = broker_with_revocations(&base_url, Arc::clone(&store));
+        let after_restart =
+            TriggerConnectionManager::revoke_connection(&restarted, &subject(), "service-1")
+                .await
+                .expect("process restart reads the durable receipt");
+        assert_eq!(after_restart, first);
+        let listed = TriggerConnectionManager::list_connections(&restarted, &subject())
+            .await
+            .expect("successful live listing merges the durable inactive receipt");
+        assert_eq!(listed, vec![first.clone()]);
+
+        revocation
+            .management_available
+            .store(false, Ordering::SeqCst);
+        assert!(
+            TriggerConnectionManager::list_connections(&restarted, &subject())
+                .await
+                .is_err()
+        );
+        let replay_lookup = TriggerConnectionManager::connection_for_revocation(
+            &restarted,
+            &subject(),
+            "service-1",
+        )
+        .await
+        .expect("durable lookup remains available for operation replay");
+        assert_eq!(replay_lookup, Some(first));
+        assert!(
+            TriggerConnectionManager::revoke_connection(&restarted, &subject(), "service-1",)
+                .await
+                .is_err()
+        );
+        server.abort();
+
+        assert!(requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| request.uri != "/api/v1/proxy/s/api-github/user"));
+    }
+
+    #[tokio::test]
+    async fn lost_delete_response_reconciles_from_provider_observed_inactive_version() {
+        let revocation = RevocationFixture::default();
+        revocation
+            .lose_delete_response_once
+            .store(true, Ordering::SeqCst);
+        let fixture = Fixture {
+            revocation: Some(revocation.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let store = Arc::new(TestConnectionRevocationStore::default());
+        let receipt = TriggerConnectionManager::revoke_connection(
+            &broker_with_revocations(&base_url, store),
+            &subject(),
+            "service-1",
+        )
+        .await
+        .expect("ambiguous DELETE is reconciled by exact authorization evidence");
+        server.abort();
+
+        assert_eq!(receipt.state, ConnectionState::Inactive);
+        assert_eq!(receipt.state_version, 5);
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn fencing_failure_after_provider_receipt_releases_the_latest_writer_revision() {
+        let revocation = RevocationFixture::default();
+        let fixture = Fixture {
+            revocation: Some(revocation.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let store = Arc::new(TestConnectionRevocationStore::default());
+        store.fail_fencing_once();
+        let broker = broker_with_revocations(&base_url, Arc::clone(&store));
+
+        TriggerConnectionManager::revoke_connection(&broker, &subject(), "service-1")
+            .await
+            .expect_err("the injected Launch fencing failure is surfaced");
+        let recoverable = store
+            .get_connection_revocation(&subject(), "service-1")
+            .await
+            .expect("read persisted revocation")
+            .expect("revocation intent remains durable");
+        assert!(recoverable.provider_receipt.is_some());
+        assert!(recoverable.dispatch_lease.is_none());
+        assert!(recoverable.settled_at.is_none());
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 1);
+
+        let settled = TriggerConnectionManager::revoke_connection(&broker, &subject(), "service-1")
+            .await
+            .expect("retry resumes from the durable provider receipt");
+        server.abort();
+
+        assert_eq!(settled.state, ConnectionState::Inactive);
+        assert_eq!(settled.state_version, 5);
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(store.fenced(), 1);
+    }
+
+    #[tokio::test]
+    async fn delete_not_found_race_requires_and_accepts_positive_inactive_evidence() {
+        let revocation = RevocationFixture::default();
+        revocation
+            .delete_returns_not_found_once
+            .store(true, Ordering::SeqCst);
+        let fixture = Fixture {
+            revocation: Some(revocation.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let receipt = TriggerConnectionManager::revoke_connection(
+            &broker_with_revocations(
+                &base_url,
+                Arc::new(TestConnectionRevocationStore::default()),
+            ),
+            &subject(),
+            "service-1",
+        )
+        .await
+        .expect("404 race reconciles only through inactive evidence");
+        server.abort();
+
+        assert_eq!(receipt.state, ConnectionState::Inactive);
+        assert_eq!(receipt.state_version, 5);
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn reactivated_service_starts_a_new_revocation_epoch() {
+        let revocation = RevocationFixture::default();
+        let fixture = Fixture {
+            revocation: Some(revocation.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let store = Arc::new(TestConnectionRevocationStore::default());
+        let broker = broker_with_revocations(&base_url, Arc::clone(&store));
+        let first = TriggerConnectionManager::revoke_connection(&broker, &subject(), "service-1")
+            .await
+            .expect("first epoch settles");
+        assert_eq!(first.state_version, 5);
+
+        revocation.reactivate();
+        let current =
+            TriggerConnectionManager::connection_for_revocation(&broker, &subject(), "service-1")
+                .await
+                .expect("lookup succeeds")
+                .expect("reactivated service is visible");
+        assert_eq!(current.state, ConnectionState::Active);
+        assert_eq!(current.state_version, 6);
+
+        let second = TriggerConnectionManager::revoke_connection(&broker, &subject(), "service-1")
+            .await
+            .expect("new provider epoch is revoked independently");
+        server.abort();
+
+        assert_eq!(second.state, ConnectionState::Inactive);
+        assert_eq!(second.state_version, 7);
+        assert_ne!(second.state_version, first.state_version);
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(store.fenced(), 2);
+    }
+
+    #[tokio::test]
+    async fn concurrent_connection_revokes_converge_on_one_provider_write() {
+        let revocation = RevocationFixture::default();
+        let fixture = Fixture {
+            revocation: Some(revocation.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let store = Arc::new(TestConnectionRevocationStore::default());
+        let left = broker_with_revocations(&base_url, Arc::clone(&store));
+        let right = broker_with_revocations(&base_url, store);
+        let left_subject = subject();
+        let right_subject = subject();
+        let (left, right) = tokio::join!(
+            TriggerConnectionManager::revoke_connection(&left, &left_subject, "service-1"),
+            TriggerConnectionManager::revoke_connection(&right, &right_subject, "service-1"),
+        );
+        server.abort();
+
+        let left = left.expect("left revoke converges");
+        let right = right.expect("right revoke converges");
+        assert_eq!(left, right);
+        assert_eq!(left.state, ConnectionState::Inactive);
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn active_list_absence_and_unknown_service_never_fabricate_owner_proof() {
+        let revocation = RevocationFixture::default();
+        revocation.active.store(false, Ordering::SeqCst);
+        let fixture = Fixture {
+            revocation: Some(revocation.clone()),
+            ..Fixture::default()
+        };
+        let (base_url, _requests, server) = fixture_server(fixture).await;
+        let broker = broker_with_revocations(
+            &base_url,
+            Arc::new(TestConnectionRevocationStore::default()),
+        );
+        assert_eq!(
+            TriggerConnectionManager::connection_for_revocation(&broker, &subject(), "service-1",)
+                .await
+                .expect("concealed lookup"),
+            None
+        );
+        assert!(
+            TriggerConnectionManager::revoke_connection(&broker, &subject(), "service-1",)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            TriggerConnectionManager::connection_for_revocation(
+                &broker,
+                &subject(),
+                "foreign-service",
+            )
+            .await
+            .expect("foreign lookup is concealed"),
+            None
+        );
+        server.abort();
+        assert_eq!(revocation.delete_calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

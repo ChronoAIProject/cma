@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use base64::Engine as _;
 use layer2_core::{
     ConnectionSnapshot, ContributionRecord, DiffChangeKind, ForkRecord, Launch, PublicationState,
-    SubjectId, MAX_DIFF_BYTES,
+    RepositoryIdentity, SubjectId, MAX_DIFF_BYTES,
 };
 use reqwest::Method;
 use serde::Deserialize;
@@ -177,14 +177,7 @@ impl GithubBroker {
     ) -> Result<PublicationAdvance, GithubBrokerError> {
         validate_plan(context, plan)?;
         reject_lfs(plan)?;
-        let branch_context = BranchContext {
-            owner: context.owner.clone(),
-            launch_id: context.launch_id.clone(),
-            connection: context.connection.clone(),
-            fork: context.fork.clone(),
-            source_sha: plan.expected_head.clone(),
-        };
-        let repository = self.current_branch_fork(&branch_context).await?;
+        let repository = self.current_publication_write_fork(context, plan).await?;
         match context.contribution.state {
             PublicationState::IntentRecorded => self
                 .write_publication_objects(context, plan, &repository)
@@ -205,7 +198,6 @@ impl GithubBroker {
                         .verified_result(
                             context,
                             plan,
-                            &repository,
                             prepared.base_tree_id,
                             prepared.tree_id,
                             prepared.commit_id,
@@ -229,6 +221,83 @@ impl GithubBroker {
                 .map(PublicationAdvance::Published),
             _ => Err(GithubBrokerError::Malformed(
                 "the publication state cannot perform a Git Data write".into(),
+            )),
+        }
+    }
+
+    /// Observe a previously admitted publication attempt without issuing any
+    /// blob, tree, commit, or ref write. An absent outcome stays ambiguous.
+    pub(crate) async fn reconcile_branch_publication(
+        &self,
+        context: &PublicationContext,
+        plan: &PublicationPlan,
+    ) -> Result<PublicationAdvance, GithubBrokerError> {
+        validate_plan(context, plan)?;
+        reject_lfs(plan)?;
+        let repository = self.current_publication_fork(context, plan).await?;
+        match context.contribution.state {
+            PublicationState::IntentRecorded => Err(GithubBrokerError::AmbiguousWrite),
+            PublicationState::ObjectsWritten => {
+                let prepared = retained_prepared(context)?;
+                let observed_head = self
+                    .resolve_branch_sha(
+                        &context.owner,
+                        &context.connection.service_id,
+                        &repository,
+                        &context.branch_name,
+                    )
+                    .await?;
+                if observed_head.eq_ignore_ascii_case(&prepared.commit_id) {
+                    return self
+                        .verified_result(
+                            context,
+                            plan,
+                            prepared.base_tree_id,
+                            prepared.tree_id,
+                            prepared.commit_id,
+                            prepared.object_ids,
+                        )
+                        .await
+                        .map(PublicationAdvance::Published);
+                }
+                if !observed_head.eq_ignore_ascii_case(&plan.expected_head) {
+                    return Err(GithubBrokerError::BranchHeadConflict);
+                }
+                let commit = self
+                    .read_commit(context, &repository, &prepared.commit_id)
+                    .await?;
+                validate_commit_response(&commit, &prepared.tree_id, &plan.expected_head)?;
+                Ok(PublicationAdvance::RefUpdatePending(prepared))
+            }
+            PublicationState::RefUpdatePending => {
+                let prepared = retained_prepared(context)?;
+                let observed_head = self
+                    .resolve_branch_sha(
+                        &context.owner,
+                        &context.connection.service_id,
+                        &repository,
+                        &context.branch_name,
+                    )
+                    .await?;
+                if observed_head.eq_ignore_ascii_case(&prepared.commit_id) {
+                    self.verified_result(
+                        context,
+                        plan,
+                        prepared.base_tree_id,
+                        prepared.tree_id,
+                        prepared.commit_id,
+                        prepared.object_ids,
+                    )
+                    .await
+                    .map(PublicationAdvance::Published)
+                } else if observed_head.eq_ignore_ascii_case(&plan.expected_head) {
+                    Err(GithubBrokerError::AmbiguousWrite)
+                } else {
+                    Err(GithubBrokerError::BranchHeadConflict)
+                }
+            }
+            _ => Err(GithubBrokerError::Malformed(
+                "the publication state has no unsettled write to reconcile".into(),
             )),
         }
     }
@@ -259,8 +328,8 @@ impl GithubBroker {
         }
         validate_commit_sha(&base_commit.tree.sha)?;
         let base_tree_id = base_commit.tree.sha.to_ascii_lowercase();
-        let (tree_entries, object_ids) =
-            self.prepare_tree_entries(context, repository, plan).await?;
+        let (tree_entries, object_ids) = self.prepare_tree_entries(context, plan).await?;
+        let repository = self.current_publication_write_fork(context, plan).await?;
         let tree: Observed<TreeWriteWire> = self
             .github_json(
                 &context.owner,
@@ -287,6 +356,7 @@ impl GithubBroker {
             "CMA Trigger contribution\n\nLaunch: {}\nReviewed diff: {}",
             context.launch_id, plan.diff_digest
         );
+        let repository = self.current_publication_write_fork(context, plan).await?;
         let commit: Observed<CommitWire> = self
             .github_json(
                 &context.owner,
@@ -352,28 +422,15 @@ impl GithubBroker {
             .await?;
         if before_patch.eq_ignore_ascii_case(&commit_id) {
             return self
-                .verified_result(
-                    context,
-                    plan,
-                    repository,
-                    base_tree_id,
-                    tree_id,
-                    commit_id,
-                    object_ids,
-                )
+                .verified_result(context, plan, base_tree_id, tree_id, commit_id, object_ids)
                 .await;
         }
         if !before_patch.eq_ignore_ascii_case(&plan.expected_head) {
             return Err(GithubBrokerError::BranchHeadConflict);
         }
 
-        // Last authority read before the only history-changing operation.
-        let current = self
-            .preflight_connection(&context.owner, &context.connection.service_id)
-            .await?;
-        if !same_connection(&context.connection, &current.snapshot) {
-            return Err(GithubBrokerError::AuthorityDrift);
-        }
+        // Re-establish authority again at the final ref-update boundary.
+        let repository = self.current_publication_write_fork(context, plan).await?;
         let components = repository_ref_components(&context.branch_name)?;
         let mut ref_path = vec![
             "repos",
@@ -401,7 +458,6 @@ impl GithubBroker {
                     .reconcile_patch_error(
                         context,
                         plan,
-                        repository,
                         base_tree_id,
                         tree_id,
                         commit_id,
@@ -411,22 +467,13 @@ impl GithubBroker {
                     .await
             }
         }
-        self.verified_result(
-            context,
-            plan,
-            repository,
-            base_tree_id,
-            tree_id,
-            commit_id,
-            object_ids,
-        )
-        .await
+        self.verified_result(context, plan, base_tree_id, tree_id, commit_id, object_ids)
+            .await
     }
 
     async fn prepare_tree_entries(
         &self,
         context: &PublicationContext,
-        repository: &layer2_core::RepositoryIdentity,
         plan: &PublicationPlan,
     ) -> Result<(Vec<Value>, Vec<String>), GithubBrokerError> {
         let mut inline_bytes = 0_usize;
@@ -472,6 +519,7 @@ impl GithubBroker {
                         "sha": blob_id,
                     })
                 } else {
+                    let repository = self.current_publication_write_fork(context, plan).await?;
                     let response: Observed<BlobWire> = self
                         .github_json(
                             &context.owner,
@@ -512,33 +560,25 @@ impl GithubBroker {
         &self,
         context: &PublicationContext,
         plan: &PublicationPlan,
-        repository: &layer2_core::RepositoryIdentity,
         base_tree_id: String,
         tree_id: String,
         commit_id: String,
         object_ids: Vec<String>,
         error: GithubBrokerError,
     ) -> Result<PublishedGitData, GithubBrokerError> {
+        let repository = self.current_publication_fork(context, plan).await?;
         let observed = self
             .resolve_branch_sha(
                 &context.owner,
                 &context.connection.service_id,
-                repository,
+                &repository,
                 &context.branch_name,
             )
             .await;
         match observed {
             Ok(head) if head.eq_ignore_ascii_case(&commit_id) => {
-                self.verified_result(
-                    context,
-                    plan,
-                    repository,
-                    base_tree_id,
-                    tree_id,
-                    commit_id,
-                    object_ids,
-                )
-                .await
+                self.verified_result(context, plan, base_tree_id, tree_id, commit_id, object_ids)
+                    .await
             }
             Ok(head) if !head.eq_ignore_ascii_case(&plan.expected_head) => {
                 Err(GithubBrokerError::BranchHeadConflict)
@@ -564,16 +604,16 @@ impl GithubBroker {
         &self,
         context: &PublicationContext,
         plan: &PublicationPlan,
-        repository: &layer2_core::RepositoryIdentity,
         base_tree_id: String,
         tree_id: String,
         commit_id: String,
         object_ids: Vec<String>,
     ) -> Result<PublishedGitData, GithubBrokerError> {
+        let repository = self.current_publication_fork(context, plan).await?;
         self.verify_publication(
             context,
             plan,
-            repository,
+            &repository,
             &base_tree_id,
             &tree_id,
             &commit_id,
@@ -586,6 +626,38 @@ impl GithubBroker {
             resulting_head: commit_id,
             object_ids,
         })
+    }
+
+    async fn current_publication_fork(
+        &self,
+        context: &PublicationContext,
+        plan: &PublicationPlan,
+    ) -> Result<RepositoryIdentity, GithubBrokerError> {
+        self.current_branch_fork(&BranchContext {
+            owner: context.owner.clone(),
+            launch_id: context.launch_id.clone(),
+            connection: context.connection.clone(),
+            fork: context.fork.clone(),
+            source_sha: plan.expected_head.clone(),
+        })
+        .await
+    }
+
+    /// Re-establish both delegated service authority and numeric repository
+    /// identity at the boundary of every Git Data write. The subject bearer is
+    /// still resolved independently by `github_json` for the following request.
+    async fn current_publication_write_fork(
+        &self,
+        context: &PublicationContext,
+        plan: &PublicationPlan,
+    ) -> Result<RepositoryIdentity, GithubBrokerError> {
+        let current = self
+            .preflight_connection(&context.owner, &context.connection.service_id)
+            .await?;
+        if !same_connection(&context.connection, &current.snapshot) {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        self.current_publication_fork(context, plan).await
     }
 
     async fn verify_publication(
@@ -870,8 +942,17 @@ fn same_connection(expected: &ConnectionSnapshot, current: &ConnectionSnapshot) 
     expected.service_id == current.service_id
         && expected.service_state_version == current.service_state_version
         && expected.backing_key_id == current.backing_key_id
-        && expected.account == current.account
-        && expected.granted_scopes == current.granted_scopes
-        && expected.satisfied_scope_classes == current.satisfied_scope_classes
+        && expected.account.account_id == current.account.account_id
+        && expected.account.account_node_id == current.account.account_node_id
+        && expected.granted_scopes.iter().collect::<BTreeSet<_>>()
+            == current.granted_scopes.iter().collect::<BTreeSet<_>>()
+        && expected
+            .satisfied_scope_classes
+            .iter()
+            .collect::<BTreeSet<_>>()
+            == current
+                .satisfied_scope_classes
+                .iter()
+                .collect::<BTreeSet<_>>()
         && current.state == layer2_core::ConnectionState::Active
 }

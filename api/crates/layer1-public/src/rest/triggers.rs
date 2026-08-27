@@ -14,15 +14,16 @@ use layer2_core::{
     ContributionRecord, CredentialRoute, DiffArtifact, DiffArtifactId, DiffFile, EditableField,
     EffectiveConfiguration, ExecutorPolicy, ForkRecord, InputFieldDefinition, Launch,
     LaunchBlockedReason, LaunchEvent, LaunchEventKind, LaunchFailure, LaunchId, LaunchOverrides,
-    LaunchStep, OverridePolicy, PricingSnapshot, PromptDelivery, PublicProjectionPolicy,
-    PublicTriggerId, PullRequestDraft, PullRequestOperation, PullRequestRecord, ReachStatus,
-    RecoverInitialPromptCommand, RepositoryAccessPolicy, RequiredCapability, ResourcePolicy,
-    ScopeClass, SessionLink, SetupPolicy, SourceMode, StartLaunchCommand, TriggerAvailability,
-    TriggerConnection, TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft,
-    TriggerId, TriggerPageRequest, TriggerPreview, TriggerRepositorySelection, TriggerRevision,
-    TriggerRevisionContent, TriggerRevisionId, TriggerServiceError, TriggerSessionPolicy,
-    TriggerStoreError, TriggerTask, UpstreamRevision, WorkflowChangePolicy, WorkspaceCheckpoint,
-    WorkspaceManifest, WorkspaceRecord,
+    LaunchProgressState, LaunchState, LaunchStep, OverridePolicy, PricingSnapshot, PromptDelivery,
+    PublicProjectionPolicy, PublicTriggerId, PullRequestDraft, PullRequestOperation,
+    PullRequestRecord, QuotaSnapshot, ReachStatus, RecoverInitialPromptCommand,
+    RepositoryAccessPolicy, RequiredCapability, ResourcePolicy, RuntimeAdmissionSnapshot,
+    ScopeClass, SessionLink, SetupPolicy, SourceMode, StartAdmissionSnapshot, StartLaunchCommand,
+    TriggerAvailability, TriggerConnection, TriggerConnectionAuthorization,
+    TriggerConnectionManager, TriggerDraft, TriggerId, TriggerPageRequest, TriggerPreview,
+    TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent, TriggerRevisionId,
+    TriggerServiceError, TriggerSessionPolicy, TriggerStoreError, TriggerTask, UpstreamRevision,
+    WorkflowChangePolicy, WorkspaceCheckpoint, WorkspaceManifest, WorkspaceRecord,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -47,6 +48,7 @@ pub(super) fn documented_router(state: TriggersState) -> OpenApiRouter {
         .routes(routes!(read_revision))
         .routes(routes!(retire_revision))
         .routes(routes!(list_connections, begin_connection))
+        .routes(routes!(revoke_connection))
         .routes(routes!(reconnect_connection))
         .routes(routes!(preflight_connection))
         .routes(routes!(resolve_connection_repository))
@@ -312,6 +314,19 @@ impl Default for PageParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct LaunchPageParams {
+    #[serde(default)]
+    state: Option<LaunchState>,
+    #[serde(default)]
+    trigger_public_id: Option<String>,
+    #[serde(default = "default_page_limit")]
+    limit: u32,
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProgressParams {
     #[serde(default)]
     after: u64,
@@ -341,20 +356,25 @@ impl From<layer2_core::SessionSize> for SessionSizeView {
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct TriggerPreviewView {
     public_id: String,
+    #[schema(value_type = trigger_schema::TriggerAvailability)]
     availability: String,
     publisher_display_identity: String,
     repository_id: u64,
     repository_owner: String,
     repository_name: String,
+    #[schema(value_type = trigger_schema::RepositoryVisibility)]
     visibility: String,
     allow_forking: bool,
     public_summary: String,
+    #[schema(value_type = trigger_schema::PermissionMode)]
     permission_ceiling: String,
+    #[schema(value_type = Vec<trigger_schema::RequiredCapability>)]
     required_capabilities: Vec<String>,
     resource_default: SessionSizeView,
     resource_ceiling: SessionSizeView,
     timeout_default_seconds: u32,
     timeout_ceiling_seconds: u32,
+    #[schema(value_type = trigger_schema::BillingMode)]
     billing_mode: String,
     pricing_policy_reference: String,
     revision_digest: String,
@@ -437,6 +457,7 @@ struct PublisherAuthorityView {
     service_state_version: i64,
     account_id: u64,
     account_login: String,
+    #[schema(value_type = trigger_schema::PublisherRepositoryRole)]
     role: String,
     verified_at: String,
 }
@@ -446,6 +467,7 @@ struct TriggerRevisionView {
     id: String,
     public_id: String,
     digest: String,
+    #[schema(value_type = trigger_schema::TriggerAvailability)]
     availability: String,
     #[schema(value_type = trigger_schema::TriggerRevisionContent)]
     content: TriggerRevisionContent,
@@ -493,6 +515,7 @@ struct TriggerRevisionPageView {
 struct TriggerConnectionView {
     service_id: String,
     state_version: i64,
+    #[schema(value_type = trigger_schema::ConnectionState)]
     state: String,
     account_id: Option<u64>,
     account_node_id: Option<String>,
@@ -557,6 +580,7 @@ pub(crate) struct LaunchView {
     trigger_public_id: String,
     revision_digest: String,
     source_sha: String,
+    #[schema(value_type = trigger_schema::LaunchState)]
     state: String,
     revision_number: u64,
     #[schema(value_type = trigger_schema::TriggerRevisionContent)]
@@ -565,12 +589,22 @@ pub(crate) struct LaunchView {
     blocked_reason: Option<LaunchBlockedReason>,
     #[schema(value_type = Option<trigger_schema::LaunchFailure>)]
     failure: Option<LaunchFailure>,
+    /// Durable step retained while authentication or another recovery action
+    /// blocks orchestration.
+    #[schema(value_type = Option<trigger_schema::LaunchState>)]
+    resume_state: Option<String>,
     #[schema(value_type = trigger_schema::LaunchOverrides)]
     overrides: LaunchOverrides,
     #[schema(value_type = trigger_schema::EffectiveConfiguration)]
     effective: EffectiveConfiguration,
     #[schema(value_type = Option<trigger_schema::PricingSnapshot>)]
     pricing: Option<PricingSnapshot>,
+    #[schema(value_type = Option<trigger_schema::RuntimeAdmissionSnapshot>)]
+    runtime_admission: Option<RuntimeAdmissionSnapshot>,
+    #[schema(value_type = Option<trigger_schema::QuotaSnapshot>)]
+    review_quota: Option<QuotaSnapshot>,
+    #[schema(value_type = Option<trigger_schema::StartAdmissionSnapshot>)]
+    start_admission: Option<StartAdmissionSnapshot>,
     connection: Option<TriggerConnectionView>,
     workflow_paths: Vec<String>,
     workflow_risk_acknowledged: bool,
@@ -592,6 +626,7 @@ pub(crate) struct LaunchView {
     pull_request: Option<PullRequestRecordView>,
     created_at: String,
     updated_at: String,
+    draft_expires_at: String,
     started_at: Option<String>,
     terminal_at: Option<String>,
 }
@@ -616,6 +651,7 @@ pub(crate) struct DiffArtifactView {
     #[schema(value_type = trigger_schema::CommitIdentity)]
     committer: CommitIdentity,
     workflow_paths: Vec<String>,
+    #[schema(value_type = trigger_schema::DiffValidationOutcome)]
     validation: String,
     #[schema(value_type = Vec<trigger_schema::CheckResult>)]
     checks: Vec<CheckResult>,
@@ -646,6 +682,7 @@ struct WorkspaceCheckpointView {
     archive_sha256: String,
     #[schema(value_type = trigger_schema::WorkspaceManifest)]
     manifest: WorkspaceManifest,
+    #[schema(value_type = trigger_schema::CheckpointIntegrity)]
     integrity: String,
     created_at: String,
     delete_after: Option<String>,
@@ -660,6 +697,7 @@ struct ContributionRecordView {
     checkpoint_digest: String,
     diff_digest: String,
     branch_name: String,
+    #[schema(value_type = trigger_schema::PublicationState)]
     state: String,
     expected_head: String,
     base_tree_id: Option<String>,
@@ -679,6 +717,7 @@ struct ContributionRecordView {
 
 #[derive(Debug, Serialize, ToSchema)]
 struct PullRequestRecordView {
+    #[schema(value_type = trigger_schema::PullRequestOperation)]
     operation: String,
     marker: String,
     upstream_repository_id: u64,
@@ -704,12 +743,15 @@ struct PullRequestRecordView {
     provider_node_id: Option<String>,
     number: Option<u64>,
     canonical_url: Option<String>,
+    #[schema(value_type = trigger_schema::PullRequestState)]
     state: String,
     base_revision: Option<String>,
     head_revision: Option<String>,
     observed_title: Option<String>,
     observed_body_digest: Option<String>,
+    #[schema(value_type = trigger_schema::Mergeability)]
     mergeability: String,
+    #[schema(value_type = trigger_schema::CheckSummaryState)]
     checks: String,
     confirmation_snapshot_digest: String,
     confirmed_at: String,
@@ -722,6 +764,7 @@ struct PullRequestRecordView {
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct PullRequestDraftView {
     launch_id: String,
+    #[schema(value_type = trigger_schema::PullRequestOperation)]
     operation: String,
     marker: String,
     upstream_repository_id: u64,
@@ -782,6 +825,7 @@ impl From<PullRequestDraft> for PullRequestDraftView {
 pub(crate) struct DiffReviewView {
     launch_id: String,
     revision_number: u64,
+    #[schema(value_type = trigger_schema::LaunchState)]
     state: String,
     source_sha: String,
     workflow_paths: Vec<String>,
@@ -943,8 +987,10 @@ impl DiffArtifactView {
 
 #[derive(Debug, Serialize, ToSchema)]
 struct LaunchStepView {
+    #[schema(value_type = trigger_schema::LaunchStepKey)]
     key: String,
     sequence: u32,
+    #[schema(value_type = trigger_schema::LaunchStepStatus)]
     status: String,
     started_at: Option<String>,
     completed_at: Option<String>,
@@ -966,10 +1012,62 @@ impl From<LaunchStep> for LaunchStepView {
             attempt: value.attempt,
             safe_detail: value.safe_detail,
             remediation: value.remediation,
-            external_resource_ids: value.external_resource_ids,
+            external_resource_ids: public_external_resource_ids(value.external_resource_ids),
             correlation_id: value.correlation_id,
         }
     }
+}
+
+fn public_external_resource_ids(
+    values: std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    values
+        .into_iter()
+        .filter(|(key, _)| {
+            matches!(
+                key.as_str(),
+                "base_tree_id"
+                    | "branch_head"
+                    | "branch_ref"
+                    | "checkpoint_archive_sha256"
+                    | "checkpoint_id"
+                    | "checkpoint_manifest_digest"
+                    | "checkpoint_quiesced_writers"
+                    | "checkpoint_version"
+                    | "cleanup_target_count"
+                    | "commit_id"
+                    | "diff_artifact_digest"
+                    | "diff_artifact_id"
+                    | "diff_changed_files"
+                    | "diff_validation"
+                    | "environment_profile_id"
+                    | "fork_readiness_deadline"
+                    | "fork_repository_id"
+                    | "fork_repository_node_id"
+                    | "policy_expires_at"
+                    | "policy_fence"
+                    | "policy_generation"
+                    | "pull_request_head"
+                    | "pull_request_node_id"
+                    | "pull_request_number"
+                    | "pull_request_provider_id"
+                    | "pull_request_url"
+                    | "repository_id"
+                    | "resulting_head"
+                    | "runtime_audience"
+                    | "runtime_gateway_probe_outcome"
+                    | "runtime_gateway_probe_version"
+                    | "runtime_generation"
+                    | "sandbox_id"
+                    | "service_id"
+                    | "session_id"
+                    | "source_sha"
+                    | "tree_id"
+                    | "workspace_file_count"
+                    | "workspace_manifest_digest"
+            )
+        })
+        .collect()
 }
 
 impl From<Launch> for LaunchView {
@@ -998,9 +1096,13 @@ impl From<Launch> for LaunchView {
             revision_content: value.revision.content,
             blocked_reason: value.blocked_reason,
             failure: value.failure,
+            resume_state: value.resume_state.map(enum_name),
             overrides: value.overrides,
             effective: value.effective,
             pricing: value.pricing,
+            runtime_admission: value.runtime_admission,
+            review_quota: value.review_quota,
+            start_admission: value.start_admission,
             connection,
             workflow_paths: value.workflow_paths,
             workflow_risk_acknowledged: value.workflow_risk_acknowledged,
@@ -1017,6 +1119,7 @@ impl From<Launch> for LaunchView {
             pull_request: value.pull_request.map(Into::into),
             created_at: value.created_at,
             updated_at: value.updated_at,
+            draft_expires_at: value.draft_expires_at,
             started_at: value.started_at,
             terminal_at: value.terminal_at,
         }
@@ -1031,29 +1134,63 @@ struct LaunchPageView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct LaunchProgressView {
-    launch_id: String,
-    events: Vec<LaunchEventView>,
-    next_cursor: u64,
+    pub(crate) launch_id: String,
+    pub(crate) events: Vec<LaunchEventView>,
+    pub(crate) next_cursor: u64,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-struct LaunchEventView {
-    sequence: u64,
+pub(crate) struct LaunchEventView {
+    pub(crate) sequence: u64,
     launch_id: String,
     occurred_at: String,
     correlation_id: String,
+    progress: LaunchProgressStateView,
     kind: LaunchEventKindView,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct LaunchProgressStateView {
+    #[schema(value_type = trigger_schema::LaunchState)]
+    state: String,
+    #[schema(value_type = Option<trigger_schema::LaunchBlockedReason>)]
+    blocked_reason: Option<LaunchBlockedReason>,
+    #[schema(value_type = Option<trigger_schema::LaunchFailure>)]
+    failure: Option<LaunchFailure>,
+    #[schema(value_type = Option<trigger_schema::LaunchState>)]
+    resume_state: Option<String>,
+    #[schema(value_type = Option<trigger_schema::ReachStatus>)]
+    reach: Option<ReachStatus>,
+    #[schema(value_type = Option<trigger_schema::PromptDelivery>)]
+    delivery: Option<PromptDelivery>,
+}
+
+impl From<LaunchProgressState> for LaunchProgressStateView {
+    fn from(value: LaunchProgressState) -> Self {
+        Self {
+            state: enum_name(value.state),
+            blocked_reason: value.blocked_reason,
+            failure: value.failure,
+            resume_state: value.resume_state.map(enum_name),
+            reach: value.reach,
+            delivery: value.delivery,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum LaunchEventKindView {
-    Created,
+    Created {
+        steps: Vec<LaunchStepView>,
+    },
     DraftUpdated,
     ConnectionSelected,
     Started,
     StateChanged {
+        #[schema(value_type = trigger_schema::LaunchState)]
         from: String,
+        #[schema(value_type = trigger_schema::LaunchState)]
         to: String,
     },
     StepChanged {
@@ -1072,12 +1209,15 @@ enum LaunchEventKindView {
         failure: LaunchFailure,
     },
     EffectReconciled {
+        #[schema(value_type = trigger_schema::LaunchEffectKind)]
         effect: String,
     },
     RecoveryAuthorized {
+        #[schema(value_type = trigger_schema::LaunchEffectKind)]
         effect: String,
     },
     DeliveryChanged {
+        #[schema(value_type = trigger_schema::PromptDeliveryState)]
         state: String,
     },
     ReachChanged {
@@ -1085,6 +1225,7 @@ enum LaunchEventKindView {
         reach: ReachStatus,
     },
     ConfirmationRecorded {
+        #[schema(value_type = trigger_schema::ConfirmationAction)]
         action: String,
     },
     CleanupPlanned {
@@ -1103,8 +1244,11 @@ impl From<LaunchEvent> for LaunchEventView {
             launch_id: value.launch_id.0,
             occurred_at: value.occurred_at,
             correlation_id: value.correlation_id,
+            progress: value.progress.into(),
             kind: match value.kind {
-                LaunchEventKind::Created => LaunchEventKindView::Created,
+                LaunchEventKind::Created { steps } => LaunchEventKindView::Created {
+                    steps: steps.into_iter().map(Into::into).collect(),
+                },
                 LaunchEventKind::DraftUpdated => LaunchEventKindView::DraftUpdated,
                 LaunchEventKind::ConnectionSelected => LaunchEventKindView::ConnectionSelected,
                 LaunchEventKind::Started => LaunchEventKindView::Started,
@@ -1194,6 +1338,56 @@ fn parse_diff_artifact_id(value: String) -> Result<DiffArtifactId, TriggerServic
     DiffArtifactId::parse(value).map_err(|_| TriggerServiceError::NotFound)
 }
 
+// Conceal foreign and missing private resources before reserving an
+// idempotency key or consulting an external authority. Resource ownership is
+// immutable, so the command can safely reload the same record for its
+// optimistic-concurrency check after this admission read.
+async fn owned_trigger_command_id(
+    state: &TriggersState,
+    owner: &layer2_core::SubjectId,
+    value: String,
+) -> Result<TriggerId, TriggerProblem> {
+    let id = parse_trigger_id(value)?;
+    state.triggers.get_draft(owner, &id).await?;
+    Ok(id)
+}
+
+async fn owned_revision_command_id(
+    state: &TriggersState,
+    owner: &layer2_core::SubjectId,
+    value: String,
+) -> Result<TriggerRevisionId, TriggerProblem> {
+    let id = parse_revision_id(value)?;
+    state.triggers.get_revision(owner, &id).await?;
+    Ok(id)
+}
+
+async fn owned_launch_command_id(
+    state: &TriggersState,
+    owner: &layer2_core::SubjectId,
+    value: String,
+) -> Result<LaunchId, TriggerProblem> {
+    let id = parse_launch_id(value)?;
+    state.triggers.get_launch(owner, &id).await?;
+    Ok(id)
+}
+
+async fn owned_connection_command_id(
+    state: &TriggersState,
+    owner: &layer2_core::SubjectId,
+    service_id: String,
+) -> Result<String, TriggerProblem> {
+    let owned = state
+        .connections
+        .connection_for_revocation(owner, &service_id)
+        .await?
+        .is_some();
+    if !owned {
+        return Err(TriggerServiceError::NotFound.into());
+    }
+    Ok(service_id)
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/triggers/public/{public_id}",
@@ -1206,7 +1400,13 @@ async fn public_preview(
     State(state): State<TriggersState>,
     Path(public_id): Path<String>,
 ) -> Result<Response, TriggerProblem> {
-    let mut response = Json(load_public_preview(&state, public_id).await?).into_response();
+    Ok(public_preview_response(
+        load_public_preview(&state, public_id).await?,
+    ))
+}
+
+pub(crate) fn public_preview_response(preview: TriggerPreviewView) -> Response {
+    let mut response = Json(preview).into_response();
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_str(&format!("public, max-age={PUBLIC_PREVIEW_CACHE_SECONDS}"))
@@ -1216,7 +1416,7 @@ async fn public_preview(
         header::REFERRER_POLICY,
         HeaderValue::from_static("no-referrer"),
     );
-    Ok(response)
+    response
 }
 
 pub(crate) async fn load_public_preview(
@@ -1343,14 +1543,17 @@ async fn update_trigger(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<UpdateTriggerRequest>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-update:{trigger_id}");
+    let trigger_id = match owned_trigger_command_id(&state, &caller.subject, trigger_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-update:{}", trigger_id.0);
     let (guard, body, _) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
             Err(response) => return response,
         };
     let result: Result<Response, RequestFailure> = async {
-        let trigger_id = parse_trigger_id(trigger_id)?;
         let body = body.map_err(RequestFailure::from)?;
         let content = body
             .content
@@ -1392,7 +1595,11 @@ async fn publish_trigger(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<PublishTriggerRequest>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-publish:{trigger_id}");
+    let trigger_id = match owned_trigger_command_id(&state, &caller.subject, trigger_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-publish:{}", trigger_id.0);
     let (guard, body, _) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -1404,7 +1611,7 @@ async fn publish_trigger(
             .triggers
             .publish(
                 &caller.subject,
-                &parse_trigger_id(trigger_id)?,
+                &trigger_id,
                 body.expected_version,
                 &body.selected_service_id,
                 now(),
@@ -1482,7 +1689,11 @@ async fn retire_revision(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<EmptyCommand>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-retire:{revision_id}");
+    let revision_id = match owned_revision_command_id(&state, &caller.subject, revision_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-retire:{}", revision_id.0);
     let (guard, body, _) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -1492,7 +1703,7 @@ async fn retire_revision(
         body.map_err(RequestFailure::from)?;
         let revision = state
             .triggers
-            .retire(&caller.subject, &parse_revision_id(revision_id)?, &now())
+            .retire(&caller.subject, &revision_id, &now())
             .await?;
         Ok(Json(TriggerRevisionView::from(revision)).into_response())
     }
@@ -1554,6 +1765,48 @@ async fn begin_connection(
             .begin_connection(&caller.subject, &body.intent_id)
             .await?;
         Ok(Json(ConnectionAuthorizationView::from(authorization)).into_response())
+    }
+    .await;
+    guard.finish(result).await
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/trigger-connections/{service_id}",
+    tag = "trigger-connections",
+    params(("service_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = EmptyCommand,
+    responses((status = 200, description = "GitHub connection revoked; retained Launch resources are preserved", body = TriggerConnectionView))
+)]
+async fn revoke_connection(
+    State(state): State<TriggersState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(service_id): Path<String>,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<EmptyCommand>, BodyProblem>,
+) -> Response {
+    let service_id = match owned_connection_command_id(&state, &caller.subject, service_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-connection-revoke:{service_id}");
+    let (guard, body, _) =
+        match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
+            Ok(parts) => parts,
+            Err(response) => return response,
+        };
+    let result: Result<Response, RequestFailure> = async {
+        body.map_err(RequestFailure::from)?;
+        let revoked = state
+            .connections
+            .revoke_connection(&caller.subject, &service_id)
+            .await?;
+        if revoked.service_id != service_id {
+            return Err(RequestFailure::from(TriggerServiceError::from(
+                layer2_core::TriggerAuthorityError::AuthorityDrift,
+            )));
+        }
+        Ok(Json(TriggerConnectionView::from(revoked)).into_response())
     }
     .await;
     guard.finish(result).await
@@ -1738,19 +1991,27 @@ async fn create_new_launch(
     get,
     path = "/api/v1/launches",
     tag = "launches",
-    params(("limit" = Option<u32>, Query), ("cursor" = Option<String>, Query)),
+    params(
+        ("state" = Option<String>, Query),
+        ("trigger_public_id" = Option<String>, Query),
+        ("limit" = Option<u32>, Query),
+        ("cursor" = Option<String>, Query)
+    ),
     responses((status = 200, description = "Contributor Launches", body = LaunchPageView))
 )]
 async fn list_launches(
     State(state): State<TriggersState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    params: Result<Query<PageParams>, axum::extract::rejection::QueryRejection>,
+    params: Result<Query<LaunchPageParams>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<LaunchPageView>, RequestFailure> {
     let Query(params) = params?;
+    let public_id = params.trigger_public_id.map(parse_public_id).transpose()?;
     let page = state
         .triggers
         .list_launches(
             &caller.subject,
+            public_id,
+            params.state.into_iter().collect(),
             TriggerPageRequest::new(params.limit, params.cursor),
         )
         .await?;
@@ -1803,7 +2064,11 @@ async fn update_launch_overrides(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<UpdateOverridesRequest>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-launch-overrides:{launch_id}");
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-launch-overrides:{}", launch_id.0);
     let (guard, body, _) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -1815,7 +2080,7 @@ async fn update_launch_overrides(
             .triggers
             .update_overrides(
                 &caller.subject,
-                &parse_launch_id(launch_id)?,
+                &launch_id,
                 body.expected_revision,
                 body.overrides,
                 now(),
@@ -1844,7 +2109,11 @@ async fn select_launch_connection(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<SelectConnectionRequest>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-launch-connection:{launch_id}");
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-launch-connection:{}", launch_id.0);
     let (guard, body, _) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -1856,7 +2125,7 @@ async fn select_launch_connection(
             .triggers
             .select_connection(
                 &caller.subject,
-                &parse_launch_id(launch_id)?,
+                &launch_id,
                 body.expected_revision,
                 &body.service_id,
                 now(),
@@ -1885,7 +2154,11 @@ async fn start_launch(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<StartLaunchRequest>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-launch-start:{launch_id}");
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-launch-start:{}", launch_id.0);
     let (guard, body, confirmation_hash) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -1901,7 +2174,7 @@ async fn start_launch(
             .triggers
             .start(
                 &caller.subject,
-                &parse_launch_id(launch_id)?,
+                &launch_id,
                 StartLaunchCommand {
                     expected_revision: body.expected_revision,
                     confirmation: Confirmation {
@@ -1939,7 +2212,11 @@ async fn review_launch_diff(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<ConfirmLaunchRequest>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-launch-diff-review:{launch_id}");
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-launch-diff-review:{}", launch_id.0);
     let (guard, body, confirmation_hash) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -1952,7 +2229,7 @@ async fn review_launch_diff(
             .triggers
             .request_diff_review(
                 &caller.subject,
-                &parse_launch_id(launch_id)?,
+                &launch_id,
                 body.expected_revision,
                 Confirmation {
                     action: ConfirmationAction::ReviewDiff,
@@ -2017,7 +2294,11 @@ async fn publish_launch_branch(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<ConfirmLaunchRequest>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-launch-branch-publication:{launch_id}");
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-launch-branch-publication:{}", launch_id.0);
     let (guard, body, confirmation_hash) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -2030,7 +2311,7 @@ async fn publish_launch_branch(
             .triggers
             .confirm_branch_publication(
                 &caller.subject,
-                &parse_launch_id(launch_id)?,
+                &launch_id,
                 body.expected_revision,
                 Confirmation {
                     action: ConfirmationAction::PublishBranch,
@@ -2063,12 +2344,13 @@ async fn review_pull_request(
     Path(launch_id): Path<String>,
     body: Result<idempotency::RequestBody<PullRequestReviewRequest>, BodyProblem>,
 ) -> Result<Json<PullRequestDraftView>, RequestFailure> {
-    let (body, _) = body?.into_parts();
-    let body = body.map_err(RequestFailure::from)?;
+    let launch_id = parse_launch_id(launch_id)?;
     let launch = state
         .triggers
-        .get_launch(&caller.subject, &parse_launch_id(launch_id)?)
+        .get_launch(&caller.subject, &launch_id)
         .await?;
+    let (body, _) = body?.into_parts();
+    let body = body.map_err(RequestFailure::from)?;
     let draft = launch
         .pull_request_draft(
             body.operation.into(),
@@ -2145,8 +2427,15 @@ async fn confirm_pull_request(
     body: Result<idempotency::RequestBody<ConfirmPullRequestRequest>, BodyProblem>,
     operation: PullRequestOperation,
 ) -> Response {
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
     let operation_name = enum_name(operation);
-    let claim = format!("trigger-launch-pull-request-{operation_name}:{launch_id}");
+    let claim = format!(
+        "trigger-launch-pull-request-{operation_name}:{}",
+        launch_id.0
+    );
     let (guard, body, confirmation_hash) =
         match command(key, Arc::clone(&state.operations), &caller, claim, body).await {
             Ok(parts) => parts,
@@ -2159,7 +2448,7 @@ async fn confirm_pull_request(
             .triggers
             .confirm_pull_request(
                 &caller.subject,
-                &parse_launch_id(launch_id)?,
+                &launch_id,
                 ConfirmPullRequestCommand {
                     expected_revision: body.expected_revision,
                     confirmation: Confirmation {
@@ -2278,7 +2567,11 @@ async fn cancel_launch(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<ConfirmLaunchRequest>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-launch-cancel:{launch_id}");
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-launch-cancel:{}", launch_id.0);
     let (guard, body, confirmation_hash) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -2291,7 +2584,7 @@ async fn cancel_launch(
             .triggers
             .cancel(
                 &caller.subject,
-                &parse_launch_id(launch_id)?,
+                &launch_id,
                 body.expected_revision,
                 Confirmation {
                     action: ConfirmationAction::Cancel,
@@ -2326,7 +2619,11 @@ async fn recover_initial_prompt(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<RecoverInitialPromptRequest>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-launch-prompt-recovery:{launch_id}");
+    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-launch-prompt-recovery:{}", launch_id.0);
     let (guard, body, confirmation_hash) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -2339,7 +2636,7 @@ async fn recover_initial_prompt(
             .triggers
             .recover_initial_prompt(
                 &caller.subject,
-                &parse_launch_id(launch_id)?,
+                &launch_id,
                 RecoverInitialPromptCommand {
                     expected_revision: body.expected_revision,
                     confirmation: Confirmation {
@@ -2419,13 +2716,36 @@ impl From<TriggerServiceError> for TriggerProblem {
 
 impl IntoResponse for TriggerProblem {
     fn into_response(self) -> Response {
-        let rollout_reason = match &self.0 {
+        let error = self.0;
+        let rollout_reason = match &error {
             TriggerServiceError::Rollout(denial) => Some(denial.code()),
             _ => None,
         };
+        let admission_capability = match &error {
+            TriggerServiceError::Admission(
+                layer2_core::TriggerAdmissionError::CapabilityUnsupported { capability },
+            ) => Some(capability.clone()),
+            _ => None,
+        };
         let mut retry_after = None;
+        let mut admission_remediation = None;
         let (status, slug, code, detail, field): (StatusCode, &str, &str, String, Option<String>) =
-            match self.0 {
+            match error {
+                TriggerServiceError::CursorBeyondEnd { cursor, head } => {
+                    let detail = format!(
+                        "The Launch progress cursor {cursor} is beyond the durable event head {head}; resume from {head} or earlier."
+                    );
+                    let mut body = problem_document(
+                        StatusCode::BAD_REQUEST,
+                        "cursor-beyond-end",
+                        &detail,
+                        "cursor_beyond_end",
+                    );
+                    body.as_object_mut()
+                        .expect("a problem document is an object")
+                        .insert("head".into(), head.into());
+                    return problem_response(StatusCode::BAD_REQUEST, body);
+                }
                 TriggerServiceError::NotFound | TriggerServiceError::Forbidden => (
                     StatusCode::NOT_FOUND,
                     "trigger-resource-not-found",
@@ -2433,6 +2753,20 @@ impl IntoResponse for TriggerProblem {
                     "The requested Trigger resource does not exist.".into(),
                     None,
                 ),
+                TriggerServiceError::Validation(error)
+                    if error.field.as_deref() == Some("draft_expires_at") =>
+                {
+                    admission_remediation = Some(
+                        "Open the README link again to create a New Launch with current admission evidence.",
+                    );
+                    (
+                        StatusCode::CONFLICT,
+                        "trigger-draft-expired",
+                        "trigger_draft_expired",
+                        "This Launch draft expired before Start.".into(),
+                        error.field,
+                    )
+                }
                 TriggerServiceError::Validation(error) => (
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "invalid-trigger-request",
@@ -2519,6 +2853,70 @@ impl IntoResponse for TriggerProblem {
                     };
                     (status, slug, code, error.to_string(), None)
                 }
+                TriggerServiceError::Admission(error) => {
+                    use layer2_core::TriggerAdmissionError as Admission;
+                    let (status, slug, code, detail, field, remediation) = match &error {
+                        Admission::Unavailable(_) => (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "trigger-admission-unavailable",
+                            "trigger_admission_unavailable",
+                            "CMA could not verify Launch admission safely.".into(),
+                            None,
+                            "Retry later. No fork, sandbox, or session work was admitted.",
+                        ),
+                        Admission::PricingUnavailable(_) => (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "trigger-pricing-unavailable",
+                            "trigger_pricing_unavailable",
+                            "CMA could not produce a valid server-owned price for this Launch."
+                                .into(),
+                            Some("pricing".into()),
+                            "Retry after deployment pricing is available.",
+                        ),
+                        Admission::PriceChanged => (
+                            StatusCode::CONFLICT,
+                            "trigger-price-changed",
+                            "trigger_price_changed",
+                            error.to_string(),
+                            Some("pricing".into()),
+                            "Refresh the Launch review and explicitly accept the current price before Start.",
+                        ),
+                        Admission::QuoteExpired => (
+                            StatusCode::CONFLICT,
+                            "trigger-quote-expired",
+                            "trigger_quote_expired",
+                            error.to_string(),
+                            Some("pricing.expires_at".into()),
+                            "Open a New Launch to review current pricing, quota, and runtime evidence.",
+                        ),
+                        Admission::QuotaExceeded(_) => (
+                            StatusCode::CONFLICT,
+                            "trigger-quota-exhausted",
+                            "trigger_quota_exhausted",
+                            error.to_string(),
+                            Some("review_quota".into()),
+                            "Release session capacity or wait for deployment capacity, then refresh the review.",
+                        ),
+                        Admission::CapabilityUnsupported { capability } => (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "trigger-capability-unsupported",
+                            "trigger_capability_unsupported",
+                            error.to_string(),
+                            Some(format!("required_capabilities.{capability}")),
+                            "Use a Trigger and deployed runtime that support every published capability.",
+                        ),
+                        Admission::RuntimeChanged => (
+                            StatusCode::CONFLICT,
+                            "trigger-runtime-changed",
+                            "trigger_runtime_changed",
+                            error.to_string(),
+                            Some("runtime_admission.runtime_version".into()),
+                            "Refresh the Launch review and explicitly accept the current runtime before Start.",
+                        ),
+                    };
+                    admission_remediation = Some(remediation);
+                    (status, slug, code, detail, field)
+                }
                 TriggerServiceError::Rollout(_) => (
                     StatusCode::SERVICE_UNAVAILABLE,
                     "trigger-feature-paused",
@@ -2555,6 +2953,12 @@ impl IntoResponse for TriggerProblem {
         }
         if let (Some(reason), Some(object)) = (rollout_reason, body.as_object_mut()) {
             object.insert("rollout_reason".into(), reason.into());
+        }
+        if let (Some(remediation), Some(object)) = (admission_remediation, body.as_object_mut()) {
+            object.insert("remediation".into(), remediation.into());
+        }
+        if let (Some(capability), Some(object)) = (admission_capability, body.as_object_mut()) {
+            object.insert("capability".into(), capability.into());
         }
         let mut response = problem_response(status, body);
         if let Some(value) = retry_after.and_then(|value| HeaderValue::from_str(&value).ok()) {

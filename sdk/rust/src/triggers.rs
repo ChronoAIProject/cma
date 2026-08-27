@@ -1,4 +1,11 @@
 //! Provider-neutral CMA Trigger and Launch REST contract.
+//!
+//! A [`Launch`] exposes server-owned [`LaunchPricingSnapshot`],
+//! [`LaunchRuntimeAdmission`], [`LaunchQuotaSnapshot`], and
+//! [`LaunchStartAdmission`] values. Clients must require the review snapshots
+//! before Start and bind confirmation to the resulting effective digest. A
+//! changed price, runtime, or quota requires a fresh saved review and explicit
+//! reconfirmation; `draft_expires_at` is the server-owned pre-Start deadline.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -73,6 +80,33 @@ pub enum TriggerBillingMode {
     Sponsored,
 }
 
+/// Runtime capability names accepted by the CMA Trigger contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerRequiredCapability {
+    /// Interactive conversation input and output.
+    Conversation,
+    /// Conversation state survives supported runtime replacement.
+    DurableConversation,
+    /// The complete workspace can be captured and restored.
+    WorkspaceCheckpoint,
+    /// GitHub access crosses the restricted service gateway.
+    RestrictedServiceGateway,
+    /// Session-scoped credentials can be refreshed.
+    CredentialRefresh,
+    /// Session-scoped credentials can be revoked with evidence.
+    CredentialRevocation,
+}
+
+/// Permission modes supported by the public Trigger MVP.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerPermissionMode {
+    Guarded,
+    Autonomous,
+}
+
 /// Side-effect-free public README Trigger preview.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -87,8 +121,8 @@ pub struct TriggerPreview {
     pub visibility: RepositoryVisibility,
     pub allow_forking: bool,
     pub public_summary: String,
-    pub permission_ceiling: String,
-    pub required_capabilities: Vec<String>,
+    pub permission_ceiling: TriggerPermissionMode,
+    pub required_capabilities: Vec<TriggerRequiredCapability>,
     pub resource_default: TriggerSessionSize,
     pub resource_ceiling: TriggerSessionSize,
     pub timeout_default_seconds: u32,
@@ -224,8 +258,18 @@ pub struct TriggerPublisherAuthority {
     pub service_state_version: i64,
     pub account_id: u64,
     pub account_login: String,
-    pub role: String,
+    pub role: TriggerPublisherRepositoryRole,
     pub verified_at: String,
+}
+
+/// Publisher role proven against the upstream repository.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerPublisherRepositoryRole {
+    Owner,
+    Admin,
+    Maintain,
 }
 
 /// Immutable published Trigger revision.
@@ -250,13 +294,25 @@ pub struct TriggerRevision {
 pub struct TriggerConnection {
     pub service_id: String,
     pub state_version: i64,
-    pub state: String,
+    pub state: TriggerConnectionState,
     pub account_id: Option<u64>,
     pub account_node_id: Option<String>,
     pub account_login: Option<String>,
     pub avatar_url: Option<String>,
     pub granted_scopes: Vec<String>,
     pub consent_observed_at: Option<String>,
+}
+
+/// Reusable NyxID connection state.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerConnectionState {
+    Active,
+    Inactive,
+    Disconnected,
+    Revoked,
+    Expired,
 }
 
 /// Browser authorization handoff returned by NyxID connection operations.
@@ -319,6 +375,20 @@ impl LaunchState {
     }
 }
 
+/// Why an otherwise active Launch is waiting for an explicit recovery action.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchBlockedReason {
+    FeaturePaused,
+    OwnerCredentialUnavailable,
+    ServiceInactive,
+    SessionRotating,
+    SessionRecovering,
+    RecoveryRequired,
+    RevocationPending,
+}
+
 /// Public Launch step state.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,12 +403,34 @@ pub enum LaunchStepStatus {
     Cancelled,
 }
 
+/// Stable Launch progress step key.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchStepKey {
+    Review,
+    Authentication,
+    Preflight,
+    Fork,
+    Branch,
+    Workspace,
+    Sandbox,
+    Session,
+    Reach,
+    InitialPrompt,
+    Checkpoint,
+    Diff,
+    PublishBranch,
+    PullRequest,
+    Cleanup,
+}
+
 /// One stable progress row shown to the contributor.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchStep {
-    pub key: String,
+    pub key: LaunchStepKey,
     pub sequence: u32,
     pub status: LaunchStepStatus,
     pub started_at: Option<String>,
@@ -350,12 +442,31 @@ pub struct LaunchStep {
     pub correlation_id: String,
 }
 
+/// Public Launch failure class.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchFailureClass {
+    AuthRequired,
+    OwnerCredentialUnavailable,
+    ServiceInactive,
+    RetryableTransient,
+    AmbiguousExternal,
+    ConflictStaleHead,
+    ResourceQuota,
+    PolicyUserAction,
+    RecoveryRequired,
+    TerminalValidation,
+    TerminalSecurity,
+    FeaturePaused,
+}
+
 /// Public-safe Launch failure.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchFailure {
-    pub class: String,
+    pub class: LaunchFailureClass,
     pub code: String,
     pub detail: String,
     pub remediation: String,
@@ -379,7 +490,7 @@ pub struct LaunchOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_seconds: Option<u32>,
     #[serde(default)]
-    pub optional_checks: Vec<String>,
+    pub optional_checks: [String; 0],
 }
 
 /// Exact effective configuration sealed for Start.
@@ -389,11 +500,83 @@ pub struct LaunchOverrides {
 pub struct EffectiveConfiguration {
     pub rendered_prompt: String,
     pub branch_suffix: String,
-    pub permission: String,
+    pub permission: TriggerPermissionMode,
     pub resource_size: TriggerSessionSize,
     pub timeout_seconds: u32,
-    pub optional_checks: Vec<String>,
+    pub optional_checks: [String; 0],
     pub digest: String,
+}
+
+/// Exact deployment rate terms included in a contributor quote.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerRate {
+    pub cpu_micros_per_cpu_hour: u64,
+    pub memory_micros_per_gib_hour: u64,
+}
+
+/// Server-owned price or explicit zero-cost promise sealed into a Launch review.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchPricingSnapshot {
+    pub policy_reference: String,
+    pub billing_mode: TriggerBillingMode,
+    pub rate_card: Option<String>,
+    pub rate: Option<TriggerRate>,
+    pub currency: String,
+    pub cpu_millis: u32,
+    pub memory_mib: u32,
+    pub micros_per_hour: u64,
+    pub estimated_micros: u64,
+    pub quoted_at: String,
+    pub expires_at: String,
+}
+
+/// Closed kernel identity admitted for a Trigger-owned session.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum TriggerKernel {
+    Codex,
+}
+
+/// Locked kernel, pinned runtime identity, and demonstrated capabilities shown during review.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchRuntimeAdmission {
+    pub kernel: TriggerKernel,
+    pub runtime_version: String,
+    pub supported_capabilities: Vec<TriggerRequiredCapability>,
+    pub observed_at: String,
+}
+
+/// Review- or Start-time observation of owner and deployment capacity.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchQuotaSnapshot {
+    pub live_sessions: u32,
+    pub live_session_limit: Option<u32>,
+    pub reserved_cpu_millis: u64,
+    pub reserved_memory_mib: u64,
+    pub free_cpu_millis: Option<u64>,
+    pub free_memory_mib: Option<u64>,
+    pub checked_at: String,
+}
+
+/// Fresh server admission recorded immediately before Start is accepted.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchStartAdmission {
+    pub runtime_version: String,
+    pub pricing_policy_reference: String,
+    pub rate_card: Option<String>,
+    pub quota: LaunchQuotaSnapshot,
+    pub checked_at: String,
 }
 
 /// Reconciled contributor fork.
@@ -494,11 +677,28 @@ pub struct DiffArtifact {
     pub author: CommitIdentity,
     pub committer: CommitIdentity,
     pub workflow_paths: Vec<String>,
-    pub validation: String,
+    pub validation: DiffValidationOutcome,
     pub checks: Vec<DiffCheck>,
     pub created_at: String,
     pub delete_after: String,
     pub download_url: String,
+}
+
+/// Public outcome of validating a sealed diff artifact.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffValidationOutcome {
+    Valid,
+    NoChanges,
+    StaleHead,
+    WorkflowScopeRequired,
+    TooManyChanges,
+    TooManyBytes,
+    UnsupportedFile,
+    MissingBaseline,
+    CorruptCheckpoint,
+    ArtifactTooLarge,
 }
 
 /// Guarded branch-publication record.
@@ -513,7 +713,7 @@ pub struct ContributionRecord {
     pub checkpoint_digest: String,
     pub diff_digest: String,
     pub branch_name: String,
-    pub state: String,
+    pub state: PublicationState,
     pub expected_head: String,
     pub base_tree_id: Option<String>,
     pub tree_id: Option<String>,
@@ -526,6 +726,20 @@ pub struct ContributionRecord {
     pub confirmed_at: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// Guarded branch-publication state.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicationState {
+    IntentRecorded,
+    ObjectsWritten,
+    RefUpdatePending,
+    Published,
+    Conflict,
+    RecoveryRequired,
+    Failed,
 }
 
 /// Pull-request operation reviewed by the contributor.
@@ -559,6 +773,18 @@ pub enum Mergeability {
     Computing,
     Mergeable,
     Conflicting,
+}
+
+/// Aggregate provider check state for a pull request.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestCheckSummaryState {
+    Pending,
+    Passing,
+    Failing,
+    AwaitingMaintainerApproval,
+    Unavailable,
 }
 
 /// Durable pull-request intent and provider observation.
@@ -597,7 +823,7 @@ pub struct PullRequestRecord {
     pub observed_title: Option<String>,
     pub observed_body_digest: Option<String>,
     pub mergeability: Mergeability,
-    pub checks: String,
+    pub checks: PullRequestCheckSummaryState,
     pub confirmation_snapshot_digest: String,
     pub confirmed_at: String,
     pub created_at: String,
@@ -643,11 +869,11 @@ pub struct PullRequestDraft {
 #[serde(deny_unknown_fields)]
 pub struct LaunchReachStatus {
     pub service_id: String,
-    pub state: String,
+    pub state: CapabilityRevocationState,
     pub policy_generation: u64,
     pub policy_fence: u64,
     pub runtime_audience: String,
-    pub expires_at_epoch_seconds: i64,
+    pub expires_at_epoch_seconds: u64,
     pub numeric_binding_observed_at: String,
     pub refreshed_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -655,9 +881,37 @@ pub struct LaunchReachStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revocation_effective_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_refusal: Option<Value>,
+    pub last_refusal: Option<CapabilityRefusal>,
     pub tombstone_acknowledged: bool,
     pub agent_key_revocation_confirmed: bool,
+}
+
+/// Restricted service-gateway capability lifecycle state.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityRevocationState {
+    Active,
+    RevocationPending,
+    Revoked,
+    Expired,
+}
+
+/// Closed public refusal reason from the restricted service gateway.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityRefusal {
+    MissingPolicy,
+    UnknownVersion,
+    Expired,
+    StaleGeneration,
+    Revoked,
+    MalformedRequest,
+    ResourceMismatch,
+    OperationDenied,
+    AudienceMismatch,
+    SignatureInvalid,
 }
 
 /// Initial-prompt delivery state, including the recovery-required fence.
@@ -672,6 +926,42 @@ pub enum PromptDeliveryState {
     Completed,
     Failed,
     RecoveryRequired,
+}
+
+/// Durable external-effect class represented by a Launch event.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchEffectKind {
+    Preflight,
+    Fork,
+    Branch,
+    WorkspaceImport,
+    Sandbox,
+    Session,
+    Reach,
+    InitialDispatch,
+    Checkpoint,
+    Diff,
+    BranchPublication,
+    PullRequest,
+    Cleanup,
+}
+
+/// Explicit contributor confirmation recorded in Launch history.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchConfirmationAction {
+    Start,
+    WorkflowRisk,
+    ReviewDiff,
+    PublishBranch,
+    OpenPullRequest,
+    UpdatePullRequest,
+    RecoverPrompt,
+    NewLaunch,
+    Cancel,
 }
 
 /// Public prompt delivery observation.
@@ -705,11 +995,15 @@ pub struct Launch {
     pub state: LaunchState,
     pub revision_number: u64,
     pub revision_content: TriggerRevisionContent,
-    pub blocked_reason: Option<Value>,
+    pub blocked_reason: Option<LaunchBlockedReason>,
     pub failure: Option<LaunchFailure>,
+    pub resume_state: Option<LaunchState>,
     pub overrides: LaunchOverrides,
     pub effective: EffectiveConfiguration,
-    pub pricing: Option<JsonObject>,
+    pub pricing: Option<LaunchPricingSnapshot>,
+    pub runtime_admission: Option<LaunchRuntimeAdmission>,
+    pub review_quota: Option<LaunchQuotaSnapshot>,
+    pub start_admission: Option<LaunchStartAdmission>,
     pub connection: Option<TriggerConnection>,
     pub workflow_paths: Vec<String>,
     pub workflow_risk_acknowledged: bool,
@@ -726,6 +1020,7 @@ pub struct Launch {
     pub pull_request: Option<PullRequestRecord>,
     pub created_at: String,
     pub updated_at: String,
+    pub draft_expires_at: String,
     pub started_at: Option<String>,
     pub terminal_at: Option<String>,
 }
@@ -735,20 +1030,36 @@ pub struct Launch {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LaunchEventKind {
-    Created,
+    Created { steps: Vec<LaunchStep> },
     DraftUpdated,
     ConnectionSelected,
     Started,
     StateChanged { from: LaunchState, to: LaunchState },
     StepChanged { step: LaunchStep },
-    Blocked { reason: Value },
+    Blocked { reason: LaunchBlockedReason },
+    Resumed { reason: LaunchBlockedReason },
     Failure { failure: LaunchFailure },
-    EffectReconciled { effect: String },
-    RecoveryAuthorized { effect: String },
+    EffectReconciled { effect: LaunchEffectKind },
+    RecoveryAuthorized { effect: LaunchEffectKind },
     DeliveryChanged { state: PromptDeliveryState },
     ReachChanged { reach: LaunchReachStatus },
-    ConfirmationRecorded { action: String },
+    ConfirmationRecorded { action: LaunchConfirmationAction },
+    CleanupPlanned { target_count: usize },
+    CleanupCompleted { target_count: usize },
     Cancelled,
+}
+
+/// Authoritative compact state captured with each replayable event.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchProgressState {
+    pub state: LaunchState,
+    pub blocked_reason: Option<LaunchBlockedReason>,
+    pub failure: Option<LaunchFailure>,
+    pub resume_state: Option<LaunchState>,
+    pub reach: Option<LaunchReachStatus>,
+    pub delivery: Option<PromptDelivery>,
 }
 
 /// One replayable Launch progress event.
@@ -760,6 +1071,7 @@ pub struct LaunchEvent {
     pub launch_id: String,
     pub occurred_at: String,
     pub correlation_id: String,
+    pub progress: LaunchProgressState,
     pub kind: LaunchEventKind,
 }
 
@@ -1109,6 +1421,30 @@ impl Client {
         .await
     }
 
+    /// Revoke one exact reusable NyxID service without deleting Launch history.
+    pub async fn revoke_trigger_connection(
+        &self,
+        service_id: &str,
+        idempotency_key: &str,
+    ) -> Result<TriggerConnection> {
+        identifier(service_id, "service id")?;
+        let connection: TriggerConnection = self
+            .command(
+                Method::DELETE,
+                &["trigger-connections", service_id],
+                HashMap::<String, Value>::new(),
+                StatusCode::OK,
+                idempotency_key,
+            )
+            .await?;
+        if connection.service_id != service_id {
+            return Err(Error::protocol(
+                "CMA returned revocation state for a different GitHub connection",
+            ));
+        }
+        Ok(connection)
+    }
+
     /// Revalidate one exact reusable NyxID service.
     pub async fn preflight_trigger_connection(
         &self,
@@ -1414,20 +1750,22 @@ impl Client {
         limit: usize,
     ) -> Result<LaunchProgress> {
         identifier(launch_id, "Launch id")?;
-        if limit == 0 || limit > 1_000 {
+        if limit == 0 || limit > 500 {
             return Err(Error::protocol(
-                "Launch progress limit must be from 1 through 1000",
+                "Launch progress limit must be from 1 through 500",
             ));
         }
-        self.request_public_json(
-            Method::GET,
-            &["launches", launch_id, "events"],
-            &[("after", after.to_string()), ("limit", limit.to_string())],
-            None,
-            StatusCode::OK,
-            false,
-        )
-        .await
+        let progress: LaunchProgress = self
+            .request_public_json(
+                Method::GET,
+                &["launches", launch_id, "events"],
+                &[("after", after.to_string()), ("limit", limit.to_string())],
+                None,
+                StatusCode::OK,
+                false,
+            )
+            .await?;
+        normalize_launch_progress(launch_id, after, progress)
     }
 
     /// Download one immutable complete diff artifact.
@@ -1472,6 +1810,70 @@ impl Client {
         )
         .await
     }
+}
+
+fn normalize_launch_progress(
+    requested_launch_id: &str,
+    after: u64,
+    mut progress: LaunchProgress,
+) -> Result<LaunchProgress> {
+    if progress.launch_id != requested_launch_id {
+        return Err(Error::protocol(format!(
+            "Launch progress response belongs to {}, not {requested_launch_id}",
+            progress.launch_id
+        )));
+    }
+
+    let mut accepted: Vec<LaunchEvent> = Vec::with_capacity(progress.events.len());
+    let mut expected_sequence = after.checked_add(1);
+    for event in progress.events {
+        if event.launch_id != progress.launch_id {
+            return Err(Error::protocol(format!(
+                "Launch progress event {} belongs to {}, not {}",
+                event.sequence, event.launch_id, progress.launch_id
+            )));
+        }
+        if let Some(previous) = accepted.last()
+            && event.sequence == previous.sequence
+        {
+            if event == *previous {
+                continue;
+            }
+            return Err(Error::protocol(format!(
+                "Launch progress sequence {} has conflicting duplicate envelopes",
+                event.sequence
+            )));
+        }
+
+        let Some(expected) = expected_sequence else {
+            return Err(Error::protocol(
+                "Launch progress returned an event after the maximum sequence",
+            ));
+        };
+        if event.sequence != expected {
+            let problem = if event.sequence > expected {
+                "contains a sequence gap"
+            } else {
+                "contains an out-of-order or unprovable duplicate event"
+            };
+            return Err(Error::protocol(format!(
+                "Launch progress {problem}: expected {expected}, received {}",
+                event.sequence
+            )));
+        }
+        expected_sequence = event.sequence.checked_add(1);
+        accepted.push(event);
+    }
+
+    let expected_cursor = accepted.last().map_or(after, |event| event.sequence);
+    if progress.next_cursor != expected_cursor {
+        return Err(Error::protocol(format!(
+            "Launch progress next_cursor {} does not match accepted sequence {expected_cursor}",
+            progress.next_cursor
+        )));
+    }
+    progress.events = accepted;
+    Ok(progress)
 }
 
 fn identifier(value: &str, name: &str) -> Result<()> {

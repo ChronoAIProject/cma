@@ -85,6 +85,14 @@ and the dashboard calls the same TypeScript SDK contract available to external
 clients. PTY cannot represent the workflow, while the unserved MCP and A2A
 designs acquire no Trigger operations in this MVP.
 
+Repository publishers and contributors should use
+[CMA_Trigger_Publishing.md](./CMA_Trigger_Publishing.md). The complete authority
+and recovery contracts are [CMA_Trigger.md](./CMA_Trigger.md) and
+[CMA_Trigger_Recovery.md](./CMA_Trigger_Recovery.md); public-exposure evidence
+is tracked separately in
+[CMA_Trigger_Release_Readiness.md](./CMA_Trigger_Release_Readiness.md), so a
+passing local projection test is never presented as GitHub or NyxID proof.
+
 ---
 
 ## 2. Session model

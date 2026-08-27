@@ -19,8 +19,13 @@ RUN cargo build --release --locked --bin layer4-runtime
 # *-unknown-linux-gnu binary, and a glibc binary will not run against musl.
 FROM debian:trixie-slim AS runtime
 
+ARG CHRONO_BUILD_SHA=local-unpinned
+LABEL org.opencontainers.image.revision="${CHRONO_BUILD_SHA}"
+
 ARG NYXID_CLI_VERSION=v0.10.0
 ARG CODEX_VERSION=0.147.0
+ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
+ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2
 # The kernel's Agent Client Protocol bridge. A conversation-mode session runs
 # this instead of the terminal application: same kernel, driven through a
 # program that speaks the contract rather than painting a screen.
@@ -173,7 +178,138 @@ RUN set -eux; \
         /usr/local/lib/node_modules/@zed-industries/claude-code-acp/node_modules/minimatch; \
     rm -rf /tmp/patched; \
     npm cache clean --force; \
-    codex --version
+    test "$(node -p "require('/usr/local/lib/node_modules/@openai/codex/package.json').version")" = "${CODEX_VERSION}"; \
+    test "$(node -p "require('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json').version")" = "${CODEX_ACP_VERSION}"; \
+    test "$(codex --version)" = "codex-cli ${CODEX_VERSION}"; \
+    case "${TARGETARCH}" in \
+      amd64) native="/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"; want="${CODEX_NATIVE_SHA256_AMD64}" ;; \
+      arm64) native="/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex"; want="${CODEX_NATIVE_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    echo "${want}  ${native}" | sha256sum -c -
+
+# `codex-acp` exposes no bounded unattended mode at this exact pin: its agent
+# mode asks for approval and disables network, while its unattended mode also
+# disables filesystem confinement. Trigger sessions need the missing middle:
+# workspace-write, no human approval, and managed networking whose allowlist is
+# supplied by the signed Trigger-only Codex profile. Patch only the exact known
+# compiled shape and fail the build when the pinned package moves underneath
+# us, so an upstream refactor cannot silently widen or disable this boundary.
+RUN node <<'NODE'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = "/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js";
+const source = fs.readFileSync(path, "utf8");
+const codexPackage = JSON.parse(fs.readFileSync(
+  "/usr/local/lib/node_modules/@openai/codex/package.json",
+  "utf8"
+));
+const bridgePackage = JSON.parse(fs.readFileSync(
+  "/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json",
+  "utf8"
+));
+if (codexPackage.version !== "0.147.0" || bridgePackage.version !== "1.4.0") {
+  throw new Error("the CMA Trigger permission patch only supports Codex 0.147.0 through codex-acp 1.4.0");
+}
+if (bridgePackage.dependencies?.["@openai/codex"] !== "^0.147.0") {
+  throw new Error("codex-acp 1.4.0 no longer declares the reviewed Codex protocol line");
+}
+function sha256(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+if (sha256(source) !== "ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf") {
+  throw new Error("codex-acp 1.4.0 compiled source differs from the reviewed artifact");
+}
+const codexLauncher = fs.readFileSync(
+  "/usr/local/lib/node_modules/@openai/codex/bin/codex.js"
+);
+if (sha256(codexLauncher) !== "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477") {
+  throw new Error("Codex 0.147.0 launcher differs from the reviewed artifact");
+}
+const agent = `  static Agent = new _AgentMode(
+    "agent",
+    "Agent",
+    "Read and edit files, and run commands.",
+    "on-request",
+    {
+      type: "workspaceWrite",
+      writableRoots: [],
+      networkAccess: false,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false
+    },
+    "workspace-write"
+  );`;
+const trigger = `
+  static CmaTrigger = new _AgentMode(
+    "cma-trigger",
+    "CMA Trigger",
+    "Edit files unattended with managed loopback network access.",
+    "never",
+    null,
+    "permission-profile:cma-trigger"
+  );`;
+const modes = `    return [_AgentMode.ReadOnly, _AgentMode.Agent, _AgentMode.AgentFullAccess];`;
+const patchedModes = `    if (process.env["INITIAL_AGENT_MODE"] === "cma-trigger") {
+      return [_AgentMode.CmaTrigger];
+    }
+    return [_AgentMode.ReadOnly, _AgentMode.Agent, _AgentMode.AgentFullAccess];`;
+const sessionConfig = `  async createSessionConfig(projectPath, additionalDirectories, mcpServers) {
+    const sessionRoots = [projectPath, ...additionalDirectories];`;
+const patchedSessionConfig = `  async createSessionConfig(projectPath, additionalDirectories, mcpServers) {
+    if (process.env["INITIAL_AGENT_MODE"] === "cma-trigger" && additionalDirectories.length !== 0) {
+      throw new Error("cma-trigger does not accept additional workspace directories");
+    }
+    const sessionRoots = [projectPath, ...additionalDirectories];`;
+const promptTurn = `    return await this.codexClient.runTurn({
+      threadId: request.sessionId,
+      input,
+      approvalPolicy: agentMode.approvalPolicy,
+      sandboxPolicy: addAdditionalDirectoriesToSandboxPolicy(agentMode.sandboxPolicy, additionalDirectories),
+      summary: disableSummary ? "none" : "auto",`;
+const patchedPromptTurn = `    const turnPermissions = agentMode.id === "cma-trigger" ? {
+      permissions: "cma-trigger"
+    } : {
+      sandboxPolicy: addAdditionalDirectoriesToSandboxPolicy(agentMode.sandboxPolicy, additionalDirectories)
+    };
+    return await this.codexClient.runTurn({
+      threadId: request.sessionId,
+      input,
+      approvalPolicy: agentMode.approvalPolicy,
+      ...turnPermissions,
+      summary: disableSummary ? "none" : "auto",`;
+function requireExactlyOnce(haystack, needle, label) {
+  const first = haystack.indexOf(needle);
+  if (first < 0 || first !== haystack.lastIndexOf(needle)) {
+    throw new Error(`codex-acp 1.4.0 ${label} source shape drifted`);
+  }
+}
+requireExactlyOnce(source, agent, "agent mode");
+requireExactlyOnce(source, modes, "mode list");
+requireExactlyOnce(source, sessionConfig, "session workspace configuration");
+requireExactlyOnce(source, promptTurn, "prompt turn sandbox policy");
+if (source.includes('"cma-trigger"')) {
+  throw new Error("codex-acp already contains a cma-trigger mode");
+}
+const patched = source
+  .replace(agent, agent + trigger)
+  .replace(modes, patchedModes)
+  .replace(sessionConfig, patchedSessionConfig)
+  .replace(promptTurn, patchedPromptTurn);
+requireExactlyOnce(patched, trigger, "patched trigger mode");
+requireExactlyOnce(patched, patchedModes, "patched mode list");
+requireExactlyOnce(patched, patchedSessionConfig, "patched session workspace guard");
+requireExactlyOnce(patched, patchedPromptTurn, "patched profile-native prompt turn");
+requireExactlyOnce(
+  patched,
+  `return [_AgentMode.ReadOnly, _AgentMode.Agent, _AgentMode.AgentFullAccess];`,
+  "ordinary mode vocabulary"
+);
+if (sha256(patched) !== "2c370f2337a5cc689d9a76b4bba1289d42afe6c17de824e2ca48004ba9670ab6") {
+  throw new Error("patched codex-acp 1.4.0 source differs from the reviewed artifact");
+}
+fs.writeFileSync(path, patched);
+NODE
 
 # The third kernel gets its own tree rather than a global install, because it
 # needs something a global install cannot express.

@@ -1,134 +1,103 @@
-import { useCallback, useRef, useState } from 'react';
-import { TransportError } from '../api/client';
-import { newIntentKey } from './idempotency';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  BrowserCommandLedger,
+  COMMAND_LEDGER_EVENT,
+  COMMAND_STORAGE_PREFIX,
+  commandOutcomeIsUnresolved,
+} from './BrowserCommandLedger';
+import type { BrowserCommandIntent, PendingBrowserCommand } from './BrowserCommandLedger';
 
-interface RetainedCommand {
-  readonly key: string;
-  readonly send: (key: string) => Promise<unknown>;
-  inFlight: Promise<unknown> | null;
-}
-
-export interface PendingBrowserCommand {
-  readonly slot: string;
-  readonly label: string;
-}
-
-/**
- * Retain one browser command's identity and byte-equivalent send closure until
- * CMA returns a finite response. A second click joins an in-flight request and
- * an ambiguous retry always invokes the original closure, not newly rendered
- * component state.
- */
-export class BrowserCommandLedger {
-  readonly #commands = new Map<string, RetainedCommand>();
-
-  async execute<T>(slot: string, send: (key: string) => Promise<T>): Promise<T> {
-    const other = [...this.#commands.keys()].find((candidate) => candidate !== slot);
-    if (other !== undefined) {
-      throw new Error(`The ${other} command must be reconciled before starting another action.`);
-    }
-
-    let command = this.#commands.get(slot);
-    if (command === undefined) {
-      command = { key: newIntentKey(), send, inFlight: null };
-      this.#commands.set(slot, command);
-    }
-    return this.#attempt<T>(slot, command);
-  }
-
-  async reconcile<T>(slot: string): Promise<T> {
-    const command = this.#commands.get(slot);
-    if (command === undefined) throw new Error(`No ${slot} command is awaiting reconciliation.`);
-    return this.#attempt<T>(slot, command);
-  }
-
-  async #attempt<T>(slot: string, command: RetainedCommand): Promise<T> {
-    if (command.inFlight !== null) return command.inFlight as Promise<T>;
-
-    const attempt = command.send(command.key);
-    command.inFlight = attempt;
-    try {
-      const result = await attempt;
-      this.#commands.delete(slot);
-      return result as T;
-    } catch (cause) {
-      if (!(cause instanceof TransportError)) this.#commands.delete(slot);
-      throw cause;
-    } finally {
-      const retained = this.#commands.get(slot);
-      if (retained === command) retained.inFlight = null;
-    }
-  }
-
-  has(slot: string): boolean {
-    return this.#commands.has(slot);
-  }
-}
+export {
+  BrowserCommandLedger,
+  COMMAND_LEASE_MS,
+  COMMAND_RETENTION_MS,
+  CommandDescriptorMismatchError,
+  CommandLedgerUnavailableError,
+  CommandRequestUnavailableError,
+  commandOutcomeIsUnresolved,
+  retainedCommandMetadata,
+  retainedCommandRequest,
+} from './BrowserCommandLedger';
+export type { BrowserCommandIntent, PendingBrowserCommand } from './BrowserCommandLedger';
 
 interface IdempotentCommands {
   readonly pending: PendingBrowserCommand | null;
-  readonly execute: <T>(
-    slot: string,
+  readonly execute: <TRequest, TResult>(
+    intent: BrowserCommandIntent<TRequest>,
     label: string,
-    send: (key: string) => Promise<T>,
-  ) => Promise<T>;
-  readonly reconcile: <T>(slot: string, label: string) => Promise<T>;
+    send: (key: string, request: TRequest) => Promise<TResult>,
+  ) => Promise<TResult>;
 }
 
-/** One immediate same-key replay, then an explicit retained reconciliation state. */
-export function useIdempotentCommand(): IdempotentCommands {
-  const ledger = useRef(new BrowserCommandLedger());
-  const pendingRef = useRef<PendingBrowserCommand | null>(null);
+/**
+ * One immediate same-key replay, then an explicit durable reconciliation
+ * state shared by every same-origin tab for this owner and resource.
+ */
+export function useIdempotentCommand(
+  ownerId: string,
+  resources: readonly string[],
+): IdempotentCommands {
+  const ledger = useMemo(() => new BrowserCommandLedger({ ownerId }), [ownerId]);
   const [pending, setPending] = useState<PendingBrowserCommand | null>(null);
+  const resourcesKey = resources.join('\u0000');
+  const currentResources = useRef<readonly string[]>([]);
 
-  const run = useCallback(
-    async <T>(slot: string, label: string, attempt: () => Promise<T>): Promise<T> => {
-      const unresolved = pendingRef.current;
-      if (unresolved !== null && unresolved.slot !== slot) {
-        throw new Error(`${unresolved.label} must be reconciled before starting another action.`);
+  useEffect(() => {
+    currentResources.current = resourcesKey === '' ? [] : resourcesKey.split('\u0000');
+  }, [resourcesKey]);
+
+  const refreshPending = useCallback(async (): Promise<void> => {
+    setPending(await ledger.pending(currentResources.current));
+  }, [ledger]);
+
+  useEffect(() => {
+    let live = true;
+    const refresh = () => {
+      void ledger.pending(currentResources.current).then((next) => {
+        if (live) setPending(next);
+      });
+    };
+    const storageChanged = (event: StorageEvent) => {
+      if (event.key === null || event.key.startsWith(COMMAND_STORAGE_PREFIX)) refresh();
+    };
+    const ledgerChanged = () => refresh();
+    window.addEventListener('storage', storageChanged);
+    window.addEventListener(COMMAND_LEDGER_EVENT, ledgerChanged);
+    refresh();
+    return () => {
+      live = false;
+      window.removeEventListener('storage', storageChanged);
+      window.removeEventListener(COMMAND_LEDGER_EVENT, ledgerChanged);
+    };
+  }, [ledger, resourcesKey]);
+
+  const execute = useCallback(
+    async <TRequest, TResult>(
+      intent: BrowserCommandIntent<TRequest>,
+      label: string,
+      send: (key: string, request: TRequest) => Promise<TResult>,
+    ): Promise<TResult> => {
+      const attempt = () => ledger.execute(intent, label, send);
+      try {
+        const result = await attempt();
+        await refreshPending();
+        return result;
+      } catch (cause) {
+        await refreshPending();
+        if (!commandOutcomeIsUnresolved(cause)) throw cause;
       }
 
       try {
         const result = await attempt();
-        pendingRef.current = null;
-        setPending(null);
+        await refreshPending();
         return result;
       } catch (cause) {
-        if (!(cause instanceof TransportError)) {
-          pendingRef.current = null;
-          setPending(null);
-          throw cause;
-        }
-      }
-
-      const unresolvedCommand = { slot, label };
-      pendingRef.current = unresolvedCommand;
-      setPending(unresolvedCommand);
-      try {
-        const result = await attempt();
-        pendingRef.current = null;
-        setPending(null);
-        return result;
-      } catch (cause) {
-        if (!(cause instanceof TransportError)) {
-          pendingRef.current = null;
-          setPending(null);
-        }
+        await refreshPending();
         throw cause;
       }
     },
-    [],
+    [ledger, refreshPending],
   );
 
-  const execute = useCallback(
-    <T>(slot: string, label: string, send: (key: string) => Promise<T>) =>
-      run(slot, label, () => ledger.current.execute(slot, send)),
-    [run],
-  );
-  const reconcile = useCallback(
-    <T>(slot: string, label: string) => run(slot, label, () => ledger.current.reconcile<T>(slot)),
-    [run],
-  );
-
-  return { pending, execute, reconcile };
+  return { pending, execute };
 }

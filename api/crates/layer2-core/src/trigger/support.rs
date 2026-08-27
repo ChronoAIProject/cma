@@ -245,7 +245,7 @@ impl TriggerSupportSnapshot {
 
 fn support_event(kind: &LaunchEventKind) -> TriggerSupportEventKind {
     match kind {
-        LaunchEventKind::Created => TriggerSupportEventKind::Created,
+        LaunchEventKind::Created { .. } => TriggerSupportEventKind::Created,
         LaunchEventKind::DraftUpdated => TriggerSupportEventKind::DraftUpdated,
         LaunchEventKind::ConnectionSelected => TriggerSupportEventKind::ConnectionSelected,
         LaunchEventKind::Started => TriggerSupportEventKind::Started,

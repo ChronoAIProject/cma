@@ -17,6 +17,12 @@ branch so later issues do not invent a different one. A new implementation may
 not weaken that branch without an amended maintainer decision and the review
 appropriate to the affected product or security boundary.
 
+Repository publishers and contributors should start with
+[CMA_Trigger_Publishing.md](./CMA_Trigger_Publishing.md). Operators use
+[CMA_Trigger_Operations.md](./CMA_Trigger_Operations.md), while release evidence
+and public-exposure gates are tracked in
+[CMA_Trigger_Release_Readiness.md](./CMA_Trigger_Release_Readiness.md).
+
 ## 1. Product boundary
 
 A publisher creates an immutable Trigger revision for a repository they are
@@ -67,7 +73,7 @@ Deferred policy tracks are explicit rather than partially enabled:
 - a GitHub App requires the replacement ADR described in section 8; and
 - #705 may strengthen recipient-side prompt deduplication after the MVP.
 
-The current `ChronoAIProject/chrono-bot` repository is internal and has
+The current `ChronoAIProject/cma` repository is internal and has
 forking disabled. It is not an MVP fixture. #673 owns a disposable public
 fixture and public-release evidence.
 
@@ -254,6 +260,17 @@ authenticated-review fields even when the upstream repository is public.
 10. Publish branch and Open or Update pull request are explicit contributor
     confirmations. PR review and merge stay on GitHub.
 
+The public MVP imports at most 100,000 files and 2 GiB of repository payload,
+with an additional 16 MiB limit on any one Git blob. The per-blob limit exists
+because GitHub's JSON blob route returns the complete base64 object; CMA checks
+the tree's declared size and returns the typed unsupported-repository result
+before requesting an oversized blob. CMA checkpoints accepted blobs as
+immutable 4 MiB storage chunks. After a restart, complete provider objects are
+reused without another GitHub blob call. If only part of one object was staged,
+that whole object is fetched again and converges on the existing exact chunks;
+CMA does not claim that GitHub supports ranged blob resume. A different byte or
+identity at any retained key fails closed.
+
 Repeated clicks have stable behavior:
 
 - Anonymous clicks always return the same inert preview or a retired/unavailable
@@ -346,8 +363,14 @@ The publisher may declare these contributor-editable:
 
 - task wording inside a bounded template field;
 - display or branch-name suffix within the server-owned naming scheme;
-- resource size and timeout within publisher/deployment ceilings; and
-- optional test commands from an enumerated safe configuration surface.
+- resource size and timeout within publisher/deployment ceilings.
+
+Configured checks are outside the public MVP until a reviewed runner can prove
+that they execute in the provisioned sandbox with explicit resource and network
+bounds. Revisions that declare checks, and Launch overrides that select one,
+fail validation rather than producing an empty result that looks successful.
+The reviewed timeout is provider-enforced and remains pinned when the session's
+runtime is replaced.
 
 Every change produces a new effective-config digest and reruns validation,
 pricing, quota, capability, and GitHub preflight. Repository identity,
@@ -366,9 +389,12 @@ Launch creation requires the selected kernel/runtime cohort to advertise:
 - the selected, closed GitHub operation classes.
 
 The MVP is Codex-scoped because the product requires an underlying Codex
-session, but admission checks capabilities rather than a kernel-name string.
-A missing capability is a typed pre-provision refusal. No old runtime image is
-given GitHub service reach it cannot filter.
+session. Review discloses the locked `codex` kernel from authoritative Trigger
+admission configuration, and Start plus provisioning reject kernel drift.
+Capability admission remains an independent check: neither the runtime image
+name nor its capability inventory is used to infer the kernel. An unknown
+configured kernel or a missing capability is a typed pre-provision refusal. No
+old runtime image is given GitHub service reach it cannot filter.
 
 The control plane and session have separate writers:
 
@@ -564,7 +590,25 @@ worker fencing token, correlation ID
 
 Launch events use an independent Launch aggregate stream because pre-session
 events have no Session ID. Its cursor/replay behavior is identical to the
-existing public session stream. Clients never set Launch state.
+existing public session stream. Sequence 1 is a creation event carrying the
+complete stable step table. Every event also captures the compact authoritative
+state, blocked reason, failure, resume state, reach, and delivery projection.
+Replaying the creation table plus later step deltas reconstructs the retained
+progress exactly; identical duplicate delivery is harmless, while gaps,
+conflicting duplicates, and mixed Launch IDs fail closed. The implementation
+uses the parallel Launch-document CAS allocator, avoiding changes to the live
+Session event write path. Clients never set Launch state.
+
+The canonical stream is stored one event per `(LaunchId, sequence)` in
+`trigger_launch_events`. A Launch mutation appends its new envelopes and
+replaces the aggregate in one MongoDB transaction. The aggregate carries a
+durable event high-water and at most 512 recent envelopes, which is enough for
+the 500-entry support timeline without allowing long-running capability
+renewal to grow the Launch document without bound. Progress reads take the
+aggregate tail first, then the canonical collection, and merge identical
+sequences. This order keeps legacy embedded streams readable while their first
+post-upgrade mutation lazily archives and compacts them; gaps and conflicting
+duplicates still fail closed.
 
 ## 11. Failure and reconciliation taxonomy
 
@@ -630,6 +674,16 @@ positive evidence and then becomes `recovery_required`. CMA never
 automatically resends it. Explicit recovery creates a newly authorized
 dispatch and discloses that the task may execute twice.
 
+The executable evidence allowlist is exactly agent message commitment, tool
+call start, tool call update, and approval request. Codex and Claude Code share
+one hosted ACP v1 opener and therefore one Layer 3 classification contract;
+their adapter tests bind their production path to it. DSH owns a separate
+session-log translator, whose real translator fixtures assert the same
+classification. Available-command, mode, configuration, usage, and sign-in
+updates remain negative even when replayed after reconnect. Terminal prompt
+results and failures settle the delivery directly rather than first pretending
+to be non-terminal activity.
+
 Consequences:
 
 - Browser refresh, duplicate Start, and worker replay cannot produce an
@@ -683,7 +737,7 @@ material preflight result is `authority_drift` and requires reauthorization.
 Routine GitHub token refresh with unchanged effective authority is transparent.
 
 NyxID remote `main` at
-`220b860fc31a7439a0b5b02662d3e1ea30873091` contains a producer-owned
+`52402f6a5510478b3601636a25572055f895c973` contains a producer-owned
 execution-authority digest, including credential identity and epoch, for its
 exact-approval path. The generic proxy used by CMA exposes neither that digest
 nor request-time expected-version validation. The MVP therefore makes the

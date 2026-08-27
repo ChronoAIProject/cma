@@ -57,7 +57,7 @@ Recorded rather than recomputed, and this is the step people expect to be missin
 
 | Variable | Value | Why |
 |---|---|---|
-| `NYXID_URL` | `http://127.0.0.1:9092` | the supervisor's loopback proxy, not the platform |
+| `NYXID_URL` | `http://127.0.0.2:9092` | the supervisor's signed, policy-enforcing loopback proxy, not the platform |
 | `NYXID_ACCESS_TOKEN` | `local-proxy-no-credential-needed` | a placeholder, deliberately useless |
 | `CHRONO_SESSION_REACHES` | `api-github,chrono-llm` | what this session may reach, by name |
 
@@ -121,7 +121,7 @@ Recorded here rather than left in an issue, because a page that describes the in
 - `nyxid` resolves on `PATH` in the published runtime image, at the version the Dockerfile pins.
 - `NYXID_ACCESS_TOKEN` in the sandbox is the placeholder, present from the first frame, and the real credential is not in the sandbox environment at any point.
 - A sandbox whose supervisor holds no credential yet answers **`503`, body `no upstream credential available yet`** — not a `401`. An agent reasoning about a `401` will reason wrongly.
-- A deployment that leaves `CHRONO_PLATFORM_BASE_URL` unset starts **no proxy at all**, while `NYXID_URL` still points at `127.0.0.1:9092` — so the sandbox sees **connection refused**, not a refusal from a broker.
+- An ordinary deployment that leaves `CHRONO_PLATFORM_BASE_URL` unset starts **no proxy at all**, while `NYXID_URL` still points at `127.0.0.2:9092` — so the sandbox sees **connection refused**, not a refusal from a broker. A Trigger runtime fails startup instead because its platform gateway is mandatory.
 - Nothing in the sandbox environment named the session's grant. That gap is what `CHRONO_SESSION_REACHES` (§1.5) closes.
 
 **Not yet established**, and each needs a signed-in identity with a service actually granted:

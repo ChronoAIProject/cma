@@ -120,7 +120,16 @@ fn corrupt_or_truncated_archives_never_make_a_workspace_visible() {
 
 #[test]
 fn traversal_and_git_control_paths_are_rejected_before_extraction() {
-    for path in ["../outside", "/absolute", ".git/config", "a/.GIT/config"] {
+    for path in [
+        "../outside",
+        "/absolute",
+        ".git/config",
+        "a/.GIT/config",
+        ".cma-control/runtime.json",
+        "nested/.codex/auth.json",
+        ".env.local",
+        "secrets/id_ed25519",
+    ] {
         let base = root(&path.replace(['/', '.'], "_"));
         let target = base.join("workspace");
         let _ = std::fs::remove_dir_all(&base);
@@ -138,6 +147,55 @@ fn traversal_and_git_control_paths_are_rejected_before_extraction() {
         assert!(!target.exists());
         let _ = std::fs::remove_dir_all(base);
     }
+}
+
+#[test]
+fn capture_excludes_runtime_control_and_credential_paths() {
+    let base = root("capture-exclusions");
+    let workspace = base.join("source");
+    let checkpoints = base.join("checkpoints");
+    let _ = std::fs::remove_dir_all(&base);
+    for directory in [".git", ".cma-control", ".codex", "nested/.ssh"] {
+        std::fs::create_dir_all(workspace.join(directory)).unwrap();
+    }
+    std::fs::write(workspace.join("README.md"), b"safe\n").unwrap();
+    std::fs::write(workspace.join(".git/config"), b"git-control-secret").unwrap();
+    std::fs::write(
+        workspace.join(".cma-control/runtime.json"),
+        b"runtime-control-secret",
+    )
+    .unwrap();
+    std::fs::write(workspace.join(".codex/auth.json"), b"agent-secret").unwrap();
+    std::fs::write(workspace.join("nested/.ssh/id_rsa"), b"private-key").unwrap();
+    std::fs::write(workspace.join(".env.local"), b"TOKEN=secret").unwrap();
+
+    let captured = prepare_capture(&workspace, &checkpoints, 8, 1, &"d".repeat(40), 0)
+        .unwrap()
+        .commit()
+        .unwrap();
+    let (header, payload) = open(&captured.archive).unwrap();
+    assert_eq!(
+        header
+            .entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["README.md"]
+    );
+    assert_eq!(payload, b"safe\n");
+    for secret in [
+        b"git-control-secret".as_slice(),
+        b"runtime-control-secret".as_slice(),
+        b"agent-secret".as_slice(),
+        b"private-key".as_slice(),
+        b"TOKEN=secret".as_slice(),
+    ] {
+        assert!(!captured
+            .archive
+            .windows(secret.len())
+            .any(|window| window == secret));
+    }
+    std::fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
@@ -292,6 +350,39 @@ fn a_checkpoint_version_is_immutable_across_ambiguous_retries() {
 }
 
 #[test]
+fn periodic_captures_keep_two_local_retry_artifacts_and_reject_stale_versions() {
+    let base = root("capture-retention");
+    let workspace = base.join("source");
+    let checkpoints = base.join("checkpoints");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    for version in 1..=4 {
+        std::fs::write(
+            workspace.join("work.txt"),
+            format!("checkpoint {version}\n"),
+        )
+        .unwrap();
+        prepare_capture(&workspace, &checkpoints, 9, version, &"e".repeat(40), 0)
+            .unwrap()
+            .commit()
+            .unwrap();
+    }
+
+    assert!(!capture_path(&checkpoints, 9, 1).exists());
+    assert!(!capture_path(&checkpoints, 9, 2).exists());
+    assert!(capture_path(&checkpoints, 9, 3).exists());
+    assert!(capture_path(&checkpoints, 9, 4).exists());
+    assert!(load_capture(&checkpoints, 9, 2, &"e".repeat(40))
+        .unwrap_err()
+        .contains("predates"));
+    assert!(load_capture(&checkpoints, 9, 3, &"e".repeat(40))
+        .unwrap()
+        .is_some());
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn uncommitted_or_corrupt_checkpoint_files_are_never_authoritative() {
     let base = root("capture-commit-order");
     let workspace = base.join("source");
@@ -346,7 +437,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
     #[cfg(target_os = "linux")]
     assert_eq!(
         readiness["workspaceCheckpoint"]["version"],
-        CAPABILITY_VERSION
+        serde_json::json!(4)
     );
     #[cfg(not(target_os = "linux"))]
     assert!(readiness["workspaceCheckpoint"].is_null());
@@ -403,6 +494,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
             version: 1,
             source: "b".repeat(40),
             baseline: baseline_digest.clone(),
+            disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
         }),
     )
     .await
@@ -416,6 +508,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
             version: 1,
             source: header.source_revision.clone(),
             baseline: header.manifest_digest.clone(),
+            disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
         }),
     )
     .await
@@ -427,6 +520,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
         version: 1,
         source: header.source_revision.clone(),
         baseline: baseline_digest.clone(),
+        disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
     };
     #[cfg(not(target_os = "linux"))]
     {
@@ -448,6 +542,7 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
                 version: checkpoint_params.version,
                 source: checkpoint_params.source.clone(),
                 baseline: checkpoint_params.baseline.clone(),
+                disposition: crate::RuntimeWorkspaceCheckpointDisposition::ResumeAfterCapture,
             }),
         )
         .await
@@ -497,4 +592,119 @@ async fn the_runtime_advertises_and_acknowledges_only_a_pre_start_verified_works
         state.registry.remove("started").await;
         std::fs::remove_dir_all(base).unwrap();
     }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn teardown_hold_has_no_deadline_and_only_the_exact_token_resumes() {
+    let base = root("non-expiring-writer-hold");
+    let target = base.join("workspace");
+    let checkpoint_root = base.join("checkpoints");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("README.md"), b"held workspace\n").unwrap();
+
+    let source = "a".repeat(40);
+    let baseline = "b".repeat(64);
+    let mut state = crate::AppState::for_test(&[]);
+    state.workspace_root = target;
+    state.checkpoint_root = checkpoint_root;
+    *state.workspace_authority.write().await = Some(crate::WorkspaceAuthority {
+        epoch: 11,
+        source_revision: source.clone(),
+        baseline_manifest_digest: baseline.clone(),
+    });
+    let request = || crate::WorkspaceCheckpointParams {
+        epoch: 11,
+        version: 7,
+        source: source.clone(),
+        baseline: baseline.clone(),
+        disposition: crate::RuntimeWorkspaceCheckpointDisposition::HoldForTeardown,
+    };
+
+    let first = crate::workspace_checkpoint(State(state.clone()), Query(request()))
+        .await
+        .into_response();
+    assert_eq!(first.status(), axum::http::StatusCode::OK);
+    let first = axum::body::to_bytes(first.into_body(), MAX_ARCHIVE_BYTES + 64 * 1024)
+        .await
+        .expect("held checkpoint wire");
+    let header_len = usize::try_from(u64::from_be_bytes(first[..8].try_into().unwrap())).unwrap();
+    let acknowledgement: serde_json::Value =
+        serde_json::from_slice(&first[8..8 + header_len]).unwrap();
+    assert_eq!(acknowledgement["writer_state"], "held_for_teardown");
+    assert_eq!(acknowledgement["writers_resumed"], false);
+    assert!(acknowledgement
+        .get("writer_hold_expires_at_unix_seconds")
+        .is_none());
+    let token = acknowledgement["writer_resume_token"]
+        .as_str()
+        .expect("the hold names its exact resume token")
+        .to_string();
+    assert_eq!(token.len(), 64);
+    assert!(state.startup_gate.try_write().is_err());
+
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    let replay = crate::workspace_checkpoint(State(state.clone()), Query(request()))
+        .await
+        .into_response();
+    assert_eq!(replay.status(), axum::http::StatusCode::OK);
+    let replay = axum::body::to_bytes(replay.into_body(), MAX_ARCHIVE_BYTES + 64 * 1024)
+        .await
+        .expect("held checkpoint replay");
+    assert_eq!(replay, first, "a hold retry must replay the exact receipt");
+
+    let conflicting = crate::workspace_checkpoint(
+        State(state.clone()),
+        Query(crate::WorkspaceCheckpointParams {
+            version: 8,
+            ..request()
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(conflicting.status(), axum::http::StatusCode::CONFLICT);
+
+    let wrong_token = if token == "c".repeat(64) {
+        "d".repeat(64)
+    } else {
+        "c".repeat(64)
+    };
+    let wrong = crate::workspace_checkpoint_resume(
+        State(state.clone()),
+        axum::Json(crate::WorkspaceCheckpointResumeRequest {
+            resume_token: wrong_token,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(wrong.status(), axum::http::StatusCode::CONFLICT);
+    assert!(state.startup_gate.try_write().is_err());
+
+    let resumed = crate::workspace_checkpoint_resume(
+        State(state.clone()),
+        axum::Json(crate::WorkspaceCheckpointResumeRequest {
+            resume_token: token.clone(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(resumed.status(), axum::http::StatusCode::OK);
+    let admission = state
+        .startup_gate
+        .try_write()
+        .expect("the exact token releases startup admission");
+    drop(admission);
+
+    let replayed_resume = crate::workspace_checkpoint_resume(
+        State(state),
+        axum::Json(crate::WorkspaceCheckpointResumeRequest {
+            resume_token: token,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(replayed_resume.status(), axum::http::StatusCode::OK);
+
+    std::fs::remove_dir_all(base).unwrap();
 }

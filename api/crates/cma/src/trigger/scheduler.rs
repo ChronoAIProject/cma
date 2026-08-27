@@ -1,19 +1,20 @@
 //! Bounded, database-led scheduling for Trigger orchestration and maintenance.
 //!
-//! The three lanes are deliberately independent. A slow GitHub write must not
-//! delay capability revocation, and retention work must not widen either lane's
-//! provider concurrency. Every candidate is still fenced by its Launch lease;
+//! The four lanes are deliberately independent. A slow GitHub write or
+//! workspace capture must not delay capability revocation, and retention work
+//! must not widen another lane's provider concurrency. Every candidate is still fenced by its Launch lease;
 //! pages are only a bounded inventory and never an ownership claim.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
 use futures_util::{stream, StreamExt as _};
 use layer2_core::{
-    rfc3339_at, ActivityAction, ActivityOutcome, ActivityService, DetailKey, Launch, LaunchId,
-    TriggerPage, TriggerPageRequest, TriggerService, TriggerServiceError,
+    rfc3339_at, ActivityAction, ActivityOutcome, ActivityService, CoreError, DetailKey, Launch,
+    LaunchId, SessionService, TriggerLifecycleCheckpointOutcome, TriggerPage, TriggerPageRequest,
+    TriggerService, TriggerServiceError, WorkspaceCheckpointPurpose,
 };
 use tokio::time::MissedTickBehavior;
 
@@ -29,14 +30,25 @@ const DEFAULT_WORKER_LEASE: Duration = Duration::from_secs(120);
 enum SchedulerLane {
     Effects,
     Capabilities,
+    Workspaces,
     Cleanup,
 }
 
 impl SchedulerLane {
+    fn index(self) -> usize {
+        match self {
+            Self::Effects => 0,
+            Self::Capabilities => 1,
+            Self::Workspaces => 2,
+            Self::Cleanup => 3,
+        }
+    }
+
     fn code(self) -> &'static str {
         match self {
             Self::Effects => "effects",
             Self::Capabilities => "capabilities",
+            Self::Workspaces => "workspaces",
             Self::Cleanup => "cleanup",
         }
     }
@@ -149,6 +161,7 @@ struct ProductionBackend {
     triggers: Arc<TriggerService>,
     effects: Arc<EffectWorker>,
     capabilities: Arc<CapabilityWorker>,
+    sessions: Arc<SessionService>,
     cleanup: Arc<CleanupPlanner>,
     cleanup_mode: TriggerCleanupMode,
 }
@@ -168,6 +181,7 @@ impl SchedulerBackend for ProductionBackend {
                     .await
             }
             SchedulerLane::Capabilities => self.triggers.capability_candidates(page).await,
+            SchedulerLane::Workspaces => self.triggers.workspace_candidates(page).await,
             SchedulerLane::Cleanup => self.triggers.cleanup_candidates(pass_boundary, &page).await,
         }
     }
@@ -189,6 +203,33 @@ impl SchedulerBackend for ProductionBackend {
                 .run_once(&launch.id, launch.revision_number, &correlation_id)
                 .await?
                 .into()),
+            SchedulerLane::Workspaces => {
+                let Some(session) = launch.session.as_ref() else {
+                    return Ok(CandidateOutcome::NoWork);
+                };
+                match self
+                    .sessions
+                    .checkpoint_trigger_lifecycle(
+                        &session.session_id,
+                        WorkspaceCheckpointPurpose::Periodic,
+                        &rfc3339_at(SystemTime::now()),
+                    )
+                    .await
+                {
+                    Ok(TriggerLifecycleCheckpointOutcome::NotDue) => Ok(CandidateOutcome::NoWork),
+                    Ok(TriggerLifecycleCheckpointOutcome::Busy) => Ok(CandidateOutcome::Deferred),
+                    Ok(TriggerLifecycleCheckpointOutcome::Complete { .. }) => {
+                        Ok(CandidateOutcome::Completed)
+                    }
+                    Err(CoreError::RuntimeUnavailable(_)) | Err(CoreError::RuntimeRefused(_)) => {
+                        Ok(CandidateOutcome::Deferred)
+                    }
+                    Err(error) => {
+                        tracing::warn!(launch_id = %launch.id, %error, "Trigger workspace checkpoint failed");
+                        Ok(CandidateOutcome::Failed)
+                    }
+                }
+            }
             SchedulerLane::Cleanup => match self.cleanup_mode {
                 TriggerCleanupMode::DryRun if launch.cleanup.is_some() => {
                     Ok(CandidateOutcome::NoWork)
@@ -211,6 +252,7 @@ impl SchedulerBackend for ProductionBackend {
 struct TriggerScheduler {
     backend: Arc<dyn SchedulerBackend>,
     settings: SchedulerSettings,
+    resume_cursors: Mutex<[Option<String>; 4]>,
 }
 
 impl TriggerScheduler {
@@ -218,7 +260,8 @@ impl TriggerScheduler {
         let started = Instant::now();
         let pass_boundary = rfc3339_at(SystemTime::now());
         let mut stats = PassStats::default();
-        let mut cursor = None;
+        let mut cursor = self.resume_cursors.lock().unwrap()[lane.index()].clone();
+        let mut next_pass_cursor = cursor.clone();
         let mut seen_cursors = BTreeSet::new();
 
         for page_index in 0..self.settings.max_pages {
@@ -277,22 +320,27 @@ impl TriggerScheduler {
             }
 
             let Some(next) = page.next else {
+                next_pass_cursor = None;
                 break;
             };
             if !seen_cursors.insert(next.clone()) {
                 stats.errors += 1;
+                next_pass_cursor = None;
                 tracing::error!(
                     lane = lane.code(),
                     "Trigger scheduler stopped a repeated page cursor"
                 );
                 break;
             }
+            next_pass_cursor = Some(next.clone());
             if page_index + 1 == self.settings.max_pages {
                 stats.page_budget_exhausted = true;
                 break;
             }
             cursor = Some(next);
         }
+
+        self.resume_cursors.lock().unwrap()[lane.index()] = next_pass_cursor;
 
         stats.finish(started);
         log_pass(lane, stats);
@@ -497,6 +545,7 @@ impl CleanupPlanner {
 pub(crate) fn spawn(
     triggers: Arc<TriggerService>,
     executor: Arc<GithubEffectExecutor>,
+    sessions: Arc<SessionService>,
     activity: Arc<ActivityService>,
     deployment_id: &str,
     config: &TriggerRuntimeConfig,
@@ -529,15 +578,18 @@ pub(crate) fn spawn(
             triggers,
             effects,
             capabilities,
+            sessions,
             cleanup,
             cleanup_mode: config.cleanup_mode,
         }),
         settings: SchedulerSettings::from(config),
+        resume_cursors: Mutex::new(std::array::from_fn(|_| None)),
     });
 
     for lane in [
         SchedulerLane::Effects,
         SchedulerLane::Capabilities,
+        SchedulerLane::Workspaces,
         SchedulerLane::Cleanup,
     ] {
         scheduler.spawn_lane(lane);

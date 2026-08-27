@@ -9,15 +9,16 @@ use layer2_core::{
     BillingMode, CommercialPolicy, CommitAttributionPolicy, ConnectedAccount, ConnectionSnapshot,
     ConnectionState, ContributionPolicy, CredentialRoute, DelegationState, EditableField,
     ExecutorPolicy, InputFieldDefinition, InputFieldKind, Launch, LaunchAuthority, LaunchQuery,
-    LaunchState, LaunchStore, OverridePolicy, PermissionMode, PublicProjectionPolicy,
-    PublicTriggerId, PublishedRevision, PublisherAuthority, PullRequestDefaults,
-    RepositoryAccessPolicy, RepositoryIdentity, RepositoryOperationClass, RepositoryVisibility,
-    RequiredCapability, ResourcePolicy, ScopeClass, SessionSize, SetupPolicy, SourceMode,
-    StoreError, SubjectId, TriggerAuthorityVerifier, TriggerDraft, TriggerId, TriggerPage,
-    TriggerPageRequest, TriggerRevision, TriggerRevisionContent, TriggerRevisionId,
-    TriggerRolloutPolicy, TriggerService, TriggerServiceError, TriggerSessionPolicy, TriggerStore,
-    TriggerStoreError, TriggerTask, UpstreamRevision, WorkerLease, WorkflowChangePolicy,
-    TRIGGER_SCHEMA_VERSION,
+    LaunchReviewAdmission, LaunchState, LaunchStore, OverridePolicy, PermissionMode,
+    PricingSnapshot, PublicProjectionPolicy, PublicTriggerId, PublishedRevision,
+    PublisherAuthority, PullRequestDefaults, QuotaSnapshot, RepositoryAccessPolicy,
+    RepositoryIdentity, RepositoryOperationClass, RepositoryVisibility, RequiredCapability,
+    ResourcePolicy, RuntimeAdmissionSnapshot, ScopeClass, SessionSize, SetupPolicy, SourceMode,
+    StartAdmissionSnapshot, StoreError, SubjectId, TriggerAuthorityVerifier, TriggerDraft,
+    TriggerId, TriggerPage, TriggerPageRequest, TriggerRevision, TriggerRevisionContent,
+    TriggerRevisionId, TriggerRolloutPolicy, TriggerService, TriggerServiceError,
+    TriggerSessionPolicy, TriggerStore, TriggerStoreError, TriggerTask, UpstreamRevision,
+    WorkerLease, WorkflowChangePolicy, TRIGGER_SCHEMA_VERSION,
 };
 use serde_json::json;
 use tokio::sync::Mutex as AsyncMutex;
@@ -107,6 +108,44 @@ async fn claim_is_committed_before_the_executor_and_success_releases_the_lease()
     assert!(stored.lease.is_none());
     assert_eq!(stored.effects.len(), 1);
     assert_eq!(stored.effects[0].state, layer2_core::EffectState::Succeeded);
+}
+
+#[tokio::test]
+async fn observed_session_wait_is_durable_without_a_failure_or_budget_spend() {
+    let mut launch = Fixture::new().launch;
+    launch.state = LaunchState::SandboxPending;
+    launch.effects.clear();
+    launch.lease = None;
+    let store = Arc::new(TestStore::new(launch.clone()));
+    let service = Arc::new(TriggerService::new(
+        store.clone(),
+        store.clone(),
+        Arc::new(NeverAuthority),
+    ));
+    let worker = test_worker(
+        service,
+        Arc::new(WaitingExecutor),
+        "session-wait-worker",
+        &[NOW, LATER],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, launch.revision_number, "session-wait")
+            .await
+            .unwrap(),
+        EffectRunOutcome::Deferred
+    );
+    let retained = store.current();
+    let effect = retained.effects.last().unwrap();
+    assert_eq!(effect.kind, layer2_core::LaunchEffectKind::Sandbox);
+    assert_eq!(effect.state, layer2_core::EffectState::Reconciling);
+    assert_eq!(effect.attempt, 1);
+    assert_eq!(effect.reconciliation_attempt, 0);
+    assert!(effect.last_failure.is_none());
+    assert!(retained.failure.is_none());
+    assert_eq!(retained.state, LaunchState::SandboxPending);
+    assert!(retained.lease.is_none());
 }
 
 #[tokio::test]
@@ -418,6 +457,299 @@ async fn takeover_reconciles_a_committed_claim_instead_of_executing_again() {
     assert_eq!(
         executor.intent.lock().unwrap().as_deref(),
         Some(old_claim.intent_key.as_str())
+    );
+}
+
+#[tokio::test]
+async fn crash_before_authority_admission_allows_only_a_freshly_admitted_execute() {
+    let fixture = fork_fixture();
+    let service = fixture.service();
+    let mut claimed = service
+        .acquire_worker(
+            &fixture.launch.id,
+            fixture.launch.revision_number,
+            "crashed-before-admission",
+            NOW,
+            "2026-08-27T00:00:02Z",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let old_lease = claimed.lease.clone().unwrap();
+    let old_claim = claimed
+        .claim_next_effect(&old_lease, NOW, "claim-before-admission")
+        .unwrap()
+        .unwrap();
+    assert_eq!(old_claim.kind, LaunchEffectKind::Fork);
+    let stranded = service
+        .commit_worker(claimed.revision_number, &old_lease, claimed)
+        .await
+        .unwrap();
+    assert!(stranded
+        .effects
+        .last()
+        .unwrap()
+        .authority_admission
+        .is_none());
+
+    let executor = Arc::new(AuthorityExecutor::new(false));
+    let worker = test_worker(
+        service,
+        Arc::clone(&executor),
+        "fresh-admission-worker",
+        &[
+            "2026-08-27T00:00:03Z",
+            "2026-08-27T00:00:04Z",
+            "2026-08-27T00:00:05Z",
+        ],
+    );
+    assert_eq!(
+        worker
+            .run_once(
+                &fixture.launch.id,
+                stranded.revision_number,
+                "resume-before-admission",
+            )
+            .await
+            .unwrap(),
+        EffectRunOutcome::Completed
+    );
+    assert_eq!(executor.admit_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.execute_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.reconcile_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.provider_write_calls.load(Ordering::SeqCst), 1);
+    let completed = fixture.store.current();
+    assert_eq!(
+        completed.effects.last().unwrap().attempt,
+        old_claim.attempt + 1
+    );
+    assert!(completed
+        .effects
+        .last()
+        .unwrap()
+        .authority_admission
+        .is_some());
+}
+
+#[tokio::test]
+async fn crash_after_authority_admission_reconciles_whether_or_not_the_write_started() {
+    for external_write_started in [false, true] {
+        let fixture = fork_fixture();
+        let service = fixture.service();
+        let mut claimed = service
+            .acquire_worker(
+                &fixture.launch.id,
+                fixture.launch.revision_number,
+                "crashed-after-admission",
+                NOW,
+                "2026-08-27T00:00:02Z",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let old_lease = claimed.lease.clone().unwrap();
+        let old_claim = claimed
+            .claim_next_effect(&old_lease, NOW, "claim-before-admission")
+            .unwrap()
+            .unwrap();
+        let mut admitted = service
+            .commit_worker(claimed.revision_number, &old_lease, claimed)
+            .await
+            .unwrap();
+        let admission = AuthorityExecutor::admission(&admitted, &old_claim, false);
+        admitted
+            .record_effect_authority_admission(&old_lease, &old_claim, admission.clone(), LATER)
+            .unwrap();
+        let admitted = service
+            .commit_worker(admitted.revision_number, &old_lease, admitted)
+            .await
+            .unwrap();
+
+        let executor = Arc::new(AuthorityExecutor::new(false));
+        if external_write_started {
+            let _ = executor.execute(&admitted, &old_claim).await;
+        }
+        let writes_before_takeover = executor.provider_write_calls.load(Ordering::SeqCst);
+        let executes_before_takeover = executor.execute_calls.load(Ordering::SeqCst);
+        let worker = test_worker(
+            service,
+            Arc::clone(&executor),
+            "reconciliation-worker",
+            &["2026-08-27T00:00:03Z", "2026-08-27T00:00:04Z"],
+        );
+        assert_eq!(
+            worker
+                .run_once(
+                    &fixture.launch.id,
+                    admitted.revision_number,
+                    "resume-after-admission",
+                )
+                .await
+                .unwrap(),
+            EffectRunOutcome::Completed
+        );
+        assert_eq!(executor.admit_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            executor.execute_calls.load(Ordering::SeqCst),
+            executes_before_takeover
+        );
+        assert_eq!(executor.reconcile_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            executor.provider_write_calls.load(Ordering::SeqCst),
+            writes_before_takeover
+        );
+        let completed = fixture.store.current();
+        let record = completed.effects.last().unwrap();
+        assert_eq!(record.state, layer2_core::EffectState::Succeeded);
+        assert_eq!(record.authority_admission, Some(admission.clone()));
+        assert_eq!(admission.fence, old_claim.fence);
+        assert_ne!(record.fence, admission.fence);
+    }
+}
+
+#[tokio::test]
+async fn lost_authority_admission_cas_never_calls_execute_or_the_provider() {
+    let fixture = fork_fixture();
+    fixture.store.fail_replace_on(2);
+    let executor = Arc::new(AuthorityExecutor::new(false));
+    let worker = test_worker(
+        fixture.service(),
+        Arc::clone(&executor),
+        "admission-cas-loser",
+        &[NOW, LATER],
+    );
+
+    let error = worker
+        .run_once(
+            &fixture.launch.id,
+            fixture.launch.revision_number,
+            "lose-admission-cas",
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        TriggerServiceError::Store(TriggerStoreError::Unavailable(_))
+    ));
+    assert_eq!(executor.admit_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.execute_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.reconcile_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.provider_write_calls.load(Ordering::SeqCst), 0);
+    let stranded = fixture.store.current();
+    assert_eq!(
+        stranded.effects.last().unwrap().state,
+        layer2_core::EffectState::Claimed
+    );
+    assert!(stranded
+        .effects
+        .last()
+        .unwrap()
+        .authority_admission
+        .is_none());
+}
+
+#[tokio::test]
+async fn stale_fence_authority_admission_never_reaches_the_execute_boundary() {
+    let fixture = fork_fixture();
+    let executor = Arc::new(AuthorityExecutor::new(true));
+    let worker = test_worker(
+        fixture.service(),
+        Arc::clone(&executor),
+        "stale-admission-worker",
+        &[NOW, LATER],
+    );
+
+    assert!(matches!(
+        worker
+            .run_once(
+                &fixture.launch.id,
+                fixture.launch.revision_number,
+                "stale-admission",
+            )
+            .await,
+        Err(TriggerServiceError::Validation(_))
+    ));
+    assert_eq!(executor.admit_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.execute_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.reconcile_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.provider_write_calls.load(Ordering::SeqCst), 0);
+    assert!(fixture
+        .store
+        .current()
+        .effects
+        .last()
+        .unwrap()
+        .authority_admission
+        .is_none());
+}
+
+#[tokio::test]
+async fn every_durable_publication_phase_requires_a_fresh_authority_admission() {
+    let launch = super::super::github_effects::tests::publication_launch_for_worker_test();
+    let store = Arc::new(TestStore::new(launch.clone()));
+    let service = Arc::new(TriggerService::new(
+        store.clone(),
+        store.clone(),
+        Arc::new(NeverAuthority),
+    ));
+    let executor = Arc::new(PublicationAuthorityExecutor::default());
+    let worker = test_worker(
+        service,
+        Arc::clone(&executor),
+        "publication-phase-worker",
+        &[
+            "2026-08-27T00:00:03Z",
+            "2026-08-27T00:00:04Z",
+            "2026-08-27T00:00:05Z",
+            "2026-08-27T00:00:06Z",
+            "2026-08-27T00:00:07Z",
+            "2026-08-27T00:00:08Z",
+            "2026-08-27T00:00:09Z",
+            "2026-08-27T00:00:10Z",
+            "2026-08-27T00:00:11Z",
+        ],
+    );
+
+    for (phase, expected) in [
+        EffectRunOutcome::Deferred,
+        EffectRunOutcome::Deferred,
+        EffectRunOutcome::Completed,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let current = store.current();
+        assert_eq!(
+            worker
+                .run_once(
+                    &launch.id,
+                    current.revision_number,
+                    &format!("publication-phase-{}", phase + 1),
+                )
+                .await
+                .unwrap(),
+            expected
+        );
+    }
+
+    assert_eq!(executor.admit_calls.load(Ordering::SeqCst), 3);
+    assert_eq!(executor.execute_calls.load(Ordering::SeqCst), 3);
+    assert_eq!(executor.reconcile_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(*executor.admitted_fences.lock().unwrap(), vec![1, 2, 3]);
+    let completed = store.current();
+    assert_eq!(
+        completed.contribution.as_ref().unwrap().state,
+        layer2_core::PublicationState::Published
+    );
+    assert_eq!(
+        completed.branch.as_ref().unwrap().current_head,
+        "d".repeat(40)
+    );
+    let record = completed.effects.last().unwrap();
+    assert_eq!(record.state, layer2_core::EffectState::Succeeded);
+    assert_eq!(
+        record.authority_admission.as_ref().unwrap().fence,
+        record.fence
     );
 }
 
@@ -787,6 +1119,27 @@ fn prompt_delivery(
     }
 }
 
+struct WaitingExecutor;
+
+#[async_trait]
+impl EffectExecutor for WaitingExecutor {
+    async fn execute(&self, _launch: &Launch, _claim: &EffectClaim) -> EffectExecution {
+        EffectExecution::WaitLater {
+            wait_at: "2026-08-27T00:00:02Z".into(),
+            safe_detail: "The deterministic session is recovering.".into(),
+            remediation: "CMA will check the same session again.".into(),
+            external_resource_ids: BTreeMap::from([(
+                "session_id".into(),
+                "sesn_trigger_wait".into(),
+            )]),
+        }
+    }
+
+    async fn reconcile(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        self.execute(launch, claim).await
+    }
+}
+
 struct InspectingExecutor {
     store: Arc<TestStore>,
     authority: AuthorityProvenance,
@@ -909,6 +1262,201 @@ impl EffectExecutor for InspectingExecutor {
     }
 }
 
+struct AuthorityExecutor {
+    stale_admission: bool,
+    admit_calls: AtomicUsize,
+    execute_calls: AtomicUsize,
+    reconcile_calls: AtomicUsize,
+    provider_write_calls: AtomicUsize,
+}
+
+impl AuthorityExecutor {
+    fn new(stale_admission: bool) -> Self {
+        Self {
+            stale_admission,
+            admit_calls: AtomicUsize::new(0),
+            execute_calls: AtomicUsize::new(0),
+            reconcile_calls: AtomicUsize::new(0),
+            provider_write_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn admission(
+        launch: &Launch,
+        claim: &EffectClaim,
+        stale_fence: bool,
+    ) -> AuthorityAdmissionSnapshot {
+        let mut admitted_claim = claim.clone();
+        if stale_fence {
+            admitted_claim.fence = claim.fence.saturating_add(1);
+        }
+        AuthorityAdmissionSnapshot::for_effect(
+            launch,
+            &admitted_claim,
+            launch.connection.clone().unwrap(),
+            launch.authority.clone().unwrap(),
+            launch.revision.content.upstream.repository.clone(),
+            None,
+            None,
+            LATER,
+        )
+        .unwrap()
+    }
+
+    fn completed_fork(launch: &Launch) -> EffectExecution {
+        let upstream = &launch.revision.content.upstream.repository;
+        let connection = launch.connection.as_ref().unwrap();
+        let repository = RepositoryIdentity {
+            repository_id: 11,
+            repository_node_id: "R_fork".into(),
+            owner_id: connection.account.account_id,
+            owner_node_id: connection.account.account_node_id.clone(),
+            canonical_owner: connection.account.login.clone(),
+            canonical_name: upstream.canonical_name.clone(),
+            visibility: upstream.visibility,
+            allow_forking: true,
+            default_branch: upstream.default_branch.clone(),
+            selected_ref: upstream.selected_ref.clone(),
+            fork_parent_id: Some(upstream.repository_id),
+            fork_source_id: Some(upstream.fork_source_id.unwrap_or(upstream.repository_id)),
+        };
+        EffectExecution::Completed {
+            result: LaunchEffectResult::Fork {
+                fork: layer2_core::ForkRecord {
+                    repository,
+                    reused: false,
+                    source_revision: launch.source_sha.clone(),
+                    canonical_url: "https://github.com/contributor/project".into(),
+                    ready_at: LATER.into(),
+                },
+            },
+            safe_detail: "The exact admitted fork is ready.".into(),
+            external_resource_ids: BTreeMap::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl EffectExecutor for AuthorityExecutor {
+    async fn admit(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+    ) -> Result<Option<AuthorityAdmissionSnapshot>, EffectExecution> {
+        self.admit_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(Self::admission(launch, claim, self.stale_admission)))
+    }
+
+    async fn execute(&self, launch: &Launch, _claim: &EffectClaim) -> EffectExecution {
+        self.execute_calls.fetch_add(1, Ordering::SeqCst);
+        self.provider_write_calls.fetch_add(1, Ordering::SeqCst);
+        Self::completed_fork(launch)
+    }
+
+    async fn reconcile(&self, launch: &Launch, _claim: &EffectClaim) -> EffectExecution {
+        self.reconcile_calls.fetch_add(1, Ordering::SeqCst);
+        Self::completed_fork(launch)
+    }
+}
+
+#[derive(Default)]
+struct PublicationAuthorityExecutor {
+    admit_calls: AtomicUsize,
+    execute_calls: AtomicUsize,
+    reconcile_calls: AtomicUsize,
+    admitted_fences: Mutex<Vec<u64>>,
+}
+
+#[async_trait]
+impl EffectExecutor for PublicationAuthorityExecutor {
+    async fn admit(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+    ) -> Result<Option<AuthorityAdmissionSnapshot>, EffectExecution> {
+        self.admit_calls.fetch_add(1, Ordering::SeqCst);
+        self.admitted_fences.lock().unwrap().push(claim.fence);
+        Ok(Some(
+            AuthorityAdmissionSnapshot::for_effect(
+                launch,
+                claim,
+                launch.connection.clone().unwrap(),
+                launch.authority.clone().unwrap(),
+                launch.revision.content.upstream.repository.clone(),
+                Some(launch.fork.as_ref().unwrap().repository.clone()),
+                launch.branch.clone(),
+                LATER,
+            )
+            .unwrap(),
+        ))
+    }
+
+    async fn execute(&self, launch: &Launch, _claim: &EffectClaim) -> EffectExecution {
+        self.execute_calls.fetch_add(1, Ordering::SeqCst);
+        let mut contribution = launch.contribution.clone().unwrap();
+        match contribution.state {
+            layer2_core::PublicationState::IntentRecorded => {
+                contribution.state = layer2_core::PublicationState::ObjectsWritten;
+                contribution.base_tree_id = Some("b".repeat(40));
+                contribution.tree_id = Some("c".repeat(40));
+                contribution.commit_id = Some("d".repeat(40));
+                contribution.object_ids = vec![launch.diff.as_ref().unwrap().files[0]
+                    .new_provider_object_id
+                    .clone()
+                    .unwrap()];
+                contribution.updated_at = LATER.into();
+                EffectExecution::Progressed {
+                    result: LaunchEffectResult::BranchPublication { contribution },
+                }
+            }
+            layer2_core::PublicationState::ObjectsWritten => {
+                contribution.state = layer2_core::PublicationState::RefUpdatePending;
+                contribution.updated_at = "2026-08-27T00:00:02Z".into();
+                EffectExecution::Progressed {
+                    result: LaunchEffectResult::BranchPublication { contribution },
+                }
+            }
+            layer2_core::PublicationState::RefUpdatePending => {
+                contribution.state = layer2_core::PublicationState::Published;
+                contribution.resulting_head = contribution.commit_id.clone();
+                contribution.updated_at = "2026-08-27T00:00:03Z".into();
+                let mut resources = BTreeMap::new();
+                resources.insert(
+                    "base_tree_id".into(),
+                    contribution.base_tree_id.clone().unwrap(),
+                );
+                resources.insert("tree_id".into(), contribution.tree_id.clone().unwrap());
+                resources.insert("commit_id".into(), contribution.commit_id.clone().unwrap());
+                resources.insert(
+                    "resulting_head".into(),
+                    contribution.resulting_head.clone().unwrap(),
+                );
+                EffectExecution::Completed {
+                    result: LaunchEffectResult::BranchPublication { contribution },
+                    safe_detail: "The exact admitted publication is complete.".into(),
+                    external_resource_ids: resources,
+                }
+            }
+            state => panic!("unexpected publication phase in worker test: {state:?}"),
+        }
+    }
+
+    async fn reconcile(&self, _launch: &Launch, claim: &EffectClaim) -> EffectExecution {
+        self.reconcile_calls.fetch_add(1, Ordering::SeqCst);
+        EffectExecution::Failed {
+            failure: LaunchFailure {
+                class: layer2_core::FailureClass::RecoveryRequired,
+                code: "unexpected_publication_reconciliation".into(),
+                detail: "The test publication phase was not freshly admitted.".into(),
+                remediation: "Inspect the phase claim.".into(),
+                correlation_id: claim.intent_key.clone(),
+                retry_at: None,
+                observed_at: LATER.into(),
+            },
+        }
+    }
+}
+
 struct Fixture {
     launch: Launch,
     store: Arc<TestStore>,
@@ -923,6 +1471,7 @@ impl Fixture {
             .select_connection(connection(), NOW, "connection")
             .unwrap();
         launch.authority = Some(provenance(owner.clone()));
+        admit_launch_for_worker_test(&mut launch);
         launch
             .start(
                 layer2_core::Confirmation {
@@ -949,6 +1498,70 @@ impl Fixture {
             Arc::new(NeverAuthority),
         ))
     }
+}
+
+fn fork_fixture() -> Fixture {
+    let mut launch = Fixture::new().launch;
+    launch.state = LaunchState::ForkPending;
+    launch.effects.clear();
+    launch.lease = None;
+    let store = Arc::new(TestStore::new(launch.clone()));
+    Fixture { launch, store }
+}
+
+fn admit_launch_for_worker_test(launch: &mut Launch) {
+    let quota = QuotaSnapshot {
+        live_sessions: 0,
+        live_session_limit: Some(5),
+        reserved_cpu_millis: 0,
+        reserved_memory_mib: 0,
+        free_cpu_millis: Some(4_000),
+        free_memory_mib: Some(8_192),
+        checked_at: NOW.into(),
+    };
+    launch
+        .apply_review_admission(LaunchReviewAdmission {
+            pricing: PricingSnapshot {
+                policy_reference: layer2_core::CMA_TRIGGER_ZERO_COST_POLICY_V1.into(),
+                billing_mode: BillingMode::ZeroCost,
+                rate_card: None,
+                rate: None,
+                currency: layer2_core::CURRENCY.into(),
+                cpu_millis: launch.effective.resource_size.cpu_millis(),
+                memory_mib: launch.effective.resource_size.memory_mib(),
+                micros_per_hour: 0,
+                estimated_micros: 0,
+                quoted_at: NOW.into(),
+                expires_at: launch.draft_expires_at.clone(),
+            },
+            runtime: RuntimeAdmissionSnapshot {
+                kernel: layer2_core::TriggerKernel::Codex,
+                runtime_version: "cma-trigger-worker-test@sha256:admitted".into(),
+                supported_capabilities: launch
+                    .revision
+                    .content
+                    .session
+                    .required_capabilities
+                    .clone(),
+                observed_at: NOW.into(),
+            },
+            quota: quota.clone(),
+        })
+        .unwrap();
+    launch
+        .record_start_admission(StartAdmissionSnapshot {
+            runtime_version: launch
+                .runtime_admission
+                .as_ref()
+                .unwrap()
+                .runtime_version
+                .clone(),
+            pricing_policy_reference: launch.pricing.as_ref().unwrap().policy_reference.clone(),
+            rate_card: None,
+            quota,
+            checked_at: NOW.into(),
+        })
+        .unwrap();
 }
 
 pub(crate) fn launch_fixture() -> Launch {
@@ -993,17 +1606,25 @@ pub(crate) fn rollout_policy(
 
 struct TestStore {
     launch: Mutex<Launch>,
+    replace_calls: AtomicUsize,
+    fail_replace_on: Mutex<Option<usize>>,
 }
 
 impl TestStore {
     fn new(launch: Launch) -> Self {
         Self {
             launch: Mutex::new(launch),
+            replace_calls: AtomicUsize::new(0),
+            fail_replace_on: Mutex::new(None),
         }
     }
 
     fn current(&self) -> Launch {
         self.launch.lock().unwrap().clone()
+    }
+
+    fn fail_replace_on(&self, call: usize) {
+        *self.fail_replace_on.lock().unwrap() = Some(call);
     }
 }
 
@@ -1023,6 +1644,14 @@ impl LaunchStore for TestStore {
     }
 
     async fn insert_new(&self, _launch: &Launch) -> Result<(), TriggerStoreError> {
+        Err(TriggerStoreError::AlreadyExists)
+    }
+
+    async fn expire_current_and_insert(
+        &self,
+        _expired: &Launch,
+        _replacement: &Launch,
+    ) -> Result<Launch, TriggerStoreError> {
         Err(TriggerStoreError::AlreadyExists)
     }
 
@@ -1050,6 +1679,12 @@ impl LaunchStore for TestStore {
         expected_fence: Option<u64>,
         launch: &Launch,
     ) -> Result<Launch, TriggerStoreError> {
+        let call = self.replace_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if *self.fail_replace_on.lock().unwrap() == Some(call) {
+            return Err(TriggerStoreError::Unavailable(
+                "injected authority-admission CAS loss".into(),
+            ));
+        }
         let mut stored = self.launch.lock().unwrap();
         if stored.revision_number != expected_revision {
             return Err(TriggerStoreError::RevisionConflict {
@@ -1308,7 +1943,7 @@ fn content(owner: SubjectId) -> TriggerRevisionContent {
         },
         commercial_policy: CommercialPolicy {
             billing_mode: BillingMode::ZeroCost,
-            policy_reference: "zero-cost".into(),
+            policy_reference: layer2_core::CMA_TRIGGER_ZERO_COST_POLICY_V1.into(),
         },
         override_policy: OverridePolicy {
             editable_fields: vec![EditableField::TaskInput],
@@ -1361,7 +1996,7 @@ fn provenance(subject: SubjectId) -> AuthorityProvenance {
         service_id: "service-1".into(),
         service_state_version: 2,
         backing_key_id: "key-1".into(),
-        session_credential_generation: None,
+        session_credential_authority: None,
         state: DelegationState::Available,
         observed_at: NOW.into(),
     }

@@ -30,6 +30,13 @@ Every recovery path keeps these properties:
   revocation and leaves ordinary session continuity to the session lifecycle.
 - Only a positively proven pre-write initial-prompt failure can retry
   automatically. Any other ambiguity holds the dispatch fence.
+- A supervisor restart inside the same provider runtime may lose in-memory
+  policy without changing the opaque runtime handle. CMA observes that exact
+  handle under the session lifecycle fence and redelivers the current signed
+  policy or tombstone; it never infers policy from static capabilities.
+- Every GitHub request evaluated by Layer 4 has exactly one closed, redacted
+  `cma_trigger_github_capability_decision` audit event at target
+  `cma_trigger::github_capability_audit` and schema version `1`.
 
 ## 2. Resource accounting vocabulary
 
@@ -111,14 +118,21 @@ it. Unless a row names a positive provider creation, every resource delta is
 | Positive reconciliation proves pull-request creation | `pr_open`; numeric/node identity and Launch marker are attached | `0/0/0/0/0/0/0/0/+1`, with no duplicate PR |
 | GitHub consent was revoked or scope became insufficient | `auth_required`, with `resume_state` equal to the interrupted durable step | Zero new resources; reconnect resumes the same Launch |
 | Exact NyxID service is inactive | `auth_required` plus block `service_inactive` | Zero new resources; only that service is rechecked/reconnected |
-| Owner credential is unavailable without revocation evidence | `failed_retryable` plus block `owner_credential_unavailable` | Zero new resources; sign-in rehydrates owner authority |
+| Owner credential is unavailable without revocation evidence | `auth_required`, with the interrupted `resume_state` and block `owner_credential_unavailable` retained | Zero new resources; after sign-in, revalidating the same service queues read-only reconciliation of the exact failed intent and resumes without another Start or blind provider write |
+| Supervisor restarts inside the same provider runtime and reports an empty policy tuple for the unchanged handle | CMA observes under the session lifecycle fence and redelivers the current signed policy or tombstone to that exact handle; observation or parsing failure stays closed | Zero new resources, sessions, runtime rotations, prompt turns, or widened authority; redelivery alone is not revocation evidence |
 | Source, base, or fork branch head is stale | `failed_retryable`, class `conflict_stale_head` | Zero new resources; CMA never force-updates the unexpected head |
 | Forking disabled, occupied fork-network slot, workflow scope, or branch policy refuses the action | `failed_terminal`, class `policy_user_action` | Zero new resources; exact remediation is shown |
-| Deleted/renamed/reclaimed repository or invalid/LFS/unsupported content fails validation | `failed_terminal`, class `terminal_validation` | Zero new resources at the refused boundary; prior resources remain |
+| Deleted/renamed/reclaimed repository, a Git blob over 16 MiB, or invalid/LFS/unsupported content fails validation | `failed_terminal`, class `terminal_validation` | Zero new resources at the refused boundary; an oversized blob is refused from tree metadata before its provider body is requested; prior resources remain |
 | Numeric identity, signature, path, tenant, or capability binding fails | `failed_terminal`, class `terminal_security`; reach revocation is requested where applicable | Zero new resources at the refused boundary; alert/audit evidence remains |
 | Session is rotating or recovering | Current Launch step is blocked as `session_rotating` or `session_recovering`; worker spends no retry budget | Zero new resources and zero new prompt turns |
 | Runtime is lost after a complete workspace checkpoint | Existing session is reprovisioned from the latest complete Launch-authorized checkpoint | Active counts remain `0/0/0/0/0/0/0/0/0`; one replacement allocation, same Launch/session, no prompt replay |
 | Checkpoint is corrupt or incomplete | It is never selected as a recovery point; use the last complete checkpoint or settle `recovery_required` | Zero new GitHub resources, sessions, or prompt turns |
+
+The Launch detail action for GitHub authentication recovery deep-links to
+`/launches/{launch_id}/recover`. That route reads the exact owned Launch by ID;
+it never substitutes a newer current Launch from the same Trigger. A Launch
+that is no longer both started and `auth_required` returns to its details
+without exposing Start on the recovery route.
 
 Provider-side ambiguity is not rewritten as a guessed count. A deterministic
 fault fixture that knows the provider accepted the write must assert the
@@ -258,9 +272,18 @@ but only the owner disclosure route authorizes a new owner turn.
 9. For `revocation_pending`, wait for a Layer 4 tombstone acknowledgement,
    confirmed agent-key revocation, or the signed-policy TTL bound. Do not mark
    it revoked from request intent alone.
-10. Confirm the final Launch/event/activity projections carry the same safe
-    correlation. Escalate missing audit or support evidence even if the effect
-    itself reconciled.
+10. When the runtime handle is unchanged but readiness reports the explicit
+    empty policy tuple, keep the lifecycle fence, redeliver the current policy
+    or tombstone to that same handle, and re-observe it. Do not recreate the
+    session, rotate the runtime, infer revocation, or replay the prompt.
+11. Confirm the final Launch/event/activity projections carry the same safe
+    correlation and that each evaluated Layer 4 GitHub call produced exactly
+    one target `cma_trigger::github_capability_audit`, event
+    `cma_trigger_github_capability_decision`, schema-version `1` decision. Its
+    closed fields may contain Session/Launch and approved numeric repository
+    and owner identities, never path, body, canonical name, service ID,
+    credential, header, or provider response. Escalate missing or malformed
+    audit/support evidence even if the effect itself reconciled.
 
 During a provider-wide outage, pause Trigger orchestration at durable effect
 boundaries, leave public reads and existing sessions available, keep the
@@ -283,7 +306,17 @@ The following tests are the executable anchors for this contract:
 | Read-only operator recovery | `operator_recovery_can_only_schedule_read_only_reconciliation`, `trigger_effect_recovery_requires_and_replays_one_durable_operation_key` |
 | Cancellation and resource preservation | `cancellation_settles_pending_work_and_preserves_every_external_record`, `cancellation_refuses_every_unsettled_external_outcome_atomically`, `cancellation_records_pending_capability_revocation_without_stopping_the_session` |
 | Browser command ambiguity | `retains_the_key_and_original_request_closure_until_a_finite_response`, plus the Trigger review, Launch, and contribution reconciliation tests |
-| Runtime replacement from Launch checkpoint | `runtime_replacement_restores_the_latest_launch_authorized_checkpoint` |
+| Launch-authorized workspace selection for replacement provisioning | `runtime_replacement_restores_the_latest_launch_authorized_checkpoint` |
+| Unplanned Trigger runtime loss without a durable conversation/workspace pair fails closed | `coordinated_trigger_runtime_loss_requires_verified_conversation_continuity`, `compatibility_trigger_runtime_loss_requires_verified_conversation_continuity` |
+
+The workspace-selection anchor proves only that provisioning resolves the
+latest complete Launch-authorized archive. It does not kill a runtime, restore
+an agent conversation, or prove that the conversation and workspace were
+captured as one recoverable pair. The runtime-loss anchors therefore preserve
+the session in `recovery_required` instead of starting a blank conversation.
+The row in section 3 that promises automatic recovery after a complete
+checkpoint remains a release requirement until an end-to-end deterministic
+test proves the paired capture, loss, restore, and no-prompt-replay path.
 
 These deterministic tests prove local contracts. They do not replace the gated
 real-provider evidence required by `#673`, and this document makes no claim that

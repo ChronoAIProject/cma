@@ -1,10 +1,11 @@
 //! Byte-faithful repository import through GitHub's tree and blob APIs.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use base64::Engine as _;
 use layer2_core::{
-    validate_workspace_path, Launch, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest,
+    validate_workspace_path, BaselineArchivePlan, BaselineImportBlob, BaselineImportChunk, Launch,
+    WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, MAX_PROVIDER_BLOB_BYTES,
     MAX_REPOSITORY_BYTES, MAX_REPOSITORY_FILES,
 };
 use reqwest::Method;
@@ -26,6 +27,7 @@ const LFS_POINTER: &[u8] = b"version https://git-lfs.github.com/spec/v1";
 pub(crate) enum WorkspaceUnsupported {
     TreeIncomplete,
     FileCount,
+    FileSize,
     RepositorySize,
     UnsafePath,
     UnsupportedMode,
@@ -38,6 +40,7 @@ impl std::fmt::Display for WorkspaceUnsupported {
         formatter.write_str(match self {
             Self::TreeIncomplete => "recursive tree is incomplete",
             Self::FileCount => "file count exceeds the configured limit",
+            Self::FileSize => "one Git blob exceeds the configured limit",
             Self::RepositorySize => "repository bytes exceed the configured limit",
             Self::UnsafePath => "a path or symlink target is unsafe",
             Self::UnsupportedMode => "a Git entry mode is unsupported",
@@ -63,10 +66,28 @@ impl TryFrom<&Launch> for WorkspaceContext {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ImportedWorkspace {
-    pub manifest: WorkspaceManifest,
-    pub archive: Vec<u8>,
-    pub archive_sha256: String,
+pub(crate) struct WorkspaceSourceEntry {
+    pub path: String,
+    pub mode: u32,
+    pub provider_object_id: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WorkspaceSourcePlan {
+    pub source_revision: String,
+    pub tree_digest: String,
+    pub entries: Vec<WorkspaceSourceEntry>,
+    pub blobs: Vec<BaselineImportBlob>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WorkspaceBlobMetadata {
+    pub content_sha256: String,
+    pub chunks: Vec<BaselineImportChunk>,
+    pub lfs_pointer: bool,
+    pub contains_lfs_filter: bool,
+    pub symlink_target: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,12 +96,6 @@ struct GithubBlobWire {
     size: u64,
     encoding: String,
     content: String,
-}
-
-#[derive(Debug)]
-struct ImportedEntry {
-    manifest: WorkspaceEntry,
-    bytes: Vec<u8>,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,7 +123,7 @@ impl GithubBroker {
     pub(crate) async fn import_workspace(
         &self,
         context: &WorkspaceContext,
-    ) -> Result<ImportedWorkspace, GithubBrokerError> {
+    ) -> Result<WorkspaceSourcePlan, GithubBrokerError> {
         match self.reconcile_branch(&context.branch).await? {
             BranchReconciliation::Ready(_) => {}
             BranchReconciliation::Absent => return Err(GithubBrokerError::AuthorityDrift),
@@ -137,7 +152,8 @@ impl GithubBroker {
         }
 
         let mut seen = BTreeSet::new();
-        let mut blobs = Vec::new();
+        let mut entries = Vec::new();
+        let mut blobs = BTreeMap::new();
         let mut declared_bytes = 0_u64;
         for entry in tree.value.tree {
             if validate_workspace_path(&entry.path).is_err() || !seen.insert(entry.path.clone()) {
@@ -149,7 +165,7 @@ impl GithubBroker {
                 "blob" => {}
                 _ => return Err(unsupported(WorkspaceUnsupported::UnsupportedMode)),
             }
-            if blobs.len() >= MAX_REPOSITORY_FILES {
+            if entries.len() >= MAX_REPOSITORY_FILES {
                 return Err(unsupported(WorkspaceUnsupported::FileCount));
             }
             let mode = parse_mode(entry.mode.as_deref())?;
@@ -157,82 +173,53 @@ impl GithubBroker {
                 GithubBrokerError::Malformed("a source-tree blob has no object ID".into())
             })?;
             validate_object_id(&object_id)?;
-            if let Some(size) = entry.size {
-                declared_bytes = declared_bytes
-                    .checked_add(size)
-                    .ok_or_else(|| unsupported(WorkspaceUnsupported::RepositorySize))?;
-                if declared_bytes > MAX_REPOSITORY_BYTES {
-                    return Err(unsupported(WorkspaceUnsupported::RepositorySize));
-                }
+            let size = entry.size.ok_or_else(|| {
+                GithubBrokerError::Malformed("a source-tree blob has no declared size".into())
+            })?;
+            if size > MAX_PROVIDER_BLOB_BYTES {
+                return Err(unsupported(WorkspaceUnsupported::FileSize));
             }
-            blobs.push((entry.path, mode, object_id));
-        }
-
-        let mut imported = Vec::with_capacity(blobs.len());
-        let mut total = 0_u64;
-        for (path, mode, object_id) in blobs {
-            let bytes = self.read_blob(context, &repository, &object_id).await?;
-            total = total
-                .checked_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+            declared_bytes = declared_bytes
+                .checked_add(size)
                 .ok_or_else(|| unsupported(WorkspaceUnsupported::RepositorySize))?;
-            if total > MAX_REPOSITORY_BYTES {
+            if declared_bytes > MAX_REPOSITORY_BYTES {
                 return Err(unsupported(WorkspaceUnsupported::RepositorySize));
             }
-            if is_lfs_content(&path, &bytes) {
-                return Err(unsupported(WorkspaceUnsupported::LargeFileStorage));
+            let blob = BaselineImportBlob::new(object_id.clone(), size)
+                .map_err(|_| unsupported(WorkspaceUnsupported::FileSize))?;
+            if blobs
+                .insert(object_id.clone(), blob.clone())
+                .is_some_and(|previous| previous != blob)
+            {
+                return Err(GithubBrokerError::AuthorityDrift);
             }
-            let kind = match mode {
-                0o100644 | 0o100755 => WorkspaceEntryKind::Regular,
-                0o120000 => WorkspaceEntryKind::Symlink,
-                _ => return Err(unsupported(WorkspaceUnsupported::UnsupportedMode)),
-            };
-            let symlink_target = if kind == WorkspaceEntryKind::Symlink {
-                Some(
-                    std::str::from_utf8(&bytes)
-                        .map_err(|_| unsupported(WorkspaceUnsupported::UnsafePath))?
-                        .to_string(),
-                )
-            } else {
-                None
-            };
-            let manifest = WorkspaceEntry {
-                path,
-                kind,
+            entries.push(WorkspaceSourceEntry {
+                path: entry.path,
                 mode,
-                size: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-                content_sha256: hex(&Sha256::digest(&bytes)),
-                provider_object_id: Some(object_id),
-                symlink_target,
-            };
-            manifest
-                .validate()
-                .map_err(|_| unsupported(WorkspaceUnsupported::UnsafePath))?;
-            imported.push(ImportedEntry { manifest, bytes });
+                provider_object_id: object_id,
+                bytes: size,
+            });
         }
-        imported.sort_by(|left, right| left.manifest.path.cmp(&right.manifest.path));
-        let manifest = WorkspaceManifest::seal(
-            source.clone(),
-            imported
-                .iter()
-                .map(|entry| entry.manifest.clone())
-                .collect(),
-        )
-        .map_err(|_| unsupported(WorkspaceUnsupported::RepositorySize))?;
-        let archive = seal_archive(&manifest, &imported)?;
-        let archive_sha256 = hex(&Sha256::digest(&archive));
-        Ok(ImportedWorkspace {
-            manifest,
-            archive,
-            archive_sha256,
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
+        let tree_digest = source_tree_digest(source, &entries);
+        Ok(WorkspaceSourcePlan {
+            source_revision: source.clone(),
+            tree_digest,
+            entries,
+            blobs: blobs.into_values().collect(),
         })
     }
 
-    async fn read_blob(
+    pub(crate) async fn read_workspace_blob(
         &self,
         context: &WorkspaceContext,
-        repository: &layer2_core::RepositoryIdentity,
-        object_id: &str,
+        expected: &BaselineImportBlob,
     ) -> Result<Vec<u8>, GithubBrokerError> {
+        if expected.bytes > MAX_PROVIDER_BLOB_BYTES {
+            return Err(unsupported(WorkspaceUnsupported::FileSize));
+        }
+        let repository = self.current_branch_fork(&context.branch).await?;
+        let object_id = &expected.provider_object_id;
         let blob: Observed<GithubBlobWire> = self
             .github_json(
                 &context.branch.owner,
@@ -262,7 +249,8 @@ impl GithubBroker {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded)
             .map_err(|_| GithubBrokerError::Malformed("a Git blob is not valid base64".into()))?;
-        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != blob.value.size
+        if blob.value.size != expected.bytes
+            || u64::try_from(bytes.len()).unwrap_or(u64::MAX) != blob.value.size
             || git_blob_id(&bytes) != object_id.to_ascii_lowercase()
         {
             return Err(GithubBrokerError::AuthorityDrift);
@@ -271,24 +259,96 @@ impl GithubBroker {
     }
 }
 
-fn seal_archive(
-    manifest: &WorkspaceManifest,
-    entries: &[ImportedEntry],
-) -> Result<Vec<u8>, GithubBrokerError> {
+pub(crate) fn workspace_blob_metadata(
+    blob: &BaselineImportBlob,
+    bytes: &[u8],
+    chunks: Vec<BaselineImportChunk>,
+    needs_symlink_target: bool,
+) -> Result<WorkspaceBlobMetadata, GithubBrokerError> {
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != blob.bytes
+        || git_blob_id(bytes) != blob.provider_object_id
+    {
+        return Err(GithubBrokerError::AuthorityDrift);
+    }
+    let chunk_bytes = chunks.iter().try_fold(0_u64, |total, chunk| {
+        total
+            .checked_add(chunk.bytes)
+            .ok_or_else(|| unsupported(WorkspaceUnsupported::RepositorySize))
+    })?;
+    if chunk_bytes != blob.bytes || chunks.len() != blob.chunk_count as usize {
+        return Err(GithubBrokerError::AuthorityDrift);
+    }
+    let symlink_target = needs_symlink_target
+        .then(|| {
+            std::str::from_utf8(bytes)
+                .map(str::to_string)
+                .map_err(|_| unsupported(WorkspaceUnsupported::UnsafePath))
+        })
+        .transpose()?;
+    Ok(WorkspaceBlobMetadata {
+        content_sha256: hex(&Sha256::digest(bytes)),
+        chunks,
+        lfs_pointer: bytes.starts_with(LFS_POINTER),
+        contains_lfs_filter: bytes
+            .windows(LFS_FILTER.len())
+            .any(|window| window.eq_ignore_ascii_case(LFS_FILTER)),
+        symlink_target,
+    })
+}
+
+pub(crate) fn build_baseline_archive_plan(
+    source: &WorkspaceSourcePlan,
+    blobs: &BTreeMap<String, WorkspaceBlobMetadata>,
+) -> Result<(WorkspaceManifest, BaselineArchivePlan), GithubBrokerError> {
+    let mut entries = Vec::with_capacity(source.entries.len());
+    let mut ordered_chunks = Vec::new();
+    for entry in &source.entries {
+        let blob = blobs
+            .get(&entry.provider_object_id)
+            .ok_or(GithubBrokerError::AuthorityDrift)?;
+        if blob.lfs_pointer || (entry.path.ends_with(".gitattributes") && blob.contains_lfs_filter)
+        {
+            return Err(unsupported(WorkspaceUnsupported::LargeFileStorage));
+        }
+        let kind = match entry.mode {
+            0o100644 | 0o100755 => WorkspaceEntryKind::Regular,
+            0o120000 => WorkspaceEntryKind::Symlink,
+            _ => return Err(unsupported(WorkspaceUnsupported::UnsupportedMode)),
+        };
+        let manifest_entry = WorkspaceEntry {
+            path: entry.path.clone(),
+            kind,
+            mode: entry.mode,
+            size: entry.bytes,
+            content_sha256: blob.content_sha256.clone(),
+            provider_object_id: Some(entry.provider_object_id.clone()),
+            symlink_target: (kind == WorkspaceEntryKind::Symlink)
+                .then(|| blob.symlink_target.clone())
+                .flatten(),
+        };
+        manifest_entry
+            .validate()
+            .map_err(|_| unsupported(WorkspaceUnsupported::UnsafePath))?;
+        entries.push(manifest_entry);
+        ordered_chunks.extend(blob.chunks.iter().cloned());
+    }
+    let manifest = WorkspaceManifest::seal(source.source_revision.clone(), entries)
+        .map_err(|_| unsupported(WorkspaceUnsupported::RepositorySize))?;
+
     let mut offset = 0_u64;
-    let mut header_entries = Vec::with_capacity(entries.len());
-    for entry in entries {
+    let mut header_entries = Vec::with_capacity(manifest.entries.len());
+    for entry in &manifest.entries {
         header_entries.push(ArchiveEntry {
-            path: &entry.manifest.path,
-            kind: entry.manifest.kind,
-            mode: entry.manifest.mode,
-            size: entry.manifest.size,
-            content_sha256: &entry.manifest.content_sha256,
-            provider_object_id: entry.manifest.provider_object_id.as_deref(),
+            path: &entry.path,
+            kind: entry.kind,
+            mode: entry.mode,
+            size: entry.size,
+            content_sha256: &entry.content_sha256,
+            provider_object_id: entry.provider_object_id.as_deref(),
             offset,
         });
         offset = offset
-            .checked_add(entry.manifest.size)
+            .checked_add(entry.size)
             .ok_or_else(|| unsupported(WorkspaceUnsupported::RepositorySize))?;
     }
     let header = serde_json::to_vec(&ArchiveHeader {
@@ -304,19 +364,37 @@ fn seal_archive(
     }
     let header_len = u64::try_from(header.len())
         .map_err(|_| unsupported(WorkspaceUnsupported::RepositorySize))?;
-    let payload_len =
-        usize::try_from(offset).map_err(|_| unsupported(WorkspaceUnsupported::RepositorySize))?;
-    let mut archive = Vec::with_capacity(
-        8_usize
-            .saturating_add(header.len())
-            .saturating_add(payload_len),
-    );
-    archive.extend_from_slice(&header_len.to_be_bytes());
-    archive.extend_from_slice(&header);
+    let mut preamble = Vec::with_capacity(8_usize.saturating_add(header.len()));
+    preamble.extend_from_slice(&header_len.to_be_bytes());
+    preamble.extend_from_slice(&header);
+    let archive_bytes = u64::try_from(preamble.len())
+        .unwrap_or(u64::MAX)
+        .checked_add(offset)
+        .ok_or_else(|| unsupported(WorkspaceUnsupported::RepositorySize))?;
+    Ok((
+        manifest,
+        BaselineArchivePlan {
+            source_revision: source.source_revision.clone(),
+            tree_digest: source.tree_digest.clone(),
+            preamble,
+            chunks: ordered_chunks,
+            archive_bytes,
+        },
+    ))
+}
+
+fn source_tree_digest(source: &str, entries: &[WorkspaceSourceEntry]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"cma-trigger-source-tree-v1\0");
+    digest.update(source.as_bytes());
     for entry in entries {
-        archive.extend_from_slice(&entry.bytes);
+        digest.update((entry.path.len() as u64).to_be_bytes());
+        digest.update(entry.path.as_bytes());
+        digest.update(entry.mode.to_be_bytes());
+        digest.update(entry.provider_object_id.as_bytes());
+        digest.update(entry.bytes.to_be_bytes());
     }
-    Ok(archive)
+    hex(&digest.finalize())
 }
 
 fn parse_mode(mode: Option<&str>) -> Result<u32, GithubBrokerError> {

@@ -7,6 +7,7 @@ use crate::{
 };
 
 const INITIAL_PROMPT_TERMINAL_EVIDENCE_GRACE_SECONDS: u64 = 300;
+const STAGING_IMPORT_RETENTION_POLICY_ID: &str = "trigger-workspace-import-v1";
 
 pub(super) fn required_effect(launch: &Launch) -> Option<LaunchEffectKind> {
     match launch.state {
@@ -21,13 +22,12 @@ pub(super) fn required_effect(launch: &Launch) -> Option<LaunchEffectKind> {
         LaunchState::Contributing
             if launch.diff.is_none()
                 && launch
-                    .contribution_checkpoint_version
-                    .is_some_and(|requested| {
-                        launch
-                            .workspace
-                            .as_ref()
-                            .and_then(|workspace| workspace.latest_checkpoint.as_ref())
-                            .is_none_or(|checkpoint| checkpoint.version < requested)
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.checkpoint_intent.as_ref())
+                    .is_some_and(|intent| {
+                        intent.purpose == WorkspaceCheckpointPurpose::ContributionReview
+                            && launch.contribution_checkpoint_version == Some(intent.version)
                     }) =>
         {
             Some(LaunchEffectKind::Checkpoint)
@@ -147,9 +147,9 @@ impl Launch {
             correlation_id.clone(),
             LaunchEventKind::StepChanged { step },
         )?;
-        candidate.transition(LaunchState::PromptPending, now, correlation_id)?;
         candidate.failure = None;
         candidate.resume_state = None;
+        candidate.transition(LaunchState::PromptPending, now, correlation_id)?;
         *self = candidate;
         Ok(())
     }
@@ -237,9 +237,9 @@ impl Launch {
             correlation_id.clone(),
             LaunchEventKind::StepChanged { step },
         )?;
-        candidate.transition(resume, now, correlation_id)?;
         candidate.failure = None;
         candidate.resume_state = None;
+        candidate.transition(resume, now, correlation_id)?;
         *self = candidate;
         Ok(())
     }
@@ -352,9 +352,9 @@ impl Launch {
             {
                 return Ok(None);
             }
-            self.transition(resume, now.clone(), correlation_id.clone())?;
             self.failure = None;
             self.resume_state = None;
+            self.transition(resume, now.clone(), correlation_id.clone())?;
         }
 
         let kind = if cleanup_due {
@@ -393,11 +393,24 @@ impl Launch {
                     }
                     EffectState::Claimed | EffectState::Reconciling => {
                         if record.state == EffectState::Reconciling
+                            && record.next_attempt_at.is_some()
                             && !deadline_reached(record.next_attempt_at.as_deref(), &now)?
                         {
                             return Ok(None);
                         }
-                        (index, EffectClaimMode::Reconcile)
+                        // A claimed authority effect without a committed
+                        // admission is positive pre-write evidence: the worker
+                        // could not legally have crossed the provider boundary.
+                        // Once admission exists, takeover is conservative and
+                        // may only reconcile the unknown outcome.
+                        if record.state == EffectState::Claimed
+                            && effect_requires_authority_admission(kind)
+                            && record.authority_admission.is_none()
+                        {
+                            (index, EffectClaimMode::Execute)
+                        } else {
+                            (index, EffectClaimMode::Reconcile)
+                        }
                     }
                     EffectState::RecoveryRequired
                     | EffectState::FailedTerminal
@@ -424,6 +437,7 @@ impl Launch {
                     attempt: 0,
                     reconciliation_attempt: 0,
                     fence: lease.fencing_token,
+                    authority_admission: None,
                     provider_request_id: None,
                     external_resource_ids: BTreeMap::new(),
                     next_attempt_at: None,
@@ -435,6 +449,14 @@ impl Launch {
         };
 
         let record = &mut self.effects[index];
+        // An admission is single-fence authority. A fresh executable claim
+        // must prove authority for its own fence, while reconciliation retains
+        // the prior snapshot as evidence that the provider boundary may have
+        // been crossed. The old snapshot cannot authorize the new claim
+        // because its fence and purpose no longer match.
+        if mode == EffectClaimMode::Execute {
+            record.authority_admission = None;
+        }
         record.state = match mode {
             EffectClaimMode::Execute => EffectState::Claimed,
             EffectClaimMode::Reconcile => EffectState::Reconciling,
@@ -608,6 +630,65 @@ impl Launch {
                 LaunchEventKind::StepChanged { step },
             )?;
         }
+        *self = candidate;
+        Ok(())
+    }
+
+    /// Keep a deterministic session effect waiting without spending the
+    /// reconciliation budget. Runtime provisioning, rotation, and recovery
+    /// are observed states rather than failed external writes.
+    pub fn defer_waiting(
+        &mut self,
+        lease: &WorkerLease,
+        claim: &EffectClaim,
+        wait_at: String,
+        safe_detail: String,
+        remediation: String,
+        external_resource_ids: BTreeMap<String, String>,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        let mut candidate = self.clone();
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        candidate.validate_worker_lease(lease, &now)?;
+        validate_external_resource_ids(&external_resource_ids)?;
+        if !matches!(
+            claim.kind,
+            LaunchEffectKind::Sandbox | LaunchEffectKind::Session
+        ) || !strictly_after(&wait_at, &now)?
+            || safe_detail.trim().is_empty()
+            || remediation.trim().is_empty()
+        {
+            return Err(TriggerValidationError::field(
+                "effect_wait",
+                "requires a deterministic session effect, future deadline, and public-safe detail",
+            ));
+        }
+        let index = candidate.claimed_effect_index(claim)?;
+        let record = &mut candidate.effects[index];
+        if claim.mode == EffectClaimMode::Reconcile {
+            record.reconciliation_attempt =
+                claim.reconciliation_attempt.checked_sub(1).ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "effect.reconciliation_attempt",
+                        "a reconciliation wait has no pre-claim counter",
+                    )
+                })?;
+        }
+        record.state = EffectState::Reconciling;
+        record.next_attempt_at = Some(wait_at);
+        record.last_failure = None;
+        record.external_resource_ids.extend(external_resource_ids);
+        record.updated_at = now.clone();
+        let step = candidate.step_mut(claim.kind)?;
+        step.status = LaunchStepStatus::Retryable;
+        step.safe_detail = safe_detail;
+        step.remediation = remediation;
+        step.worker_fencing_token = claim.fence;
+        step.correlation_id = correlation_id.clone();
+        let step = step.clone();
+        candidate.push_event(now, correlation_id, LaunchEventKind::StepChanged { step })?;
         *self = candidate;
         Ok(())
     }
@@ -828,11 +909,11 @@ impl Launch {
                 })?;
                 if branch.name != retained_branch.name
                     || branch.expected_head != retained_branch.expected_head
-                    || branch.canonical_url != retained_branch.canonical_url
+                    || branch.created_at != retained_branch.created_at
                 {
                     return Err(TriggerValidationError::field(
                         "branch",
-                        "the admitted policy observed a different Launch branch",
+                        "the admitted policy observed a different Launch branch identity",
                     ));
                 }
                 super::super::validate_sha("branch.current_head", &branch.current_head)?;
@@ -866,18 +947,25 @@ impl Launch {
                         "does not match the current Launch workspace epoch",
                     ));
                 }
-                let expected_version = match workspace.latest_checkpoint.as_ref() {
-                    None => 1,
-                    Some(latest) => latest.version.checked_add(1).ok_or_else(|| {
+                let intent = workspace
+                    .checkpoint_intent
+                    .as_ref()
+                    .cloned()
+                    .ok_or_else(|| {
                         TriggerValidationError::field(
-                            "checkpoint.version",
-                            "cannot advance beyond the retained checkpoint version",
+                            "checkpoint_intent",
+                            "the checkpoint has no durable version reservation",
                         )
-                    })?,
-                };
-                if checkpoint.version != expected_version
+                    })?;
+                if intent.purpose != WorkspaceCheckpointPurpose::ContributionReview
+                    || checkpoint.id != intent.id
+                    || checkpoint.version != intent.version
+                    || intent.session_id != session_id
+                    || intent.runtime_generation != minimum_runtime_generation
+                    || intent.workspace_epoch != workspace.workspace_epoch
+                    || self.contribution_checkpoint_version != Some(intent.version)
                     || checkpoint.session_id != session_id
-                    || checkpoint.runtime_generation < minimum_runtime_generation
+                    || checkpoint.runtime_generation != minimum_runtime_generation
                     || checkpoint.manifest.source_revision != self.source_sha
                     || checkpoint.delete_after.as_deref() != Some(workspace.delete_after.as_str())
                 {
@@ -886,13 +974,10 @@ impl Launch {
                         "does not match the Launch session, source, retention, and next version",
                     ));
                 }
-                let runtime_generation = checkpoint.runtime_generation;
-                workspace.previous_checkpoint = workspace.latest_checkpoint.take();
-                workspace.latest_checkpoint = Some(checkpoint);
-                self.session
-                    .as_mut()
-                    .expect("validated above")
-                    .runtime_generation = runtime_generation;
+                super::checkpoint::install_recovery_checkpoint(workspace, checkpoint.clone())?;
+                workspace.sealed_contribution_checkpoint = Some(checkpoint);
+                workspace.checkpoint_version = intent.version;
+                workspace.checkpoint_intent = None;
             }
             (LaunchEffectKind::Diff, LaunchEffectResult::Diff { diff }) => self.diff = Some(diff),
             (
@@ -1051,6 +1136,11 @@ impl Launch {
         self.effects[index]
             .external_resource_ids
             .extend(resources.clone());
+        // Every durable publication phase is a separate write admission. The
+        // next lease must claim Execute and persist a fresh authority snapshot;
+        // a crash before this commit still leaves Claimed and reconciles only.
+        self.effects[index].state = EffectState::Queued;
+        self.effects[index].authority_admission = None;
         self.effects[index].updated_at = now.clone();
         let step = self.step_mut(LaunchEffectKind::BranchPublication)?;
         step.status = LaunchStepStatus::Running;
@@ -1358,7 +1448,7 @@ impl Launch {
                     || self
                         .workspace
                         .as_ref()
-                        .and_then(|workspace| workspace.latest_checkpoint.as_ref())
+                        .and_then(|workspace| workspace.sealed_contribution_checkpoint.as_ref())
                         .is_none_or(|checkpoint| checkpoint.id != diff.checkpoint_id)
                 {
                     return Err(TriggerValidationError::field(
@@ -1491,7 +1581,7 @@ impl Launch {
         )
     }
 
-    fn step_mut(
+    pub(super) fn step_mut(
         &mut self,
         kind: LaunchEffectKind,
     ) -> Result<&mut LaunchStep, TriggerValidationError> {
@@ -1506,8 +1596,12 @@ impl Launch {
 
     /// Whether retention cleanup may be claimed at this durable boundary.
     pub fn cleanup_due(&self, now: &str) -> Result<bool, TriggerValidationError> {
+        let has_retained_import = self
+            .effects
+            .iter()
+            .any(|effect| effect.kind == LaunchEffectKind::WorkspaceImport);
         if !self.state.is_terminal()
-            || self.workspace.is_none()
+            || (self.workspace.is_none() && !has_retained_import)
             || self
                 .cleanup
                 .as_ref()
@@ -1520,10 +1614,20 @@ impl Launch {
         {
             return Ok(false);
         }
-        let delete_after = &self.workspace.as_ref().expect("checked above").delete_after;
+        let delete_after = self
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.delete_after.as_str())
+            .or(self.terminal_at.as_deref())
+            .ok_or_else(|| {
+                TriggerValidationError::field(
+                    "cleanup.delete_after",
+                    "a terminal baseline import has no retention boundary",
+                )
+            })?;
         let delete_after = seconds_from_rfc3339(delete_after).ok_or_else(|| {
             TriggerValidationError::field(
-                "workspace.delete_after",
+                "cleanup.delete_after",
                 "is not a CMA retention timestamp",
             )
         })?;
@@ -1570,33 +1674,68 @@ impl Launch {
         if self.cleanup.is_some() {
             return Ok(());
         }
-        let workspace = self.workspace.as_ref().ok_or_else(|| {
-            TriggerValidationError::field("cleanup", "has no retained CMA workspace objects")
-        })?;
         let mut targets = Vec::new();
-        if let Some(diff) = self.diff.as_ref() {
-            targets.push(CleanupTarget::DiffArtifact {
-                artifact_id: diff.id.clone(),
-            });
-        }
-        let mut checkpoint_ids = BTreeSet::new();
-        for checkpoint in [
-            workspace.previous_checkpoint.as_ref(),
-            workspace.latest_checkpoint.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if checkpoint_ids.insert(checkpoint.id.clone()) {
-                targets.push(CleanupTarget::Checkpoint {
-                    checkpoint_id: checkpoint.id.clone(),
+        let (retention_policy_id, delete_after) = if let Some(workspace) = self.workspace.as_ref() {
+            if let Some(diff) = self.diff.as_ref() {
+                targets.push(CleanupTarget::DiffArtifact {
+                    artifact_id: diff.id.clone(),
                 });
             }
-        }
+            let mut checkpoint_ids = BTreeSet::new();
+            for checkpoint in [
+                workspace.retired_checkpoint.as_ref(),
+                workspace.previous_checkpoint.as_ref(),
+                workspace.latest_checkpoint.as_ref(),
+                workspace.sealed_contribution_checkpoint.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if checkpoint_ids.insert(checkpoint.id.clone()) {
+                    targets.push(CleanupTarget::Checkpoint {
+                        checkpoint_id: checkpoint.id.clone(),
+                    });
+                }
+            }
+            if let Some(intent) = workspace.checkpoint_intent.as_ref() {
+                if checkpoint_ids.insert(intent.id.clone()) {
+                    targets.push(CleanupTarget::Checkpoint {
+                        checkpoint_id: intent.id.clone(),
+                    });
+                }
+            }
+            (
+                workspace.retention_policy_id.clone(),
+                workspace.delete_after.clone(),
+            )
+        } else if self
+            .effects
+            .iter()
+            .any(|effect| effect.kind == LaunchEffectKind::WorkspaceImport)
+        {
+            let terminal_at = self.terminal_at.clone().ok_or_else(|| {
+                TriggerValidationError::field(
+                    "cleanup",
+                    "a terminal baseline import has no cleanup boundary",
+                )
+            })?;
+            if self.diff.is_some() {
+                return Err(TriggerValidationError::field(
+                    "cleanup",
+                    "a staged-only baseline import cannot own a diff artifact",
+                ));
+            }
+            (STAGING_IMPORT_RETENTION_POLICY_ID.into(), terminal_at)
+        } else {
+            return Err(TriggerValidationError::field(
+                "cleanup",
+                "has no retained CMA workspace objects",
+            ));
+        };
         targets.push(CleanupTarget::Baseline);
         let plan = CleanupPlan {
-            retention_policy_id: workspace.retention_policy_id.clone(),
-            delete_after: workspace.delete_after.clone(),
+            retention_policy_id,
+            delete_after,
             targets,
             planned_at: now.to_string(),
         };

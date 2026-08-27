@@ -125,7 +125,7 @@ impl SessionService {
         id: &SessionId,
         input: TerminalInput,
     ) -> Result<(), CoreError> {
-        let record = self.terminal_interaction_record(caller, id).await?;
+        let record = self.terminal_interaction_record(caller, id, true).await?;
         let service = Arc::clone(self);
         let owner = caller.subject.clone();
         let id = id.clone();
@@ -177,12 +177,13 @@ impl SessionService {
         self: &Arc<Self>,
         caller: &Caller,
         id: &SessionId,
+        reserve_initial_prompt: bool,
     ) -> Result<SessionRecord, CoreError> {
         caller
             .authorization
             .require(AuthorizationCapability::UseOwnSessions)?;
         let record = self.record(id).await?;
-        Self::require_terminal_interaction_record(caller, &record)?;
+        Self::require_terminal_interaction_record(caller, &record, reserve_initial_prompt)?;
 
         let entries = self.entries.read().await;
         let live_is_rotating = entries
@@ -203,16 +204,22 @@ impl SessionService {
         // Readoption may settle capabilities or advance readiness. Interaction
         // acquisition must name the exact durable boundary after that work.
         let record = self.record(id).await?;
-        Self::require_terminal_interaction_record(caller, &record)?;
+        Self::require_terminal_interaction_record(caller, &record, reserve_initial_prompt)?;
         Ok(record)
     }
 
     fn require_terminal_interaction_record(
         caller: &Caller,
         record: &SessionRecord,
+        reserve_initial_prompt: bool,
     ) -> Result<(), CoreError> {
         if !record.session.is_owned_by(&caller.subject) {
             return Err(CoreError::Forbidden);
+        }
+        if reserve_initial_prompt {
+            if let Some(state) = record.reserved_initial_prompt_state() {
+                return Err(CoreError::InitialPromptReserved(state));
+            }
         }
         if record.session.status.is_terminal() {
             return Err(CoreError::SessionTerminated);
@@ -238,7 +245,7 @@ impl SessionService {
         id: &SessionId,
         geometry: TerminalGeometry,
     ) -> Result<(), CoreError> {
-        let record = self.terminal_interaction_record(caller, id).await?;
+        let record = self.terminal_interaction_record(caller, id, false).await?;
         let service = Arc::clone(self);
         let owner = caller.subject.clone();
         let id = id.clone();

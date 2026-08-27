@@ -756,6 +756,7 @@ async fn compatibility_termination_retry_clears_a_terminal_residual_handover_des
         claim: "rotn_terminal_residual".into(),
         snapshot_ref: format!("sessions/{}/handover.snapshot", created.id.0),
         snapshot_at: "2026-08-27T02:03:04Z".into(),
+        trigger_recovery: None,
         rotations_from: residual.session.rotations,
         rotations_to: residual.session.rotations + 1,
         target: crate::store::PendingHandoverTarget::RuntimeVersion {

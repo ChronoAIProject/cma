@@ -68,12 +68,43 @@ beforeEach(() => {
 });
 
 describe('Launch command reconciliation', () => {
+  it('discloses an online refresh failure and retries the retained Launch read', async () => {
+    const current = { ...resource(FIXTURE), failure: 'CMA returned a rate-limit response.' };
+    launchResource.use.mockReturnValue(current);
+    render(<LaunchSurface ownerId="test-owner" launchId={FIXTURE.id} navigate={vi.fn()} />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Launch data may be stale.');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry refresh' }));
+    expect(current.refresh).toHaveBeenCalledOnce();
+  });
+
+  it('routes an authentication-blocked Launch back to same-Launch recovery', async () => {
+    const navigate = vi.fn();
+    const blocked: Launch = {
+      ...FIXTURE,
+      state: 'auth_required',
+      blocked_reason: 'owner_credential_unavailable',
+      resume_state: 'preflight',
+      started_at: '2026-08-26T12:00:00Z',
+    };
+    launchResource.use.mockReturnValue(resource(blocked));
+    render(<LaunchSurface ownerId="test-owner" launchId={blocked.id} navigate={navigate} />);
+
+    await userEvent.click(screen.getByRole('link', { name: 'Resume GitHub access' }));
+    expect(navigate).toHaveBeenCalledWith({
+      kind: 'trigger_recovery',
+      launchId: blocked.id,
+    });
+  });
+
   it('offers prompt recovery only for the exact retained recovery state', () => {
     launchResource.use.mockReturnValue(resource(RECOVERY_LAUNCH));
-    const view = render(<LaunchSurface launchId={RECOVERY_LAUNCH.id} navigate={vi.fn()} />);
+    const view = render(
+      <LaunchSurface ownerId="test-owner" launchId={RECOVERY_LAUNCH.id} navigate={vi.fn()} />,
+    );
     expect(screen.getByRole('button', { name: 'Recover initial task' })).toBeInTheDocument();
 
-    const ineligible = [
+    const ineligible: readonly Launch[] = [
       { ...RECOVERY_LAUNCH, state: 'ready' as const },
       { ...RECOVERY_LAUNCH, blocked_reason: 'service_inactive' },
       {
@@ -87,7 +118,7 @@ describe('Launch command reconciliation', () => {
     ];
     for (const launch of ineligible) {
       launchResource.use.mockReturnValue(resource(launch));
-      view.rerender(<LaunchSurface launchId={launch.id} navigate={vi.fn()} />);
+      view.rerender(<LaunchSurface ownerId="test-owner" launchId={launch.id} navigate={vi.fn()} />);
       expect(screen.queryByRole('button', { name: 'Recover initial task' })).toBeNull();
     }
   });
@@ -96,7 +127,9 @@ describe('Launch command reconciliation', () => {
     api.recoverInitialPrompt.mockRejectedValue(new TransportError('response lost'));
     const initialResource = resource(RECOVERY_LAUNCH);
     launchResource.use.mockReturnValue(initialResource);
-    const view = render(<LaunchSurface launchId={RECOVERY_LAUNCH.id} navigate={vi.fn()} />);
+    const view = render(
+      <LaunchSurface ownerId="test-owner" launchId={RECOVERY_LAUNCH.id} navigate={vi.fn()} />,
+    );
     const user = userEvent.setup();
 
     const opener = screen.getByRole('button', { name: 'Recover initial task' });
@@ -138,7 +171,9 @@ describe('Launch command reconciliation', () => {
     };
     const refreshedResource = resource(refreshedLaunch);
     launchResource.use.mockReturnValue(refreshedResource);
-    view.rerender(<LaunchSurface launchId={refreshedLaunch.id} navigate={vi.fn()} />);
+    view.rerender(
+      <LaunchSurface ownerId="test-owner" launchId={refreshedLaunch.id} navigate={vi.fn()} />,
+    );
     api.recoverInitialPrompt.mockResolvedValue({
       ...refreshedLaunch,
       state: 'ready',
@@ -156,16 +191,16 @@ describe('Launch command reconciliation', () => {
     const third = api.recoverInitialPrompt.mock.calls[2];
     expect(third?.slice(0, 3)).toEqual(first?.slice(0, 3));
     expect(third?.[3].idempotencyKey).toBe(first?.[3].idempotencyKey);
-    expect(refreshedResource.accept).toHaveBeenCalledOnce();
+    await waitFor(() => expect(refreshedResource.accept).toHaveBeenCalledOnce());
     expect(screen.queryByRole('dialog', { name: 'Authorize another initial task?' })).toBeNull();
-    expect(opener).toHaveFocus();
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 
   it('renders a hostile finite recovery failure as text and keeps the dialog available', async () => {
     const hostile = '<img src=x onerror=alert(1)> recovery refused';
     api.recoverInitialPrompt.mockRejectedValue(new Error(hostile));
     launchResource.use.mockReturnValue(resource(RECOVERY_LAUNCH));
-    render(<LaunchSurface launchId={RECOVERY_LAUNCH.id} navigate={vi.fn()} />);
+    render(<LaunchSurface ownerId="test-owner" launchId={RECOVERY_LAUNCH.id} navigate={vi.fn()} />);
     const user = userEvent.setup();
 
     await user.click(screen.getByRole('button', { name: 'Recover initial task' }));
@@ -193,7 +228,7 @@ describe('Launch command reconciliation', () => {
     api.cancelLaunch.mockRejectedValue(new TransportError('response lost'));
     const currentResource = resource(FIXTURE);
     launchResource.use.mockReturnValue(currentResource);
-    render(<LaunchSurface launchId={FIXTURE.id} navigate={vi.fn()} />);
+    render(<LaunchSurface ownerId="test-owner" launchId={FIXTURE.id} navigate={vi.fn()} />);
     const user = userEvent.setup();
 
     await user.click(screen.getByRole('button', { name: 'Cancel Launch' }));
@@ -215,18 +250,18 @@ describe('Launch command reconciliation', () => {
     expect(api.cancelLaunch.mock.calls[2]?.[3].idempotencyKey).toBe(
       api.cancelLaunch.mock.calls[0]?.[3].idempotencyKey,
     );
-    expect(currentResource.accept).toHaveBeenCalledWith(cancelled);
+    await waitFor(() => expect(currentResource.accept).toHaveBeenCalledWith(cancelled));
     expect(screen.queryByRole('dialog', { name: 'Cancel this Launch?' })).toBeNull();
   });
 
   it('reconciles New Launch creation without issuing a new logical command', async () => {
-    const completed = { ...FIXTURE, state: 'completed' as const };
-    launchResource.use.mockReturnValue(resource(completed));
+    launchResource.use.mockReturnValue(resource(FIXTURE));
     api.createNewLaunch.mockRejectedValue(new TransportError('response lost'));
     const navigate = vi.fn();
-    render(<LaunchSurface launchId={completed.id} navigate={navigate} />);
+    render(<LaunchSurface ownerId="test-owner" launchId={FIXTURE.id} navigate={navigate} />);
     const user = userEvent.setup();
 
+    expect(screen.getByRole('button', { name: 'Cancel Launch' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'New Launch' }));
     const dialog = screen.getByRole('dialog', { name: 'Create a separate Launch?' });
     await user.click(within(dialog).getByRole('button', { name: 'Create New Launch' }));
@@ -234,11 +269,13 @@ describe('Launch command reconciliation', () => {
 
     const next = { ...FIXTURE, id: '55555555-5555-4555-8555-555555555555' };
     api.createNewLaunch.mockResolvedValue(next);
-    await user.click(within(dialog).getByRole('button', { name: 'Reconcile New Launch' }));
+    await user.click(await within(dialog).findByRole('button', { name: 'Reconcile New Launch' }));
 
     await waitFor(() => expect(api.createNewLaunch).toHaveBeenCalledTimes(3));
     const keys = api.createNewLaunch.mock.calls.map((call) => call[1].idempotencyKey);
     expect(new Set(keys)).toHaveLength(1);
-    expect(navigate).toHaveBeenCalledWith({ kind: 'trigger', publicId: next.trigger_public_id });
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ kind: 'trigger', publicId: next.trigger_public_id }),
+    );
   });
 });

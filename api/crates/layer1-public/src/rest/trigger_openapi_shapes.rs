@@ -24,6 +24,31 @@ pub(super) enum RepositoryVisibility {
 }
 
 #[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum TriggerAvailability {
+    Published,
+    Retired,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum PublisherRepositoryRole {
+    Owner,
+    Admin,
+    Maintain,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ConnectionState {
+    Active,
+    Inactive,
+    Disconnected,
+    Revoked,
+    Expired,
+}
+
+#[derive(serde::Serialize, ToSchema)]
 pub(super) struct RepositoryIdentity {
     repository_id: u64,
     repository_node_id: String,
@@ -104,7 +129,6 @@ pub(super) enum RequiredCapability {
 pub(super) enum PermissionMode {
     Guarded,
     Autonomous,
-    Unrestricted,
 }
 
 #[derive(serde::Serialize, ToSchema)]
@@ -209,12 +233,12 @@ pub(super) enum EditableField {
     BranchSuffix,
     ResourceSize,
     Timeout,
-    OptionalChecks,
 }
 
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct OverridePolicy {
     editable_fields: Vec<EditableField>,
+    #[schema(min_items = 0, max_items = 0)]
     optional_checks: Vec<String>,
 }
 
@@ -247,6 +271,7 @@ pub(super) struct LaunchOverrides {
     branch_suffix: Option<String>,
     resource_size: Option<SessionSize>,
     timeout_seconds: Option<u32>,
+    #[schema(min_items = 0, max_items = 0)]
     optional_checks: Vec<String>,
 }
 
@@ -257,8 +282,64 @@ pub(super) struct EffectiveConfiguration {
     permission: PermissionMode,
     resource_size: SessionSize,
     timeout_seconds: u32,
+    #[schema(min_items = 0, max_items = 0)]
     optional_checks: Vec<String>,
     digest: String,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum LaunchState {
+    Draft,
+    AuthRequired,
+    Preflight,
+    ForkPending,
+    ForkReady,
+    BranchPending,
+    WorkspacePending,
+    SandboxPending,
+    SessionPending,
+    PromptPending,
+    Ready,
+    Contributing,
+    PrPending,
+    PrOpen,
+    Completed,
+    FailedRetryable,
+    FailedTerminal,
+    Cancelled,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum LaunchStepKey {
+    Review,
+    Authentication,
+    Preflight,
+    Fork,
+    Branch,
+    Workspace,
+    Sandbox,
+    Session,
+    Reach,
+    InitialPrompt,
+    Checkpoint,
+    Diff,
+    PublishBranch,
+    PullRequest,
+    Cleanup,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum LaunchStepStatus {
+    Pending,
+    Running,
+    Completed,
+    Blocked,
+    Retryable,
+    Failed,
+    Cancelled,
 }
 
 #[derive(serde::Serialize, ToSchema)]
@@ -305,10 +386,55 @@ pub(super) struct LaunchFailure {
 pub(super) struct PricingSnapshot {
     policy_reference: String,
     billing_mode: BillingMode,
+    rate_card: Option<String>,
+    rate: Option<Rate>,
     currency: String,
+    cpu_millis: u32,
+    memory_mib: u32,
+    micros_per_hour: u64,
     estimated_micros: u64,
     quoted_at: String,
     expires_at: String,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct Rate {
+    cpu_micros_per_cpu_hour: u64,
+    memory_micros_per_gib_hour: u64,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum TriggerKernel {
+    Codex,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct RuntimeAdmissionSnapshot {
+    kernel: TriggerKernel,
+    runtime_version: String,
+    supported_capabilities: Vec<RequiredCapability>,
+    observed_at: String,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct QuotaSnapshot {
+    live_sessions: u32,
+    live_session_limit: Option<u32>,
+    reserved_cpu_millis: u64,
+    reserved_memory_mib: u64,
+    free_cpu_millis: Option<u64>,
+    free_memory_mib: Option<u64>,
+    checked_at: String,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+pub(super) struct StartAdmissionSnapshot {
+    runtime_version: String,
+    pricing_policy_reference: String,
+    rate_card: Option<String>,
+    quota: QuotaSnapshot,
+    checked_at: String,
 }
 
 #[derive(serde::Serialize, ToSchema)]
@@ -341,10 +467,9 @@ pub(super) struct SessionLink {
 #[serde(rename_all = "snake_case")]
 pub(super) enum CapabilityRevocationState {
     Active,
-    RefreshRequired,
-    Expired,
     RevocationPending,
     Revoked,
+    Expired,
 }
 
 #[derive(serde::Serialize, ToSchema)]
@@ -410,6 +535,20 @@ pub(super) enum LaunchEffectKind {
 }
 
 #[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ConfirmationAction {
+    Start,
+    WorkflowRisk,
+    ReviewDiff,
+    PublishBranch,
+    OpenPullRequest,
+    UpdatePullRequest,
+    RecoverPrompt,
+    NewLaunch,
+    Cancel,
+}
+
+#[derive(serde::Serialize, ToSchema)]
 pub(super) struct PromptDelivery {
     launch_id: String,
     session_id: String,
@@ -438,6 +577,79 @@ pub(super) enum DiffChangeKind {
     Deleted,
     ModeChanged,
     SymlinkChanged,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum DiffValidationOutcome {
+    Valid,
+    NoChanges,
+    StaleHead,
+    WorkflowScopeRequired,
+    TooManyChanges,
+    TooManyBytes,
+    UnsupportedFile,
+    MissingBaseline,
+    CorruptCheckpoint,
+    ArtifactTooLarge,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum CheckpointIntegrity {
+    Pending,
+    Complete,
+    Corrupt,
+    RecoveryRequired,
+    Deleted,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum PublicationState {
+    IntentRecorded,
+    ObjectsWritten,
+    RefUpdatePending,
+    Published,
+    Conflict,
+    RecoveryRequired,
+    Failed,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum PullRequestOperation {
+    Open,
+    Update,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum PullRequestState {
+    Creating,
+    Updating,
+    Open,
+    ClosedUnmerged,
+    Merged,
+    RecoveryRequired,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Mergeability {
+    Computing,
+    Mergeable,
+    Conflicting,
+}
+
+#[derive(serde::Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum CheckSummaryState {
+    Pending,
+    Passing,
+    Failing,
+    AwaitingMaintainerApproval,
+    Unavailable,
 }
 
 #[derive(serde::Serialize, ToSchema)]

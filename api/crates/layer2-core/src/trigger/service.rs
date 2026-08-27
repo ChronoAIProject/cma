@@ -1,13 +1,15 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use super::{
     AuthorityProvenance, Confirmation, ConnectedAccount, ConnectionSnapshot, ConnectionState,
-    Launch, LaunchEvent, LaunchId, LaunchOverrides, LaunchQuery, LaunchStore, PublicTriggerId,
-    PublishedRevision, PublisherAuthority, TriggerAvailability, TriggerDraft, TriggerId,
-    TriggerPage, TriggerPageRequest, TriggerPreview, TriggerRevision, TriggerRevisionContent,
-    TriggerRevisionId, TriggerRolloutDenial, TriggerRolloutPolicy, TriggerStore, TriggerStoreError,
+    Launch, LaunchEvent, LaunchId, LaunchOverrides, LaunchQuery, LaunchReviewAdmission,
+    LaunchState, LaunchStore, PublicTriggerId, PublishedRevision, PublisherAuthority,
+    StartAdmissionSnapshot, TriggerAvailability, TriggerDraft, TriggerId, TriggerPage,
+    TriggerPageRequest, TriggerPreview, TriggerRevision, TriggerRevisionContent, TriggerRevisionId,
+    TriggerRolloutDenial, TriggerRolloutPolicy, TriggerStore, TriggerStoreError,
     TriggerSupportLookup, TriggerSupportSnapshot, TriggerValidationError, WorkerLease,
 };
 use crate::{Caller, Capability, SubjectId};
@@ -83,6 +85,69 @@ pub trait TriggerAuthorityVerifier: Send + Sync {
     ) -> Result<LaunchAuthority, TriggerServiceError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TriggerAdmissionError {
+    #[error("Trigger admission is unavailable: {0}")]
+    Unavailable(String),
+    #[error("pricing policy is unavailable: {0}")]
+    PricingUnavailable(String),
+    #[error("the reviewed price is no longer in force")]
+    PriceChanged,
+    #[error("the reviewed price expired")]
+    QuoteExpired,
+    #[error("session quota or deployment capacity is exhausted: {0}")]
+    QuotaExceeded(String),
+    #[error("the pinned runtime does not support required capability {capability}")]
+    CapabilityUnsupported { capability: String },
+    #[error("the deployment runtime changed after review")]
+    RuntimeChanged,
+}
+
+/// Server-owned pricing, quota, and pinned-runtime policy for Trigger Launches.
+#[async_trait]
+pub trait TriggerLaunchAdmission: Send + Sync {
+    async fn review(
+        &self,
+        owner: &SubjectId,
+        launch: &Launch,
+        now: &str,
+    ) -> Result<LaunchReviewAdmission, TriggerAdmissionError>;
+
+    async fn start(
+        &self,
+        owner: &SubjectId,
+        launch: &Launch,
+        now: &str,
+    ) -> Result<StartAdmissionSnapshot, TriggerAdmissionError>;
+}
+
+struct UnavailableTriggerLaunchAdmission;
+
+#[async_trait]
+impl TriggerLaunchAdmission for UnavailableTriggerLaunchAdmission {
+    async fn review(
+        &self,
+        _owner: &SubjectId,
+        _launch: &Launch,
+        _now: &str,
+    ) -> Result<LaunchReviewAdmission, TriggerAdmissionError> {
+        Err(TriggerAdmissionError::Unavailable(
+            "no deployment admission resolver is configured".into(),
+        ))
+    }
+
+    async fn start(
+        &self,
+        _owner: &SubjectId,
+        _launch: &Launch,
+        _now: &str,
+    ) -> Result<StartAdmissionSnapshot, TriggerAdmissionError> {
+        Err(TriggerAdmissionError::Unavailable(
+            "no deployment admission resolver is configured".into(),
+        ))
+    }
+}
+
 /// Public-safe metadata for one reusable contributor connection.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TriggerConnection {
@@ -120,6 +185,23 @@ pub trait TriggerConnectionManager: Send + Sync {
         subject: &SubjectId,
     ) -> Result<Vec<TriggerConnection>, TriggerServiceError>;
 
+    /// Owner-concealing lookup used before reserving a revoke operation.
+    ///
+    /// The default filters the complete live list. Durable implementations may
+    /// override it so a persisted revoke intent or receipt remains discoverable
+    /// when the provider's active-only list no longer contains the connection.
+    async fn connection_for_revocation(
+        &self,
+        subject: &SubjectId,
+        service_id: &str,
+    ) -> Result<Option<TriggerConnection>, TriggerServiceError> {
+        Ok(self
+            .list_connections(subject)
+            .await?
+            .into_iter()
+            .find(|connection| connection.service_id == service_id))
+    }
+
     /// Reconcile or create the placeholder named by a persisted client intent,
     /// then begin its authorization flow.
     async fn begin_connection(
@@ -133,6 +215,19 @@ pub trait TriggerConnectionManager: Send + Sync {
         subject: &SubjectId,
         service_id: &str,
     ) -> Result<TriggerConnectionAuthorization, TriggerServiceError>;
+
+    /// Deactivate one exact owner-scoped connection and return its inactive
+    /// provider-observed projection. Implementations must make repeats converge
+    /// without treating an active-list miss as ownership evidence.
+    async fn revoke_connection(
+        &self,
+        _subject: &SubjectId,
+        _service_id: &str,
+    ) -> Result<TriggerConnection, TriggerServiceError> {
+        Err(TriggerServiceError::Authority(
+            TriggerAuthorityError::ProviderAuthenticationUnavailable,
+        ))
+    }
 
     async fn preflight_connection(
         &self,
@@ -200,12 +295,16 @@ pub enum TriggerServiceError {
     NotFound,
     #[error("the caller does not own this trigger resource")]
     Forbidden,
+    #[error("Launch progress cursor {cursor} is beyond the durable event head {head}")]
+    CursorBeyondEnd { cursor: u64, head: u64 },
     #[error("trigger input is invalid: {0}")]
     Validation(#[from] TriggerValidationError),
     #[error("trigger persistence failed: {0}")]
     Store(#[from] TriggerStoreError),
     #[error("trigger authority could not be verified: {0}")]
     Authority(#[from] TriggerAuthorityError),
+    #[error("trigger launch admission failed: {0}")]
+    Admission(#[from] TriggerAdmissionError),
     #[error("trigger rollout refused this operation: {0}")]
     Rollout(#[from] TriggerRolloutDenial),
 }
@@ -214,6 +313,7 @@ pub struct TriggerService {
     triggers: Arc<dyn TriggerStore>,
     launches: Arc<dyn LaunchStore>,
     authority: Arc<dyn TriggerAuthorityVerifier>,
+    launch_admission: Arc<dyn TriggerLaunchAdmission>,
     rollout: Arc<TriggerRolloutPolicy>,
 }
 
@@ -227,12 +327,18 @@ impl TriggerService {
             triggers,
             launches,
             authority,
+            launch_admission: Arc::new(UnavailableTriggerLaunchAdmission),
             rollout: Arc::new(TriggerRolloutPolicy::allow_all()),
         }
     }
 
     pub fn with_rollout(mut self, rollout: Arc<TriggerRolloutPolicy>) -> Self {
         self.rollout = rollout;
+        self
+    }
+
+    pub fn with_launch_admission(mut self, admission: Arc<dyn TriggerLaunchAdmission>) -> Self {
+        self.launch_admission = admission;
         self
     }
 
@@ -445,6 +551,8 @@ impl TriggerService {
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<Launch, TriggerServiceError> {
+        let now = now.into();
+        let correlation_id = correlation_id.into();
         let revision = self
             .triggers
             .get_public_revision(public_id)
@@ -455,7 +563,32 @@ impl TriggerService {
             .get_current_launch(&owner, &revision.id)
             .await?
         {
-            return Ok(current);
+            if current.started_at.is_some()
+                || !matches!(
+                    current.state,
+                    super::LaunchState::Draft | super::LaunchState::AuthRequired
+                )
+                || !current.draft_is_expired(&now)?
+            {
+                return Ok(current);
+            }
+            self.rollout.launch_admission(
+                &owner,
+                &revision.content.publisher_subject_id,
+                revision.content.upstream.repository.repository_id,
+            )?;
+            let mut expired = current;
+            expired.expire_draft(now.clone(), correlation_id.clone())?;
+            expired.revision_number = expired.revision_number.checked_add(1).ok_or_else(|| {
+                TriggerValidationError::field("revision_number", "the Launch revision is exhausted")
+            })?;
+            let replacement = self
+                .admitted_launch(owner, revision, &now, &correlation_id)
+                .await?;
+            return Ok(self
+                .launches
+                .expire_current_and_insert(&expired, &replacement)
+                .await?);
         }
         if revision.availability != TriggerAvailability::Published {
             return Err(TriggerValidationError::new("this Trigger revision is retired").into());
@@ -465,7 +598,9 @@ impl TriggerService {
             &revision.content.publisher_subject_id,
             revision.content.upstream.repository.repository_id,
         )?;
-        let launch = Launch::new(owner, revision, now, correlation_id)?;
+        let launch = self
+            .admitted_launch(owner, revision, &now, &correlation_id)
+            .await?;
         Ok(self.launches.insert_or_get_current(&launch).await?)
     }
 
@@ -492,7 +627,9 @@ impl TriggerService {
         )?;
         let now = now.into();
         let correlation_id = correlation_id.into();
-        let mut launch = Launch::new(owner.clone(), revision, now.clone(), correlation_id.clone())?;
+        let mut launch = self
+            .admitted_launch(owner.clone(), revision, &now, &correlation_id)
+            .await?;
         launch.acknowledge_new_launch(owner, now, idempotency_key_hash, correlation_id)?;
         self.launches.insert_new(&launch).await?;
         Ok(launch)
@@ -515,13 +652,16 @@ impl TriggerService {
     pub async fn list_launches(
         &self,
         owner: &SubjectId,
+        public_id: Option<PublicTriggerId>,
+        states: Vec<LaunchState>,
         page: TriggerPageRequest,
     ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
         Ok(self
             .launches
             .list_launches(&LaunchQuery {
                 owner: Some(owner.clone()),
-                states: Vec::new(),
+                public_id,
+                states,
                 updated_before: None,
                 page,
             })
@@ -536,12 +676,72 @@ impl TriggerService {
         limit: usize,
     ) -> Result<Vec<LaunchEvent>, TriggerServiceError> {
         let launch = self.get_launch(owner, id).await?;
-        Ok(launch
+        let head = launch.event_high_water();
+        if after > head {
+            return Err(TriggerServiceError::CursorBeyondEnd {
+                cursor: after,
+                head,
+            });
+        }
+        let limit = limit.clamp(1, 500);
+        // Read the aggregate tail before the canonical collection. During a
+        // lazy migration, this ordering prevents a concurrent compaction from
+        // making an accepted event temporarily invisible.
+        let tail = launch
             .events
-            .into_iter()
+            .iter()
             .filter(|event| event.sequence > after)
-            .take(limit.clamp(1, 500))
-            .collect())
+            .cloned()
+            .collect::<Vec<_>>();
+        let canonical = self.launches.list_launch_events(id, after, limit).await?;
+        let mut ordered = BTreeMap::new();
+        for event in tail.into_iter().chain(canonical) {
+            if event.launch_id != *id {
+                return Err(TriggerStoreError::Malformed(
+                    "Launch progress contains an event for another Launch".into(),
+                )
+                .into());
+            }
+            match ordered.entry(event.sequence) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(event);
+                }
+                std::collections::btree_map::Entry::Occupied(entry) if entry.get() == &event => {}
+                std::collections::btree_map::Entry::Occupied(_) => {
+                    return Err(TriggerStoreError::Malformed(
+                        "Launch progress contains a conflicting duplicate sequence".into(),
+                    )
+                    .into());
+                }
+            }
+        }
+        let events = ordered
+            .into_values()
+            .into_iter()
+            .take(limit)
+            .collect::<Vec<_>>();
+        if after < launch.event_high_water()
+            && events.first().map(|event| event.sequence) != after.checked_add(1)
+        {
+            return Err(TriggerStoreError::Malformed(
+                "Launch progress contains a sequence gap".into(),
+            )
+            .into());
+        }
+        if events.windows(2).any(|pair| {
+            pair[0]
+                .sequence
+                .checked_add(1)
+                .is_none_or(|next| next != pair[1].sequence)
+        }) || (events.len() < limit
+            && events.last().map_or(after, |event| event.sequence) < launch.event_high_water())
+        {
+            return Err(TriggerStoreError::Malformed(
+                "Launch progress contains a sequence gap".into(),
+            )
+            .into());
+        }
+        Ok(events)
     }
 
     /// Redacted cross-owner support read, gated by the existing narrow activity
@@ -602,6 +802,13 @@ impl TriggerService {
             .await?)
     }
 
+    pub async fn workspace_candidates(
+        &self,
+        page: TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
+        Ok(self.launches.list_workspace_candidates(&page).await?)
+    }
+
     pub async fn update_overrides(
         &self,
         owner: &SubjectId,
@@ -611,8 +818,14 @@ impl TriggerService {
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<Launch, TriggerServiceError> {
+        let now = now.into();
+        let correlation_id = correlation_id.into();
         let mut launch = self.get_launch(owner, id).await?;
-        launch.update_overrides(overrides, now, correlation_id)?;
+        self.fence_pre_start(expected_revision, &mut launch, &now, &correlation_id)
+            .await?;
+        launch.update_overrides(overrides, now.clone(), correlation_id)?;
+        let admission = self.launch_admission.review(owner, &launch, &now).await?;
+        launch.apply_review_admission(admission)?;
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
     }
 
@@ -625,7 +838,11 @@ impl TriggerService {
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<Launch, TriggerServiceError> {
+        let now = now.into();
+        let correlation_id = correlation_id.into();
         let mut launch = self.get_launch(owner, id).await?;
+        self.fence_pre_start(expected_revision, &mut launch, &now, &correlation_id)
+            .await?;
         let verified = self
             .authority
             .verify_launch(owner, &launch.revision, selected_service_id, None)
@@ -652,6 +869,8 @@ impl TriggerService {
             correlation_id,
         } = command;
         let mut launch = self.get_launch(owner, id).await?;
+        self.fence_pre_start(expected_revision, &mut launch, &now, &correlation_id)
+            .await?;
         if let Err(denial) = self.rollout.launch_orchestration(&launch) {
             if launch.blocked_reason.is_none() {
                 launch.block(
@@ -664,6 +883,8 @@ impl TriggerService {
             return Err(denial.into());
         }
         launch.resume_feature_pause(now.clone(), correlation_id.clone())?;
+        let admission = self.launch_admission.start(owner, &launch, &now).await?;
+        launch.record_start_admission(admission)?;
         let connection = launch.connection.as_ref().ok_or_else(|| {
             TriggerValidationError::field("connection", "select an eligible connection")
         })?;
@@ -832,6 +1053,54 @@ impl TriggerService {
             correlation_id,
         )?;
         persist_user_mutation(self.launches.as_ref(), expected_revision, launch).await
+    }
+
+    async fn admitted_launch(
+        &self,
+        owner: SubjectId,
+        revision: TriggerRevision,
+        now: &str,
+        correlation_id: &str,
+    ) -> Result<Launch, TriggerServiceError> {
+        let mut launch = Launch::new(owner.clone(), revision, now, correlation_id)?;
+        let admission = self.launch_admission.review(&owner, &launch, now).await?;
+        launch.apply_review_admission(admission)?;
+        Ok(launch)
+    }
+
+    async fn fence_pre_start(
+        &self,
+        expected_revision: u64,
+        launch: &mut Launch,
+        now: &str,
+        correlation_id: &str,
+    ) -> Result<(), TriggerServiceError> {
+        if launch.revision_number != expected_revision {
+            return Err(TriggerStoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: launch.revision_number,
+            }
+            .into());
+        }
+        if launch.started_at.is_none()
+            && matches!(
+                launch.state,
+                super::LaunchState::Draft | super::LaunchState::AuthRequired
+            )
+            && launch.draft_is_expired(now)?
+        {
+            launch.expire_draft(now, correlation_id)?;
+            let expired =
+                persist_user_mutation(self.launches.as_ref(), expected_revision, launch.clone())
+                    .await?;
+            *launch = expired;
+            return Err(TriggerValidationError::field(
+                "draft_expires_at",
+                "this Launch draft expired; open the README link again for a New Launch",
+            )
+            .into());
+        }
+        Ok(())
     }
 
     pub async fn acquire_worker(

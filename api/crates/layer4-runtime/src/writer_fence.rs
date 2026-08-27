@@ -70,6 +70,24 @@ impl Drop for WriterFence {
     }
 }
 
+/// Whether a retained process-session root still names a live workspace
+/// writer. Callers retire authority only after this positive observation.
+pub(crate) fn session_has_live_members(root: i32) -> Result<bool, String> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        Err("process-session retirement requires Linux procfs support".into())
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let roots = BTreeSet::from([root]);
+        Ok(writer_states(&process_table()?, &roots)
+            .values()
+            .any(|state| !matches!(state, 'Z' | 'X')))
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy)]
 struct ProcessRecord {

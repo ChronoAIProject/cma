@@ -63,8 +63,11 @@ cancels Launches that already captured the revision.
 
 Read the preview before asking CMA to create or resume a Launch. The Launch review
 contains the immutable revision content, contributor-editable overrides, the
-effective configuration and its digest, workflow-file warnings, pricing, selected
-connection, and current step state.
+effective configuration and its digest, workflow-file warnings, exact pricing,
+the locked kernel and pinned runtime capabilities, quota evidence, selected
+connection, and current step state. `pricing`, `runtime_admission`, and `review_quota` must all be
+present before enabling Start. `start_admission` appears only after CMA has
+revalidated those facts for the accepted Start.
 
 ```ts
 import { createClient, type Launch } from '@chronoai/cma-sdk';
@@ -108,6 +111,20 @@ async function reviewAndStart(publicId: string): Promise<Launch> {
     { idempotencyKey: crypto.randomUUID() },
   );
 
+  // `optional_checks` is an empty compatibility field in the public MVP.
+  // CMA rejects configured checks until a bounded sandbox runner is enabled.
+
+  if (
+    launch.pricing === null ||
+    launch.runtime_admission === null ||
+    launch.review_quota === null
+  ) {
+    throw new Error('Launch admission evidence is incomplete');
+  }
+  if (launch.runtime_admission.kernel !== 'codex') {
+    throw new Error('Unsupported locked Trigger kernel');
+  }
+
   return cma.startLaunch(
     launch.id,
     launch.revision_number,
@@ -124,16 +141,47 @@ The OAuth callback never starts work. After CMA regains control, repeat
 `createOrResumeLaunch`, list the connections, select the exact returned
 `service_id`, and show the review again. `reconnectTriggerConnection` starts a
 new NyxID consent handoff for an inactive or insufficient existing service.
+`revokeTriggerConnection` deactivates one exact owned service. It is a keyed
+command: retain the same key and body after an unresolved response. Its returned
+public connection state is replayable evidence that CMA accepted the command;
+it is not a claim that every previously issued provider credential became
+unusable at that instant. Existing Launch, workspace, branch, commit, and pull
+request records remain intact, and an affected Launch resumes through
+`auth_required` after another eligible connection is selected and preflighted.
 
 `startLaunch` binds the confirmation to `launch.effective.digest`. Workflow risk
 acknowledgement is required when `workflow_paths` is nonempty; it does not grant
 new GitHub scopes or claim that GitHub will run a fork's workflows.
 
+The quote and runtime snapshot are server-owned and included in the effective
+digest. Quota is displayed as current evidence and checked again at Start. If
+Start returns `trigger_price_changed`, `trigger_runtime_changed`, or
+`trigger_quota_exhausted`, disable Start and call `updateLaunchOverrides` with
+the same configuration to obtain fresh evidence. Show the changed review and
+require a new confirmation; never resubmit the stale digest automatically.
+
+`draft_expires_at` is the server-derived pre-Start deadline. The exact instant
+is expired. A direct README re-click can atomically replace a current expired
+draft, while a Launch whose expiry was already durably settled uses
+`createNewLaunch` after the user acknowledges the additional resource attempt.
+`trigger_draft_expired` and `trigger_quote_expired` therefore route to the
+retained Launch and explicit New Launch UI. The original deadline does not
+prevent authentication recovery after a Launch has started.
+
 ## Progress and failure handling
 
 Progress is durable cursor replay, not a transient progress animation. Persist
 `next_cursor`, request events strictly after it, and refresh the Launch projection
-when an event arrives. Reconnecting with the last accepted cursor is safe.
+when an event arrives. Sequence 1 carries the complete stable step table in its
+`created` kind. Every event's `progress` field is the authoritative compact
+state, failure/recovery, reach, and prompt-delivery snapshot; `step_changed`
+replaces one row. Reconnecting with the last accepted cursor is safe. Ignore an
+immediately repeated event only when its complete envelope is identical; the
+SDK collapses that duplicate. It rejects a sequence gap, conflicting duplicate,
+event for another Launch, or `next_cursor` that does not equal the last unique
+accepted sequence. Restart replay from sequence 1 after such a protocol error.
+The page limit defaults to `100`, accepts `1..=500`, and is rejected locally
+before transport when it is outside that range.
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
@@ -158,6 +206,22 @@ recovery strategy. `recovery_required` means CMA could not prove an unsafe effec
 did not happen; automatic retry is intentionally fenced until explicit recovery.
 Cancellation is also digest-bound to the current `effective.digest` and retains
 the Launch history.
+
+Admission Problem Details use stable codes and typed remediation:
+
+| Code                             | Meaning                                                      |
+| -------------------------------- | ------------------------------------------------------------ |
+| `trigger_admission_unavailable`  | CMA could not verify admission safely; retry later.          |
+| `trigger_pricing_unavailable`    | No valid server-owned price is available.                    |
+| `trigger_price_changed`          | Refresh and explicitly accept the current price.             |
+| `trigger_quote_expired`          | Open a New Launch with current evidence.                     |
+| `trigger_quota_exhausted`        | Owner or deployment capacity is currently exhausted.         |
+| `trigger_capability_unsupported` | The named `capability` is unavailable on the pinned runtime. |
+| `trigger_runtime_changed`        | Refresh and explicitly accept the current runtime.           |
+| `trigger_draft_expired`          | Follow `remediation` to the New Launch flow.                 |
+
+Treat these as review-state transitions, not transport failures. In particular,
+do not retry Start for price, runtime, quota, quote, or draft conflicts.
 
 For an ambiguous initial task, show the owner the retained Launch and state
 plainly that CMA cannot determine whether the prior task started. Only after the

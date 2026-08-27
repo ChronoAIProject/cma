@@ -84,6 +84,7 @@ fn scheduler(
             max_pages,
             concurrency,
         },
+        resume_cursors: Mutex::new(std::array::from_fn(|_| None)),
     }
 }
 
@@ -103,6 +104,72 @@ async fn pagination_stops_at_the_configured_page_budget() {
     assert_eq!(
         backend.cursors.lock().unwrap().as_slice(),
         [None, Some("cursor-1".into()), Some("cursor-2".into())]
+    );
+}
+
+struct FinitePagingBackend {
+    cursors: Mutex<Vec<Option<String>>>,
+    visited: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl SchedulerBackend for FinitePagingBackend {
+    async fn candidates(
+        &self,
+        _lane: SchedulerLane,
+        _pass_boundary: &str,
+        page: TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerServiceError> {
+        self.cursors.lock().unwrap().push(page.cursor.clone());
+        let (name, next) = match page.cursor.as_deref() {
+            None => ("newest", Some("after-newest".to_string())),
+            Some("after-newest") => ("middle", Some("after-middle".to_string())),
+            Some("after-middle") => ("oldest", None),
+            Some(other) => panic!("unexpected scheduler cursor {other}"),
+        };
+        let mut launch = candidate();
+        launch.id = LaunchId(name.to_string());
+        Ok(TriggerPage {
+            items: vec![launch],
+            next,
+        })
+    }
+
+    async fn run_candidate(
+        &self,
+        _lane: SchedulerLane,
+        launch: Launch,
+        _correlation_id: String,
+    ) -> Result<CandidateOutcome, TriggerServiceError> {
+        self.visited.lock().unwrap().push(launch.id.0);
+        Ok(CandidateOutcome::Completed)
+    }
+}
+
+#[tokio::test]
+async fn a_candidate_beyond_one_page_budget_is_visited_on_the_next_pass() {
+    let backend = Arc::new(FinitePagingBackend {
+        cursors: Mutex::new(Vec::new()),
+        visited: Mutex::new(Vec::new()),
+    });
+    let scheduler = scheduler(backend.clone(), 2, 1);
+
+    let first = scheduler.run_pass(SchedulerLane::Capabilities).await;
+    let second = scheduler.run_pass(SchedulerLane::Capabilities).await;
+
+    assert!(first.page_budget_exhausted);
+    assert!(!second.page_budget_exhausted);
+    assert_eq!(
+        backend.visited.lock().unwrap().as_slice(),
+        ["newest", "middle", "oldest"]
+    );
+    assert_eq!(
+        backend.cursors.lock().unwrap().as_slice(),
+        [
+            None,
+            Some("after-newest".into()),
+            Some("after-middle".into())
+        ]
     );
 }
 
@@ -202,6 +269,8 @@ async fn candidate_concurrency_never_exceeds_the_configured_bound() {
 struct IndependentLaneBackend {
     effect_started: AtomicBool,
     effect_release: Semaphore,
+    workspace_started: AtomicBool,
+    workspace_release: Semaphore,
     capability_runs: AtomicUsize,
 }
 
@@ -233,6 +302,10 @@ impl SchedulerBackend for IndependentLaneBackend {
             SchedulerLane::Capabilities => {
                 self.capability_runs.fetch_add(1, Ordering::SeqCst);
             }
+            SchedulerLane::Workspaces => {
+                self.workspace_started.store(true, Ordering::SeqCst);
+                self.workspace_release.acquire().await.unwrap().forget();
+            }
             SchedulerLane::Cleanup => {}
         }
         Ok(CandidateOutcome::Completed)
@@ -244,6 +317,8 @@ async fn capability_pass_is_not_delayed_by_a_blocked_provider_effect() {
     let backend = Arc::new(IndependentLaneBackend {
         effect_started: AtomicBool::new(false),
         effect_release: Semaphore::new(0),
+        workspace_started: AtomicBool::new(false),
+        workspace_release: Semaphore::new(0),
         capability_runs: AtomicUsize::new(0),
     });
     let scheduler = Arc::new(scheduler(backend.clone(), 1, 1));
@@ -270,6 +345,39 @@ async fn capability_pass_is_not_delayed_by_a_blocked_provider_effect() {
 
     backend.effect_release.add_permits(1);
     assert_eq!(effects.await.unwrap().completed, 1);
+}
+
+#[tokio::test]
+async fn capability_pass_is_not_delayed_by_a_blocked_workspace_capture() {
+    let backend = Arc::new(IndependentLaneBackend {
+        effect_started: AtomicBool::new(false),
+        effect_release: Semaphore::new(0),
+        workspace_started: AtomicBool::new(false),
+        workspace_release: Semaphore::new(0),
+        capability_runs: AtomicUsize::new(0),
+    });
+    let scheduler = Arc::new(scheduler(backend.clone(), 1, 1));
+    let workspaces = {
+        let scheduler = Arc::clone(&scheduler);
+        tokio::spawn(async move { scheduler.run_pass(SchedulerLane::Workspaces).await })
+    };
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !backend.workspace_started.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the workspace lane reached its capture boundary");
+
+    let capability = tokio::time::timeout(
+        Duration::from_secs(2),
+        scheduler.run_pass(SchedulerLane::Capabilities),
+    )
+    .await
+    .expect("capability maintenance remained independent of workspace capture");
+    assert_eq!(capability.completed, 1);
+    backend.workspace_release.add_permits(1);
+    assert_eq!(workspaces.await.unwrap().completed, 1);
 }
 
 struct RecoveringBackend {
@@ -360,6 +468,11 @@ async fn cleanup_dry_run_persists_only_an_exact_plan_and_a_safe_audit_record() {
         baseline_archive_sha256: "a".repeat(64),
         latest_checkpoint: None,
         previous_checkpoint: None,
+        retired_checkpoint: None,
+        sealed_contribution_checkpoint: None,
+        checkpoint_intent: None,
+        lifecycle_checkpoint: Default::default(),
+        checkpoint_version: 0,
         workspace_epoch: 1,
         retention_policy_id: "retention-v1".into(),
         delete_after: "2026-08-01T00:00:00Z".into(),

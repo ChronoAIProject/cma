@@ -184,6 +184,9 @@ fn credential_state() -> SessionCredentialState {
             issued_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000),
             expires_at: None,
             scope_fingerprint: "scope-a".into(),
+            custody_generation: 7,
+            provider_state_version: 3,
+            grant_fingerprint: "a".repeat(64),
             revocation_credential: Some(SecretValue::new("current-revoke-plaintext".into())),
         }),
         pending: Some(DurableCredential {
@@ -193,6 +196,9 @@ fn credential_state() -> SessionCredentialState {
             issued_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_001),
             expires_at: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_001)),
             scope_fingerprint: "scope-b".into(),
+            custody_generation: 8,
+            provider_state_version: 4,
+            grant_fingerprint: "b".repeat(64),
             revocation_credential: Some(SecretValue::new("pending-revoke-plaintext".into())),
         }),
         pending_target: None,
@@ -2263,6 +2269,9 @@ async fn real_mongo_sequence_epochs_return_exact_positions_and_page_large_debt()
         issued_at,
         expires_at: None,
         scope_fingerprint: "scope".into(),
+        custody_generation: 0,
+        provider_state_version: 0,
+        grant_fingerprint: String::new(),
         revocation_credential: None,
     };
     let mut current_a = credential_state();
@@ -3246,9 +3255,11 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
     );
 
     let login_id = SecretDigest::identify("login-attempt", "oauth-state");
+    let browser_binding = SecretDigest::identify("login-browser-binding", "browser-binding");
     first
         .put_login_attempt(LoginAttempt {
             id: login_id.clone(),
+            browser_binding: browser_binding.clone(),
             verifier: SecretValue::new("pkce-plaintext".into()),
             return_to: Some("/triggers/123e4567-e89b-12d3-a456-426614174000".into()),
             expires_at: SystemTime::now() + Duration::from_secs(300),
@@ -3263,10 +3274,18 @@ async fn real_mongo_has_exact_indexes_and_cross_instance_atomicity() {
         .unwrap()
         .unwrap();
     assert!(!format!("{raw_login:?}").contains("pkce-plaintext"));
+    assert!(first
+        .take_login_attempt(
+            &login_id,
+            &SecretDigest::identify("login-browser-binding", "other-browser"),
+        )
+        .await
+        .unwrap()
+        .is_none());
 
     let (left, right) = tokio::join!(
-        first.take_login_attempt(&login_id),
-        second.take_login_attempt(&login_id)
+        first.take_login_attempt(&login_id, &browser_binding),
+        second.take_login_attempt(&login_id, &browser_binding)
     );
     let consumed = [left.unwrap(), right.unwrap()];
     assert_eq!(consumed.iter().filter(|value| value.is_some()).count(), 1);

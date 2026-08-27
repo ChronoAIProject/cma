@@ -8,7 +8,7 @@ use std::num::NonZeroU32;
 
 use axum::http::HeaderValue;
 use ipnet::IpNet;
-use layer2_core::TriggerRolloutPolicy;
+use layer2_core::{RequiredCapability, TriggerRolloutPolicy};
 
 use crate::auth::AuthMode;
 use crate::store::AuthEncryptionKey;
@@ -21,6 +21,7 @@ const CREATE_RATE_REQUESTS_PER_MINUTE: u32 = 10;
 const INPUT_RATE_REQUESTS_PER_MINUTE: u32 = 120;
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
 const MAX_TRUSTED_PROXY_HOPS: usize = 16;
+const DEFAULT_TRIGGER_CHANGED_FILE_LIMIT: usize = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TriggerCleanupMode {
@@ -41,7 +42,9 @@ impl TriggerCleanupMode {
 #[derive(Debug, Clone)]
 pub struct TriggerRuntimeConfig {
     pub rollout: TriggerRolloutPolicy,
+    pub runtime_capabilities: Vec<RequiredCapability>,
     pub cleanup_mode: TriggerCleanupMode,
+    pub changed_file_limit: u32,
     pub interval: std::time::Duration,
     pub page_size: u32,
     pub max_pages: usize,
@@ -82,10 +85,23 @@ impl TriggerRuntimeConfig {
             user_cohort_percent,
         )
         .map_err(|error| error.to_string())?;
+        let runtime_capabilities = parse_trigger_runtime_capabilities(
+            "CHRONO_TRIGGER_RUNTIME_CAPABILITIES",
+            &var_or("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", ""),
+        )?;
         let cleanup_mode = parse_trigger_cleanup_mode(
             "CHRONO_TRIGGER_CLEANUP_MODE",
             &var_or("CHRONO_TRIGGER_CLEANUP_MODE", "dry_run"),
         )?;
+        let changed_file_limit = parse_bounded_usize(
+            "CHRONO_TRIGGER_CHANGED_FILE_LIMIT",
+            &var_or(
+                "CHRONO_TRIGGER_CHANGED_FILE_LIMIT",
+                &DEFAULT_TRIGGER_CHANGED_FILE_LIMIT.to_string(),
+            ),
+            1,
+            layer2_core::MAX_DIFF_SUMMARY_FILES,
+        )? as u32;
         /*
          * Keep the scheduler's operation budget bounded independently of the
          * number of stored Launches. Values outside these ceilings fail
@@ -117,7 +133,9 @@ impl TriggerRuntimeConfig {
         )?;
         Ok(Self {
             rollout,
+            runtime_capabilities,
             cleanup_mode,
+            changed_file_limit,
             interval: std::time::Duration::from_secs(interval_seconds as u64),
             page_size,
             max_pages,
@@ -129,7 +147,9 @@ impl TriggerRuntimeConfig {
     fn sample() -> Self {
         Self {
             rollout: TriggerRolloutPolicy::allow_all(),
+            runtime_capabilities: all_trigger_runtime_capabilities(),
             cleanup_mode: TriggerCleanupMode::DryRun,
+            changed_file_limit: DEFAULT_TRIGGER_CHANGED_FILE_LIMIT as u32,
             interval: std::time::Duration::from_secs(5),
             page_size: 50,
             max_pages: 20,
@@ -146,6 +166,48 @@ fn parse_trigger_cleanup_mode(key: &str, raw: &str) -> Result<TriggerCleanupMode
             "{key} must be \"dry_run\" or \"execute\", got {other:?}"
         )),
     }
+}
+
+#[cfg(test)]
+fn all_trigger_runtime_capabilities() -> Vec<RequiredCapability> {
+    vec![
+        RequiredCapability::Conversation,
+        RequiredCapability::DurableConversation,
+        RequiredCapability::WorkspaceCheckpoint,
+        RequiredCapability::RestrictedServiceGateway,
+        RequiredCapability::CredentialRefresh,
+        RequiredCapability::CredentialRevocation,
+    ]
+}
+
+fn parse_trigger_runtime_capabilities(
+    key: &str,
+    raw: &str,
+) -> Result<Vec<RequiredCapability>, String> {
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut parsed = Vec::new();
+    for name in raw.split(',') {
+        let capability = match name {
+            "conversation" => RequiredCapability::Conversation,
+            "durable_conversation" => RequiredCapability::DurableConversation,
+            "workspace_checkpoint" => RequiredCapability::WorkspaceCheckpoint,
+            "restricted_service_gateway" => RequiredCapability::RestrictedServiceGateway,
+            "credential_refresh" => RequiredCapability::CredentialRefresh,
+            "credential_revocation" => RequiredCapability::CredentialRevocation,
+            _ => {
+                return Err(format!(
+                    "{key} contains unsupported capability {name:?}; use exact comma-separated canonical names"
+                ));
+            }
+        };
+        if parsed.contains(&capability) {
+            return Err(format!("{key} contains duplicate capability {name:?}"));
+        }
+        parsed.push(capability);
+    }
+    Ok(parsed)
 }
 
 /// Per-key request budgets enforced by this process.
@@ -886,6 +948,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn trigger_runtime_capabilities_accept_only_the_six_canonical_names() {
+        let raw = "conversation,durable_conversation,workspace_checkpoint,restricted_service_gateway,credential_refresh,credential_revocation";
+        assert_eq!(
+            parse_trigger_runtime_capabilities("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", raw)
+                .expect("the complete canonical inventory is usable"),
+            all_trigger_runtime_capabilities()
+        );
+        assert_eq!(
+            parse_trigger_runtime_capabilities("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", "")
+                .expect("an empty declaration deliberately admits no Trigger capability"),
+            Vec::<RequiredCapability>::new()
+        );
+    }
+
+    #[test]
+    fn trigger_runtime_capabilities_reject_duplicates_and_noncanonical_spelling() {
+        for raw in [
+            "conversation,conversation",
+            " conversation",
+            "conversation ",
+            "conversation, durable_conversation",
+            "Conversation",
+            "unknown_capability",
+        ] {
+            let error =
+                parse_trigger_runtime_capabilities("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", raw)
+                    .expect_err("ambiguous or noncanonical capability input must fail startup");
+            assert!(
+                error.contains("CHRONO_TRIGGER_RUNTIME_CAPABILITIES"),
+                "the startup error must name its deployment key: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn a_blank_value_falls_back_to_the_default() {
         // An env var set to the empty string is a common deployment mistake and
         // must behave as absent rather than producing an empty bind address.
@@ -1073,6 +1170,29 @@ mod tests {
                 "accepted {raw:?}"
             );
         }
+
+        assert_eq!(
+            parse_bounded_usize(
+                "CHRONO_TRIGGER_CHANGED_FILE_LIMIT",
+                "1000",
+                1,
+                layer2_core::MAX_DIFF_SUMMARY_FILES,
+            )
+            .unwrap(),
+            1_000
+        );
+        for raw in ["0", "1001", "unbounded"] {
+            assert!(
+                parse_bounded_usize(
+                    "CHRONO_TRIGGER_CHANGED_FILE_LIMIT",
+                    raw,
+                    1,
+                    layer2_core::MAX_DIFF_SUMMARY_FILES,
+                )
+                .is_err(),
+                "accepted {raw:?}"
+            );
+        }
     }
 
     #[test]
@@ -1082,10 +1202,12 @@ mod tests {
             ("CHRONO_TRIGGER_ENABLED", "false"),
             ("CHRONO_TRIGGER_ORCHESTRATION_PAUSED", "true"),
             ("CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH", "true"),
+            ("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", ""),
             ("CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS", ""),
             ("CHRONO_TRIGGER_REPOSITORY_IDS", ""),
             ("CHRONO_TRIGGER_USER_COHORT_PERCENT", "0"),
             ("CHRONO_TRIGGER_CLEANUP_MODE", "dry_run"),
+            ("CHRONO_TRIGGER_CHANGED_FILE_LIMIT", "1000"),
             ("CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS", "5"),
             ("CHRONO_TRIGGER_WORKER_PAGE_SIZE", "50"),
             ("CHRONO_TRIGGER_WORKER_MAX_PAGES", "20"),

@@ -1,7 +1,19 @@
-use super::{CapabilityRenewalRecord, Launch, LaunchEventKind, LaunchState, WorkerLease};
-use crate::trigger::{CapabilityRevocationState, TriggerValidationError};
+use super::{
+    CapabilityRenewalRecord, Launch, LaunchEventKind, LaunchState, SessionCredentialRetirement,
+    WorkerLease,
+};
+use crate::trigger::{CapabilityRefusal, CapabilityRevocationState, TriggerValidationError};
 
 impl Launch {
+    /// Whether durable session-key custody still needs terminal settlement.
+    ///
+    /// Every Launch reserves a deterministic session id. Retiring even when no
+    /// session link was committed also fences a late credential mint whose
+    /// provider response crossed cancellation.
+    pub fn session_credential_requires_retirement(&self) -> bool {
+        self.state.is_terminal() && self.session_credential_retirement.is_none()
+    }
+
     /// Whether this Launch has permanently ended and must surrender GitHub
     /// authorization while leaving its session and conversation intact.
     pub fn capability_requires_revocation(&self) -> bool {
@@ -28,6 +40,7 @@ impl Launch {
         } = renewal;
         let now = now.into();
         self.validate_capability_lease(lease, &now)?;
+        let admission = self.capability_authority_admission_for(lease)?.clone();
         reach.validate()?;
         connection.validate_for(
             &self
@@ -42,6 +55,17 @@ impl Launch {
             || authority.subject != self.owner
             || authority.service_id != connection.service_id
             || authority.detects_drift(&connection)
+            || reach.policy_generation != admission.target_policy_generation
+            || reach.expires_at_epoch_seconds != admission.target_policy_expires_at_epoch_seconds
+            || connection != admission.snapshot.connection
+            || authority != admission.snapshot.authority
+            || branch
+                != *admission.snapshot.branch.as_ref().ok_or_else(|| {
+                    TriggerValidationError::field(
+                        "capability_authority_admission.branch",
+                        "is missing from the committed renewal authority",
+                    )
+                })?
             || self
                 .reach
                 .as_ref()
@@ -57,11 +81,11 @@ impl Launch {
         })?;
         if branch.name != retained_branch.name
             || branch.expected_head != retained_branch.expected_head
-            || branch.canonical_url != retained_branch.canonical_url
+            || branch.created_at != retained_branch.created_at
         {
             return Err(TriggerValidationError::field(
                 "branch",
-                "the renewal observed a different Launch branch",
+                "the renewal observed a different Launch branch identity",
             ));
         }
         super::super::validate_sha("branch.current_head", &branch.current_head)?;
@@ -69,12 +93,41 @@ impl Launch {
         self.authority = Some(authority);
         self.branch = Some(branch);
         self.reach = Some(reach.clone());
+        self.capability_authority_admission = None;
         self.updated_at = now;
         self.push_event(
             self.updated_at.clone(),
             correlation_id,
             LaunchEventKind::ReachChanged { reach },
         )
+    }
+
+    /// Project the latest closed runtime refusal without treating readiness as
+    /// the complete per-call audit stream.
+    ///
+    /// Returns whether durable Launch state changed, so a maintenance worker
+    /// can avoid an otherwise empty revision and event.
+    pub fn record_capability_refusal_observation(
+        &mut self,
+        lease: &WorkerLease,
+        refusal: Option<CapabilityRefusal>,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<bool, TriggerValidationError> {
+        let now = now.into();
+        self.validate_capability_lease(lease, &now)?;
+        let reach = self.reach.as_mut().ok_or_else(|| {
+            TriggerValidationError::field("reach", "cannot observe an absent capability")
+        })?;
+        if reach.last_refusal == refusal {
+            return Ok(false);
+        }
+        reach.last_refusal = refusal;
+        reach.validate()?;
+        let reach = reach.clone();
+        self.updated_at = now.clone();
+        self.push_event(now, correlation_id, LaunchEventKind::ReachChanged { reach })?;
+        Ok(true)
     }
 
     /// Mark a lapsed active policy without claiming provider revocation.
@@ -112,6 +165,7 @@ impl Launch {
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
+        self.capability_authority_admission = None;
         let Some(reach) = self.reach.as_mut() else {
             return Ok(());
         };
@@ -173,6 +227,39 @@ impl Launch {
         let reach = reach.clone();
         self.updated_at = now.clone();
         self.push_event(now, correlation_id, LaunchEventKind::ReachChanged { reach })
+    }
+
+    /// Persist positive credential-custody settlement independently of Reach.
+    pub fn record_session_credential_retirement(
+        &mut self,
+        lease: &WorkerLease,
+        retirement: SessionCredentialRetirement,
+    ) -> Result<(), TriggerValidationError> {
+        self.validate_capability_lease(lease, &retirement.settled_at)?;
+        let expected = crate::trigger_session_id(&self.id)?;
+        if retirement.session_id != expected
+            || self
+                .session
+                .as_ref()
+                .is_some_and(|session| session.session_id != retirement.session_id)
+        {
+            return Err(TriggerValidationError::field(
+                "session_credential_retirement",
+                "does not settle this Launch's deterministic session identity",
+            ));
+        }
+        if let Some(current) = self.session_credential_retirement.as_ref() {
+            if current == &retirement {
+                return Ok(());
+            }
+            return Err(TriggerValidationError::field(
+                "session_credential_retirement",
+                "cannot replace positive custody settlement evidence",
+            ));
+        }
+        self.updated_at = retirement.settled_at.clone();
+        self.session_credential_retirement = Some(retirement);
+        Ok(())
     }
 
     fn validate_capability_lease(
