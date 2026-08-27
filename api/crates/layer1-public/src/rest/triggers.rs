@@ -398,6 +398,7 @@ impl From<TriggerRepositorySelection> for TriggerRepositorySelectionView {
 #[derive(Debug, Serialize, ToSchema)]
 struct TriggerDraftView {
     id: String,
+    selected_service_id: String,
     version: u64,
     next_revision_number: u32,
     #[schema(value_type = trigger_schema::TriggerRevisionContent)]
@@ -410,6 +411,7 @@ impl From<TriggerDraft> for TriggerDraftView {
     fn from(value: TriggerDraft) -> Self {
         Self {
             id: value.id.0,
+            selected_service_id: value.selected_service_id,
             version: value.version,
             next_revision_number: value.next_revision_number,
             content: value.content,
@@ -1260,7 +1262,12 @@ async fn create_trigger(
             .await?;
         let draft = state
             .triggers
-            .create_draft(caller.subject.clone(), content, now())
+            .create_draft(
+                caller.subject.clone(),
+                body.selected_service_id,
+                content,
+                now(),
+            )
             .await?;
         Ok((StatusCode::CREATED, Json(TriggerDraftView::from(draft))).into_response())
     }
@@ -1353,6 +1360,7 @@ async fn update_trigger(
                 &caller.subject,
                 &trigger_id,
                 body.expected_version,
+                body.selected_service_id,
                 content,
                 now(),
             )

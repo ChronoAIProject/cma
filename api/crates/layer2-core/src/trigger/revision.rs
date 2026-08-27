@@ -817,6 +817,9 @@ pub struct PublisherAuthority {
 pub struct TriggerDraft {
     pub id: TriggerId,
     pub owner: SubjectId,
+    /// Exact reusable connection that resolved and authorized this mutable draft.
+    #[serde(default)]
+    pub selected_service_id: String,
     pub version: u64,
     pub next_revision_number: u32,
     pub content: TriggerRevisionContent,
