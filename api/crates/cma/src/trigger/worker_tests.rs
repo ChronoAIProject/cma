@@ -5,25 +5,44 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use layer2_core::{
-    seconds_from_rfc3339, AuthorityProvenance, BillingMode, CommercialPolicy,
-    CommitAttributionPolicy, ConnectedAccount, ConnectionSnapshot, ConnectionState,
-    ContributionPolicy, CredentialRoute, DelegationState, EditableField, ExecutorPolicy,
-    InputFieldDefinition, InputFieldKind, Launch, LaunchAuthority, LaunchQuery, LaunchState,
-    LaunchStore, OverridePolicy, PermissionMode, PublicProjectionPolicy, PublicTriggerId,
-    PublishedRevision, PublisherAuthority, PullRequestDefaults, RepositoryAccessPolicy,
-    RepositoryIdentity, RepositoryOperationClass, RepositoryVisibility, RequiredCapability,
-    ResourcePolicy, ScopeClass, SessionSize, SetupPolicy, SourceMode, SubjectId,
-    TriggerAuthorityVerifier, TriggerDraft, TriggerId, TriggerPage, TriggerPageRequest,
-    TriggerRevision, TriggerRevisionContent, TriggerRevisionId, TriggerService,
-    TriggerServiceError, TriggerSessionPolicy, TriggerStore, TriggerStoreError, TriggerTask,
-    UpstreamRevision, WorkerLease, WorkflowChangePolicy, TRIGGER_SCHEMA_VERSION,
+    seconds_from_rfc3339, ActivityQuery, ActivityRecord, ActivityStore, AuthorityProvenance,
+    BillingMode, CommercialPolicy, CommitAttributionPolicy, ConnectedAccount, ConnectionSnapshot,
+    ConnectionState, ContributionPolicy, CredentialRoute, DelegationState, EditableField,
+    ExecutorPolicy, InputFieldDefinition, InputFieldKind, Launch, LaunchAuthority, LaunchQuery,
+    LaunchState, LaunchStore, OverridePolicy, PermissionMode, PublicProjectionPolicy,
+    PublicTriggerId, PublishedRevision, PublisherAuthority, PullRequestDefaults,
+    RepositoryAccessPolicy, RepositoryIdentity, RepositoryOperationClass, RepositoryVisibility,
+    RequiredCapability, ResourcePolicy, ScopeClass, SessionSize, SetupPolicy, SourceMode,
+    StoreError, SubjectId, TriggerAuthorityVerifier, TriggerDraft, TriggerId, TriggerPage,
+    TriggerPageRequest, TriggerRevision, TriggerRevisionContent, TriggerRevisionId,
+    TriggerRolloutPolicy, TriggerService, TriggerServiceError, TriggerSessionPolicy, TriggerStore,
+    TriggerStoreError, TriggerTask, UpstreamRevision, WorkerLease, WorkflowChangePolicy,
+    TRIGGER_SCHEMA_VERSION,
 };
 use serde_json::json;
+use tokio::sync::Mutex as AsyncMutex;
 
 use super::*;
 
 const NOW: &str = "2026-08-27T00:00:00Z";
 const LATER: &str = "2026-08-27T00:00:01Z";
+
+#[derive(Default)]
+pub(crate) struct RecordingActivityStore {
+    pub(crate) records: AsyncMutex<Vec<ActivityRecord>>,
+}
+
+#[async_trait]
+impl ActivityStore for RecordingActivityStore {
+    async fn append(&self, record: &ActivityRecord) -> Result<(), StoreError> {
+        self.records.lock().await.push(record.clone());
+        Ok(())
+    }
+
+    async fn recent(&self, _query: &ActivityQuery) -> Result<Vec<ActivityRecord>, StoreError> {
+        Ok(self.records.lock().await.clone())
+    }
+}
 
 struct TestClock {
     times: Mutex<VecDeque<SystemTime>>,
@@ -88,6 +107,269 @@ async fn claim_is_committed_before_the_executor_and_success_releases_the_lease()
     assert!(stored.lease.is_none());
     assert_eq!(stored.effects.len(), 1);
     assert_eq!(stored.effects[0].state, layer2_core::EffectState::Succeeded);
+}
+
+#[tokio::test]
+async fn effect_activity_retains_only_closed_safe_identifiers() {
+    let fixture = Fixture::new();
+    let executor = Arc::new(InspectingExecutor::complete(
+        Arc::clone(&fixture.store),
+        fixture.launch.authority.clone().unwrap(),
+    ));
+    let activity_store = Arc::new(RecordingActivityStore::default());
+    let worker = test_worker(
+        fixture.service(),
+        executor,
+        "activity-worker",
+        &[NOW, LATER],
+    )
+    .with_activity(layer2_core::ActivityService::new(activity_store.clone()));
+
+    assert_eq!(
+        worker
+            .run_once(&fixture.launch.id, 0, "effect-audit")
+            .await
+            .unwrap(),
+        EffectRunOutcome::Completed
+    );
+    let records = activity_store.records.lock().await;
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(
+        record.action,
+        layer2_core::ActivityAction::TriggerEffectExecute
+    );
+    assert_eq!(record.outcome, layer2_core::ActivityOutcome::Succeeded);
+    assert_eq!(
+        record.detail.get(layer2_core::DetailKey::Effect),
+        Some("preflight")
+    );
+    assert_eq!(
+        record.detail.iter().map(|(key, _)| key).collect::<Vec<_>>(),
+        vec![
+            layer2_core::DetailKey::Subject,
+            layer2_core::DetailKey::CorrelationId,
+            layer2_core::DetailKey::RevisionDigest,
+            layer2_core::DetailKey::RepositoryId,
+            layer2_core::DetailKey::GithubAccountId,
+            layer2_core::DetailKey::ServiceId,
+            layer2_core::DetailKey::Effect,
+            layer2_core::DetailKey::LaunchState,
+            layer2_core::DetailKey::FencingToken,
+        ]
+    );
+    let wire = serde_json::to_string(record).unwrap();
+    for forbidden in [
+        "prompt",
+        "credential",
+        "access_token",
+        "github_token",
+        "file_content",
+        "provider_body",
+    ] {
+        assert!(
+            !wire.contains(forbidden),
+            "audit record admitted {forbidden}: {wire}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn rollout_pause_and_resume_have_distinct_stable_audit_actions() {
+    let paused_launch = prompt_pending_launch();
+    let paused_store = Arc::new(TestStore::new(paused_launch.clone()));
+    let paused_service = Arc::new(
+        TriggerService::new(
+            paused_store.clone(),
+            paused_store.clone(),
+            Arc::new(NeverAuthority),
+        )
+        .with_rollout(Arc::new(rollout_policy(&paused_launch, true, false))),
+    );
+    let paused_executor = Arc::new(InspectingExecutor::complete(
+        Arc::clone(&paused_store),
+        paused_launch.authority.clone().unwrap(),
+    ));
+    let activity_store = Arc::new(RecordingActivityStore::default());
+    let paused_worker = test_worker(
+        paused_service,
+        paused_executor,
+        "pause-audit-worker",
+        &[NOW],
+    )
+    .with_activity(layer2_core::ActivityService::new(activity_store.clone()));
+    assert_eq!(
+        paused_worker
+            .run_once(
+                &paused_launch.id,
+                paused_launch.revision_number,
+                "pause-audit",
+            )
+            .await
+            .unwrap(),
+        EffectRunOutcome::Paused
+    );
+
+    let mut resumed_launch = launch_fixture();
+    resumed_launch
+        .block(
+            layer2_core::LaunchBlockedReason::FeaturePaused,
+            NOW,
+            "old-pause",
+        )
+        .unwrap();
+    let resumed_store = Arc::new(TestStore::new(resumed_launch.clone()));
+    let resumed_service = Arc::new(TriggerService::new(
+        resumed_store.clone(),
+        resumed_store.clone(),
+        Arc::new(NeverAuthority),
+    ));
+    let resumed_executor = Arc::new(InspectingExecutor::complete(
+        resumed_store,
+        resumed_launch.authority.clone().unwrap(),
+    ));
+    let resumed_worker = test_worker(
+        resumed_service,
+        resumed_executor,
+        "resume-audit-worker",
+        &[NOW, LATER],
+    )
+    .with_activity(layer2_core::ActivityService::new(activity_store.clone()));
+    assert_eq!(
+        resumed_worker
+            .run_once(
+                &resumed_launch.id,
+                resumed_launch.revision_number,
+                "resume-audit",
+            )
+            .await
+            .unwrap(),
+        EffectRunOutcome::Completed
+    );
+
+    let records = activity_store.records.lock().await;
+    assert_eq!(records.len(), 3);
+    assert_eq!(
+        records[0].action,
+        layer2_core::ActivityAction::TriggerOrchestrationPause
+    );
+    assert_eq!(
+        records[0].detail.get(layer2_core::DetailKey::RolloutReason),
+        Some("orchestration_paused")
+    );
+    assert_eq!(
+        records[1].action,
+        layer2_core::ActivityAction::TriggerOrchestrationResume
+    );
+    assert_eq!(
+        records[1].detail.get(layer2_core::DetailKey::RolloutReason),
+        Some("rollout_permitted")
+    );
+    assert_eq!(
+        records[2].action,
+        layer2_core::ActivityAction::TriggerEffectExecute
+    );
+}
+
+#[tokio::test]
+async fn rollout_pause_is_persisted_before_any_effect_and_preserves_the_session() {
+    let launch = prompt_pending_launch();
+    let original_session = launch.session.clone();
+    let original_state = launch.state;
+    let store = Arc::new(TestStore::new(launch.clone()));
+    let service = Arc::new(
+        TriggerService::new(store.clone(), store.clone(), Arc::new(NeverAuthority))
+            .with_rollout(Arc::new(rollout_policy(&launch, true, false))),
+    );
+    let executor = Arc::new(InspectingExecutor::complete(
+        Arc::clone(&store),
+        launch.authority.clone().unwrap(),
+    ));
+    let worker = test_worker(service, Arc::clone(&executor), "paused-worker", &[NOW]);
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, launch.revision_number, "rollout-paused")
+            .await
+            .unwrap(),
+        EffectRunOutcome::Paused
+    );
+    assert_eq!(executor.execute_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.reconcile_calls.load(Ordering::SeqCst), 0);
+    let current = store.current();
+    assert_eq!(current.state, original_state);
+    assert_eq!(current.session, original_session);
+    assert_eq!(
+        current.blocked_reason,
+        Some(layer2_core::LaunchBlockedReason::FeaturePaused)
+    );
+    assert!(current.lease.is_none());
+    assert!(current.events.iter().any(|event| matches!(
+        event.kind,
+        layer2_core::LaunchEventKind::Blocked {
+            reason: layer2_core::LaunchBlockedReason::FeaturePaused
+        }
+    )));
+}
+
+#[tokio::test]
+async fn rollout_resume_is_committed_before_the_next_effect_claim() {
+    let mut launch = launch_fixture();
+    launch
+        .block(
+            layer2_core::LaunchBlockedReason::FeaturePaused,
+            NOW,
+            "pause-before-restart",
+        )
+        .unwrap();
+    let store = Arc::new(TestStore::new(launch.clone()));
+    let service = Arc::new(TriggerService::new(
+        store.clone(),
+        store.clone(),
+        Arc::new(NeverAuthority),
+    ));
+    let executor = Arc::new(InspectingExecutor::complete(
+        Arc::clone(&store),
+        launch.authority.clone().unwrap(),
+    ));
+    let worker = test_worker(
+        service,
+        Arc::clone(&executor),
+        "resumed-worker",
+        &[NOW, LATER],
+    );
+
+    assert_eq!(
+        worker
+            .run_once(&launch.id, launch.revision_number, "rollout-resumed")
+            .await
+            .unwrap(),
+        EffectRunOutcome::Completed
+    );
+    assert_eq!(executor.execute_calls.load(Ordering::SeqCst), 1);
+    let current = store.current();
+    assert_eq!(current.blocked_reason, None);
+    let resumed = current
+        .events
+        .iter()
+        .position(|event| matches!(event.kind, layer2_core::LaunchEventKind::Resumed { .. }))
+        .unwrap();
+    let claimed_step = current
+        .events
+        .iter()
+        .position(|event| {
+            matches!(
+                event.kind,
+                layer2_core::LaunchEventKind::StepChanged {
+                    step: layer2_core::LaunchStep {
+                        status: layer2_core::LaunchStepStatus::Running,
+                        ..
+                    }
+                }
+            )
+        })
+        .unwrap();
+    assert!(resumed < claimed_step);
 }
 
 #[tokio::test]
@@ -681,6 +963,33 @@ pub(crate) fn service_for_launch(launch: Launch) -> Arc<TriggerService> {
     ))
 }
 
+pub(crate) fn service_for_launch_with_rollout(
+    launch: Launch,
+    rollout: TriggerRolloutPolicy,
+) -> Arc<TriggerService> {
+    let store = Arc::new(TestStore::new(launch));
+    Arc::new(
+        TriggerService::new(store.clone(), store, Arc::new(NeverAuthority))
+            .with_rollout(Arc::new(rollout)),
+    )
+}
+
+pub(crate) fn rollout_policy(
+    launch: &Launch,
+    orchestration_paused: bool,
+    capability_kill_switch: bool,
+) -> TriggerRolloutPolicy {
+    TriggerRolloutPolicy::new(
+        true,
+        orchestration_paused,
+        capability_kill_switch,
+        [launch.revision.content.publisher_subject_id.0.clone()],
+        [launch.revision.content.upstream.repository.repository_id],
+        100,
+    )
+    .unwrap()
+}
+
 struct TestStore {
     launch: Mutex<Launch>,
 }
@@ -701,6 +1010,15 @@ impl TestStore {
 impl LaunchStore for TestStore {
     async fn insert_or_get_current(&self, launch: &Launch) -> Result<Launch, TriggerStoreError> {
         Ok(launch.clone())
+    }
+
+    async fn get_current_launch(
+        &self,
+        owner: &SubjectId,
+        revision: &TriggerRevisionId,
+    ) -> Result<Option<Launch>, TriggerStoreError> {
+        let launch = self.current();
+        Ok((&launch.owner == owner && &launch.revision.id == revision).then_some(launch))
     }
 
     async fn insert_new(&self, _launch: &Launch) -> Result<(), TriggerStoreError> {

@@ -1,14 +1,41 @@
 use async_trait::async_trait;
 
 use super::{
-    DiffArtifact, DiffArtifactId, Launch, LaunchId, LaunchState, PublicTriggerId, TriggerDraft,
-    TriggerId, TriggerRevision, TriggerRevisionId, WorkerLease, WorkspaceCheckpoint,
-    WorkspaceManifest,
+    CapabilityRevocationState, DiffArtifact, DiffArtifactId, Launch, LaunchId, LaunchState,
+    PublicTriggerId, TriggerDraft, TriggerId, TriggerRevision, TriggerRevisionId, WorkerLease,
+    WorkspaceCheckpoint, WorkspaceManifest,
 };
 use crate::SubjectId;
 
 pub const DEFAULT_TRIGGER_PAGE_SIZE: u32 = 50;
 pub const MAX_TRIGGER_PAGE_SIZE: u32 = 200;
+
+pub const TRIGGER_WORKER_STATES: [LaunchState; 11] = [
+    LaunchState::Preflight,
+    LaunchState::ForkPending,
+    LaunchState::ForkReady,
+    LaunchState::BranchPending,
+    LaunchState::WorkspacePending,
+    LaunchState::SandboxPending,
+    LaunchState::SessionPending,
+    LaunchState::PromptPending,
+    LaunchState::Contributing,
+    LaunchState::PrPending,
+    LaunchState::FailedRetryable,
+];
+
+pub const TRIGGER_CAPABILITY_STATES: [LaunchState; 10] = [
+    LaunchState::PromptPending,
+    LaunchState::Ready,
+    LaunchState::Contributing,
+    LaunchState::PrPending,
+    LaunchState::PrOpen,
+    LaunchState::Completed,
+    LaunchState::AuthRequired,
+    LaunchState::FailedRetryable,
+    LaunchState::FailedTerminal,
+    LaunchState::Cancelled,
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TriggerPageRequest {
@@ -124,14 +151,105 @@ pub trait LaunchStore: Send + Sync {
     /// Inserts a draft, or returns the current Launch for the same owner and revision.
     async fn insert_or_get_current(&self, launch: &Launch) -> Result<Launch, TriggerStoreError>;
 
+    /// Returns the current README-click Launch without creating a replacement.
+    async fn get_current_launch(
+        &self,
+        owner: &SubjectId,
+        revision: &TriggerRevisionId,
+    ) -> Result<Option<Launch>, TriggerStoreError>;
+
     async fn insert_new(&self, launch: &Launch) -> Result<(), TriggerStoreError>;
 
     async fn get_launch(&self, id: &LaunchId) -> Result<Option<Launch>, TriggerStoreError>;
+
+    /// Resolve an operator-facing correlation without exposing a collection
+    /// scan through the public service contract.
+    async fn find_launch_by_correlation_id(
+        &self,
+        _correlation_id: &str,
+    ) -> Result<Option<Launch>, TriggerStoreError> {
+        Ok(None)
+    }
 
     async fn list_launches(
         &self,
         query: &LaunchQuery,
     ) -> Result<TriggerPage<Launch>, TriggerStoreError>;
+
+    /// Current Launches that may claim a normal orchestration effect.
+    async fn list_worker_candidates(
+        &self,
+        updated_before: Option<String>,
+        page: &TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
+        self.list_launches(&LaunchQuery {
+            owner: None,
+            states: TRIGGER_WORKER_STATES.to_vec(),
+            updated_before,
+            page: page.clone(),
+        })
+        .await
+    }
+
+    /// Current Launches with reach that still requires renewal or revocation.
+    async fn list_capability_candidates(
+        &self,
+        page: &TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
+        let mut candidates = self
+            .list_launches(&LaunchQuery {
+                owner: None,
+                states: TRIGGER_CAPABILITY_STATES.to_vec(),
+                updated_before: None,
+                page: page.clone(),
+            })
+            .await?;
+        candidates.items.retain(|launch| {
+            launch
+                .reach
+                .as_ref()
+                .is_some_and(|reach| reach.state != CapabilityRevocationState::Revoked)
+        });
+        Ok(candidates)
+    }
+
+    /// Terminal Launches whose CMA-owned objects crossed their retention fence.
+    async fn list_cleanup_candidates(
+        &self,
+        delete_before: &str,
+        page: &TriggerPageRequest,
+    ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
+        let candidates = self
+            .list_launches(&LaunchQuery {
+                owner: None,
+                states: vec![
+                    LaunchState::Completed,
+                    LaunchState::FailedTerminal,
+                    LaunchState::Cancelled,
+                ],
+                updated_before: None,
+                page: page.clone(),
+            })
+            .await?;
+        Ok(TriggerPage {
+            items: candidates
+                .items
+                .into_iter()
+                .filter(|launch| {
+                    launch
+                        .workspace
+                        .as_ref()
+                        .is_some_and(|workspace| workspace.delete_after.as_str() <= delete_before)
+                        && launch
+                            .cleanup
+                            .as_ref()
+                            .and_then(|cleanup| cleanup.completed_at.as_ref())
+                            .is_none()
+                })
+                .collect(),
+            next: candidates.next,
+        })
+    }
 
     /// Replaces one aggregate only when both its optimistic revision and worker fence match.
     async fn replace_launch(

@@ -160,6 +160,111 @@ fn delivery_wire_enum_is_closed_to_seven_values() {
 }
 
 #[test]
+fn cleanup_dry_run_can_only_name_cma_owned_object_classes() {
+    let now = "2026-09-27T12:00:00Z";
+    let mut launch = reviewed_launch();
+    launch.state = LaunchState::Cancelled;
+    launch.terminal_at = Some(NOW.into());
+    launch.reach.as_mut().unwrap().state = CapabilityRevocationState::Revoked;
+    launch.fencing_counter = 7;
+    launch.lease = Some(WorkerLease {
+        holder: "cleanup-test".into(),
+        fencing_token: 7,
+        acquired_at: now.into(),
+        expires_at: "2026-09-27T12:02:00Z".into(),
+    });
+    let lease = launch.lease.clone().unwrap();
+
+    let plan = launch.plan_cleanup(&lease, now, "cleanup-dry-run").unwrap();
+    assert_eq!(plan.retention_policy_id, "trigger-test-retention");
+    assert_eq!(
+        plan.targets,
+        vec![
+            CleanupTarget::DiffArtifact {
+                artifact_id: launch.diff.as_ref().unwrap().id.clone(),
+            },
+            CleanupTarget::Checkpoint {
+                checkpoint_id: launch
+                    .workspace
+                    .as_ref()
+                    .unwrap()
+                    .latest_checkpoint
+                    .as_ref()
+                    .unwrap()
+                    .id
+                    .clone(),
+            },
+            CleanupTarget::Baseline,
+        ]
+    );
+    let wire = serde_json::to_string(&plan).unwrap();
+    for forbidden in ["sandbox", "fork", "branch", "commit", "pull_request"] {
+        assert!(
+            !wire.contains(forbidden),
+            "cleanup target vocabulary admitted {forbidden}: {wire}"
+        );
+    }
+}
+
+#[test]
+fn terminal_cleanup_waits_for_retention_and_capability_revocation_then_is_fenced() {
+    let after_retention = "2026-09-27T12:00:00Z";
+    let mut launch = reviewed_launch();
+    launch.state = LaunchState::Cancelled;
+    launch.terminal_at = Some(NOW.into());
+    launch.fencing_counter = 11;
+    launch.lease = Some(WorkerLease {
+        holder: "cleanup-test".into(),
+        fencing_token: 11,
+        acquired_at: after_retention.into(),
+        expires_at: "2026-09-27T12:02:00Z".into(),
+    });
+    let lease = launch.lease.clone().unwrap();
+
+    assert!(!launch.cleanup_due("2026-09-01T00:00:00Z").unwrap());
+    assert!(
+        !launch.cleanup_due(after_retention).unwrap(),
+        "an active credential must retain its evidence until revocation settles"
+    );
+    launch.reach.as_mut().unwrap().state = CapabilityRevocationState::Revoked;
+    assert!(launch.cleanup_due(after_retention).unwrap());
+
+    let claim = launch
+        .claim_next_effect(&lease, after_retention, "cleanup-claim")
+        .unwrap()
+        .expect("retention creates one fenced cleanup effect");
+    assert_eq!(claim.kind, LaunchEffectKind::Cleanup);
+    let targets = launch.cleanup.as_ref().unwrap().plan.targets.clone();
+    launch
+        .complete_effect(
+            &lease,
+            &claim,
+            EffectCompletion {
+                result: LaunchEffectResult::Cleanup {
+                    receipt: CleanupReceipt {
+                        targets: targets.clone(),
+                        completed_at: after_retention.into(),
+                    },
+                },
+                safe_detail: "CMA-owned retained objects were deleted.".into(),
+                external_resource_ids: BTreeMap::from([(
+                    "cleanup_target_count".into(),
+                    targets.len().to_string(),
+                )]),
+                now: after_retention.into(),
+                correlation_id: "cleanup-complete".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(launch.state, LaunchState::Cancelled);
+    assert_eq!(
+        launch.cleanup.as_ref().unwrap().completed_at.as_deref(),
+        Some(after_retention)
+    );
+    assert!(!launch.cleanup_due(after_retention).unwrap());
+}
+
+#[test]
 fn prompt_delivery_progress_is_identity_bound_monotonic_and_evented() {
     let session_launch = session_launch(&"a".repeat(64));
     let session_id = crate::service::trigger_session_origin(&session_launch)
@@ -1617,6 +1722,173 @@ async fn a_readme_reclick_resumes_current_and_new_launch_explicitly_supersedes_i
 }
 
 #[tokio::test]
+async fn a_readme_reclick_can_open_the_current_launch_while_rollout_is_paused() {
+    let publisher = SubjectId("publisher".into());
+    let contributor = SubjectId("contributor".into());
+    let (service, store) = service();
+    let draft = service
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = service
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    let current = service
+        .create_or_resume_launch(
+            contributor.clone(),
+            &published.revision.public_id,
+            NOW,
+            "first-click",
+        )
+        .await
+        .unwrap();
+    let repository_id = published.revision.content.upstream.repository.repository_id;
+    let paused =
+        TriggerService::new(store.clone(), store, Arc::new(TestAuthority)).with_rollout(Arc::new(
+            TriggerRolloutPolicy::new(
+                true,
+                true,
+                false,
+                [publisher.0.clone()],
+                [repository_id],
+                100,
+            )
+            .unwrap(),
+        ));
+
+    let reclick = paused
+        .create_or_resume_launch(
+            contributor,
+            &published.revision.public_id,
+            LATER,
+            "paused-reclick",
+        )
+        .await
+        .unwrap();
+    assert_eq!(reclick.id, current.id);
+    assert_eq!(reclick.revision_number, current.revision_number);
+
+    let denied = paused
+        .create_or_resume_launch(
+            SubjectId("new-contributor".into()),
+            &published.revision.public_id,
+            LATER,
+            "paused-first-click",
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        denied,
+        TriggerServiceError::Rollout(TriggerRolloutDenial::OrchestrationPaused)
+    ));
+}
+
+#[tokio::test]
+async fn repeated_paused_start_preserves_the_first_durable_pause_revision() {
+    let owner = SubjectId("contributor".into());
+    let mut launch = Launch::new(owner.clone(), revision(owner.clone()), NOW, "create").unwrap();
+    launch
+        .select_connection(connection(), NOW, "select-connection")
+        .unwrap();
+    let repository_id = launch.revision.content.upstream.repository.repository_id;
+    let publisher = launch.revision.content.publisher_subject_id.clone();
+    let id = launch.id.clone();
+    let digest = launch.effective.digest.clone();
+    let (base, store) = service();
+    store.insert_new(&launch).await.unwrap();
+    let paused = TriggerService::new(store.clone(), store.clone(), Arc::new(TestAuthority))
+        .with_rollout(Arc::new(
+            TriggerRolloutPolicy::new(true, true, false, [publisher.0], [repository_id], 100)
+                .unwrap(),
+        ));
+
+    let command = |expected_revision, correlation_id: &str| StartLaunchCommand {
+        expected_revision,
+        confirmation: confirmation(ConfirmationAction::Start, &owner, &digest),
+        acknowledge_workflow_risk: false,
+        now: LATER.into(),
+        correlation_id: correlation_id.into(),
+    };
+    assert!(matches!(
+        paused
+            .start(
+                &owner,
+                &id,
+                command(launch.revision_number, "first-paused-start")
+            )
+            .await,
+        Err(TriggerServiceError::Rollout(
+            TriggerRolloutDenial::OrchestrationPaused
+        ))
+    ));
+    let first = base.get_launch(&owner, &id).await.unwrap();
+    assert_eq!(
+        first.blocked_reason,
+        Some(LaunchBlockedReason::FeaturePaused)
+    );
+    let event_count = first.events.len();
+
+    assert!(matches!(
+        paused
+            .start(
+                &owner,
+                &id,
+                command(first.revision_number, "second-paused-start")
+            )
+            .await,
+        Err(TriggerServiceError::Rollout(
+            TriggerRolloutDenial::OrchestrationPaused
+        ))
+    ));
+    let second = base.get_launch(&owner, &id).await.unwrap();
+    assert_eq!(second.revision_number, first.revision_number);
+    assert_eq!(second.events.len(), event_count);
+    assert_eq!(second.blocked_reason, first.blocked_reason);
+}
+
+#[tokio::test]
+async fn capability_inventory_excludes_absent_and_effectively_revoked_reach() {
+    let (service, store) = service();
+    let active = reviewed_launch();
+    let active_id = active.id.clone();
+    store.insert_new(&active).await.unwrap();
+
+    let mut revoked = reviewed_launch();
+    let revoked_id = revoked.id.clone();
+    let reach = revoked.reach.as_mut().unwrap();
+    reach.state = CapabilityRevocationState::Revoked;
+    reach.policy_generation = 2;
+    reach.revocation_requested_at = Some(NOW.into());
+    reach.revocation_effective_at = Some(LATER.into());
+    reach.tombstone_acknowledged = true;
+    store.insert_new(&revoked).await.unwrap();
+
+    let mut absent = reviewed_launch();
+    let absent_id = absent.id.clone();
+    absent.reach = None;
+    store.insert_new(&absent).await.unwrap();
+
+    let page = service
+        .capability_candidates(TriggerPageRequest::default())
+        .await
+        .unwrap();
+    let ids = page
+        .items
+        .into_iter()
+        .map(|launch| launch.id)
+        .collect::<Vec<_>>();
+    assert!(ids.contains(&active_id));
+    assert!(!ids.contains(&revoked_id));
+    assert!(!ids.contains(&absent_id));
+}
+
+#[tokio::test]
 async fn expired_worker_takeover_fences_the_old_worker() {
     let owner = SubjectId("contributor".into());
     let (service, store) = service();
@@ -1960,6 +2232,10 @@ fn revision(owner: SubjectId) -> TriggerRevision {
     }
 }
 
+pub(crate) fn revision_fixture(owner: SubjectId) -> TriggerRevision {
+    revision(owner)
+}
+
 fn publisher_authority(subject: &SubjectId) -> PublisherAuthority {
     PublisherAuthority {
         subject: subject.clone(),
@@ -2288,6 +2564,19 @@ impl LaunchStore for MemoryTriggerStore {
         data.current.insert(key, launch.id.clone());
         data.launches.insert(launch.id.clone(), launch.clone());
         Ok(launch.clone())
+    }
+
+    async fn get_current_launch(
+        &self,
+        owner: &SubjectId,
+        revision: &TriggerRevisionId,
+    ) -> Result<Option<Launch>, TriggerStoreError> {
+        let data = self.inner.lock().unwrap();
+        Ok(data
+            .current
+            .get(&(owner.0.clone(), revision.0.clone()))
+            .and_then(|id| data.launches.get(id))
+            .cloned())
     }
 
     async fn insert_new(&self, launch: &Launch) -> Result<(), TriggerStoreError> {

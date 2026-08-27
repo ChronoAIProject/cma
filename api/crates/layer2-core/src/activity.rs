@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::activity_detail::{ActivityDetail, DetailKey};
 use crate::clock::now_rfc3339;
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
+use crate::trigger::{LaunchId, PublicTriggerId, TriggerId, TriggerRevisionId};
 
 /// Most entries one read may return.
 pub const MAX_ACTIVITY_LIMIT: usize = 500;
@@ -129,6 +130,44 @@ pub enum ActivityAction {
     PlatformSettingsWrite,
     /// The session briefing was restored to its shipped text.
     PlatformSettingsReset,
+    TriggerPreviewRead,
+    TriggerDraftCreate,
+    TriggerDraftRead,
+    TriggerDraftList,
+    TriggerDraftUpdate,
+    TriggerRevisionPublish,
+    TriggerRevisionRead,
+    TriggerRevisionList,
+    TriggerRevisionRetire,
+    TriggerConnectionList,
+    TriggerConnectionBegin,
+    TriggerConnectionReconnect,
+    TriggerConnectionPreflight,
+    TriggerRepositoryResolve,
+    TriggerLaunchCreate,
+    TriggerLaunchRead,
+    TriggerLaunchList,
+    TriggerLaunchDraftUpdate,
+    TriggerLaunchConnectionSelect,
+    TriggerLaunchStart,
+    TriggerLaunchDiffReview,
+    TriggerLaunchDiffRead,
+    TriggerLaunchContributionPublish,
+    TriggerLaunchPullRequestReview,
+    TriggerLaunchPullRequestOpen,
+    TriggerLaunchPullRequestUpdate,
+    TriggerLaunchDiffDownload,
+    TriggerLaunchCancel,
+    TriggerLaunchEventsRead,
+    TriggerLaunchSupportRead,
+    TriggerOrchestrationPause,
+    TriggerOrchestrationResume,
+    TriggerEffectExecute,
+    TriggerEffectReconcile,
+    TriggerCapabilityRenew,
+    TriggerCapabilityRevoke,
+    TriggerCleanupPlan,
+    TriggerCleanupExecute,
 }
 
 /// What an action was taken on.
@@ -145,6 +184,16 @@ pub enum ActivityTarget {
     EnvironmentProfile(EnvironmentProfileId),
     /// One subject, when the action concerns a person rather than a resource.
     Subject(SubjectId),
+    /// One mutable publisher Trigger draft.
+    Trigger(TriggerId),
+    /// One immutable Trigger revision.
+    TriggerRevision(TriggerRevisionId),
+    /// One public README-facing Trigger identifier.
+    PublicTrigger(PublicTriggerId),
+    /// One contributor Launch.
+    Launch(LaunchId),
+    /// One exact NyxID GitHub UserService identifier.
+    TriggerConnection(String),
 }
 
 impl ActivityTarget {
@@ -154,6 +203,11 @@ impl ActivityTarget {
             Self::Session(id) => id.as_str(),
             Self::EnvironmentProfile(id) => id.as_str(),
             Self::Subject(id) => id.as_str(),
+            Self::Trigger(id) => id.0.as_str(),
+            Self::TriggerRevision(id) => id.0.as_str(),
+            Self::PublicTrigger(id) => id.0.as_str(),
+            Self::Launch(id) => id.0.as_str(),
+            Self::TriggerConnection(id) => id.as_str(),
         }
     }
 }
