@@ -67,7 +67,7 @@ Deferred policy tracks are explicit rather than partially enabled:
 - a GitHub App requires the replacement ADR described in section 8; and
 - #705 may strengthen recipient-side prompt deduplication after the MVP.
 
-The current `ChronoAIProject/chrono-bot` repository is internal and has
+The current `ChronoAIProject/cma` repository is internal and has
 forking disabled. It is not an MVP fixture. #673 owns a disposable public
 fixture and public-release evidence.
 
