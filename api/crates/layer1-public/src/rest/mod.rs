@@ -32,7 +32,8 @@ mod openapi_shapes;
 mod operate;
 mod problems;
 mod tickets;
-mod triggers;
+mod trigger_openapi_shapes;
+pub(crate) mod triggers;
 
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
@@ -54,6 +55,7 @@ const CONFORMS_TO: &[&str] = &[
     "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
     "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
     "https://spec.chrono-ai.fun/cma/1.0/conf/usage",
+    "https://spec.chrono-ai.fun/cma/1.0/conf/trigger",
 ];
 
 const BUILD_SHA: &str = match option_env!("CHRONO_BUILD_SHA") {
@@ -119,6 +121,18 @@ impl InterfaceProfile for RestInterface {
             Operation::GetUsage,
             Operation::GetSpend,
             Operation::ChangePlane,
+            Operation::ReadTriggerPreview,
+            Operation::ManageTriggers,
+            Operation::ManageTriggerConnections,
+            Operation::CreateLaunch,
+            Operation::ReadLaunch,
+            Operation::UpdateLaunchDraft,
+            Operation::StartLaunch,
+            Operation::CancelLaunch,
+            Operation::ReplayLaunchProgress,
+            Operation::ReadLaunchDiff,
+            Operation::PublishLaunchContribution,
+            Operation::ManageLaunchPullRequest,
         ]
     }
 }

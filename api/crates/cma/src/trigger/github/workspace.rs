@@ -250,9 +250,7 @@ impl GithubBroker {
                 None,
             )
             .await?;
-        if blob.value.sha.to_ascii_lowercase() != object_id.to_ascii_lowercase()
-            || blob.value.encoding != "base64"
-        {
+        if !blob.value.sha.eq_ignore_ascii_case(object_id) || blob.value.encoding != "base64" {
             return Err(GithubBrokerError::AuthorityDrift);
         }
         let encoded: String = blob

@@ -82,7 +82,7 @@ enum PendingOperation {
     },
     RetainedCompletion {
         retained: Box<dyn RetainedCommitWork>,
-        outcome: Result<SessionRecord, StoreError>,
+        outcome: Box<Result<SessionRecord, StoreError>>,
     },
     ObserveRecord(Option<Box<SessionRecord>>),
     #[cfg(test)]
@@ -1198,7 +1198,7 @@ impl SessionLog {
             if let Some(retained) = retained.take() {
                 self.enqueue(PendingOperation::RetainedCompletion {
                     retained,
-                    outcome: Err(error),
+                    outcome: Box::new(Err(error)),
                 });
             } else {
                 let _ = complete.send(Err(error));
@@ -1240,7 +1240,7 @@ impl SessionLog {
                                 .queued
                                 .push_back(PendingOperation::RetainedCompletion {
                                     retained,
-                                    outcome: Err(error),
+                                    outcome: Box::new(Err(error)),
                                 });
                             let start = if state.running {
                                 false
@@ -1271,7 +1271,7 @@ impl SessionLog {
                             .queued
                             .push_back(PendingOperation::RetainedCompletion {
                                 retained,
-                                outcome: Err(error),
+                                outcome: Box::new(Err(error)),
                             });
                         let start = if state.running {
                             false
@@ -1575,7 +1575,7 @@ impl SessionLog {
                     }
                 }
                 PendingOperation::RetainedCompletion { retained, outcome } => {
-                    retained.prepare_outcome(outcome.clone());
+                    retained.prepare_outcome((**outcome).clone());
                     retained.finish().await;
                 }
                 #[cfg(test)]
@@ -1847,7 +1847,7 @@ impl SessionLog {
                 .queued
                 .push_back(PendingOperation::RetainedCompletion {
                     retained,
-                    outcome: Err(error),
+                    outcome: Box::new(Err(error)),
                 });
         }
     }

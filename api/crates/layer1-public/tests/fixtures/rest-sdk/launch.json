@@ -1,0 +1,340 @@
+{
+  "id": "44444444-4444-4444-8444-444444444444",
+  "trigger_public_id": "33333333-3333-4333-8333-333333333333",
+  "revision_digest": "e49c49f8e2459f64d9f594ec060c89254d7dc03f07b468db5f51bd0f87603086",
+  "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "state": "draft",
+  "revision_number": 0,
+  "revision_content": {
+    "schema_version": 1,
+    "trigger_id": "11111111-1111-4111-8111-111111111111",
+    "revision_number": 1,
+    "publisher_subject_id": "publisher",
+    "publisher_display_identity": "Chrono Maintainer",
+    "upstream": {
+      "repository": {
+        "repository_id": 10,
+        "repository_node_id": "R_upstream",
+        "owner_id": 20,
+        "owner_node_id": "U_upstream_owner",
+        "canonical_owner": "upstream-owner",
+        "canonical_name": "project",
+        "visibility": "public",
+        "allow_forking": true,
+        "default_branch": "main",
+        "selected_ref": "main"
+      },
+      "source_mode": "pinned_commit",
+      "observed_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contribution_base_ref": "main"
+    },
+    "task": {
+      "public_summary": "Fix one bounded issue",
+      "prompt_template": "PRIVATE_TRIGGER_PROMPT {{topic}}",
+      "renderer_version": 1,
+      "input_fields": [
+        {
+          "key": "topic",
+          "kind": {
+            "text": {
+              "min_bytes": 1,
+              "max_bytes": 100
+            }
+          },
+          "required": true,
+          "default": "the selected issue",
+          "editable": true
+        }
+      ]
+    },
+    "session": {
+      "required_capabilities": [
+        "conversation",
+        "durable_conversation",
+        "workspace_checkpoint",
+        "restricted_service_gateway",
+        "credential_refresh",
+        "credential_revocation"
+      ],
+      "permission_ceiling": "autonomous",
+      "sandbox_profile": "cma-trigger-v1",
+      "resources": {
+        "default": {
+          "cpu_millis": 500,
+          "memory_mib": 1024
+        },
+        "ceiling": {
+          "cpu_millis": 1000,
+          "memory_mib": 2048
+        }
+      },
+      "timeout_default_seconds": 3600,
+      "timeout_ceiling_seconds": 7200
+    },
+    "repository_access": {
+      "credential_route": "contributor_connection",
+      "required_scope_classes": [
+        "public_repository"
+      ],
+      "allowed_operation_classes": [
+        "repository_read"
+      ],
+      "workflow_change_policy": "refuse"
+    },
+    "setup": {
+      "executor_policy": "disabled",
+      "steps": []
+    },
+    "contribution": {
+      "branch_prefix": "cma/",
+      "commit_attribution": "contributor_no_reply",
+      "pull_request": {
+        "title_template": "CMA contribution",
+        "body_template": "Created by CMA"
+      }
+    },
+    "commercial_policy": {
+      "billing_mode": "zero_cost",
+      "policy_reference": "public-zero-cost-v1"
+    },
+    "override_policy": {
+      "editable_fields": [
+        "task_input"
+      ],
+      "optional_checks": []
+    },
+    "public_projection": {
+      "version": 1
+    }
+  },
+  "blocked_reason": null,
+  "failure": null,
+  "overrides": {
+    "task_inputs": {},
+    "optional_checks": []
+  },
+  "effective": {
+    "rendered_prompt": "PRIVATE_TRIGGER_PROMPT the selected issue",
+    "branch_suffix": "work",
+    "permission": "autonomous",
+    "resource_size": {
+      "cpu_millis": 500,
+      "memory_mib": 1024
+    },
+    "timeout_seconds": 3600,
+    "optional_checks": [],
+    "digest": "c23ff59781e162fe7c00481c5398a1d22da9b4e6626ef7b30596b780e277f4b1"
+  },
+  "pricing": null,
+  "connection": {
+    "service_id": "service-1",
+    "state_version": 2,
+    "state": "active",
+    "account_id": 21,
+    "account_node_id": "U_contributor",
+    "account_login": "contributor",
+    "avatar_url": null,
+    "granted_scopes": [
+      "public_repo"
+    ],
+    "consent_observed_at": "2026-08-26T12:00:00Z"
+  },
+  "workflow_paths": [],
+  "workflow_risk_acknowledged": false,
+  "steps": [
+    {
+      "key": "review",
+      "sequence": 1,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "authentication",
+      "sequence": 2,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "preflight",
+      "sequence": 3,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "fork",
+      "sequence": 4,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "branch",
+      "sequence": 5,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "workspace",
+      "sequence": 6,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "sandbox",
+      "sequence": 7,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "session",
+      "sequence": 8,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "reach",
+      "sequence": 9,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "initial_prompt",
+      "sequence": 10,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "checkpoint",
+      "sequence": 11,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "diff",
+      "sequence": 12,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "publish_branch",
+      "sequence": 13,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "pull_request",
+      "sequence": 14,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    },
+    {
+      "key": "cleanup",
+      "sequence": 15,
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "attempt": 0,
+      "safe_detail": "",
+      "remediation": "",
+      "external_resource_ids": {},
+      "correlation_id": "create"
+    }
+  ],
+  "fork": null,
+  "branch": null,
+  "workspace": null,
+  "session": null,
+  "reach": null,
+  "delivery": null,
+  "contribution_checkpoint_version": null,
+  "diff": null,
+  "contribution": null,
+  "pull_request": null,
+  "created_at": "2026-08-26T12:00:00Z",
+  "updated_at": "2026-08-26T12:00:00Z",
+  "started_at": null,
+  "terminal_at": null
+}
