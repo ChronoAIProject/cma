@@ -51,6 +51,7 @@ fn with(path: Option<&str>, body: Option<&str>, f: impl FnOnce()) {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_kernel_that_needs_a_file_gets_exactly_what_it_was_given() {
     // Byte for byte, and unread. What a kernel is configured with is the
@@ -108,6 +109,7 @@ fn a_path_that_leaves_the_pods_home_is_refused_rather_than_written() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_path_that_merely_says_here_is_kept() {
     let home = Home::new("curdir");
@@ -117,6 +119,7 @@ fn a_path_that_merely_says_here_is_kept() {
     });
 }
 
+#[cfg(unix)]
 #[test]
 fn the_directory_it_belongs_in_is_created() {
     // A fresh pod has nothing under its home but the home itself.
@@ -251,6 +254,46 @@ mod a_pack_of_files {
     }
 
     #[test]
+    fn refuses_file_and_directory_targets_in_either_order() {
+        for files in [
+            [("a", b"one".as_slice()), ("a/b", b"two".as_slice())],
+            [("a/b", b"one".as_slice()), ("a", b"two".as_slice())],
+        ] {
+            let refused = unpack(&pack(&files))
+                .expect_err("one target cannot be both a file and a directory");
+            assert!(refused.contains("conflicts"), "got {refused}");
+        }
+    }
+
+    #[test]
+    fn one_path_component_may_be_255_bytes_but_not_256() {
+        let accepted = "x".repeat(PACK_COMPONENT_LIMIT);
+        let refused = "x".repeat(PACK_COMPONENT_LIMIT + 1);
+
+        assert!(unpack(&pack(&[(accepted.as_str(), b"x")])).is_ok());
+        assert!(unpack(&pack(&[(refused.as_str(), b"x")])).is_err());
+    }
+
+    #[test]
+    fn slash_dense_paths_are_decoded_without_copying_every_prefix() {
+        let deep = "a/".repeat(1_700);
+        let paths = (0..160)
+            .map(|index| format!("branch-{index}/{deep}leaf"))
+            .collect::<Vec<_>>();
+        let files = paths
+            .iter()
+            .map(|path| (path.as_str(), b"".as_slice()))
+            .collect::<Vec<_>>();
+        let packed = pack(&files);
+        assert!(packed.len() < PACK_LIMIT);
+
+        assert_eq!(
+            unpack(&packed).expect("bounded deep paths are valid").len(),
+            files.len()
+        );
+    }
+
+    #[test]
     fn refuses_more_than_the_sender_s_file_limit() {
         let entries = (0..=PACK_FILE_LIMIT)
             .map(|index| serde_json::json!({ "path": format!("file-{index}"), "len": 0 }))
@@ -293,6 +336,7 @@ mod a_pack_of_files {
         assert!(refused.contains(&PACK_LIMIT.to_string()), "got {refused}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn writes_what_it_was_handed_creating_directories_on_the_way() {
         let home = Home::new("pack-write");

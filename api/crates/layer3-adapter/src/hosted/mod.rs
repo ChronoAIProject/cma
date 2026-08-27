@@ -26,7 +26,7 @@ mod loss;
 mod telemetry;
 pub(super) mod turn;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
@@ -127,6 +127,8 @@ const PRELUDE_PATH: &str = "/runtime/prelude";
 const PRELUDE_LIMIT: usize = 4 * 1024 * 1024;
 /// Skill files plus the one optional standing-instructions document.
 const PRELUDE_FILE_LIMIT: usize = 4_097;
+/// Largest byte length of one component accepted by the Linux runtime image.
+const PRELUDE_COMPONENT_LIMIT: usize = 255;
 
 /// Where a pod says what it is and what it can take.
 const READY_PATH: &str = "/readyz";
@@ -209,30 +211,51 @@ fn oversized_prelude() -> AdapterError {
 
 fn add_prelude_entry(
     entries: &mut Vec<PreludeEntry>,
-    targets: &mut HashSet<String>,
     path_bytes: &mut usize,
     path: &str,
     len: usize,
 ) -> Result<(), AdapterError> {
     if !is_canonical_prelude_path(path) {
-        return Err(AdapterError::Rejected(
-            "runtime prelude contains an unsafe or noncanonical path".into(),
+        return Err(AdapterError::Unsupported(
+            "runtime prelude contains an unsafe, noncanonical, or overlong path".into(),
         ));
     }
     *path_bytes = path_bytes
         .checked_add(path.len())
         .filter(|bytes| *bytes <= PRELUDE_LIMIT)
         .ok_or_else(oversized_prelude)?;
-    if !targets.insert(path.to_owned()) {
-        return Err(AdapterError::Rejected(
-            "runtime prelude contains two files with the same target".into(),
-        ));
-    }
     entries.push(PreludeEntry {
         path: path.to_owned(),
         len,
     });
     Ok(())
+}
+
+fn validate_prelude_targets(entries: &[PreludeEntry]) -> Result<(), AdapterError> {
+    // Component ordering places every file immediately before its first
+    // descendant. Keep only references here: copying every prefix of a deep
+    // path would turn the bounded wire header into quadratic allocation.
+    let mut targets = entries
+        .iter()
+        .map(|entry| Path::new(entry.path.as_str()))
+        .collect::<Vec<_>>();
+    targets.sort_unstable_by(|left, right| left.components().cmp(right.components()));
+    if targets
+        .windows(2)
+        .any(|pair| is_component_prefix(pair[0], pair[1]))
+    {
+        return Err(AdapterError::Unsupported(
+            "runtime prelude contains conflicting file and directory targets".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_component_prefix(prefix: &Path, path: &Path) -> bool {
+    let mut components = path.components();
+    prefix
+        .components()
+        .all(|component| components.next() == Some(component))
 }
 
 fn is_canonical_prelude_path(raw: &str) -> bool {
@@ -248,6 +271,9 @@ fn is_canonical_prelude_path(raw: &str) -> bool {
         let Component::Normal(part) = component else {
             return false;
         };
+        if part.len() > PRELUDE_COMPONENT_LIMIT {
+            return false;
+        }
         normalized.push(part);
     }
     !normalized.as_os_str().is_empty() && normalized.as_os_str() == path.as_os_str()
@@ -897,16 +923,9 @@ impl HostedKernel {
             return Err(oversized_prelude());
         }
         let mut entries = Vec::with_capacity(file_count);
-        let mut targets = HashSet::with_capacity(file_count);
         let mut path_bytes = 0_usize;
         if let Some(body) = note.as_ref() {
-            add_prelude_entry(
-                &mut entries,
-                &mut targets,
-                &mut path_bytes,
-                notes_path,
-                body.len(),
-            )?;
+            add_prelude_entry(&mut entries, &mut path_bytes, notes_path, body.len())?;
         }
         for skill in skills {
             for (relative, body) in &skill.files {
@@ -917,15 +936,10 @@ impl HostedKernel {
                     .filter(|bytes| *bytes <= PRELUDE_LIMIT)
                     .ok_or_else(oversized_prelude)?;
                 let path = format!("{root}/{}/{relative}", skill.name);
-                add_prelude_entry(
-                    &mut entries,
-                    &mut targets,
-                    &mut path_bytes,
-                    &path,
-                    body.len(),
-                )?;
+                add_prelude_entry(&mut entries, &mut path_bytes, &path, body.len())?;
             }
         }
+        validate_prelude_targets(&entries)?;
 
         let mut pack = BoundedPrelude::new();
         if let Err(error) = serde_json::to_writer(

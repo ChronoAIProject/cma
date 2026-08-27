@@ -1565,6 +1565,16 @@ mod runtime_prelude_size {
         }
     }
 
+    fn one_skill_with_paths(paths: &[&str]) -> SkillPackage {
+        SkillPackage {
+            name: "review".into(),
+            files: paths
+                .iter()
+                .map(|path| ((*path).into(), Vec::new()))
+                .collect(),
+        }
+    }
+
     #[test]
     fn the_exact_limit_is_accepted_and_one_more_byte_is_refused() {
         let kernel = HostedKernel::new(
@@ -1601,11 +1611,12 @@ mod runtime_prelude_size {
             Err(AdapterError::Unsupported(_))
         ));
 
+        let component = "r".repeat(170);
         let long_root = HostedKernel::new(
             SandboxClient::new("http://x", "test-key"),
             SandboxShape::default(),
             "test-kernel",
-            "r".repeat(512),
+            format!("{component}/{component}/{component}"),
             "",
         );
         assert!(matches!(
@@ -1639,12 +1650,12 @@ mod runtime_prelude_size {
         ] {
             assert!(matches!(
                 kernel.prelude_for(&[invalid], "", ""),
-                Err(AdapterError::Rejected(_))
+                Err(AdapterError::Unsupported(_))
             ));
         }
         assert!(matches!(
             kernel.prelude_for(&[skill("review", &["SKILL.md"])], "briefing", ""),
-            Err(AdapterError::Rejected(_))
+            Err(AdapterError::Unsupported(_))
         ));
         assert!(kernel
             .prelude_for(&[skill("review", &["references/api.md"])], "briefing", "")
@@ -1674,6 +1685,73 @@ mod runtime_prelude_size {
             ),
             Err(AdapterError::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn file_and_directory_targets_conflict_in_either_order() {
+        let kernel = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            ".skills",
+            "",
+        );
+
+        for paths in [["a", "a/b"], ["a/b", "a"]] {
+            assert!(matches!(
+                kernel.prelude_for(&[one_skill_with_paths(&paths)], "", ""),
+                Err(AdapterError::Unsupported(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn one_path_component_may_be_255_bytes_but_not_256() {
+        let kernel = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            ".skills",
+            "",
+        );
+        let accepted = "x".repeat(PRELUDE_COMPONENT_LIMIT);
+        let refused = "x".repeat(PRELUDE_COMPONENT_LIMIT + 1);
+
+        assert!(kernel
+            .prelude_for(&[one_skill_with_paths(&[accepted.as_str()])], "", "")
+            .is_ok());
+        assert!(matches!(
+            kernel.prelude_for(&[one_skill_with_paths(&[refused.as_str()])], "", ""),
+            Err(AdapterError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn slash_dense_paths_do_not_expand_into_copied_prefixes() {
+        let kernel = HostedKernel::new(
+            SandboxClient::new("http://x", "test-key"),
+            SandboxShape::default(),
+            "test-kernel",
+            ".skills",
+            "",
+        );
+        let deep = "a/".repeat(1_700);
+        let files = (0..160)
+            .map(|index| (format!("branch-{index}/{deep}leaf"), Vec::new()))
+            .collect();
+
+        let packed = kernel
+            .prelude_for(
+                &[SkillPackage {
+                    name: "review".into(),
+                    files,
+                }],
+                "",
+                "",
+            )
+            .expect("bounded deep paths are valid")
+            .expect("the paths produce a prelude");
+        assert!(packed.len() < PRELUDE_LIMIT);
     }
 }
 
