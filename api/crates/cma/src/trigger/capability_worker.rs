@@ -12,6 +12,7 @@ use layer2_core::{
 };
 
 use super::github_effects::{CapabilityRenewal, CapabilityRevocation, GithubEffectExecutor};
+use super::observability::{record_activity, TriggerAlert, OBSERVABILITY_SCHEMA_VERSION};
 use super::worker::worker_record;
 
 const DEFAULT_WORKER_LEASE: Duration = Duration::from_secs(120);
@@ -128,7 +129,7 @@ enum RuntimeObservationDisposition {
 
 enum RenewalPreparation {
     Complete(CapabilityRunOutcome),
-    Admitted(AdmittedRenewal),
+    Admitted(Box<AdmittedRenewal>),
 }
 
 struct AdmittedRenewal {
@@ -234,6 +235,18 @@ impl CapabilityWorker {
         expected_revision: u64,
         correlation_id: &str,
     ) -> Result<CapabilityRunOutcome, TriggerServiceError> {
+        // Keep the large Launch state out of callers' async frames. Tokio's
+        // worker threads use bounded stacks just like the test harness.
+        Box::pin(self.run_once_inner(id, expected_revision, correlation_id)).await
+    }
+
+    #[inline(never)]
+    async fn run_once_inner(
+        &self,
+        id: &LaunchId,
+        expected_revision: u64,
+        correlation_id: &str,
+    ) -> Result<CapabilityRunOutcome, TriggerServiceError> {
         let acquired = self.clock.now();
         let acquired_at = rfc3339_at(acquired);
         let expires_at = rfc3339_at(acquired + self.lease_duration);
@@ -254,6 +267,25 @@ impl CapabilityWorker {
             .lease
             .clone()
             .expect("a capability worker owns a persisted Launch lease");
+        let cancellation_settled = match self
+            .triggers
+            .reconcile_cancelled_session(&mut launch, &acquired_at, correlation_id)
+            .await
+        {
+            Ok(settled) => settled,
+            Err(error) => {
+                self.triggers
+                    .release_worker(&launch.id, launch.revision_number, &lease)
+                    .await?;
+                return Err(error);
+            }
+        };
+        if cancellation_settled {
+            launch = self
+                .triggers
+                .commit_worker(launch.revision_number, &lease, launch)
+                .await?;
+        }
         let reach = launch.reach.clone();
 
         if self.triggers.rollout_policy().capability_must_revoke()
@@ -262,6 +294,24 @@ impl CapabilityWorker {
                 .as_ref()
                 .is_some_and(|reach| reach.state != CapabilityRevocationState::Revoked)
         {
+            launch.request_capability_revocation(&acquired_at, correlation_id)?;
+            launch = self
+                .triggers
+                .commit_worker(launch.revision_number, &lease, launch)
+                .await?;
+        }
+
+        if launch.capability_requires_revocation()
+            && launch.reach.as_ref().is_some_and(|reach| {
+                !matches!(
+                    reach.state,
+                    CapabilityRevocationState::RevocationPending
+                        | CapabilityRevocationState::Revoked
+                )
+            })
+        {
+            // Backfill the durable intent for legacy terminal or provider-
+            // closed records before contacting either revocation boundary.
             launch.request_capability_revocation(&acquired_at, correlation_id)?;
             launch = self
                 .triggers
@@ -371,7 +421,7 @@ impl CapabilityWorker {
         match preparation {
             RenewalPreparation::Complete(outcome) => Ok(outcome),
             RenewalPreparation::Admitted(admitted) => {
-                Box::pin(self.settle_admitted_renewal(admitted, correlation_id)).await
+                Box::pin(self.settle_admitted_renewal(*admitted, correlation_id)).await
             }
         }
     }
@@ -574,11 +624,11 @@ impl CapabilityWorker {
             .commit_worker(launch.revision_number, &lease, launch)
             .await?;
 
-        Ok(RenewalPreparation::Admitted(AdmittedRenewal {
+        Ok(RenewalPreparation::Admitted(Box::new(AdmittedRenewal {
             launch: Box::new(launch),
             lease,
             reach,
-        }))
+        })))
     }
 
     #[inline(never)]
@@ -731,6 +781,8 @@ impl CapabilityWorker {
             .as_ref()
             .map_or(0, |reach| reach.policy_generation);
         tracing::info!(
+            event_name = "cma_trigger_capability_settlement",
+            schema_version = OBSERVABILITY_SCHEMA_VERSION,
             launch_id = %launch.id.0,
             correlation_id,
             action = ?action,
@@ -739,14 +791,39 @@ impl CapabilityWorker {
             fence,
             "Trigger capability worker settled one durable boundary"
         );
+        if outcome == ActivityOutcome::Failed
+            && launch
+                .failure
+                .as_ref()
+                .is_some_and(|failure| failure.class == FailureClass::TerminalSecurity)
+        {
+            let alert = TriggerAlert::UnauthorizedEffect;
+            let failure_code = launch
+                .failure
+                .as_ref()
+                .map_or("none", |failure| failure.code.as_str());
+            tracing::error!(
+                event_name = "cma_trigger_alert_candidate",
+                schema_version = OBSERVABILITY_SCHEMA_VERSION,
+                alert_id = alert.id(),
+                severity = alert.severity(),
+                launch_id = %launch.id.0,
+                correlation_id,
+                action = ?action,
+                fence,
+                policy_generation = generation,
+                failure_code,
+                "Trigger unauthorized capability-effect alert candidate observed"
+            );
+        }
         if let Some(activity) = self.activity.as_ref() {
-            activity
-                .record(
-                    worker_record(launch, action, outcome, correlation_id)
-                        .with(DetailKey::PolicyGeneration, generation.to_string())
-                        .with(DetailKey::FencingToken, fence.to_string()),
-                )
-                .await;
+            record_activity(
+                activity,
+                worker_record(launch, action, outcome, correlation_id)
+                    .with(DetailKey::PolicyGeneration, generation.to_string())
+                    .with(DetailKey::FencingToken, fence.to_string()),
+            )
+            .await;
         }
     }
 }

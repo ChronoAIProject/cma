@@ -1,8 +1,10 @@
 //! Deterministic release journey for the complete Trigger orchestration path.
 
 use std::collections::VecDeque;
+use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use layer2_core::{
@@ -10,10 +12,10 @@ use layer2_core::{
     BaselineImportOutcome, BaselineObjectStore, BranchRecord, Caller, Capability,
     CheckpointObjectStore, Confirmation, ConfirmationAction, DiffArtifact, DiffArtifactObjectStore,
     DiffChangeKind, DiffValidationOutcome, EffectClaim, Launch, LaunchEffectKind, LaunchState,
-    PromptDelivery, PromptDeliveryState, PublicationState, PullRequestOperation, PullRequestRecord,
-    PullRequestState, SessionId, SessionStatus, SubjectId, TriggerService, TriggerStoreError,
-    TriggerSupportLookup, WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind,
-    WorkspaceManifest,
+    PromptDelivery, PromptDeliveryState, PublicationObjectPhase, PublicationObjectWrite,
+    PublicationState, PullRequestOperation, PullRequestRecord, PullRequestState, SessionId,
+    SessionStatus, SubjectId, TriggerService, TriggerStoreError, TriggerSupportLookup,
+    WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -23,8 +25,8 @@ use super::tests::{
 use super::*;
 use crate::trigger::github::{
     BranchContext, BranchReconciliation, ForkContext, ForkReconciliation, GithubBrokerError,
-    PreparedGitData, PublicationAdvance, PublishedGitData, PullRequestAdvance, WorkspaceContext,
-    WorkspaceSourcePlan,
+    GithubRejectionKind, PendingGitData, PreparedGitData, PublicationAdvance, PublishedGitData,
+    PullRequestAdvance, WorkspaceContext, WorkspaceSourcePlan,
 };
 use crate::trigger::worker::tests::{launch_fixture, service_for_launch, RecordingActivityStore};
 use crate::trigger::worker::{EffectRunOutcome, EffectWorker};
@@ -35,6 +37,30 @@ const PROVIDER_BODY_MARKER: &str = "PRIVATE_PROVIDER_BODY_SENTINEL_RELEASE_673";
 const PROMPT_MARKER: &str = "PROMPT_SENTINEL_RELEASE_673";
 const PATH_MARKER: &str = "release-fixture/path-sentinel-673.txt";
 const CHECKPOINT_CONTENT: &[u8] = b"WORKSPACE_CONTENT_SENTINEL_RELEASE_673\n";
+
+#[derive(Clone, Default)]
+struct ReleaseLogBuffer(Arc<Mutex<Vec<u8>>>);
+
+struct ReleaseLogWriter(Arc<Mutex<Vec<u8>>>);
+
+impl Write for ReleaseLogWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ReleaseLogBuffer {
+    type Writer = ReleaseLogWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        ReleaseLogWriter(Arc::clone(&self.0))
+    }
+}
 
 #[derive(Default)]
 struct ReleaseGithub {
@@ -52,9 +78,10 @@ struct ReleaseGithub {
     publication_ref_writes: AtomicUsize,
     pull_request_write_calls: AtomicUsize,
     pull_request_reconcile_calls: AtomicUsize,
+    pull_request_status_calls: AtomicUsize,
     publication_answers: Mutex<VecDeque<PublicationAdvance>>,
     pull_request_answer: Mutex<Option<PullRequestRecord>>,
-    provider_body_marker: &'static str,
+    pull_request_status_answers: Mutex<VecDeque<Result<PullRequestRecord, GithubBrokerError>>>,
 }
 
 impl ReleaseGithub {
@@ -65,9 +92,31 @@ impl ReleaseGithub {
             commit_id: "d".repeat(40),
             object_ids: vec!["e".repeat(40)],
         };
+        let pending = |phase, tree_id| PendingGitData {
+            base_tree_id: prepared.base_tree_id.clone(),
+            tree_id,
+            object_ids: prepared.object_ids.clone(),
+            object_write: PublicationObjectWrite {
+                version: PublicationObjectWrite::VERSION,
+                request_digest: "9".repeat(64),
+                phase,
+            },
+        };
         Self {
             publication_answers: Mutex::new(
                 [
+                    PublicationAdvance::ObjectWritePending(pending(
+                        PublicationObjectPhase::BlobsPending,
+                        None,
+                    )),
+                    PublicationAdvance::ObjectWritePending(pending(
+                        PublicationObjectPhase::TreePending,
+                        None,
+                    )),
+                    PublicationAdvance::ObjectWritePending(pending(
+                        PublicationObjectPhase::CommitPending,
+                        Some(prepared.tree_id.clone()),
+                    )),
                     PublicationAdvance::ObjectsWritten(prepared.clone()),
                     PublicationAdvance::RefUpdatePending(prepared.clone()),
                     PublicationAdvance::Published(PublishedGitData {
@@ -80,13 +129,19 @@ impl ReleaseGithub {
                 ]
                 .into(),
             ),
-            provider_body_marker: PROVIDER_BODY_MARKER,
             ..Self::default()
         }
     }
 
     fn set_pull_request_answer(&self, answer: PullRequestRecord) {
         *self.pull_request_answer.lock().unwrap() = Some(answer);
+    }
+
+    fn set_pull_request_status_answers(
+        &self,
+        answers: impl IntoIterator<Item = Result<PullRequestRecord, GithubBrokerError>>,
+    ) {
+        *self.pull_request_status_answers.lock().unwrap() = answers.into_iter().collect();
     }
 }
 
@@ -232,6 +287,7 @@ impl GithubEffectPort for ReleaseGithub {
             .pop_front()
             .ok_or_else(|| GithubBrokerError::Malformed("duplicate publication call".into()))?;
         match answer {
+            PublicationAdvance::ObjectWritePending(_) => {}
             PublicationAdvance::ObjectsWritten(_) => {
                 self.publication_object_writes
                     .fetch_add(1, Ordering::SeqCst);
@@ -269,6 +325,23 @@ impl GithubEffectPort for ReleaseGithub {
             "the release happy path must not reconcile its pull request".into(),
         ))
     }
+
+    async fn observe_pull_request(
+        &self,
+        _context: &crate::trigger::github::PullRequestContext,
+    ) -> Result<PullRequestRecord, GithubBrokerError> {
+        self.pull_request_status_calls
+            .fetch_add(1, Ordering::SeqCst);
+        self.pull_request_status_answers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                Err(GithubBrokerError::Malformed(
+                    "unexpected pull-request status read".into(),
+                ))
+            })
+    }
 }
 
 #[derive(Default)]
@@ -298,7 +371,7 @@ impl TriggerSessionEffectPort for ReleaseSessions {
             credential_authority: Some(layer2_core::SessionCredentialAuthority {
                 session_id: session.id.clone(),
                 custody_generation: 1,
-                provider_key_id: "provider-session-key-1".into(),
+                provider_key_id: self.credential_marker.into(),
                 provider_state_version: 1,
                 provider_expires_at_epoch_milliseconds: 4_000_000_000_000,
                 grant_fingerprint: "a".repeat(64),
@@ -314,7 +387,7 @@ impl TriggerSessionEffectPort for ReleaseSessions {
         Ok(Some(layer2_core::SessionCredentialAuthority {
             session_id: session_id.clone(),
             custody_generation: 1,
-            provider_key_id: "provider-session-key-1".into(),
+            provider_key_id: self.credential_marker.into(),
             provider_state_version: 1,
             provider_expires_at_epoch_milliseconds: 4_000_000_000_000,
             grant_fingerprint: "a".repeat(64),
@@ -324,7 +397,7 @@ impl TriggerSessionEffectPort for ReleaseSessions {
     async fn install_runtime_policy_and_probe(
         &self,
         _session_id: &SessionId,
-        _expected_credential_authority: &layer2_core::SessionCredentialAuthority,
+        expected_credential_authority: &layer2_core::SessionCredentialAuthority,
         mut capability: LaunchCapability,
         signer: Arc<CapabilitySigner>,
         probe: layer3_adapter::RuntimeGatewayProbeRequest,
@@ -334,6 +407,16 @@ impl TriggerSessionEffectPort for ReleaseSessions {
     > {
         self.policy_install_calls.fetch_add(1, Ordering::SeqCst);
         self.gateway_probe_calls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(
+            expected_credential_authority.provider_key_id, self.credential_marker,
+            "the planted credential must reach runtime-policy installation"
+        );
+        let capability_projection = serde_json::to_vec(&capability).unwrap();
+        assert_projection_excludes(
+            "runtime capability",
+            &capability_projection,
+            &[CREDENTIAL_MARKER],
+        );
         capability.runtime_audience = "release-runtime-1".into();
         signer
             .sign_policy(&capability)
@@ -683,11 +766,24 @@ fn one_launch_reaches_one_reviewed_commit_and_one_pull_request() {
         .name("cma-trigger-release-journey".into())
         .stack_size(16 * 1024 * 1024)
         .spawn(|| {
+            let logs = ReleaseLogBuffer::default();
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_writer(logs.clone())
+                .finish();
+            let _subscriber = tracing::subscriber::set_default(subscriber);
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("the release verification runtime builds")
                 .block_on(run_release_journey());
+            let captured = logs.0.lock().unwrap().clone();
+            assert_projection_excludes(
+                "release logs and traces",
+                &captured,
+                &[CREDENTIAL_MARKER, PROVIDER_BODY_MARKER],
+            );
         })
         .expect("the release verification thread starts")
         .join()
@@ -760,6 +856,7 @@ async fn run_release_journey() {
         service
             .list_launches(
                 &owner,
+                None,
                 None,
                 Vec::new(),
                 layer2_core::TriggerPageRequest::default(),
@@ -839,6 +936,9 @@ async fn run_release_journey() {
     for outcome in [
         EffectRunOutcome::Deferred,
         EffectRunOutcome::Deferred,
+        EffectRunOutcome::Deferred,
+        EffectRunOutcome::Deferred,
+        EffectRunOutcome::Deferred,
         EffectRunOutcome::Completed,
     ] {
         run_effect(
@@ -896,19 +996,54 @@ async fn run_release_journey() {
     )
     .await;
 
-    let complete = service.get_launch(&owner, &launch_id).await.unwrap();
-    assert_eq!(complete.state, LaunchState::PrOpen);
-    assert_eq!(complete.pull_request.as_ref().unwrap().number, Some(7));
+    let pr_open = service.get_launch(&owner, &launch_id).await.unwrap();
+    assert_eq!(pr_open.state, LaunchState::PrOpen);
+    assert_eq!(pr_open.pull_request.as_ref().unwrap().number, Some(7));
     assert_eq!(
-        complete.pull_request.as_ref().unwrap().state,
+        pr_open.pull_request.as_ref().unwrap().state,
         PullRequestState::Open
+    );
+    github.set_pull_request_status_answers([
+        Err(GithubBrokerError::Rejected {
+            status: 422,
+            kind: GithubRejectionKind::Unknown,
+            provider_code: Some(PROVIDER_BODY_MARKER.into()),
+        }),
+        Ok(reconciled_pull_request(&pr_open, PullRequestState::Merged)),
+    ]);
+    let before_status = release_counts(&github, &sessions, &objects);
+    assert_eq!(
+        worker
+            .run_once(&launch_id, pr_open.revision_number, "scheduled-open-status")
+            .await
+            .unwrap(),
+        EffectRunOutcome::Deferred
+    );
+    assert_eq!(release_counts(&github, &sessions, &objects), before_status);
+    assert_eq!(github.pull_request_status_calls.load(Ordering::SeqCst), 1);
+    let observed_open = service.get_launch(&owner, &launch_id).await.unwrap();
+    assert_eq!(observed_open.state, LaunchState::PrOpen);
+    let status_failure = observed_open
+        .pull_request
+        .as_ref()
+        .unwrap()
+        .status_sync
+        .last_failure
+        .as_ref()
+        .expect("the sanitized provider refusal is retained");
+    assert_eq!(status_failure.code, "github_status_policy_refused");
+    let failed_status_projection = serde_json::to_string(status_failure).unwrap();
+    assert_projection_excludes(
+        "stored pull-request status failure",
+        failed_status_projection.as_bytes(),
+        &[CREDENTIAL_MARKER, PROVIDER_BODY_MARKER],
     );
     let before_duplicate = release_counts(&github, &sessions, &objects);
     assert_eq!(
         worker
             .run_once(
                 &launch_id,
-                complete.revision_number,
+                observed_open.revision_number,
                 "duplicate-worker-click"
             )
             .await
@@ -918,6 +1053,48 @@ async fn run_release_journey() {
     assert_eq!(
         release_counts(&github, &sessions, &objects),
         before_duplicate
+    );
+    assert_eq!(
+        github.pull_request_status_calls.load(Ordering::SeqCst),
+        1,
+        "the durable status deadline prevents scheduler-tick polling"
+    );
+
+    let after_duplicate = service.get_launch(&owner, &launch_id).await.unwrap();
+    assert_eq!(after_duplicate.state, LaunchState::PrOpen);
+    let refresh_queued = service
+        .request_pull_request_status_refresh(
+            &owner,
+            &launch_id,
+            after_duplicate.revision_number,
+            layer2_core::rfc3339_at(SystemTime::now()),
+            "release-explicit-status-refresh",
+        )
+        .await
+        .unwrap();
+    let before_merged_status = release_counts(&github, &sessions, &objects);
+    assert_eq!(
+        worker
+            .run_once(
+                &launch_id,
+                refresh_queued.revision_number,
+                "observe-provider-merged"
+            )
+            .await
+            .unwrap(),
+        EffectRunOutcome::Completed
+    );
+    assert_eq!(
+        release_counts(&github, &sessions, &objects),
+        before_merged_status,
+        "status reconciliation performs no provider or object write"
+    );
+    assert_eq!(github.pull_request_status_calls.load(Ordering::SeqCst), 2);
+    let complete = service.get_launch(&owner, &launch_id).await.unwrap();
+    assert_eq!(complete.state, LaunchState::Completed);
+    assert_eq!(
+        complete.pull_request.as_ref().unwrap().state,
+        PullRequestState::Merged
     );
 
     assert_eq!(github.preflight_calls.load(Ordering::SeqCst), 1);
@@ -935,12 +1112,15 @@ async fn run_release_journey() {
             LaunchEffectKind::BranchPublication,
             LaunchEffectKind::BranchPublication,
             LaunchEffectKind::BranchPublication,
+            LaunchEffectKind::BranchPublication,
+            LaunchEffectKind::BranchPublication,
+            LaunchEffectKind::BranchPublication,
             LaunchEffectKind::PullRequest,
         ]
     );
-    // Five write admissions plus the read-only diff authority observation.
-    assert_eq!(github.capability_preflight_calls.load(Ordering::SeqCst), 6);
-    assert_eq!(github.publication_calls.load(Ordering::SeqCst), 3);
+    // Eight provider-bound admissions plus the read-only diff authority observation.
+    assert_eq!(github.capability_preflight_calls.load(Ordering::SeqCst), 9);
+    assert_eq!(github.publication_calls.load(Ordering::SeqCst), 6);
     assert_eq!(github.publication_object_writes.load(Ordering::SeqCst), 1);
     assert_eq!(github.publication_ref_checks.load(Ordering::SeqCst), 1);
     assert_eq!(github.publication_ref_writes.load(Ordering::SeqCst), 1);
@@ -949,7 +1129,7 @@ async fn run_release_journey() {
         github.pull_request_reconcile_calls.load(Ordering::SeqCst),
         0
     );
-    assert_eq!(sessions.ensure_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(sessions.ensure_calls.load(Ordering::SeqCst), 3);
     assert_eq!(sessions.runtime_identity_calls.load(Ordering::SeqCst), 1);
     assert_eq!(sessions.policy_install_calls.load(Ordering::SeqCst), 1);
     assert_eq!(sessions.prompt_calls.load(Ordering::SeqCst), 1);
@@ -960,12 +1140,12 @@ async fn run_release_journey() {
 
     {
         let observed_sessions = sessions.observed_session_ids.lock().unwrap();
-        assert_eq!(observed_sessions.len(), 2);
+        assert_eq!(observed_sessions.len(), 3);
         assert!(
             observed_sessions
                 .iter()
                 .all(|session| session == &complete.session.as_ref().unwrap().session_id),
-            "sandbox readiness and attachment must resolve one deterministic session"
+            "sandbox readiness, attachment, and initial dispatch must resolve one deterministic session"
         );
     }
 
@@ -983,13 +1163,12 @@ async fn run_release_journey() {
     let owner_projection = serde_json::to_string(&complete).unwrap();
     let support_projection = serde_json::to_string(&support).unwrap();
     let activity_records = activity.records.lock().await;
-    assert_eq!(activity_records.len(), 14);
+    assert_eq!(activity_records.len(), 19);
     let audit_projection = serde_json::to_string(&*activity_records).unwrap();
     drop(activity_records);
     let checkpoint_projection = objects.checkpoint.lock().unwrap().clone().unwrap();
     let diff_projection = objects.diff.lock().unwrap().clone().unwrap();
 
-    assert_eq!(github.provider_body_marker, PROVIDER_BODY_MARKER);
     assert_eq!(sessions.credential_marker, CREDENTIAL_MARKER);
     assert!(owner_projection.contains(PROMPT_MARKER));
     assert!(owner_projection.contains(PATH_MARKER));
@@ -998,9 +1177,9 @@ async fn run_release_journey() {
     assert!(String::from_utf8_lossy(&diff_projection)
         .contains("WORKSPACE_CONTENT_SENTINEL_RELEASE_673"));
     assert_projection_excludes(
-        "owner Launch",
+        "durable Launch",
         owner_projection.as_bytes(),
-        &[CREDENTIAL_MARKER, PROVIDER_BODY_MARKER],
+        &[PROVIDER_BODY_MARKER],
     );
     assert_projection_excludes(
         "redacted support",
@@ -1067,7 +1246,12 @@ async fn run_effect(
             &format!("release-{expected_effect:?}"),
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|error| {
+            panic!(
+                "release worker failed for {expected_effect:?} from {:?}: {error:?}",
+                before.state
+            )
+        });
     assert_eq!(
         observed, expected_outcome,
         "unexpected worker outcome for {expected_effect:?} from {:?}",

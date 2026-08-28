@@ -257,12 +257,14 @@ fn with_request_context(router: Router) -> Router {
 }
 
 async fn discard_unusable_request_id(mut request: Request, next: Next) -> Response {
-    let usable = request
-        .headers()
-        .get(&X_REQUEST_ID)
-        .is_none_or(|value| value.to_str().is_ok_and(|text| !text.trim().is_empty()));
-    if !usable {
-        request.headers_mut().remove(&X_REQUEST_ID);
+    let normalized = layer1_public::rest::request_id_from_headers(request.headers())
+        .and_then(|value| HeaderValue::from_bytes(value.as_bytes()).ok());
+    // Remove first so repeated values collapse to either one canonical value or
+    // no value; the outer UUID layer mints the latter without ever observing
+    // the caller's unusable bytes.
+    request.headers_mut().remove(&X_REQUEST_ID);
+    if let Some(normalized) = normalized {
+        request.headers_mut().insert(&X_REQUEST_ID, normalized);
     }
     next.run(request).await
 }
@@ -774,7 +776,7 @@ async fn serve_normal_control_plane() {
             trigger_runtime_capabilities: config.trigger.runtime_capabilities.clone(),
             // The versioned Trigger profile selects this adapter explicitly;
             // Layer 2 treats the identifier as opaque and remains kernel-neutral.
-            trigger_kernel: Some(layer2_core::KernelId::new("codex")),
+            trigger_kernel: Some(layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)),
         },
     );
     let trigger_service = Arc::new(
@@ -784,6 +786,9 @@ async fn serve_normal_control_plane() {
             trigger_authority,
         )
         .with_launch_admission(Arc::clone(&service) as Arc<dyn layer2_core::TriggerLaunchAdmission>)
+        .with_session_cancellation(
+            Arc::clone(&service) as Arc<dyn layer2_core::TriggerSessionCancellation>
+        )
         .with_rollout(Arc::new(config.trigger.rollout.clone())),
     );
     tracing::info!(
@@ -828,12 +833,29 @@ async fn serve_normal_control_plane() {
                     diff_store,
                     Arc::clone(&service),
                     Arc::clone(signer),
-                    config.trigger.changed_file_limit,
+                    trigger::github_effects::GithubEffectRuntimeLimits {
+                        fork_readiness_timeout: config.trigger.fork_readiness_timeout,
+                        changed_file_limit: config.trigger.changed_file_limit,
+                    },
                 ),
             ))
         }
         _ => None,
     };
+
+    // Trigger's Session effect verifies exact delegated services. Install the
+    // issuer before any scheduler lane is spawned because Tokio intervals tick
+    // immediately and a restart must not spend an effect attempt against a
+    // transiently incomplete authentication runtime.
+    if let Some(issuer) = issuer {
+        auth_state.use_issuer(issuer).await;
+        tracing::info!(
+            deployment = %config.deployment_id,
+            services = ?config.baseline_services,
+            "each session gets its own credential, reaching these services and whatever its profile adds"
+        );
+    }
+
     match trigger_effect_executor {
         Some(executor) => {
             if let Err(error) = trigger::scheduler::spawn(
@@ -855,20 +877,6 @@ async fn serve_normal_control_plane() {
             missing_prerequisites = ?missing_trigger_worker_prerequisites,
             "Trigger provider workers are disabled"
         ),
-    }
-
-    // Keeps delegated credentials valid underneath running sessions, and pushes
-    // each renewal into the runtimes already using the old value.
-    // Per-session credentials are minted on the platform, so this only exists
-    // where a platform root is configured. Without one every session falls
-    // back to its owner's own token, which is what happened before scoping.
-    if let Some(issuer) = issuer {
-        auth_state.use_issuer(issuer).await;
-        tracing::info!(
-            deployment = %config.deployment_id,
-            services = ?config.baseline_services,
-            "each session gets its own credential, reaching these services and whatever its profile adds"
-        );
     }
 
     renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
@@ -1217,16 +1225,15 @@ mod tests {
                  ?ticket=pty-ticket-secret-488&code=oauth-code-secret-488\
                  &state=oauth-state-secret-488",
             )
-            .header("x-request-id", "support-case-488")
+            .header("x-request-id", "48800000-0000-4000-8000-000000000006")
             .body(axum::body::Body::empty())
             .expect("request builds");
             let _span = request_span(&request);
         });
         let fields = fields.lock().expect("capture lock is usable");
         assert!(
-            fields
-                .iter()
-                .any(|(name, value)| name == "request_id" && value.contains("support-case-488")),
+            fields.iter().any(|(name, value)| name == "request_id"
+                && value.contains("48800000-0000-4000-8000-000000000006")),
             "request span must carry the support correlation id: {fields:?}"
         );
         assert!(
@@ -1269,5 +1276,24 @@ mod tests {
                 iface.interface_id()
             );
         }
+    }
+
+    #[test]
+    fn delegated_issuer_is_installed_before_trigger_scheduler_spawn() {
+        let source = include_str!("main.rs");
+        let startup = source
+            .split_once("#[cfg(test)]\nmod tests")
+            .expect("main keeps one test module after startup")
+            .0;
+        let issuer = startup
+            .find("auth_state.use_issuer(issuer).await;")
+            .expect("normal startup installs the delegated issuer");
+        let scheduler = startup
+            .find("trigger::scheduler::spawn(")
+            .expect("normal startup constructs the Trigger scheduler");
+        assert!(
+            issuer < scheduler,
+            "an immediate scheduler tick must observe the installed issuer"
+        );
     }
 }

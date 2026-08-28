@@ -17,11 +17,15 @@ use layer2_core::{
     TriggerService, TriggerServiceError, WorkspaceCheckpointPurpose,
 };
 use tokio::time::MissedTickBehavior;
+use tracing::Instrument as _;
 
 use crate::config::{TriggerCleanupMode, TriggerRuntimeConfig};
 
 use super::capability_worker::{CapabilityExecutor, CapabilityRunOutcome, CapabilityWorker};
 use super::github_effects::GithubEffectExecutor;
+use super::observability::{
+    record_activity, TriggerAlert, METRIC_LABELS, OBSERVABILITY_SCHEMA_VERSION,
+};
 use super::worker::{worker_record, EffectExecutor, EffectRunOutcome, EffectWorker};
 
 const DEFAULT_WORKER_LEASE: Duration = Duration::from_secs(120);
@@ -62,6 +66,19 @@ enum CandidateOutcome {
     Completed,
     Deferred,
     Failed,
+}
+
+impl CandidateOutcome {
+    fn code(self) -> &'static str {
+        match self {
+            Self::NotAcquired => "not_acquired",
+            Self::Paused => "paused",
+            Self::NoWork => "no_work",
+            Self::Completed => "completed",
+            Self::Deferred => "deferred",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 impl From<EffectRunOutcome> for CandidateOutcome {
@@ -257,6 +274,15 @@ struct TriggerScheduler {
 
 impl TriggerScheduler {
     async fn run_pass(&self, lane: SchedulerLane) -> PassStats {
+        let span = tracing::info_span!(
+            "cma_trigger.scheduler_pass",
+            schema_version = OBSERVABILITY_SCHEMA_VERSION,
+            lane = lane.code(),
+        );
+        self.run_pass_inner(lane).instrument(span).await
+    }
+
+    async fn run_pass_inner(&self, lane: SchedulerLane) -> PassStats {
         let started = Instant::now();
         let pass_boundary = rfc3339_at(SystemTime::now());
         let mut stats = PassStats::default();
@@ -292,26 +318,53 @@ impl TriggerScheduler {
                 .map(|launch| {
                     let backend = Arc::clone(&self.backend);
                     let correlation_id = scheduler_correlation(lane);
+                    let span = tracing::info_span!(
+                        "cma_trigger.scheduler_candidate",
+                        schema_version = OBSERVABILITY_SCHEMA_VERSION,
+                        lane = lane.code(),
+                        launch_id = %launch.id.0,
+                        correlation_id,
+                    );
                     async move {
+                        let started = Instant::now();
                         let launch_id = launch.id.clone();
                         let result = backend
                             .run_candidate(lane, launch, correlation_id.clone())
                             .await;
-                        (launch_id, correlation_id, result)
+                        let elapsed_milliseconds =
+                            started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                        (launch_id, correlation_id, elapsed_milliseconds, result)
                     }
+                    .instrument(span)
                 })
                 .buffer_unordered(self.settings.concurrency)
                 .collect::<Vec<_>>()
                 .await;
-            for (launch_id, correlation_id, result) in outcomes {
+            for (launch_id, correlation_id, elapsed_milliseconds, result) in outcomes {
                 match result {
-                    Ok(outcome) => stats.observe(outcome),
+                    Ok(outcome) => {
+                        stats.observe(outcome);
+                        tracing::info!(
+                            event_name = "cma_trigger_scheduler_candidate",
+                            schema_version = OBSERVABILITY_SCHEMA_VERSION,
+                            lane = lane.code(),
+                            outcome = outcome.code(),
+                            launch_id = %launch_id.0,
+                            correlation_id,
+                            elapsed_milliseconds,
+                            "Trigger scheduler candidate settled"
+                        );
+                    }
                     Err(error) => {
                         stats.errors += 1;
                         tracing::error!(
+                            event_name = "cma_trigger_scheduler_candidate",
+                            schema_version = OBSERVABILITY_SCHEMA_VERSION,
                             lane = lane.code(),
+                            outcome = "error",
                             launch_id = %launch_id.0,
                             correlation_id,
+                            elapsed_milliseconds,
                             error = %error,
                             "Trigger scheduler candidate failed outside a settled worker outcome"
                         );
@@ -361,6 +414,7 @@ impl TriggerScheduler {
 }
 
 fn log_pass(lane: SchedulerLane, stats: PassStats) {
+    debug_assert_eq!(METRIC_LABELS, ["lane", "outcome"]);
     let actionable = stats.completed > 0
         || stats.deferred > 0
         || stats.paused > 0
@@ -371,6 +425,8 @@ fn log_pass(lane: SchedulerLane, stats: PassStats) {
     // and bounded so an operator can distinguish an empty queue from a dead
     // scheduler without enabling content-bearing debug logs process-wide.
     tracing::info!(
+        event_name = "cma_trigger_scheduler_pass",
+        schema_version = OBSERVABILITY_SCHEMA_VERSION,
         lane = lane.code(),
         pages = stats.pages,
         candidates = stats.candidates,
@@ -386,6 +442,52 @@ fn log_pass(lane: SchedulerLane, stats: PassStats) {
         elapsed_milliseconds = stats.elapsed_milliseconds,
         "Trigger scheduler pass settled"
     );
+
+    for alert in pass_alert_candidates(lane, stats) {
+        // These are source signals for deployment-owned, sustained-window alert
+        // rules. A candidate is not itself a delivered page; release evidence
+        // must still prove the saved rule and notification target.
+        tracing::warn!(
+            event_name = "cma_trigger_alert_candidate",
+            schema_version = OBSERVABILITY_SCHEMA_VERSION,
+            alert_id = alert.id(),
+            severity = alert.severity(),
+            lane = lane.code(),
+            candidates = stats.candidates,
+            completed = stats.completed,
+            deferred = stats.deferred,
+            failed = stats.failed,
+            not_acquired = stats.not_acquired,
+            errors = stats.errors,
+            page_budget_exhausted = stats.page_budget_exhausted,
+            "Trigger operational alert candidate observed"
+        );
+    }
+}
+
+fn pass_alert_candidates(lane: SchedulerLane, stats: PassStats) -> Vec<TriggerAlert> {
+    let mut alerts = Vec::with_capacity(3);
+    let unhealthy = stats.errors > 0 || stats.failed > 0 || stats.page_budget_exhausted;
+    if unhealthy {
+        alerts.push(TriggerAlert::SchedulerHealth);
+    }
+    if stats.candidates > 0
+        && stats.completed == 0
+        && stats.not_acquired.saturating_mul(2) > stats.candidates
+    {
+        alerts.push(TriggerAlert::StuckLaunch);
+    }
+    match lane {
+        SchedulerLane::Capabilities if stats.failed > 0 || stats.errors > 0 => {
+            alerts.push(TriggerAlert::CapabilityBound);
+        }
+        SchedulerLane::Cleanup if unhealthy => alerts.push(TriggerAlert::CleanupDebt),
+        SchedulerLane::Effects
+        | SchedulerLane::Capabilities
+        | SchedulerLane::Workspaces
+        | SchedulerLane::Cleanup => {}
+    }
+    alerts
 }
 
 fn scheduler_correlation(lane: SchedulerLane) -> String {
@@ -514,24 +616,26 @@ impl CleanupPlanner {
             .await?;
         let target_count = plan.targets.len();
         tracing::info!(
+            event_name = "cma_trigger_cleanup_plan",
+            schema_version = OBSERVABILITY_SCHEMA_VERSION,
             launch_id = %released.id.0,
             correlation_id,
             target_count,
             fence = lease.fencing_token,
             "Trigger cleanup dry-run retained an exact CMA-owned object plan"
         );
-        self.activity
-            .record(
-                worker_record(
-                    &released,
-                    ActivityAction::TriggerCleanupPlan,
-                    ActivityOutcome::Succeeded,
-                    correlation_id,
-                )
-                .with(DetailKey::CleanupTargetCount, target_count.to_string())
-                .with(DetailKey::FencingToken, lease.fencing_token.to_string()),
+        record_activity(
+            &self.activity,
+            worker_record(
+                &released,
+                ActivityAction::TriggerCleanupPlan,
+                ActivityOutcome::Succeeded,
+                correlation_id,
             )
-            .await;
+            .with(DetailKey::CleanupTargetCount, target_count.to_string())
+            .with(DetailKey::FencingToken, lease.fencing_token.to_string()),
+        )
+        .await;
         Ok(CleanupPlanOutcome::Planned)
     }
 }

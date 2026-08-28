@@ -15,7 +15,7 @@
 use std::{
     collections::HashSet,
     path::{Component, Path, PathBuf},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use sha2::{Digest, Sha256};
@@ -171,9 +171,7 @@ impl SessionRecord {
     /// reserve the first turn: absence of an outbox is the initial `Queued`
     /// state, not permission for an owner message to race its creation.
     pub(crate) fn reserved_initial_prompt_state(&self) -> Option<crate::PromptDeliveryState> {
-        if self.trigger_origin.is_none() {
-            return None;
-        }
+        self.trigger_origin.as_ref()?;
         let state = self
             .initial_prompt
             .as_ref()
@@ -745,15 +743,18 @@ pub enum StoreError {
 /// One subject-scoped attempt to perform a named operation once.
 ///
 /// The name, key, and fingerprint are opaque to the core. The interface that
-/// accepts the request decides how to derive them; persistence only guarantees
-/// that one exact fingerprint can hold a key until the claim expires.
+/// accepts the request decides how to derive them. An unfinished generation
+/// remains fenced until it is reconciled; retention begins only after an exact
+/// opaque outcome is recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperationClaim {
+    claim_id: String,
     subject: SubjectId,
     operation: String,
     key: String,
     fingerprint: [u8; 32],
-    expires_at: SystemTime,
+    lease_expires_at: SystemTime,
+    outcome_retention: Duration,
 }
 
 impl OperationClaim {
@@ -763,15 +764,23 @@ impl OperationClaim {
         operation: impl Into<String>,
         key: impl Into<String>,
         fingerprint: [u8; 32],
-        expires_at: SystemTime,
+        lease_expires_at: SystemTime,
+        outcome_retention: Duration,
     ) -> Self {
         Self {
+            claim_id: uuid::Uuid::new_v4().simple().to_string(),
             subject,
             operation: operation.into(),
             key: key.into(),
             fingerprint,
-            expires_at,
+            lease_expires_at,
+            outcome_retention,
         }
+    }
+
+    /// Unique generation owned only by the process that acquired this claim.
+    pub fn claim_id(&self) -> &str {
+        &self.claim_id
     }
 
     /// The subject whose operation this is.
@@ -794,9 +803,17 @@ impl OperationClaim {
         &self.fingerprint
     }
 
-    /// When persistence may forget this claim and permit the key again.
-    pub fn expires_at(&self) -> SystemTime {
-        self.expires_at
+    /// The finite ownership window for the process executing this claim.
+    ///
+    /// Expiry never authorizes another execution. It only proves that a
+    /// missing outcome must be reconciled before the operation can progress.
+    pub fn lease_expires_at(&self) -> SystemTime {
+        self.lease_expires_at
+    }
+
+    /// How long an exact completed outcome remains replayable.
+    pub fn outcome_retention(&self) -> Duration {
+        self.outcome_retention
     }
 }
 
@@ -807,6 +824,11 @@ pub enum OperationReservation {
     Acquired,
     /// The same operation is still being performed elsewhere.
     Pending,
+    /// The execution lease ended without a replay outcome.
+    ///
+    /// The operation remains fenced: a caller must reconcile durable domain
+    /// state or let the original owner complete it, never execute it again.
+    RecoveryRequired,
     /// The operation finished and its opaque outcome can be replayed.
     Complete(Vec<u8>),
     /// This key already names a different request fingerprint.
@@ -823,7 +845,7 @@ pub trait OperationStore: Send + Sync {
     /// Atomically acquire a new claim or inspect the one already holding it.
     async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError>;
 
-    /// Replace a held claim's pending marker with its replayable outcome.
+    /// Replace this exact acquired generation with its replayable outcome.
     async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError>;
 }
 
@@ -835,20 +857,23 @@ mod operation_claim_tests {
 
     #[test]
     fn a_claim_preserves_every_part_of_its_durable_identity() {
-        let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+        let lease_expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
         let claim = OperationClaim::new(
             SubjectId("subject-a".into()),
             "create-resource",
             "attempt-a",
             [9; 32],
-            expires_at,
+            lease_expires_at,
+            Duration::from_secs(86_400),
         );
 
         assert_eq!(claim.subject(), &SubjectId("subject-a".into()));
         assert_eq!(claim.operation(), "create-resource");
         assert_eq!(claim.key(), "attempt-a");
         assert_eq!(claim.fingerprint(), &[9; 32]);
-        assert_eq!(claim.expires_at(), expires_at);
+        assert!(!claim.claim_id().is_empty());
+        assert_eq!(claim.lease_expires_at(), lease_expires_at);
+        assert_eq!(claim.outcome_retention(), Duration::from_secs(86_400));
     }
 }
 

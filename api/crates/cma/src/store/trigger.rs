@@ -10,10 +10,13 @@ use layer2_core::{
     TRIGGER_WORKER_STATES,
 };
 use mongodb::bson::{doc, Bson, Document};
-use mongodb::error::{Error, ErrorKind, WriteFailure, UNKNOWN_TRANSACTION_COMMIT_RESULT};
+use mongodb::error::{
+    Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
+};
 use mongodb::options::{IndexOptions, ReturnDocument};
 use mongodb::{Client, Collection, IndexModel};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::time::Duration;
 
 use super::durability::majority_collection;
 
@@ -24,11 +27,21 @@ const TRIGGER_LAUNCH_EVENTS: &str = "trigger_launch_events";
 const TRIGGER_CONNECTION_REVOCATIONS: &str = "trigger_connection_revocations";
 const DUPLICATE_KEY: i32 = 11_000;
 const CONNECTION_REVOCATION_CAS_RETRIES: usize = 5;
+const TRIGGER_PUBLICATION_TRANSACTION_ATTEMPTS: usize = 5;
+const TRIGGER_PUBLICATION_COMMIT_ATTEMPTS: usize = 5;
+const LAUNCH_TRANSACTION_COMMIT_ATTEMPTS: usize = 5;
+const LAUNCH_TRANSACTION_COMMIT_DEADLINE: Duration = Duration::from_secs(5);
+const LAUNCH_TRANSACTION_COMMIT_INITIAL_BACKOFF: Duration = Duration::from_millis(25);
+const LAUNCH_TRANSACTION_COMMIT_MAX_BACKOFF: Duration = Duration::from_millis(400);
+const TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION: i64 = 1;
+const TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION: i64 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DraftDoc {
     #[serde(rename = "_id")]
     id: String,
+    #[serde(default)]
+    document_schema_version: i64,
     owner: String,
     version: i64,
     updated_at: String,
@@ -39,10 +52,56 @@ struct DraftDoc {
 struct RevisionDoc {
     #[serde(rename = "_id")]
     id: String,
+    #[serde(default)]
+    document_schema_version: i64,
     public_id: String,
     owner: String,
     published_at: String,
     revision: TriggerRevision,
+}
+
+#[derive(Debug, Deserialize)]
+struct DraftVersionProjection {
+    #[serde(default)]
+    document_schema_version: i64,
+    version: i64,
+}
+
+enum TransactionCommitOutcome {
+    Committed,
+    RetryTransaction(Error),
+    Unknown(Error),
+}
+
+enum LaunchCommitAttempt {
+    Committed,
+    Unknown(Error),
+    Failed(Error),
+}
+
+#[derive(Debug)]
+enum LaunchCommitFailure {
+    Unknown(Error),
+    Deadline(Option<Error>),
+    Failed(Error),
+}
+
+#[async_trait::async_trait]
+trait LaunchTransactionCommitter {
+    async fn commit_once(&mut self) -> LaunchCommitAttempt;
+}
+
+#[async_trait::async_trait]
+impl LaunchTransactionCommitter for mongodb::ClientSession {
+    async fn commit_once(&mut self) -> LaunchCommitAttempt {
+        match self.commit_transaction().await {
+            Ok(()) => LaunchCommitAttempt::Committed,
+            Err(error) if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) => {
+                LaunchCommitAttempt::Unknown(error)
+            }
+            Err(error) => LaunchCommitAttempt::Failed(error),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,7 +122,35 @@ struct LaunchDoc {
     /// been copied to the canonical event collection.
     #[serde(default)]
     event_high_water: Option<i64>,
+    #[serde(deserialize_with = "deserialize_launch")]
     launch: Launch,
+}
+
+fn deserialize_launch<'de, D>(deserializer: D) -> Result<Launch, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut document = Document::deserialize(deserializer)?;
+    match document.get_mut("runtime_admission") {
+        None | Some(Bson::Null) => {}
+        Some(Bson::Document(runtime)) => match runtime.get("kernel") {
+            None => {
+                runtime.insert("kernel", crate::trigger::TRIGGER_KERNEL_ID);
+            }
+            Some(Bson::String(kernel)) if kernel == crate::trigger::TRIGGER_KERNEL_ID => {}
+            Some(_) => {
+                return Err(serde::de::Error::custom(
+                    "stored Launch runtime admission uses an unsupported kernel",
+                ));
+            }
+        },
+        Some(_) => {
+            return Err(serde::de::Error::custom(
+                "stored Launch runtime admission is not a document",
+            ));
+        }
+    }
+    mongodb::bson::deserialize_from_document(document).map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +210,59 @@ impl MongoTriggerStore {
         Ok(store)
     }
 
+    async fn migrate_draft_schema(&self, id: &str) -> Result<(), TriggerStoreError> {
+        let result = self
+            .drafts
+            .update_one(
+                exact_legacy_document_schema_filter(id),
+                current_document_schema_update(TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION),
+            )
+            .await
+            .map_err(|error| unavailable("migrate Trigger draft document schema", error))?;
+        if result.modified_count == 1 {
+            tracing::debug!(trigger_id = id, "migrated legacy Trigger draft schema");
+        }
+        Ok(())
+    }
+
+    async fn migrate_revision_schema(&self, id: &str) -> Result<(), TriggerStoreError> {
+        let result = self
+            .revisions
+            .update_one(
+                exact_legacy_document_schema_filter(id),
+                current_document_schema_update(TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION),
+            )
+            .await
+            .map_err(|error| unavailable("migrate Trigger revision document schema", error))?;
+        if result.modified_count == 1 {
+            tracing::debug!(
+                trigger_revision_id = id,
+                "migrated legacy Trigger revision schema"
+            );
+        }
+        Ok(())
+    }
+
+    async fn migrate_draft_page(&self, docs: &[DraftDoc]) -> Result<(), TriggerStoreError> {
+        for document in docs
+            .iter()
+            .filter(|document| document.document_schema_version == 0)
+        {
+            self.migrate_draft_schema(&document.id).await?;
+        }
+        Ok(())
+    }
+
+    async fn migrate_revision_page(&self, docs: &[RevisionDoc]) -> Result<(), TriggerStoreError> {
+        for document in docs
+            .iter()
+            .filter(|document| document.document_schema_version == 0)
+        {
+            self.migrate_revision_schema(&document.id).await?;
+        }
+        Ok(())
+    }
+
     async fn ensure_indexes(&self) -> Result<(), TriggerStoreError> {
         for (collection, index) in [(
             &self.drafts,
@@ -178,6 +318,15 @@ impl MongoTriggerStore {
                     "_id": -1,
                 })
                 .options(named("trigger_launches_by_owner_public_id"))
+                .build(),
+            IndexModel::builder()
+                .keys(doc! {
+                    "owner": 1,
+                    "launch.session.session_id": 1,
+                    "created_at": -1,
+                    "_id": -1,
+                })
+                .options(named("trigger_launches_by_owner_session"))
                 .build(),
             IndexModel::builder()
                 .keys(doc! { "state": 1, "lease_expires_at": 1, "updated_at": 1 })
@@ -251,13 +400,235 @@ impl MongoTriggerStore {
     }
 
     async fn draft_version(&self, id: &str) -> Result<Option<u64>, TriggerStoreError> {
-        self.drafts
+        self.migrate_draft_schema(id).await?;
+        let document = self
+            .drafts
+            .clone_with_type::<DraftVersionProjection>()
             .find_one(doc! { "_id": id })
-            .projection(doc! { "version": 1 })
+            .projection(doc! { "document_schema_version": 1, "version": 1 })
             .await
-            .map_err(|error| unavailable("read Trigger draft revision", error))?
-            .map(|doc| unsigned(doc.version, "Trigger draft revision"))
-            .transpose()
+            .map_err(|error| stored_read_failure("read Trigger draft revision", error))?;
+        let Some(document) = document else {
+            return Ok(None);
+        };
+        validate_document_schema_version(
+            document.document_schema_version,
+            TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION,
+            "Trigger draft",
+        )?;
+        Ok(Some(unsigned(document.version, "Trigger draft revision")?))
+    }
+
+    async fn reconcile_publication(
+        &self,
+        expected_draft_version: u64,
+        draft: &TriggerDraft,
+        revision: &TriggerRevision,
+        unresolved: Error,
+    ) -> Result<PublishedRevision, TriggerStoreError> {
+        self.migrate_revision_schema(&revision.id.0).await?;
+        let persisted_revision = self
+            .revisions
+            .find_one(doc! { "_id": &revision.id.0 })
+            .await
+            .map_err(|error| {
+                stored_read_failure("reconcile uncertain Trigger publication revision", error)
+            })?
+            .map(read_revision)
+            .transpose()?;
+        if let Some(persisted) = persisted_revision {
+            if persisted == *revision {
+                return Ok(PublishedRevision {
+                    draft: draft.clone(),
+                    revision: revision.clone(),
+                });
+            }
+            return Err(TriggerStoreError::AlreadyExists);
+        }
+
+        let actual = self.draft_version(&draft.id.0).await?.unwrap_or(0);
+        if actual != expected_draft_version {
+            return Err(TriggerStoreError::RevisionConflict {
+                expected: expected_draft_version,
+                actual,
+            });
+        }
+        Err(unavailable(
+            "resolve uncertain Trigger publication transaction",
+            unresolved,
+        ))
+    }
+
+    /// Publish with bounded transaction/commit retries and durable ambiguity reconciliation.
+    async fn publish_revision_transaction(
+        &self,
+        expected_draft_version: u64,
+        draft: &TriggerDraft,
+        revision: &TriggerRevision,
+        first_attempt_barrier: Option<&tokio::sync::Barrier>,
+    ) -> Result<PublishedRevision, TriggerStoreError> {
+        let expected = signed(expected_draft_version, "Trigger draft expected revision")?;
+        let draft_doc = draft_doc(draft)?;
+        let revision_doc = revision_doc(revision)?;
+        self.migrate_draft_schema(&draft.id.0).await?;
+
+        let mut last_transient = None;
+        for attempt in 0..TRIGGER_PUBLICATION_TRANSACTION_ATTEMPTS {
+            if attempt > 0 {
+                tokio::task::yield_now().await;
+            }
+            let mut session = match self.client.start_session().await {
+                Ok(session) => session,
+                Err(error) if error.contains_label(TRANSIENT_TRANSACTION_ERROR) => {
+                    last_transient = Some(error);
+                    continue;
+                }
+                Err(error) => {
+                    return Err(unavailable("start Trigger publication transaction", error));
+                }
+            };
+            if let Err(error) = session.start_transaction().await {
+                if error.contains_label(TRANSIENT_TRANSACTION_ERROR) {
+                    last_transient = Some(error);
+                    continue;
+                }
+                return Err(unavailable("begin Trigger publication transaction", error));
+            }
+
+            let observed = self
+                .drafts
+                .clone_with_type::<DraftVersionProjection>()
+                .find_one(doc! { "_id": &draft.id.0 })
+                .projection(doc! { "document_schema_version": 1, "version": 1 })
+                .session(&mut session)
+                .await;
+            let observed = match observed {
+                Ok(Some(observed)) => observed,
+                Ok(None) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(TriggerStoreError::RevisionConflict {
+                        expected: expected_draft_version,
+                        actual: 0,
+                    });
+                }
+                Err(error) if error.contains_label(TRANSIENT_TRANSACTION_ERROR) => {
+                    let _ = session.abort_transaction().await;
+                    last_transient = Some(error);
+                    continue;
+                }
+                Err(error) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(stored_read_failure(
+                        "read Trigger draft in publication transaction",
+                        error,
+                    ));
+                }
+            };
+            if let Err(error) = validate_document_schema_version(
+                observed.document_schema_version,
+                TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION,
+                "Trigger draft",
+            ) {
+                let _ = session.abort_transaction().await;
+                return Err(error);
+            }
+            let actual = match unsigned(observed.version, "Trigger draft revision") {
+                Ok(actual) => actual,
+                Err(error) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(error);
+                }
+            };
+            if actual != expected_draft_version {
+                let _ = session.abort_transaction().await;
+                return Err(TriggerStoreError::RevisionConflict {
+                    expected: expected_draft_version,
+                    actual,
+                });
+            }
+            if attempt == 0 {
+                if let Some(barrier) = first_attempt_barrier {
+                    barrier.wait().await;
+                }
+            }
+
+            let replaced = self
+                .drafts
+                .replace_one(
+                    doc! {
+                        "_id": &draft.id.0,
+                        "owner": &draft.owner.0,
+                        "version": expected,
+                        "document_schema_version": TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION,
+                    },
+                    &draft_doc,
+                )
+                .session(&mut session)
+                .await;
+            let replaced = match replaced {
+                Ok(result) => result,
+                Err(error) if error.contains_label(TRANSIENT_TRANSACTION_ERROR) => {
+                    let _ = session.abort_transaction().await;
+                    last_transient = Some(error);
+                    continue;
+                }
+                Err(error) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(unavailable("publish Trigger draft", error));
+                }
+            };
+            if replaced.matched_count != 1 {
+                let _ = session.abort_transaction().await;
+                let actual = self.draft_version(&draft.id.0).await?.unwrap_or(0);
+                return Err(TriggerStoreError::RevisionConflict {
+                    expected: expected_draft_version,
+                    actual,
+                });
+            }
+
+            if let Err(error) = self
+                .revisions
+                .insert_one(&revision_doc)
+                .session(&mut session)
+                .await
+            {
+                let _ = session.abort_transaction().await;
+                if error.contains_label(TRANSIENT_TRANSACTION_ERROR) {
+                    last_transient = Some(error);
+                    continue;
+                }
+                return Err(if is_duplicate_key(&error) {
+                    TriggerStoreError::AlreadyExists
+                } else {
+                    unavailable("insert immutable Trigger revision", error)
+                });
+            }
+
+            match commit_transaction(&mut session).await? {
+                TransactionCommitOutcome::Committed => {
+                    return Ok(PublishedRevision {
+                        draft: read_draft(draft_doc)?,
+                        revision: read_revision(revision_doc)?,
+                    });
+                }
+                TransactionCommitOutcome::RetryTransaction(error) => {
+                    last_transient = Some(error);
+                }
+                TransactionCommitOutcome::Unknown(error) => {
+                    return self
+                        .reconcile_publication(expected_draft_version, draft, revision, error)
+                        .await;
+                }
+            }
+        }
+
+        let Some(last_transient) = last_transient else {
+            return Err(TriggerStoreError::Unavailable(
+                "Trigger publication retry budget ended without a driver result".into(),
+            ));
+        };
+        self.reconcile_publication(expected_draft_version, draft, revision, last_transient)
+            .await
     }
 
     async fn launch_after_failed_cas(
@@ -674,10 +1045,11 @@ impl TriggerStore for MongoTriggerStore {
     }
 
     async fn get_draft(&self, id: &TriggerId) -> Result<Option<TriggerDraft>, TriggerStoreError> {
+        self.migrate_draft_schema(&id.0).await?;
         self.drafts
             .find_one(doc! { "_id": &id.0 })
             .await
-            .map_err(|error| unavailable("read Trigger draft", error))?
+            .map_err(|error| stored_read_failure("read Trigger draft", error))?
             .map(read_draft)
             .transpose()
     }
@@ -701,7 +1073,8 @@ impl TriggerStore for MongoTriggerStore {
             .map_err(|error| unavailable("list Trigger drafts", error))?
             .try_collect::<Vec<_>>()
             .await
-            .map_err(|error| unavailable("read Trigger draft page", error))?;
+            .map_err(|error| stored_read_failure("read Trigger draft page", error))?;
+        self.migrate_draft_page(&docs).await?;
         map_page(docs, page.limit, |doc| {
             let cursor = encode_cursor(&doc.updated_at, &doc.id);
             Ok((read_draft(doc)?, cursor))
@@ -715,10 +1088,16 @@ impl TriggerStore for MongoTriggerStore {
     ) -> Result<TriggerDraft, TriggerStoreError> {
         let expected = signed(expected_version, "Trigger draft expected revision")?;
         let replacement = draft_doc(draft)?;
+        self.migrate_draft_schema(&draft.id.0).await?;
         let result = self
             .drafts
             .find_one_and_replace(
-                doc! { "_id": &draft.id.0, "owner": &draft.owner.0, "version": expected },
+                doc! {
+                    "_id": &draft.id.0,
+                    "owner": &draft.owner.0,
+                    "version": expected,
+                    "document_schema_version": TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION,
+                },
                 replacement,
             )
             .return_document(ReturnDocument::After)
@@ -740,69 +1119,19 @@ impl TriggerStore for MongoTriggerStore {
         draft: &TriggerDraft,
         revision: &TriggerRevision,
     ) -> Result<PublishedRevision, TriggerStoreError> {
-        let expected = signed(expected_draft_version, "Trigger draft expected revision")?;
-        let draft_doc = draft_doc(draft)?;
-        let revision_doc = revision_doc(revision)?;
-        let mut session = self
-            .client
-            .start_session()
+        self.publish_revision_transaction(expected_draft_version, draft, revision, None)
             .await
-            .map_err(|error| unavailable("start Trigger publication transaction", error))?;
-        session
-            .start_transaction()
-            .await
-            .map_err(|error| unavailable("begin Trigger publication transaction", error))?;
-        let replaced = self
-            .drafts
-            .replace_one(
-                doc! { "_id": &draft.id.0, "owner": &draft.owner.0, "version": expected },
-                &draft_doc,
-            )
-            .session(&mut session)
-            .await;
-        let replaced = match replaced {
-            Ok(result) => result,
-            Err(error) => {
-                let _ = session.abort_transaction().await;
-                return Err(unavailable("publish Trigger draft", error));
-            }
-        };
-        if replaced.matched_count != 1 {
-            let _ = session.abort_transaction().await;
-            let actual = self.draft_version(&draft.id.0).await?.unwrap_or(0);
-            return Err(TriggerStoreError::RevisionConflict {
-                expected: expected_draft_version,
-                actual,
-            });
-        }
-        if let Err(error) = self
-            .revisions
-            .insert_one(&revision_doc)
-            .session(&mut session)
-            .await
-        {
-            let _ = session.abort_transaction().await;
-            return Err(if is_duplicate_key(&error) {
-                TriggerStoreError::AlreadyExists
-            } else {
-                unavailable("insert immutable Trigger revision", error)
-            });
-        }
-        commit(&mut session, "commit Trigger publication").await?;
-        Ok(PublishedRevision {
-            draft: read_draft(draft_doc)?,
-            revision: read_revision(revision_doc)?,
-        })
     }
 
     async fn get_revision(
         &self,
         id: &TriggerRevisionId,
     ) -> Result<Option<TriggerRevision>, TriggerStoreError> {
+        self.migrate_revision_schema(&id.0).await?;
         self.revisions
             .find_one(doc! { "_id": &id.0 })
             .await
-            .map_err(|error| unavailable("read Trigger revision", error))?
+            .map_err(|error| stored_read_failure("read Trigger revision", error))?
             .map(read_revision)
             .transpose()
     }
@@ -811,12 +1140,17 @@ impl TriggerStore for MongoTriggerStore {
         &self,
         id: &PublicTriggerId,
     ) -> Result<Option<TriggerRevision>, TriggerStoreError> {
-        self.revisions
+        let document = self
+            .revisions
             .find_one(doc! { "public_id": &id.0 })
             .await
-            .map_err(|error| unavailable("read public Trigger revision", error))?
-            .map(read_revision)
-            .transpose()
+            .map_err(|error| stored_read_failure("read public Trigger revision", error))?;
+        if let Some(document) = &document {
+            if document.document_schema_version == 0 {
+                self.migrate_revision_schema(&document.id).await?;
+            }
+        }
+        document.map(read_revision).transpose()
     }
 
     async fn list_revisions_for(
@@ -838,7 +1172,8 @@ impl TriggerStore for MongoTriggerStore {
             .map_err(|error| unavailable("list Trigger revisions", error))?
             .try_collect::<Vec<_>>()
             .await
-            .map_err(|error| unavailable("read Trigger revision page", error))?;
+            .map_err(|error| stored_read_failure("read Trigger revision page", error))?;
+        self.migrate_revision_page(&docs).await?;
         map_page(docs, page.limit, |doc| {
             let cursor = encode_cursor(&doc.published_at, &doc.id);
             Ok((read_revision(doc)?, cursor))
@@ -851,12 +1186,14 @@ impl TriggerStore for MongoTriggerStore {
         owner: &SubjectId,
         retired_at: &str,
     ) -> Result<Option<TriggerRevision>, TriggerStoreError> {
+        self.migrate_revision_schema(&id.0).await?;
         let updated = self
             .revisions
             .find_one_and_update(
                 doc! {
                     "_id": &id.0,
                     "owner": &owner.0,
+                    "document_schema_version": TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION,
                     "revision.availability": "published",
                 },
                 doc! {
@@ -875,7 +1212,7 @@ impl TriggerStore for MongoTriggerStore {
         self.revisions
             .find_one(doc! { "_id": &id.0, "owner": &owner.0 })
             .await
-            .map_err(|error| unavailable("reconcile retired Trigger revision", error))?
+            .map_err(|error| stored_read_failure("reconcile retired Trigger revision", error))?
             .map(read_revision)
             .transpose()
     }
@@ -1143,24 +1480,7 @@ impl LaunchStore for MongoTriggerStore {
         &self,
         query: &LaunchQuery,
     ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
-        let mut filter = Document::new();
-        if let Some(owner) = query.owner.as_ref() {
-            filter.insert("owner", owner.0.clone());
-        }
-        if let Some(public_id) = query.public_id.as_ref() {
-            filter.insert("launch.revision.public_id", public_id.0.clone());
-        }
-        if !query.states.is_empty() {
-            filter.insert(
-                "state",
-                doc! { "$in": mongodb::bson::serialize_to_bson(&query.states).map_err(|error| {
-                    TriggerStoreError::Malformed(format!("encode Launch states: {error}"))
-                })? },
-            );
-        }
-        if let Some(bound) = query.updated_before.as_ref() {
-            filter.insert("updated_at", doc! { "$lt": bound });
-        }
+        let filter = launch_query_filter(query)?;
         let filter = page_filter(filter, query.page.cursor.as_deref(), "created_at")?;
         let docs = self
             .launches
@@ -1224,8 +1544,25 @@ impl LaunchStore for MongoTriggerStore {
         .map_err(|error| {
             TriggerStoreError::Malformed(format!("encode terminal Launch states: {error}"))
         })?;
+        let cancelled =
+            mongodb::bson::serialize_to_bson(&LaunchState::Cancelled).map_err(|error| {
+                TriggerStoreError::Malformed(format!("encode cancelled Launch state: {error}"))
+            })?;
+        let settled_prompt_states = mongodb::bson::serialize_to_bson(&[
+            layer2_core::PromptDeliveryState::Completed,
+            layer2_core::PromptDeliveryState::Failed,
+        ])
+        .map_err(|error| {
+            TriggerStoreError::Malformed(format!("encode settled prompt states: {error}"))
+        })?;
         let filter = page_filter(
-            capability_candidate_filter(states, revoked, terminal_states),
+            capability_candidate_filter(
+                states,
+                revoked,
+                terminal_states,
+                cancelled,
+                settled_prompt_states,
+            ),
             page.cursor.as_deref(),
             "created_at",
         )?;
@@ -1439,6 +1776,31 @@ impl LaunchStore for MongoTriggerStore {
     }
 }
 
+fn launch_query_filter(query: &LaunchQuery) -> Result<Document, TriggerStoreError> {
+    let mut filter = Document::new();
+    if let Some(owner) = query.owner.as_ref() {
+        filter.insert("owner", owner.0.clone());
+    }
+    if let Some(public_id) = query.public_id.as_ref() {
+        filter.insert("launch.revision.public_id", public_id.0.clone());
+    }
+    if let Some(session_id) = query.session_id.as_ref() {
+        filter.insert("launch.session.session_id", session_id.0.clone());
+    }
+    if !query.states.is_empty() {
+        filter.insert(
+            "state",
+            doc! { "$in": mongodb::bson::serialize_to_bson(&query.states).map_err(|error| {
+                TriggerStoreError::Malformed(format!("encode Launch states: {error}"))
+            })? },
+        );
+    }
+    if let Some(bound) = query.updated_before.as_ref() {
+        filter.insert("updated_at", doc! { "$lt": bound });
+    }
+    Ok(filter)
+}
+
 fn connection_revocation_filter(owner: &SubjectId, service_id: &str) -> Document {
     doc! {
         "_id": {
@@ -1456,14 +1818,34 @@ fn connection_revocation_launch_filter(owner: &SubjectId, service_id: &str) -> D
 }
 
 fn worker_candidate_filter(states: Bson, updated_before: Option<&str>) -> Document {
-    let mut filter = doc! { "state": { "$in": states } };
+    let mut clauses = vec![doc! { "state": { "$in": states } }];
     if let Some(bound) = updated_before {
-        filter.insert("updated_at", doc! { "$lt": bound });
+        clauses.push(doc! { "updated_at": { "$lt": bound } });
+        clauses.push(doc! {
+            "$or": [
+                { "state": { "$ne": "pr_open" } },
+                {
+                    "state": "pr_open",
+                    "launch.pull_request.state": "open",
+                    "$or": [
+                        { "launch.pull_request.status_sync.next_attempt_at": { "$lte": bound } },
+                        { "launch.pull_request.status_sync.next_attempt_at": { "$exists": false } },
+                        { "launch.pull_request.status_sync.next_attempt_at": Bson::Null },
+                    ],
+                },
+            ],
+        });
     }
-    filter
+    doc! { "$and": clauses }
 }
 
-fn capability_candidate_filter(states: Bson, revoked: Bson, terminal_states: Bson) -> Document {
+fn capability_candidate_filter(
+    states: Bson,
+    revoked: Bson,
+    terminal_states: Bson,
+    cancelled: Bson,
+    settled_prompt_states: Bson,
+) -> Document {
     doc! {
         "state": { "$in": states },
         "$or": [
@@ -1471,6 +1853,11 @@ fn capability_candidate_filter(states: Bson, revoked: Bson, terminal_states: Bso
             {
                 "state": { "$in": terminal_states },
                 "launch.session_credential_retirement": { "$exists": false },
+            },
+            {
+                "state": cancelled,
+                "launch.session": { "$exists": true, "$ne": Bson::Null },
+                "launch.delivery.state": { "$nin": settled_prompt_states },
             },
         ],
     }
@@ -1668,6 +2055,7 @@ async fn replace_connection_revocation(
 fn draft_doc(draft: &TriggerDraft) -> Result<DraftDoc, TriggerStoreError> {
     Ok(DraftDoc {
         id: draft.id.0.clone(),
+        document_schema_version: TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION,
         owner: draft.owner.0.clone(),
         version: signed(draft.version, "Trigger draft revision")?,
         updated_at: draft.updated_at.clone(),
@@ -1676,6 +2064,11 @@ fn draft_doc(draft: &TriggerDraft) -> Result<DraftDoc, TriggerStoreError> {
 }
 
 fn read_draft(doc: DraftDoc) -> Result<TriggerDraft, TriggerStoreError> {
+    validate_document_schema_version(
+        doc.document_schema_version,
+        TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION,
+        "Trigger draft",
+    )?;
     if doc.id != doc.draft.id.0
         || doc.owner != doc.draft.owner.0
         || unsigned(doc.version, "Trigger draft revision")? != doc.draft.version
@@ -1697,6 +2090,7 @@ fn revision_doc(revision: &TriggerRevision) -> Result<RevisionDoc, TriggerStoreE
     })?;
     Ok(RevisionDoc {
         id: revision.id.0.clone(),
+        document_schema_version: TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION,
         public_id: revision.public_id.0.clone(),
         owner: revision.content.publisher_subject_id.0.clone(),
         published_at: revision.published_at.clone(),
@@ -1705,6 +2099,11 @@ fn revision_doc(revision: &TriggerRevision) -> Result<RevisionDoc, TriggerStoreE
 }
 
 fn read_revision(doc: RevisionDoc) -> Result<TriggerRevision, TriggerStoreError> {
+    validate_document_schema_version(
+        doc.document_schema_version,
+        TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION,
+        "Trigger revision",
+    )?;
     doc.revision.validate().map_err(|error| {
         TriggerStoreError::Malformed(format!("stored Trigger revision is invalid: {error}"))
     })?;
@@ -1718,6 +2117,57 @@ fn read_revision(doc: RevisionDoc) -> Result<TriggerRevision, TriggerStoreError>
         ));
     }
     Ok(doc.revision)
+}
+
+fn legacy_document_schema_filter() -> Document {
+    doc! {
+        "$or": [
+            { "document_schema_version": { "$exists": false } },
+            {
+                "$expr": {
+                    "$and": [
+                        {
+                            "$in": [
+                                { "$type": "$document_schema_version" },
+                                ["int", "long"],
+                            ],
+                        },
+                        { "$eq": ["$document_schema_version", 0_i64] },
+                    ],
+                },
+            },
+        ],
+    }
+}
+
+fn exact_legacy_document_schema_filter(id: &str) -> Document {
+    doc! {
+        "$and": [
+            { "_id": id },
+            legacy_document_schema_filter(),
+        ],
+    }
+}
+
+fn current_document_schema_update(version: i64) -> Document {
+    doc! {
+        "$set": {
+            "document_schema_version": version,
+        },
+    }
+}
+
+fn validate_document_schema_version(
+    version: i64,
+    current: i64,
+    record: &str,
+) -> Result<(), TriggerStoreError> {
+    if !(0..=current).contains(&version) {
+        return Err(TriggerStoreError::Malformed(format!(
+            "stored {record} uses unsupported document schema version {version}"
+        )));
+    }
+    Ok(())
 }
 
 fn launch_doc(launch: &Launch, current: bool) -> Result<LaunchDoc, TriggerStoreError> {
@@ -1925,6 +2375,15 @@ fn unavailable(context: &str, error: Error) -> TriggerStoreError {
     TriggerStoreError::Unavailable(format!("{context}: {error}"))
 }
 
+fn stored_read_failure(context: &str, error: Error) -> TriggerStoreError {
+    match error.kind.as_ref() {
+        ErrorKind::BsonDeserialization(_) | ErrorKind::Bson(_) => {
+            TriggerStoreError::Malformed(format!("{context}: stored document cannot be decoded"))
+        }
+        _ => unavailable(context, error),
+    }
+}
+
 fn map_insert(context: &'static str) -> impl FnOnce(Error) -> TriggerStoreError {
     move |error| {
         if is_duplicate_key(&error) {
@@ -1943,17 +2402,106 @@ fn is_duplicate_key(error: &Error) -> bool {
     }
 }
 
+async fn commit_transaction(
+    session: &mut mongodb::ClientSession,
+) -> Result<TransactionCommitOutcome, TriggerStoreError> {
+    for attempt in 0..TRIGGER_PUBLICATION_COMMIT_ATTEMPTS {
+        match session.commit_transaction().await {
+            Ok(()) => return Ok(TransactionCommitOutcome::Committed),
+            Err(error) if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) => {
+                if attempt + 1 == TRIGGER_PUBLICATION_COMMIT_ATTEMPTS {
+                    return Ok(TransactionCommitOutcome::Unknown(error));
+                }
+                tokio::task::yield_now().await;
+            }
+            Err(error) if error.contains_label(TRANSIENT_TRANSACTION_ERROR) => {
+                return Ok(TransactionCommitOutcome::RetryTransaction(error));
+            }
+            Err(error) => return Err(unavailable("commit Trigger publication", error)),
+        }
+    }
+    unreachable!("the bounded Trigger publication commit loop always returns")
+}
+
 async fn commit(
     session: &mut mongodb::ClientSession,
     context: &str,
 ) -> Result<(), TriggerStoreError> {
-    loop {
-        match session.commit_transaction().await {
-            Ok(()) => return Ok(()),
-            Err(error) if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) => continue,
-            Err(error) => return Err(unavailable(context, error)),
+    match commit_launch_transaction(session).await {
+        Ok(()) => Ok(()),
+        Err(LaunchCommitFailure::Unknown(error)) => Err(TriggerStoreError::Unavailable(format!(
+            "{context}: transaction commit result remains unknown after \
+             {LAUNCH_TRANSACTION_COMMIT_ATTEMPTS} attempts: {error}"
+        ))),
+        Err(LaunchCommitFailure::Deadline(Some(error))) => {
+            Err(TriggerStoreError::Unavailable(format!(
+                "{context}: transaction commit result remains unknown at the \
+                 {}ms deadline: {error}",
+                LAUNCH_TRANSACTION_COMMIT_DEADLINE.as_millis()
+            )))
         }
+        Err(LaunchCommitFailure::Deadline(None)) => Err(TriggerStoreError::Unavailable(format!(
+            "{context}: transaction commit result remains unknown at the {}ms deadline",
+            LAUNCH_TRANSACTION_COMMIT_DEADLINE.as_millis()
+        ))),
+        Err(LaunchCommitFailure::Failed(error)) => Err(unavailable(context, error)),
     }
+}
+
+async fn commit_launch_transaction(
+    committer: &mut (impl LaunchTransactionCommitter + Send),
+) -> Result<(), LaunchCommitFailure> {
+    commit_launch_transaction_with_policy(
+        committer,
+        LAUNCH_TRANSACTION_COMMIT_ATTEMPTS,
+        LAUNCH_TRANSACTION_COMMIT_DEADLINE,
+        LAUNCH_TRANSACTION_COMMIT_INITIAL_BACKOFF,
+        LAUNCH_TRANSACTION_COMMIT_MAX_BACKOFF,
+    )
+    .await
+}
+
+async fn commit_launch_transaction_with_policy(
+    committer: &mut (impl LaunchTransactionCommitter + Send),
+    attempts: usize,
+    deadline_after: Duration,
+    initial_backoff: Duration,
+    max_backoff: Duration,
+) -> Result<(), LaunchCommitFailure> {
+    debug_assert!(attempts > 0);
+    debug_assert!(initial_backoff <= max_backoff);
+
+    let deadline = tokio::time::Instant::now() + deadline_after;
+    let mut backoff = initial_backoff;
+    let mut last_unknown = None;
+    for attempt in 0..attempts {
+        match tokio::time::timeout_at(deadline, committer.commit_once()).await {
+            Ok(LaunchCommitAttempt::Committed) => return Ok(()),
+            Ok(LaunchCommitAttempt::Unknown(error)) => {
+                last_unknown = Some(error);
+                if attempt + 1 == attempts {
+                    return Err(LaunchCommitFailure::Unknown(
+                        last_unknown.expect("the unknown result was recorded above"),
+                    ));
+                }
+            }
+            Ok(LaunchCommitAttempt::Failed(error)) => {
+                return Err(LaunchCommitFailure::Failed(error));
+            }
+            Err(_) => return Err(LaunchCommitFailure::Deadline(last_unknown)),
+        }
+
+        let now = tokio::time::Instant::now();
+        let Some(wake_at) = now.checked_add(backoff) else {
+            return Err(LaunchCommitFailure::Deadline(last_unknown));
+        };
+        if wake_at >= deadline {
+            return Err(LaunchCommitFailure::Deadline(last_unknown));
+        }
+        tokio::time::sleep_until(wake_at).await;
+        backoff = std::cmp::min(backoff * 2, max_backoff);
+    }
+    unreachable!("the bounded Launch commit loop always returns")
 }
 
 fn encode_cursor(stamp: &str, id: &str) -> String {
@@ -2028,6 +2576,50 @@ where
 mod tests {
     use super::*;
     use layer2_core::{LaunchEventKind, LaunchProgressState};
+    use std::collections::VecDeque;
+
+    struct InjectedLaunchCommitter {
+        outcomes: VecDeque<LaunchCommitAttempt>,
+        attempted_at: Vec<tokio::time::Instant>,
+        hang_after_injections: bool,
+    }
+
+    impl InjectedLaunchCommitter {
+        fn new(outcomes: impl IntoIterator<Item = LaunchCommitAttempt>) -> Self {
+            Self {
+                outcomes: outcomes.into_iter().collect(),
+                attempted_at: Vec::new(),
+                hang_after_injections: false,
+            }
+        }
+
+        fn hanging() -> Self {
+            Self {
+                outcomes: VecDeque::new(),
+                attempted_at: Vec::new(),
+                hang_after_injections: true,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LaunchTransactionCommitter for InjectedLaunchCommitter {
+        async fn commit_once(&mut self) -> LaunchCommitAttempt {
+            self.attempted_at.push(tokio::time::Instant::now());
+            if let Some(outcome) = self.outcomes.pop_front() {
+                return outcome;
+            }
+            if self.hang_after_injections {
+                std::future::pending().await
+            } else {
+                panic!("the injected Launch commit outcomes were exhausted")
+            }
+        }
+    }
+
+    fn unknown_commit_result(message: &'static str) -> LaunchCommitAttempt {
+        LaunchCommitAttempt::Unknown(Error::custom(message))
+    }
 
     fn event(sequence: u64) -> LaunchEvent {
         LaunchEvent {
@@ -2047,6 +2639,157 @@ mod tests {
         }
     }
 
+    fn launch_document() -> Document {
+        let launch = crate::trigger::worker::tests::launch_fixture();
+        mongodb::bson::serialize_to_document(&launch_doc(&launch, true).unwrap())
+            .expect("Launch document serializes")
+    }
+
+    fn runtime_admission(document: &mut Document) -> &mut Document {
+        document
+            .get_document_mut("launch")
+            .unwrap()
+            .get_document_mut("runtime_admission")
+            .unwrap()
+    }
+
+    fn trigger_resource_documents() -> (DraftDoc, RevisionDoc) {
+        let revision = crate::trigger::worker::tests::launch_fixture().revision;
+        let draft = TriggerDraft {
+            id: revision.content.trigger_id.clone(),
+            owner: revision.content.publisher_subject_id.clone(),
+            selected_service_id: "service-schema-test".into(),
+            version: 3,
+            next_revision_number: revision.content.revision_number + 1,
+            content: revision.content.clone(),
+            created_at: "2026-08-27T00:00:00Z".into(),
+            updated_at: "2026-08-27T00:01:00Z".into(),
+        };
+        (draft_doc(&draft).unwrap(), revision_doc(&revision).unwrap())
+    }
+
+    fn publication_candidate(
+        seed: &TriggerDraft,
+        base: &TriggerRevision,
+        published_at: &str,
+    ) -> (TriggerDraft, TriggerRevision) {
+        let mut draft = seed.clone();
+        draft.version += 1;
+        draft.updated_at = published_at.into();
+        let mut revision = base.clone();
+        revision.id = TriggerRevisionId::new();
+        revision.public_id = PublicTriggerId::new();
+        revision.published_at = published_at.into();
+        (draft, revision)
+    }
+
+    #[test]
+    fn owner_session_lookup_targets_the_persisted_nested_identity() {
+        let filter = launch_query_filter(&LaunchQuery {
+            owner: Some(SubjectId("subject-session-owner".into())),
+            public_id: None,
+            session_id: Some(layer2_core::SessionId("sesn_exact_launch".into())),
+            states: Vec::new(),
+            updated_before: None,
+            page: TriggerPageRequest::default(),
+        })
+        .unwrap();
+
+        assert_eq!(filter.get_str("owner").unwrap(), "subject-session-owner");
+        assert_eq!(
+            filter.get_str("launch.session.session_id").unwrap(),
+            "sesn_exact_launch"
+        );
+        assert_eq!(filter.len(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn launch_commit_recovers_from_injected_database_failover_with_bounded_backoff() {
+        let mut committer = InjectedLaunchCommitter::new([
+            unknown_commit_result("primary stepped down"),
+            unknown_commit_result("new primary not selected"),
+            LaunchCommitAttempt::Committed,
+        ]);
+        let started = tokio::time::Instant::now();
+
+        commit_launch_transaction(&mut committer)
+            .await
+            .expect("a confirmed commit settles failover ambiguity");
+
+        assert_eq!(committer.attempted_at.len(), 3);
+        assert_eq!(committer.attempted_at[0], started);
+        assert_eq!(
+            committer.attempted_at[1].duration_since(started),
+            LAUNCH_TRANSACTION_COMMIT_INITIAL_BACKOFF
+        );
+        assert_eq!(
+            committer.attempted_at[2].duration_since(started),
+            LAUNCH_TRANSACTION_COMMIT_INITIAL_BACKOFF * 3
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn launch_commit_preserves_persistent_unknown_result_after_the_attempt_budget() {
+        let mut committer = InjectedLaunchCommitter::new(
+            (0..LAUNCH_TRANSACTION_COMMIT_ATTEMPTS)
+                .map(|_| unknown_commit_result("commit reply lost")),
+        );
+        let started = tokio::time::Instant::now();
+
+        let result = commit_launch_transaction(&mut committer).await;
+
+        assert!(matches!(result, Err(LaunchCommitFailure::Unknown(_))));
+        assert_eq!(
+            committer.attempted_at.len(),
+            LAUNCH_TRANSACTION_COMMIT_ATTEMPTS
+        );
+        assert_eq!(
+            tokio::time::Instant::now().duration_since(started),
+            Duration::from_millis(375)
+        );
+        assert!(tokio::time::Instant::now().duration_since(started) < Duration::from_secs(120));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn launch_commit_backoff_never_crosses_the_commit_deadline() {
+        let mut committer = InjectedLaunchCommitter::new([unknown_commit_result(
+            "primary election still in progress",
+        )]);
+        let started = tokio::time::Instant::now();
+
+        let result = commit_launch_transaction_with_policy(
+            &mut committer,
+            LAUNCH_TRANSACTION_COMMIT_ATTEMPTS,
+            Duration::from_millis(100),
+            Duration::from_millis(100),
+            Duration::from_millis(100),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(LaunchCommitFailure::Deadline(Some(_)))
+        ));
+        assert_eq!(committer.attempted_at, vec![started]);
+        assert_eq!(tokio::time::Instant::now(), started);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn launch_commit_hung_failover_is_cut_off_before_the_worker_lease() {
+        let mut committer = InjectedLaunchCommitter::hanging();
+        let started = tokio::time::Instant::now();
+
+        let result = commit_launch_transaction(&mut committer).await;
+
+        assert!(matches!(result, Err(LaunchCommitFailure::Deadline(None))));
+        assert_eq!(committer.attempted_at.len(), 1);
+        assert_eq!(
+            tokio::time::Instant::now().duration_since(started),
+            LAUNCH_TRANSACTION_COMMIT_DEADLINE
+        );
+        assert!(LAUNCH_TRANSACTION_COMMIT_DEADLINE < Duration::from_secs(120));
+    }
+
     #[test]
     fn cursor_round_trips_without_exposing_query_structure() {
         let cursor = encode_cursor("2026-08-26T12:00:00Z", "opaque-id");
@@ -2062,6 +2805,114 @@ mod tests {
         assert_eq!(signed(i64::MAX as u64, "counter").unwrap(), i64::MAX);
         assert!(signed(i64::MAX as u64 + 1, "counter").is_err());
         assert!(unsigned(-1, "counter").is_err());
+    }
+
+    #[test]
+    fn trigger_resource_documents_write_current_schema_and_read_legacy_schema() {
+        let (draft, revision) = trigger_resource_documents();
+        assert_eq!(
+            draft.document_schema_version,
+            TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            revision.document_schema_version,
+            TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION
+        );
+
+        let mut legacy_draft = mongodb::bson::serialize_to_document(&draft).unwrap();
+        legacy_draft.remove("document_schema_version");
+        let legacy_draft =
+            mongodb::bson::deserialize_from_document::<DraftDoc>(legacy_draft).unwrap();
+        assert_eq!(legacy_draft.document_schema_version, 0);
+        assert!(read_draft(legacy_draft).is_ok());
+
+        let mut legacy_revision = mongodb::bson::serialize_to_document(&revision).unwrap();
+        legacy_revision.remove("document_schema_version");
+        let legacy_revision =
+            mongodb::bson::deserialize_from_document::<RevisionDoc>(legacy_revision).unwrap();
+        assert_eq!(legacy_revision.document_schema_version, 0);
+        assert!(read_revision(legacy_revision).is_ok());
+    }
+
+    #[test]
+    fn trigger_resource_documents_reject_future_schema_versions() {
+        let (mut draft, mut revision) = trigger_resource_documents();
+        draft.document_schema_version = TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION + 1;
+        revision.document_schema_version = TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION + 1;
+
+        assert!(matches!(
+            read_draft(draft),
+            Err(TriggerStoreError::Malformed(_))
+        ));
+        assert!(matches!(
+            read_revision(revision),
+            Err(TriggerStoreError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn legacy_schema_migration_targets_only_one_exact_missing_or_zero_document() {
+        assert_eq!(
+            legacy_document_schema_filter(),
+            doc! {
+                "$or": [
+                    { "document_schema_version": { "$exists": false } },
+                    {
+                        "$expr": {
+                            "$and": [
+                                {
+                                    "$in": [
+                                        { "$type": "$document_schema_version" },
+                                        ["int", "long"],
+                                    ],
+                                },
+                                { "$eq": ["$document_schema_version", 0_i64] },
+                            ],
+                        },
+                    },
+                ],
+            }
+        );
+        assert_eq!(
+            exact_legacy_document_schema_filter("trigger-id"),
+            doc! {
+                "$and": [
+                    { "_id": "trigger-id" },
+                    legacy_document_schema_filter(),
+                ],
+            }
+        );
+        assert_eq!(
+            current_document_schema_update(1),
+            doc! { "$set": { "document_schema_version": 1_i64 } }
+        );
+        assert!(validate_document_schema_version(0, 1, "record").is_ok());
+        assert!(validate_document_schema_version(1, 1, "record").is_ok());
+        assert!(validate_document_schema_version(-1, 1, "record").is_err());
+        assert!(validate_document_schema_version(2, 1, "record").is_err());
+    }
+
+    #[test]
+    fn missing_historical_launch_kernel_is_migrated_at_the_cma_store_boundary() {
+        let mut document = launch_document();
+        runtime_admission(&mut document).remove("kernel");
+
+        let decoded: LaunchDoc = mongodb::bson::deserialize_from_document(document)
+            .expect("the historical product-owned Launch remains readable");
+        assert_eq!(
+            decoded.launch.runtime_admission.unwrap().kernel,
+            layer2_core::KernelId::new(crate::trigger::TRIGGER_KERNEL_ID)
+        );
+    }
+
+    #[test]
+    fn explicit_invalid_historical_launch_kernels_fail_closed() {
+        for kernel in [Bson::String(String::new()), Bson::String("other".into())] {
+            let mut document = launch_document();
+            runtime_admission(&mut document).insert("kernel", kernel);
+
+            assert!(mongodb::bson::deserialize_from_document::<LaunchDoc>(document).is_err());
+        }
     }
 
     #[test]
@@ -2129,6 +2980,11 @@ mod tests {
                 states.clone(),
                 Bson::String("revoked".into()),
                 terminal_states,
+                Bson::String("cancelled".into()),
+                Bson::Array(vec![
+                    Bson::String("completed".into()),
+                    Bson::String("failed".into()),
+                ]),
             ),
             cleanup_candidate_filter(states, "2026-08-27T00:00:00Z"),
         ];
@@ -2139,6 +2995,42 @@ mod tests {
                 "settlement inventory must not use the README-click selector: {filter:?}"
             );
         }
+    }
+
+    #[test]
+    fn capability_inventory_retains_unsettled_cancelled_sessions() {
+        let filter = capability_candidate_filter(
+            Bson::Array(vec![Bson::String("cancelled".into())]),
+            Bson::String("revoked".into()),
+            Bson::Array(vec![Bson::String("cancelled".into())]),
+            Bson::String("cancelled".into()),
+            Bson::Array(vec![
+                Bson::String("completed".into()),
+                Bson::String("failed".into()),
+            ]),
+        );
+        let shape = format!("{filter:?}");
+
+        assert!(shape.contains("launch.session"));
+        assert!(shape.contains("launch.delivery.state"));
+        assert!(shape.contains("$nin"));
+        assert!(shape.contains("completed"));
+        assert!(shape.contains("failed"));
+    }
+
+    #[test]
+    fn worker_inventory_rate_bounds_open_pull_request_status_reads() {
+        let filter = worker_candidate_filter(
+            Bson::Array(vec![Bson::String("pr_open".into())]),
+            Some("2026-08-27T00:00:00Z"),
+        );
+        let shape = format!("{filter:?}");
+
+        assert!(shape.contains("launch.pull_request.state"));
+        assert!(shape.contains("launch.pull_request.status_sync.next_attempt_at"));
+        assert!(shape.contains("$lte"));
+        assert!(shape.contains("$exists"));
+        assert!(shape.contains("pr_open"));
     }
 
     #[test]
@@ -2190,5 +3082,348 @@ mod tests {
         ] {
             assert!(collection.write_concern().is_some());
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
+    async fn real_mongo_lazily_migrates_exact_trigger_resources_and_fences_mutations() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
+        let client = Client::with_uri_str(&uri)
+            .await
+            .expect("connect to MongoDB");
+        let database_name = format!(
+            "cma_trigger_schema_{}",
+            mongodb::bson::oid::ObjectId::new().to_hex()
+        );
+        let database = client.database(&database_name);
+        let drafts = database.collection::<Document>(TRIGGER_DRAFTS);
+        let revisions = database.collection::<Document>(TRIGGER_REVISIONS);
+        let (draft, revision) = trigger_resource_documents();
+        let draft_id = draft.id.clone();
+        let revision_id = revision.id.clone();
+        let malformed_id = format!("malformed-{}", mongodb::bson::oid::ObjectId::new().to_hex());
+
+        let mut legacy_draft = mongodb::bson::serialize_to_document(&draft).unwrap();
+        legacy_draft.remove("document_schema_version");
+        let mut malformed = legacy_draft.clone();
+        malformed.insert("_id", &malformed_id);
+        malformed.insert(
+            "document_schema_version",
+            Bson::Array(vec![Bson::Int64(0), Bson::Int64(2)]),
+        );
+        drafts
+            .insert_one(legacy_draft)
+            .await
+            .expect("insert legacy draft");
+        let mut legacy_revision = mongodb::bson::serialize_to_document(&revision).unwrap();
+        legacy_revision.insert("document_schema_version", 0_i64);
+        revisions
+            .insert_one(legacy_revision)
+            .await
+            .expect("insert legacy revision");
+        drafts
+            .insert_one(malformed)
+            .await
+            .expect("insert malformed schema evidence");
+
+        let store = MongoTriggerStore::open(&client, &database_name)
+            .await
+            .expect("open Trigger store without a collection scan");
+
+        let unopened_draft = drafts
+            .find_one(doc! { "_id": &draft_id })
+            .await
+            .unwrap()
+            .unwrap();
+        let unopened_revision = revisions
+            .find_one(doc! { "_id": &revision_id })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!unopened_draft.contains_key("document_schema_version"));
+        assert_eq!(
+            unopened_revision
+                .get_i64("document_schema_version")
+                .unwrap(),
+            0
+        );
+
+        assert_eq!(
+            store
+                .get_draft(&TriggerId(draft_id.clone()))
+                .await
+                .unwrap()
+                .unwrap(),
+            draft.draft
+        );
+        assert_eq!(
+            store
+                .get_revision(&TriggerRevisionId(revision_id.clone()))
+                .await
+                .unwrap()
+                .unwrap(),
+            revision.revision
+        );
+
+        let migrated_draft = drafts
+            .find_one(doc! { "_id": &draft_id })
+            .await
+            .unwrap()
+            .unwrap();
+        let migrated_revision = revisions
+            .find_one(doc! { "_id": &revision_id })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            migrated_draft.get_i64("document_schema_version").unwrap(),
+            TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            migrated_revision
+                .get_i64("document_schema_version")
+                .unwrap(),
+            TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            drafts
+                .find_one(doc! { "_id": &malformed_id })
+                .await
+                .unwrap()
+                .unwrap()
+                .get_array("document_schema_version")
+                .unwrap(),
+            &vec![Bson::Int64(0), Bson::Int64(2)]
+        );
+        assert!(matches!(
+            store.get_draft(&TriggerId(malformed_id.clone())).await,
+            Err(TriggerStoreError::Malformed(_))
+        ));
+
+        let mut legacy_mutation = draft.draft.clone();
+        legacy_mutation.id = TriggerId::new();
+        let legacy_mutation_id = legacy_mutation.id.0.clone();
+        let mut legacy_mutation_document =
+            mongodb::bson::serialize_to_document(&draft_doc(&legacy_mutation).unwrap()).unwrap();
+        legacy_mutation_document.remove("document_schema_version");
+        drafts
+            .insert_one(legacy_mutation_document)
+            .await
+            .expect("insert legacy mutation draft");
+        let mut replacement = legacy_mutation.clone();
+        replacement.version += 1;
+        assert_eq!(
+            store
+                .replace_draft(legacy_mutation.version, &replacement)
+                .await
+                .expect("an exact legacy draft is migrated before replacement"),
+            replacement
+        );
+        assert_eq!(
+            drafts
+                .find_one(doc! { "_id": &legacy_mutation_id })
+                .await
+                .unwrap()
+                .unwrap()
+                .get_i64("document_schema_version")
+                .unwrap(),
+            TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION
+        );
+
+        let mut legacy_retirement = revision.revision.clone();
+        legacy_retirement.id = TriggerRevisionId::new();
+        legacy_retirement.public_id = PublicTriggerId::new();
+        let mut legacy_retirement_document =
+            mongodb::bson::serialize_to_document(&revision_doc(&legacy_retirement).unwrap())
+                .unwrap();
+        legacy_retirement_document.insert("document_schema_version", 0_i64);
+        revisions
+            .insert_one(legacy_retirement_document)
+            .await
+            .expect("insert legacy retirement revision");
+        let retired = store
+            .retire_revision(
+                &legacy_retirement.id,
+                &legacy_retirement.content.publisher_subject_id,
+                "2026-08-28T00:10:00Z",
+            )
+            .await
+            .expect("legacy revision retirement is migrated")
+            .expect("revision exists");
+        assert_eq!(
+            retired.availability,
+            layer2_core::TriggerAvailability::Retired
+        );
+        assert_eq!(retired.retired_at.as_deref(), Some("2026-08-28T00:10:00Z"));
+
+        let mut future_draft = draft.draft.clone();
+        future_draft.id = TriggerId::new();
+        let future_draft_id = future_draft.id.0.clone();
+        let mut future_draft_document =
+            mongodb::bson::serialize_to_document(&draft_doc(&future_draft).unwrap()).unwrap();
+        future_draft_document.insert(
+            "document_schema_version",
+            TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION + 1,
+        );
+        drafts
+            .insert_one(future_draft_document)
+            .await
+            .expect("insert future-schema draft");
+        let mut future_replacement = future_draft.clone();
+        future_replacement.version += 1;
+        assert!(matches!(
+            store
+                .replace_draft(future_draft.version, &future_replacement)
+                .await,
+            Err(TriggerStoreError::Malformed(_))
+        ));
+        assert_eq!(
+            drafts
+                .find_one(doc! { "_id": &future_draft_id })
+                .await
+                .unwrap()
+                .unwrap()
+                .get_i64("version")
+                .unwrap(),
+            signed(future_draft.version, "future draft version").unwrap()
+        );
+
+        let (_, future_publication_revision) =
+            publication_candidate(&future_draft, &revision.revision, "2026-08-28T00:11:00Z");
+        assert!(matches!(
+            store
+                .publish_revision(
+                    future_draft.version,
+                    &future_replacement,
+                    &future_publication_revision,
+                )
+                .await,
+            Err(TriggerStoreError::Malformed(_))
+        ));
+        assert!(revisions
+            .find_one(doc! { "_id": &future_publication_revision.id.0 })
+            .await
+            .unwrap()
+            .is_none());
+
+        let mut future_revision = revision.revision.clone();
+        future_revision.id = TriggerRevisionId::new();
+        future_revision.public_id = PublicTriggerId::new();
+        let mut future_revision_document =
+            mongodb::bson::serialize_to_document(&revision_doc(&future_revision).unwrap()).unwrap();
+        future_revision_document.insert(
+            "document_schema_version",
+            TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION + 1,
+        );
+        revisions
+            .insert_one(future_revision_document)
+            .await
+            .expect("insert future-schema revision");
+        assert!(matches!(
+            store
+                .retire_revision(
+                    &future_revision.id,
+                    &future_revision.content.publisher_subject_id,
+                    "2026-08-28T00:12:00Z",
+                )
+                .await,
+            Err(TriggerStoreError::Malformed(_))
+        ));
+        assert_eq!(
+            revisions
+                .find_one(doc! { "_id": &future_revision.id.0 })
+                .await
+                .unwrap()
+                .unwrap()
+                .get_document("revision")
+                .unwrap()
+                .get_str("availability")
+                .unwrap(),
+            "published"
+        );
+
+        database.drop().await.expect("drop disposable database");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+    async fn real_mongo_concurrent_publication_retries_the_loser_to_revision_conflict() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("ignored test requires CHRONO_TEST_MONGODB_URI");
+        let client = Client::with_uri_str(&uri)
+            .await
+            .expect("connect to MongoDB");
+        let database_name = format!(
+            "cma_trigger_publish_race_{}",
+            mongodb::bson::oid::ObjectId::new().to_hex()
+        );
+        let store = MongoTriggerStore::open(&client, &database_name)
+            .await
+            .expect("open Trigger store");
+        let (draft, revision) = trigger_resource_documents();
+        let seed = draft.draft;
+        store.insert_draft(&seed).await.expect("insert race seed");
+        let expected = seed.version;
+        let (left_draft, left_revision) =
+            publication_candidate(&seed, &revision.revision, "2026-08-28T00:20:00Z");
+        let (right_draft, right_revision) =
+            publication_candidate(&seed, &revision.revision, "2026-08-28T00:20:01Z");
+        let barrier = tokio::sync::Barrier::new(2);
+
+        let (left, right) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(
+                store.publish_revision_transaction(
+                    expected,
+                    &left_draft,
+                    &left_revision,
+                    Some(&barrier),
+                ),
+                store.publish_revision_transaction(
+                    expected,
+                    &right_draft,
+                    &right_revision,
+                    Some(&barrier),
+                ),
+            )
+        })
+        .await
+        .expect("the synchronized publication race must not hang");
+
+        let mut successes = 0;
+        let mut conflicts = 0;
+        for outcome in [left, right] {
+            match outcome {
+                Ok(_) => successes += 1,
+                Err(TriggerStoreError::RevisionConflict {
+                    expected: seen,
+                    actual,
+                }) => {
+                    assert_eq!(seen, expected);
+                    assert_eq!(actual, expected + 1);
+                    conflicts += 1;
+                }
+                Err(error) => {
+                    panic!("publication race returned a non-deterministic error: {error}")
+                }
+            }
+        }
+        assert_eq!(successes, 1);
+        assert_eq!(conflicts, 1);
+        assert_eq!(
+            store
+                .list_revisions_for(&seed.owner, &TriggerPageRequest::default())
+                .await
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+
+        client
+            .database(&database_name)
+            .drop()
+            .await
+            .expect("drop disposable database");
     }
 }

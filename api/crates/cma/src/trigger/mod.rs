@@ -2,6 +2,8 @@ pub(crate) mod capability_signing;
 pub(crate) mod capability_worker;
 pub(crate) mod github;
 pub(crate) mod github_effects;
+pub(crate) mod observability;
+mod pull_request_status;
 pub(crate) mod scheduler;
 pub(crate) mod worker;
 pub(crate) mod workspace_diff;
@@ -12,6 +14,8 @@ use layer2_core::{
     TriggerConnectionAuthorization, TriggerConnectionManager, TriggerRepositorySelection,
     TriggerRevision, TriggerRevisionContent, TriggerServiceError,
 };
+
+pub(crate) const TRIGGER_KERNEL_ID: &str = "codex";
 
 /// Explicit adapter used by trusted local mode, where no renewable NyxID
 /// subject authority exists. Resource reads still work; provider effects fail

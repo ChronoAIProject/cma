@@ -6,8 +6,9 @@ use sha2::{Digest, Sha256};
 
 use super::{
     AuthorityProvenance, CheckpointId, ConnectionSnapshot, DiffArtifact, DiffArtifactId,
-    EditableField, LaunchId, RepositoryIdentity, RequiredCapability, TriggerRevision,
-    TriggerValidationError, WorkspaceCheckpoint, WorkspaceCheckpointPurpose, WorkspaceManifest,
+    EditableField, LaunchId, PullRequestState, RepositoryIdentity, RequiredCapability,
+    TriggerRevision, TriggerValidationError, WorkspaceCheckpoint, WorkspaceCheckpointPurpose,
+    WorkspaceManifest,
 };
 use crate::{
     CapabilityRevocationState, PermissionMode, Rate, RateCardId, SessionId, SessionSize, SubjectId,
@@ -17,9 +18,11 @@ mod admission;
 mod capability;
 mod checkpoint;
 mod effect;
+mod pull_request;
 mod replay;
 
 pub use admission::*;
+pub use pull_request::PULL_REQUEST_STATUS_INTERVAL_SECONDS;
 pub use replay::{
     replay_launch_progress, LaunchProgressProjection, LaunchProgressState, LaunchReplayError,
 };
@@ -163,22 +166,57 @@ pub struct LaunchStep {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LaunchEventKind {
-    Created { steps: Vec<LaunchStep> },
+    Created {
+        steps: Vec<LaunchStep>,
+    },
     DraftUpdated,
     ConnectionSelected,
     Started,
-    StateChanged { from: LaunchState, to: LaunchState },
-    StepChanged { step: LaunchStep },
-    Blocked { reason: LaunchBlockedReason },
-    Resumed { reason: LaunchBlockedReason },
-    Failure { failure: LaunchFailure },
-    EffectReconciled { effect: LaunchEffectKind },
-    RecoveryAuthorized { effect: LaunchEffectKind },
-    DeliveryChanged { state: PromptDeliveryState },
-    ReachChanged { reach: super::ReachStatus },
-    ConfirmationRecorded { action: ConfirmationAction },
-    CleanupPlanned { target_count: usize },
-    CleanupCompleted { target_count: usize },
+    StateChanged {
+        from: LaunchState,
+        to: LaunchState,
+    },
+    StepChanged {
+        step: LaunchStep,
+    },
+    Blocked {
+        reason: LaunchBlockedReason,
+    },
+    Resumed {
+        reason: LaunchBlockedReason,
+    },
+    Failure {
+        failure: LaunchFailure,
+    },
+    EffectReconciled {
+        effect: LaunchEffectKind,
+    },
+    RecoveryAuthorized {
+        effect: LaunchEffectKind,
+    },
+    DeliveryChanged {
+        state: PromptDeliveryState,
+    },
+    ReachChanged {
+        reach: super::ReachStatus,
+    },
+    PullRequestStatusChanged {
+        state: super::PullRequestState,
+        mergeability: super::Mergeability,
+        checks: super::CheckSummaryState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failure: Option<LaunchFailure>,
+    },
+    PullRequestStatusRefreshRequested,
+    ConfirmationRecorded {
+        action: ConfirmationAction,
+    },
+    CleanupPlanned {
+        target_count: usize,
+    },
+    CleanupCompleted {
+        target_count: usize,
+    },
     Cancelled,
 }
 
@@ -299,6 +337,7 @@ pub struct CapabilityRenewalRecord {
 /// Launch by returning an unstructured success flag.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)] // Durable effect values retain their exact public shape.
 pub enum LaunchEffectResult {
     Preflight {
         connection: ConnectionSnapshot,
@@ -352,7 +391,7 @@ pub struct LaunchOverrides {
     #[serde(default)]
     pub task_inputs: BTreeMap<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch_suffix: Option<String>,
+    pub work_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_size: Option<SessionSize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -364,7 +403,7 @@ pub struct LaunchOverrides {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EffectiveConfiguration {
     pub rendered_prompt: String,
-    pub branch_suffix: String,
+    pub work_label: String,
     pub permission: PermissionMode,
     pub resource_size: SessionSize,
     pub timeout_seconds: u32,
@@ -390,24 +429,11 @@ pub struct PricingSnapshot {
     pub expires_at: String,
 }
 
-/// Closed product kernel identity disclosed and accepted during Launch review.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TriggerKernel {
-    Codex,
-}
-
-fn historical_trigger_kernel() -> TriggerKernel {
-    // Every Trigger admission persisted before this field existed was created
-    // by the sole eligible Trigger profile, which the composition root pins to
-    // Codex. This default is migration compatibility, not runtime inference.
-    TriggerKernel::Codex
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeAdmissionSnapshot {
-    #[serde(default = "historical_trigger_kernel")]
-    pub kernel: TriggerKernel,
+    /// Opaque runtime choice locked during review. The composition root owns
+    /// which concrete identifiers are eligible for this product workflow.
+    pub kernel: crate::KernelId,
     pub runtime_version: String,
     #[serde(default)]
     pub supported_capabilities: Vec<RequiredCapability>,
@@ -454,6 +480,7 @@ pub enum ConfirmationAction {
     PublishBranch,
     OpenPullRequest,
     UpdatePullRequest,
+    Complete,
     RecoverPrompt,
     NewLaunch,
     Cancel,
@@ -1558,6 +1585,93 @@ impl Launch {
         self.push_event(now, correlation_id, LaunchEventKind::Cancelled)
     }
 
+    /// End CMA orchestration after an open pull request has been handed to its
+    /// maintainers. The provider pull request and contributor-owned Git state
+    /// remain untouched; the terminal transition starts normal reach
+    /// revocation and retention handling.
+    pub fn complete(
+        &mut self,
+        confirmation: Confirmation,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        if self.state == LaunchState::Completed {
+            return Ok(());
+        }
+        if self.state != LaunchState::PrOpen
+            || self.pull_request.as_ref().is_none_or(|pull_request| {
+                !matches!(
+                    pull_request.state,
+                    PullRequestState::Open | PullRequestState::Merged
+                )
+            })
+        {
+            return Err(TriggerValidationError::field(
+                "confirmation",
+                "can complete only after CMA has handed off an open pull request",
+            ));
+        }
+        if confirmation.action != ConfirmationAction::Complete
+            || confirmation.subject != self.owner
+            || confirmation.snapshot_digest != self.effective.digest
+        {
+            return Err(TriggerValidationError::field(
+                "confirmation",
+                "does not authorize completion of this exact Launch snapshot",
+            ));
+        }
+        let now = now.into();
+        let correlation_id = correlation_id.into();
+        self.confirmations.push(confirmation);
+        self.push_event(
+            now.clone(),
+            correlation_id.clone(),
+            LaunchEventKind::ConfirmationRecorded {
+                action: ConfirmationAction::Complete,
+            },
+        )?;
+        self.transition(LaunchState::Completed, now, correlation_id)
+    }
+
+    /// Whether cancellation still owes the retained session a durable
+    /// first-turn release marker.
+    ///
+    /// `Completed` and `Failed` both release owner input. A `Failed` delivery
+    /// with attempt zero and no fence is the distinguished pre-dispatch
+    /// cancellation tombstone; an attempted runtime failure has attempt and
+    /// fence evidence instead.
+    pub fn cancelled_session_requires_settlement(&self) -> bool {
+        self.state == LaunchState::Cancelled
+            && self.session.is_some()
+            && self.delivery.as_ref().is_none_or(|delivery| {
+                !matches!(
+                    delivery.state,
+                    PromptDeliveryState::Completed | PromptDeliveryState::Failed
+                )
+            })
+    }
+
+    /// Mirror positive session-store settlement into the Launch projection.
+    pub fn record_cancelled_session_settlement(
+        &mut self,
+        delivery: PromptDelivery,
+        now: impl Into<String>,
+        correlation_id: impl Into<String>,
+    ) -> Result<(), TriggerValidationError> {
+        if self.state != LaunchState::Cancelled
+            || !matches!(
+                delivery.state,
+                PromptDeliveryState::Completed | PromptDeliveryState::Failed
+            )
+        {
+            return Err(TriggerValidationError::field(
+                "delivery",
+                "does not settle a cancelled Trigger session",
+            ));
+        }
+        self.observe_prompt_delivery(delivery, now.into(), correlation_id.into())
+    }
+
     /// Begin or refresh a read-only contribution review.
     ///
     /// Every request selects the next checkpoint version before any worker is
@@ -1577,6 +1691,24 @@ impl Launch {
             return Err(TriggerValidationError::new(
                 "a diff can be reviewed only from a ready session or its open pull request",
             ));
+        }
+        match self.pull_request.as_ref() {
+            Some(pull_request)
+                if pull_request.state != super::PullRequestState::Open
+                    || pull_request.status_sync.head_matches_launch != Some(true) =>
+            {
+                return Err(TriggerValidationError::field(
+                    "pull_request",
+                    "must remain open and match the retained Launch head before another contribution review",
+                ));
+            }
+            None if self.state == LaunchState::PrOpen => {
+                return Err(TriggerValidationError::field(
+                    "pull_request",
+                    "is missing from a Launch linked to an open pull request",
+                ));
+            }
+            _ => {}
         }
         if confirmation.action != ConfirmationAction::ReviewDiff
             || confirmation.subject != self.owner
@@ -1706,6 +1838,7 @@ impl Launch {
             commit_id: None,
             resulting_head: None,
             object_ids: Vec::new(),
+            object_write: None,
             author: diff.author.clone(),
             committer: diff.committer.clone(),
             confirmation: confirmation.clone(),
@@ -2013,6 +2146,7 @@ impl Launch {
                 updated_at: now.clone(),
                 provider_created_at: None,
                 provider_updated_at: None,
+                status_sync: super::PullRequestStatusSync::default(),
             },
             super::PullRequestOperation::Update => {
                 let existing = self
@@ -2038,6 +2172,7 @@ impl Launch {
                     updated_at: now.clone(),
                     provider_created_at: existing.provider_created_at.clone(),
                     provider_updated_at: existing.provider_updated_at.clone(),
+                    status_sync: super::PullRequestStatusSync::default(),
                 }
             }
         };
@@ -2159,27 +2294,27 @@ pub fn effective_configuration(
             "task inputs are locked by the publisher",
         ));
     }
-    let branch_suffix = overrides
-        .branch_suffix
+    let work_label = overrides
+        .work_label
         .as_deref()
         .unwrap_or("work")
         .trim()
         .to_string();
-    if overrides.branch_suffix.is_some() && !allowed.contains(&EditableField::BranchSuffix) {
+    if overrides.work_label.is_some() && !allowed.contains(&EditableField::WorkLabel) {
         return Err(TriggerValidationError::field(
-            "overrides.branch_suffix",
-            "the branch suffix is locked by the publisher",
+            "overrides.work_label",
+            "the work label is locked by the publisher",
         ));
     }
-    if branch_suffix.is_empty()
-        || branch_suffix.len() > 48
-        || !branch_suffix
+    if work_label.is_empty()
+        || work_label.len() > 48
+        || !work_label
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'-' | b'_'))
     {
         return Err(TriggerValidationError::field(
-            "overrides.branch_suffix",
-            "must contain only letters, numbers, dash, or underscore",
+            "overrides.work_label",
+            "must contain only letters, numbers, spaces, dash, or underscore",
         ));
     }
     let resource_size = overrides
@@ -2224,7 +2359,7 @@ pub fn effective_configuration(
     let rendered_prompt = revision.content.render_prompt(&overrides.task_inputs)?;
     let mut effective = EffectiveConfiguration {
         rendered_prompt,
-        branch_suffix,
+        work_label,
         permission: revision.content.session.permission_ceiling,
         resource_size,
         timeout_seconds,
@@ -2244,7 +2379,7 @@ fn effective_digest(
     let digest_input = serde_json::to_vec(&(
         &revision.digest,
         &effective.rendered_prompt,
-        &effective.branch_suffix,
+        &effective.work_label,
         effective.permission,
         effective.resource_size,
         effective.timeout_seconds,
@@ -2314,7 +2449,8 @@ fn validate_review_admission(
 
     let runtime = &admission.runtime;
     let supported: BTreeSet<_> = runtime.supported_capabilities.iter().copied().collect();
-    if runtime.runtime_version.trim().is_empty()
+    if runtime.kernel.is_unset()
+        || runtime.runtime_version.trim().is_empty()
         || runtime.supported_capabilities.len() != supported.len()
         || crate::seconds_from_rfc3339(&runtime.observed_at).is_none()
         || launch
@@ -2339,7 +2475,7 @@ fn validate_review_admission(
     Ok(())
 }
 
-fn legal_transition(from: LaunchState, to: LaunchState) -> bool {
+pub(super) fn legal_transition(from: LaunchState, to: LaunchState) -> bool {
     use LaunchState::*;
     if matches!(to, FailedRetryable | FailedTerminal | Cancelled) && !from.is_terminal() {
         return true;

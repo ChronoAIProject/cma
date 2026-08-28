@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 use crate::{
-    seconds_from_rfc3339, CapabilityRevocationState, ContributionRecord, PublicationState,
-    PullRequestState,
+    seconds_from_rfc3339, CapabilityRevocationState, ContributionRecord, PublicationObjectPhase,
+    PublicationState, PullRequestState,
 };
 
 const INITIAL_PROMPT_TERMINAL_EVIDENCE_GRACE_SECONDS: u64 = 300;
@@ -382,7 +382,14 @@ impl Launch {
             Some(index) => {
                 let record = &self.effects[index];
                 match record.state {
-                    EffectState::Queued => (index, EffectClaimMode::Execute),
+                    EffectState::Queued => {
+                        if record.next_attempt_at.is_some()
+                            && !deadline_reached(record.next_attempt_at.as_deref(), &now)?
+                        {
+                            return Ok(None);
+                        }
+                        (index, EffectClaimMode::Execute)
+                    }
                     EffectState::FailedRetryable => {
                         if record.attempt >= MAX_LAUNCH_EFFECT_ATTEMPTS
                             || !deadline_reached(record.next_attempt_at.as_deref(), &now)?
@@ -521,6 +528,7 @@ impl Launch {
         lease: &WorkerLease,
         claim: &EffectClaim,
         result: LaunchEffectResult,
+        external_resource_ids: BTreeMap<String, String>,
         now: impl Into<String>,
         correlation_id: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
@@ -528,7 +536,16 @@ impl Launch {
         let now = now.into();
         let correlation_id = correlation_id.into();
         candidate.validate_worker_lease(lease, &now)?;
-        candidate.claimed_effect_index(claim)?;
+        validate_external_resource_ids(&external_resource_ids)?;
+        let index = candidate.claimed_effect_index(claim)?;
+        let record = &mut candidate.effects[index];
+        record.provider_request_id = external_resource_ids
+            .get("provider_request_id")
+            .cloned()
+            .or_else(|| record.provider_request_id.clone());
+        record
+            .external_resource_ids
+            .extend(external_resource_ids.clone());
         match (claim.kind, result) {
             (
                 LaunchEffectKind::InitialDispatch,
@@ -547,6 +564,10 @@ impl Launch {
                 ))
             }
         }
+        candidate
+            .step_mut(claim.kind)?
+            .external_resource_ids
+            .extend(external_resource_ids);
         *self = candidate;
         Ok(())
     }
@@ -637,6 +658,7 @@ impl Launch {
     /// Keep a deterministic session effect waiting without spending the
     /// reconciliation budget. Runtime provisioning, rotation, and recovery
     /// are observed states rather than failed external writes.
+    #[allow(clippy::too_many_arguments)] // Every value binds one wait to its fenced effect claim.
     pub fn defer_waiting(
         &mut self,
         lease: &WorkerLease,
@@ -655,7 +677,9 @@ impl Launch {
         validate_external_resource_ids(&external_resource_ids)?;
         if !matches!(
             claim.kind,
-            LaunchEffectKind::Sandbox | LaunchEffectKind::Session
+            LaunchEffectKind::Sandbox
+                | LaunchEffectKind::Session
+                | LaunchEffectKind::InitialDispatch
         ) || !strictly_after(&wait_at, &now)?
             || safe_detail.trim().is_empty()
             || remediation.trim().is_empty()
@@ -667,16 +691,31 @@ impl Launch {
         }
         let index = candidate.claimed_effect_index(claim)?;
         let record = &mut candidate.effects[index];
-        if claim.mode == EffectClaimMode::Reconcile {
-            record.reconciliation_attempt =
-                claim.reconciliation_attempt.checked_sub(1).ok_or_else(|| {
-                    TriggerValidationError::field(
-                        "effect.reconciliation_attempt",
-                        "a reconciliation wait has no pre-claim counter",
-                    )
-                })?;
+        if claim.kind == LaunchEffectKind::InitialDispatch && claim.mode == EffectClaimMode::Execute
+        {
+            // No session write was attempted. Restore the exact queued effect
+            // and its pre-claim attempt so lifecycle observation cannot spend
+            // the bounded execute budget or turn the first send into takeover
+            // reconciliation.
+            record.attempt = claim.attempt.checked_sub(1).ok_or_else(|| {
+                TriggerValidationError::field(
+                    "effect.attempt",
+                    "an initial-dispatch wait has no pre-claim counter",
+                )
+            })?;
+            record.state = EffectState::Queued;
+        } else {
+            if claim.mode == EffectClaimMode::Reconcile {
+                record.reconciliation_attempt =
+                    claim.reconciliation_attempt.checked_sub(1).ok_or_else(|| {
+                        TriggerValidationError::field(
+                            "effect.reconciliation_attempt",
+                            "a reconciliation wait has no pre-claim counter",
+                        )
+                    })?;
+            }
+            record.state = EffectState::Reconciling;
         }
-        record.state = EffectState::Reconciling;
         record.next_attempt_at = Some(wait_at);
         record.last_failure = None;
         record.external_resource_ids.extend(external_resource_ids);
@@ -787,7 +826,7 @@ impl Launch {
         Ok(())
     }
 
-    fn observe_prompt_delivery(
+    pub(super) fn observe_prompt_delivery(
         &mut self,
         delivery: PromptDelivery,
         now: String,
@@ -1091,27 +1130,7 @@ impl Launch {
             )
         })?;
         if !same_publication_intent(previous, &contribution)
-            || !matches!(
-                (previous.state, contribution.state),
-                (
-                    PublicationState::IntentRecorded,
-                    PublicationState::ObjectsWritten
-                ) | (
-                    PublicationState::ObjectsWritten,
-                    PublicationState::RefUpdatePending
-                ) | (
-                    PublicationState::ObjectsWritten,
-                    PublicationState::ObjectsWritten
-                ) | (
-                    PublicationState::RefUpdatePending,
-                    PublicationState::RefUpdatePending
-                )
-            )
-            || (previous.state != PublicationState::IntentRecorded
-                && (previous.base_tree_id != contribution.base_tree_id
-                    || previous.tree_id != contribution.tree_id
-                    || previous.commit_id != contribution.commit_id
-                    || previous.object_ids != contribution.object_ids))
+            || !legal_publication_progress(previous, &contribution)
         {
             return Err(TriggerValidationError::field(
                 "contribution",
@@ -1129,10 +1148,20 @@ impl Launch {
                 resources.insert(key.to_string(), value.clone());
             }
         }
+        if let Some(write) = contribution.object_write.as_ref() {
+            resources.insert("object_request_digest".into(), write.request_digest.clone());
+        }
         validate_external_resource_ids(&resources)?;
+        let object_phase = contribution.object_write.as_ref().map(|write| write.phase);
         self.contribution = Some(contribution);
         self.updated_at = now.clone();
         let index = self.claimed_effect_index(claim)?;
+        if claim.mode == EffectClaimMode::Reconcile {
+            // A typed object/ref observation has resolved the preceding
+            // ambiguity. Later response loss starts a fresh bounded
+            // reconciliation campaign instead of inheriting spent budget.
+            self.effects[index].reconciliation_attempt = 0;
+        }
         self.effects[index]
             .external_resource_ids
             .extend(resources.clone());
@@ -1145,6 +1174,20 @@ impl Launch {
         let step = self.step_mut(LaunchEffectKind::BranchPublication)?;
         step.status = LaunchStepStatus::Running;
         step.safe_detail = match state {
+            PublicationState::IntentRecorded => match object_phase
+                .expect("validated publication progress retains an object cursor")
+            {
+                PublicationObjectPhase::BlobsPending => {
+                    "The immutable Git object recipe is retained while required blobs are reconciled."
+                        .into()
+                }
+                PublicationObjectPhase::TreePending => {
+                    "The required blobs are reconciled and exact tree creation is pending.".into()
+                }
+                PublicationObjectPhase::CommitPending => {
+                    "The resulting tree is retained and exact commit creation is pending.".into()
+                }
+            },
             PublicationState::ObjectsWritten => {
                 "The reviewed Git objects are retained; the launch ref has not been changed.".into()
             }
@@ -1168,6 +1211,7 @@ impl Launch {
         lease: &WorkerLease,
         claim: &EffectClaim,
         mut failure: LaunchFailure,
+        external_resource_ids: BTreeMap<String, String>,
         next_attempt_at: Option<String>,
         now: impl Into<String>,
     ) -> Result<(), TriggerValidationError> {
@@ -1176,6 +1220,7 @@ impl Launch {
         candidate.validate_worker_lease(lease, &now)?;
         let index = candidate.claimed_effect_index(claim)?;
         validate_failure(&failure)?;
+        validate_external_resource_ids(&external_resource_ids)?;
 
         let automatically_retryable = matches!(
             failure.class,
@@ -1231,7 +1276,18 @@ impl Launch {
         record.state = state;
         record.next_attempt_at = effective_retry_at.clone();
         record.last_failure = Some(failure.clone());
+        record.provider_request_id = external_resource_ids
+            .get("provider_request_id")
+            .cloned()
+            .or_else(|| record.provider_request_id.clone());
+        record
+            .external_resource_ids
+            .extend(external_resource_ids.clone());
         record.updated_at = now.clone();
+        candidate
+            .step_mut(claim.kind)?
+            .external_resource_ids
+            .extend(external_resource_ids);
         candidate.mark_step_failed(claim, &failure, state, &now)?;
         if claim.kind == LaunchEffectKind::Cleanup {
             candidate.updated_at = now.clone();
@@ -1835,14 +1891,18 @@ fn validate_prompt_delivery(
         || crate::seconds_from_rfc3339(&delivery.updated_at).is_none()
         || crate::seconds_from_rfc3339(&delivery.updated_at)
             < crate::seconds_from_rfc3339(&delivery.queued_at)
-        || (delivery.state != PromptDeliveryState::Queued && delivery.attempt == 0)
+        || (delivery.state != PromptDeliveryState::Queued
+            && delivery.attempt == 0
+            && !(launch.state == LaunchState::Cancelled
+                && delivery.state == PromptDeliveryState::Failed
+                && delivery.dispatch_fence_sequence.is_none()))
     {
         return Err(TriggerValidationError::field(
             "delivery",
             "does not identify a valid prompt for this Launch and session",
         ));
     }
-    let requires_fence = delivery.state != PromptDeliveryState::Queued;
+    let requires_fence = delivery.state != PromptDeliveryState::Queued && delivery.attempt > 0;
     if requires_fence
         != delivery
             .dispatch_fence_sequence
@@ -1880,6 +1940,69 @@ fn same_publication_intent(left: &ContributionRecord, right: &ContributionRecord
         && left.confirmation == right.confirmation
         && left.intent_key == right.intent_key
         && left.created_at == right.created_at
+}
+
+fn legal_publication_progress(previous: &ContributionRecord, next: &ContributionRecord) -> bool {
+    use PublicationObjectPhase as Phase;
+    use PublicationState as State;
+
+    match (previous.state, next.state) {
+        (State::IntentRecorded, State::IntentRecorded) => {
+            match (previous.object_write.as_ref(), next.object_write.as_ref()) {
+                (None, Some(write)) => {
+                    write.phase == Phase::BlobsPending
+                        && previous.base_tree_id.is_none()
+                        && previous.tree_id.is_none()
+                        && previous.commit_id.is_none()
+                        && previous.object_ids.is_empty()
+                }
+                (Some(previous_write), Some(next_write)) => {
+                    previous.base_tree_id == next.base_tree_id
+                        && previous.object_ids == next.object_ids
+                        && previous_write.version == next_write.version
+                        && previous_write.request_digest == next_write.request_digest
+                        && matches!(
+                            (previous_write.phase, next_write.phase),
+                            (
+                                Phase::BlobsPending,
+                                Phase::BlobsPending | Phase::TreePending
+                            ) | (
+                                Phase::TreePending,
+                                Phase::TreePending | Phase::CommitPending
+                            ) | (Phase::CommitPending, Phase::CommitPending)
+                        )
+                        && previous.tree_id.as_ref().is_none_or(|tree| {
+                            next.tree_id
+                                .as_ref()
+                                .is_some_and(|next_tree| next_tree == tree)
+                        })
+                        && previous.commit_id.is_none()
+                        && next.commit_id.is_none()
+                }
+                _ => false,
+            }
+        }
+        (State::IntentRecorded, State::ObjectsWritten) => {
+            previous
+                .object_write
+                .as_ref()
+                .is_some_and(|write| write.phase == Phase::CommitPending)
+                && next.object_write.is_none()
+                && previous.base_tree_id == next.base_tree_id
+                && previous.tree_id == next.tree_id
+                && previous.object_ids == next.object_ids
+        }
+        (State::ObjectsWritten, State::ObjectsWritten | State::RefUpdatePending)
+        | (State::RefUpdatePending, State::RefUpdatePending) => {
+            previous.object_write.is_none()
+                && next.object_write.is_none()
+                && previous.base_tree_id == next.base_tree_id
+                && previous.tree_id == next.tree_id
+                && previous.commit_id == next.commit_id
+                && previous.object_ids == next.object_ids
+        }
+        _ => false,
+    }
 }
 
 fn same_pull_request_intent(

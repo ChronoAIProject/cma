@@ -23,6 +23,8 @@ const INPUT_RATE_REQUESTS_PER_MINUTE: u32 = 120;
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
 const MAX_TRUSTED_PROXY_HOPS: usize = 16;
 const DEFAULT_TRIGGER_CHANGED_FILE_LIMIT: usize = 1_000;
+const DEFAULT_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS: usize = 300;
+const MAX_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS: usize = 3_600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TriggerCleanupMode {
@@ -46,6 +48,7 @@ pub struct TriggerRuntimeConfig {
     pub runtime_capabilities: Vec<RequiredCapability>,
     pub cleanup_mode: TriggerCleanupMode,
     pub changed_file_limit: u32,
+    pub fork_readiness_timeout: std::time::Duration,
     pub interval: std::time::Duration,
     pub page_size: u32,
     pub max_pages: usize,
@@ -103,6 +106,15 @@ impl TriggerRuntimeConfig {
             1,
             layer2_core::MAX_DIFF_SUMMARY_FILES,
         )? as u32;
+        let fork_readiness_timeout_seconds = parse_bounded_usize(
+            "CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS",
+            &var_or(
+                "CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS",
+                &DEFAULT_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS.to_string(),
+            ),
+            1,
+            MAX_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS,
+        )?;
         /*
          * Keep the scheduler's operation budget bounded independently of the
          * number of stored Launches. Values outside these ceilings fail
@@ -137,6 +149,9 @@ impl TriggerRuntimeConfig {
             runtime_capabilities,
             cleanup_mode,
             changed_file_limit,
+            fork_readiness_timeout: std::time::Duration::from_secs(
+                fork_readiness_timeout_seconds as u64,
+            ),
             interval: std::time::Duration::from_secs(interval_seconds as u64),
             page_size,
             max_pages,
@@ -151,6 +166,9 @@ impl TriggerRuntimeConfig {
             runtime_capabilities: all_trigger_runtime_capabilities(),
             cleanup_mode: TriggerCleanupMode::DryRun,
             changed_file_limit: DEFAULT_TRIGGER_CHANGED_FILE_LIMIT as u32,
+            fork_readiness_timeout: std::time::Duration::from_secs(
+                DEFAULT_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS as u64,
+            ),
             interval: std::time::Duration::from_secs(5),
             page_size: 50,
             max_pages: 20,
@@ -1310,6 +1328,29 @@ mod tests {
                 "accepted {raw:?}"
             );
         }
+
+        assert_eq!(
+            parse_bounded_usize(
+                "CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS",
+                "300",
+                1,
+                MAX_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS,
+            )
+            .unwrap(),
+            DEFAULT_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS
+        );
+        for raw in ["0", "3601", "five minutes"] {
+            assert!(
+                parse_bounded_usize(
+                    "CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS",
+                    raw,
+                    1,
+                    MAX_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS,
+                )
+                .is_err(),
+                "accepted {raw:?}"
+            );
+        }
     }
 
     #[test]
@@ -1373,6 +1414,7 @@ mod tests {
             ("CHRONO_TRIGGER_USER_COHORT_PERCENT", "0"),
             ("CHRONO_TRIGGER_CLEANUP_MODE", "dry_run"),
             ("CHRONO_TRIGGER_CHANGED_FILE_LIMIT", "1000"),
+            ("CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS", "300"),
             ("CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS", "5"),
             ("CHRONO_TRIGGER_WORKER_PAGE_SIZE", "50"),
             ("CHRONO_TRIGGER_WORKER_MAX_PAGES", "20"),

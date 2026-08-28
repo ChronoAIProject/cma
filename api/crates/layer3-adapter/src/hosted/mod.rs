@@ -1912,8 +1912,7 @@ fn parse_runtime_policy_observation(
         && wire.fence.is_some_and(|value| value > 0)
         && wire.expires_at_epoch_seconds.is_none();
     let empty_tuple = !wire.installed && !wire.revoked && !has_identity;
-    if (wire.required && !wire.supported)
-        || (wire.installed && !wire.supported)
+    if ((wire.required || wire.installed) && !wire.supported)
         || !(active_tuple || revoked_tuple || empty_tuple)
     {
         return Err(AdapterError::Rejected(

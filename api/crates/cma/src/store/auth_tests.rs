@@ -601,7 +601,7 @@ fn recurring_work_filters_advance_in_their_compound_index_order() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, 5_i64, AUTH_SCHEMA_VERSION] } },
             ],
             "revoke_debt.0": { "$exists": true },
             "revoke_debt_ordered": { "$ne": true },
@@ -814,7 +814,7 @@ fn legacy_subject_bson_defaults_incarnation_generation_and_retention() {
 }
 
 #[test]
-fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
+fn schema_compatibility_accepts_v1_through_v5_and_rejects_future_documents() {
     let cipher = cipher();
 
     let mut legacy_subject = subject_to_doc(subject_state(), &cipher).unwrap();
@@ -831,6 +831,9 @@ fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
     let mut v4_subject = subject_to_doc(subject_state(), &cipher).unwrap();
     v4_subject.auth_schema_version = 4;
     assert!(subject_from_doc(v4_subject, &cipher).is_ok());
+    let mut v5_subject = subject_to_doc(subject_state(), &cipher).unwrap();
+    v5_subject.auth_schema_version = 5;
+    assert!(subject_from_doc(v5_subject, &cipher).is_ok());
     let mut future_subject = subject_to_doc(subject_state(), &cipher).unwrap();
     future_subject.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -851,6 +854,9 @@ fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
     v4_credential.auth_schema_version = 4;
     v4_credential.pending_target = None;
     assert!(credential_state_from_doc(v4_credential, &cipher).is_ok());
+    let mut v5_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
+    v5_credential.auth_schema_version = 5;
+    assert!(credential_state_from_doc(v5_credential, &cipher).is_ok());
     let mut future_credential = credential_state_to_doc(credential_state(), &cipher).unwrap();
     future_credential.auth_schema_version = AUTH_SCHEMA_VERSION + 1;
     assert!(matches!(
@@ -863,7 +869,7 @@ fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, 5_i64] } },
             ]
         }
     );
@@ -872,7 +878,7 @@ fn schema_compatibility_accepts_v1_through_v4_and_rejects_future_documents() {
         doc! {
             "$or": [
                 { "auth_schema_version": { "$exists": false } },
-                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, AUTH_SCHEMA_VERSION] } },
+                { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, 5_i64, AUTH_SCHEMA_VERSION] } },
             ]
         }
     );
