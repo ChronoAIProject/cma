@@ -6,7 +6,7 @@
 //! working is the normal case, and a client that reattaches must find the
 //! screen already correct rather than replaying history.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use layer3_adapter::{AdapterError, KernelAdapter, TerminalInput, TerminalInputSender};
@@ -25,7 +25,7 @@ use crate::ids::{KernelId, SessionId};
 use crate::options::{AgentOptions, SessionMode};
 use crate::platform::PlatformSettings;
 use crate::platform_service::PlatformSettingsService;
-use crate::pricing::{format_usd, Quote, SessionPricing, CURRENCY};
+use crate::pricing::{estimate_micros, format_usd, Quote, SessionPricing, CURRENCY};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::size::SessionSize;
 use crate::store::{SessionRecord, SessionStore, StoreError};
@@ -54,6 +54,7 @@ impl SessionService {
             handovers,
             credentials,
             skills,
+            workspaces,
             skill_packs,
             settings,
         } = ports;
@@ -70,6 +71,7 @@ impl SessionService {
             conversation_order_gates: Default::default(),
             prompt_gates: Default::default(),
             skills,
+            workspaces,
             skill_packs,
             sequences,
             event_logs,
@@ -87,6 +89,8 @@ impl SessionService {
             session_limit_guards: Default::default(),
             deployment_capacity_guard: Default::default(),
             runtime_version: deployment.runtime_version,
+            trigger_runtime_capabilities: deployment.trigger_runtime_capabilities,
+            trigger_kernel: deployment.trigger_kernel,
             identity: deployment.identity,
             coordination_holder: format!("cma_{}", uuid::Uuid::new_v4().simple()),
             adopts_untagged: deployment.adopts_untagged,
@@ -249,6 +253,14 @@ impl SessionService {
         settings: &PlatformSettings,
         size: Option<SessionSize>,
     ) -> Result<Option<Quote>, CoreError> {
+        Self::quote_from_at(settings, size, now_rfc3339())
+    }
+
+    fn quote_from_at(
+        settings: &PlatformSettings,
+        size: Option<SessionSize>,
+        quoted_at: String,
+    ) -> Result<Option<Quote>, CoreError> {
         let Some(card) = settings.pricing.in_force() else {
             return Ok(None);
         };
@@ -276,7 +288,7 @@ impl SessionService {
             micros_per_hour,
             display: format_usd(micros_per_hour),
             currency: CURRENCY,
-            quoted_at: now_rfc3339(),
+            quoted_at,
         }))
     }
 
@@ -359,6 +371,17 @@ impl SessionService {
         self: &Arc<Self>,
         caller: &Caller,
         spec: SessionSpec,
+    ) -> Result<Session, CoreError> {
+        self.create_session_with_identity(caller, spec, SessionId::generate(), None)
+            .await
+    }
+
+    async fn create_session_with_identity(
+        self: &Arc<Self>,
+        caller: &Caller,
+        spec: SessionSpec,
+        id: SessionId,
+        trigger_origin: Option<crate::TriggerSessionOrigin>,
     ) -> Result<Session, CoreError> {
         caller.authorization.require(Capability::CreateSession)?;
         // Checked before anything is recorded: a selection this caller may not
@@ -478,7 +501,7 @@ impl SessionService {
         let granted_skills = Self::granted_skills_for(&skill_packs);
 
         let (settings, settings_fallback) = self.settings.for_provisioning_observed().await;
-        if settings_fallback.is_none() {
+        if trigger_origin.is_none() && settings_fallback.is_none() {
             if let Some(quoted) = spec.quoted_rate_card.as_ref() {
                 let in_force = settings.pricing.in_force().map(|card| &card.id);
                 if in_force != Some(quoted) {
@@ -495,14 +518,17 @@ impl SessionService {
                 }
             }
         }
-        let pricing = Self::quote_from(&settings, size)?.map(|quote| SessionPricing {
-            rate_card: quote.rate_card,
-            rate: quote.rate,
-            cpu_millis: quote.cpu_millis,
-            memory_mib: quote.memory_mib,
-            micros_per_hour: quote.micros_per_hour,
-            quoted_at: quote.quoted_at,
-        });
+        let pricing = match trigger_origin.as_ref() {
+            Some(origin) => origin.pricing.clone(),
+            None => Self::quote_from(&settings, size)?.map(|quote| SessionPricing {
+                rate_card: quote.rate_card,
+                rate: quote.rate,
+                cpu_millis: quote.cpu_millis,
+                memory_mib: quote.memory_mib,
+                micros_per_hour: quote.micros_per_hour,
+                quoted_at: quote.quoted_at,
+            }),
+        };
         if let Some(size) = size {
             settings.size_bounds.check(size)?;
         }
@@ -514,7 +540,6 @@ impl SessionService {
             .await?;
 
         let geometry = spec.geometry.unwrap_or_default();
-        let id = SessionId::generate();
         let session = Session {
             id: id.clone(),
             owner: caller.subject.clone(),
@@ -537,6 +562,7 @@ impl SessionService {
         };
 
         let mut record = SessionRecord::new(session.clone());
+        record.trigger_origin = trigger_origin;
         record.skill_packs = crate::store::SkillPackState::Staged(skill_packs);
         if let Err(error) = self
             .create_durably(
@@ -610,6 +636,671 @@ impl SessionService {
 
         tracing::info!(session_id = %id, kernel = %record.session.kernel, "session created, runtime starting");
         Ok(record.session)
+    }
+
+    /// Ensure the one deterministic managed-agent session owned by a Trigger Launch.
+    ///
+    /// The durable Launch is the authority. No browser credential is retained
+    /// or forwarded: credential custody resolves the owner's current token when
+    /// detached provisioning mints the session-scoped NyxID key.
+    pub async fn ensure_trigger_session(
+        self: &Arc<Self>,
+        launch: &crate::Launch,
+    ) -> Result<Session, CoreError> {
+        let provisioning_at = now_rfc3339();
+        self.revalidate_trigger_provisioning_admission(launch, &provisioning_at)
+            .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+        let sandbox_profile =
+            crate::TriggerSandboxProfile::parse(&launch.revision.content.session.sandbox_profile)
+                .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+        let connection = launch.connection.as_ref().ok_or_else(|| {
+            CoreError::InvalidRequest("the Launch GitHub connection is not frozen".into())
+        })?;
+        let origin = trigger_session_origin(launch)?;
+        let exact_service = crate::ServiceId::new(origin.github_service_id.clone());
+        let credentials = self.credentials.as_ref().ok_or_else(|| {
+            CoreError::ServiceCatalogUnavailable(
+                "no credential source can verify the selected Trigger service".into(),
+            )
+        })?;
+        match credentials
+            .exact_services_available(&launch.owner, std::slice::from_ref(&exact_service))
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return Err(CoreError::ServiceNotGranted(exact_service.0)),
+            Err(error) => {
+                tracing::warn!(
+                    launch_id = %launch.id,
+                    error = %error,
+                    "could not verify the selected Trigger service before session creation"
+                );
+                return Err(CoreError::ServiceCatalogUnavailable(
+                    "the selected Trigger service could not be verified".into(),
+                ));
+            }
+        }
+        if launch.effective.permission == crate::PermissionMode::Unrestricted {
+            return Err(CoreError::InvalidRequest(
+                "unrestricted permission is not allowed for a Trigger session".into(),
+            ));
+        }
+
+        let trigger_kernel = self.trigger_kernel.as_ref().ok_or_else(|| {
+            CoreError::RuntimeUnavailable("the Trigger runtime kernel is not configured".into())
+        })?;
+        let agent = sandbox_profile.resolve_agent(
+            self.environments.default_agent(),
+            trigger_kernel,
+            launch.effective.permission,
+            launch.effective.resource_size,
+        );
+        let profile_spec = crate::EnvironmentProfileSpec {
+            name: format!("CMA Trigger {}", launch.id),
+            agent,
+            variables: Vec::new(),
+            packages: Vec::new(),
+            services: vec![crate::ServiceId::new(connection.service_id.clone())],
+            agent_notes: String::new(),
+        };
+        let profile = self
+            .environments
+            .ensure_trigger_profile(&launch.owner, &origin, profile_spec)
+            .await?;
+        let id = origin
+            .session_id()
+            .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+        let expected_services = self
+            .environments
+            .services_for(&launch.owner, Some(&profile.id))
+            .await;
+        let expected_options = AgentOptions {
+            mode: profile.agent.mode,
+            model: profile.agent.model.clone(),
+            reasoning_effort: profile.agent.reasoning_effort,
+            permission: profile.agent.permission,
+            credential: profile.agent.credential,
+            size: profile.agent.size,
+            record_tool_bodies: profile.agent.record_tool_bodies,
+        };
+
+        // One process cannot race itself. Mongo's create-only transaction is
+        // the cross-process fence; a losing replica rereads and verifies below.
+        let creation = self.lock_lifecycle(&id).await;
+        if let Some(record) = self.store.get(&id).await.map_err(store_failed)? {
+            let session = verify_trigger_session_record(
+                &record,
+                &origin,
+                &launch.owner,
+                &profile.id,
+                &profile.agent.kernel,
+                &expected_options,
+                &expected_services,
+            )?;
+            drop(creation);
+            return Ok(session);
+        }
+
+        let caller = Caller::new(
+            launch.owner.clone(),
+            crate::Authorization::from_capabilities([
+                Capability::CreateSession,
+                Capability::ManageOwnEnvironmentProfiles,
+            ]),
+        );
+        let spec = SessionSpec {
+            options: AgentOptions::default(),
+            geometry: None,
+            environment_profile: Some(profile.id.clone()),
+            caller_credential: None,
+            runtime_credential: None,
+            requested_mode: Some(SessionMode::Conversation),
+            quoted_rate_card: None,
+        };
+        let attempted = self
+            .create_session_with_identity(&caller, spec, id.clone(), Some(origin.clone()))
+            .await;
+        drop(creation);
+        match attempted {
+            Ok(session) => Ok(session),
+            Err(original) => match self.store.get(&id).await {
+                Ok(Some(record)) => verify_trigger_session_record(
+                    &record,
+                    &origin,
+                    &launch.owner,
+                    &profile.id,
+                    &profile.agent.kernel,
+                    &expected_options,
+                    &expected_services,
+                ),
+                _ => Err(original),
+            },
+        }
+    }
+
+    async fn trigger_review_admission(
+        &self,
+        owner: &crate::SubjectId,
+        launch: &crate::Launch,
+        now: &str,
+    ) -> Result<crate::LaunchReviewAdmission, crate::TriggerAdmissionError> {
+        launch
+            .require_live_draft(now)
+            .map_err(|error| crate::TriggerAdmissionError::Unavailable(error.to_string()))?;
+        let settings = self
+            .settings
+            .for_trigger_admission()
+            .await
+            .map_err(|error| crate::TriggerAdmissionError::Unavailable(error.to_string()))?;
+        settings
+            .size_bounds
+            .check(launch.effective.resource_size)
+            .map_err(|error| crate::TriggerAdmissionError::QuotaExceeded(error.to_string()))?;
+        let pricing = self.trigger_pricing_snapshot(launch, &settings, now)?;
+        let runtime = self.trigger_runtime_snapshot(launch, now)?;
+        let quota = self
+            .trigger_quota_snapshot(owner, launch.effective.resource_size, &settings, now)
+            .await?;
+        Ok(crate::LaunchReviewAdmission {
+            pricing,
+            runtime,
+            quota,
+        })
+    }
+
+    async fn revalidate_trigger_start_admission(
+        &self,
+        launch: &crate::Launch,
+        now: &str,
+    ) -> Result<crate::StartAdmissionSnapshot, crate::TriggerAdmissionError> {
+        let reviewed_pricing = launch.pricing.as_ref().ok_or_else(|| {
+            crate::TriggerAdmissionError::PricingUnavailable(
+                "the Launch has no reviewed pricing snapshot".into(),
+            )
+        })?;
+        let reviewed_runtime = launch.runtime_admission.as_ref().ok_or_else(|| {
+            crate::TriggerAdmissionError::CapabilityUnsupported {
+                capability: "runtime_admission".into(),
+            }
+        })?;
+        let now_seconds = crate::seconds_from_rfc3339(now).ok_or_else(|| {
+            crate::TriggerAdmissionError::Unavailable("the server clock is malformed".into())
+        })?;
+        let quote_expiry =
+            crate::seconds_from_rfc3339(&reviewed_pricing.expires_at).ok_or_else(|| {
+                crate::TriggerAdmissionError::PricingUnavailable(
+                    "the reviewed quote expiry is malformed".into(),
+                )
+            })?;
+        if now_seconds >= quote_expiry {
+            return Err(crate::TriggerAdmissionError::QuoteExpired);
+        }
+
+        let settings = self
+            .settings
+            .for_trigger_admission()
+            .await
+            .map_err(|error| crate::TriggerAdmissionError::Unavailable(error.to_string()))?;
+        let current_pricing = self.trigger_pricing_snapshot(launch, &settings, now)?;
+        if current_pricing.policy_reference != reviewed_pricing.policy_reference
+            || current_pricing.billing_mode != reviewed_pricing.billing_mode
+            || current_pricing.rate_card != reviewed_pricing.rate_card
+            || current_pricing.rate != reviewed_pricing.rate
+            || current_pricing.micros_per_hour != reviewed_pricing.micros_per_hour
+            || current_pricing.estimated_micros != reviewed_pricing.estimated_micros
+        {
+            return Err(crate::TriggerAdmissionError::PriceChanged);
+        }
+        let current_runtime = self.trigger_runtime_snapshot(launch, now)?;
+        if current_runtime.runtime_version != reviewed_runtime.runtime_version
+            || current_runtime.kernel != reviewed_runtime.kernel
+        {
+            return Err(crate::TriggerAdmissionError::RuntimeChanged);
+        }
+        let quota = self
+            .trigger_quota_snapshot(
+                &launch.owner,
+                launch.effective.resource_size,
+                &settings,
+                now,
+            )
+            .await?;
+        Ok(crate::StartAdmissionSnapshot {
+            runtime_version: current_runtime.runtime_version,
+            pricing_policy_reference: reviewed_pricing.policy_reference.clone(),
+            rate_card: reviewed_pricing.rate_card.clone(),
+            quota,
+            checked_at: now.to_string(),
+        })
+    }
+
+    /// Recheck facts that may change between Start and sandbox provisioning.
+    ///
+    /// Start already accepted and pinned the pricing promise. A retired rate
+    /// card or elapsed draft deadline therefore cannot invalidate later
+    /// provisioning. Runtime identity and required capabilities remain live
+    /// safety facts and are deliberately checked again here.
+    fn revalidate_trigger_provisioning_admission(
+        &self,
+        launch: &crate::Launch,
+        now: &str,
+    ) -> Result<(), crate::TriggerAdmissionError> {
+        let reviewed_pricing = launch.pricing.as_ref().ok_or_else(|| {
+            crate::TriggerAdmissionError::PricingUnavailable(
+                "the Launch has no pinned pricing snapshot".into(),
+            )
+        })?;
+        let reviewed_runtime = launch.runtime_admission.as_ref().ok_or_else(|| {
+            crate::TriggerAdmissionError::CapabilityUnsupported {
+                capability: "runtime_admission".into(),
+            }
+        })?;
+        let start = launch.start_admission.as_ref().ok_or_else(|| {
+            crate::TriggerAdmissionError::Unavailable(
+                "the Launch has no successful Start admission".into(),
+            )
+        })?;
+        self.validate_trigger_pinned_pricing(launch, reviewed_pricing, start)?;
+
+        let current_runtime = self.trigger_runtime_snapshot(launch, now)?;
+        if current_runtime.runtime_version != reviewed_runtime.runtime_version
+            || current_runtime.kernel != reviewed_runtime.kernel
+            || current_runtime.runtime_version != start.runtime_version
+        {
+            return Err(crate::TriggerAdmissionError::RuntimeChanged);
+        }
+        Ok(())
+    }
+
+    fn validate_trigger_pinned_pricing(
+        &self,
+        launch: &crate::Launch,
+        pricing: &crate::PricingSnapshot,
+        start: &crate::StartAdmissionSnapshot,
+    ) -> Result<(), crate::TriggerAdmissionError> {
+        let policy = &launch.revision.content.commercial_policy;
+        let size = launch.effective.resource_size;
+        let estimated = estimate_micros(pricing.micros_per_hour, launch.effective.timeout_seconds)
+            .ok_or_else(|| {
+                crate::TriggerAdmissionError::PricingUnavailable(
+                    "the pinned maximum session estimate exceeds the supported ledger".into(),
+                )
+            })?;
+        let common_is_valid = pricing.policy_reference == policy.policy_reference
+            && pricing.billing_mode == policy.billing_mode
+            && pricing.currency == CURRENCY
+            && pricing.cpu_millis == size.cpu_millis()
+            && pricing.memory_mib == size.memory_mib()
+            && crate::seconds_from_rfc3339(&pricing.quoted_at).is_some()
+            && crate::seconds_from_rfc3339(&pricing.expires_at).is_some()
+            && pricing.quoted_at < pricing.expires_at
+            && pricing.estimated_micros == estimated
+            && start.pricing_policy_reference == pricing.policy_reference
+            && start.rate_card == pricing.rate_card;
+        let terms_are_valid = match pricing.billing_mode {
+            crate::BillingMode::ZeroCost => {
+                pricing.policy_reference == crate::CMA_TRIGGER_ZERO_COST_POLICY_V1
+                    && pricing.rate_card.is_none()
+                    && pricing.rate.is_none()
+                    && pricing.micros_per_hour == 0
+                    && pricing.estimated_micros == 0
+            }
+            crate::BillingMode::Contributor => {
+                pricing.policy_reference == crate::CMA_TRIGGER_CONTRIBUTOR_POLICY_V1
+                    && pricing.rate_card.is_some()
+                    && pricing.rate.as_ref().is_some_and(|rate| {
+                        rate.micros_per_hour(pricing.cpu_millis, pricing.memory_mib)
+                            == Some(pricing.micros_per_hour)
+                    })
+                    && pricing.micros_per_hour > 0
+            }
+            crate::BillingMode::Sponsored => false,
+        };
+        if !common_is_valid || !terms_are_valid {
+            return Err(crate::TriggerAdmissionError::PricingUnavailable(
+                "the pinned pricing promise is incomplete or inconsistent".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn trigger_pricing_snapshot(
+        &self,
+        launch: &crate::Launch,
+        settings: &PlatformSettings,
+        now: &str,
+    ) -> Result<crate::PricingSnapshot, crate::TriggerAdmissionError> {
+        let policy = &launch.revision.content.commercial_policy;
+        let size = launch.effective.resource_size;
+        match policy.billing_mode {
+            crate::BillingMode::ZeroCost => {
+                if policy.policy_reference != crate::CMA_TRIGGER_ZERO_COST_POLICY_V1 {
+                    return Err(crate::TriggerAdmissionError::PricingUnavailable(
+                        "the zero-cost policy reference is not deployment-owned".into(),
+                    ));
+                }
+                Ok(crate::PricingSnapshot {
+                    policy_reference: policy.policy_reference.clone(),
+                    billing_mode: policy.billing_mode,
+                    rate_card: None,
+                    rate: None,
+                    currency: CURRENCY.into(),
+                    cpu_millis: size.cpu_millis(),
+                    memory_mib: size.memory_mib(),
+                    micros_per_hour: 0,
+                    estimated_micros: 0,
+                    quoted_at: now.to_string(),
+                    expires_at: launch.draft_expires_at.clone(),
+                })
+            }
+            crate::BillingMode::Contributor => {
+                if policy.policy_reference != crate::CMA_TRIGGER_CONTRIBUTOR_POLICY_V1 {
+                    return Err(crate::TriggerAdmissionError::PricingUnavailable(
+                        "the contributor policy reference is not deployment-owned".into(),
+                    ));
+                }
+                let quote = Self::trigger_contributor_quote(settings, size, now)?;
+                let estimated_micros =
+                    estimate_micros(quote.micros_per_hour, launch.effective.timeout_seconds)
+                        .ok_or_else(|| {
+                            crate::TriggerAdmissionError::PricingUnavailable(
+                                "the maximum session estimate exceeds the supported ledger".into(),
+                            )
+                        })?;
+                Ok(crate::PricingSnapshot {
+                    policy_reference: policy.policy_reference.clone(),
+                    billing_mode: policy.billing_mode,
+                    rate_card: Some(quote.rate_card),
+                    rate: Some(quote.rate),
+                    currency: quote.currency.into(),
+                    cpu_millis: quote.cpu_millis,
+                    memory_mib: quote.memory_mib,
+                    micros_per_hour: quote.micros_per_hour,
+                    estimated_micros,
+                    quoted_at: quote.quoted_at,
+                    expires_at: launch.draft_expires_at.clone(),
+                })
+            }
+            crate::BillingMode::Sponsored => Err(crate::TriggerAdmissionError::PricingUnavailable(
+                "sponsored billing is disabled for the public MVP".into(),
+            )),
+        }
+    }
+
+    fn trigger_contributor_quote(
+        settings: &PlatformSettings,
+        size: SessionSize,
+        now: &str,
+    ) -> Result<Quote, crate::TriggerAdmissionError> {
+        let quote = Self::quote_from_at(settings, Some(size), now.to_string())
+            .map_err(|error| crate::TriggerAdmissionError::PricingUnavailable(error.to_string()))?
+            .ok_or_else(|| {
+                crate::TriggerAdmissionError::PricingUnavailable(
+                    "contributor billing requires an in-force platform rate card".into(),
+                )
+            })?;
+        if quote.micros_per_hour == 0 {
+            return Err(crate::TriggerAdmissionError::PricingUnavailable(
+                "the contributor rate must produce a positive hourly amount".into(),
+            ));
+        }
+        Ok(quote)
+    }
+
+    async fn trigger_preview_cost(
+        &self,
+        revision: &crate::TriggerRevision,
+        now: &str,
+    ) -> crate::TriggerPreviewCost {
+        let policy = &revision.content.commercial_policy;
+        if policy.billing_mode != crate::BillingMode::Contributor
+            || policy.policy_reference != crate::CMA_TRIGGER_CONTRIBUTOR_POLICY_V1
+        {
+            return crate::TriggerPreviewCost::QuoteUnavailable;
+        }
+        let settings = match self.settings.for_trigger_admission().await {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(
+                    public_trigger_id = %revision.public_id,
+                    %error,
+                    "the public Trigger preview cannot read deployment pricing"
+                );
+                return crate::TriggerPreviewCost::QuoteUnavailable;
+            }
+        };
+        let quote = match Self::trigger_contributor_quote(
+            &settings,
+            revision.content.session.resources.default,
+            now,
+        ) {
+            Ok(quote) => quote,
+            Err(error) => {
+                tracing::debug!(
+                    public_trigger_id = %revision.public_id,
+                    %error,
+                    "the public Trigger preview has no contributor quote"
+                );
+                return crate::TriggerPreviewCost::QuoteUnavailable;
+            }
+        };
+        let Some(amount_micros) = estimate_micros(
+            quote.micros_per_hour,
+            revision.content.session.timeout_default_seconds,
+        ) else {
+            tracing::warn!(
+                public_trigger_id = %revision.public_id,
+                "the public Trigger estimate exceeds the supported ledger"
+            );
+            return crate::TriggerPreviewCost::QuoteUnavailable;
+        };
+        crate::TriggerPreviewCost::ContributorEstimate {
+            currency: quote.currency.into(),
+            amount_micros,
+            display: format_usd(amount_micros),
+            quoted_at: quote.quoted_at,
+        }
+    }
+
+    fn trigger_runtime_snapshot(
+        &self,
+        launch: &crate::Launch,
+        now: &str,
+    ) -> Result<crate::RuntimeAdmissionSnapshot, crate::TriggerAdmissionError> {
+        let runtime_version = self
+            .runtime_version
+            .as_ref()
+            .filter(|version| !version.trim().is_empty())
+            .cloned()
+            .ok_or_else(|| crate::TriggerAdmissionError::CapabilityUnsupported {
+                capability: "pinned_runtime_version".into(),
+            })?;
+        let trigger_kernel = self.trigger_kernel.as_ref().ok_or_else(|| {
+            crate::TriggerAdmissionError::CapabilityUnsupported {
+                capability: "trigger_kernel".into(),
+            }
+        })?;
+        if trigger_kernel.is_unset() {
+            return Err(crate::TriggerAdmissionError::CapabilityUnsupported {
+                capability: "trigger_kernel".into(),
+            });
+        }
+        let adapter = self.adapters.get(trigger_kernel).ok_or_else(|| {
+            crate::TriggerAdmissionError::CapabilityUnsupported {
+                capability: "trigger_kernel".into(),
+            }
+        })?;
+        let kernel = adapter.capabilities();
+        let mut supported: BTreeSet<_> =
+            self.trigger_runtime_capabilities.iter().copied().collect();
+        if !kernel.conversation {
+            supported.remove(&crate::RequiredCapability::Conversation);
+        }
+        if !kernel.conversation || !kernel.snapshot {
+            supported.remove(&crate::RequiredCapability::DurableConversation);
+        }
+        if self.workspaces.is_none() {
+            supported.remove(&crate::RequiredCapability::WorkspaceCheckpoint);
+        }
+        if self.credentials.is_none() {
+            supported.remove(&crate::RequiredCapability::RestrictedServiceGateway);
+            supported.remove(&crate::RequiredCapability::CredentialRefresh);
+            supported.remove(&crate::RequiredCapability::CredentialRevocation);
+        }
+        if let Some(missing) = launch
+            .revision
+            .content
+            .session
+            .required_capabilities
+            .iter()
+            .find(|capability| !supported.contains(capability))
+        {
+            return Err(crate::TriggerAdmissionError::CapabilityUnsupported {
+                capability: trigger_capability_name(*missing).into(),
+            });
+        }
+        Ok(crate::RuntimeAdmissionSnapshot {
+            kernel: trigger_kernel.clone(),
+            runtime_version,
+            supported_capabilities: supported.into_iter().collect(),
+            observed_at: now.to_string(),
+        })
+    }
+
+    async fn trigger_quota_snapshot(
+        &self,
+        owner: &crate::SubjectId,
+        requested: SessionSize,
+        settings: &PlatformSettings,
+        now: &str,
+    ) -> Result<crate::QuotaSnapshot, crate::TriggerAdmissionError> {
+        let live = self.store.count_live_for(owner).await.map_err(|error| {
+            crate::TriggerAdmissionError::Unavailable(format!(
+                "the live-session ledger could not be read: {error}"
+            ))
+        })?;
+        let limit = settings.live_sessions.map(std::num::NonZeroU32::get);
+        if limit.is_some_and(|limit| live >= limit) {
+            return Err(crate::TriggerAdmissionError::QuotaExceeded(format!(
+                "{live} live sessions already consume the limit of {}",
+                limit.unwrap()
+            )));
+        }
+        let mut reserved = self.store.reserved_capacity().await.map_err(|error| {
+            crate::TriggerAdmissionError::Unavailable(format!(
+                "the deployment-capacity ledger could not be read: {error}"
+            ))
+        })?;
+        let declared = settings.deployment_capacity;
+        if reserved.unsized_sessions > 0 {
+            let assumed = declared.assumed_session_size.ok_or_else(|| {
+                crate::TriggerAdmissionError::Unavailable(
+                    "deployment capacity cannot price existing unsized sessions".into(),
+                )
+            })?;
+            reserved = reserved.assuming(assumed);
+        }
+        let (free_cpu_millis, free_memory_mib) = if declared.is_declared() {
+            let room = declared.check(reserved, requested).map_err(|shortfall| {
+                crate::TriggerAdmissionError::QuotaExceeded(format!(
+                    "requested {}m/{}MiB but only {}m/{}MiB is declared free",
+                    shortfall.requested_cpu_millis,
+                    shortfall.requested_memory_mib,
+                    shortfall.free_cpu_millis,
+                    shortfall.free_memory_mib
+                ))
+            })?;
+            (
+                declared.cpu_millis.map(|_| room.free_cpu_millis),
+                declared.memory_mib.map(|_| room.free_memory_mib),
+            )
+        } else {
+            (None, None)
+        };
+        Ok(crate::QuotaSnapshot {
+            live_sessions: live,
+            live_session_limit: limit,
+            reserved_cpu_millis: reserved.cpu_millis,
+            reserved_memory_mib: reserved.memory_mib,
+            free_cpu_millis,
+            free_memory_mib,
+            checked_at: now.to_string(),
+        })
+    }
+
+    /// Whether the current runtime acknowledged its session-scoped credential.
+    pub async fn trigger_credential_ready(&self, id: &SessionId) -> bool {
+        self.entries
+            .read()
+            .await
+            .get(id)
+            .is_some_and(|entry| entry.subject_credential.is_some())
+    }
+
+    /// Exact live runtime generation for a Trigger session.
+    ///
+    /// A generation is returned only when the process-local entry and durable
+    /// runtime authority name the same handle and generation. Compatibility
+    /// stores have no separate authority document; their lifecycle-fenced
+    /// Trigger entry carries the monotonic `rotations + 1` generation.
+    pub async fn trigger_runtime_generation(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<u64>, StoreError> {
+        let entry = {
+            let entries = self.entries.read().await;
+            let Some(entry) = entries.get(id) else {
+                return Ok(None);
+            };
+            let (Some(origin), Some(runtime)) =
+                (entry.trigger_origin.as_ref(), entry.runtime.as_ref())
+            else {
+                return Ok(None);
+            };
+            let expected_session = origin
+                .session_id()
+                .map_err(|error| StoreError::Malformed(error.to_string()))?;
+            if expected_session != *id || entry.runtime_generation == 0 {
+                return Ok(None);
+            }
+            (runtime.0.clone(), entry.runtime_generation)
+        };
+        match self.store.runtime_authority(id).await {
+            Ok(Some(authority)) => Ok((authority.generation == entry.1
+                && authority.runtime_id.as_deref() == Some(entry.0.as_str()))
+            .then_some(entry.1)),
+            Err(StoreError::CoordinationDisabled) => Ok(Some(entry.1)),
+            Ok(None) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Exact current credential authority, only after the live Trigger runtime
+    /// acknowledged credential delivery.
+    pub async fn trigger_credential_authority(
+        &self,
+        id: &SessionId,
+    ) -> Result<Option<crate::SessionCredentialAuthority>, StoreError> {
+        let acknowledged_trigger_runtime = self.entries.read().await.get(id).is_some_and(|entry| {
+            entry.trigger_origin.is_some()
+                && entry.runtime.is_some()
+                && entry.subject_credential.is_some()
+        });
+        if !acknowledged_trigger_runtime {
+            return Ok(None);
+        }
+        let Some(source) = self.credentials.as_ref() else {
+            return Ok(None);
+        };
+        let Some(authority) = source.credential_authority(id).await? else {
+            return Ok(None);
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let now = u64::try_from(now).unwrap_or(u64::MAX);
+        Ok((authority.session_id == *id && authority.is_valid_at(now)).then_some(authority))
     }
 
     /// Fail unless the caller owns this live session and it is still running.
@@ -688,6 +1379,138 @@ impl SessionService {
             }
         })
     }
+}
+
+#[async_trait::async_trait]
+impl crate::TriggerLaunchAdmission for SessionService {
+    async fn preview_cost(
+        &self,
+        revision: &crate::TriggerRevision,
+        now: &str,
+    ) -> crate::TriggerPreviewCost {
+        self.trigger_preview_cost(revision, now).await
+    }
+
+    async fn review(
+        &self,
+        owner: &crate::SubjectId,
+        launch: &crate::Launch,
+        now: &str,
+    ) -> Result<crate::LaunchReviewAdmission, crate::TriggerAdmissionError> {
+        self.trigger_review_admission(owner, launch, now).await
+    }
+
+    async fn start(
+        &self,
+        owner: &crate::SubjectId,
+        launch: &crate::Launch,
+        now: &str,
+    ) -> Result<crate::StartAdmissionSnapshot, crate::TriggerAdmissionError> {
+        if owner != &launch.owner {
+            return Err(crate::TriggerAdmissionError::Unavailable(
+                "the Launch owner changed during admission".into(),
+            ));
+        }
+        self.revalidate_trigger_start_admission(launch, now).await
+    }
+}
+
+fn trigger_capability_name(capability: crate::RequiredCapability) -> &'static str {
+    match capability {
+        crate::RequiredCapability::Conversation => "conversation",
+        crate::RequiredCapability::DurableConversation => "durable_conversation",
+        crate::RequiredCapability::WorkspaceCheckpoint => "workspace_checkpoint",
+        crate::RequiredCapability::RestrictedServiceGateway => "restricted_service_gateway",
+        crate::RequiredCapability::CredentialRefresh => "credential_refresh",
+        crate::RequiredCapability::CredentialRevocation => "credential_revocation",
+    }
+}
+
+pub(crate) fn trigger_session_origin(
+    launch: &crate::Launch,
+) -> Result<crate::TriggerSessionOrigin, CoreError> {
+    let workspace = launch.workspace.as_ref().ok_or_else(|| {
+        CoreError::InvalidRequest("the Launch workspace has not been imported".into())
+    })?;
+    workspace
+        .baseline
+        .validate()
+        .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+    let connection = launch.connection.as_ref().ok_or_else(|| {
+        CoreError::InvalidRequest("the Launch GitHub connection is not frozen".into())
+    })?;
+    let pricing = launch.pricing.as_ref().ok_or_else(|| {
+        CoreError::InvalidRequest("the Launch pricing snapshot is not frozen".into())
+    })?;
+    let session_pricing = match pricing.billing_mode {
+        crate::BillingMode::ZeroCost => None,
+        crate::BillingMode::Contributor => Some(SessionPricing {
+            rate_card: pricing.rate_card.clone().ok_or_else(|| {
+                CoreError::InvalidRequest("the contributor rate card is missing".into())
+            })?,
+            rate: pricing.rate.clone().ok_or_else(|| {
+                CoreError::InvalidRequest("the contributor rate is missing".into())
+            })?,
+            cpu_millis: pricing.cpu_millis,
+            memory_mib: pricing.memory_mib,
+            micros_per_hour: pricing.micros_per_hour,
+            quoted_at: pricing.quoted_at.clone(),
+        }),
+        crate::BillingMode::Sponsored => {
+            return Err(CoreError::InvalidRequest(
+                "sponsored Trigger billing is disabled".into(),
+            ));
+        }
+    };
+    let origin = crate::TriggerSessionOrigin {
+        launch_id: launch.id.clone(),
+        revision_digest: launch.revision_digest.clone(),
+        sandbox_profile: launch.revision.content.session.sandbox_profile.clone(),
+        github_service_id: connection.service_id.clone(),
+        workspace_epoch: workspace.workspace_epoch,
+        source_revision: launch.source_sha.clone(),
+        manifest_digest: workspace.baseline.digest.clone(),
+        object_reference: workspace.baseline_object_reference.clone(),
+        archive_sha256: workspace.baseline_archive_sha256.clone(),
+        timeout_seconds: launch.effective.timeout_seconds,
+        pricing_policy_reference: pricing.policy_reference.clone(),
+        billing_mode: pricing.billing_mode,
+        pricing: session_pricing,
+    };
+    origin
+        .validate()
+        .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+    Ok(origin)
+}
+
+fn verify_trigger_session_record(
+    record: &SessionRecord,
+    origin: &crate::TriggerSessionOrigin,
+    owner: &crate::SubjectId,
+    profile_id: &crate::EnvironmentProfileId,
+    expected_kernel: &KernelId,
+    expected_options: &AgentOptions,
+    expected_services: &[crate::ServiceId],
+) -> Result<Session, CoreError> {
+    let session = &record.session;
+    let exact = record.trigger_origin.as_ref() == Some(origin)
+        && session.id
+            == origin
+                .session_id()
+                .map_err(|error| CoreError::InvalidRequest(error.to_string()))?
+        && &session.owner == owner
+        && session.environment_profile.as_ref() == Some(profile_id)
+        && &session.kernel == expected_kernel
+        && &session.options == expected_options
+        && session.capabilities.conversation
+        && session.granted_services.as_deref() == Some(expected_services);
+    if !exact {
+        return Err(CoreError::InvalidRequest(
+            "the deterministic Trigger session identity is occupied by different authority or configuration"
+                .into(),
+        ));
+    }
+    Ok(session.clone())
 }
 
 /// Render a storage failure as a core error.

@@ -29,10 +29,14 @@ mod task_retirement;
 mod terminal_input;
 
 pub use runtime::{
-    ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeGeneration, RuntimeHandle,
+    ResourceSample, RuntimeCapacity, RuntimeEnvironment, RuntimeGatewayProbeOutcome,
+    RuntimeGatewayProbeReceipt, RuntimeGatewayProbeRequest, RuntimeGeneration, RuntimeHandle,
     RuntimeIdentity, RuntimeListing, RuntimeLossReason, RuntimeMode, RuntimeOptions,
-    RuntimePermission, RuntimeReservationIdentity, RuntimeSpec, SkillPackage, TermSize,
-    TerminalChannel, TerminalInput, TerminalOutput,
+    RuntimePermission, RuntimePolicyObservation, RuntimePolicyReceipt, RuntimePolicyRefusal,
+    RuntimeReservationIdentity, RuntimeSpec, SkillPackage, TermSize, TerminalChannel,
+    TerminalInput, TerminalOutput, WorkspaceCheckpointDisposition, WorkspaceCheckpointPackage,
+    WorkspaceCheckpointRequest, WorkspaceEntryKind, WorkspaceEntryPackage, WorkspacePackage,
+    WorkspaceWriterState, RUNTIME_GATEWAY_PROBE_VERSION,
 };
 pub use terminal_input::TerminalInputSender;
 
@@ -40,11 +44,12 @@ use tokio::sync::mpsc;
 
 pub use conversation::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
-    ConversationId, ConversationInput, ConversationInputSender, ConversationUpdate, MessageId,
-    PermissionDecision, PermissionLocator, PermissionOption, PermissionOptionId,
-    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
-    SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-    ToolKind, TurnStopReason, TurnUsage, UsageUpdate,
+    ConversationId, ConversationInput, ConversationInputSender, ConversationSendOutcome,
+    ConversationUpdate, MessageId, PermissionDecision, PermissionLocator, PermissionOption,
+    PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
+    RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage,
+    UsageUpdate,
 };
 
 pub mod claude_code;
@@ -259,6 +264,48 @@ pub trait KernelAdapter: Send + Sync {
         credential: &str,
     ) -> Result<(), AdapterError>;
 
+    /// Install one authenticated runtime policy and wait for the exact runtime
+    /// generation to acknowledge it.
+    ///
+    /// The envelope is opaque at this boundary. Its signer, semantics and
+    /// evaluator belong on opposite sides of Layer 3; this layer only carries
+    /// it and reports the monotonic receipt the runtime returned.
+    async fn install_runtime_policy(
+        &self,
+        _handle: &RuntimeHandle,
+        _envelope: &str,
+    ) -> Result<RuntimePolicyReceipt, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime does not accept authenticated policy data".to_string(),
+        ))
+    }
+
+    /// Observe the non-secret authenticated-policy state of one exact runtime.
+    ///
+    /// This is distinct from static capability discovery: a supervisor may
+    /// restart inside the same provider runtime and lose its in-memory policy
+    /// while the opaque runtime handle remains unchanged.
+    async fn observe_runtime_policy(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<RuntimePolicyObservation, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime does not expose authenticated policy state".to_string(),
+        ))
+    }
+
+    /// Prove that this exact runtime can traverse its command sandbox and the
+    /// restricted local service gateway without exposing gateway response data.
+    async fn probe_runtime_gateway(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &RuntimeGatewayProbeRequest,
+    ) -> Result<RuntimeGatewayProbeReceipt, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime does not expose a restricted gateway probe".to_string(),
+        ))
+    }
+
     /// Tear the runtime down using provider authority captured when this call
     /// begins.
     ///
@@ -325,6 +372,32 @@ pub trait KernelAdapter: Send + Sync {
     async fn snapshot(&self, _handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
         Err(AdapterError::Unsupported(
             "this runtime cannot capture its agent's conversation".to_string(),
+        ))
+    }
+
+    /// Quiesce every supported workspace writer, seal one complete checkpoint,
+    /// resume the same writers, and return the exact retained artifact.
+    ///
+    /// Defaults to a stated absence so runtimes predating the versioned Layer 4
+    /// capability cannot accidentally enter a Trigger contribution flow.
+    async fn checkpoint_workspace(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &WorkspaceCheckpointRequest,
+    ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot coherently checkpoint its workspace".to_string(),
+        ))
+    }
+
+    /// Reopen the exact writer fence returned by a hold-for-teardown capture.
+    async fn resume_workspace_writers(
+        &self,
+        _handle: &RuntimeHandle,
+        _resume_token: &str,
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::Unsupported(
+            "this runtime cannot resume a held workspace checkpoint".to_string(),
         ))
     }
 

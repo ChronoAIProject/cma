@@ -6,15 +6,20 @@ publish = false
 
 [dependencies]
 axum = { workspace = true }
+base64 = { workspace = true }
 futures-util = { workspace = true }
 libc = { workspace = true }
 portable-pty = { workspace = true }
 reqwest = { workspace = true, features = ["stream"] }
+ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+unicode-normalization = { workspace = true }
 
 [dev-dependencies]
 tokio-tungstenite = { workspace = true }

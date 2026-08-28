@@ -17,6 +17,7 @@
 import { open, visit, settle, ready, CLIPPED_BY } from './browser.mjs';
 
 const PORT = 4319;
+const EXPECTED_DEVELOPER_GUIDES = 9;
 
 /** A profile list long enough that a clipped menu hides some of it. */
 const PROFILES = [
@@ -413,8 +414,10 @@ async function developerSurface(page) {
   if (desktop.missing) {
     return ['developer: the surface is incomplete'];
   }
-  if (desktop.guides !== 8) {
-    problems.push(`developer: TypeScript draws ${String(desktop.guides)} guides, expected 8`);
+  if (desktop.guides !== EXPECTED_DEVELOPER_GUIDES) {
+    problems.push(
+      `developer: TypeScript draws ${String(desktop.guides)} guides, expected ${String(EXPECTED_DEVELOPER_GUIDES)}`,
+    );
   }
   if (desktop.heading !== 'CMA TypeScript SDK') {
     problems.push(`developer: the first bundled heading is ${String(desktop.heading)}`);

@@ -16,7 +16,7 @@
 //! shaped like, what environment its agent needs, what it can actually do, and
 //! the words its bridge uses that no other bridge does.
 
-pub(crate) mod acp;
+mod acp;
 mod deployment;
 mod handshake;
 mod inbound;
@@ -26,11 +26,16 @@ mod loss;
 mod telemetry;
 pub(super) mod turn;
 
+#[cfg(test)]
+#[path = "evidence_tests.rs"]
+mod evidence_tests;
+
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
-use tokio::sync::oneshot;
+use sha2::{Digest as _, Sha256};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::sandbox::{ImageSpec, Sandbox, SandboxClient, SandboxError, SandboxRequest};
 use crate::sandbox_reclaimer::{
@@ -39,12 +44,54 @@ use crate::sandbox_reclaimer::{
 use crate::task_retirement::TaskRetirement;
 use crate::terminal_input::WeakTerminalInputSender;
 use crate::{
-    AdapterError, RuntimeCapacity, RuntimeGeneration, RuntimeHandle, RuntimeIdentity,
-    RuntimeListing, RuntimeReservationIdentity, RuntimeSpec, SkillPackage, TerminalInput,
-    TerminalInputSender,
+    AdapterError, ConversationChannel, ConversationUpdate, RuntimeCapacity, RuntimeGeneration,
+    RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeReservationIdentity, RuntimeSpec,
+    SkillPackage, TerminalInput, TerminalInputSender, WorkspaceCheckpointDisposition,
+    WorkspaceCheckpointPackage, WorkspaceCheckpointRequest, WorkspaceEntryKind,
+    WorkspaceEntryPackage, WorkspacePackage, WorkspaceWriterState,
 };
 
 pub use deployment::{Deployment, PLACEHOLDER_CREDENTIAL};
+
+/// The shared evidence semantics used by a hosted conversation protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConversationEvidenceContract {
+    /// ACP v1 updates use [`crate::ConversationUpdate::turn_evidence`].
+    AcpV1,
+}
+
+/// Kernel-specific values supplied to the one hosted ACP conversation path.
+///
+/// The protocol, frame translation, and evidence classification are not
+/// kernel-specific. Keeping those behind this typed binding makes it possible
+/// for Codex and Claude Code to choose their own permission mode without
+/// silently acquiring different prompt-delivery semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AcpConversationBinding {
+    mode: Option<String>,
+    resume_conversation: Option<String>,
+    own_credential: bool,
+}
+
+impl AcpConversationBinding {
+    /// Bind one kernel's mode and credential behavior to hosted ACP v1.
+    pub(crate) fn new(
+        mode: Option<String>,
+        resume_conversation: Option<String>,
+        own_credential: bool,
+    ) -> Self {
+        Self {
+            mode,
+            resume_conversation,
+            own_credential,
+        }
+    }
+
+    /// The evidence contract production opening will use for this binding.
+    pub(crate) fn evidence_contract(&self) -> ConversationEvidenceContract {
+        ConversationEvidenceContract::AcpV1
+    }
+}
 
 /// Port the supervisor listens on inside the sandbox.
 pub(crate) const SUPERVISOR_PORT: u16 = 9090;
@@ -129,6 +176,24 @@ const PRELUDE_LIMIT: usize = 4 * 1024 * 1024;
 const PRELUDE_FILE_LIMIT: usize = 4_097;
 /// Largest byte length of one component accepted by the Linux runtime image.
 const PRELUDE_COMPONENT_LIMIT: usize = 255;
+
+/// Versioned repository workspace restore/checkpoint endpoint.
+const WORKSPACE_PATH: &str = "/runtime/workspace";
+const WORKSPACE_CHECKPOINT_PATH: &str = "/runtime/workspace/checkpoint";
+const WORKSPACE_CHECKPOINT_RESUME_PATH: &str = "/runtime/workspace/checkpoint/resume";
+const RUNTIME_GATEWAY_PROBE_PATH: &str = "/runtime/gateway-probe";
+const WORKSPACE_VERSION: u64 = 2;
+const WORKSPACE_HOLD_VERSION: u64 = 4;
+const WORKSPACE_ARCHIVE_VERSION: u32 = 1;
+const MAX_WORKSPACE_FILES: usize = 100_000;
+const MAX_WORKSPACE_BYTES: usize = 2 * 1024 * 1024 * 1024;
+const MAX_WORKSPACE_HEADER_BYTES: usize = 128 * 1024 * 1024;
+const MAX_WORKSPACE_RESPONSE_BYTES: usize =
+    MAX_WORKSPACE_BYTES + MAX_WORKSPACE_HEADER_BYTES + 128 * 1024;
+const HELD_CHECKPOINT_RECOVERY_ERROR: &str =
+    "held workspace checkpoint could not be safely recovered";
+const RUNTIME_POLICY_VERSION: u64 = 1;
+const RUNTIME_GATEWAY_PROBE_VERSION: u64 = 1;
 
 /// Where a pod says what it is and what it can take.
 const READY_PATH: &str = "/readyz";
@@ -379,6 +444,10 @@ impl SandboxShape {
             None => self.resource_limits.clone(),
         }
     }
+
+    fn timeout_for(&self, requested: Option<u64>) -> Option<u64> {
+        requested.or(self.timeout_seconds)
+    }
 }
 
 impl Default for SandboxShape {
@@ -394,7 +463,7 @@ impl Default for SandboxShape {
             // Slow enough not to dominate an idle session's traffic, while
             // bounding the last reading before a kill to two seconds of age.
             telemetry_interval_ms: Some(2_000),
-            workspace: "/home/chrono".into(),
+            workspace: "/home/chrono/workspace".into(),
         }
     }
 }
@@ -597,6 +666,91 @@ impl CredentialWaiters {
     }
 }
 
+/// Runtime-policy acknowledgements, correlated to one operation and socket generation.
+#[derive(Clone, Default)]
+pub(crate) struct RuntimePolicyWaiters(
+    std::sync::Arc<tokio::sync::Mutex<BTreeMap<(String, String), RuntimePolicyWaiter>>>,
+);
+
+struct RuntimePolicyWaiter {
+    link: WeakTerminalInputSender,
+    answer: oneshot::Sender<link::RuntimePolicyAnswer>,
+}
+
+impl RuntimePolicyWaiters {
+    pub(crate) async fn expect(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &TerminalInputSender,
+    ) -> oneshot::Receiver<link::RuntimePolicyAnswer> {
+        let (tx, rx) = oneshot::channel();
+        self.0.lock().await.insert(
+            (handle.to_string(), operation_id.to_string()),
+            RuntimePolicyWaiter {
+                link: link.downgrade(),
+                answer: tx,
+            },
+        );
+        rx
+    }
+
+    pub(crate) async fn settle(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &TerminalInputSender,
+        answer: link::RuntimePolicyAnswer,
+    ) {
+        let key = (handle.to_string(), operation_id.to_string());
+        let mut waiters = self.0.lock().await;
+        let same_link = waiters
+            .get(&key)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if !same_link {
+            return;
+        }
+        if let Some(waiter) = waiters.remove(&key) {
+            let _ = waiter.answer.send(answer);
+        }
+    }
+
+    pub(crate) async fn forget_operation(
+        &self,
+        handle: &str,
+        operation_id: &str,
+        link: &TerminalInputSender,
+    ) {
+        let key = (handle.to_string(), operation_id.to_string());
+        let mut waiters = self.0.lock().await;
+        let same_link = waiters
+            .get(&key)
+            .and_then(|waiter| waiter.link.upgrade())
+            .is_some_and(|expected| expected.same_channel(link));
+        if same_link {
+            waiters.remove(&key);
+        }
+    }
+
+    pub(crate) async fn fail(&self, handle: &str, operation_id: &str) {
+        self.0
+            .lock()
+            .await
+            .remove(&(handle.to_string(), operation_id.to_string()));
+    }
+
+    pub(crate) async fn forget_link(&self, handle: &str, link: &TerminalInputSender) {
+        self.0.lock().await.retain(|(runtime, _), waiter| {
+            runtime != handle
+                || waiter
+                    .link
+                    .upgrade()
+                    .is_some_and(|expected| !expected.same_channel(link))
+        });
+    }
+}
+
 /// Registration and cleanup for one runtime link generation.
 ///
 /// A generation supervisor owns reader, writer, and registry cleanup, while
@@ -609,6 +763,7 @@ pub(crate) struct LinkLifecycle {
     links: std::sync::Arc<tokio::sync::Mutex<BTreeMap<String, RegisteredLink>>>,
     switch_waiters: SwitchWaiters,
     credential_waiters: CredentialWaiters,
+    runtime_policy_waiters: RuntimePolicyWaiters,
 }
 
 impl LinkLifecycle {
@@ -651,9 +806,13 @@ impl LinkLifecycle {
             let runtime = self.runtime.clone();
             let switch_waiters = self.switch_waiters.clone();
             let credential_waiters = self.credential_waiters.clone();
+            let runtime_policy_waiters = self.runtime_policy_waiters.clone();
             let retirement = tokio::spawn(async move {
                 switch_waiters.forget(&runtime, &previous.sender).await;
                 credential_waiters
+                    .forget_link(&runtime, &previous.sender)
+                    .await;
+                runtime_policy_waiters
                     .forget_link(&runtime, &previous.sender)
                     .await;
                 previous.retire().await;
@@ -688,6 +847,9 @@ impl LinkLifecycle {
         self.credential_waiters
             .forget_link(&self.runtime, link)
             .await;
+        self.runtime_policy_waiters
+            .forget_link(&self.runtime, link)
+            .await;
     }
 
     pub(crate) async fn forget_if_whole_retired(&self, link: &TerminalInputSender) {
@@ -701,6 +863,9 @@ impl LinkLifecycle {
         if removed.is_some() {
             self.switch_waiters.forget(&self.runtime, link).await;
             self.credential_waiters
+                .forget_link(&self.runtime, link)
+                .await;
+            self.runtime_policy_waiters
                 .forget_link(&self.runtime, link)
                 .await;
         }
@@ -739,6 +904,23 @@ impl LinkLifecycle {
             .fail(&self.runtime, operation_id)
             .await;
     }
+
+    pub(crate) async fn settle_runtime_policy(
+        &self,
+        link: &TerminalInputSender,
+        operation_id: &str,
+        answer: link::RuntimePolicyAnswer,
+    ) {
+        self.runtime_policy_waiters
+            .settle(&self.runtime, operation_id, link, answer)
+            .await;
+    }
+
+    pub(crate) async fn fail_runtime_policy(&self, operation_id: &str) {
+        self.runtime_policy_waiters
+            .fail(&self.runtime, operation_id)
+            .await;
+    }
 }
 
 /// A kernel running in a provider-managed sandbox.
@@ -773,6 +955,8 @@ pub struct HostedKernel {
     switch_waiters: SwitchWaiters,
     /// Credential acknowledgements awaiting an exact operation and link generation.
     credential_waiters: CredentialWaiters,
+    /// Opaque runtime-policy acknowledgements awaiting this socket generation.
+    runtime_policy_waiters: RuntimePolicyWaiters,
 }
 
 impl HostedKernel {
@@ -793,12 +977,52 @@ impl HostedKernel {
             links: std::sync::Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             switch_waiters: SwitchWaiters::default(),
             credential_waiters: CredentialWaiters::default(),
+            runtime_policy_waiters: RuntimePolicyWaiters::default(),
         }
     }
 
     /// Where the agent works, inside its sandbox.
     pub fn workspace(&self) -> &str {
         &self.shape.workspace
+    }
+
+    /// Open one hosted ACP conversation under the shared evidence contract.
+    ///
+    /// Kernel adapters provide only their mode, resume, and credential
+    /// choices. Socket framing, ACP translation, link lifecycle, and the
+    /// turn-evidence boundary remain one production path for every ACP kernel.
+    pub(crate) async fn open_acp_conversation(
+        &self,
+        handle: &RuntimeHandle,
+        binding: AcpConversationBinding,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<ConversationChannel, AdapterError> {
+        debug_assert_eq!(
+            binding.evidence_contract(),
+            ConversationEvidenceContract::AcpV1
+        );
+        let (stream, url) = self.connect(handle, Some("conv")).await?;
+        tracing::info!(
+            sandbox = %handle.0,
+            kernel = self.kernel,
+            %url,
+            "opening the sandbox conversation"
+        );
+        let (conversation, control) = acp::Bridge::open(
+            stream,
+            self.workspace().to_string(),
+            binding.mode,
+            binding.resume_conversation,
+            Some(self.link_lifecycle(&handle.0)),
+            binding.own_credential,
+            updates,
+        )
+        .await?;
+        // The bridge records this control generation before its socket reader
+        // starts, so a close racing the end of the handshake cannot leave a
+        // dead sender registered here.
+        drop(control);
+        Ok(conversation)
     }
 
     /// Bring a sandbox up with this environment, and wait until it serves.
@@ -811,6 +1035,11 @@ impl HostedKernel {
             return Err(AdapterError::Rejected(
                 "coordinated provisioning requires both a runtime generation and its reservation token"
                     .into(),
+            ));
+        }
+        if spec.timeout_seconds == Some(0) {
+            return Err(AdapterError::Rejected(
+                "runtime timeout must be positive".into(),
             ));
         }
         // Build and validate the exact bytes before provider creation. Skill
@@ -830,7 +1059,7 @@ impl HostedKernel {
             entrypoint: self.shape.entrypoint.clone(),
             env,
             resource_limits: resource_limits.clone(),
-            timeout: self.shape.timeout_seconds,
+            timeout: self.shape.timeout_for(spec.timeout_seconds),
             // Correlates a sandbox back to the session that owns it, so an
             // orphan can be found and reclaimed.
             metadata: provisioning_metadata(spec, self.kernel),
@@ -847,6 +1076,51 @@ impl HostedKernel {
             "sandbox provisioned"
         );
         let sandbox = self.await_running(&sandbox.id).await?;
+        let policy_delete_target = if spec.runtime_policy_required {
+            self.client.capture_delete_target(&sandbox.id).await?
+        } else {
+            None
+        };
+
+        if spec.runtime_policy_required {
+            let capability_result = async {
+                if !self.supports_runtime_policy(&sandbox.id).await?
+                    || !self.supports_runtime_gateway_probe(&sandbox.id).await?
+                {
+                    return Err(AdapterError::Unsupported(
+                        "this runtime image does not advertise github_capability_v1 and runtime_gateway_probe_v1"
+                            .into(),
+                    ));
+                }
+                Ok(())
+            }
+            .await;
+
+            if let Err(probe_error) = capability_result {
+                // No failed readiness candidate is left behind. The target was
+                // captured before probing, so cleanup cannot drift onto a
+                // later provider object that happens to reuse the same handle.
+                if let Some(target) = policy_delete_target {
+                    if let Err(cleanup_error) = self.client.delete_captured(target).await {
+                        tracing::error!(
+                            sandbox = %sandbox.id,
+                            probe = %probe_error,
+                            cleanup = %cleanup_error,
+                            "failed readiness candidate could not be reclaimed"
+                        );
+                        return Err(AdapterError::Unavailable(format!(
+                            "runtime {} failed required Trigger readiness ({probe_error}); exact candidate cleanup also failed: {cleanup_error}",
+                            sandbox.id,
+                        )));
+                    }
+                }
+                return Err(probe_error);
+            }
+        }
+
+        if let Some(workspace) = spec.workspace.as_ref() {
+            self.hand_over_workspace(&sandbox.id, workspace).await?;
+        }
 
         // Handed over before anything attaches, which is what makes this
         // possible at all: the supervisor does not start the agent until the
@@ -1013,6 +1287,36 @@ impl HostedKernel {
     /// answers without the key, which is unambiguous — and asking is cheaper
     /// than discovering it from a 404 that means something else entirely.
     async fn takes_a_prelude(&self, endpoint: &str) -> Result<bool, AdapterError> {
+        let (readiness, _) = self.runtime_readiness(endpoint).await?;
+        Ok(readiness.prelude.unwrap_or(false))
+    }
+
+    async fn supports_runtime_policy(&self, sandbox: &str) -> Result<bool, AdapterError> {
+        let endpoint = self.client.endpoint(sandbox, SUPERVISOR_PORT).await?;
+        let (_, body) = self.runtime_readiness(&endpoint.endpoint).await?;
+        Ok(readiness_supports_runtime_policy(&body))
+    }
+
+    /// Read the exact non-secret policy tuple from one live supervisor.
+    pub async fn observe_runtime_policy(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Result<crate::RuntimePolicyObservation, AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let (_, body) = self.runtime_readiness(&endpoint.endpoint).await?;
+        parse_runtime_policy_observation(&body)
+    }
+
+    async fn supports_runtime_gateway_probe(&self, sandbox: &str) -> Result<bool, AdapterError> {
+        let endpoint = self.client.endpoint(sandbox, SUPERVISOR_PORT).await?;
+        let (_, body) = self.runtime_readiness(&endpoint.endpoint).await?;
+        Ok(readiness_supports_runtime_gateway_probe(&body))
+    }
+
+    async fn runtime_readiness(
+        &self,
+        endpoint: &str,
+    ) -> Result<(RuntimeReadiness, Vec<u8>), AdapterError> {
         let body = self
             .client
             .get_from_sandbox(endpoint, READY_PATH)
@@ -1029,8 +1333,262 @@ impl HostedKernel {
                 readiness.status
             ))
             .into());
+        };
+        Ok((readiness, body))
+    }
+
+    async fn hand_over_workspace(
+        &self,
+        sandbox: &str,
+        workspace: &WorkspacePackage,
+    ) -> Result<(), AdapterError> {
+        let endpoint = self.client.endpoint(sandbox, SUPERVISOR_PORT).await?;
+        let ready = self
+            .client
+            .get_from_sandbox(&endpoint.endpoint, READY_PATH)
+            .await?
+            .unwrap_or_default();
+        let supported = serde_json::from_slice::<serde_json::Value>(&ready)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("workspaceCheckpoint")
+                    .and_then(|capability| capability.get("version"))
+                    .and_then(serde_json::Value::as_u64)
+            })
+            .is_some_and(|version| version >= WORKSPACE_VERSION);
+        if !supported {
+            return Err(AdapterError::Unsupported(
+                "this runtime image does not advertise coherent workspace checkpoint v2".into(),
+            ));
         }
-        Ok(readiness.prelude.unwrap_or(false))
+        if workspace.epoch == 0
+            || workspace.source_revision.len() != 40
+            || workspace.baseline_manifest_digest.len() != 64
+            || workspace.manifest_digest.len() != 64
+            || workspace.archive_sha256.len() != 64
+        {
+            return Err(AdapterError::Rejected(
+                "workspace handover metadata is invalid".into(),
+            ));
+        }
+        let path = format!(
+            "{WORKSPACE_PATH}?epoch={}&source={}&baseline={}&manifest={}&archive={}",
+            workspace.epoch,
+            workspace.source_revision,
+            workspace.baseline_manifest_digest,
+            workspace.manifest_digest,
+            workspace.archive_sha256
+        );
+        let acknowledgement = self
+            .client
+            .post_to_sandbox_with_response(&endpoint.endpoint, &path, workspace.archive.clone())
+            .await?;
+        let acknowledgement: WorkspaceAcknowledgement = serde_json::from_slice(&acknowledgement)
+            .map_err(|_| {
+                AdapterError::Rejected("runtime did not acknowledge the restored workspace".into())
+            })?;
+        if acknowledgement.workspace_epoch != workspace.epoch
+            || acknowledgement.source_revision != workspace.source_revision
+            || acknowledgement.baseline_manifest_digest != workspace.baseline_manifest_digest
+            || acknowledgement.manifest_digest != workspace.manifest_digest
+        {
+            return Err(AdapterError::Rejected(
+                "runtime acknowledged a different workspace".into(),
+            ));
+        }
+        tracing::info!(
+            %sandbox,
+            epoch = workspace.epoch,
+            files = acknowledgement.entries,
+            bytes = acknowledgement.bytes,
+            "verified this session's repository workspace"
+        );
+        Ok(())
+    }
+
+    /// Ask the shared Layer 4 supervisor for one coherent, resumable capture.
+    pub async fn checkpoint_workspace(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceCheckpointRequest,
+    ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let ready = self
+            .client
+            .get_from_sandbox(&endpoint.endpoint, READY_PATH)
+            .await?
+            .unwrap_or_default();
+        if !readiness_supports_workspace_checkpoint(&ready, request.disposition) {
+            return Err(AdapterError::Unsupported(
+                "this runtime image does not advertise the requested workspace checkpoint capability"
+                    .into(),
+            ));
+        }
+        if request.epoch == 0
+            || request.version == 0
+            || !is_hex(&request.source_revision, 40)
+            || !is_hex(&request.baseline_manifest_digest, 64)
+        {
+            return Err(AdapterError::Rejected(
+                "workspace checkpoint request metadata is invalid".into(),
+            ));
+        }
+        let disposition = match request.disposition {
+            WorkspaceCheckpointDisposition::ResumeAfterCapture => "resume_after_capture",
+            WorkspaceCheckpointDisposition::HoldForTeardown => "hold_for_teardown",
+        };
+        let path = format!(
+            "{WORKSPACE_CHECKPOINT_PATH}?epoch={}&version={}&source={}&baseline={}&disposition={disposition}",
+            request.epoch,
+            request.version,
+            request.source_revision,
+            request.baseline_manifest_digest,
+        );
+        let wire = self
+            .client
+            .post_to_sandbox_with_bounded_response(
+                &endpoint.endpoint,
+                &path,
+                Vec::new(),
+                MAX_WORKSPACE_RESPONSE_BYTES,
+            )
+            .await?;
+        let checkpoint = match parse_workspace_checkpoint(&wire, request) {
+            Ok(checkpoint) => checkpoint,
+            Err(original @ AdapterError::Rejected(_))
+                if request.disposition == WorkspaceCheckpointDisposition::HoldForTeardown =>
+            {
+                let resume_token = held_checkpoint_resume_token(&wire).ok_or_else(|| {
+                    AdapterError::Unavailable(HELD_CHECKPOINT_RECOVERY_ERROR.into())
+                })?;
+                if self
+                    .resume_workspace_writers_at(&endpoint.endpoint, &resume_token)
+                    .await
+                    .is_err()
+                {
+                    return Err(AdapterError::Unavailable(
+                        HELD_CHECKPOINT_RECOVERY_ERROR.into(),
+                    ));
+                }
+                return Err(original);
+            }
+            Err(error) => return Err(error),
+        };
+        tracing::info!(
+            sandbox = %handle.0,
+            epoch = checkpoint.epoch,
+            version = checkpoint.version,
+            files = checkpoint.entries.len(),
+            bytes = checkpoint.total_bytes,
+            writers = checkpoint.quiesced_writers,
+            "verified a coherent repository workspace checkpoint"
+        );
+        Ok(checkpoint)
+    }
+
+    pub async fn resume_workspace_writers(
+        &self,
+        handle: &RuntimeHandle,
+        resume_token: &str,
+    ) -> Result<(), AdapterError> {
+        if resume_token.len() != 64 || !resume_token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(AdapterError::Rejected(
+                "workspace writer resume token is invalid".into(),
+            ));
+        }
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let ready = self
+            .client
+            .get_from_sandbox(&endpoint.endpoint, READY_PATH)
+            .await?
+            .unwrap_or_default();
+        if !readiness_supports_workspace_checkpoint(
+            &ready,
+            WorkspaceCheckpointDisposition::HoldForTeardown,
+        ) {
+            return Err(AdapterError::Unsupported(
+                "this runtime image cannot resume a held workspace checkpoint".into(),
+            ));
+        }
+        self.resume_workspace_writers_at(&endpoint.endpoint, resume_token)
+            .await
+    }
+
+    async fn resume_workspace_writers_at(
+        &self,
+        endpoint: &str,
+        resume_token: &str,
+    ) -> Result<(), AdapterError> {
+        let body = serde_json::to_vec(&WorkspaceWriterResumeRequest { resume_token })
+            .expect("a workspace writer resume request is serializable");
+        let response = self
+            .client
+            .post_to_sandbox_with_response(endpoint, WORKSPACE_CHECKPOINT_RESUME_PATH, body)
+            .await?;
+        let receipt: WorkspaceWriterResumeReceipt =
+            serde_json::from_slice(&response).map_err(|_| {
+                AdapterError::Rejected("runtime returned an invalid writer resume receipt".into())
+            })?;
+        if !receipt.writers_resumed || receipt.resume_token != resume_token {
+            return Err(AdapterError::Rejected(
+                "runtime did not acknowledge the exact writer resume token".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Run one closed read through the exact runtime's command sandbox and
+    /// restricted service gateway. No provider response data crosses back.
+    pub async fn probe_runtime_gateway(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::RuntimeGatewayProbeRequest,
+    ) -> Result<crate::RuntimeGatewayProbeReceipt, AdapterError> {
+        if request.version != crate::RUNTIME_GATEWAY_PROBE_VERSION
+            || request.resource_id == 0
+            || !valid_probe_service_id(&request.service_id)
+        {
+            return Err(AdapterError::Rejected(
+                "runtime gateway probe request metadata is invalid".into(),
+            ));
+        }
+        let endpoint = self.client.endpoint(&handle.0, SUPERVISOR_PORT).await?;
+        let ready = self
+            .client
+            .get_from_sandbox(&endpoint.endpoint, READY_PATH)
+            .await?
+            .unwrap_or_default();
+        if !readiness_supports_runtime_gateway_probe(&ready) {
+            return Err(AdapterError::Unsupported(
+                "this runtime image does not advertise runtime_gateway_probe_v1".into(),
+            ));
+        }
+        let body = serde_json::to_vec(&RuntimeGatewayProbeWireRequest {
+            version: request.version,
+            service_id: &request.service_id,
+            resource_id: request.resource_id,
+        })
+        .expect("a validated gateway probe request is serializable");
+        let response = self
+            .client
+            .post_to_sandbox_with_response(&endpoint.endpoint, RUNTIME_GATEWAY_PROBE_PATH, body)
+            .await?;
+        let receipt: RuntimeGatewayProbeWireReceipt =
+            serde_json::from_slice(&response).map_err(|_| {
+                AdapterError::Rejected(
+                    "runtime returned an unreadable restricted gateway probe receipt".into(),
+                )
+            })?;
+        if receipt.version != request.version {
+            return Err(AdapterError::Rejected(
+                "runtime acknowledged a different gateway probe version".into(),
+            ));
+        }
+        Ok(crate::RuntimeGatewayProbeReceipt {
+            version: receipt.version,
+            outcome: receipt.outcome.into(),
+        })
     }
 
     /// Capture the agent's conversation so it can be resumed elsewhere.
@@ -1150,9 +1708,13 @@ impl HostedKernel {
         let handle = handle.to_string();
         let switch_waiters = self.switch_waiters.clone();
         let credential_waiters = self.credential_waiters.clone();
+        let runtime_policy_waiters = self.runtime_policy_waiters.clone();
         let retirement = tokio::spawn(async move {
             switch_waiters.forget(&handle, &link.sender).await;
             credential_waiters.forget_link(&handle, &link.sender).await;
+            runtime_policy_waiters
+                .forget_link(&handle, &link.sender)
+                .await;
             link.retire().await;
         });
         let _ = retirement.await;
@@ -1231,6 +1793,7 @@ impl HostedKernel {
             links: std::sync::Arc::clone(&self.links),
             switch_waiters: self.switch_waiters.clone(),
             credential_waiters: self.credential_waiters.clone(),
+            runtime_policy_waiters: self.runtime_policy_waiters.clone(),
         }
     }
 
@@ -1251,6 +1814,529 @@ impl HostedKernel {
             tokio::time::sleep(READY_POLL).await;
         }
     }
+}
+
+fn readiness_supports_runtime_policy(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            let capability = value.get("githubCapability")?;
+            Some(
+                capability.get("name").and_then(serde_json::Value::as_str)
+                    == Some("github_capability_v1")
+                    && capability
+                        .get("version")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(RUNTIME_POLICY_VERSION)
+                    && capability
+                        .pointer("/runtime/supported")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true),
+            )
+        })
+        .unwrap_or(false)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RuntimePolicyObservationWire {
+    required: bool,
+    supported: bool,
+    installed: bool,
+    revoked: bool,
+    #[serde(default)]
+    launch_id: Option<String>,
+    #[serde(default)]
+    generation: Option<u64>,
+    #[serde(default)]
+    fence: Option<u64>,
+    #[serde(default)]
+    expires_at_epoch_seconds: Option<u64>,
+    #[serde(default)]
+    last_refusal: Option<String>,
+}
+
+fn parse_runtime_policy_observation(
+    body: &[u8],
+) -> Result<crate::RuntimePolicyObservation, AdapterError> {
+    let value: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        AdapterError::Rejected("runtime returned unreadable policy readiness".into())
+    })?;
+    let capability = value.get("githubCapability").ok_or_else(|| {
+        AdapterError::Unsupported(
+            "this runtime image does not advertise github_capability_v1".into(),
+        )
+    })?;
+    if capability.get("name").and_then(serde_json::Value::as_str) != Some("github_capability_v1")
+        || capability
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            != Some(RUNTIME_POLICY_VERSION)
+    {
+        return Err(AdapterError::Unsupported(
+            "this runtime image does not advertise the supported GitHub policy version".into(),
+        ));
+    }
+    let runtime = capability.get("runtime").cloned().ok_or_else(|| {
+        AdapterError::Rejected("runtime policy readiness omitted its runtime tuple".into())
+    })?;
+    let wire: RuntimePolicyObservationWire = serde_json::from_value(runtime).map_err(|_| {
+        AdapterError::Rejected("runtime returned malformed policy readiness".into())
+    })?;
+    let last_refusal = wire
+        .last_refusal
+        .as_deref()
+        .map(parse_runtime_policy_refusal)
+        .transpose()?;
+    let has_identity = wire.launch_id.is_some()
+        || wire.generation.is_some()
+        || wire.fence.is_some()
+        || wire.expires_at_epoch_seconds.is_some();
+    let valid_launch_id = wire.launch_id.as_deref().is_some_and(|value| {
+        !value.is_empty()
+            && value.len() <= 256
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    });
+    let active_tuple = wire.installed
+        && !wire.revoked
+        && valid_launch_id
+        && wire.generation.is_some_and(|value| value > 0)
+        && wire.fence.is_some_and(|value| value > 0)
+        && wire.expires_at_epoch_seconds.is_some_and(|value| value > 0);
+    let revoked_tuple = wire.installed
+        && wire.revoked
+        && valid_launch_id
+        && wire.generation.is_some_and(|value| value > 0)
+        && wire.fence.is_some_and(|value| value > 0)
+        && wire.expires_at_epoch_seconds.is_none();
+    let empty_tuple = !wire.installed && !wire.revoked && !has_identity;
+    if ((wire.required || wire.installed) && !wire.supported)
+        || !(active_tuple || revoked_tuple || empty_tuple)
+    {
+        return Err(AdapterError::Rejected(
+            "runtime policy readiness tuple is inconsistent".into(),
+        ));
+    }
+    Ok(crate::RuntimePolicyObservation {
+        required: wire.required,
+        supported: wire.supported,
+        installed: wire.installed,
+        revoked: wire.revoked,
+        launch_id: wire.launch_id,
+        generation: wire.generation,
+        fence: wire.fence,
+        expires_at_epoch_seconds: wire.expires_at_epoch_seconds,
+        last_refusal,
+    })
+}
+
+fn parse_runtime_policy_refusal(value: &str) -> Result<crate::RuntimePolicyRefusal, AdapterError> {
+    use crate::RuntimePolicyRefusal as Refusal;
+    match value {
+        "missing_policy" => Ok(Refusal::MissingPolicy),
+        "unknown_version" => Ok(Refusal::UnknownVersion),
+        "expired" => Ok(Refusal::Expired),
+        "stale_generation" => Ok(Refusal::StaleGeneration),
+        "revoked" => Ok(Refusal::Revoked),
+        "malformed_request" => Ok(Refusal::MalformedRequest),
+        "resource_mismatch" => Ok(Refusal::ResourceMismatch),
+        "operation_denied" => Ok(Refusal::OperationDenied),
+        "audience_mismatch" => Ok(Refusal::AudienceMismatch),
+        "signature_invalid" => Ok(Refusal::SignatureInvalid),
+        _ => Err(AdapterError::Rejected(
+            "runtime policy readiness used an unknown refusal code".into(),
+        )),
+    }
+}
+
+fn readiness_supports_runtime_gateway_probe(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            let capability = value.get("runtimeGatewayProbe")?;
+            Some(
+                capability.get("name").and_then(serde_json::Value::as_str)
+                    == Some("runtime_gateway_probe_v1")
+                    && capability
+                        .get("version")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(RUNTIME_GATEWAY_PROBE_VERSION)
+                    && capability
+                        .get("supported")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true),
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn valid_probe_service_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+#[derive(serde::Serialize)]
+struct RuntimeGatewayProbeWireRequest<'a> {
+    version: u32,
+    service_id: &'a str,
+    resource_id: u64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeGatewayProbeWireReceipt {
+    version: u32,
+    outcome: RuntimeGatewayProbeWireOutcome,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RuntimeGatewayProbeWireOutcome {
+    Allowed,
+    CommandSandboxInitializationFailed,
+    GatewayNetworkInitializationFailed,
+    PolicyDenied,
+    ProviderDenied,
+    TransientBrokerFailure,
+}
+
+impl From<RuntimeGatewayProbeWireOutcome> for crate::RuntimeGatewayProbeOutcome {
+    fn from(value: RuntimeGatewayProbeWireOutcome) -> Self {
+        match value {
+            RuntimeGatewayProbeWireOutcome::Allowed => Self::Allowed,
+            RuntimeGatewayProbeWireOutcome::CommandSandboxInitializationFailed => {
+                Self::CommandSandboxInitializationFailed
+            }
+            RuntimeGatewayProbeWireOutcome::GatewayNetworkInitializationFailed => {
+                Self::GatewayNetworkInitializationFailed
+            }
+            RuntimeGatewayProbeWireOutcome::PolicyDenied => Self::PolicyDenied,
+            RuntimeGatewayProbeWireOutcome::ProviderDenied => Self::ProviderDenied,
+            RuntimeGatewayProbeWireOutcome::TransientBrokerFailure => Self::TransientBrokerFailure,
+        }
+    }
+}
+
+fn workspace_checkpoint_version(body: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/workspaceCheckpoint/version")
+                .and_then(serde_json::Value::as_u64)
+        })
+}
+
+fn readiness_supports_workspace_checkpoint(
+    body: &[u8],
+    disposition: WorkspaceCheckpointDisposition,
+) -> bool {
+    let minimum = match disposition {
+        WorkspaceCheckpointDisposition::ResumeAfterCapture => WORKSPACE_VERSION,
+        WorkspaceCheckpointDisposition::HoldForTeardown => WORKSPACE_HOLD_VERSION,
+    };
+    workspace_checkpoint_version(body).is_some_and(|version| version >= minimum)
+}
+
+#[derive(serde::Serialize)]
+struct WorkspaceWriterResumeRequest<'a> {
+    resume_token: &'a str,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceWriterResumeReceipt {
+    resume_token: String,
+    writers_resumed: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WorkspaceAcknowledgement {
+    workspace_epoch: u64,
+    source_revision: String,
+    baseline_manifest_digest: String,
+    manifest_digest: String,
+    entries: usize,
+    bytes: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointAcknowledgement {
+    cma_checkpoint: u32,
+    workspace_epoch: u64,
+    checkpoint_version: u64,
+    source_revision: String,
+    manifest_digest: String,
+    archive_sha256: String,
+    entries: usize,
+    bytes: u64,
+    quiesced_writers: u32,
+    writers_resumed: bool,
+    #[serde(default)]
+    writer_state: Option<CheckpointWriterState>,
+    #[serde(default)]
+    writer_resume_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CheckpointWriterState {
+    Resumed,
+    HeldForTeardown,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointArchiveHeader {
+    cma_workspace: u32,
+    workspace_epoch: u64,
+    #[serde(default)]
+    checkpoint_version: u64,
+    #[serde(default)]
+    quiesced_writers: u32,
+    source_revision: String,
+    manifest_digest: String,
+    entries: Vec<CheckpointArchiveEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CheckpointArchiveEntryKind {
+    Regular,
+    Symlink,
+    Submodule,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointArchiveEntry {
+    path: String,
+    kind: CheckpointArchiveEntryKind,
+    mode: u32,
+    size: u64,
+    content_sha256: String,
+    provider_object_id: Option<String>,
+    offset: u64,
+}
+
+fn parse_workspace_checkpoint(
+    wire: &[u8],
+    request: &WorkspaceCheckpointRequest,
+) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+    let (acknowledgement_bytes, archive) =
+        open_length_delimited(wire, 64 * 1024, "workspace checkpoint acknowledgement")?;
+    let acknowledgement: CheckpointAcknowledgement = serde_json::from_slice(acknowledgement_bytes)
+        .map_err(|_| {
+            AdapterError::Rejected("runtime checkpoint acknowledgement is malformed".into())
+        })?;
+    let (writer_state, writer_resume_token) =
+        validate_checkpoint_writer_receipt(&acknowledgement, request.disposition)?;
+    if acknowledgement.cma_checkpoint != WORKSPACE_ARCHIVE_VERSION
+        || acknowledgement.workspace_epoch != request.epoch
+        || acknowledgement.checkpoint_version != request.version
+        || !acknowledgement
+            .source_revision
+            .eq_ignore_ascii_case(&request.source_revision)
+        || !is_hex(&acknowledgement.manifest_digest, 64)
+        || !is_hex(&acknowledgement.archive_sha256, 64)
+        || acknowledgement.entries > MAX_WORKSPACE_FILES
+        || acknowledgement.bytes > MAX_WORKSPACE_BYTES as u64
+        || hex(&Sha256::digest(archive)) != acknowledgement.archive_sha256
+    {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint acknowledgement did not prove the requested artifact".into(),
+        ));
+    }
+    let (header_bytes, payload) = open_length_delimited(
+        archive,
+        MAX_WORKSPACE_HEADER_BYTES,
+        "workspace checkpoint archive header",
+    )?;
+    let header: CheckpointArchiveHeader = serde_json::from_slice(header_bytes).map_err(|_| {
+        AdapterError::Rejected("runtime checkpoint archive header is malformed".into())
+    })?;
+    if header.cma_workspace != WORKSPACE_ARCHIVE_VERSION
+        || header.workspace_epoch != request.epoch
+        || header.checkpoint_version != request.version
+        || header.quiesced_writers != acknowledgement.quiesced_writers
+        || !header
+            .source_revision
+            .eq_ignore_ascii_case(&request.source_revision)
+        || header.manifest_digest != acknowledgement.manifest_digest
+        || header.entries.len() != acknowledgement.entries
+    {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint archive does not match its acknowledgement".into(),
+        ));
+    }
+
+    let mut expected_offset = 0_u64;
+    let mut entries = Vec::with_capacity(header.entries.len());
+    for entry in header.entries {
+        if entry.offset != expected_offset
+            || !is_hex(&entry.content_sha256, 64)
+            || entry
+                .provider_object_id
+                .as_deref()
+                .is_some_and(|object| !is_hex(object, 40))
+        {
+            return Err(AdapterError::Rejected(
+                "runtime checkpoint archive entry metadata is invalid".into(),
+            ));
+        }
+        expected_offset = expected_offset.checked_add(entry.size).ok_or_else(|| {
+            AdapterError::Rejected("runtime checkpoint archive size overflowed".into())
+        })?;
+        let start = usize::try_from(entry.offset).map_err(|_| {
+            AdapterError::Rejected("runtime checkpoint archive offset is unsupported".into())
+        })?;
+        let end = usize::try_from(expected_offset).map_err(|_| {
+            AdapterError::Rejected("runtime checkpoint archive size is unsupported".into())
+        })?;
+        let bytes = payload.get(start..end).ok_or_else(|| {
+            AdapterError::Rejected("runtime checkpoint archive entry is truncated".into())
+        })?;
+        if hex(&Sha256::digest(bytes)) != entry.content_sha256 {
+            return Err(AdapterError::Rejected(
+                "runtime checkpoint archive entry failed integrity verification".into(),
+            ));
+        }
+        let (kind, symlink_target) = match entry.kind {
+            CheckpointArchiveEntryKind::Regular => (WorkspaceEntryKind::Regular, None),
+            CheckpointArchiveEntryKind::Symlink => (
+                WorkspaceEntryKind::Symlink,
+                Some(
+                    std::str::from_utf8(bytes)
+                        .map_err(|_| {
+                            AdapterError::Rejected(
+                                "runtime checkpoint symlink target is not UTF-8".into(),
+                            )
+                        })?
+                        .to_string(),
+                ),
+            ),
+            CheckpointArchiveEntryKind::Submodule => {
+                return Err(AdapterError::Rejected(
+                    "runtime checkpoint contains an unsupported submodule".into(),
+                ))
+            }
+        };
+        entries.push(WorkspaceEntryPackage {
+            path: entry.path,
+            kind,
+            mode: entry.mode,
+            size: entry.size,
+            content_sha256: entry.content_sha256,
+            provider_object_id: entry.provider_object_id,
+            symlink_target,
+        });
+    }
+    if usize::try_from(expected_offset).ok() != Some(payload.len())
+        || expected_offset != acknowledgement.bytes
+    {
+        return Err(AdapterError::Rejected(
+            "runtime checkpoint archive payload length is invalid".into(),
+        ));
+    }
+    Ok(WorkspaceCheckpointPackage {
+        epoch: request.epoch,
+        version: request.version,
+        source_revision: header.source_revision,
+        manifest_digest: header.manifest_digest,
+        archive_sha256: acknowledgement.archive_sha256,
+        entries,
+        total_bytes: acknowledgement.bytes,
+        quiesced_writers: acknowledgement.quiesced_writers,
+        writer_state,
+        writer_resume_token,
+        archive: archive.to_vec(),
+    })
+}
+
+fn held_checkpoint_resume_token(wire: &[u8]) -> Option<String> {
+    let (acknowledgement, _) =
+        open_length_delimited(wire, 64 * 1024, "workspace checkpoint acknowledgement").ok()?;
+    let acknowledgement: CheckpointAcknowledgement =
+        serde_json::from_slice(acknowledgement).ok()?;
+    let token = acknowledgement.writer_resume_token?;
+    (!acknowledgement.writers_resumed
+        && acknowledgement.writer_state == Some(CheckpointWriterState::HeldForTeardown)
+        && token.len() == 64
+        && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    .then_some(token)
+}
+
+fn validate_checkpoint_writer_receipt(
+    acknowledgement: &CheckpointAcknowledgement,
+    disposition: WorkspaceCheckpointDisposition,
+) -> Result<(WorkspaceWriterState, Option<String>), AdapterError> {
+    match disposition {
+        WorkspaceCheckpointDisposition::ResumeAfterCapture => {
+            if !acknowledgement.writers_resumed
+                || acknowledgement
+                    .writer_state
+                    .is_some_and(|state| state != CheckpointWriterState::Resumed)
+                || acknowledgement.writer_resume_token.is_some()
+            {
+                return Err(AdapterError::Rejected(
+                    "runtime did not prove that checkpoint writers resumed".into(),
+                ));
+            }
+            Ok((WorkspaceWriterState::Resumed, None))
+        }
+        WorkspaceCheckpointDisposition::HoldForTeardown => {
+            let token = acknowledgement.writer_resume_token.as_ref();
+            if acknowledgement.writers_resumed
+                || acknowledgement.writer_state != Some(CheckpointWriterState::HeldForTeardown)
+                || token.is_none_or(|token| {
+                    token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+            {
+                return Err(AdapterError::Rejected(
+                    "runtime did not prove an exact non-expiring hold on checkpoint writers".into(),
+                ));
+            }
+            Ok((WorkspaceWriterState::HeldForTeardown, token.cloned()))
+        }
+    }
+}
+
+fn open_length_delimited<'a>(
+    bytes: &'a [u8],
+    max_header: usize,
+    name: &str,
+) -> Result<(&'a [u8], &'a [u8]), AdapterError> {
+    let prefix: [u8; 8] = bytes
+        .get(..8)
+        .ok_or_else(|| AdapterError::Rejected(format!("{name} has no length")))?
+        .try_into()
+        .map_err(|_| AdapterError::Rejected(format!("{name} length is malformed")))?;
+    let length = usize::try_from(u64::from_be_bytes(prefix))
+        .map_err(|_| AdapterError::Rejected(format!("{name} is too large")))?;
+    if length == 0 || length > max_header {
+        return Err(AdapterError::Rejected(format!("{name} exceeds its bound")));
+    }
+    let end = 8_usize
+        .checked_add(length)
+        .ok_or_else(|| AdapterError::Rejected(format!("{name} length overflowed")))?;
+    let header = bytes
+        .get(8..end)
+        .ok_or_else(|| AdapterError::Rejected(format!("{name} is truncated")))?;
+    Ok((header, &bytes[end..]))
+}
+
+fn is_hex(value: &str, length: usize) -> bool {
+    value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -1285,6 +2371,10 @@ where
                 TerminalInput::Credential { operation_id, .. } => Some(operation_id.clone()),
                 _ => None,
             };
+            let policy_operation = match &input {
+                TerminalInput::RuntimePolicy { operation_id, .. } => Some(operation_id.clone()),
+                _ => None,
+            };
             let message = match input {
                 TerminalInput::Credential {
                     operation_id,
@@ -1294,6 +2384,17 @@ where
                         "t": "credential",
                         "operation_id": operation_id,
                         "value": value,
+                    })
+                    .to_string(),
+                ),
+                TerminalInput::RuntimePolicy {
+                    operation_id,
+                    envelope,
+                } => tokio_tungstenite::tungstenite::Message::Text(
+                    serde_json::json!({
+                        "t": "github_capability",
+                        "operation_id": operation_id,
+                        "envelope": envelope,
                     })
                     .to_string(),
                 ),
@@ -1316,6 +2417,11 @@ where
                     (credential_operation, lifecycle.as_ref())
                 {
                     lifecycle.fail_credential(&operation_id).await;
+                }
+                if let (Some(operation_id), Some(lifecycle)) =
+                    (policy_operation, lifecycle.as_ref())
+                {
+                    lifecycle.fail_runtime_policy(&operation_id).await;
                 }
                 return Err(AdapterError::Unavailable(
                     "the conversation control link write failed".into(),

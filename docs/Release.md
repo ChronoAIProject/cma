@@ -15,6 +15,7 @@ This document is the procedure. The rules it implements are in [CLAUDE.md](../CL
 | `ghcr.io/chronoaiproject/cma-runtime:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
 | the same three at `:<short-sha>` | GHCR, private | intended write-once under the same audited contract |
 | three OCI transfer archives with JSON metadata | the `Publish release` Actions run, readable under repository artifact access | yes; retained for up to one day from upload |
+| closed D-09 runtime-boundary evidence | the same Actions run, readable under repository artifact access | exact release commit and runtime digest; retained for 90 days |
 | annotated tag `vX.Y.Z` | this repository | write-protected after creation by the required active ruleset |
 | GitHub release `vX.Y.Z` | this repository | notes editable |
 
@@ -25,6 +26,11 @@ The release page carries three things:
 3. **The images** — every reference in a block you can copy, and a link to each package in GHCR.
 
 The OCI archives are not release assets, but they are an additional, ephemeral distribution surface for the private images. They are unencrypted, and anyone allowed to download this internal repository's Actions artifacts can receive them; that reader set is not assumed to be identical to the GHCR package ACL. One-day retention limits how long they are available, not who can read them. SDKs remain repository-only and untouched: the release workflow neither packages nor publishes anything under `sdk/`.
+
+The D-09 record is a separate Actions artifact under the same repository access
+boundary. It retains closed outcomes, image and build identity, artifact hashes,
+synthetic identities, status classes, and counts for 90 days. Provider response
+bodies and credential values are discarded rather than retained as evidence.
 
 The workflow intends to assign each image tag once, and a retry may retain an
 exact existing image tag, annotated tag or release record after validation.
@@ -177,11 +183,22 @@ Then, on merge, `publish.yml`:
   not a registry compare-and-swap, so it does not replace exclusive write
   access;
 - after all three images are in GHCR, exports each published digest to a one-day OCI transfer artifact without rebuilding it;
+- consumes the exact runtime transfer artifact, validates its complete metadata
+  and archive checksum, pulls its immutable `sourceReference`, and runs the D-09
+  runtime network-boundary campaign against the full release commit;
+- retains one closed D-09 result for 90 days after every outcome and requires a
+  pass before GitHub Release creation;
 - immediately before creating the tag, requires exactly one non-empty,
   unexpired transfer artifact for each image in the current workflow run;
 - creates the annotated tag and GitHub release last, reusing either only when
   its target, annotation, title, body and published state are exactly what this
   run would create.
+
+The GHCR version and short-SHA tags necessarily exist before D-09 because the
+release-candidate digest cannot be tested until GHCR has accepted it. A failed
+or inconclusive D-09 result blocks GitHub Release creation and remains attached
+to the workflow run for review; it cannot prevent or retract those image tags
+and must not be described as doing so.
 
 Watch it under **Actions → Publish release**. It takes roughly as long as the image job on the pull request did, because it restores the same layer cache.
 
@@ -195,9 +212,13 @@ from the existing digest, and builds only when both listings report absence.
 This matters because the Dockerfiles refresh OS packages, so the same commit
 can build different bytes on a later attempt. A retried export reads the
 currently published digest and replaces only its same-named artifact from this
-workflow run; the release preflight still requires exactly one artifact per
-component before it can create the tag. A visible version, target, image digest,
-annotation or release-record disagreement stops without rewriting it.
+workflow run. A retried D-09 gate consumes that exact runtime artifact and never
+rebuilds or retags the image. The release preflight still requires exactly one
+artifact per component before it can create the tag. A visible version, target,
+image digest, annotation or release-record disagreement stops without rewriting
+it. If the one-day runtime transfer artifact has expired, rerun the complete
+workflow under the same writer and package-history fences rather than bypassing
+the gate.
 
 ---
 
@@ -911,6 +932,16 @@ An export retry may replace only its same-named artifact in this workflow run.
 Immediately before the tag step, the release job requires exactly one non-empty,
 unexpired transfer artifact for each component. Never rewrite either image tag
 by hand.
+
+**The runtime D-09 gate failed or was inconclusive.** Inspect the
+`cma-trigger-d09-release-<run>-<attempt>` artifact before retrying. The gate
+initializes a closed inconclusive record before checkout, artifact download, or
+registry access, so a missing or malformed campaign result is still evidence of
+where the release stopped. Re-run failed jobs only after the recorded failure is
+understood; the rerun consumes the same immutable runtime export while it is
+retained. Do not delete, move, or republish either GHCR tag to make the gate
+pass. If the runtime OCI artifact has expired, use a whole-workflow rerun under
+the required writer and package-history fences.
 
 **It failed after the tag was pushed but before the GitHub release completed.**
 Choose **Re-run failed jobs**. The tag reconciler reuses the annotated tag only

@@ -15,6 +15,8 @@ export class ApiError extends CmaError {
     readonly code?: string,
     /** Correlation id returned with the failed response, when usable. */
     readonly requestId?: string,
+    /** Validated positive Retry-After delay supplied by the service. */
+    readonly retryAfterMs?: number,
   ) {
     super('ApiError', message);
   }
@@ -40,8 +42,9 @@ export class CapabilityRefused extends ApiError {
     message: string,
     readonly capability: string,
     requestId?: string,
+    retryAfterMs?: number,
   ) {
-    super(status, message, 'capability_unsupported', requestId);
+    super(status, message, 'capability_unsupported', requestId, retryAfterMs);
     this.name = 'CapabilityRefused';
   }
 }
@@ -54,8 +57,9 @@ export class SessionLimitReached extends ApiError {
     readonly limit?: number,
     readonly live?: number,
     requestId?: string,
+    retryAfterMs?: number,
   ) {
-    super(status, message, 'session_limit_reached', requestId);
+    super(status, message, 'session_limit_reached', requestId, retryAfterMs);
     this.name = 'SessionLimitReached';
   }
 }
@@ -70,8 +74,9 @@ export class DeploymentAtCapacity extends ApiError {
     readonly freeCpuMillis?: number,
     readonly freeMemoryMib?: number,
     requestId?: string,
+    retryAfterMs?: number,
   ) {
-    super(status, message, 'deployment_at_capacity', requestId);
+    super(status, message, 'deployment_at_capacity', requestId, retryAfterMs);
     this.name = 'DeploymentAtCapacity';
   }
 }

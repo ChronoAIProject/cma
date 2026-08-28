@@ -1,0 +1,289 @@
+{
+  "launch_id": "44444444-4444-4444-8444-444444444444",
+  "events": [
+    {
+      "sequence": 1,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "create",
+      "progress": {
+        "state": "draft",
+        "blocked_reason": null,
+        "failure": null,
+        "resume_state": null,
+        "reach": null,
+        "delivery": null
+      },
+      "kind": {
+        "type": "created",
+        "steps": [
+          {
+            "key": "review",
+            "sequence": 1,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "authentication",
+            "sequence": 2,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "preflight",
+            "sequence": 3,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "fork",
+            "sequence": 4,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "branch",
+            "sequence": 5,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "workspace",
+            "sequence": 6,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "sandbox",
+            "sequence": 7,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "session",
+            "sequence": 8,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "reach",
+            "sequence": 9,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "initial_prompt",
+            "sequence": 10,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "checkpoint",
+            "sequence": 11,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "diff",
+            "sequence": 12,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "publish_branch",
+            "sequence": 13,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "pull_request",
+            "sequence": 14,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          },
+          {
+            "key": "cleanup",
+            "sequence": 15,
+            "status": "pending",
+            "started_at": null,
+            "completed_at": null,
+            "attempt": 0,
+            "safe_detail": "",
+            "remediation": "",
+            "external_resource_ids": {},
+            "correlation_id": "create"
+          }
+        ]
+      }
+    },
+    {
+      "sequence": 2,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "connection",
+      "progress": {
+        "state": "draft",
+        "blocked_reason": null,
+        "failure": null,
+        "resume_state": null,
+        "reach": null,
+        "delivery": null
+      },
+      "kind": {
+        "type": "connection_selected"
+      }
+    },
+    {
+      "sequence": 3,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "fixture-progress",
+      "progress": {
+        "state": "draft",
+        "blocked_reason": null,
+        "failure": null,
+        "resume_state": null,
+        "reach": null,
+        "delivery": null
+      },
+      "kind": {
+        "type": "step_changed",
+        "step": {
+          "key": "review",
+          "sequence": 1,
+          "status": "pending",
+          "started_at": null,
+          "completed_at": null,
+          "attempt": 0,
+          "safe_detail": "",
+          "remediation": "",
+          "external_resource_ids": {},
+          "correlation_id": "create"
+        }
+      }
+    },
+    {
+      "sequence": 4,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "fixture-pr-status",
+      "progress": {
+        "state": "draft",
+        "blocked_reason": null,
+        "failure": null,
+        "resume_state": null,
+        "reach": null,
+        "delivery": null
+      },
+      "kind": {
+        "type": "pull_request_status_refresh_requested"
+      }
+    },
+    {
+      "sequence": 5,
+      "launch_id": "44444444-4444-4444-8444-444444444444",
+      "occurred_at": "2026-08-26T12:00:00Z",
+      "correlation_id": "fixture-pr-status",
+      "progress": {
+        "state": "draft",
+        "blocked_reason": null,
+        "failure": null,
+        "resume_state": null,
+        "reach": null,
+        "delivery": null
+      },
+      "kind": {
+        "type": "pull_request_status_changed",
+        "state": "open",
+        "mergeability": "mergeable",
+        "checks": "passing",
+        "failure": null
+      }
+    }
+  ],
+  "next_cursor": 5
+}

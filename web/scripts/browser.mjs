@@ -71,10 +71,11 @@ export async function open({ port, viewport = { width: 1440, height: 900 } }) {
  * it closes, so there is always a request in flight and the page is never
  * idle by that definition — a check waiting for it waits until it times out.
  */
-export async function visit(page, port, waitUntil = 'networkidle0') {
+export async function visit(page, port, waitUntil = 'networkidle0', pathname = '/') {
+  const url = new URL(pathname, `http://localhost:${String(port)}/`).href;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      await page.goto(`http://localhost:${String(port)}/`, {
+      await page.goto(url, {
         waitUntil,
         timeout: 15_000,
       });

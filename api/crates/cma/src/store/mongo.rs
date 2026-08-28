@@ -284,6 +284,12 @@ struct SessionDoc {
     environment_profile: Option<String>,
     runtime_id: Option<String>,
     context_ref: Option<String>,
+    /// Internal Trigger provenance. Absent for every ordinary/legacy session.
+    #[serde(default)]
+    trigger_origin: Option<layer2_core::TriggerSessionOrigin>,
+    /// Internal initial-prompt outbox. Absent on ordinary and legacy sessions.
+    #[serde(default)]
+    initial_prompt: Option<layer2_core::InitialPromptDispatch>,
     /// Absent on records written before durable handover claims existed.
     #[serde(default)]
     rotation_claim: Option<String>,
@@ -5855,6 +5861,8 @@ fn to_doc(r: &SessionRecord) -> Result<SessionDoc, StoreError> {
         environment_profile: s.environment_profile.as_ref().map(|p| p.0.clone()),
         runtime_id: r.runtime_id.clone(),
         context_ref: r.context_ref.clone(),
+        trigger_origin: r.trigger_origin.clone(),
+        initial_prompt: r.initial_prompt.clone(),
         rotation_claim: r.rotation_claim.clone(),
         pending_handover: r.pending_handover.clone(),
         skill_packs: skill_pack_state_to_doc(&r.skill_packs)?,
@@ -6143,6 +6151,8 @@ fn from_doc(d: SessionDoc) -> Result<SessionRecord, StoreError> {
         },
         runtime_id: d.runtime_id,
         context_ref: d.context_ref,
+        trigger_origin: d.trigger_origin,
+        initial_prompt: d.initial_prompt,
         rotation_claim: d.rotation_claim,
         pending_handover: d.pending_handover,
         skill_packs,

@@ -34,8 +34,8 @@ describe('the control heights', () => {
     expect(new Set(heights)).toEqual(new Set(['40px', '32px', '16px']));
     expect(css).toMatch(/\.button\s*\{[^}]*border-radius: 10px/);
     expect(css).toMatch(/\.button--sm\s*\{[^}]*border-radius: 6px/);
-    expect(css).toMatch(/\.button--md:has\(> \.button__icon:only-child\)\s*\{[^}]*width: 40px/);
-    expect(css).toMatch(/\.button--sm:has\(> \.button__icon:only-child\)\s*\{[^}]*width: 32px/);
+    expect(css).toMatch(/\.button--md\.button--icon-only\s*\{[^}]*width: 40px/);
+    expect(css).toMatch(/\.button--sm\.button--icon-only\s*\{[^}]*width: 32px/);
   });
 
   it('makes every element border-box', () => {
@@ -146,6 +146,19 @@ describe('the button', () => {
     expect(slot).not.toBeNull();
     expect(slot).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByRole('button').textContent).toBe('Stop');
+  });
+
+  it('only applies square geometry when the icon has no label', () => {
+    const { rerender } = render(<Button icon={<svg />}>Check access</Button>);
+    const labelled = screen.getByRole('button', { name: 'Check access' });
+    expect(labelled).not.toHaveClass('button--icon-only');
+
+    rerender(<Button icon={<svg aria-label="Refresh" />} />);
+    const iconOnly = screen.getByRole('button');
+    expect(iconOnly).toHaveClass('button--icon-only', 'button--md');
+
+    const css = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
+    expect(css).not.toContain(':has(> .button__icon:only-child)');
   });
 });
 

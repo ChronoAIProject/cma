@@ -261,6 +261,7 @@ fn app(record: SessionRecord, ticket_store: Arc<CountingTicketStore>) -> Router 
         tickets: TerminalTickets::new(ticket_store),
         environments,
         operations: Arc::new(NoOperations),
+        triggers: None,
     };
     let authorization = Authorization::from_capabilities([Capability::UseOwnSessions]);
 

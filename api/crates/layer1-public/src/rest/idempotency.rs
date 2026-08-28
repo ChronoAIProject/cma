@@ -18,6 +18,7 @@ use super::{problem_document, problem_response, BodyProblem, RequestFailure};
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
 const MAX_KEY_BYTES: usize = 255;
 pub(super) const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+const EXECUTION_LEASE: Duration = Duration::from_secs(2 * 60);
 
 /// A JSON decoding result accompanied by the digest of the bytes that carried it.
 pub(super) struct RequestBody<T> {
@@ -77,6 +78,29 @@ fn is_json_content_type(headers: &HeaderMap) -> bool {
 /// A validated optional operation key.
 pub(super) struct IdempotencyKey(Option<String>);
 
+impl IdempotencyKey {
+    pub(super) fn required(self) -> Result<Self, IdempotencyProblem> {
+        if self.0.is_some() {
+            Ok(self)
+        } else {
+            Err(IdempotencyProblem::Missing)
+        }
+    }
+
+    /// Stable evidence for a confirmation record without retaining the HTTP
+    /// operation key itself.
+    pub(super) fn confirmation_hash(&self, domain: &str) -> Option<String> {
+        self.0.as_ref().map(|key| {
+            let mut digest = Sha256::new();
+            digest.update(domain.as_bytes());
+            digest.update([0]);
+            digest.update(key.as_bytes());
+            let digest = digest.finalize();
+            digest.iter().map(|byte| format!("{byte:02x}")).collect()
+        })
+    }
+}
+
 impl<S> FromRequestParts<S> for IdempotencyKey
 where
     S: Send + Sync,
@@ -107,14 +131,22 @@ where
 
 /// A refusal specific to operation-key handling.
 pub enum IdempotencyProblem {
+    Missing,
     Invalid,
     Pending,
+    RecoveryRequired,
     Reused,
 }
 
 impl IntoResponse for IdempotencyProblem {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match self {
+            Self::Missing => (
+                StatusCode::BAD_REQUEST,
+                "missing-idempotency-key",
+                "missing_idempotency_key",
+                "This operation requires an Idempotency-Key header.",
+            ),
             Self::Invalid => (
                 StatusCode::BAD_REQUEST,
                 "invalid-idempotency-key",
@@ -126,6 +158,12 @@ impl IntoResponse for IdempotencyProblem {
                 "idempotency-in-flight",
                 "idempotency_in_flight",
                 "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+            ),
+            Self::RecoveryRequired => (
+                StatusCode::CONFLICT,
+                "idempotency-recovery-required",
+                "idempotency_recovery_required",
+                "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
             ),
             Self::Reused => (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -161,12 +199,14 @@ impl Idempotency {
         let Some(key) = key.0 else {
             return Ok(Self::Unkeyed);
         };
+        let now = std::time::SystemTime::now();
         let claim = OperationClaim::new(
             caller.subject.clone(),
             operation,
             key,
             fingerprint,
-            std::time::SystemTime::now() + RETENTION,
+            now + EXECUTION_LEASE,
+            RETENTION,
         );
         let reservation = store
             .reserve(&claim)
@@ -176,6 +216,9 @@ impl Idempotency {
             OperationReservation::Acquired => Self::Acquired { store, claim },
             OperationReservation::Pending => {
                 return Err(IdempotencyProblem::Pending.into_response())
+            }
+            OperationReservation::RecoveryRequired => {
+                return Err(IdempotencyProblem::RecoveryRequired.into_response())
             }
             OperationReservation::FingerprintMismatch => {
                 return Err(IdempotencyProblem::Reused.into_response())
@@ -188,7 +231,10 @@ impl Idempotency {
     }
 
     /// Record the result of an acquired operation and return it to the caller.
-    pub(super) async fn finish(self, result: Result<Response, RequestFailure>) -> Response {
+    pub(super) async fn finish<E>(self, result: Result<Response, E>) -> Response
+    where
+        E: IntoResponse,
+    {
         let response = result.unwrap_or_else(IntoResponse::into_response);
         let Self::Acquired { store, claim } = self else {
             return response;
@@ -202,6 +248,31 @@ impl Idempotency {
         }
         response
     }
+}
+
+/// Begin one required, body-fingerprinted command and derive confirmation
+/// evidence from its operation key without retaining the key itself.
+pub(super) async fn required_command<T: DeserializeOwned>(
+    key: IdempotencyKey,
+    store: Arc<dyn OperationStore>,
+    caller: &Caller,
+    operation: String,
+    body: Result<RequestBody<T>, BodyProblem>,
+) -> Result<(Idempotency, Result<T, BodyProblem>, String), Response> {
+    let key = key.required().map_err(IntoResponse::into_response)?;
+    let confirmation_hash = key
+        .confirmation_hash(&operation)
+        .expect("a required operation key has a digest");
+    let (body, fingerprint) = match body {
+        Ok(body) => body.into_parts(),
+        Err(error) => return Err(RequestFailure::from(error).into_response()),
+    };
+    let guard = match Idempotency::begin(key, store, caller, operation, fingerprint).await {
+        Ok(Idempotency::Replay(response)) => return Err(response),
+        Ok(guard) => guard,
+        Err(response) => return Err(response),
+    };
+    Ok((guard, body, confirmation_hash))
 }
 
 #[derive(Serialize, Deserialize)]

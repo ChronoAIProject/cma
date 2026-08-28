@@ -249,6 +249,7 @@ fn app_for(status: SessionStatus, rotation_claim: Option<&str>, conversation: bo
         tickets: TerminalTickets::in_memory(),
         environments,
         operations: Arc::new(NoOperations),
+        triggers: None,
     };
     let authorization = Authorization::from_capabilities([Capability::UseOwnSessions]);
 
