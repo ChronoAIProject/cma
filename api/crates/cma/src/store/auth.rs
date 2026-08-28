@@ -54,13 +54,13 @@ const CREDENTIAL_MIGRATION_INDEX: &str = "auth_credential_schema_migration";
 const DUPLICATE_KEY: i32 = 11000;
 /// Persisted shape written by this binary.
 ///
-/// Version 5 binds a pending credential to the exact runtime generation selected
-/// for delivery. The deployment's
+/// Version 6 retains the exact non-secret provider authority and stable custody
+/// generation for each created key. The deployment's
 /// `Recreate` strategy is a hard writer boundary: an older binary uses
 /// whole-document replacement and cannot preserve newer fields if both write at
 /// once. Migration fences operations that predate the cutover, but does not
 /// claim arbitrary mixed-version rolling-writer compatibility.
-const AUTH_SCHEMA_VERSION: i64 = 5;
+const AUTH_SCHEMA_VERSION: i64 = 6;
 const AUTH_MIGRATION_LANE_BATCH_SIZE: usize = 50;
 const AUTH_SCHEMA_OPEN_BUDGET: usize = 2 * (AUTH_MIGRATION_LANE_BATCH_SIZE + 2) + 2;
 
@@ -101,7 +101,10 @@ struct BrowserSessionDoc {
 struct LoginAttemptDoc {
     #[serde(rename = "_id")]
     id: Binary,
+    browser_binding: Binary,
     verifier: CipherEnvelope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    return_to: Option<String>,
     expires_at: DateTime,
 }
 
@@ -172,6 +175,12 @@ struct CredentialDoc {
     issued_at: DateTime,
     expires_at: Option<DateTime>,
     scope_fingerprint: String,
+    #[serde(default)]
+    custody_generation: i64,
+    #[serde(default)]
+    provider_state_version: i64,
+    #[serde(default)]
+    grant_fingerprint: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -685,9 +694,13 @@ impl AuthStore for MongoAuthStore {
     async fn take_login_attempt(
         &self,
         id: &SecretDigest,
+        browser_binding: &SecretDigest,
     ) -> Result<Option<LoginAttempt>, StoreError> {
         self.login_attempts
-            .find_one_and_delete(doc! { "_id": id_binary(id) })
+            .find_one_and_delete(doc! {
+                "_id": id_binary(id),
+                "browser_binding": id_binary(browser_binding),
+            })
             .await
             .map_err(|error| read_failure("consume login attempt", &error))?
             .map(|stored| login_from_doc(stored, &self.cipher))
@@ -1213,7 +1226,7 @@ fn legacy_schema_filter() -> Document {
     doc! {
         "$or": [
             { "auth_schema_version": { "$exists": false } },
-            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64] } },
+            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, 5_i64] } },
         ]
     }
 }
@@ -1222,7 +1235,7 @@ fn supported_schema_filter() -> Document {
     doc! {
         "$or": [
             { "auth_schema_version": { "$exists": false } },
-            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, AUTH_SCHEMA_VERSION] } },
+            { "auth_schema_version": { "$in": [1_i64, 2_i64, 3_i64, 4_i64, 5_i64, AUTH_SCHEMA_VERSION] } },
         ]
     }
 }
@@ -2125,12 +2138,14 @@ fn browser_from_doc(stored: BrowserSessionDoc) -> Result<BrowserSession, StoreEr
 fn login_to_doc(attempt: LoginAttempt, cipher: &AuthCipher) -> Result<LoginAttemptDoc, StoreError> {
     Ok(LoginAttemptDoc {
         id: id_binary(&attempt.id),
+        browser_binding: id_binary(&attempt.browser_binding),
         verifier: cipher.seal(
             LOGIN_KIND,
             attempt.id.as_bytes(),
             VERIFIER_FIELD,
             attempt.verifier.expose(),
         )?,
+        return_to: attempt.return_to,
         expires_at: DateTime::from_system_time(attempt.expires_at),
     })
 }
@@ -2143,7 +2158,9 @@ fn login_from_doc(
     let verifier = cipher.open(LOGIN_KIND, id.as_bytes(), VERIFIER_FIELD, stored.verifier)?;
     Ok(LoginAttempt {
         id,
+        browser_binding: digest_from_binary(stored.browser_binding, "login browser binding")?,
         verifier: SecretValue::new(verifier),
+        return_to: stored.return_to,
         expires_at: stored.expires_at.to_system_time(),
     })
 }
@@ -2453,6 +2470,9 @@ fn credential_to_doc(
         issued_at,
         expires_at,
         scope_fingerprint,
+        custody_generation,
+        provider_state_version,
+        grant_fingerprint,
         revocation_credential,
     } = credential;
     Ok(CredentialDoc {
@@ -2477,6 +2497,9 @@ fn credential_to_doc(
         issued_at: DateTime::from_system_time(issued_at),
         expires_at: expires_at.map(DateTime::from_system_time),
         scope_fingerprint,
+        custody_generation: stored_counter(custody_generation, "credential custody generation")?,
+        provider_state_version,
+        grant_fingerprint,
     })
 }
 
@@ -2604,7 +2627,15 @@ fn credential_from_doc(
         issued_at,
         expires_at,
         scope_fingerprint,
+        custody_generation,
+        provider_state_version,
+        grant_fingerprint,
     } = stored;
+    if provider_state_version < 0 {
+        return Err(StoreError::Malformed(
+            "stored credential provider state version must not be negative".into(),
+        ));
+    }
     Ok(DurableCredential {
         id,
         value: SecretValue::new(cipher.open(
@@ -2629,6 +2660,9 @@ fn credential_from_doc(
         issued_at: issued_at.to_system_time(),
         expires_at: expires_at.map(|value| value.to_system_time()),
         scope_fingerprint,
+        custody_generation: read_counter(custody_generation, "credential custody generation")?,
+        provider_state_version,
+        grant_fingerprint,
     })
 }
 

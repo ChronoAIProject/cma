@@ -20,8 +20,10 @@ fn adapter(base: &str) -> ClaudeCodeAdapter {
 fn conversation() -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment: RuntimeEnvironment::default(),
@@ -30,6 +32,7 @@ fn conversation() -> RuntimeSpec {
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: RuntimeOptions {
             mode: RuntimeMode::Conversation,
@@ -41,6 +44,15 @@ fn conversation() -> RuntimeSpec {
 #[test]
 fn the_kernel_is_named_for_diagnostics_only() {
     assert_eq!(adapter("http://p").kernel_name(), "claude_code");
+}
+
+#[test]
+fn this_kernel_binds_its_production_conversation_to_shared_acp_evidence() {
+    let binding = adapter("http://p").conversation_binding(&Default::default());
+    assert_eq!(
+        binding.evidence_contract(),
+        crate::hosted::ConversationEvidenceContract::AcpV1
+    );
 }
 
 #[test]

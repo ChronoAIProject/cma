@@ -136,10 +136,14 @@ export function createNyxidAuthProvider(): AuthProvider {
       };
     },
 
-    async signIn(): Promise<void> {
+    async signIn(returnTo?: string): Promise<void> {
       // A navigation, not a fetch: the provider needs to run its own redirects
       // and may show a login page, neither of which survives XHR.
-      window.location.assign(LOGIN_ENDPOINT);
+      const target = new URL(LOGIN_ENDPOINT, window.location.origin);
+      if (returnTo !== undefined) {
+        target.searchParams.set('return_to', returnTo);
+      }
+      window.location.assign(`${target.pathname}${target.search}`);
     },
 
     async signOut(): Promise<void> {

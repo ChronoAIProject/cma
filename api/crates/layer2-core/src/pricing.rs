@@ -189,6 +189,16 @@ pub fn format_usd(micros: u64) -> String {
     format!("${dollars}.{fraction}")
 }
 
+/// Price a bounded number of seconds at one hourly micro-USD rate.
+///
+/// Trigger preview and authenticated Launch admission deliberately share this
+/// arithmetic so the anonymous estimate cannot drift from the quote later
+/// pinned at review. Division rounds deterministically toward the contributor.
+pub(crate) fn estimate_micros(micros_per_hour: u64, seconds: u32) -> Option<u64> {
+    let estimated = (u128::from(micros_per_hour) * u128::from(seconds)) / 3_600;
+    u64::try_from(estimated).ok()
+}
+
 /// One rate the deployment has charged under.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RateCard {

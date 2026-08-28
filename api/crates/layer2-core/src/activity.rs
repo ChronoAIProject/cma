@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::activity_detail::{ActivityDetail, DetailKey};
 use crate::clock::now_rfc3339;
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
+use crate::trigger::{LaunchId, PublicTriggerId, TriggerId, TriggerRevisionId};
 
 /// Most entries one read may return.
 pub const MAX_ACTIVITY_LIMIT: usize = 500;
@@ -129,6 +130,101 @@ pub enum ActivityAction {
     PlatformSettingsWrite,
     /// The session briefing was restored to its shipped text.
     PlatformSettingsReset,
+    TriggerPreviewRead,
+    TriggerDraftCreate,
+    TriggerDraftRead,
+    TriggerDraftList,
+    TriggerDraftUpdate,
+    TriggerRevisionPublish,
+    TriggerRevisionRead,
+    TriggerRevisionList,
+    TriggerRevisionRetire,
+    TriggerConnectionList,
+    TriggerConnectionBegin,
+    TriggerConnectionRevoke,
+    TriggerConnectionReconnect,
+    TriggerConnectionPreflight,
+    TriggerRepositoryResolve,
+    TriggerLaunchCreate,
+    TriggerLaunchRead,
+    TriggerLaunchList,
+    TriggerLaunchDraftUpdate,
+    TriggerLaunchConnectionSelect,
+    TriggerLaunchStart,
+    TriggerLaunchDiffReview,
+    TriggerLaunchDiffRead,
+    TriggerLaunchContributionPublish,
+    TriggerLaunchPullRequestReview,
+    TriggerLaunchPullRequestOpen,
+    TriggerLaunchPullRequestUpdate,
+    TriggerLaunchDiffDownload,
+    TriggerLaunchCancel,
+    TriggerLaunchPromptRecover,
+    TriggerLaunchEventsRead,
+    TriggerLaunchSupportRead,
+    TriggerOrchestrationPause,
+    TriggerOrchestrationResume,
+    TriggerEffectExecute,
+    TriggerEffectReconcile,
+    TriggerEffectRecoveryAuthorize,
+    TriggerCapabilityRenew,
+    TriggerCapabilityRevoke,
+    TriggerCleanupPlan,
+    TriggerCleanupExecute,
+}
+
+impl ActivityAction {
+    /// Whether this action belongs to the CMA Trigger workflow.
+    ///
+    /// Kept as an exhaustive match so adding a Trigger action forces its audit
+    /// and alert behavior to be considered rather than relying on a string
+    /// prefix after serialization.
+    pub fn is_trigger(self) -> bool {
+        matches!(
+            self,
+            Self::TriggerPreviewRead
+                | Self::TriggerDraftCreate
+                | Self::TriggerDraftRead
+                | Self::TriggerDraftList
+                | Self::TriggerDraftUpdate
+                | Self::TriggerRevisionPublish
+                | Self::TriggerRevisionRead
+                | Self::TriggerRevisionList
+                | Self::TriggerRevisionRetire
+                | Self::TriggerConnectionList
+                | Self::TriggerConnectionBegin
+                | Self::TriggerConnectionRevoke
+                | Self::TriggerConnectionReconnect
+                | Self::TriggerConnectionPreflight
+                | Self::TriggerRepositoryResolve
+                | Self::TriggerLaunchCreate
+                | Self::TriggerLaunchRead
+                | Self::TriggerLaunchList
+                | Self::TriggerLaunchDraftUpdate
+                | Self::TriggerLaunchConnectionSelect
+                | Self::TriggerLaunchStart
+                | Self::TriggerLaunchDiffReview
+                | Self::TriggerLaunchDiffRead
+                | Self::TriggerLaunchContributionPublish
+                | Self::TriggerLaunchPullRequestReview
+                | Self::TriggerLaunchPullRequestOpen
+                | Self::TriggerLaunchPullRequestUpdate
+                | Self::TriggerLaunchDiffDownload
+                | Self::TriggerLaunchCancel
+                | Self::TriggerLaunchPromptRecover
+                | Self::TriggerLaunchEventsRead
+                | Self::TriggerLaunchSupportRead
+                | Self::TriggerOrchestrationPause
+                | Self::TriggerOrchestrationResume
+                | Self::TriggerEffectExecute
+                | Self::TriggerEffectReconcile
+                | Self::TriggerEffectRecoveryAuthorize
+                | Self::TriggerCapabilityRenew
+                | Self::TriggerCapabilityRevoke
+                | Self::TriggerCleanupPlan
+                | Self::TriggerCleanupExecute
+        )
+    }
 }
 
 /// What an action was taken on.
@@ -145,6 +241,16 @@ pub enum ActivityTarget {
     EnvironmentProfile(EnvironmentProfileId),
     /// One subject, when the action concerns a person rather than a resource.
     Subject(SubjectId),
+    /// One mutable publisher Trigger draft.
+    Trigger(TriggerId),
+    /// One immutable Trigger revision.
+    TriggerRevision(TriggerRevisionId),
+    /// One public README-facing Trigger identifier.
+    PublicTrigger(PublicTriggerId),
+    /// One contributor Launch.
+    Launch(LaunchId),
+    /// One exact NyxID GitHub UserService identifier.
+    TriggerConnection(String),
 }
 
 impl ActivityTarget {
@@ -154,6 +260,11 @@ impl ActivityTarget {
             Self::Session(id) => id.as_str(),
             Self::EnvironmentProfile(id) => id.as_str(),
             Self::Subject(id) => id.as_str(),
+            Self::Trigger(id) => id.0.as_str(),
+            Self::TriggerRevision(id) => id.0.as_str(),
+            Self::PublicTrigger(id) => id.0.as_str(),
+            Self::Launch(id) => id.0.as_str(),
+            Self::TriggerConnection(id) => id.as_str(),
         }
     }
 }
@@ -367,5 +478,13 @@ mod tests {
             ActivityTarget::Subject(SubjectId("subject-a".into())).id(),
             "subject-a"
         );
+    }
+
+    #[test]
+    fn trigger_actions_are_classified_without_string_inference() {
+        assert!(ActivityAction::TriggerPreviewRead.is_trigger());
+        assert!(ActivityAction::TriggerCleanupExecute.is_trigger());
+        assert!(!ActivityAction::SessionCreate.is_trigger());
+        assert!(!ActivityAction::ActivityLogRead.is_trigger());
     }
 }
