@@ -1,6 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProtocolError, TransportError } from '@chronoai/cma-sdk';
-import { ApiError, followSession, listKernels, toSession } from './client';
+import {
+  ApiError,
+  followSession,
+  listKernels,
+  listTriggerRevisions,
+  listTriggers,
+  toSession,
+} from './client';
 
 /**
  * The wire is a trust boundary. These cover what the control plane actually
@@ -99,6 +108,97 @@ describe('ApiError', () => {
     expect(new ApiError(401, 'nope').isUnauthenticated).toBe(true);
     expect(new ApiError(500, 'boom').isUnauthenticated).toBe(false);
     expect(new TransportError('offline')).toBeInstanceOf(TransportError);
+  });
+});
+
+describe('publisher catalogues', () => {
+  const launch = JSON.parse(
+    readFileSync(resolve(process.cwd(), '../sdk/typescript/tests/fixtures/launch.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  const content = launch.revision_content as Record<string, unknown>;
+
+  function draft(index: number) {
+    const id = `draft-${String(index).padStart(3, '0')}`;
+    return {
+      id,
+      selected_service_id: 'service-fixture',
+      version: 1,
+      next_revision_number: 2,
+      content: { ...content, trigger_id: id },
+      created_at: '2026-08-27T00:00:00Z',
+      updated_at: '2026-08-27T01:00:00Z',
+    };
+  }
+
+  function revision(index: number) {
+    const id = `revision-${String(index).padStart(3, '0')}`;
+    return {
+      id,
+      public_id: `public-${String(index).padStart(3, '0')}`,
+      digest: String(index).padStart(64, '0'),
+      availability: 'published',
+      content: { ...content, trigger_id: `draft-${String(index).padStart(3, '0')}` },
+      authority: {
+        service_id: 'service-fixture',
+        service_state_version: 1,
+        account_id: 42,
+        account_login: 'contributor',
+        role: 'owner',
+        verified_at: '2026-08-27T00:00:00Z',
+      },
+      published_at: '2026-08-27T00:00:00Z',
+      retired_at: null,
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('walks every bounded draft and revision cursor page', async () => {
+    const fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const revisions = url.includes('/api/v1/trigger-revisions');
+      const second = url.includes('cursor=page-2');
+      const items = Array.from({ length: second ? 10 : 50 }, (_, offset) => {
+        const index = offset + (second ? 50 : 0);
+        return revisions ? revision(index) : draft(index);
+      });
+      return Promise.resolve(
+        new Response(JSON.stringify({ items, next_cursor: second ? null : 'page-2' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const [drafts, revisions] = await Promise.all([listTriggers(), listTriggerRevisions()]);
+
+    expect(drafts).toHaveLength(60);
+    expect(revisions).toHaveLength(60);
+    expect(drafts[55]?.id).toBe('draft-055');
+    expect(revisions[55]?.id).toBe('revision-055');
+    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual(
+      expect.arrayContaining([
+        '/api/v1/triggers?limit=200&cursor=page-2',
+        '/api/v1/trigger-revisions?limit=200&cursor=page-2',
+      ]),
+    );
+  });
+
+  it('fails closed when cursor pagination makes no progress', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ items: [], next_cursor: 'stuck' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    await expect(listTriggers()).rejects.toBeInstanceOf(ProtocolError);
   });
 });
 

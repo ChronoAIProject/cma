@@ -44,6 +44,7 @@ mod client;
 mod error;
 mod event;
 mod stream;
+mod triggers;
 mod types;
 
 /// Executable integration guides shipped with the crate.
@@ -61,6 +62,8 @@ pub mod guides {
     pub mod sessions {}
     #[doc = include_str!("../docs/streaming.md")]
     pub mod streaming {}
+    #[doc = include_str!("../docs/triggers.md")]
+    pub mod triggers {}
     #[doc = include_str!("../docs/operations.md")]
     pub mod operations {}
     #[doc = include_str!("../docs/errors.md")]
@@ -76,6 +79,7 @@ pub use event::{
     RuntimeLossCause, SessionPlane, ToolBody,
 };
 pub use stream::EventStream;
+pub use triggers::*;
 pub use types::{
     Agent, ApprovalDecision, Conformance, CreateSessionRequest, CredentialMode, MAX_PAGE_SIZE,
     MIN_PAGE_SIZE, Page, PageContinuation, PageWalkLimits, PermissionMode, PublicIdentity, Reach,

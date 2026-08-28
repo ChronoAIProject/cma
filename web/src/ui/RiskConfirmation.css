@@ -55,6 +55,21 @@
   box-shadow: var(--focus-ring);
 }
 
+.risk__status,
+.risk__failure {
+  margin: 14px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.risk__status {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.risk__failure {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 /*
  * Minimum widths so the two keys do not resize with their labels — a Cancel
  * that shifts when the confirm text changes reads as the dialog moving.
@@ -65,4 +80,10 @@
 
 .risk__confirm {
   min-width: 136px;
+}
+
+@media (max-width: 29.999rem) {
+  .risk__acknowledgement {
+    min-height: 44px;
+  }
 }

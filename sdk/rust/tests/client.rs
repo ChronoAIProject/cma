@@ -11,9 +11,17 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
 use cma_sdk::{
-    ApprovalDecision, Client, Conformance, CreateSessionRequest, Error, Event, EventKind,
-    MAX_PAGE_SIZE, PageWalkLimits, ResponseMetadata, RetryPolicy, ScreenSnapshot, Session,
-    SessionId, SessionInput, SessionPageRequest, SessionStatus, TerminalGeometry, Usage,
+    ApprovalDecision, BeginConnectionRequest, Client, Conformance, CreateSessionRequest,
+    CreateTriggerRequest, DiffReview, Error, Event, EventKind, Launch, LaunchConfirmationAction,
+    LaunchConfirmationRequest, LaunchEventKind, LaunchListRequest, LaunchProgress,
+    LaunchStartRequest, LaunchState, MAX_PAGE_SIZE, PageWalkLimits, PublishTriggerRequest,
+    PullRequestConfirmRequest, PullRequestDraft, PullRequestOperation, PullRequestReviewRequest,
+    PullRequestStatusRefreshRequest, RecoverInitialPromptRequest, ResponseMetadata, RetryPolicy,
+    ScreenSnapshot, SelectLaunchConnectionRequest, Session, SessionId, SessionInput,
+    SessionPageRequest, SessionStatus, TerminalGeometry, TriggerConnection, TriggerConnectionState,
+    TriggerContentDraft, TriggerDraft, TriggerPreview, TriggerPreviewCost,
+    TriggerRepositorySelection, TriggerRevision, UpdateLaunchOverridesRequest,
+    UpdateTriggerRequest, Usage,
 };
 use tokio::sync::Mutex;
 
@@ -28,6 +36,18 @@ const EVENT: &str = include_str!("fixtures/event.json");
 const CAPABILITY_REFUSED: &str = include_str!("fixtures/capability_refused.json");
 const SCREEN: &str = include_str!("fixtures/screen.json");
 const USAGE: &str = include_str!("fixtures/usage.json");
+const TRIGGER_PREVIEW: &str = include_str!("fixtures/trigger_preview.json");
+const REPOSITORY_SELECTION: &str = include_str!("fixtures/repository_selection.json");
+const LAUNCH: &str = include_str!("fixtures/launch.json");
+const LAUNCH_PROGRESS: &str = include_str!("fixtures/launch_progress.json");
+const DIFF_REVIEW: &str = include_str!("fixtures/diff_review.json");
+const PULL_REQUEST_DRAFT: &str = include_str!("fixtures/pull_request_draft.json");
+const LAUNCH_START_REQUEST: &str = include_str!("fixtures/launch_start_request.json");
+const PULL_REQUEST_REVIEW_REQUEST: &str = include_str!("fixtures/pull_request_review_request.json");
+const PULL_REQUEST_CONFIRM_REQUEST: &str =
+    include_str!("fixtures/pull_request_confirm_request.json");
+const PULL_REQUEST_STATUS_REFRESH_REQUEST: &str =
+    include_str!("fixtures/pull_request_status_refresh_request.json");
 const CONFORMANCE: &str = r#"{
   "conformsTo": ["https://spec.chrono-ai.fun/cma/1.0/conf/rest-core"],
   "version": "development",
@@ -112,6 +132,7 @@ struct CapturedRequest {
     uri: Uri,
     authorization: Option<String>,
     request_id: Option<String>,
+    idempotency_key: Option<String>,
     last_event_id: Option<String>,
     body: Vec<u8>,
 }
@@ -176,6 +197,10 @@ async fn capture(
             .get("x-request-id")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
+        idempotency_key: headers
+            .get("idempotency-key")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
         last_event_id: headers
             .get("last-event-id")
             .and_then(|value| value.to_str().ok())
@@ -233,6 +258,94 @@ fn event_fixture(source: &str) -> serde_json::Value {
     fixture(source)
 }
 
+fn trigger_content_draft() -> TriggerContentDraft {
+    TriggerContentDraft {
+        schema_version: 1,
+        publisher_display_identity: "Chrono Maintainer".into(),
+        repository: cma_sdk::RepositorySelectionDraft {
+            repository_id: 10,
+            selected_ref: "main".into(),
+            contribution_base_ref: "main".into(),
+            source_mode: cma_sdk::TriggerSourceMode::PinnedCommit,
+        },
+        task: Default::default(),
+        session: Default::default(),
+        repository_access: Default::default(),
+        setup: Default::default(),
+        contribution: Default::default(),
+        commercial_policy: Default::default(),
+        override_policy: Default::default(),
+        public_projection: Default::default(),
+    }
+}
+
+fn trigger_draft_response() -> String {
+    let launch = fixture(LAUNCH);
+    serde_json::json!({
+        "id": "trigger_fixture",
+        "selected_service_id": "service_fixture",
+        "version": 1,
+        "next_revision_number": 2,
+        "content": launch["revision_content"],
+        "created_at": "2026-08-26T12:00:00Z",
+        "updated_at": "2026-08-26T12:00:00Z"
+    })
+    .to_string()
+}
+
+fn trigger_revision_response() -> String {
+    let launch = fixture(LAUNCH);
+    serde_json::json!({
+        "id": "revision_fixture",
+        "public_id": "public_fixture",
+        "digest": launch["revision_digest"],
+        "availability": "published",
+        "content": launch["revision_content"],
+        "authority": {
+            "service_id": "service_fixture",
+            "service_state_version": 2,
+            "account_id": 20,
+            "account_login": "upstream-owner",
+            "role": "owner",
+            "verified_at": "2026-08-26T12:00:00Z"
+        },
+        "published_at": "2026-08-26T12:00:00Z",
+        "retired_at": null
+    })
+    .to_string()
+}
+
+fn trigger_connection_response() -> String {
+    serde_json::json!({
+        "service_id": "service_fixture",
+        "state_version": 2,
+        "state": "active",
+        "account_id": 21,
+        "account_node_id": "U_contributor",
+        "account_login": "contributor",
+        "avatar_url": null,
+        "granted_scopes": ["public_repo"],
+        "consent_observed_at": "2026-08-26T12:00:00Z"
+    })
+    .to_string()
+}
+
+fn revoked_trigger_connection_response() -> String {
+    let mut connection = fixture(&trigger_connection_response());
+    connection["state_version"] = serde_json::json!(3);
+    connection["state"] = serde_json::json!("inactive");
+    connection.to_string()
+}
+
+fn connection_authorization_response() -> String {
+    serde_json::json!({
+        "service_id": "service_fixture",
+        "authorization_url": "https://identity.example.test/authorize",
+        "attempt_nonce": "attempt_fixture"
+    })
+    .to_string()
+}
+
 #[test]
 fn sdk_copies_read_every_server_owned_response_fixture() {
     let conformance: Conformance =
@@ -248,6 +361,149 @@ fn sdk_copies_read_every_server_owned_response_fixture() {
     assert_eq!(screen.lines.len(), 3);
     let usage: Usage = serde_json::from_str(USAGE).expect("usage fixture is typed");
     assert_eq!(usage.context_window, Some(200_000));
+    let preview: TriggerPreview =
+        serde_json::from_str(TRIGGER_PREVIEW).expect("Trigger preview fixture is typed");
+    assert_eq!(preview.repository_id, 10);
+    assert!(matches!(
+        preview.estimated_cost,
+        TriggerPreviewCost::ExactZero {
+            amount_micros: 0,
+            ..
+        }
+    ));
+    let mut contributor_preview = fixture(TRIGGER_PREVIEW);
+    contributor_preview["estimated_cost"] = serde_json::json!({
+        "kind": "contributor_estimate",
+        "currency": "USD",
+        "amount_micros": 25_000,
+        "display": "$0.025",
+        "quoted_at": "2026-08-26T12:00:00Z"
+    });
+    assert!(matches!(
+        serde_json::from_value::<TriggerPreview>(contributor_preview)
+            .expect("contributor estimate is typed")
+            .estimated_cost,
+        TriggerPreviewCost::ContributorEstimate {
+            amount_micros: 25_000,
+            ..
+        }
+    ));
+    let mut unavailable_preview = fixture(TRIGGER_PREVIEW);
+    unavailable_preview["estimated_cost"] = serde_json::json!({ "kind": "quote_unavailable" });
+    assert!(matches!(
+        serde_json::from_value::<TriggerPreview>(unavailable_preview)
+            .expect("unavailable quote is typed")
+            .estimated_cost,
+        TriggerPreviewCost::QuoteUnavailable
+    ));
+    let mut unknown_cost = fixture(TRIGGER_PREVIEW);
+    unknown_cost["estimated_cost"] = serde_json::json!({ "kind": "future_quote" });
+    assert!(serde_json::from_value::<TriggerPreview>(unknown_cost).is_err());
+    for malformed in [
+        serde_json::json!({
+            "kind": "exact_zero",
+            "currency": "EUR",
+            "amount_micros": 0,
+            "display": "EUR 0.00"
+        }),
+        serde_json::json!({
+            "kind": "exact_zero",
+            "currency": "USD",
+            "amount_micros": 1,
+            "display": "$0.00"
+        }),
+        serde_json::json!({
+            "kind": "contributor_estimate",
+            "currency": "EUR",
+            "amount_micros": 25_000,
+            "display": "EUR 0.025",
+            "quoted_at": "2026-08-26T12:00:00Z"
+        }),
+    ] {
+        let mut preview = fixture(TRIGGER_PREVIEW);
+        preview["estimated_cost"] = malformed;
+        assert!(serde_json::from_value::<TriggerPreview>(preview).is_err());
+    }
+    assert_eq!(
+        serde_json::from_str::<LaunchConfirmationAction>(r#""complete""#)
+            .expect("complete is a closed confirmation action"),
+        LaunchConfirmationAction::Complete
+    );
+    let repository: TriggerRepositorySelection =
+        serde_json::from_str(REPOSITORY_SELECTION).expect("repository selection fixture is typed");
+    assert_eq!(repository.repository.repository_node_id, "R_upstream");
+    assert_eq!(repository.source_sha, "a".repeat(40));
+    let launch: Launch = serde_json::from_str(LAUNCH).expect("Launch fixture is typed");
+    assert_eq!(launch.steps.len(), 15);
+    assert_eq!(
+        launch
+            .runtime_admission
+            .as_ref()
+            .map(|runtime| runtime.kernel),
+        Some(cma_sdk::TriggerKernel::Codex)
+    );
+    let mut unknown_kernel = fixture(LAUNCH);
+    unknown_kernel["runtime_admission"]["kernel"] = serde_json::json!("future_kernel");
+    assert!(serde_json::from_value::<Launch>(unknown_kernel).is_err());
+    let progress: LaunchProgress =
+        serde_json::from_str(LAUNCH_PROGRESS).expect("Launch progress fixture is typed");
+    assert_eq!(progress.next_cursor, 5);
+    assert_eq!(progress.events[0].progress.state, LaunchState::Draft);
+    assert!(matches!(
+        &progress.events[0].kind,
+        LaunchEventKind::Created { steps } if steps.len() == 15
+    ));
+    let review: DiffReview =
+        serde_json::from_str(DIFF_REVIEW).expect("diff-review fixture is typed");
+    assert_eq!(
+        review
+            .artifact
+            .as_ref()
+            .expect("fixture has an artifact")
+            .files
+            .len(),
+        1
+    );
+    let pull_request = review
+        .pull_request
+        .as_ref()
+        .expect("diff-review fixture has an observed pull request");
+    assert_eq!(
+        pull_request.provider_request_id.as_deref(),
+        Some("github-request-fixture")
+    );
+    assert_eq!(pull_request.head_matches_launch, Some(false));
+    assert_eq!(
+        pull_request
+            .status_failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("github_status_unavailable")
+    );
+    assert!(matches!(
+        progress.events[3].kind,
+        LaunchEventKind::PullRequestStatusRefreshRequested
+    ));
+    assert!(matches!(
+        progress.events[4].kind,
+        LaunchEventKind::PullRequestStatusChanged { .. }
+    ));
+    let draft: PullRequestDraft =
+        serde_json::from_str(PULL_REQUEST_DRAFT).expect("pull-request draft fixture is typed");
+    assert_eq!(draft.operation, PullRequestOperation::Open);
+    let start: LaunchStartRequest =
+        serde_json::from_str(LAUNCH_START_REQUEST).expect("Start request fixture is typed");
+    assert!(!start.acknowledge_workflow_risk);
+    let pr_review: PullRequestReviewRequest = serde_json::from_str(PULL_REQUEST_REVIEW_REQUEST)
+        .expect("pull-request review fixture is typed");
+    assert_eq!(pr_review.operation, PullRequestOperation::Open);
+    let pr_confirm: PullRequestConfirmRequest = serde_json::from_str(PULL_REQUEST_CONFIRM_REQUEST)
+        .expect("pull-request confirmation fixture is typed");
+    assert_eq!(pr_confirm.expected_revision, 0);
+    let pr_refresh: PullRequestStatusRefreshRequest =
+        serde_json::from_str(PULL_REQUEST_STATUS_REFRESH_REQUEST)
+            .expect("pull-request status refresh fixture is typed");
+    assert_eq!(pr_refresh.expected_revision, 0);
 }
 
 #[tokio::test]
@@ -304,6 +560,649 @@ async fn conformance_discovery_is_typed_anonymous_and_correlated() {
         requests[0].request_id.as_deref(),
         Some("caller-conformance-488")
     );
+}
+
+#[tokio::test]
+async fn trigger_preview_is_typed_and_always_anonymous() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, TRIGGER_PREVIEW)]).await;
+    let (client, credential_calls) = stub_client(&stub, 1);
+
+    let preview = client
+        .read_trigger_preview("33333333-3333-4333-8333-333333333333")
+        .await
+        .expect("public Trigger preview succeeds");
+
+    assert_eq!(preview.repository_id, 10);
+    assert_eq!(credential_calls.load(Ordering::SeqCst), 0);
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].uri.path(),
+        "/proxy/api/v1/triggers/public/33333333-3333-4333-8333-333333333333"
+    );
+    assert_eq!(requests[0].authorization, None);
+    assert_eq!(requests[0].idempotency_key, None);
+}
+
+#[tokio::test]
+async fn every_trigger_command_uses_the_exact_key_and_canonical_path() {
+    let draft = trigger_draft_response();
+    let revision = trigger_revision_response();
+    let authorization = connection_authorization_response();
+    let connection = trigger_connection_response();
+    let revoked_connection = revoked_trigger_connection_response();
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::CREATED, &draft),
+        StubResponse::json(StatusCode::OK, &draft),
+        StubResponse::json(StatusCode::CREATED, &revision),
+        StubResponse::json(StatusCode::OK, &revision),
+        StubResponse::json(StatusCode::OK, &authorization),
+        StubResponse::json(StatusCode::OK, &authorization),
+        StubResponse::json(StatusCode::OK, &revoked_connection),
+        StubResponse::json(StatusCode::OK, &connection),
+        StubResponse::json(StatusCode::CREATED, LAUNCH),
+        StubResponse::json(StatusCode::CREATED, LAUNCH),
+        StubResponse::json(StatusCode::OK, LAUNCH),
+        StubResponse::json(StatusCode::OK, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+        StubResponse::json(StatusCode::OK, LAUNCH),
+        StubResponse::json(StatusCode::OK, LAUNCH),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+    let content = trigger_content_draft();
+
+    let _: TriggerDraft = client
+        .create_trigger(
+            CreateTriggerRequest {
+                selected_service_id: "service_fixture".into(),
+                content: content.clone(),
+            },
+            "exact-00",
+        )
+        .await
+        .unwrap();
+    let _: TriggerDraft = client
+        .update_trigger(
+            "trigger_fixture",
+            UpdateTriggerRequest {
+                expected_version: 1,
+                selected_service_id: "service_fixture".into(),
+                content,
+            },
+            "exact-01",
+        )
+        .await
+        .unwrap();
+    let _: TriggerRevision = client
+        .publish_trigger(
+            "trigger_fixture",
+            PublishTriggerRequest {
+                expected_version: 1,
+                selected_service_id: "service_fixture".into(),
+            },
+            "exact-02",
+        )
+        .await
+        .unwrap();
+    client
+        .retire_trigger_revision("revision_fixture", "exact-03")
+        .await
+        .unwrap();
+    client
+        .begin_trigger_connection(
+            BeginConnectionRequest {
+                intent_id: "intent_fixture".into(),
+            },
+            "exact-04",
+        )
+        .await
+        .unwrap();
+    client
+        .reconnect_trigger_connection("service_fixture", "exact-05")
+        .await
+        .unwrap();
+    let revoked: TriggerConnection = client
+        .revoke_trigger_connection("service_fixture", "exact-06")
+        .await
+        .unwrap();
+    assert_eq!(revoked.state, TriggerConnectionState::Inactive);
+    let _: TriggerConnection = client
+        .preflight_trigger_connection("service_fixture")
+        .await
+        .unwrap();
+    client
+        .create_or_resume_launch("public_fixture", "exact-07")
+        .await
+        .unwrap();
+    client
+        .create_new_launch("public_fixture", "exact-08")
+        .await
+        .unwrap();
+    client
+        .update_launch_overrides(
+            "launch_fixture",
+            UpdateLaunchOverridesRequest {
+                expected_revision: 0,
+                overrides: Default::default(),
+            },
+            "exact-09",
+        )
+        .await
+        .unwrap();
+    client
+        .select_launch_connection(
+            "launch_fixture",
+            SelectLaunchConnectionRequest {
+                expected_revision: 0,
+                service_id: "service_fixture".into(),
+            },
+            "exact-10",
+        )
+        .await
+        .unwrap();
+    client
+        .start_launch(
+            "launch_fixture",
+            serde_json::from_str(LAUNCH_START_REQUEST).unwrap(),
+            "exact-11",
+        )
+        .await
+        .unwrap();
+    let confirmation = LaunchConfirmationRequest {
+        expected_revision: 0,
+        snapshot_digest: "snapshot_fixture".into(),
+    };
+    client
+        .request_launch_diff("launch_fixture", confirmation.clone(), "exact-12")
+        .await
+        .unwrap();
+    client
+        .publish_launch_branch("launch_fixture", confirmation.clone(), "exact-13")
+        .await
+        .unwrap();
+    client
+        .confirm_pull_request(
+            "launch_fixture",
+            PullRequestOperation::Open,
+            serde_json::from_str(PULL_REQUEST_CONFIRM_REQUEST).unwrap(),
+            "exact-14",
+        )
+        .await
+        .unwrap();
+    client
+        .confirm_pull_request(
+            "launch_fixture",
+            PullRequestOperation::Update,
+            serde_json::from_str(PULL_REQUEST_CONFIRM_REQUEST).unwrap(),
+            "exact-15",
+        )
+        .await
+        .unwrap();
+    client
+        .refresh_pull_request_status(
+            "launch_fixture",
+            serde_json::from_str(PULL_REQUEST_STATUS_REFRESH_REQUEST).unwrap(),
+            "exact-16",
+        )
+        .await
+        .unwrap();
+    client
+        .cancel_launch("launch_fixture", confirmation.clone(), "exact-17")
+        .await
+        .unwrap();
+    client
+        .complete_launch("launch_fixture", confirmation, "exact-18")
+        .await
+        .unwrap();
+    client
+        .recover_initial_prompt(
+            "launch_fixture",
+            RecoverInitialPromptRequest {
+                expected_revision: 12,
+                snapshot_digest: "retained-payload-hash".into(),
+                acknowledge_duplicate_execution_risk: true,
+            },
+            "exact-19",
+        )
+        .await
+        .unwrap();
+
+    let requests = stub.requests().await;
+    let expected = [
+        (Method::POST, "/proxy/api/v1/triggers"),
+        (Method::PUT, "/proxy/api/v1/triggers/trigger_fixture"),
+        (
+            Method::POST,
+            "/proxy/api/v1/triggers/trigger_fixture/publish",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/trigger-revisions/revision_fixture/retire",
+        ),
+        (Method::POST, "/proxy/api/v1/trigger-connections"),
+        (
+            Method::POST,
+            "/proxy/api/v1/trigger-connections/service_fixture/reconnect",
+        ),
+        (
+            Method::DELETE,
+            "/proxy/api/v1/trigger-connections/service_fixture",
+        ),
+        (
+            Method::GET,
+            "/proxy/api/v1/trigger-connections/service_fixture/preflight",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/triggers/public/public_fixture/launches",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/triggers/public/public_fixture/launches/new",
+        ),
+        (
+            Method::PATCH,
+            "/proxy/api/v1/launches/launch_fixture/overrides",
+        ),
+        (
+            Method::PUT,
+            "/proxy/api/v1/launches/launch_fixture/connection",
+        ),
+        (Method::POST, "/proxy/api/v1/launches/launch_fixture/start"),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/contributions/review",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/contributions/publish",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/pull-request/open",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/pull-request/update",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/pull-request/refresh",
+        ),
+        (Method::POST, "/proxy/api/v1/launches/launch_fixture/cancel"),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/complete",
+        ),
+        (
+            Method::POST,
+            "/proxy/api/v1/launches/launch_fixture/recover-initial-prompt",
+        ),
+    ];
+    assert_eq!(requests.len(), expected.len());
+    let keys = [
+        Some("exact-00"),
+        Some("exact-01"),
+        Some("exact-02"),
+        Some("exact-03"),
+        Some("exact-04"),
+        Some("exact-05"),
+        Some("exact-06"),
+        None,
+        Some("exact-07"),
+        Some("exact-08"),
+        Some("exact-09"),
+        Some("exact-10"),
+        Some("exact-11"),
+        Some("exact-12"),
+        Some("exact-13"),
+        Some("exact-14"),
+        Some("exact-15"),
+        Some("exact-16"),
+        Some("exact-17"),
+        Some("exact-18"),
+        Some("exact-19"),
+    ];
+    for (index, ((request, (method, path)), key)) in
+        requests.iter().zip(expected).zip(keys).enumerate()
+    {
+        assert_eq!(request.method, method, "command {index}");
+        assert_eq!(request.uri.path(), path, "command {index}");
+        assert_eq!(request.idempotency_key.as_deref(), key, "command {index}");
+    }
+    assert_eq!(
+        fixture(std::str::from_utf8(&requests[12].body).unwrap()),
+        fixture(LAUNCH_START_REQUEST)
+    );
+    assert_eq!(
+        fixture(std::str::from_utf8(&requests[17].body).unwrap()),
+        fixture(PULL_REQUEST_STATUS_REFRESH_REQUEST)
+    );
+    assert_eq!(
+        fixture(std::str::from_utf8(&requests[19].body).unwrap()),
+        serde_json::json!({
+            "expected_revision": 0,
+            "snapshot_digest": "snapshot_fixture",
+        })
+    );
+    assert_eq!(
+        fixture(std::str::from_utf8(&requests[20].body).unwrap()),
+        serde_json::json!({
+            "expected_revision": 12,
+            "snapshot_digest": "retained-payload-hash",
+            "acknowledge_duplicate_execution_risk": true,
+        })
+    );
+}
+
+#[tokio::test]
+async fn trigger_connection_revocation_rejects_a_different_service_projection() {
+    let mut connection = fixture(&trigger_connection_response());
+    connection["service_id"] = serde_json::json!("service_other");
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &connection.to_string())]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client
+            .revoke_trigger_connection("service_fixture", "revoke-exact-key")
+            .await,
+        Err(Error::Protocol { ref message })
+            if message.contains("different GitHub connection")
+    ));
+}
+
+#[tokio::test]
+async fn repository_resolution_is_authenticated_keyless_and_canonical() {
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, REPOSITORY_SELECTION)]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let selection = client
+        .resolve_trigger_repository("service_fixture", "upstream-owner", ".github")
+        .await
+        .unwrap();
+    assert_eq!(selection.repository.repository_id, 10);
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::GET);
+    assert_eq!(
+        requests[0].uri.path(),
+        "/proxy/api/v1/trigger-connections/service_fixture/repositories/resolve"
+    );
+    assert_eq!(
+        requests[0].uri.query(),
+        Some("owner=upstream-owner&name=.github")
+    );
+    assert!(requests[0].authorization.is_some());
+    assert_eq!(requests[0].idempotency_key, None);
+}
+
+#[tokio::test]
+async fn repository_resolution_rejects_non_canonical_locators_before_transport() {
+    let stub = Stub::start([]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    for (owner, name) in [
+        ("", "project"),
+        ("upstream/owner", "project"),
+        ("upstream-owner", ".."),
+        ("upstream-owner", "project?private=true"),
+        (" upstream-owner", "project"),
+    ] {
+        assert!(matches!(
+            client
+                .resolve_trigger_repository("service_fixture", owner, name)
+                .await,
+            Err(Error::Protocol { ref message })
+                if message.contains("canonical owner or repository name")
+        ));
+    }
+    assert!(stub.requests().await.is_empty());
+}
+
+#[tokio::test]
+async fn pull_request_review_is_keyless_while_confirmation_is_keyed() {
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, PULL_REQUEST_DRAFT),
+        StubResponse::json(StatusCode::ACCEPTED, LAUNCH),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    client
+        .review_pull_request(
+            "launch_fixture",
+            serde_json::from_str(PULL_REQUEST_REVIEW_REQUEST).unwrap(),
+        )
+        .await
+        .unwrap();
+    client
+        .confirm_pull_request(
+            "launch_fixture",
+            PullRequestOperation::Open,
+            serde_json::from_str(PULL_REQUEST_CONFIRM_REQUEST).unwrap(),
+            "confirm-exact",
+        )
+        .await
+        .unwrap();
+
+    let requests = stub.requests().await;
+    assert_eq!(requests[0].idempotency_key, None);
+    assert_eq!(
+        requests[1].idempotency_key.as_deref(),
+        Some("confirm-exact")
+    );
+}
+
+#[tokio::test]
+async fn trigger_contract_rejects_internal_fields_before_typed_decoding() {
+    let forbidden = [
+        "idempotency_key_hash",
+        "intent_key",
+        "provider_request_id",
+        "object_reference",
+        "baseline_object_reference",
+        "backing_key_id",
+        "worker_fencing_token",
+        "fencing_counter",
+        "subject_token_generation",
+        "session_credential_generation",
+        "session_credential_authority",
+        "custody_generation",
+        "provider_key_id",
+        "provider_state_version",
+        "grant_fingerprint",
+        "checkpoint_object",
+        "diff_artifact_object",
+        "prompt_origin_key",
+        "prompt_payload_hash",
+    ];
+    let responses = forbidden.iter().map(|field| {
+        let mut launch = fixture(LAUNCH);
+        launch["steps"][0][*field] = serde_json::json!(99);
+        StubResponse::json(StatusCode::OK, &launch.to_string())
+    });
+    let stub = Stub::start(responses).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    for field in forbidden {
+        assert!(matches!(
+            client.read_launch("launch_fixture").await,
+            Err(Error::Protocol { ref message }) if message.contains(field)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn trigger_contract_admits_public_pull_request_provider_correlation_at_its_record() {
+    let mut launch = fixture(LAUNCH);
+    let review = fixture(DIFF_REVIEW);
+    launch["state"] = serde_json::json!("pr_open");
+    launch["pull_request"] = review["pull_request"].clone();
+    let page = serde_json::json!({ "items": [launch.clone()], "next_cursor": null });
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, &launch.to_string()),
+        StubResponse::json(StatusCode::OK, &page.to_string()),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let launch = client.read_launch("launch_fixture").await.unwrap();
+    let pull_request = launch.pull_request.expect("fixture carries a pull request");
+    assert_eq!(
+        pull_request.provider_request_id.as_deref(),
+        Some("github-request-fixture")
+    );
+    assert_eq!(pull_request.head_matches_launch, Some(false));
+    let page = client
+        .list_launches(LaunchListRequest::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        page.items[0]
+            .pull_request
+            .as_ref()
+            .and_then(|record| record.provider_request_id.as_deref()),
+        Some("github-request-fixture")
+    );
+}
+
+#[tokio::test]
+async fn launch_list_filters_by_one_validated_session_identifier() {
+    let page = serde_json::json!({ "items": [], "next_cursor": null });
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &page.to_string())]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    client
+        .list_launches(LaunchListRequest {
+            session_id: Some("ses_fixture".to_owned()),
+            limit: Some(1),
+            ..LaunchListRequest::default()
+        })
+        .await
+        .unwrap();
+
+    let requests = stub.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].uri.path(), "/proxy/api/v1/launches");
+    assert_eq!(
+        requests[0].uri.query(),
+        Some("session_id=ses_fixture&limit=1")
+    );
+}
+
+#[tokio::test]
+async fn launch_list_rejects_invalid_session_identifiers_before_transport() {
+    let stub = Stub::start([]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    for session_id in ["", "   ", "ses/fixture"] {
+        assert!(matches!(
+            client
+                .list_launches(LaunchListRequest {
+                    session_id: Some(session_id.to_owned()),
+                    ..LaunchListRequest::default()
+                })
+                .await,
+            Err(Error::Protocol { ref message })
+                if message.contains("session id must be a non-empty path identifier")
+        ));
+    }
+    assert!(stub.requests().await.is_empty());
+}
+
+#[tokio::test]
+async fn trigger_contract_rejects_unknown_closed_enum_values() {
+    let mut launch = fixture(LAUNCH);
+    launch["effective"]["permission"] = serde_json::json!("future_permission");
+    let stub = Stub::start([StubResponse::json(StatusCode::OK, &launch.to_string())]).await;
+    let (client, _) = stub_client(&stub, 1);
+
+    assert!(matches!(
+        client.read_launch("launch_fixture").await,
+        Err(Error::Protocol { ref message })
+            if message.contains("future_permission") && message.contains("unknown variant")
+    ));
+}
+
+#[tokio::test]
+async fn launch_progress_normalizes_identical_duplicates_and_rejects_unsafe_replay() {
+    let base = fixture(LAUNCH_PROGRESS);
+    let launch_id = base["launch_id"]
+        .as_str()
+        .expect("progress fixture has a Launch id")
+        .to_owned();
+
+    let mut identical = base.clone();
+    let duplicate = identical["events"][0].clone();
+    identical["events"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, duplicate);
+
+    let mut conflicting = base.clone();
+    let mut duplicate = conflicting["events"][0].clone();
+    duplicate["correlation_id"] = serde_json::json!("conflicting-correlation");
+    conflicting["events"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, duplicate);
+
+    let mut gap = base.clone();
+    gap["events"].as_array_mut().unwrap().remove(1);
+
+    let mut mixed_launch = base.clone();
+    mixed_launch["events"][1]["launch_id"] = serde_json::json!("launch_other");
+
+    let mut bad_cursor = base.clone();
+    bad_cursor["next_cursor"] = serde_json::json!(4);
+
+    let mut wrong_page = base.clone();
+    wrong_page["launch_id"] = serde_json::json!("launch_other");
+
+    let stub = Stub::start([
+        StubResponse::json(StatusCode::OK, &identical.to_string()),
+        StubResponse::json(StatusCode::OK, &conflicting.to_string()),
+        StubResponse::json(StatusCode::OK, &gap.to_string()),
+        StubResponse::json(StatusCode::OK, &mixed_launch.to_string()),
+        StubResponse::json(StatusCode::OK, &bad_cursor.to_string()),
+        StubResponse::json(StatusCode::OK, &wrong_page.to_string()),
+    ])
+    .await;
+    let (client, _) = stub_client(&stub, 1);
+
+    let progress = client
+        .read_launch_progress(&launch_id, 0, 100)
+        .await
+        .expect("an identical adjacent duplicate is harmless");
+    assert_eq!(progress.events.len(), 5);
+    assert_eq!(progress.next_cursor, 5);
+
+    for expected in [
+        "conflicting duplicate",
+        "sequence gap",
+        "belongs to launch_other",
+        "next_cursor 4",
+        "response belongs to launch_other",
+    ] {
+        assert!(matches!(
+            client.read_launch_progress(&launch_id, 0, 500).await,
+            Err(Error::Protocol { ref message }) if message.contains(expected)
+        ));
+    }
+
+    assert!(matches!(
+        client.read_launch_progress(&launch_id, 0, 501).await,
+        Err(Error::Protocol { ref message }) if message.contains("1 through 500")
+    ));
+    assert_eq!(stub.requests().await.len(), 6);
 }
 
 #[tokio::test]

@@ -64,6 +64,35 @@ Capabilities are one half of what a session is; **reach** is the other. Capabili
 
 An interface exposing a subset is expected. An interface inventing an operation absent from the core is a defect.
 
+### Trigger and Launch workflow projection
+
+Trigger and Launch resources form a control-plane workflow around a session;
+they do not turn a Launch identifier into a session identifier or add hidden
+session operations. Their public projection is fixed as follows:
+
+| Capability | AG-UI | REST/SDK | PTY | MCP | A2A |
+|---|---|---|---|---|---|
+| Anonymous Trigger preview | Read-only `cma:trigger` companion | Public read | Absent | Absent | Absent |
+| Launch, repository, and pull-request snapshot | Owner-only `cma:trigger` companion | Owner read | Absent | Absent | Absent |
+| Launch progress replay | Owner-only cursor replay | Owner cursor replay | Absent | Absent | Absent |
+| Diff review and artifact read | Owner-only `cma:trigger` companion | Owner read | Absent | Absent | Absent |
+| Draft, Start, cancel, retry, publish, pull-request confirmation/status refresh, and finish | Absent | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
+
+AG-UI declares its closed read-only subset under `features.custom["cma:trigger"]`.
+The companion resources do not use `threadId` or `runId`: those fields continue
+to mean a CMA session and one session turn. REST is the sole mutation projection
+and the dashboard calls the same TypeScript SDK contract available to external
+clients. PTY cannot represent the workflow, while the unserved MCP and A2A
+designs acquire no Trigger operations in this MVP.
+
+Repository publishers and contributors should use
+[CMA_Trigger_Publishing.md](./CMA_Trigger_Publishing.md). The complete authority
+and recovery contracts are [CMA_Trigger.md](./CMA_Trigger.md) and
+[CMA_Trigger_Recovery.md](./CMA_Trigger_Recovery.md); public-exposure evidence
+is tracked separately in
+[CMA_Trigger_Release_Readiness.md](./CMA_Trigger_Release_Readiness.md), so a
+passing local projection test is never presented as GitHub or NyxID proof.
+
 ---
 
 ## 2. Session model

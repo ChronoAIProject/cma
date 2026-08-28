@@ -1601,6 +1601,7 @@ async fn terminal_repair_inherits_a_racing_empty_pack_cleanup_acknowledgement() 
         claim: "rotn_terminal_cleanup_rebase".into(),
         snapshot_ref: format!("sessions/{}/handover.snapshot", created.id.0),
         snapshot_at: "2026-08-27T02:03:04Z".into(),
+        trigger_recovery: None,
         rotations_from: residual.session.rotations,
         rotations_to: residual.session.rotations.saturating_add(1),
         target: crate::store::PendingHandoverTarget::RuntimeVersion {
@@ -2041,6 +2042,7 @@ async fn queued_terminal_repairs_refuse_changed_exact_authority() {
                     claim: format!("rotn_successor_{changed:?}"),
                     snapshot_ref: format!("sessions/{}/successor.snapshot", created.id.0),
                     snapshot_at: "2026-08-27T05:06:07Z".into(),
+                    trigger_recovery: None,
                     rotations_from: rival.session.rotations,
                     rotations_to: rival.session.rotations.saturating_add(1),
                     target: crate::store::PendingHandoverTarget::RuntimeVersion {

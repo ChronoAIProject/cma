@@ -12,6 +12,7 @@ futures-util = { workspace = true }
 governor = { workspace = true }
 ipnet = { workspace = true }
 sha2 = { workspace = true }
+sha1 = { workspace = true }
 layer1-public = { workspace = true }
 layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
@@ -20,6 +21,7 @@ reqwest = { workspace = true }
 ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+similar = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
 tower-http = { workspace = true }

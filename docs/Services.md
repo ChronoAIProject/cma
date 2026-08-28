@@ -57,7 +57,7 @@ Recorded rather than recomputed, and this is the step people expect to be missin
 
 | Variable | Value | Why |
 |---|---|---|
-| `NYXID_URL` | `http://127.0.0.1:9092` | the supervisor's loopback proxy, not the platform |
+| `NYXID_URL` | `http://127.0.0.2:9092` | the supervisor's signed, policy-enforcing loopback proxy, not the platform |
 | `NYXID_ACCESS_TOKEN` | `local-proxy-no-credential-needed` | a placeholder, deliberately useless |
 | `CHRONO_SESSION_REACHES` | `api-github,chrono-llm` | what this session may reach, by name |
 
@@ -82,7 +82,7 @@ The `nyxid` CLI is a baseline package and a baseline skill (`cma/src/config.rs`,
 - **A credential is minted per session**, against that session's own list, and re-minted the same way for a replacement runtime.
 - **A session's reach is fixed when it is provisioned.** A profile can be edited afterwards — widened, narrowed, or deleted — and the session keeps what it was given. Reading the profile to learn a running session's reach gives the wrong answer precisely when somebody has changed one.
 - **A rotation changes nothing about reach.** A replaced runtime is the same session.
-- **The session reports its own answer.** `reach` on the session object over REST ([Sessions](./API_REST.md#3-sessions)), and `CHRONO_SESSION_REACHES` inside the sandbox. Both carry identifiers and display names; neither carries a credential.
+- **The session reports its own answer.** `reach` on the session object over REST ([Sessions](./API_REST.md#4-sessions)), and `CHRONO_SESSION_REACHES` inside the sandbox. Both carry identifiers and display names; neither carries a credential.
 
 ---
 
@@ -121,8 +121,28 @@ Recorded here rather than left in an issue, because a page that describes the in
 - `nyxid` resolves on `PATH` in the published runtime image, at the version the Dockerfile pins.
 - `NYXID_ACCESS_TOKEN` in the sandbox is the placeholder, present from the first frame, and the real credential is not in the sandbox environment at any point.
 - A sandbox whose supervisor holds no credential yet answers **`503`, body `no upstream credential available yet`** — not a `401`. An agent reasoning about a `401` will reason wrongly.
-- A deployment that leaves `CHRONO_PLATFORM_BASE_URL` unset starts **no proxy at all**, while `NYXID_URL` still points at `127.0.0.1:9092` — so the sandbox sees **connection refused**, not a refusal from a broker.
+- An ordinary deployment that leaves `CHRONO_PLATFORM_BASE_URL` unset starts **no proxy at all**, while `NYXID_URL` still points at `127.0.0.2:9092` — so the sandbox sees **connection refused**, not a refusal from a broker. A Trigger runtime fails startup instead because its platform gateway is mandatory.
 - Nothing in the sandbox environment named the session's grant. That gap is what `CHRONO_SESSION_REACHES` (§1.5) closes.
+
+**Established by the Trigger enforcement contract and deterministic tests:**
+
+- A Trigger runtime receives a signed, Launch- and session-bound GitHub policy
+  only when it advertises `github_capability_v1`; an old runtime or a missing,
+  expired, revoked, malformed, or stale-generation policy fails closed.
+- Before issue and every renewal, CMA resolves the numeric repository through
+  the exact NyxID UserService and signs only the provider-returned canonical
+  owner/name binding. The policy lifetime is at most 60 seconds with at most 5
+  seconds of accepted clock skew.
+- Layer 4 admits only the closed method/route/body operation families in the
+  policy. It rejects another repository, owner, branch, session, operation
+  class, path encoding, or `force=true` update before forwarding the request.
+- Policy replacement and revoke tombstones are monotonic and acknowledged.
+  Until Layer 4 acknowledges a tombstone or NyxID confirms agent-key
+  revocation, CMA reports `revocation_pending`; expiry is the disconnected
+  runtime backstop, not a claim of immediate revocation.
+- Pull-request creation/update and other CMA-owned irreversible effects remain
+  typed server-side writers. A session policy never authorizes upstream writes
+  or pull-request mutation.
 
 **Not yet established**, and each needs a signed-in identity with a service actually granted:
 
@@ -130,8 +150,17 @@ Recorded here rather than left in an issue, because a page that describes the in
 - whether the granted scope covers the calls an agent actually makes;
 - what a scope refusal looks like from inside the sandbox;
 - whether a credential renewal mid-session is invisible to a working agent.
+- whether the signed policy succeeds and refuses the required cases inside the
+  pinned release runtime against a disposable real repository;
+- whether the same policy and paired workspace/conversation state survive a
+  real control-plane restart and runtime image rotation; and
+- whether tombstone acknowledgement or NyxID agent-key revocation is observed
+  within the documented bound in staging.
 
-Until those are walked, the honest claim is that every piece of the path is built and connected, not that the flow has been seen to work end to end.
+Until those are walked, the honest claim is that the general service path and
+the Trigger enforcement path are built and deterministically tested, not that
+the Trigger flow has been seen to work end to end against the pinned deployed
+runtime and real provider.
 
 ---
 
@@ -147,7 +176,7 @@ The same reasoning runs through the rest of the path: the sandbox gets a placeho
 
 ## See also
 
-- [Environment Profiles](./API_REST.md#2-environment-profiles) — authoring the service selection and reading the catalogue
-- [Sessions](./API_REST.md#3-sessions) — the `reach` field on a session, and the three refusals as REST renders them
+- [Environment Profiles](./API_REST.md#3-environment-profiles) — authoring the service selection and reading the catalogue
+- [Sessions](./API_REST.md#4-sessions) — the `reach` field on a session, and the three refusals as REST renders them
 - `docs/API_Overview.md` §6 — rule 6, "Identity is NyxID"
 - `CLAUDE.md` §4 — why a change to deployment surface changes `infra/` in the same pull request

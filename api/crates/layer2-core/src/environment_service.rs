@@ -334,6 +334,74 @@ impl EnvironmentProfileService {
         Ok(profile)
     }
 
+    /// Create or reconcile CMA's deterministic contributor-owned Trigger profile.
+    ///
+    /// Public callers cannot choose this identifier namespace. A retry may
+    /// reuse the row only when its owner and complete normalized content match;
+    /// an occupied but different row is never overwritten.
+    pub(crate) async fn ensure_trigger_profile(
+        &self,
+        owner: &crate::SubjectId,
+        origin: &crate::TriggerSessionOrigin,
+        mut spec: EnvironmentProfileSpec,
+    ) -> Result<EnvironmentProfile, CoreError> {
+        origin
+            .validate()
+            .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+        spec.validate_with_baseline(&self.baseline)?;
+        self.apply_deployment_defaults(&mut spec);
+        spec.name = spec.name.trim().to_string();
+        let id = origin
+            .environment_profile_id()
+            .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+
+        if let Some(existing) = self.store.get(&id).await.map_err(store_failed)? {
+            return self.verify_trigger_profile(existing, owner, &spec);
+        }
+
+        let now = now_rfc3339();
+        let candidate = EnvironmentProfile {
+            id: id.clone(),
+            owner: owner.clone(),
+            name: spec.name.clone(),
+            variables: spec.variables.clone(),
+            packages: spec.packages.clone(),
+            agent: spec.agent.clone(),
+            services: spec.services.clone(),
+            agent_notes: spec.agent_notes.clone(),
+            created_at: now.clone(),
+            updated_at: now,
+            preferred: false,
+        };
+        let insertion = self.store.upsert(&candidate).await;
+        let durable = self.store.get(&id).await.map_err(store_failed)?;
+        let Some(durable) = durable else {
+            return match insertion {
+                Ok(()) => Err(CoreError::RuntimeUnavailable(
+                    "the Trigger environment profile was not readable after creation".into(),
+                )),
+                Err(error) => Err(store_failed(error)),
+            };
+        };
+        self.verify_trigger_profile(durable, owner, &spec)
+    }
+
+    fn verify_trigger_profile(
+        &self,
+        existing: EnvironmentProfile,
+        owner: &crate::SubjectId,
+        expected: &EnvironmentProfileSpec,
+    ) -> Result<EnvironmentProfile, CoreError> {
+        let normalized = self.normalize_profile(existing);
+        if &normalized.owner != owner || normalized.to_spec() != *expected {
+            return Err(CoreError::InvalidRequest(
+                "the deterministic Trigger environment profile is occupied by different authority or configuration"
+                    .into(),
+            ));
+        }
+        Ok(normalized)
+    }
+
     /// Read one of the caller's profiles.
     pub async fn get(
         &self,
@@ -397,6 +465,9 @@ impl EnvironmentProfileService {
             .require(Capability::ManageOwnEnvironmentProfiles)?;
         // Validate before asking the store to clear anything. A profile the
         // caller does not own is refused by the same rule as every other read.
+        if id.is_some_and(EnvironmentProfileId::is_trigger_managed) {
+            return Err(CoreError::Forbidden);
+        }
         let selected = match id {
             Some(wanted) => Some(self.owned(caller, wanted).await?),
             None => None,
@@ -441,6 +512,9 @@ impl EnvironmentProfileService {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
+        if id.is_trigger_managed() {
+            return Err(CoreError::Forbidden);
+        }
         let existing = self.owned(caller, id).await?;
         let mut normalized_spec = spec.clone();
         self.apply_deployment_defaults(&mut normalized_spec);
@@ -486,6 +560,9 @@ impl EnvironmentProfileService {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
+        if id.is_trigger_managed() {
+            return Err(CoreError::Forbidden);
+        }
         // Read first: deleting by id alone would let one subject remove
         // another's profile by guessing an identifier.
         self.owned(caller, id).await?;
