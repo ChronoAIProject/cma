@@ -36,6 +36,123 @@ As of 2026-08-28:
 - production serves CMA API/web `v0.7.0` and advertises only the core and
   terminal conformance classes; it has no Trigger surface and cannot provide a
   Trigger smoke or rollout result;
+- the production app-origin route is still the legacy web-only rule and the
+  effective-policy input remains `HealthCheckPolicy/cma-api` on `/livez`. All
+  three current routes are reconciled, but the present operator lacks the
+  temporary effective-routing read role, so the checked `/ready` route-adoption
+  preflight remains closed before its first mutation. That role must include
+  `compute.globalAddresses.get`, `compute.globalForwardingRules.get`,
+  `compute.targetHttpProxies.get`, `compute.targetHttpsProxies.get`,
+  `compute.urlMaps.get`, `compute.sslCertificates.get`,
+  `compute.backendServices.get`, `compute.healthChecks.get`,
+  `compute.networkEndpointGroups.get`,
+  `compute.networkEndpointGroups.listNetworkEndpoints`, and
+  `compute.sslPolicies.get` when referenced. Once access exists, a reviewed live
+  capture must bind Gateway UID/resourceVersion/annotations/status IP through
+  the global address, 80/443 forwarding rules, HTTP/HTTPS proxies, redirect and
+  routing URL maps, certificates/SSL policy, backend services, health checks,
+  and zonal NEGs, with Compute fingerprints and the Gateway identity re-read.
+  The stable closure must prove equal Gateway/address/forwarding-rule IPs, exact
+  TCP 80/443 proxy targets, redirect and serving maps, TLS/certificate/SSL/QUIC/
+  proxy settings, annotated API/web backend refs, and every CMA host/path action
+  with no wildcard overlap, weighted backend, rewrite, mirror, or fault branch;
+  only observational metadata may be stripped.
+  The current checker is an open partial predicate; before a future change may
+  enable the production mutation guard or execute adoption, live evidence must
+  drive a closed normalized projection and
+  per-field mutation tests for CDN, custom headers, IAP/security policies,
+  affinity, draining, logging, LB/capacity/rate behavior, all API/web health
+  links and health timing/threshold/proxy/host/response fields, plus exact
+  host/path/backend/header/redirect, certificate, SSL, QUIC, and proxy settings.
+  The closed root projection must also validate the shared Gateway's exact spec,
+  current-generation `Programmed`/listener status, and each Service's desired
+  `cloud.google.com/neg` annotation, complete NEG-status shape, type, ports,
+  traffic-policy/default fields, and mode-specific source or cutover-fence
+  selector. Step 10 needs distinct fenced-from-snapshot and source/adopted
+  checker modes. A captured nonempty NEG-member JSON must also bind any
+  instance/zone identity to the verified pod's node/provider identity; stale NEG
+  status and backend links are not roots of trust.
+  No expected absent/default value may be invented without that capture.
+  Traffic-fence proof separately requires every advertised `cma-api` zonal NEG
+  to be empty. Zero EndpointSlice entries alone are insufficient; two consecutive
+  empty NEG sweeps must retain the same Service and complete EndpointSlice
+  name/UID/resourceVersion records across all bounded Compute calls.
+  That preflight now also requires a clean checkout at the reviewed full commit,
+  exact source-bundle validation, source and desired-object seals, an old-image
+  probe including the direct `/ready` response, server-dry-run forward and
+  rollback replacement sets, an absolute owned non-symlink mode-`0700` custody
+  root with an explicit
+  durable-off-host attestation, file fsync and supported directory-fsync
+  barriers before the rollback digest is accepted, an externally recorded
+  rollback SHA-256, and the retained sealed directory for the compare-and-swap
+  manual recovery path.
+  Adoption and restore additionally require the honest
+  `CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer` attestation after
+  direct writes are fenced across the entire checked routing graph. Because the
+  Gateway is shared, creation/deletion/spec writes must be frozen for every
+  `HTTPRoute` eligible to attach to either listener, not just the three owned
+  routes; the only alternative is an admission-enforced policy that rejects any
+  route overlapping either CMA hostname. The remaining scope includes the three
+  owned `HTTPRoute`s, `HealthCheckPolicy/cma-api`, the shared
+  `gateway-infra/chronoai-gateway` Gateway, the `cma-api` and `cma-web` Services
+  and GCPBackendPolicies, and the generated Compute global address, forwarding
+  rules, target proxies, URL maps, certificates/SSL policy, backend services,
+  health checks, and NEGs. GitOps, release automation, and every human or
+  service with one of those write paths must remain paused through completion;
+  normal GKE Gateway controller status and effective-resource reconciliation
+  remains allowed.
+  Adoption must prove effective `/ready` with unchanged snapshot routes before
+  route writes; rollback must prove the restored snapshot routes, their
+  identities, the source-image probe, and the closed legacy health transition
+  set `{/livez,/ready}` before it conditionally returns the policy to `/livez`.
+  Failure handling masks `HUP`, `INT`, `QUIT`, and `TERM` as its first state change after
+  capturing the exit status; successful adoption remains signal-masked while it
+  disarms rollback, cleans temporary state, and prints retained custody details;
+- a 2026-08-29 read-only comparison found both CMA hostnames proxied through
+  Cloudflare while the GKE Gateway reported `136.69.78.214`. Public DNS is not
+  origin proof, and that observed address is not a release constant. The closed
+  live-derived projection must feed two independent lanes: ordinary DNS probes
+  through the complete Cloudflare public chain, plus HTTP/HTTPS `curl --resolve`
+  probes pinned to the exact coherently captured Gateway address with Host/SNI
+  preserved and `%{remote_ip}` required to equal it. If Cloudflare remains
+  proxied, the evidence gate must also close its behavior-bearing DNS,
+  origin/TLS, redirect, cache, transform, header, and routing configuration and
+  retain stable versioned identities around the probe set;
+- production client-IP authority remains a choose-one gate. The current
+  `CHRONO_SERVER_TRUSTED_PROXY_HOPS=1` direct-GFE contract safely selects
+  Cloudflare egress rather than the visitor on the observed chain and therefore
+  merges unrelated users' anonymous/admission budgets. The reviewed release
+  must either make both hostnames DNS-only/direct-to-GFE, fence direct origin
+  access to an authenticated Cloudflare path, or implement conditional
+  chain-aware selection: an approved GFE peer must report an upstream in the
+  reviewed pinned official Cloudflare CIDRs before CMA selects the next-left
+  Cloudflare-normalized visitor; otherwise it uses the GFE-observed upstream and
+  ignores caller prefixes. Retaining edge-shared budgets instead requires an
+  explicit weaker product contract with revised claims, limits, tests, and
+  alerts. A blind hop-count increase is prohibited because a direct-origin
+  caller could spoof the selected prefix. Production adoption, `--adopt`, and
+  step 10 remain disabled until the selected branch passes a live Cloudflare
+  header-shape drill plus direct-origin, spoofed-prefix,
+  non-Cloudflare-upstream, malformed-chain, CIDR-drift, IPv4, and IPv6 evidence;
+- the checked adoption and traffic-restoration mutation entry points are
+  hard-disabled by a reviewed source constant while those gates remain open.
+  Every Compute truth read runs `gcloud` under `env -i` with only the operator's
+  `HOME` for the default active Cloud SDK configuration, the current `PATH`,
+  `LC_ALL=C`, and the fixed HTTP timeout; ambient Cloud SDK property, endpoint,
+  credential, custom-CA, Python, and proxy overrides are excluded.
+  Their release curls put `--disable` first, set `--noproxy '*'`, and remove
+  `CURL_CA_BUNDLE`, `CURL_SSL_BACKEND`, `SSL_CERT_DIR`, `SSL_CERT_FILE`, and
+  `SSLKEYLOGFILE`; hostile operator curl configuration, inherited proxies,
+  trust roots, TLS backends, or TLS key logging cannot alter or disclose the
+  authenticated probe. The bearer is rejected before use if it contains CR or
+  LF, and core dumps are fail-closed disabled before it is read so a signaled
+  curl child cannot persist the private header. A matching convergence
+  observation that completes after its wall-clock deadline is a failure, not a
+  late success;
+- Step 10 pins the initial coherent fenced `cma-api` Service UID, NEG name, and
+  zone set across selector restoration, every re-fence, both reopen proofs, and
+  the final projection. An exact-looking delete/recreate cannot establish a new
+  baseline inside the transaction;
 - a read-only probe through `chronoai-shining` proved that NyxID's catalog-ID
   route plus the exact `_nyxid_via` UserService ID reaches fixture repository
   `1349237845`, while placing that UserService ID directly after `/proxy/`
@@ -58,6 +175,51 @@ As of 2026-08-28:
 This baseline explains why all provider/staging rows remain open. Replace it
 with linked evidence from the actual candidate build rather than reinterpreting
 the existing production service as a test target.
+
+### Gateway and Cloudflare operator evidence checklist
+
+The Gateway release lane remains read-only until every item below is attached
+to the final candidate and independently reviewed:
+
+- Run the baseline Cloudflare capture from the exact clean reviewed commit with
+  the trusted `env -i` launcher and reviewed host toolchain. Supply one
+  at-most-one-hour read-only token through protected descriptor 7 using an
+  anonymous pipe; never export it, place it in arguments, or retain it in the
+  evidence bundle.
+- Retain the atomically published 29-root baseline bundle in durable off-host
+  custody. Independently record and verify `receipt.sha256`, then derive the
+  candidate policy from that exact receipt. Approve only an unchanged zone ID,
+  account ID, `sourceEvidenceSha256`, full `behaviorProjection`, and settings;
+  only the candidate status may change to `approved`.
+- Record a bounded external freeze ID and disable every human and automated
+  Cloudflare writer represented by that projection. Keep the freeze active for
+  the complete origin/public campaign.
+- Let the checked origin program create both fresh Cloudflare captures itself.
+  It must prove pre-capture completion precedes probes, probe completion
+  precedes post-capture, and the exact zone, settings, and full behavior
+  projection remain equal. A previously retained immutable receipt cannot be
+  substituted for either side of this window.
+- Retain evidence that both proxied CMA DNS records bind to the approved Gateway
+  IP; both ordinary-DNS hosts return fresh `DYNAMIC` responses with no `Age`;
+  and separate origin-pinned TLS probes preserve Host/SNI and reach that exact
+  IP. Retain the unchanged source-projection checks from both sides of the
+  campaign.
+- Treat a denied or entitlement-gated Cloudflare root, partial response,
+  mismatch, timeout, probe failure, or durability error as a failed campaign.
+  No successful directory is published on failure. Keep the writer freeze
+  until state is understood, preserve diagnostic evidence, mint a fresh token,
+  and retry into a new absolute directory.
+- Link the reviewed baseline, approved policy digest, pre/post captures, origin
+  receipt, projection receipt, UTC window, operator, reviewer, writer-freeze
+  record, and pass/fail outcome in this ledger. Receipts and policy contain no
+  bearer values or private TLS key material.
+
+Passing this checklist does not enable mutation. The selected client-IP
+authority contract, closed live Gateway policy, admission denial drill, adopted
+and fenced projections, durable fence custody, final source projection, and
+independent release approval remain required. The checked adoption and traffic
+restoration constants stay hard-disabled until a separately reviewed rollout
+commit closes every one of those gates.
 
 ## 2. Evidence record
 
