@@ -102,9 +102,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: cma-trigger-smoke
+    outputs:
+      evidence_id: ${{ steps.evidence_audit.outputs.evidence_id }}
+      evidence_result: ${{ steps.evidence_audit.outputs.evidence_result }}
+      retained_artifact_url: ${{ steps.evidence_upload.outputs.artifact-url }}
     env:
       CMA_TRIGGER_SMOKE_BASE_URL: ${{ vars.CMA_TRIGGER_SMOKE_BASE_URL }}
       CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA: ${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA }}
+      CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST: ${{ vars.CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST }}
+      CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION: ${{ vars.CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION }}
+      CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION: ${{ vars.CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION }}
       CMA_TRIGGER_SMOKE_PUBLIC_ID: ${{ vars.CMA_TRIGGER_SMOKE_PUBLIC_ID }}
       CMA_TRIGGER_SMOKE_REVISION_DIGEST: ${{ vars.CMA_TRIGGER_SMOKE_REVISION_DIGEST }}
       CMA_TRIGGER_SMOKE_SOURCE_SHA: ${{ vars.CMA_TRIGGER_SMOKE_SOURCE_SHA }}
@@ -145,6 +152,47 @@ jobs:
             and .deployment_branch_policy.custom_branch_policies == false
           ' "$environment" >/dev/null
 
+      - name: Capture independent approval provenance
+        id: approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          approvals="$RUNNER_TEMP/cma-trigger-smoke-approvals.json"
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+            > "$approvals"
+
+          operator=$(gh api \
+            "users/$GITHUB_TRIGGERING_ACTOR" \
+            --jq '{login: .login, account_id: .id}')
+          approval_observed_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          reviewers=$(jq -c \
+            --arg approval_observed_at "$approval_observed_at" \
+            '[.[]
+              | select((.state | ascii_downcase) == "approved")
+              | select(any(.environments[]?; .name == "cma-trigger-smoke"))
+              | {login: .user.login, account_id: .user.id, approval_observed_at: $approval_observed_at}]
+             | unique_by(.account_id)
+             | sort_by(.account_id)' \
+            "$approvals")
+          jq -e \
+            --argjson operator "$operator" \
+            'type == "array"
+             and length > 0
+             and all(.[];
+               (.login | type) == "string"
+               and (.account_id | type) == "number"
+               and .account_id > 0
+               and (.approval_observed_at | type) == "string"
+               and .account_id != $operator.account_id
+               and (.login | ascii_downcase) != ($operator.login | ascii_downcase))' \
+            <<< "$reviewers" >/dev/null
+
+          echo "operator_login=$(jq -r '.login' <<< "$operator")" >> "$GITHUB_OUTPUT"
+          echo "operator_account_id=$(jq -r '.account_id' <<< "$operator")" >> "$GITHUB_OUTPUT"
+          echo "reviewers_json=$reviewers" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v6
@@ -168,6 +216,9 @@ jobs:
           jq -n \
             --arg base_url "$CMA_TRIGGER_SMOKE_BASE_URL" \
             --arg build_sha "$CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA" \
+            --arg runtime_image_digest "$CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST" \
+            --arg runtime_version "$CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION" \
+            --arg configuration_revision "$CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION" \
             --arg public_id "$CMA_TRIGGER_SMOKE_PUBLIC_ID" \
             --arg revision_digest "$CMA_TRIGGER_SMOKE_REVISION_DIGEST" \
             --arg source_sha "$CMA_TRIGGER_SMOKE_SOURCE_SHA" \
@@ -182,9 +233,12 @@ jobs:
             --arg path_template "$CMA_TRIGGER_SMOKE_EXPECTED_PATH_TEMPLATE" \
             --arg content_template "$CMA_TRIGGER_SMOKE_EXPECTED_CONTENT_TEMPLATE" \
             '{
-              schema_version: 1,
+              schema_version: 2,
               base_url: $base_url,
               expected_build_sha: $build_sha,
+              runtime_image_digest: $runtime_image_digest,
+              expected_runtime_version: $runtime_version,
+              configuration_revision: $configuration_revision,
               public_id: $public_id,
               revision_digest: $revision_digest,
               source_sha: $source_sha,
@@ -221,12 +275,15 @@ jobs:
           EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
           CMA_TRIGGER_SMOKE_ACCESS_TOKEN: ${{ secrets.CMA_TRIGGER_SMOKE_ACCESS_TOKEN }}
           CMA_TRIGGER_SMOKE_SERVICE_ID: ${{ secrets.CMA_TRIGGER_SMOKE_SERVICE_ID }}
+          CMA_TRIGGER_SMOKE_OPERATOR_LOGIN: ${{ steps.approval.outputs.operator_login }}
+          CMA_TRIGGER_SMOKE_OPERATOR_ACCOUNT_ID: ${{ steps.approval.outputs.operator_account_id }}
+          CMA_TRIGGER_SMOKE_REVIEWERS_JSON: ${{ steps.approval.outputs.reviewers_json }}
         run: |
           set -euo pipefail
           node .github/scripts/cma-trigger-provider-smoke.mjs \
             --run "$CONFIG_PATH" "$EVIDENCE_PATH"
 
-      - name: Reject credentials or unbounded response data in evidence
+      - name: Audit and validate closed provider evidence
         id: evidence_audit
         if: always()
         env:
@@ -237,12 +294,21 @@ jobs:
           set -euo pipefail
           node .github/scripts/cma-trigger-provider-smoke.mjs \
             --audit-evidence "$EVIDENCE_PATH"
+          node .github/scripts/cma-trigger-provider-smoke.mjs \
+            --validate-evidence "$EVIDENCE_PATH"
+          evidence_id=$(jq -r '.evidence_id' "$EVIDENCE_PATH")
+          evidence_result=$(jq -r '.result' "$EVIDENCE_PATH")
+          artifact_name=$(jq -r '.provenance.workflow.artifact_name' "$EVIDENCE_PATH")
+          echo "evidence_id=$evidence_id" >> "$GITHUB_OUTPUT"
+          echo "evidence_result=$evidence_result" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
 
       - name: Upload redacted provider evidence
+        id: evidence_upload
         if: ${{ always() && steps.evidence_audit.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
-          name: cma-trigger-provider-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.evidence_audit.outputs.artifact_name }}
           path: ${{ runner.temp }}/cma-trigger-smoke-evidence.json
           if-no-files-found: error
           retention-days: 30

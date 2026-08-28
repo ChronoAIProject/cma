@@ -363,6 +363,9 @@ jobs:
         # options shipped underneath a green suite because of that.
         timeout-minutes: 5
         run: npm run check:surfaces
+      - name: Trigger browser journey
+        timeout-minutes: 5
+        run: npm run check:trigger-journey
       - name: Dependency audit
         run: npm audit --audit-level=high
 
