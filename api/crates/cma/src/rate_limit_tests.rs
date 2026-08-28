@@ -178,13 +178,32 @@ fn with_xff(mut request: Request<Body>, value: &'static str) -> Request<Body> {
     request
 }
 
+fn with_cf_connecting_ip(mut request: Request<Body>, value: &'static str) -> Request<Body> {
+    request
+        .headers_mut()
+        .insert("cf-connecting-ip", HeaderValue::from_static(value));
+    request
+}
+
 fn trusted_proxy(cidrs: &[&str], forwarded_hops: usize) -> TrustedProxyConfig {
+    trusted_proxy_with_cloudflare(cidrs, forwarded_hops, &[])
+}
+
+fn trusted_proxy_with_cloudflare(
+    cidrs: &[&str],
+    forwarded_hops: usize,
+    cloudflare_cidrs: &[&str],
+) -> TrustedProxyConfig {
     TrustedProxyConfig {
         cidrs: cidrs
             .iter()
             .map(|cidr| cidr.parse().expect("test CIDR parses"))
             .collect(),
         forwarded_hops,
+        cloudflare_cidrs: cloudflare_cidrs
+            .iter()
+            .map(|cidr| cidr.parse().expect("test Cloudflare CIDR parses"))
+            .collect(),
     }
 }
 
@@ -479,6 +498,345 @@ async fn forwarding_headers_are_used_only_from_a_trusted_peer_and_skip_spoofed_p
         StatusCode::TOO_MANY_REQUESTS,
         "an untrusted peer's header must never change its key"
     );
+}
+
+#[tokio::test]
+async fn pinned_cloudflare_upstream_selects_only_the_agreeing_visitor_token() {
+    let app = operation_app(complete_limiters(
+        generous(),
+        generous(),
+        one(),
+        generous(),
+        generous(),
+        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
+    ));
+    let gfe = "35.191.4.7".parse().unwrap();
+
+    let first = with_cf_connecting_ip(
+        with_xff(
+            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
+            "203.0.113.200, 198.51.100.10, 173.245.48.9, 192.0.2.40",
+        ),
+        "198.51.100.10",
+    );
+    assert_eq!(status(&app, first).await, StatusCode::NO_CONTENT);
+
+    let same_visitor_new_spoof = with_cf_connecting_ip(
+        with_xff(
+            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
+            "203.0.113.201, 198.51.100.10, 173.245.48.9, 192.0.2.40",
+        ),
+        "198.51.100.10",
+    );
+    assert_eq!(
+        status(&app, same_visitor_new_spoof).await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "a caller-controlled prefix changed the Cloudflare-authenticated visitor key"
+    );
+
+    let different_visitor = with_cf_connecting_ip(
+        with_xff(
+            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
+            "203.0.113.200, 198.51.100.11, 173.245.48.9, 192.0.2.40",
+        ),
+        "198.51.100.11",
+    );
+    assert_eq!(
+        status(&app, different_visitor).await,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn ambiguous_cloudflare_identity_falls_back_to_the_observed_edge() {
+    let gfe = "35.191.4.7".parse().unwrap();
+    for scenario in [
+        "missing connecting header",
+        "malformed connecting header",
+        "mismatched connecting header",
+        "duplicate connecting header",
+        "comma-joined connecting header",
+        "whitespace connecting header",
+        "worker marker",
+        "pseudo IPv4 overwrite",
+        "pseudo IPv4 without overwrite marker",
+        "malformed visitor token",
+        "missing visitor token",
+    ] {
+        let app = operation_app(complete_limiters(
+            generous(),
+            generous(),
+            one(),
+            generous(),
+            generous(),
+            trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
+        ));
+        for expected in [StatusCode::NO_CONTENT, StatusCode::TOO_MANY_REQUESTS] {
+            let visitor = if expected == StatusCode::NO_CONTENT {
+                "198.51.100.20"
+            } else {
+                "198.51.100.21"
+            };
+            let chain = match scenario {
+                "malformed visitor token" => "not-an-ip, 173.245.48.9, 192.0.2.40",
+                "missing visitor token" => "173.245.48.9, 192.0.2.40",
+                "pseudo IPv4 overwrite" | "pseudo IPv4 without overwrite marker" => {
+                    "240.10.20.30, 173.245.48.9, 192.0.2.40"
+                }
+                _ if visitor == "198.51.100.20" => "198.51.100.20, 173.245.48.9, 192.0.2.40",
+                _ => "198.51.100.21, 173.245.48.9, 192.0.2.40",
+            };
+            let mut candidate = with_xff(
+                request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
+                chain,
+            );
+            match scenario {
+                "missing connecting header" => {}
+                "malformed connecting header" => {
+                    candidate = with_cf_connecting_ip(candidate, "not-an-ip");
+                }
+                "malformed visitor token" | "missing visitor token" => {
+                    candidate = with_cf_connecting_ip(candidate, visitor);
+                }
+                "mismatched connecting header" => {
+                    candidate = with_cf_connecting_ip(candidate, "198.51.100.99");
+                }
+                "duplicate connecting header" => {
+                    candidate.headers_mut().append(
+                        "cf-connecting-ip",
+                        HeaderValue::from_static("198.51.100.20"),
+                    );
+                    candidate.headers_mut().append(
+                        "cf-connecting-ip",
+                        HeaderValue::from_static("198.51.100.21"),
+                    );
+                }
+                "comma-joined connecting header" => {
+                    candidate = with_cf_connecting_ip(candidate, "198.51.100.20, 198.51.100.21");
+                }
+                "whitespace connecting header" => {
+                    candidate = with_cf_connecting_ip(candidate, "198.51.100.20 ");
+                }
+                "worker marker" => {
+                    candidate = with_cf_connecting_ip(candidate, visitor);
+                    candidate
+                        .headers_mut()
+                        .insert("cf-worker", HeaderValue::from_static("example.workers.dev"));
+                }
+                "pseudo IPv4 overwrite" => {
+                    candidate = with_cf_connecting_ip(candidate, "240.10.20.30");
+                    candidate.headers_mut().insert(
+                        "cf-connecting-ipv6",
+                        HeaderValue::from_static("2001:db8:10:20::1"),
+                    );
+                }
+                "pseudo IPv4 without overwrite marker" => {
+                    candidate = with_cf_connecting_ip(candidate, "240.10.20.30");
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                status(&app, candidate).await,
+                expected,
+                "{scenario} did not retain the shared observed-edge key"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn cloudflare_chain_across_multiple_header_fields_stays_right_anchored() {
+    let app = operation_app(complete_limiters(
+        generous(),
+        generous(),
+        one(),
+        generous(),
+        generous(),
+        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
+    ));
+    let gfe = "35.191.4.7".parse().unwrap();
+    for (spoofed, expected) in [
+        ("203.0.113.40", StatusCode::NO_CONTENT),
+        ("203.0.113.41", StatusCode::TOO_MANY_REQUESTS),
+    ] {
+        let mut candidate = request(Method::GET, "/api/v1/conformance", None, Some(gfe));
+        candidate
+            .headers_mut()
+            .append("x-forwarded-for", HeaderValue::from_static(spoofed));
+        candidate.headers_mut().append(
+            "x-forwarded-for",
+            HeaderValue::from_static("198.51.100.40, 173.245.48.9, 192.0.2.40"),
+        );
+        candidate = with_cf_connecting_ip(candidate, "198.51.100.40");
+        assert_eq!(
+            status(&app, candidate).await,
+            expected,
+            "a separate caller-controlled XFF field changed the selected visitor"
+        );
+    }
+}
+
+#[tokio::test]
+async fn non_cloudflare_upstream_ignores_claimed_cloudflare_identity_and_prefix() {
+    let app = operation_app(complete_limiters(
+        generous(),
+        generous(),
+        one(),
+        generous(),
+        generous(),
+        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
+    ));
+    let gfe = "35.191.4.7".parse().unwrap();
+    for (visitor, expected) in [
+        ("198.51.100.30", StatusCode::NO_CONTENT),
+        ("198.51.100.31", StatusCode::TOO_MANY_REQUESTS),
+    ] {
+        let chain = if visitor == "198.51.100.30" {
+            "198.51.100.30, 192.0.2.90, 192.0.2.40"
+        } else {
+            "198.51.100.31, 192.0.2.90, 192.0.2.40"
+        };
+        let candidate = with_cf_connecting_ip(
+            with_xff(
+                request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
+                chain,
+            ),
+            visitor,
+        );
+        assert_eq!(
+            status(&app, candidate).await,
+            expected,
+            "an unpinned upstream treated a claimed Cloudflare header as authority"
+        );
+    }
+}
+
+#[tokio::test]
+async fn direct_origin_caller_cannot_authenticate_spoofed_cloudflare_headers() {
+    let app = operation_app(RateLimiters::for_test(one(), generous(), generous()));
+    let peer = "192.0.2.91".parse().unwrap();
+    for (visitor, expected) in [
+        ("198.51.100.50", StatusCode::NO_CONTENT),
+        ("198.51.100.51", StatusCode::TOO_MANY_REQUESTS),
+    ] {
+        let chain = if visitor == "198.51.100.50" {
+            "198.51.100.50, 173.245.48.9, 192.0.2.40"
+        } else {
+            "198.51.100.51, 173.245.48.9, 192.0.2.40"
+        };
+        let candidate = with_cf_connecting_ip(
+            with_xff(
+                request(Method::GET, "/api/v1/conformance", None, Some(peer)),
+                chain,
+            ),
+            visitor,
+        );
+        assert_eq!(
+            status(&app, candidate).await,
+            expected,
+            "an untrusted TCP peer selected a spoofed forwarded identity"
+        );
+    }
+}
+
+#[tokio::test]
+async fn unreviewed_cloudflare_edge_range_degrades_to_the_edge_key() {
+    let app = operation_app(complete_limiters(
+        generous(),
+        generous(),
+        one(),
+        generous(),
+        generous(),
+        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
+    ));
+    let gfe = "35.191.4.7".parse().unwrap();
+    for (visitor, expected) in [
+        ("198.51.100.60", StatusCode::NO_CONTENT),
+        ("198.51.100.61", StatusCode::TOO_MANY_REQUESTS),
+    ] {
+        let chain = if visitor == "198.51.100.60" {
+            "198.51.100.60, 173.245.64.9, 192.0.2.40"
+        } else {
+            "198.51.100.61, 173.245.64.9, 192.0.2.40"
+        };
+        let candidate = with_cf_connecting_ip(
+            with_xff(
+                request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
+                chain,
+            ),
+            visitor,
+        );
+        assert_eq!(status(&app, candidate).await, expected);
+    }
+}
+
+#[tokio::test]
+async fn mapped_and_native_visitor_headers_are_one_cloudflare_identity() {
+    let app = operation_app(complete_limiters(
+        generous(),
+        generous(),
+        one(),
+        generous(),
+        generous(),
+        trusted_proxy_with_cloudflare(&["35.191.0.0/16"], 1, &["173.245.48.0/20"]),
+    ));
+    let gfe = "35.191.4.7".parse().unwrap();
+    let mapped = with_cf_connecting_ip(
+        with_xff(
+            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
+            "::ffff:198.51.100.70, 173.245.48.9, 192.0.2.40",
+        ),
+        "198.51.100.70",
+    );
+    assert_eq!(status(&app, mapped).await, StatusCode::NO_CONTENT);
+
+    let native = with_cf_connecting_ip(
+        with_xff(
+            request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
+            "198.51.100.70, 173.245.48.9, 192.0.2.40",
+        ),
+        "198.51.100.70",
+    );
+    assert_eq!(status(&app, native).await, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn cloudflare_ipv6_chain_uses_the_agreeing_visitor_network() {
+    let app = operation_app(complete_limiters(
+        generous(),
+        generous(),
+        one(),
+        generous(),
+        generous(),
+        trusted_proxy_with_cloudflare(&["2600:2d00:1:1::/64"], 1, &["2606:4700::/32"]),
+    ));
+    let gfe = "2600:2d00:1:1::9".parse().unwrap();
+    for (visitor, chain, expected) in [
+        (
+            "2001:db8:10:20::1",
+            "2001:db8:10:20::1, 2606:4700::100, 2001:db8:ffff::40",
+            StatusCode::NO_CONTENT,
+        ),
+        (
+            "2001:db8:10:20::99",
+            "2001:db8:10:20::99, 2606:4700::100, 2001:db8:ffff::40",
+            StatusCode::TOO_MANY_REQUESTS,
+        ),
+        (
+            "2001:db8:10:21::1",
+            "2001:db8:10:21::1, 2606:4700::100, 2001:db8:ffff::40",
+            StatusCode::NO_CONTENT,
+        ),
+    ] {
+        let candidate = with_cf_connecting_ip(
+            with_xff(
+                request(Method::GET, "/api/v1/conformance", None, Some(gfe)),
+                chain,
+            ),
+            visitor,
+        );
+        assert_eq!(status(&app, candidate).await, expected);
+    }
 }
 
 #[tokio::test]

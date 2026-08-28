@@ -10,12 +10,14 @@
 //! traffic refused to protect MongoDB would defeat the boundary.
 //!
 //! The TCP peer is authoritative by default. `X-Forwarded-For` is considered
-//! only when that peer belongs to an explicitly configured trusted proxy
-//! network, and a fixed number of rightmost proxy tokens is skipped. This
-//! follows the Google external Application Load Balancer contract without
-//! believing caller-prepended values. IPv4-mapped IPv6 is canonicalized to
-//! IPv4; ordinary IPv6 clients share a `/64`, so rotating privacy addresses
-//! does not mint fresh budgets.
+//! only when that peer belongs to an explicitly configured GFE network. A
+//! fixed right-anchored suffix identifies the upstream GFE actually observed.
+//! If that upstream is a pinned Cloudflare edge, CMA advances one token only
+//! when a single `CF-Connecting-IP` value agrees exactly and no Worker marker
+//! is present. Ambiguity retains the observed upstream rather than trusting a
+//! caller prefix. IPv4-mapped IPv6 is canonicalized to IPv4; ordinary IPv6
+//! clients share a `/64`, so rotating privacy addresses does not mint fresh
+//! budgets.
 //!
 //! Counters live in this process. That is exact while the deployment is pinned
 //! to one replica. Running N replicas makes the effective allowance up to N
@@ -420,12 +422,12 @@ fn resolve_client(request: &Request, trusted: &TrustedProxyConfig) -> ClientKey 
         .cidrs
         .iter()
         .any(|network| network.contains(&peer_ip))
-        .then(|| forwarded_client(request.headers(), trusted.forwarded_hops))
+        .then(|| forwarded_client(request.headers(), trusted))
         .flatten();
     ClientKey::Network(normalize_client_ip(forwarded.unwrap_or(peer_ip)))
 }
 
-fn forwarded_client(headers: &HeaderMap, forwarded_hops: usize) -> Option<IpAddr> {
+fn forwarded_client(headers: &HeaderMap, trusted: &TrustedProxyConfig) -> Option<IpAddr> {
     let mut tokens = Vec::new();
     let mut found = false;
     for value in headers.get_all("x-forwarded-for") {
@@ -442,9 +444,55 @@ fn forwarded_client(headers: &HeaderMap, forwarded_hops: usize) -> Option<IpAddr
     if !found {
         return None;
     }
-    let offset = forwarded_hops.checked_add(1)?;
+    let offset = trusted.forwarded_hops.checked_add(1)?;
     let index = tokens.len().checked_sub(offset)?;
-    tokens[index].parse::<IpAddr>().ok().map(canonical_ip)
+    let upstream = tokens[index].parse::<IpAddr>().ok().map(canonical_ip)?;
+
+    if !trusted
+        .cloudflare_cidrs
+        .iter()
+        .any(|network| network.contains(&upstream))
+    {
+        return Some(upstream);
+    }
+
+    // Cloudflare Workers can alter the connecting-client value, while Pseudo
+    // IPv4 overwrite mode carries the real address in CF-Connecting-IPv6. Keep
+    // the authenticated edge as the key in either case instead of treating the
+    // rewritten value as visitor authority.
+    if headers.contains_key("cf-worker") || headers.contains_key("cf-connecting-ipv6") {
+        return Some(upstream);
+    }
+
+    let visitor = index
+        .checked_sub(1)
+        .and_then(|index| tokens[index].parse::<IpAddr>().ok())
+        .map(canonical_ip);
+    let connecting = single_ip_header(headers, "cf-connecting-ip");
+    Some(match (visitor, connecting) {
+        (Some(visitor), Some(connecting))
+            if visitor == connecting && !is_cloudflare_pseudo_ipv4(visitor) =>
+        {
+            visitor
+        }
+        _ => upstream,
+    })
+}
+
+fn is_cloudflare_pseudo_ipv4(ip: IpAddr) -> bool {
+    matches!(canonical_ip(ip), IpAddr::V4(ip) if ip.octets()[0] >= 240)
+}
+
+fn single_ip_header(headers: &HeaderMap, name: &'static str) -> Option<IpAddr> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?.to_str().ok()?;
+    if values.next().is_some() {
+        return None;
+    }
+    if value.is_empty() || value != value.trim() {
+        return None;
+    }
+    value.parse::<IpAddr>().ok().map(canonical_ip)
 }
 
 fn canonical_ip(ip: IpAddr) -> IpAddr {
