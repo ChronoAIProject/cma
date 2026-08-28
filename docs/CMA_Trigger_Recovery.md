@@ -84,6 +84,7 @@ additional writes while the outcome is unknown.
 | Browser refresh | `GET` reloads the authoritative Launch and progress cursor | `0/0/0/0/0/0/0/0/0` |
 | Two tabs submit the same frozen command | One operation-store claim executes; both settle on the same response | First command's delta only; replay is `0/0/0/0/0/0/0/0/0` |
 | Same idempotency key is reused with a changed body | `422 idempotency_key_reused`; Launch is unchanged | `0/0/0/0/0/0/0/0/0` |
+| An operation execution lease ends without a finite replay receipt | `409 idempotency_recovery_required`: `The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.` The claim has no TTL or takeover; only that original generation can add its finite receipt, and manual domain review does not clear the claim | `0/0/0/0/0/0/0/0/0` additional work while ambiguous |
 | Browser goes offline after submission and later returns | The same key/body is reconciled; current Launch is reloaded before another action | Replay is `0/0/0/0/0/0/0/0/0` |
 | CMA authentication expires before command admission | `401 not_authenticated`; command has no Launch or provider write | `0/0/0/0/0/0/0/0/0` |
 | Start is accepted | Exact reviewed digest is confirmed and Launch becomes `preflight`; provider effects are only queued | `0/0/0/0/0/0/0/0/0` |
@@ -116,8 +117,14 @@ it. Unless a row names a positive provider creation, every resource delta is
 | Positive runtime evidence resolves an ambiguous prompt | Delivery advances to `execution_observed`, then `completed` or `failed`; Launch becomes `ready` only after the effect completes | Exactly one admitted owner turn for that dispatch generation |
 | Positive reconciliation proves branch publication | Launch remains `contributing`; published contribution record names the exact reviewed commit | `0/0/0/0/0/0/0/+1/0`, with no force push or duplicate commit generation |
 | Positive reconciliation proves pull-request creation | `pr_open`; numeric/node identity and Launch marker are attached | `0/0/0/0/0/0/0/0/+1`, with no duplicate PR |
+| Read-only PR observation reports open | `pr_open`; checks, mergeability, provider time, request ID, and head-match evidence refresh under the Launch fence | `0/0/0/0/0/0/0/0/0`; no PR write and no browser dependency |
+| Read-only PR observation reports merged | Exact provider identity and merged state are retained, then the Launch advances `pr_open` -> `completed` atomically | `0/0/0/0/0/0/0/0/0`; CMA does not perform the merge |
+| Contributor explicitly finishes open-PR handoff | Exact owner, Launch revision, effective snapshot digest, and idempotency receipt are retained; reach converges to revocation and the Launch advances `pr_open` -> `completed` | `0/0/0/0/0/0/0/0/0`; fork, branch, commit, and open PR remain untouched |
+| Read-only PR observation reports closed without merge | PR state becomes `closed_unmerged`; top-level Launch remains `pr_open`, the attempt is terminal, and New Launch is offered | `0/0/0/0/0/0/0/0/0`; CMA never reopens the PR |
+| User queues PR status refresh | Current safe status failure is cleared and the next fenced observation becomes due; same key/body replays the accepted Launch revision | `0/0/0/0/0/0/0/0/0`; the HTTP request performs no provider call |
+| PR status read fails safely | Public `status_failure` and provider request ID are retained; transient/rate failures receive a durable bounded retry, while auth or authority failures remain fenced for action | `0/0/0/0/0/0/0/0/0`; no status-read failure authorizes a write |
 | GitHub consent was revoked or scope became insufficient | `auth_required`, with `resume_state` equal to the interrupted durable step | Zero new resources; reconnect resumes the same Launch |
-| Exact NyxID service is inactive | `auth_required` plus block `service_inactive` | Zero new resources; only that service is rechecked/reconnected |
+| Exact NyxID service is inactive | `auth_required` plus block `service_inactive` | Zero new resources; only that service is rechecked. CMA refuses inactive-service OAuth until NyxID provides callback-bound reactivation and `state_version` advancement; an eligible active connection may be selected instead. |
 | Owner credential is unavailable without revocation evidence | `auth_required`, with the interrupted `resume_state` and block `owner_credential_unavailable` retained | Zero new resources; after sign-in, revalidating the same service queues read-only reconciliation of the exact failed intent and resumes without another Start or blind provider write |
 | Supervisor restarts inside the same provider runtime and reports an empty policy tuple for the unchanged handle | CMA observes under the session lifecycle fence and redelivers the current signed policy or tombstone to that exact handle; observation or parsing failure stays closed | Zero new resources, sessions, runtime rotations, prompt turns, or widened authority; redelivery alone is not revocation evidence |
 | Source, base, or fork branch head is stale | `failed_retryable`, class `conflict_stale_head` | Zero new resources; CMA never force-updates the unexpected head |
@@ -306,17 +313,17 @@ The following tests are the executable anchors for this contract:
 | Read-only operator recovery | `operator_recovery_can_only_schedule_read_only_reconciliation`, `trigger_effect_recovery_requires_and_replays_one_durable_operation_key` |
 | Cancellation and resource preservation | `cancellation_settles_pending_work_and_preserves_every_external_record`, `cancellation_refuses_every_unsettled_external_outcome_atomically`, `cancellation_records_pending_capability_revocation_without_stopping_the_session` |
 | Browser command ambiguity | `retains_the_key_and_original_request_closure_until_a_finite_response`, plus the Trigger review, Launch, and contribution reconciliation tests |
-| Launch-authorized workspace selection for replacement provisioning | `runtime_replacement_restores_the_latest_launch_authorized_checkpoint` |
+| Paired conversation/workspace capture, killed-runtime replacement, and no task replay | `killed_trigger_runtime_restores_the_exact_pair_without_replaying_the_task` |
+| Missing, corrupt, or stale recovery pair fails closed | `killed_trigger_runtime_stays_fenced_when_the_pair_is_missing`, `killed_trigger_runtime_stays_fenced_when_the_workspace_half_is_corrupt`, `killed_trigger_runtime_stays_fenced_when_the_conversation_half_is_corrupt`, `killed_trigger_runtime_stays_fenced_when_the_pair_names_stale_authority` |
 | Unplanned Trigger runtime loss without a durable conversation/workspace pair fails closed | `coordinated_trigger_runtime_loss_requires_verified_conversation_continuity`, `compatibility_trigger_runtime_loss_requires_verified_conversation_continuity` |
 
-The workspace-selection anchor proves only that provisioning resolves the
-latest complete Launch-authorized archive. It does not kill a runtime, restore
-an agent conversation, or prove that the conversation and workspace were
-captured as one recoverable pair. The runtime-loss anchors therefore preserve
-the session in `recovery_required` instead of starting a blank conversation.
-The row in section 3 that promises automatic recovery after a complete
-checkpoint remains a release requirement until an end-to-end deterministic
-test proves the paired capture, loss, restore, and no-prompt-replay path.
+The paired-recovery anchor captures the opaque conversation and repository
+workspace behind one writer fence, commits their sealed authority, makes the
+first runtime disappear, reconciles a replacement runtime, and proves that the
+replacement receives both exact halves without replaying the configured task.
+The negative anchors preserve the session in `recovery_required` rather than
+starting a blank or mismatched conversation when either half is absent,
+corrupt, or bound to stale Launch authority.
 
 These deterministic tests prove local contracts. They do not replace the gated
 real-provider evidence required by `#673`, and this document makes no claim that

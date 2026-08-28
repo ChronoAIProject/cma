@@ -57,8 +57,8 @@ evidence_id
 build commit and runtime image digest
 environment and configuration revision
 UTC start and end
-operator and reviewer
-numeric upstream, fork, account, Launch, session, and service identifiers
+operator and independent reviewer, including safe numeric provider account IDs
+numeric upstream, fork, owner, and contributor account IDs where the provider supplies them; typed Launch/session IDs and a SHA-256 fingerprint for an opaque protected service ID
 fixture revision and source SHA
 expected result and actual result
 before/after external resource counts
@@ -243,6 +243,26 @@ and expected outcome must be deterministic.
 | truncated large tree                   | Page/entry/byte ceilings produce an explicit incomplete/refusal state, never a falsely complete diff                                            |
 | workflow files                         | Paths are detected, displayed, acknowledged where permitted, and refused without the required scope                                             |
 
+The deterministic anchor inventory for this matrix is:
+
+| Fixture row | Required test anchors |
+| ----------- | --------------------- |
+| untracked, modified, and deleted paths | `trigger::workspace_diff::tests::golden_diff_covers_every_supported_file_state_and_is_deterministic`, `trigger::github::tests::git_data_publication_persists_each_object_boundary_and_is_verified`, and `workspace::tests::capture_round_trip_preserves_the_complete_current_tree` |
+| binary and large files | `trigger::github::tests::workspace_import_preserves_binary_executable_and_symlink_identity`, `trigger::github::workspace::tests::source_tree_file_blob_and_repository_bounds_fail_before_blob_reads`, `trigger::github::tests::workspace_import_refuses_an_oversize_provider_blob_before_requesting_it`, `trigger::github_effects::tests::workspace_import_reuses_complete_blobs_and_converges_partial_chunks_after_restart`, and the golden diff test above prove binary identity, stable artifact digests, 4 MiB chunks, the inclusive 16 MiB and 2 GiB limits, the 100,000-entry ceiling, and refusal before blob reads |
+| executable mode changes | The workspace-import, golden-diff, Git Data publication, and runtime `workspace::tests::a_verified_archive_restores_binary_executable_and_symlink_entries` tests prove mode retention without execution |
+| safe and escaping symlinks | The workspace-import and runtime restore tests prove inert safe-link representation; `trigger::workspace_diff::tests::unsafe_paths_and_symlinks_are_rejected_before_artifact_generation` and `workspace::tests::traversal_and_git_control_paths_are_rejected_before_extraction` prove escaping refusal |
+| malicious names | `trigger::github::workspace::tests::malicious_repository_names_are_rejected_before_blob_planning`, `trigger::workspace_diff::tests::unsafe_paths_and_symlinks_are_rejected_before_artifact_generation`, and `workspace::tests::malicious_archive_names_aliases_and_reserved_paths_never_materialize` cover traversal, absolute/control names, case and Unicode aliases, archive aliases, and reserved paths at independent boundaries |
+| prompt injection | `trigger::github::workspace::tests::repository_content_and_non_lfs_attributes_remain_inert_archive_bytes`, `trigger::tests::hostile_repository_content_cannot_mutate_launch_policy_authority_or_confirmations`, and `workspace::tests::attributes_and_hostile_text_restore_as_inert_exact_bytes` prove repository text remains inert across import, policy, and runtime boundaries |
+| upstream divergence/stale fork | `trigger::github::tests::compatible_fork_is_reused_only_after_network_and_commit_proof`, `trigger::github::tests::divergent_compatible_fork_is_reused_without_resetting_its_default_branch`, `trigger::github::workspace::tests::workspace_inventory_remains_bound_to_the_launch_source_when_a_branch_moves`, and `trigger::workspace_diff::tests::no_changes_and_stale_head_are_named_review_outcomes` preserve numeric identity and the captured SHA without reset, rebase, or force |
+| archive attributes | The repository-content and runtime exact-byte tests above cover `export-subst`, `export-ignore`, `eol`, filter, and executable attributes without invoking commands, filters, hooks, or smudge behavior |
+| LFS | `trigger::github::workspace::tests::lfs_attributes_and_pointer_files_are_both_refused`, `trigger::github::tests::workspace_import_refuses_lfs_attributes`, and `trigger::github::publication::tests::publication_refuses_new_lfs_attributes_and_pointer_content` prove typed refusal for imported and newly introduced LFS metadata or pointers without a hidden object fetch; the oversize-provider-blob test proves the independent object-size refusal before request |
+| truncated large tree | `trigger::github::tests::workspace_import_refuses_truncated_tree_before_any_blob_read` and the source-tree boundary test above prove provider truncation and an over-ceiling inventory become explicit incomplete/refusal outcomes before blob reads |
+| workflow files | `trigger::workspace_diff::tests::workflow_scope_is_checked_at_review_with_same_content_exception`, `trigger::github::tests::provider_refusals_remain_named_after_ref_reconciliation`, and `trigger::tests::workflow_paths_require_an_explicit_reviewed_confirmation_before_start` cover detection, display/confirmation authority, same-content handling, and typed scope refusal |
+
+These anchors are class `D` evidence only. `D-06` remains open until the final
+review revision links their passing CI results, and they do not establish real
+GitHub/NyxID behavior.
+
 ## 7. Real-provider smoke contract
 
 The real-provider smoke is separately gated from default CI. It runs only by an
@@ -273,6 +293,32 @@ credential-bearing execution, closing a protection-change race. As of
 2026-08-28 the live repository has no environment configured, so
 the harness exists but `P-01` remains unavailable and open.
 
+The protected environment must bind the full deployed build commit,
+`sha256:` runtime image digest, exact runtime version advertised by Trigger
+admission, and immutable deployment configuration revision. These are reviewed
+provenance inputs, not values typed ad hoc into a dispatch. The provider job
+queries the workflow run's environment-approval history after the gate opens;
+it records the numeric GitHub identities of the actual triggering operator and
+at least one independent approving reviewer and fails closed if the approval
+cannot be tied to `cma-trigger-smoke`. GitHub's review-history response does not
+carry an approval-submission timestamp, so the record honestly names the UTC
+time at which the workflow observed that approved history; it does not invent a
+`reviewed_at` value. The opaque NyxID service value remains a secret and is
+represented only by its SHA-256 fingerprint. The harness verifies
+the configured runtime version against both review-time and Start-time
+admission. It records the runtime image digest as approved deployment
+provenance; `D-09`, not this workflow, proves the bytes and boundary behavior of
+that digest.
+
+The additional required protected-environment variables are
+`CMA_TRIGGER_SMOKE_EXPECTED_BUILD_SHA`,
+`CMA_TRIGGER_SMOKE_RUNTIME_IMAGE_DIGEST`,
+`CMA_TRIGGER_SMOKE_EXPECTED_RUNTIME_VERSION`, and
+`CMA_TRIGGER_SMOKE_CONFIGURATION_REVISION`. The remaining fixture bindings are
+materialized into the same closed configuration shown by the checked-in example.
+The operator/reviewer values are workflow-derived outputs and must not be
+maintainer-supplied variables.
+
 Before running, the operator verifies the build and runtime digests, closed
 rollout allowlists, fixture numeric identity/SHA, service/account identity,
 fork-network inventory, quotas, and redaction. Production is not restarted or
@@ -297,9 +343,27 @@ not weakened to "at least one." A rerun with the same idempotent intent must not
 increase any count. A New Launch is a separate, visibly confirmed case and is
 never used to make the smoke pass after failure.
 
+The retained JSON uses closed schema version 2. In addition to the section 2
+fields it binds a deterministic evidence ID to the workflow run attempt, the
+exact fixture-file SHA-256, the fixed no-fault `P-01` rollout action, safe
+Launch and GitHub request correlations, typed resource identities, and exact
+before/after/delta inventories for Launches, contributor forks, Launch branches,
+and matching pull requests. The artifact name and the run's `#artifacts`
+landing URL are deterministic before upload; the workflow also exposes the
+upload action's direct retained-artifact URL as a job output once GitHub assigns
+the artifact ID. Neither URL is a claim that the artifact exists until the
+upload step succeeds.
+
 The workflow must always run its credential and redaction audit after the smoke,
 including when the smoke fails. It uploads the manifest and result only after
-that audit passes; a rejected evidence file is never published as an artifact.
+that audit passes and the terminal document passes the closed publishable-schema
+validator. The audit atomically marks redaction complete; a running, extended,
+mistyped, contradictory, secret-bearing, or incomplete document is never
+published as an artifact. Checked-in mutation tests prove representative
+missing-field, extra-field, provenance-drift, self-review, inventory, identity,
+correlation, URL, and redaction failures are rejected. A structurally valid
+`fail`, `inconclusive`, or `blocked` record may be retained; it never advances
+`P-01` to pass.
 It must not automatically delete provider resources after the run, because
 deletion would remove reconciliation and audit evidence and could target
 contributor-owned work.
@@ -312,7 +376,7 @@ Each stage changes one control at a time and records its configuration revision.
 
 | Stage               | Exposure                                                                                           | Entry gate                                                                       | Exit gate                                                                                                                                                                                                       |
 | ------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0. Dormant deploy   | No publisher or Launch admission; orchestration paused; capability kill switch on; cleanup dry-run | Migrations/indexes reviewed and rollback-capable image retained                  | All scheduler lanes healthy, no prerequisite gap, no existing-session change, `D-01` through `D-08` pass on the deployed commit                                                                                 |
+| 0. Dormant deploy   | No publisher or Launch admission; orchestration paused; capability kill switch on; cleanup dry-run | Migrations/indexes reviewed and rollback-capable image retained                  | All scheduler lanes healthy, no prerequisite gap, no existing-session change, `D-01` through `D-09` pass on the deployed commit and exact pinned runtime image                                                   |
 | 1. Staging provider | One synthetic publisher, contributor, and fixture; no production subjects                          | `P-01` configuration reviewed and disposable credential custody confirmed        | `P-01`, `P-03`, `S-01`, and `S-02` pass; all planted leakage scans are zero                                                                                                                                     |
 | 2. Internal canary  | One repository allowlist and named internal subjects; cleanup remains dry-run                      | Security review has no open SEV-0/SEV-1 finding; alerts route to a tested target | At least 10 completed Launches across two contributor accounts, every required fault/recovery drill passes, and no unexplained resource-count growth occurs                                                     |
 | 3. Invite beta      | Explicit publishers and a stable small subject cohort                                              | `O-01`, `O-02`, `M-01`, and publisher documentation pass review                  | At least 50 started Launches from five contributors over seven consecutive days; 99% of non-user-blocked steps settle/defer/type-block within 10 minutes; no SEV-0/SEV-1 incident or credential leak            |

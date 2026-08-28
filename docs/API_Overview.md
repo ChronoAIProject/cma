@@ -76,7 +76,7 @@ session operations. Their public projection is fixed as follows:
 | Launch, repository, and pull-request snapshot | Owner-only `cma:trigger` companion | Owner read | Absent | Absent | Absent |
 | Launch progress replay | Owner-only cursor replay | Owner cursor replay | Absent | Absent | Absent |
 | Diff review and artifact read | Owner-only `cma:trigger` companion | Owner read | Absent | Absent | Absent |
-| Draft, Start, cancel, retry, publish, and pull-request confirmations | Absent | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
+| Draft, Start, cancel, retry, publish, pull-request confirmation/status refresh, and finish | Absent | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
 
 AG-UI declares its closed read-only subset under `features.custom["cma:trigger"]`.
 The companion resources do not use `threadId` or `runId`: those fields continue

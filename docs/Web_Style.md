@@ -797,6 +797,10 @@ language already defined in §§12 and 13a:
   previously observed values and fail on concurrent provider change rather than overwriting it.
 - A closed-unmerged or merged PR has no Update control. The former offers the explicit New Launch
   route, producing a new Launch-owned branch and marker while preserving the old Launch and PR link.
+- An open PR exposes a status refresh and **Finish CMA handoff**. Refresh queues a read-only provider
+  observation. Finish uses the standard confirmation dialog, makes no provider call, preserves the
+  fork, branch, commit, and open PR, and ends further contribution, Update, and refresh actions for
+  that Launch. A provider-observed merge finishes the Launch without this confirmation.
 
 Confirmations use §12.4's one-dialog rule. Review diff, Publish branch, Open pull request, and Update
 pull request are separate controls and separate server snapshots. Cancel closes the dialog without
@@ -821,7 +825,7 @@ The interface decision is fixed before implementation:
 | Launch/repository/PR snapshot                    | Read-only companion projection | Owner read                                          | Absent | Absent | Absent |
 | Launch progress replay                           | Read-only companion replay     | Owner cursor replay                                 | Absent | Absent | Absent |
 | Diff review and artifact read                    | Read-only companion projection | Owner read                                          | Absent | Absent | Absent |
-| Start, cancel, review, publish, PR confirmations | Absent                         | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
+| Start, cancel, review, publish, PR confirmations/status refresh, finish | Absent                         | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
 
 AG-UI declares this read-only subset under its `cma:trigger` custom capability. Its existing run and
 session event semantics do not change, and a Launch identifier is never presented as a session
