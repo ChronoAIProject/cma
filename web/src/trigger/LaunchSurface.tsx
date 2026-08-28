@@ -11,6 +11,7 @@ import {
   IconCloseOutline16,
   IconLinkOutline16,
   IconLoadingOutline16,
+  IconPauseOutline16,
   IconQueueOutline14,
   IconRefreshOutline16,
   IconRightUpOutline16,
@@ -18,6 +19,8 @@ import {
 } from '../ui/icons';
 import {
   deliveryState,
+  isCurrentTriggerRuntime,
+  isLegacyTriggerRuntime,
   isTerminalLaunch,
   mergeabilityLabel,
   reachState,
@@ -28,6 +31,7 @@ import {
   statusLabel,
   stepLabel,
   timestamp,
+  triggerKernelLabel,
   upstreamRepository,
   workspaceCheckpoint,
 } from './model';
@@ -60,6 +64,8 @@ function StepIcon({ status }: { readonly status: string }) {
       return <IconLoadingOutline16 />;
     case 'retryable':
       return <IconRefreshOutline16 />;
+    case 'paused':
+      return <IconPauseOutline16 />;
     case 'blocked':
     case 'failed':
       return <IconWarningOutline16 />;
@@ -199,6 +205,10 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
   async function recoverPrompt(): Promise<void> {
     const current = resource.launch;
     if (current === null) return;
+    if (!isCurrentTriggerRuntime(current)) {
+      setRecoveryFailure('Historical Launches cannot authorize another initial task.');
+      return;
+    }
     const slot = `launch:recover-prompt:${current.id}`;
     const pending = commands.pending?.slot === slot;
     const delivery = recoverablePromptDelivery(current);
@@ -306,10 +316,20 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
   const reach = reachState(launch);
   const delivery = deliveryState(launch);
   const terminal = isTerminalLaunch(launch);
+  const currentRuntime = isCurrentTriggerRuntime(launch);
+  const legacyReadOnly = isLegacyTriggerRuntime(launch);
+  const runtimeLabel = triggerKernelLabel(launch) ?? 'Admission unavailable';
+  const featurePaused = launch.blocked_reason === 'feature_paused';
+  const orderedSteps = [...launch.steps].sort((left, right) => left.sequence - right.sequence);
+  const pausedStep = featurePaused
+    ? (orderedSteps.find((step) => ['running', 'retryable', 'blocked'].includes(step.status)) ??
+      orderedSteps.find((step) => step.status === 'pending'))
+    : undefined;
   const pendingCancel = commands.pending?.slot === `launch:cancel:${launch.id}`;
   const pendingNew = commands.pending?.slot === `launch:new:${launch.id}`;
   const pendingRecovery = commands.pending?.slot === `launch:recover-prompt:${launch.id}`;
-  const recoveryAvailable = recoverablePromptDelivery(launch) !== undefined || pendingRecovery;
+  const recoveryAvailable =
+    currentRuntime && (recoverablePromptDelivery(launch) !== undefined || pendingRecovery);
   const recoveryStatus =
     busy === 'recover'
       ? pendingRecovery
@@ -319,8 +339,11 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
         ? 'CMA has not returned a finite result. Only the retained recovery authorization can be reconciled.'
         : undefined;
   const contributionRoute = { kind: 'contribute', launchId: launch.id } as const;
+  const retainedContributionAvailable =
+    launch.diff !== null || launch.contribution !== null || launch.pull_request !== null;
+  const contributionInspectable = linkedSession !== undefined || retainedContributionAvailable;
   const authenticationRoute =
-    launch.state === 'auth_required'
+    currentRuntime && launch.state === 'auth_required'
       ? ({ kind: 'trigger_recovery', launchId: launch.id } as const)
       : undefined;
   const sessionRoute =
@@ -347,6 +370,19 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
           {resource.lastUpdated === null
             ? 'unknown'
             : new Date(resource.lastUpdated).toLocaleTimeString()}
+        </div>
+      ) : null}
+      {legacyReadOnly ? (
+        <div className="notice notice--quiet trigger-workflow__notice" role="status">
+          <IconPauseOutline16 />
+          <div>
+            <p className="notice__title">Historical Launch is read-only</p>
+            <p className="notice__detail">
+              CMA retains this pre-versioned Launch for inspection, its existing session and
+              artifacts, cancellation, or a separate New Launch. It cannot resume runtime or GitHub
+              work.
+            </p>
+          </div>
         </div>
       ) : null}
       {!resource.offline && resource.failure !== null ? (
@@ -409,6 +445,10 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
             <div>
               <dt>Work label</dt>
               <dd>{launch.effective.work_label}</dd>
+            </div>
+            <div>
+              <dt>Runtime</dt>
+              <dd>{runtimeLabel}</dd>
             </div>
             <div>
               <dt>Upstream</dt>
@@ -492,17 +532,24 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
             <h2 id="launch-progress-heading">Automation progress</h2>
           </div>
           <ol className="launch-progress">
-            {[...launch.steps]
-              .sort((left, right) => left.sequence - right.sequence)
-              .map((step) => (
-                <li key={step.key} data-status={step.status}>
+            {orderedSteps.map((step) => {
+              const frozenByCma = pausedStep?.key === step.key;
+              const displayStatus = frozenByCma ? 'paused' : step.status;
+              return (
+                <li
+                  key={step.key}
+                  data-status={step.status}
+                  data-feature-paused={frozenByCma ? 'true' : undefined}
+                >
                   <span className="launch-progress__icon" aria-hidden="true">
-                    <StepIcon status={step.status} />
+                    <StepIcon status={displayStatus} />
                   </span>
                   <div className="launch-progress__body">
                     <div className="launch-progress__line">
                       <strong>{stepLabel(step.key)}</strong>
-                      <span className="launch-progress__status">{statusLabel(step.status)}</span>
+                      <span className="launch-progress__status">
+                        {frozenByCma ? 'Paused by CMA' : statusLabel(step.status)}
+                      </span>
                       <time dateTime={step.completed_at ?? step.started_at ?? undefined}>
                         {timestamp(step.completed_at ?? step.started_at)}
                       </time>
@@ -518,14 +565,26 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
                     ) : null}
                   </div>
                 </li>
-              ))}
+              );
+            })}
           </ol>
           {launch.blocked_reason === null ? null : (
-            <div className="notice notice--quiet launch__blocked" role="status">
-              <IconWarningOutline16 />
+            <div
+              className={`notice notice--quiet launch__blocked${featurePaused ? ' launch__blocked--paused' : ''}`}
+              role="status"
+            >
+              {featurePaused ? <IconPauseOutline16 /> : <IconWarningOutline16 />}
               <div>
-                <p className="notice__title">{stateLabel(launch.blocked_reason)}</p>
-                <p className="notice__detail">This Launch remains resumable.</p>
+                <p className="notice__title">
+                  {featurePaused ? 'Paused by CMA' : stateLabel(launch.blocked_reason)}
+                </p>
+                <p className="notice__detail">
+                  {featurePaused
+                    ? 'Trigger automation is frozen at a durable boundary. Any active CMA session remains available and was not interrupted.'
+                    : legacyReadOnly
+                      ? 'Historical automation remains stopped; inspection and cancellation are still available.'
+                      : 'This Launch remains resumable.'}
+                </p>
                 {authenticationRoute === undefined ? null : (
                   <a
                     className="button button--outline button--sm"
@@ -628,7 +687,7 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
               </>
             )}
           </dl>
-          {linkedSession === undefined ? (
+          {!contributionInspectable ? (
             <p className="control-reason">
               Contribution review becomes available after the session is ready.
             </p>
@@ -638,7 +697,7 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
               href={routePath(contributionRoute)}
               onClick={(event) => routeClick(event, contributionRoute, navigate)}
             >
-              Review contribution
+              {legacyReadOnly ? 'Inspect retained contribution' : 'Review contribution'}
             </a>
           )}
         </section>
@@ -716,7 +775,7 @@ export function LaunchSurface({ ownerId, launchId, navigate }: LaunchSurfaceProp
         }
       />
       <RiskConfirmation
-        open={confirmingRecovery || pendingRecovery}
+        open={recoveryAvailable && (confirmingRecovery || pendingRecovery)}
         title="Authorize another initial task?"
         description="CMA cannot determine whether the previous initial task started. Authorizing another dispatch may execute the task twice."
         acknowledgeLabel="I understand that the initial task may execute twice."

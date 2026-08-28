@@ -1,12 +1,58 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { access, readFile, rename, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const TRIGGER_CONFORMANCE = "https://spec.chrono-ai.fun/cma/1.0/conf/trigger";
+const TRIGGER_KERNEL_ID = "codex-trigger-native-v1";
+const BATCH_SANDBOX_API_VERSION = "sandbox.opensandbox.io/v1alpha1";
+const BATCH_SANDBOX_KIND = "BatchSandbox";
+const BATCH_SANDBOX_RESOURCE = "batchsandboxes.sandbox.opensandbox.io";
+const BATCH_SANDBOX_LIST_KIND = "BatchSandboxList";
+const SANDBOX_LABELS = Object.freeze({
+  sandbox_id: "opensandbox.io/id",
+  canonical_kernel: "cma/kernel",
+  legacy_kernel: "chrono-bot/kernel",
+  canonical_session: "cma/session",
+  legacy_session: "chrono-bot/session",
+  runtime_generation: "cma/runtime-generation",
+  runtime_reservation: "cma/runtime-reservation",
+});
+const SANDBOX_PHASES = Object.freeze([
+  "before_launch",
+  "live_session",
+  "after_stop",
+]);
+const SANDBOX_ISSUES = new Set([
+  "object_present_before_launch",
+  "api_version_mismatch",
+  "kind_mismatch",
+  "namespace_mismatch",
+  "name_missing_or_invalid",
+  "uid_missing_or_invalid",
+  "resource_version_missing_or_invalid",
+  "creation_timestamp_missing_or_invalid",
+  "deletion_timestamp_invalid",
+  "deletion_in_progress",
+  "sandbox_id_mismatch",
+  "canonical_kernel_mismatch",
+  "legacy_kernel_mismatch",
+  "kernel_labels_ambiguous",
+  "canonical_session_mismatch",
+  "legacy_session_mismatch",
+  "session_labels_ambiguous",
+  "runtime_generation_mismatch",
+  "runtime_reservation_missing",
+  "runtime_reservation_invalid",
+  "runtime_reservation_mismatch",
+  "runtime_reservation_ambiguous",
+]);
+const execFileAsync = promisify(execFile);
 const REQUIRED_OPENAPI_PATHS = [
   "/api/v1/triggers/public/{public_id}",
   "/api/v1/triggers/public/{public_id}/launches",
@@ -31,6 +77,7 @@ const SETTLED_PRIOR_LAUNCH_STATES = new Set([
   "failed_terminal",
   "cancelled",
 ]);
+const MAX_CONFIG_JSON_BYTES = 64 * 1024;
 const MAX_PUBLIC_JSON_BYTES = 8 * 1024 * 1024;
 const SDK_ENTRY = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -46,6 +93,19 @@ const REPOSITORY = /^[A-Za-z0-9_.-]{1,100}$/;
 const INPUT_KEY = /^[a-z][a-z0-9_]{0,63}$/;
 const RUN_MARKER = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const CONFIGURATION_REVISION = /^[A-Za-z0-9][A-Za-z0-9._:/@+~-]{0,254}$/;
+const DNS1123_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const KUBERNETES_NAME = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
+const KUBERNETES_LABEL_VALUE =
+  /^(?:[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?)?$/;
+const SAFE_KUBERNETES_METADATA = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,254}$/;
+const RUNTIME_RESERVATION = /^rres_[0-9a-f]{32}$/;
+const CONFIG_CREDENTIAL_PATTERNS = [
+  /\bBearer\s+[^\s"]+/iu,
+  /\b(?:github_pat_|gh[opusr]_|sk-[A-Za-z0-9])/u,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/u,
+  /"(?:access_token|refresh_token|authorization|cookie|set-cookie|kubeconfig|api_key|client_secret|password|token|client-key-data|client-certificate-data|certificate-authority-data)"\s*:/iu,
+  /\b(?:kubeconfig|current-context|client-key-data|client-certificate-data|certificate-authority-data)\b/iu,
+];
 const EVIDENCE_RESULTS = new Set([
   "running",
   "pass",
@@ -132,6 +192,16 @@ function repositoryPath(value, path) {
   }
 }
 
+function validateConfigRedaction(value) {
+  const serialized = typeof value === "string" ? value : JSON.stringify(value);
+  if (CONFIG_CREDENTIAL_PATTERNS.some((pattern) => pattern.test(serialized))) {
+    fail(
+      "invalid_config",
+      "config must contain only non-secret fixture and deployment bindings",
+    );
+  }
+}
+
 function validateConfig(raw) {
   exactKeys(
     raw,
@@ -142,6 +212,7 @@ function validateConfig(raw) {
       "runtime_image_digest",
       "expected_runtime_version",
       "configuration_revision",
+      "trigger_sandbox_namespace",
       "public_id",
       "revision_digest",
       "source_sha",
@@ -157,7 +228,12 @@ function validateConfig(raw) {
   if (raw.schema_version !== 2)
     fail("invalid_config", "config.schema_version must be 2");
 
-  const baseUrl = new URL(text(raw.base_url, "config.base_url", 512));
+  let baseUrl;
+  try {
+    baseUrl = new URL(text(raw.base_url, "config.base_url", 512));
+  } catch {
+    fail("invalid_config", "config.base_url must be an absolute URL");
+  }
   if (
     baseUrl.protocol !== "https:" ||
     baseUrl.username !== "" ||
@@ -189,6 +265,20 @@ function validateConfig(raw) {
     fail(
       "invalid_config",
       "config.configuration_revision must be one safe immutable revision",
+    );
+  }
+  if (
+    !DNS1123_LABEL.test(
+      text(
+        raw.trigger_sandbox_namespace,
+        "config.trigger_sandbox_namespace",
+        63,
+      ),
+    )
+  ) {
+    fail(
+      "invalid_config",
+      "config.trigger_sandbox_namespace must be one exact DNS-1123 label",
     );
   }
   if (!UUID.test(raw.public_id))
@@ -337,14 +427,23 @@ function validateConfig(raw) {
       "config.github_api_url must be the public GitHub API origin",
     );
   }
+  validateConfigRedaction(raw);
   return raw;
 }
 
 async function loadConfig(path) {
   let serialized;
-  let parsed;
   try {
     serialized = await readFile(path, "utf8");
+  } catch {
+    fail("invalid_config", "configuration is not readable JSON");
+  }
+  if (Buffer.byteLength(serialized, "utf8") > MAX_CONFIG_JSON_BYTES) {
+    fail("invalid_config", "configuration exceeds the closed size bound");
+  }
+  validateConfigRedaction(serialized);
+  let parsed;
+  try {
     parsed = JSON.parse(serialized);
   } catch {
     fail("invalid_config", "configuration is not readable JSON");
@@ -466,6 +565,278 @@ function validateInventory(value, path) {
   }
 }
 
+function evidenceKubernetesMetadata(value, path, maximum = 255) {
+  const checked = evidenceText(value, path, maximum);
+  if (!SAFE_KUBERNETES_METADATA.test(checked)) {
+    fail(EVIDENCE_ERROR, `${path} is not safe Kubernetes metadata`);
+  }
+  return checked;
+}
+
+function evidenceKubernetesLabel(value, path) {
+  const checked = evidenceText(value, path, 63);
+  if (!KUBERNETES_LABEL_VALUE.test(checked)) {
+    fail(EVIDENCE_ERROR, `${path} is not a Kubernetes label value`);
+  }
+  return checked;
+}
+
+function validateSandboxObject(value, path, { namespace, expected, entitled }) {
+  evidenceExactKeys(
+    value,
+    [
+      "api_version",
+      "kind",
+      "namespace",
+      "name",
+      "uid",
+      "resource_version",
+      "creation_timestamp",
+      "deletion_timestamp",
+      "labels",
+      "issues",
+    ],
+    path,
+  );
+  for (const key of ["api_version", "kind"]) {
+    nullable(value[key], (entry) => evidenceText(entry, `${path}.${key}`, 128));
+  }
+  nullable(value.namespace, (entry) => {
+    if (!DNS1123_LABEL.test(evidenceText(entry, `${path}.namespace`, 63))) {
+      fail(EVIDENCE_ERROR, `${path}.namespace is not a DNS-1123 label`);
+    }
+  });
+  nullable(value.name, (entry) => {
+    if (!KUBERNETES_NAME.test(evidenceText(entry, `${path}.name`, 253))) {
+      fail(EVIDENCE_ERROR, `${path}.name is not a Kubernetes object name`);
+    }
+  });
+  for (const key of ["uid", "resource_version"]) {
+    nullable(value[key], (entry) =>
+      evidenceKubernetesMetadata(entry, `${path}.${key}`),
+    );
+  }
+  nullable(value.creation_timestamp, (entry) =>
+    evidenceTimestamp(entry, `${path}.creation_timestamp`),
+  );
+  nullable(value.deletion_timestamp, (entry) =>
+    evidenceTimestamp(entry, `${path}.deletion_timestamp`),
+  );
+
+  const labels = value.labels;
+  evidenceExactKeys(
+    labels,
+    [
+      "sandbox_id",
+      "canonical_kernel",
+      "legacy_kernel",
+      "canonical_session",
+      "legacy_session",
+      "runtime_generation",
+      "runtime_reservation_sha256",
+    ],
+    `${path}.labels`,
+  );
+  for (const key of [
+    "sandbox_id",
+    "canonical_kernel",
+    "legacy_kernel",
+    "canonical_session",
+    "legacy_session",
+    "runtime_generation",
+  ]) {
+    nullable(labels[key], (entry) =>
+      evidenceKubernetesLabel(entry, `${path}.labels.${key}`),
+    );
+  }
+  nullable(labels.runtime_reservation_sha256, (entry) =>
+    evidenceSha256(entry, `${path}.labels.runtime_reservation_sha256`),
+  );
+
+  if (!Array.isArray(value.issues)) {
+    fail(EVIDENCE_ERROR, `${path}.issues must be an array`);
+  }
+  value.issues.forEach((issue, index) => {
+    if (!SANDBOX_ISSUES.has(issue)) {
+      fail(
+        EVIDENCE_ERROR,
+        `${path}.issues[${String(index)}] is not a closed inventory issue`,
+      );
+    }
+  });
+  const canonicalIssues = [...new Set(value.issues)].sort();
+  if (JSON.stringify(value.issues) !== JSON.stringify(canonicalIssues)) {
+    fail(EVIDENCE_ERROR, `${path}.issues must be unique and ordered`);
+  }
+
+  if (entitled) {
+    if (
+      value.api_version !== BATCH_SANDBOX_API_VERSION ||
+      value.kind !== BATCH_SANDBOX_KIND ||
+      value.namespace !== namespace ||
+      value.name === null ||
+      value.uid === null ||
+      value.resource_version === null ||
+      value.creation_timestamp === null ||
+      value.deletion_timestamp !== null ||
+      labels.sandbox_id !== value.name ||
+      labels.canonical_kernel !== TRIGGER_KERNEL_ID ||
+      labels.legacy_kernel !== TRIGGER_KERNEL_ID ||
+      labels.canonical_session !== expected.session_id ||
+      labels.legacy_session !== expected.session_id ||
+      labels.runtime_generation !== String(expected.runtime_generation) ||
+      labels.runtime_reservation_sha256 !==
+        expected.runtime_reservation_sha256 ||
+      value.issues.length !== 0
+    ) {
+      fail(EVIDENCE_ERROR, `${path} is not an exactly entitled BatchSandbox`);
+    }
+  } else if (value.issues.length === 0) {
+    fail(EVIDENCE_ERROR, `${path} lacks its unexpected-object classification`);
+  }
+}
+
+function validateSandboxObservation(value, path, phase, namespace) {
+  evidenceExactKeys(
+    value,
+    [
+      "phase",
+      "observed_at",
+      "list_resource_version",
+      "expected",
+      "total_objects",
+      "entitled_objects",
+      "unexpected_objects",
+    ],
+    path,
+  );
+  if (value.phase !== phase) {
+    fail(EVIDENCE_ERROR, `${path}.phase does not match its inventory slot`);
+  }
+  evidenceTimestamp(value.observed_at, `${path}.observed_at`);
+  evidenceKubernetesMetadata(
+    value.list_resource_version,
+    `${path}.list_resource_version`,
+  );
+  evidenceExactKeys(
+    value.expected,
+    ["session_id", "runtime_generation", "runtime_reservation_sha256"],
+    `${path}.expected`,
+  );
+  nullable(value.expected.session_id, (entry) =>
+    evidenceKubernetesLabel(entry, `${path}.expected.session_id`),
+  );
+  nullable(value.expected.runtime_generation, (entry) =>
+    evidenceInteger(entry, `${path}.expected.runtime_generation`, 1),
+  );
+  nullable(value.expected.runtime_reservation_sha256, (entry) =>
+    evidenceSha256(entry, `${path}.expected.runtime_reservation_sha256`),
+  );
+  if (
+    phase === "before_launch" &&
+    (value.expected.session_id !== null ||
+      value.expected.runtime_generation !== null ||
+      value.expected.runtime_reservation_sha256 !== null)
+  ) {
+    fail(EVIDENCE_ERROR, "pre-launch sandbox inventory invented an identity");
+  }
+  if (
+    phase !== "before_launch" &&
+    (value.expected.session_id === null ||
+      value.expected.runtime_generation === null)
+  ) {
+    fail(EVIDENCE_ERROR, `${path} lacks the exact session generation`);
+  }
+  evidenceInteger(value.total_objects, `${path}.total_objects`);
+  for (const key of ["entitled_objects", "unexpected_objects"]) {
+    if (!Array.isArray(value[key])) {
+      fail(EVIDENCE_ERROR, `${path}.${key} must be an array`);
+    }
+  }
+  value.entitled_objects.forEach((entry, index) =>
+    validateSandboxObject(entry, `${path}.entitled_objects[${String(index)}]`, {
+      namespace,
+      expected: value.expected,
+      entitled: true,
+    }),
+  );
+  value.unexpected_objects.forEach((entry, index) =>
+    validateSandboxObject(
+      entry,
+      `${path}.unexpected_objects[${String(index)}]`,
+      { namespace, expected: value.expected, entitled: false },
+    ),
+  );
+  if (
+    value.total_objects !==
+    value.entitled_objects.length + value.unexpected_objects.length
+  ) {
+    fail(EVIDENCE_ERROR, `${path} does not account for its exact object total`);
+  }
+  const identities = [
+    ...value.entitled_objects,
+    ...value.unexpected_objects,
+  ].map((entry) =>
+    JSON.stringify([
+      entry.namespace,
+      entry.name,
+      entry.uid,
+      entry.resource_version,
+    ]),
+  );
+  if (new Set(identities).size !== identities.length) {
+    fail(EVIDENCE_ERROR, `${path} contains a duplicate object version`);
+  }
+  return value;
+}
+
+function validateSandboxInventory(value, path) {
+  evidenceExactKeys(
+    value,
+    [
+      "namespace",
+      "api_version",
+      "kind",
+      "resource",
+      "label_contract",
+      "observations",
+    ],
+    path,
+  );
+  if (
+    !DNS1123_LABEL.test(evidenceText(value.namespace, `${path}.namespace`, 63))
+  ) {
+    fail(EVIDENCE_ERROR, `${path}.namespace is not one exact DNS-1123 label`);
+  }
+  if (
+    value.api_version !== BATCH_SANDBOX_API_VERSION ||
+    value.kind !== BATCH_SANDBOX_KIND ||
+    value.resource !== BATCH_SANDBOX_RESOURCE
+  ) {
+    fail(EVIDENCE_ERROR, `${path} does not bind the BatchSandbox resource`);
+  }
+  evidenceExactKeys(
+    value.label_contract,
+    Object.keys(SANDBOX_LABELS),
+    `${path}.label_contract`,
+  );
+  if (JSON.stringify(value.label_contract) !== JSON.stringify(SANDBOX_LABELS)) {
+    fail(EVIDENCE_ERROR, `${path}.label_contract does not bind exact labels`);
+  }
+  evidenceExactKeys(value.observations, SANDBOX_PHASES, `${path}.observations`);
+  for (const phase of SANDBOX_PHASES) {
+    nullable(value.observations[phase], (observation) =>
+      validateSandboxObservation(
+        observation,
+        `${path}.observations.${phase}`,
+        phase,
+        value.namespace,
+      ),
+    );
+  }
+  return value;
+}
+
 function validateEvidence(raw, { publishable = false } = {}) {
   evidenceExactKeys(
     raw,
@@ -483,6 +854,7 @@ function validateEvidence(raw, { publishable = false } = {}) {
       "fixture",
       "action",
       "external_inventory",
+      "sandbox_inventory",
       "counts",
       "resources",
       "correlations",
@@ -493,8 +865,8 @@ function validateEvidence(raw, { publishable = false } = {}) {
     ],
     "evidence",
   );
-  if (raw.schema_version !== 2)
-    fail(EVIDENCE_ERROR, "evidence.schema_version must be 2");
+  if (raw.schema_version !== 3)
+    fail(EVIDENCE_ERROR, "evidence.schema_version must be 3");
   evidenceText(raw.evidence_id, "evidence.evidence_id", 255);
   if (raw.ledger_id !== "P-01")
     fail(EVIDENCE_ERROR, "evidence.ledger_id must be P-01");
@@ -619,6 +991,8 @@ function validateEvidence(raw, { publishable = false } = {}) {
       "runtime_image_digest",
       "expected_runtime_version",
       "observed_runtime_version",
+      "expected_kernel",
+      "observed_kernel",
       "configuration_revision",
       "fixture_config_sha256",
       "trigger_conformance",
@@ -651,6 +1025,12 @@ function validateEvidence(raw, { publishable = false } = {}) {
       "evidence.provenance.deployment.observed_runtime_version",
       512,
     ),
+  );
+  if (deployment.expected_kernel !== TRIGGER_KERNEL_ID) {
+    fail(EVIDENCE_ERROR, "evidence expected kernel is not the Trigger kernel");
+  }
+  nullable(deployment.observed_kernel, (value) =>
+    evidenceText(value, "evidence.provenance.deployment.observed_kernel", 128),
   );
   if (!CONFIGURATION_REVISION.test(deployment.configuration_revision)) {
     fail(EVIDENCE_ERROR, "evidence configuration revision is invalid");
@@ -835,6 +1215,13 @@ function validateEvidence(raw, { publishable = false } = {}) {
     raw.external_inventory.delta,
     "evidence.external_inventory.delta",
   );
+  const sandboxInventory = validateSandboxInventory(
+    raw.sandbox_inventory,
+    "evidence.sandbox_inventory",
+  );
+  const sandboxBefore = sandboxInventory.observations.before_launch;
+  const sandboxLive = sandboxInventory.observations.live_session;
+  const sandboxAfter = sandboxInventory.observations.after_stop;
 
   const countKeys = [
     "launch",
@@ -851,6 +1238,15 @@ function validateEvidence(raw, { publishable = false } = {}) {
   evidenceExactKeys(raw.counts, countKeys, "evidence.counts");
   for (const key of countKeys)
     evidenceInteger(raw.counts[key], `evidence.counts.${key}`);
+  if (
+    raw.counts.sandbox !==
+    (sandboxLive === null ? 0 : sandboxLive.entitled_objects.length)
+  ) {
+    fail(
+      EVIDENCE_ERROR,
+      "evidence sandbox count is not derived from the live inventory",
+    );
+  }
 
   const resources = raw.resources;
   const resourceKeys = [
@@ -942,6 +1338,9 @@ function validateEvidence(raw, { publishable = false } = {}) {
       evidenceTimestamp(value, `${path}.finished_at`),
     );
   });
+  const sessionCleanupStages = raw.stages.filter(
+    (stage) => stage.name === "session_cleanup",
+  );
 
   evidenceExactKeys(
     raw.cleanup,
@@ -973,6 +1372,7 @@ function validateEvidence(raw, { publishable = false } = {}) {
   const redactionChecks = [
     "closed_schema",
     "environment_secrets",
+    "kubernetes_credentials",
     "credential_patterns",
     "forbidden_fields",
   ];
@@ -1015,23 +1415,48 @@ function validateEvidence(raw, { publishable = false } = {}) {
   }
 
   if (raw.result === "pass") {
+    const exactSandboxInventory =
+      sandboxBefore !== null &&
+      sandboxBefore.total_objects === 0 &&
+      sandboxBefore.entitled_objects.length === 0 &&
+      sandboxBefore.unexpected_objects.length === 0 &&
+      sandboxLive !== null &&
+      sandboxLive.total_objects === 1 &&
+      sandboxLive.entitled_objects.length === 1 &&
+      sandboxLive.unexpected_objects.length === 0 &&
+      sandboxLive.expected.session_id === resources.session_id &&
+      sandboxLive.expected.runtime_generation ===
+        resources.runtime_generation &&
+      sandboxLive.expected.runtime_reservation_sha256 !== null &&
+      sandboxAfter !== null &&
+      sandboxAfter.total_objects === 0 &&
+      sandboxAfter.entitled_objects.length === 0 &&
+      sandboxAfter.unexpected_objects.length === 0 &&
+      JSON.stringify(sandboxAfter.expected) ===
+        JSON.stringify(sandboxLive.expected);
     if (
       raw.actual_result !== "matched_expected" ||
       raw.failure !== null ||
       deployment.version === null ||
       deployment.observed_runtime_version !==
         deployment.expected_runtime_version ||
+      deployment.observed_kernel !== deployment.expected_kernel ||
       deployment.trigger_conformance !== true ||
       fixture.upstream_owner_account_id === null ||
       fixture.contributor_account_id === null ||
       fixture.launch_creation_mode === null ||
       raw.cleanup.session !== "idle_and_preserved" ||
+      !exactSandboxInventory ||
       raw.correlations.launch.length === 0 ||
       raw.correlations.provider.length === 0 ||
       raw.stages.length === 0 ||
       raw.stages.some(
         (stage) => stage.status !== "passed" || stage.finished_at === null,
-      )
+      ) ||
+      sessionCleanupStages.length !== 1 ||
+      raw.stages[raw.stages.length - 1] !== sessionCleanupStages[0] ||
+      sessionCleanupStages[0].status !== "passed" ||
+      sessionCleanupStages[0].finished_at === null
     ) {
       fail(EVIDENCE_ERROR, "passing evidence is incomplete or contradictory");
     }
@@ -1173,7 +1598,7 @@ class Evidence {
   constructor(path, config, marker, context) {
     this.path = path;
     this.document = {
-      schema_version: 2,
+      schema_version: 3,
       evidence_id: `p-01-gha-${String(context.workflow.run_id)}-${String(context.workflow.run_attempt)}`,
       ledger_id: "P-01",
       result: "running",
@@ -1199,6 +1624,8 @@ class Evidence {
           runtime_image_digest: config.runtime_image_digest,
           expected_runtime_version: config.expected_runtime_version,
           observed_runtime_version: null,
+          expected_kernel: TRIGGER_KERNEL_ID,
+          observed_kernel: null,
           configuration_revision: config.configuration_revision,
           fixture_config_sha256: context.config_sha256,
           trigger_conformance: false,
@@ -1234,6 +1661,16 @@ class Evidence {
         before: Object.fromEntries(INVENTORY_KEYS.map((key) => [key, null])),
         after: Object.fromEntries(INVENTORY_KEYS.map((key) => [key, null])),
         delta: Object.fromEntries(INVENTORY_KEYS.map((key) => [key, null])),
+      },
+      sandbox_inventory: {
+        namespace: config.trigger_sandbox_namespace,
+        api_version: BATCH_SANDBOX_API_VERSION,
+        kind: BATCH_SANDBOX_KIND,
+        resource: BATCH_SANDBOX_RESOURCE,
+        label_contract: { ...SANDBOX_LABELS },
+        observations: Object.fromEntries(
+          SANDBOX_PHASES.map((phase) => [phase, null]),
+        ),
       },
       counts: {
         launch: 0,
@@ -1280,6 +1717,7 @@ class Evidence {
         checks: [
           "closed_schema",
           "environment_secrets",
+          "kubernetes_credentials",
           "credential_patterns",
           "forbidden_fields",
         ],
@@ -1382,6 +1820,386 @@ async function fetchJson(url, expectedStatuses) {
     status: response.status,
     body,
     provider_request_id: providerRequestId,
+  };
+}
+
+function retainedText(value, maximum, pattern) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > maximum ||
+    /[\u0000-\u001f\u007f]/u.test(value) ||
+    !pattern.test(value)
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function retainedTimestamp(value) {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value) ||
+    Number.isNaN(Date.parse(value))
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function sandboxRawLabels(item) {
+  const labels = item?.metadata?.labels;
+  return labels !== null && typeof labels === "object" && !Array.isArray(labels)
+    ? labels
+    : {};
+}
+
+function exactReservationCandidate(item, namespace, expected) {
+  const labels = sandboxRawLabels(item);
+  const name = item?.metadata?.name;
+  return (
+    item?.apiVersion === BATCH_SANDBOX_API_VERSION &&
+    item?.kind === BATCH_SANDBOX_KIND &&
+    item?.metadata?.namespace === namespace &&
+    typeof name === "string" &&
+    labels[SANDBOX_LABELS.sandbox_id] === name &&
+    labels[SANDBOX_LABELS.canonical_kernel] === TRIGGER_KERNEL_ID &&
+    labels[SANDBOX_LABELS.legacy_kernel] === TRIGGER_KERNEL_ID &&
+    labels[SANDBOX_LABELS.canonical_session] === expected.session_id &&
+    labels[SANDBOX_LABELS.legacy_session] === expected.session_id &&
+    labels[SANDBOX_LABELS.runtime_generation] ===
+      String(expected.runtime_generation) &&
+    RUNTIME_RESERVATION.test(labels[SANDBOX_LABELS.runtime_reservation] ?? "")
+  );
+}
+
+function sandboxObjectRecord(
+  item,
+  { namespace, phase, expected, expectedReservation, reservationAmbiguous },
+) {
+  const metadata =
+    item.metadata !== null &&
+    typeof item.metadata === "object" &&
+    !Array.isArray(item.metadata)
+      ? item.metadata
+      : {};
+  const rawLabels = sandboxRawLabels(item);
+  const name = retainedText(metadata.name, 253, KUBERNETES_NAME);
+  const uid = retainedText(metadata.uid, 255, SAFE_KUBERNETES_METADATA);
+  const resourceVersion = retainedText(
+    metadata.resourceVersion,
+    255,
+    SAFE_KUBERNETES_METADATA,
+  );
+  const objectNamespace = retainedText(metadata.namespace, 63, DNS1123_LABEL);
+  const creationTimestamp = retainedTimestamp(metadata.creationTimestamp);
+  const rawDeletionTimestamp = metadata.deletionTimestamp;
+  const deletionTimestamp =
+    rawDeletionTimestamp === undefined || rawDeletionTimestamp === null
+      ? null
+      : retainedTimestamp(rawDeletionTimestamp);
+  const label = (key) =>
+    retainedText(rawLabels[key], 63, KUBERNETES_LABEL_VALUE);
+  const sandboxId = label(SANDBOX_LABELS.sandbox_id);
+  const canonicalKernel = label(SANDBOX_LABELS.canonical_kernel);
+  const legacyKernel = label(SANDBOX_LABELS.legacy_kernel);
+  const canonicalSession = label(SANDBOX_LABELS.canonical_session);
+  const legacySession = label(SANDBOX_LABELS.legacy_session);
+  const runtimeGeneration = label(SANDBOX_LABELS.runtime_generation);
+  const rawReservation = rawLabels[SANDBOX_LABELS.runtime_reservation];
+  const validReservation =
+    typeof rawReservation === "string" &&
+    RUNTIME_RESERVATION.test(rawReservation)
+      ? rawReservation
+      : null;
+  const issues = [];
+  const issue = (condition, name) => {
+    if (condition) issues.push(name);
+  };
+
+  issue(phase === "before_launch", "object_present_before_launch");
+  issue(item.apiVersion !== BATCH_SANDBOX_API_VERSION, "api_version_mismatch");
+  issue(item.kind !== BATCH_SANDBOX_KIND, "kind_mismatch");
+  issue(objectNamespace !== namespace, "namespace_mismatch");
+  issue(name === null, "name_missing_or_invalid");
+  issue(uid === null, "uid_missing_or_invalid");
+  issue(resourceVersion === null, "resource_version_missing_or_invalid");
+  issue(creationTimestamp === null, "creation_timestamp_missing_or_invalid");
+  issue(
+    rawDeletionTimestamp !== undefined &&
+      rawDeletionTimestamp !== null &&
+      deletionTimestamp === null,
+    "deletion_timestamp_invalid",
+  );
+  issue(
+    rawDeletionTimestamp !== undefined && rawDeletionTimestamp !== null,
+    "deletion_in_progress",
+  );
+  issue(name === null || sandboxId !== name, "sandbox_id_mismatch");
+  issue(canonicalKernel !== TRIGGER_KERNEL_ID, "canonical_kernel_mismatch");
+  issue(legacyKernel !== TRIGGER_KERNEL_ID, "legacy_kernel_mismatch");
+  issue(
+    canonicalKernel !== null &&
+      legacyKernel !== null &&
+      canonicalKernel !== legacyKernel,
+    "kernel_labels_ambiguous",
+  );
+
+  if (phase !== "before_launch") {
+    issue(
+      canonicalSession !== expected.session_id,
+      "canonical_session_mismatch",
+    );
+    issue(legacySession !== expected.session_id, "legacy_session_mismatch");
+    issue(
+      canonicalSession !== null &&
+        legacySession !== null &&
+        canonicalSession !== legacySession,
+      "session_labels_ambiguous",
+    );
+    issue(
+      runtimeGeneration !== String(expected.runtime_generation),
+      "runtime_generation_mismatch",
+    );
+    issue(
+      rawReservation === undefined || rawReservation === null,
+      "runtime_reservation_missing",
+    );
+    issue(
+      rawReservation !== undefined &&
+        rawReservation !== null &&
+        validReservation === null,
+      "runtime_reservation_invalid",
+    );
+    issue(reservationAmbiguous, "runtime_reservation_ambiguous");
+    issue(
+      validReservation !== null &&
+        expectedReservation !== null &&
+        validReservation !== expectedReservation,
+      "runtime_reservation_mismatch",
+    );
+  }
+
+  const record = {
+    api_version: retainedText(item.apiVersion, 128, SAFE_KUBERNETES_METADATA),
+    kind: retainedText(item.kind, 128, SAFE_KUBERNETES_METADATA),
+    namespace: objectNamespace,
+    name,
+    uid,
+    resource_version: resourceVersion,
+    creation_timestamp: creationTimestamp,
+    deletion_timestamp: deletionTimestamp,
+    labels: {
+      sandbox_id: sandboxId,
+      canonical_kernel: canonicalKernel,
+      legacy_kernel: legacyKernel,
+      canonical_session: canonicalSession,
+      legacy_session: legacySession,
+      runtime_generation: runtimeGeneration,
+      runtime_reservation_sha256:
+        validReservation === null ? null : sha256(validReservation),
+    },
+    issues: [...new Set(issues)].sort(),
+  };
+  return { record, raw_reservation: validReservation };
+}
+
+function classifySandboxInventory(list, { namespace, phase, expected }) {
+  if (
+    list === null ||
+    typeof list !== "object" ||
+    Array.isArray(list) ||
+    list.apiVersion !== BATCH_SANDBOX_API_VERSION ||
+    list.kind !== BATCH_SANDBOX_LIST_KIND ||
+    !Array.isArray(list.items) ||
+    list.items.length > 10_000 ||
+    list.metadata === null ||
+    typeof list.metadata !== "object" ||
+    Array.isArray(list.metadata)
+  ) {
+    fail(
+      "sandbox_inventory_malformed",
+      "Kubernetes returned a malformed BatchSandbox inventory",
+    );
+  }
+  if (
+    list.items.some(
+      (item) =>
+        item === null || typeof item !== "object" || Array.isArray(item),
+    )
+  ) {
+    fail(
+      "sandbox_inventory_malformed",
+      "Kubernetes returned a non-object BatchSandbox item",
+    );
+  }
+  if (
+    typeof list.metadata.continue === "string" &&
+    list.metadata.continue.length > 0
+  ) {
+    fail(
+      "sandbox_inventory_incomplete",
+      "Kubernetes BatchSandbox inventory retained a continuation token",
+    );
+  }
+  const listResourceVersion = retainedText(
+    list.metadata.resourceVersion,
+    255,
+    SAFE_KUBERNETES_METADATA,
+  );
+  if (listResourceVersion === null) {
+    fail(
+      "sandbox_inventory_malformed",
+      "Kubernetes BatchSandbox inventory lacks a safe resourceVersion",
+    );
+  }
+
+  let expectedReservation = expected.runtime_reservation ?? null;
+  let reservationAmbiguous = false;
+  if (phase !== "before_launch" && expectedReservation === null) {
+    const candidates = list.items.filter((item) =>
+      exactReservationCandidate(item, namespace, expected),
+    );
+    const reservations = [
+      ...new Set(
+        candidates.map(
+          (item) => sandboxRawLabels(item)[SANDBOX_LABELS.runtime_reservation],
+        ),
+      ),
+    ];
+    if (reservations.length === 1) {
+      [expectedReservation] = reservations;
+    } else if (reservations.length > 1) {
+      reservationAmbiguous = true;
+    }
+  }
+  if (
+    expectedReservation !== null &&
+    !RUNTIME_RESERVATION.test(expectedReservation)
+  ) {
+    fail(
+      "sandbox_identity_invalid",
+      "expected runtime reservation is not an exact provider reservation",
+    );
+  }
+
+  const entitledObjects = [];
+  const unexpectedObjects = [];
+  for (const item of list.items) {
+    const inspected = sandboxObjectRecord(item, {
+      namespace,
+      phase,
+      expected,
+      expectedReservation,
+      reservationAmbiguous,
+    });
+    if (inspected.record.issues.length === 0) {
+      entitledObjects.push(inspected.record);
+    } else {
+      unexpectedObjects.push(inspected.record);
+    }
+  }
+  const observation = {
+    phase,
+    observed_at: now(),
+    list_resource_version: listResourceVersion,
+    expected: {
+      session_id: expected.session_id,
+      runtime_generation: expected.runtime_generation,
+      runtime_reservation_sha256:
+        expectedReservation === null ? null : sha256(expectedReservation),
+    },
+    total_objects: list.items.length,
+    entitled_objects: entitledObjects,
+    unexpected_objects: unexpectedObjects,
+  };
+  return { observation, runtime_reservation: expectedReservation };
+}
+
+async function kubernetesSandboxInventory({
+  kubeconfig,
+  namespace,
+  phase,
+  expected,
+}) {
+  const childEnvironment = {};
+  for (const name of [
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY",
+  ]) {
+    if (typeof process.env[name] === "string") {
+      childEnvironment[name] = process.env[name];
+    }
+  }
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(
+      "kubectl",
+      [
+        "--kubeconfig",
+        kubeconfig,
+        "get",
+        BATCH_SANDBOX_RESOURCE,
+        "--namespace",
+        namespace,
+        "--output=json",
+        "--request-timeout=30s",
+        "--chunk-size=0",
+      ],
+      {
+        encoding: "utf8",
+        env: childEnvironment,
+        timeout: 45_000,
+        maxBuffer: MAX_PUBLIC_JSON_BYTES,
+      },
+    ));
+  } catch {
+    fail(
+      "sandbox_inventory_unavailable",
+      "the exact Trigger BatchSandbox inventory could not be read",
+    );
+  }
+  let list;
+  try {
+    list = JSON.parse(stdout);
+  } catch {
+    fail(
+      "sandbox_inventory_malformed",
+      "kubectl did not return a JSON BatchSandbox inventory",
+    );
+  }
+  return classifySandboxInventory(list, { namespace, phase, expected });
+}
+
+function exactSandboxExpectation(
+  sessionId,
+  runtimeGeneration,
+  reservation = null,
+) {
+  if (
+    typeof sessionId !== "string" ||
+    sessionId.length === 0 ||
+    sessionId.length > 63 ||
+    !KUBERNETES_LABEL_VALUE.test(sessionId) ||
+    !Number.isSafeInteger(runtimeGeneration) ||
+    runtimeGeneration <= 0 ||
+    (reservation !== null && !RUNTIME_RESERVATION.test(reservation))
+  ) {
+    fail(
+      "sandbox_identity_invalid",
+      "Launch session identity cannot fence a BatchSandbox inventory",
+    );
+  }
+  return {
+    session_id: sessionId,
+    runtime_generation: runtimeGeneration,
+    runtime_reservation: reservation,
   };
 }
 
@@ -1608,23 +2426,33 @@ async function selfTestLaunchChoice() {
   console.log("[smoke] launch selection self-test passed");
 }
 
-function selfTestEvidenceValidation() {
-  const config = {
+function selfTestFixtureConfig() {
+  return {
+    schema_version: 2,
+    base_url: "https://cma.example.invalid",
     expected_build_sha: "1".repeat(40),
     runtime_image_digest: `sha256:${"2".repeat(64)}`,
     expected_runtime_version: "registry.example/cma-runtime@sha256:pinned",
     configuration_revision: "deployment-42",
+    trigger_sandbox_namespace: "trigger-workloads",
+    public_id: "00000000-0000-4000-8000-000000000001",
+    revision_digest: "4".repeat(64),
+    source_sha: "3".repeat(40),
     upstream: {
       repository_id: 101,
       owner: "ChronoAIProject",
       repository: "cma-trigger-fixture",
+      default_branch: "main",
     },
-    source_sha: "3".repeat(40),
-    public_id: "00000000-0000-4000-8000-000000000001",
-    revision_digest: "4".repeat(64),
     contributor: {
       login: "cma-trigger-smoke-user",
+      fork_repository: "cma-trigger-fixture",
       expected_fork_mode: "new",
+    },
+    task: {
+      marker_input: "smoke_marker",
+      expected_path_template: "cma-trigger-smoke/{marker}.txt",
+      expected_content_template: "CMA Trigger provider smoke {marker}\n",
     },
     fixture_policy: {
       repository_owner: "ChronoAIProject",
@@ -1633,7 +2461,192 @@ function selfTestEvidenceValidation() {
       github_cleanup: "preserve",
       session_cleanup: "stop_runtime_preserve_session",
     },
+    timeouts: {
+      launch_seconds: 2400,
+      effect_seconds: 600,
+      poll_seconds: 5,
+    },
+    github_api_url: "https://api.github.com",
   };
+}
+
+function selfTestConfigValidation() {
+  const base = selfTestFixtureConfig();
+  validateConfig(JSON.parse(JSON.stringify(base)));
+  const mutations = [
+    ["extra kubeconfig field", (value) => (value.kubeconfig = "forbidden")],
+    [
+      "missing Trigger namespace",
+      (value) => delete value.trigger_sandbox_namespace,
+    ],
+    [
+      "invalid Trigger namespace",
+      (value) => (value.trigger_sandbox_namespace = "Other/Namespace"),
+    ],
+    [
+      "credential-bearing task content",
+      (value) =>
+        (value.task.expected_content_template =
+          "Bearer github_pat_forbidden {marker}"),
+    ],
+  ];
+  for (const [name, mutate] of mutations) {
+    const candidate = JSON.parse(JSON.stringify(base));
+    mutate(candidate);
+    let refused = false;
+    try {
+      validateConfig(candidate);
+    } catch (cause) {
+      refused =
+        cause instanceof SmokeFailure && cause.code === "invalid_config";
+    }
+    assert(
+      refused,
+      "self_test_failed",
+      `config mutation was accepted: ${name}`,
+    );
+  }
+  let hiddenCredentialRefused = false;
+  try {
+    validateConfigRedaction(
+      `{"expected_runtime_version":"Bearer github_pat_hidden","expected_runtime_version":"safe"}`,
+    );
+  } catch (cause) {
+    hiddenCredentialRefused =
+      cause instanceof SmokeFailure && cause.code === "invalid_config";
+  }
+  assert(
+    hiddenCredentialRefused,
+    "self_test_failed",
+    "serialized duplicate-field credential was accepted",
+  );
+  console.log(
+    `[smoke] config schema and redaction self-test passed (${String(mutations.length + 1)} rejected mutations)`,
+  );
+}
+
+function selfTestBatchSandbox({
+  name = "sandbox-provider-smoke",
+  uid = "00000000-0000-4000-8000-000000000020",
+  resourceVersion = "17",
+  session = "sesn_provider_smoke",
+  generation = "1",
+  reservation = `rres_${"a".repeat(32)}`,
+} = {}) {
+  return {
+    apiVersion: BATCH_SANDBOX_API_VERSION,
+    kind: BATCH_SANDBOX_KIND,
+    metadata: {
+      namespace: "trigger-workloads",
+      name,
+      uid,
+      resourceVersion,
+      creationTimestamp: "2026-08-28T01:02:20Z",
+      labels: {
+        [SANDBOX_LABELS.sandbox_id]: name,
+        [SANDBOX_LABELS.canonical_kernel]: TRIGGER_KERNEL_ID,
+        [SANDBOX_LABELS.legacy_kernel]: TRIGGER_KERNEL_ID,
+        [SANDBOX_LABELS.canonical_session]: session,
+        [SANDBOX_LABELS.legacy_session]: session,
+        [SANDBOX_LABELS.runtime_generation]: generation,
+        [SANDBOX_LABELS.runtime_reservation]: reservation,
+      },
+    },
+  };
+}
+
+function selfTestBatchSandboxList(items, resourceVersion) {
+  return {
+    apiVersion: BATCH_SANDBOX_API_VERSION,
+    kind: BATCH_SANDBOX_LIST_KIND,
+    metadata: { resourceVersion },
+    items,
+  };
+}
+
+function selfTestSandboxInventory() {
+  const expected = exactSandboxExpectation("sesn_provider_smoke", 1);
+  const entitled = selfTestBatchSandbox();
+  const stale = selfTestBatchSandbox({
+    name: "sandbox-stale",
+    uid: "00000000-0000-4000-8000-000000000021",
+    resourceVersion: "18",
+    session: "sesn_stale",
+  });
+  const extra = classifySandboxInventory(
+    selfTestBatchSandboxList([entitled, stale], "19"),
+    {
+      namespace: "trigger-workloads",
+      phase: "live_session",
+      expected,
+    },
+  );
+  assert(
+    extra.observation.entitled_objects.length === 1 &&
+      extra.observation.unexpected_objects.length === 1,
+    "self_test_failed",
+    "extra or stale live BatchSandbox was not classified as unexpected",
+  );
+
+  const conflicting = selfTestBatchSandbox({
+    name: "sandbox-conflicting",
+    uid: "00000000-0000-4000-8000-000000000022",
+    resourceVersion: "20",
+    reservation: `rres_${"b".repeat(32)}`,
+  });
+  const ambiguous = classifySandboxInventory(
+    selfTestBatchSandboxList([entitled, conflicting], "21"),
+    {
+      namespace: "trigger-workloads",
+      phase: "live_session",
+      expected,
+    },
+  );
+  assert(
+    ambiguous.observation.entitled_objects.length === 0 &&
+      ambiguous.observation.unexpected_objects.length === 2 &&
+      ambiguous.observation.unexpected_objects.every((object) =>
+        object.issues.includes("runtime_reservation_ambiguous"),
+      ),
+    "self_test_failed",
+    "ambiguous live reservations were accepted",
+  );
+
+  const missing = classifySandboxInventory(selfTestBatchSandboxList([], "22"), {
+    namespace: "trigger-workloads",
+    phase: "live_session",
+    expected,
+  });
+  assertEqual(
+    missing.observation.total_objects,
+    0,
+    "self_test_failed",
+    "missing-live inventory invented a BatchSandbox",
+  );
+
+  const leaked = classifySandboxInventory(
+    selfTestBatchSandboxList([entitled], "23"),
+    {
+      namespace: "trigger-workloads",
+      phase: "after_stop",
+      expected: exactSandboxExpectation(
+        "sesn_provider_smoke",
+        1,
+        `rres_${"a".repeat(32)}`,
+      ),
+    },
+  );
+  assertEqual(
+    leaked.observation.entitled_objects.length,
+    1,
+    "self_test_failed",
+    "leaked post-stop BatchSandbox was not retained as exact evidence",
+  );
+  console.log("[smoke] BatchSandbox inventory classifier self-test passed");
+}
+
+function selfTestEvidenceValidation() {
+  const config = selfTestFixtureConfig();
   const workflow = {
     repository: "ChronoAIProject/cma",
     workflow_commit: "5".repeat(40),
@@ -1664,6 +2677,7 @@ function selfTestEvidenceValidation() {
   document.provenance.deployment.version = "v1.2.3";
   document.provenance.deployment.observed_runtime_version =
     config.expected_runtime_version;
+  document.provenance.deployment.observed_kernel = TRIGGER_KERNEL_ID;
   document.provenance.deployment.trigger_conformance = true;
   document.fixture.upstream_owner_account_id = 301;
   document.fixture.contributor_account_id = 302;
@@ -1688,18 +2702,60 @@ function selfTestEvidenceValidation() {
       launch_pull_requests: 1,
     },
   };
+  const sandboxBefore = classifySandboxInventory(
+    selfTestBatchSandboxList([], "16"),
+    {
+      namespace: config.trigger_sandbox_namespace,
+      phase: "before_launch",
+      expected: {
+        session_id: null,
+        runtime_generation: null,
+        runtime_reservation: null,
+      },
+    },
+  );
+  const sandboxLive = classifySandboxInventory(
+    selfTestBatchSandboxList([selfTestBatchSandbox()], "17"),
+    {
+      namespace: config.trigger_sandbox_namespace,
+      phase: "live_session",
+      expected: exactSandboxExpectation("sesn_provider_smoke", 1),
+    },
+  );
+  const sandboxAfter = classifySandboxInventory(
+    selfTestBatchSandboxList([], "18"),
+    {
+      namespace: config.trigger_sandbox_namespace,
+      phase: "after_stop",
+      expected: exactSandboxExpectation(
+        "sesn_provider_smoke",
+        1,
+        sandboxLive.runtime_reservation,
+      ),
+    },
+  );
+  sandboxBefore.observation.observed_at = "2026-08-28T01:02:10Z";
+  sandboxLive.observation.observed_at = "2026-08-28T01:02:30Z";
+  sandboxAfter.observation.observed_at = "2026-08-28T01:02:50Z";
+  document.sandbox_inventory.observations = {
+    before_launch: sandboxBefore.observation,
+    live_session: sandboxLive.observation,
+    after_stop: sandboxAfter.observation,
+  };
   document.counts = {
     launch: 1,
     fork: 1,
     fork_created_delta: 1,
     branch: 1,
     workspace: 1,
-    sandbox: 1,
+    sandbox: 0,
     session: 1,
     initial_owner_message: 1,
     contribution_commit: 1,
     pull_request: 1,
   };
+  document.counts.sandbox =
+    document.sandbox_inventory.observations.live_session.entitled_objects.length;
   document.resources = {
     launch_id: "00000000-0000-4000-8000-000000000010",
     fork_repository_id: 401,
@@ -1729,6 +2785,12 @@ function selfTestEvidenceValidation() {
       started_at: "2026-08-28T01:02:00Z",
       finished_at: "2026-08-28T01:03:00Z",
     },
+    {
+      name: "session_cleanup",
+      status: "passed",
+      started_at: "2026-08-28T01:03:00Z",
+      finished_at: "2026-08-28T01:03:00Z",
+    },
   ];
   document.cleanup.session = "idle_and_preserved";
   document.redaction.status = "passed";
@@ -1752,6 +2814,26 @@ function selfTestEvidenceValidation() {
         (value.provenance.deployment.observed_runtime_version = "other"),
     ],
     [
+      "wrong expected kernel",
+      (value) => (value.provenance.deployment.expected_kernel = "other"),
+    ],
+    [
+      "kernel observation drift",
+      (value) => (value.provenance.deployment.observed_kernel = "other"),
+    ],
+    ["missing session cleanup stage", (value) => value.stages.pop()],
+    [
+      "incomplete session cleanup stage",
+      (value) => {
+        value.stages[value.stages.length - 1].status = "failed";
+        value.stages[value.stages.length - 1].finished_at = null;
+      },
+    ],
+    [
+      "cleanup state drift",
+      (value) => (value.cleanup.session = "preserved_for_investigation"),
+    ],
+    [
       "self review",
       (value) =>
         (value.actors.reviewers[0].account_id =
@@ -1772,10 +2854,68 @@ function selfTestEvidenceValidation() {
       (value) => (value.fixture.service_id = "must-not-appear"),
     ],
     [
+      "extra live BatchSandbox object",
+      (value) => {
+        const observation = value.sandbox_inventory.observations.live_session;
+        const extra = JSON.parse(
+          JSON.stringify(observation.entitled_objects[0]),
+        );
+        extra.name = "sandbox-extra";
+        extra.uid = "00000000-0000-4000-8000-000000000023";
+        extra.resource_version = "24";
+        extra.labels.sandbox_id = extra.name;
+        extra.labels.canonical_session = "sesn_stale";
+        extra.labels.legacy_session = "sesn_stale";
+        extra.issues = [
+          "canonical_session_mismatch",
+          "legacy_session_mismatch",
+        ];
+        observation.unexpected_objects.push(extra);
+        observation.total_objects += 1;
+      },
+    ],
+    [
+      "stale or ambiguous live BatchSandbox object",
+      (value) => {
+        const observation = value.sandbox_inventory.observations.live_session;
+        const stale = observation.entitled_objects.pop();
+        stale.labels.canonical_session = "sesn_stale";
+        stale.issues = [
+          "canonical_session_mismatch",
+          "session_labels_ambiguous",
+        ];
+        observation.unexpected_objects.push(stale);
+        value.counts.sandbox = observation.entitled_objects.length;
+      },
+    ],
+    [
+      "missing live BatchSandbox object",
+      (value) => {
+        value.sandbox_inventory.observations.live_session = null;
+        value.counts.sandbox = 0;
+      },
+    ],
+    [
+      "leaked post-stop BatchSandbox object",
+      (value) => {
+        const live =
+          value.sandbox_inventory.observations.live_session.entitled_objects[0];
+        const after = value.sandbox_inventory.observations.after_stop;
+        after.entitled_objects.push(JSON.parse(JSON.stringify(live)));
+        after.total_objects = after.entitled_objects.length;
+      },
+    ],
+    [
+      "raw sandbox reservation extension",
+      (value) =>
+        (value.sandbox_inventory.observations.live_session.entitled_objects[0].labels.runtime_reservation = `rres_${"f".repeat(32)}`),
+    ],
+    [
       "inventory mismatch",
       (value) => (value.external_inventory.after.launches += 1),
     ],
     ["count mismatch", (value) => (value.counts.workspace = 0)],
+    ["fabricated sandbox count", (value) => (value.counts.sandbox = 0)],
     [
       "missing provider correlation",
       (value) => (value.correlations.provider = []),
@@ -1956,9 +3096,21 @@ async function runSmoke(configPath, evidencePath) {
   let currentStage = "environment";
   let client;
   let sessionId;
+  let runtimeReservation;
 
   try {
     const accessToken = requiredEnvironment("CMA_TRIGGER_SMOKE_ACCESS_TOKEN");
+    const kubeconfig = requiredEnvironment(
+      "CMA_TRIGGER_SMOKE_KUBECONFIG",
+      4096,
+    );
+    if (!kubeconfig.startsWith("/")) {
+      fail(
+        "invalid_kubeconfig_path",
+        "CMA_TRIGGER_SMOKE_KUBECONFIG must be an absolute runner path",
+      );
+    }
+    await access(kubeconfig, fsConstants.R_OK);
     await access(SDK_ENTRY, fsConstants.R_OK);
     const sdk = await import(SDK_ENTRY);
     let requestSequence = 0;
@@ -2155,6 +3307,34 @@ async function runSmoke(configPath, evidencePath) {
       }
     });
 
+    currentStage = "sandbox_inventory_before_launch";
+    await evidence.stage(currentStage, async () => {
+      const inventory = await kubernetesSandboxInventory({
+        kubeconfig,
+        namespace: config.trigger_sandbox_namespace,
+        phase: "before_launch",
+        expected: {
+          session_id: null,
+          runtime_generation: null,
+          runtime_reservation: null,
+        },
+      });
+      evidence.document.sandbox_inventory.observations.before_launch =
+        inventory.observation;
+      assertEqual(
+        inventory.observation.total_objects,
+        0,
+        "sandbox_precondition_mismatch",
+        "Trigger namespace was not empty before Launch creation",
+      );
+      assertEqual(
+        inventory.observation.unexpected_objects.length,
+        0,
+        "sandbox_precondition_mismatch",
+        "Trigger namespace contained an unexpected BatchSandbox before Launch",
+      );
+    });
+
     currentStage = "launch_and_reclick";
     let launch;
     let launchCountBefore;
@@ -2322,6 +3502,7 @@ async function runSmoke(configPath, evidencePath) {
         "runtime_admission_missing",
         "ready Launch lacks its reviewed and Start-time runtime identity",
       );
+      sessionId = launch.session.session_id;
       assertEqual(
         launch.runtime_admission.runtime_version,
         config.expected_runtime_version,
@@ -2336,6 +3517,14 @@ async function runSmoke(configPath, evidencePath) {
       );
       evidence.document.provenance.deployment.observed_runtime_version =
         launch.start_admission.runtime_version;
+      evidence.document.provenance.deployment.observed_kernel =
+        launch.runtime_admission.kernel;
+      assertEqual(
+        launch.runtime_admission.kernel,
+        TRIGGER_KERNEL_ID,
+        "trigger_kernel_mismatch",
+        "reviewed kernel differs from the code-owned Trigger kernel",
+      );
       assertEqual(
         launch.fork.reused,
         config.contributor.expected_fork_mode === "reuse",
@@ -2353,6 +3542,21 @@ async function runSmoke(configPath, evidencePath) {
         launch.session.session_id,
         "session_identity_mismatch",
         "delivery and Launch session identities differ",
+      );
+      const createdSession = await client.readSession(
+        launch.session.session_id,
+      );
+      assertEqual(
+        createdSession.id,
+        launch.session.session_id,
+        "session_identity_mismatch",
+        "created session identity differs from the Launch session",
+      );
+      assertEqual(
+        createdSession.kernel,
+        TRIGGER_KERNEL_ID,
+        "trigger_kernel_mismatch",
+        "created session did not retain the code-owned Trigger kernel",
       );
       assertEqual(
         launch.delivery.launch_id,
@@ -2378,11 +3582,9 @@ async function runSmoke(configPath, evidencePath) {
         "branch_identity_mismatch",
         "Launch branch did not use the fenced Launch identity",
       );
-      sessionId = launch.session.session_id;
       evidence.document.counts.fork = 1;
       evidence.document.counts.branch = 1;
       evidence.document.counts.workspace = 1;
-      evidence.document.counts.sandbox = 1;
       evidence.document.counts.session = 1;
       evidence.document.resources.fork_repository_id =
         launch.fork.repository.repository_id;
@@ -2399,6 +3601,51 @@ async function runSmoke(configPath, evidencePath) {
       evidence.document.resources.delivery_origin_key =
         launch.delivery.origin_key;
       evidence.document.cleanup.session = "preserved_for_investigation";
+    });
+
+    currentStage = "sandbox_inventory_live_session";
+    await evidence.stage(currentStage, async () => {
+      const expected = exactSandboxExpectation(
+        sessionId,
+        launch.session.runtime_generation,
+        typeof launch.session.runtime_reservation === "string"
+          ? launch.session.runtime_reservation
+          : null,
+      );
+      const inventory = await kubernetesSandboxInventory({
+        kubeconfig,
+        namespace: config.trigger_sandbox_namespace,
+        phase: "live_session",
+        expected,
+      });
+      evidence.document.sandbox_inventory.observations.live_session =
+        inventory.observation;
+      runtimeReservation = inventory.runtime_reservation;
+      evidence.document.counts.sandbox =
+        inventory.observation.entitled_objects.length;
+      if (inventory.observation.total_objects === 0) {
+        fail(
+          "sandbox_live_object_missing",
+          "ready Trigger session had no BatchSandbox in its exact namespace",
+        );
+      }
+      assertEqual(
+        inventory.observation.unexpected_objects.length,
+        0,
+        "sandbox_live_inventory_ambiguous",
+        "ready Trigger session had an extra, stale, or ambiguous BatchSandbox",
+      );
+      assertEqual(
+        inventory.observation.entitled_objects.length,
+        1,
+        "sandbox_live_count_mismatch",
+        "ready Trigger session did not own exactly one entitled BatchSandbox",
+      );
+      assert(
+        runtimeReservation !== null,
+        "sandbox_reservation_missing",
+        "entitled BatchSandbox lacked its exact runtime reservation",
+      );
     });
 
     currentStage = "initial_message";
@@ -2963,10 +4210,53 @@ async function runSmoke(configPath, evidencePath) {
       await client.stopSession(sessionId);
       const stopped = await client.readSession(sessionId);
       assertEqual(
+        stopped.id,
+        sessionId,
+        "session_cleanup_failed",
+        "stopped session identity changed",
+      );
+      assertEqual(
+        stopped.kernel,
+        TRIGGER_KERNEL_ID,
+        "session_cleanup_failed",
+        "stopped session did not retain the Trigger kernel",
+      );
+      assertEqual(
         stopped.lifecycle,
         "idle",
         "session_cleanup_failed",
         "smoke session was not stopped",
+      );
+      const expected = exactSandboxExpectation(
+        sessionId,
+        evidence.document.resources.runtime_generation,
+        runtimeReservation,
+      );
+      const deadline = Date.now() + config.timeouts.effect_seconds * 1000;
+      while (true) {
+        const inventory = await kubernetesSandboxInventory({
+          kubeconfig,
+          namespace: config.trigger_sandbox_namespace,
+          phase: "after_stop",
+          expected,
+        });
+        evidence.document.sandbox_inventory.observations.after_stop =
+          inventory.observation;
+        if (inventory.observation.total_objects === 0) break;
+        if (Date.now() >= deadline) {
+          fail(
+            "sandbox_leaked_after_stop",
+            "Trigger BatchSandbox remained after stop reconciliation",
+          );
+        }
+        await sleep(config.timeouts.poll_seconds * 1000);
+      }
+      assertEqual(
+        evidence.document.sandbox_inventory.observations.after_stop
+          .unexpected_objects.length,
+        0,
+        "sandbox_post_stop_inventory_mismatch",
+        "Trigger namespace retained an unexpected BatchSandbox after stop",
       );
       evidence.document.cleanup.session = "idle_and_preserved";
     });
@@ -3033,9 +4323,8 @@ async function auditEvidence(path) {
     );
   }
   const forbidden = [
-    /\bBearer\s+[^\s"]+/iu,
-    /"(?:access_token|refresh_token|authorization|cookie|set-cookie|provider_body|rendered_prompt)"\s*:/iu,
-    /\b(?:github_pat_|gh[opusr]_|sk-[A-Za-z0-9])/u,
+    ...CONFIG_CREDENTIAL_PATTERNS,
+    /"(?:provider_body|rendered_prompt|runtime_reservation|kubernetes_config|cluster_server)"\s*:/iu,
   ];
   if (forbidden.some((pattern) => pattern.test(serialized))) {
     fail(
@@ -3074,6 +4363,8 @@ async function main() {
     rest.length === 0
   ) {
     await selfTestLaunchChoice();
+    selfTestConfigValidation();
+    selfTestSandboxInventory();
     selfTestEvidenceValidation();
     return;
   }

@@ -217,6 +217,7 @@ impl SessionService {
         let mut offerings: Vec<_> = self
             .adapters
             .iter()
+            .filter(|(id, _)| self.trigger_kernel.as_ref() != Some(*id))
             .map(|(id, adapter)| (id.clone(), servable_modes(adapter.capabilities())))
             .collect();
         offerings.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
@@ -401,6 +402,12 @@ impl SessionService {
             .environments
             .agent_for(caller, spec.environment_profile.as_ref())
             .await?;
+        if trigger_origin.is_none() && self.trigger_kernel.as_ref() == Some(&agent.kernel) {
+            return Err(CoreError::InvalidRequest(format!(
+                "runtime {} is reserved for managed Trigger sessions",
+                agent.kernel
+            )));
+        }
         let size = Self::resolve_size(&agent);
         let mut spec = spec;
         // Which plane a session is on is the exception, and only where no

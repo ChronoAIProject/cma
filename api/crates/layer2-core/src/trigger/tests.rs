@@ -16,6 +16,7 @@ const DRAFT_EXPIRY: &str = "2026-08-27T12:00:00Z";
 const AFTER_DRAFT_EXPIRY: &str = "2026-08-27T12:00:01Z";
 pub(crate) const TEST_TRIGGER_RUNTIME_VERSION: &str = "cma-trigger-test-runtime@sha256:admitted";
 const TEST_TRIGGER_KERNEL: &str = "trigger-test-kernel";
+const TEST_HISTORICAL_KERNEL: &str = "historical-trigger-test-kernel";
 
 pub(crate) fn session_launch(archive_sha256: &str) -> Launch {
     let owner = SubjectId("trigger-contributor".into());
@@ -149,6 +150,22 @@ fn capability_lifetime_is_hard_bounded() {
     capability.validate().unwrap();
     capability.expires_at_epoch_seconds += 1;
     assert!(capability.validate().is_err());
+}
+
+#[test]
+fn connection_generation_must_be_positive() {
+    let mut snapshot = connection();
+    snapshot
+        .validate_for(&[ScopeClass::PublicRepository])
+        .unwrap();
+
+    for invalid_generation in [0, -1] {
+        snapshot.service_state_version = invalid_generation;
+        let error = snapshot
+            .validate_for(&[ScopeClass::PublicRepository])
+            .unwrap_err();
+        assert!(error.to_string().contains("generation data"));
+    }
 }
 
 #[test]
@@ -2181,6 +2198,8 @@ fn reviewed_launch() -> Launch {
             new_provider_object_id: None,
             old_bytes: 0,
             new_bytes: bytes.len() as u64,
+            additions: Some(1),
+            deletions: Some(0),
             patch: Some("--- baseline\n+++ checkpoint\n@@ -0,0 +1 @@\n+reviewed change\n".into()),
             patch_complete: true,
         }],
@@ -5505,6 +5524,154 @@ async fn public_preview_projects_the_deployment_contributor_estimate() {
     ));
 }
 
+#[derive(Clone, Copy)]
+enum PreviewPolicyOutcome {
+    Available,
+    Renamed,
+    NotForkable,
+    NotFound,
+    IdentityDrift,
+    Transient,
+}
+
+struct PreviewPolicyAuthority(PreviewPolicyOutcome);
+
+#[async_trait]
+impl TriggerAuthorityVerifier for PreviewPolicyAuthority {
+    async fn verify_publisher(
+        &self,
+        subject: &SubjectId,
+        content: &TriggerRevisionContent,
+        selected_service_id: &str,
+    ) -> Result<PublisherAuthority, TriggerServiceError> {
+        TestAuthority
+            .verify_publisher(subject, content, selected_service_id)
+            .await
+    }
+
+    async fn verify_launch(
+        &self,
+        subject: &SubjectId,
+        revision: &TriggerRevision,
+        selected_service_id: &str,
+        previous: Option<&ConnectionSnapshot>,
+    ) -> Result<LaunchAuthority, TriggerServiceError> {
+        TestAuthority
+            .verify_launch(subject, revision, selected_service_id, previous)
+            .await
+    }
+
+    async fn resolve_preview_repository_policy(
+        &self,
+        revision: &TriggerRevision,
+    ) -> Result<TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        let mut repository = revision.content.upstream.repository.clone();
+        match self.0 {
+            PreviewPolicyOutcome::Available => Ok(TriggerPreviewRepositoryPolicy {
+                repository,
+                public_forkable: true,
+            }),
+            PreviewPolicyOutcome::Renamed => {
+                repository.canonical_owner = "renamed-owner".into();
+                repository.canonical_name = "renamed-repository".into();
+                repository.default_branch = "trunk".into();
+                Ok(TriggerPreviewRepositoryPolicy {
+                    repository,
+                    public_forkable: true,
+                })
+            }
+            PreviewPolicyOutcome::NotForkable => {
+                repository.allow_forking = false;
+                Ok(TriggerPreviewRepositoryPolicy {
+                    repository,
+                    public_forkable: false,
+                })
+            }
+            PreviewPolicyOutcome::NotFound => Err(TriggerAuthorityError::ResourceNotFound.into()),
+            PreviewPolicyOutcome::IdentityDrift => {
+                Err(TriggerAuthorityError::AuthorityDrift.into())
+            }
+            PreviewPolicyOutcome::Transient => Err(TriggerAuthorityError::Transient.into()),
+        }
+    }
+}
+
+async fn preview_for_policy(outcome: PreviewPolicyOutcome) -> TriggerPreview {
+    let publisher = SubjectId("publisher".into());
+    let store = Arc::new(MemoryTriggerStore::default());
+    let service = TriggerService::new(
+        store.clone(),
+        store,
+        Arc::new(PreviewPolicyAuthority(outcome)),
+    )
+    .with_launch_admission(Arc::new(TestAdmission));
+    let draft = service
+        .create_draft(
+            publisher.clone(),
+            "service-1".into(),
+            content(publisher.clone()),
+            NOW,
+        )
+        .await
+        .unwrap();
+    let published = service
+        .publish(&publisher, &draft.id, draft.version, "service-1", NOW)
+        .await
+        .unwrap();
+    service
+        .preview(&published.revision.public_id)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn public_preview_maps_current_repository_policy_to_typed_availability() {
+    let available = preview_for_policy(PreviewPolicyOutcome::Available).await;
+    assert_eq!(
+        available.availability,
+        TriggerPreviewAvailability::Published
+    );
+    assert_eq!(available.unavailable_reason, None);
+
+    let renamed = preview_for_policy(PreviewPolicyOutcome::Renamed).await;
+    assert_eq!(renamed.availability, TriggerPreviewAvailability::Published);
+    assert_eq!(renamed.repository_owner, "renamed-owner");
+    assert_eq!(renamed.repository_name, "renamed-repository");
+
+    let not_forkable = preview_for_policy(PreviewPolicyOutcome::NotForkable).await;
+    assert_eq!(
+        not_forkable.availability,
+        TriggerPreviewAvailability::Unavailable
+    );
+    assert_eq!(
+        not_forkable.unavailable_reason,
+        Some(TriggerPreviewUnavailableReason::UpstreamNotForkable)
+    );
+    assert!(!not_forkable.allow_forking);
+
+    for (outcome, reason) in [
+        (
+            PreviewPolicyOutcome::NotFound,
+            TriggerPreviewUnavailableReason::UpstreamUnavailable,
+        ),
+        (
+            PreviewPolicyOutcome::IdentityDrift,
+            TriggerPreviewUnavailableReason::UpstreamIdentityChanged,
+        ),
+        (
+            PreviewPolicyOutcome::Transient,
+            TriggerPreviewUnavailableReason::RepositoryPolicyUnavailable,
+        ),
+    ] {
+        let preview = preview_for_policy(outcome).await;
+        assert_eq!(
+            preview.availability,
+            TriggerPreviewAvailability::Unavailable
+        );
+        assert_eq!(preview.unavailable_reason, Some(reason));
+    }
+}
+
 #[derive(Default)]
 struct CountingAdmission {
     review_calls: AtomicUsize,
@@ -5716,6 +5883,151 @@ fn runtime_admission_requires_an_explicit_opaque_kernel() {
     assert_eq!(decoded.kernel, KernelId::new(TEST_TRIGGER_KERNEL));
 }
 
+#[test]
+fn retained_runtime_route_requires_one_complete_exact_admission_snapshot() {
+    let launch = session_launch(&"a".repeat(64));
+    assert_eq!(
+        launch.runtime_admission_route(
+            TEST_TRIGGER_KERNEL,
+            TEST_HISTORICAL_KERNEL,
+            &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        ),
+        RuntimeAdmissionRoute::Current
+    );
+    assert!(launch
+        .validate_runtime_admission_route(
+            TEST_TRIGGER_KERNEL,
+            TEST_HISTORICAL_KERNEL,
+            &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        )
+        .is_ok());
+
+    let mut historical = launch.clone();
+    historical.runtime_admission.as_mut().unwrap().kernel = KernelId::new(TEST_HISTORICAL_KERNEL);
+    assert_eq!(
+        historical.runtime_admission_route(
+            TEST_TRIGGER_KERNEL,
+            TEST_HISTORICAL_KERNEL,
+            &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        ),
+        RuntimeAdmissionRoute::Historical
+    );
+    assert_eq!(
+        historical
+            .validate_runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            )
+            .unwrap_err()
+            .field
+            .as_deref(),
+        Some("runtime_admission.kernel")
+    );
+
+    for (corruption, expected_field) in [
+        ("missing", "runtime_admission"),
+        ("wrong-kernel", "runtime_admission.kernel"),
+        ("missing-version", "runtime_admission.runtime_version"),
+        ("malformed-time", "runtime_admission.observed_at"),
+        (
+            "missing-capability",
+            "runtime_admission.supported_capabilities",
+        ),
+        (
+            "duplicate-capability",
+            "runtime_admission.supported_capabilities",
+        ),
+    ] {
+        let mut retained = launch.clone();
+        match corruption {
+            "missing" => retained.runtime_admission = None,
+            "wrong-kernel" => {
+                retained.runtime_admission.as_mut().unwrap().kernel = KernelId::new("other-route");
+            }
+            "missing-version" => {
+                retained.runtime_admission.as_mut().unwrap().runtime_version = " \t".into();
+            }
+            "malformed-time" => {
+                retained.runtime_admission.as_mut().unwrap().observed_at = "not-a-time".into();
+            }
+            "missing-capability" => {
+                retained
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = retained.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        let error = retained
+            .validate_runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            )
+            .unwrap_err();
+        assert_eq!(error.field.as_deref(), Some(expected_field), "{corruption}");
+        assert_eq!(
+            retained.runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            ),
+            RuntimeAdmissionRoute::Invalid,
+            "{corruption}"
+        );
+    }
+
+    for corruption in [
+        "missing-version",
+        "malformed-time",
+        "missing-capability",
+        "duplicate-capability",
+    ] {
+        let mut retained = historical.clone();
+        match corruption {
+            "missing-version" => {
+                retained.runtime_admission.as_mut().unwrap().runtime_version = " \t".into();
+            }
+            "malformed-time" => {
+                retained.runtime_admission.as_mut().unwrap().observed_at = "not-a-time".into();
+            }
+            "missing-capability" => {
+                retained
+                    .runtime_admission
+                    .as_mut()
+                    .unwrap()
+                    .supported_capabilities
+                    .pop();
+            }
+            "duplicate-capability" => {
+                let runtime = retained.runtime_admission.as_mut().unwrap();
+                runtime
+                    .supported_capabilities
+                    .push(runtime.supported_capabilities[0]);
+            }
+            _ => unreachable!("the table contains only declared corruptions"),
+        }
+        assert_eq!(
+            retained.runtime_admission_route(
+                TEST_TRIGGER_KERNEL,
+                TEST_HISTORICAL_KERNEL,
+                &CMA_TRIGGER_REQUIRED_CAPABILITIES,
+            ),
+            RuntimeAdmissionRoute::Invalid,
+            "historical {corruption}"
+        );
+    }
+}
+
 fn start_admission(launch: &Launch, now: &str) -> StartAdmissionSnapshot {
     let pricing = launch.pricing.as_ref().unwrap();
     let runtime = launch.runtime_admission.as_ref().unwrap();
@@ -5777,6 +6089,16 @@ impl TriggerAuthorityVerifier for TestAuthority {
             connection,
             source_sha: "a".repeat(40),
             workflow_paths: Vec::new(),
+        })
+    }
+
+    async fn resolve_preview_repository_policy(
+        &self,
+        revision: &TriggerRevision,
+    ) -> Result<TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        Ok(TriggerPreviewRepositoryPolicy {
+            repository: revision.content.upstream.repository.clone(),
+            public_forkable: true,
         })
     }
 }

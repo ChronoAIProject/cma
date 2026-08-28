@@ -3035,6 +3035,30 @@ impl GithubEffectExecutor {
 
 #[async_trait]
 impl EffectExecutor for GithubEffectExecutor {
+    fn refuse_execute(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+        correlation_id: &str,
+    ) -> Option<LaunchFailure> {
+        if claim.kind == LaunchEffectKind::Cleanup
+            || super::has_current_trigger_runtime_admission(launch)
+        {
+            return None;
+        }
+        Some(LaunchFailure {
+            class: FailureClass::TerminalSecurity,
+            code: "launch_runtime_route_quarantined".into(),
+            detail: "The retained Launch runtime route is not authorized for new Trigger effects."
+                .into(),
+            remediation: "CMA will preserve reconciliation evidence, revoke remaining session authority, and permit only fenced cleanup on this historical Launch. Open a New Launch to continue."
+                .into(),
+            correlation_id: correlation_id.into(),
+            retry_at: None,
+            observed_at: rfc3339_at(SystemTime::now()),
+        })
+    }
+
     async fn refresh_pull_request_status(
         &self,
         launch: &Launch,
@@ -4213,7 +4237,9 @@ fn service_failure(error: TriggerServiceError, claim: &EffectClaim) -> EffectExe
                 ),
             },
         },
-        TriggerServiceError::Validation(_) | TriggerServiceError::CursorBeyondEnd { .. } => {
+        TriggerServiceError::Validation(_)
+        | TriggerServiceError::CursorBeyondEnd { .. }
+        | TriggerServiceError::RuntimeRouteUnavailable { .. } => {
             EffectExecution::Failed {
                 failure: failure(
                     FailureClass::TerminalValidation,
@@ -8596,6 +8622,79 @@ pub(in crate::trigger) mod tests {
         assert_eq!(actual.intent_key, expected.intent_key);
     }
 
+    #[test]
+    fn incomplete_runtime_admission_refuses_new_effects_but_preserves_cleanup() {
+        let executor = GithubEffectExecutor::with_port(
+            Arc::new(FakeGithub::new([])),
+            DEFAULT_FORK_READINESS_TIMEOUT,
+        );
+        let claim = claim_for(LaunchEffectKind::Fork, EffectClaimMode::Execute);
+        let cleanup = claim_for(LaunchEffectKind::Cleanup, EffectClaimMode::Execute);
+
+        for corruption in [
+            "missing",
+            "historical-kernel",
+            "missing-version",
+            "malformed-time",
+            "missing-capability",
+            "duplicate-capability",
+        ] {
+            let mut launch = fork_launch();
+            match corruption {
+                "missing" => launch.runtime_admission = None,
+                "historical-kernel" => {
+                    launch.runtime_admission.as_mut().unwrap().kernel =
+                        layer2_core::KernelId::new(super::super::LEGACY_TRIGGER_KERNEL_ID);
+                }
+                "missing-version" => {
+                    launch.runtime_admission.as_mut().unwrap().runtime_version = String::new();
+                }
+                "malformed-time" => {
+                    launch.runtime_admission.as_mut().unwrap().observed_at = "invalid".into();
+                }
+                "missing-capability" => {
+                    launch
+                        .runtime_admission
+                        .as_mut()
+                        .unwrap()
+                        .supported_capabilities
+                        .pop();
+                }
+                "duplicate-capability" => {
+                    let runtime = launch.runtime_admission.as_mut().unwrap();
+                    runtime
+                        .supported_capabilities
+                        .push(runtime.supported_capabilities[0]);
+                }
+                _ => unreachable!("the table contains only declared corruptions"),
+            }
+
+            let failure = executor
+                .refuse_execute(&launch, &claim, corruption)
+                .expect("an incomplete admission cannot execute a new provider effect");
+            assert_eq!(
+                failure.class,
+                FailureClass::TerminalSecurity,
+                "{corruption}"
+            );
+            assert_eq!(
+                failure.code, "launch_runtime_route_quarantined",
+                "{corruption}"
+            );
+            assert!(
+                executor
+                    .refuse_execute(&launch, &cleanup, corruption)
+                    .is_none(),
+                "cleanup remains available for {corruption}"
+            );
+        }
+
+        let launch = fork_launch();
+        assert!(executor
+            .refuse_execute(&launch, &claim, "complete-runtime-admission")
+            .is_none());
+    }
+
     fn fork_launch() -> Launch {
         let mut launch = super::super::worker::tests::launch_fixture();
         launch.state = LaunchState::ForkPending;
@@ -9291,7 +9390,7 @@ pub(in crate::trigger) mod tests {
             options: Default::default(),
             id: layer2_core::SessionId("sesn_trigger_effect".into()),
             owner: launch.owner.clone(),
-            kernel: layer2_core::KernelId::new("codex"),
+            kernel: layer2_core::KernelId::new(super::super::TRIGGER_KERNEL_ID),
             status,
             recovery_state: layer2_core::RecoveryState::Normal,
             stop_reason: None,

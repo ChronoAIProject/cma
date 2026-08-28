@@ -27,12 +27,14 @@ const TRIGGER_LAUNCH_EVENTS: &str = "trigger_launch_events";
 const TRIGGER_CONNECTION_REVOCATIONS: &str = "trigger_connection_revocations";
 const DUPLICATE_KEY: i32 = 11_000;
 const CONNECTION_REVOCATION_CAS_RETRIES: usize = 5;
+const CONNECTION_REVOCATION_INVENTORY_PAGE_SIZE: u32 = 100;
 const TRIGGER_PUBLICATION_TRANSACTION_ATTEMPTS: usize = 5;
 const TRIGGER_PUBLICATION_COMMIT_ATTEMPTS: usize = 5;
 const LAUNCH_TRANSACTION_COMMIT_ATTEMPTS: usize = 5;
 const LAUNCH_TRANSACTION_COMMIT_DEADLINE: Duration = Duration::from_secs(5);
 const LAUNCH_TRANSACTION_COMMIT_INITIAL_BACKOFF: Duration = Duration::from_millis(25);
 const LAUNCH_TRANSACTION_COMMIT_MAX_BACKOFF: Duration = Duration::from_millis(400);
+const LAUNCH_INVENTORY_SCAN_MULTIPLIER: i64 = 4;
 const TRIGGER_DRAFT_DOCUMENT_SCHEMA_VERSION: i64 = 1;
 const TRIGGER_REVISION_DOCUMENT_SCHEMA_VERSION: i64 = 1;
 
@@ -77,6 +79,27 @@ enum LaunchCommitAttempt {
     Committed,
     Unknown(Error),
     Failed(Error),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaunchInventory {
+    Query,
+    Worker,
+    Capability,
+    Cleanup,
+    ConnectionRevocation,
+}
+
+impl LaunchInventory {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::Query => "query",
+            Self::Worker => "worker",
+            Self::Capability => "capability",
+            Self::Cleanup => "cleanup",
+            Self::ConnectionRevocation => "connection_revocation",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -134,10 +157,18 @@ where
     match document.get_mut("runtime_admission") {
         None | Some(Bson::Null) => {}
         Some(Bson::Document(runtime)) => match runtime.get("kernel") {
+            // Before the routing field existed, the sole Trigger adapter was
+            // the ordinary `codex` lane. Preserve that exact historical route
+            // for read/inspection and cleanup; mapping absence to today's
+            // native lane would invent provider authority. Current admission
+            // compares this value with the configured versioned kernel and
+            // therefore refuses every new effect on the compatibility route.
             None => {
-                runtime.insert("kernel", crate::trigger::TRIGGER_KERNEL_ID);
+                runtime.insert("kernel", crate::trigger::LEGACY_TRIGGER_KERNEL_ID);
             }
-            Some(Bson::String(kernel)) if kernel == crate::trigger::TRIGGER_KERNEL_ID => {}
+            Some(Bson::String(kernel))
+                if kernel == crate::trigger::TRIGGER_KERNEL_ID
+                    || kernel == crate::trigger::LEGACY_TRIGGER_KERNEL_ID => {}
             Some(_) => {
                 return Err(serde::de::Error::custom(
                     "stored Launch runtime admission uses an unsupported kernel",
@@ -187,6 +218,7 @@ pub struct MongoTriggerStore {
     drafts: Collection<DraftDoc>,
     revisions: Collection<RevisionDoc>,
     launches: Collection<LaunchDoc>,
+    raw_launches: Collection<Document>,
     launch_events: Collection<LaunchEventDoc>,
     connection_revocations: Collection<ConnectionRevocationDoc>,
 }
@@ -202,12 +234,33 @@ impl MongoTriggerStore {
             drafts: majority_collection(&database, TRIGGER_DRAFTS),
             revisions: majority_collection(&database, TRIGGER_REVISIONS),
             launches: majority_collection(&database, TRIGGER_LAUNCHES),
+            raw_launches: majority_collection(&database, TRIGGER_LAUNCHES),
             launch_events: majority_collection(&database, TRIGGER_LAUNCH_EVENTS),
             connection_revocations: majority_collection(&database, TRIGGER_CONNECTION_REVOCATIONS),
         };
         store.ensure_indexes().await?;
         tracing::info!("trigger store ready");
         Ok(store)
+    }
+
+    async fn list_launch_inventory(
+        &self,
+        filter: Document,
+        page: &TriggerPageRequest,
+        inventory: LaunchInventory,
+    ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
+        let scan_budget = launch_inventory_scan_budget(page.limit);
+        let documents = self
+            .raw_launches
+            .find(stable_launch_inventory_filter(filter))
+            .sort(doc! { "created_at": -1, "_id": -1 })
+            .limit(i64::try_from(scan_budget + 1).unwrap_or(i64::MAX))
+            .await
+            .map_err(|error| unavailable("list Launch inventory", error))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| unavailable("read Launch inventory", error))?;
+        map_launch_inventory_page(documents, page.limit, scan_budget, inventory)
     }
 
     async fn migrate_draft_schema(&self, id: &str) -> Result<(), TriggerStoreError> {
@@ -938,22 +991,35 @@ impl ConnectionRevocationStore for MongoTriggerStore {
         now: &str,
         correlation_id: &str,
     ) -> Result<(), TriggerStoreError> {
-        let launches = self
-            .launches
-            .find(connection_revocation_launch_filter(owner, service_id))
-            .await
-            .map_err(|error| unavailable("list Launches for connection revocation", error))?
-            .try_collect::<Vec<_>>()
-            .await
-            .map_err(|error| unavailable("read Launch revocation inventory", error))?;
-        for launch in launches {
-            self.fence_launch_for_revoked_connection(
-                &LaunchId(launch.id),
-                service_id,
-                now,
-                correlation_id,
-            )
-            .await?;
+        let base_filter = connection_revocation_launch_filter(owner, service_id);
+        let mut cursor = None;
+        loop {
+            let filter = page_filter(base_filter.clone(), cursor.as_deref(), "created_at")?;
+            let page = self
+                .list_launch_inventory(
+                    filter,
+                    &TriggerPageRequest::new(CONNECTION_REVOCATION_INVENTORY_PAGE_SIZE, None),
+                    LaunchInventory::ConnectionRevocation,
+                )
+                .await?;
+            for launch in page.items {
+                self.fence_launch_for_revoked_connection(
+                    &launch.id,
+                    service_id,
+                    now,
+                    correlation_id,
+                )
+                .await?;
+            }
+            let Some(next) = page.next else {
+                break;
+            };
+            if cursor.as_deref() == Some(next.as_str()) {
+                return Err(TriggerStoreError::Malformed(
+                    "Launch connection-revocation inventory repeated its cursor".into(),
+                ));
+            }
+            cursor = Some(next);
         }
         Ok(())
     }
@@ -1482,20 +1548,8 @@ impl LaunchStore for MongoTriggerStore {
     ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
         let filter = launch_query_filter(query)?;
         let filter = page_filter(filter, query.page.cursor.as_deref(), "created_at")?;
-        let docs = self
-            .launches
-            .find(filter)
-            .sort(doc! { "created_at": -1, "_id": -1 })
-            .limit(i64::from(query.page.limit) + 1)
+        self.list_launch_inventory(filter, &query.page, LaunchInventory::Query)
             .await
-            .map_err(|error| unavailable("list Launches", error))?
-            .try_collect::<Vec<_>>()
-            .await
-            .map_err(|error| unavailable("read Launch page", error))?;
-        map_page(docs, query.page.limit, |doc| {
-            let cursor = encode_cursor(&doc.created_at, &doc.id);
-            Ok((read_launch(doc)?, cursor))
-        })
     }
 
     async fn list_worker_candidates(
@@ -1508,20 +1562,8 @@ impl LaunchStore for MongoTriggerStore {
         })?;
         let filter = worker_candidate_filter(states, updated_before.as_deref());
         let filter = page_filter(filter, page.cursor.as_deref(), "created_at")?;
-        let docs = self
-            .launches
-            .find(filter)
-            .sort(doc! { "created_at": -1, "_id": -1 })
-            .limit(i64::from(page.limit) + 1)
+        self.list_launch_inventory(filter, page, LaunchInventory::Worker)
             .await
-            .map_err(|error| unavailable("list worker Launch candidates", error))?
-            .try_collect::<Vec<_>>()
-            .await
-            .map_err(|error| unavailable("read worker Launch candidate page", error))?;
-        map_page(docs, page.limit, |doc| {
-            let cursor = encode_cursor(&doc.created_at, &doc.id);
-            Ok((read_launch(doc)?, cursor))
-        })
     }
 
     async fn list_capability_candidates(
@@ -1566,20 +1608,8 @@ impl LaunchStore for MongoTriggerStore {
             page.cursor.as_deref(),
             "created_at",
         )?;
-        let docs = self
-            .launches
-            .find(filter)
-            .sort(doc! { "created_at": -1, "_id": -1 })
-            .limit(i64::from(page.limit) + 1)
+        self.list_launch_inventory(filter, page, LaunchInventory::Capability)
             .await
-            .map_err(|error| unavailable("list capability Launch candidates", error))?
-            .try_collect::<Vec<_>>()
-            .await
-            .map_err(|error| unavailable("read capability Launch candidate page", error))?;
-        map_page(docs, page.limit, |doc| {
-            let cursor = encode_cursor(&doc.created_at, &doc.id);
-            Ok((read_launch(doc)?, cursor))
-        })
     }
 
     async fn list_cleanup_candidates(
@@ -1600,20 +1630,8 @@ impl LaunchStore for MongoTriggerStore {
             page.cursor.as_deref(),
             "created_at",
         )?;
-        let docs = self
-            .launches
-            .find(filter)
-            .sort(doc! { "created_at": -1, "_id": -1 })
-            .limit(i64::from(page.limit) + 1)
+        self.list_launch_inventory(filter, page, LaunchInventory::Cleanup)
             .await
-            .map_err(|error| unavailable("list cleanup candidates", error))?
-            .try_collect::<Vec<_>>()
-            .await
-            .map_err(|error| unavailable("read cleanup candidate page", error))?;
-        map_page(docs, page.limit, |doc| {
-            let cursor = encode_cursor(&doc.created_at, &doc.id);
-            Ok((read_launch(doc)?, cursor))
-        })
     }
 
     async fn replace_launch(
@@ -2547,6 +2565,109 @@ fn page_filter(
     })
 }
 
+fn stable_launch_inventory_filter(base: Document) -> Document {
+    doc! {
+        "$and": [
+            base,
+            {
+                "_id": { "$type": "string" },
+                "created_at": { "$type": "string" },
+            },
+        ],
+    }
+}
+
+fn launch_inventory_scan_budget(limit: u32) -> usize {
+    usize::try_from(
+        i64::from(limit.max(1))
+            .saturating_mul(LAUNCH_INVENTORY_SCAN_MULTIPLIER)
+            .max(i64::from(limit.max(1)) + 1),
+    )
+    .unwrap_or(usize::MAX - 1)
+}
+
+fn launch_inventory_cursor(document: &Document) -> Result<String, TriggerStoreError> {
+    let id = document.get_str("_id").map_err(|_| {
+        TriggerStoreError::Malformed(
+            "Launch inventory row does not have a stable string identifier".into(),
+        )
+    })?;
+    let created_at = document.get_str("created_at").map_err(|_| {
+        TriggerStoreError::Malformed(
+            "Launch inventory row does not have a stable creation cursor".into(),
+        )
+    })?;
+    Ok(encode_cursor(created_at, id))
+}
+
+fn observe_quarantined_launch(inventory: LaunchInventory, reason: &'static str) {
+    tracing::warn!(
+        event_name = "cma_trigger_launch_quarantine",
+        schema_version = crate::trigger::observability::OBSERVABILITY_SCHEMA_VERSION,
+        inventory = inventory.code(),
+        reason,
+        increment = 1_u64,
+        "malformed Trigger Launch quarantined from a bounded inventory scan"
+    );
+}
+
+fn decode_inventory_launch(
+    document: Document,
+    inventory: LaunchInventory,
+) -> Result<Option<Launch>, TriggerStoreError> {
+    // Validate the independent cursor envelope before attempting to decode any
+    // provider or runtime authority from the aggregate itself.
+    launch_inventory_cursor(&document)?;
+    let document = match mongodb::bson::deserialize_from_document::<LaunchDoc>(document) {
+        Ok(document) => document,
+        Err(_) => {
+            observe_quarantined_launch(inventory, "decode_failed");
+            return Ok(None);
+        }
+    };
+    match read_launch(document) {
+        Ok(launch) => Ok(Some(launch)),
+        Err(_) => {
+            observe_quarantined_launch(inventory, "aggregate_validation_failed");
+            Ok(None)
+        }
+    }
+}
+
+fn map_launch_inventory_page(
+    mut documents: Vec<Document>,
+    limit: u32,
+    scan_budget: usize,
+    inventory: LaunchInventory,
+) -> Result<TriggerPage<Launch>, TriggerStoreError> {
+    let has_unscanned_rows = documents.len() > scan_budget;
+    documents.truncate(scan_budget);
+    let limit = limit.max(1) as usize;
+    let mut items = Vec::with_capacity(limit);
+    let mut continuation = None;
+
+    for document in documents {
+        let cursor = launch_inventory_cursor(&document)?;
+        let Some(launch) = decode_inventory_launch(document, inventory)? else {
+            continuation = Some(cursor);
+            continue;
+        };
+        if items.len() == limit {
+            return Ok(TriggerPage {
+                items,
+                next: continuation,
+            });
+        }
+        items.push(launch);
+        continuation = Some(cursor);
+    }
+
+    Ok(TriggerPage {
+        items,
+        next: has_unscanned_rows.then_some(continuation).flatten(),
+    })
+}
+
 fn map_page<T, D, F>(
     mut docs: Vec<D>,
     limit: u32,
@@ -2893,7 +3014,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_historical_launch_kernel_is_migrated_at_the_cma_store_boundary() {
+    fn missing_historical_launch_kernel_retains_the_pre_versioned_provider_route() {
         let mut document = launch_document();
         runtime_admission(&mut document).remove("kernel");
 
@@ -2901,18 +3022,97 @@ mod tests {
             .expect("the historical product-owned Launch remains readable");
         assert_eq!(
             decoded.launch.runtime_admission.unwrap().kernel,
-            layer2_core::KernelId::new(crate::trigger::TRIGGER_KERNEL_ID)
+            layer2_core::KernelId::new(crate::trigger::LEGACY_TRIGGER_KERNEL_ID)
         );
     }
 
     #[test]
+    fn explicit_legacy_and_current_launch_kernels_remain_readable_without_rerouting() {
+        for kernel in [
+            crate::trigger::LEGACY_TRIGGER_KERNEL_ID,
+            crate::trigger::TRIGGER_KERNEL_ID,
+        ] {
+            let mut document = launch_document();
+            runtime_admission(&mut document).insert("kernel", kernel);
+
+            let decoded: LaunchDoc = mongodb::bson::deserialize_from_document(document)
+                .expect("a supported durable route remains readable");
+            assert_eq!(
+                decoded.launch.runtime_admission.unwrap().kernel,
+                layer2_core::KernelId::new(kernel)
+            );
+        }
+    }
+
+    #[test]
     fn explicit_invalid_historical_launch_kernels_fail_closed() {
-        for kernel in [Bson::String(String::new()), Bson::String("other".into())] {
+        for kernel in [
+            Bson::String(String::new()),
+            Bson::String("other".into()),
+            Bson::Int32(1),
+        ] {
             let mut document = launch_document();
             runtime_admission(&mut document).insert("kernel", kernel);
 
             assert!(mongodb::bson::deserialize_from_document::<LaunchDoc>(document).is_err());
         }
+    }
+
+    #[test]
+    fn malformed_launch_aggregate_is_quarantined_without_poisoning_its_page() {
+        let valid = launch_document();
+        let mut invalid_route = launch_document();
+        runtime_admission(&mut invalid_route).insert("kernel", "unsupported-runtime");
+        let mut invalid_aggregate = launch_document();
+        invalid_aggregate.insert("owner", "different-owner");
+
+        let page = map_launch_inventory_page(
+            vec![valid.clone(), invalid_route, invalid_aggregate, valid],
+            2,
+            8,
+            LaunchInventory::Worker,
+        )
+        .expect("malformed aggregates remain row-local quarantine evidence");
+
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.next, None);
+    }
+
+    #[test]
+    fn quarantined_rows_advance_the_bounded_inventory_cursor() {
+        let mut invalid = launch_document();
+        runtime_admission(&mut invalid).insert("kernel", Bson::Int32(7));
+        let valid = launch_document();
+        let expected_cursor = launch_inventory_cursor(&valid).unwrap();
+
+        let page = map_launch_inventory_page(
+            vec![invalid, valid, launch_document()],
+            2,
+            2,
+            LaunchInventory::Capability,
+        )
+        .expect("the inventory scan can advance beyond one quarantined row");
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.next.as_deref(), Some(expected_cursor.as_str()));
+    }
+
+    #[test]
+    fn launch_inventory_filter_requires_an_independent_string_cursor_envelope() {
+        assert_eq!(
+            stable_launch_inventory_filter(doc! { "owner": "subject" }),
+            doc! {
+                "$and": [
+                    { "owner": "subject" },
+                    {
+                        "_id": { "$type": "string" },
+                        "created_at": { "$type": "string" },
+                    },
+                ],
+            }
+        );
+        assert_eq!(launch_inventory_scan_budget(1), 4);
+        assert_eq!(launch_inventory_scan_budget(25), 100);
     }
 
     #[test]

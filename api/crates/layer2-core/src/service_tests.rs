@@ -224,6 +224,42 @@ async fn a_runtime_is_advertised_as_what_it_says_it_can_be() {
     );
 }
 
+#[tokio::test]
+async fn a_trigger_runtime_is_neither_advertised_nor_selectable_by_an_ordinary_session() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: layer3_adapter::KernelCapabilities {
+            conversation: true,
+            ..FakeAdapter::default().capabilities
+        },
+        ..FakeAdapter::default()
+    });
+    let profiles = Arc::new(crate::test_support::FakeProfileStore::default());
+    let service = build_trigger_session_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        profiles,
+        Arc::new(TriggerWorkspaceBytes {
+            archive: b"reserved runtime".to_vec(),
+            reads: AtomicUsize::new(0),
+        }),
+    );
+
+    assert!(service.available_kernels().is_empty());
+    let error = service
+        .create_session(&user("ordinary-owner"), spec())
+        .await
+        .expect_err("an ordinary session cannot select the managed Trigger runtime");
+    assert!(matches!(error, CoreError::InvalidRequest(_)));
+    assert_eq!(adapter.provision_calls.load(Ordering::SeqCst), 0);
+    assert!(service
+        .list_sessions(&user("ordinary-owner"), &crate::SessionListQuery::default())
+        .await
+        .expect("the empty ledger remains readable")
+        .items
+        .is_empty());
+}
+
 struct TriggerWorkspaceBytes {
     archive: Vec<u8>,
     reads: AtomicUsize,
