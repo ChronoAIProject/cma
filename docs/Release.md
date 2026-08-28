@@ -152,9 +152,10 @@ apply after publishing starts:
    rm ruleset.json
    ```
 
-   The current repository has no tag ruleset, so this prerequisite is also
-   **not yet satisfied**. Never weaken or bypass it to make a failed release
-   retry succeed.
+   The repository satisfies this prerequisite through active ruleset
+   `21664901` (`Immutable v* release tags`), verified with this exact target,
+   rule set and empty bypass list on 2026-08-28. Never weaken or bypass it to
+   make a failed release retry succeed.
 
 Image reconciliation is authorized to reuse an existing release tag only
 under the exclusive-writer contract and only when package history ties that
