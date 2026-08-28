@@ -5,14 +5,9 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ApprovalCard } from './ApprovalCard';
 import { MessageStream } from './MessageStream';
-import { fold } from './conversation';
-import {
-  AguiConnection,
-  AguiOperations,
-  MockSession,
-  transcriptNamed,
-  type AguiEvent,
-} from '../agui';
+import { fold } from '@chronoai/cma-sdk';
+import { AguiConnection, AguiOperations, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 
 /**
  * The approval card — `Web_Style.md` §18.3.
@@ -33,7 +28,7 @@ async function conversationFrom(name: string, options: { dropAfter?: number; upT
     options.upTo === undefined ? full : { ...full, frames: full.frames.slice(0, options.upTo) };
   const session = new MockSession(transcript, { dropAfter: options.dropAfter });
   const seen: AguiEvent[] = [];
-  const connection = new AguiConnection(session.transport, 'sesn_1', {
+  const connection = new AguiConnection(session.transport, session.id, {
     backoffMs: 0,
     sleep: () => Promise.resolve(),
   });
@@ -77,6 +72,20 @@ describe('the card', () => {
     expect(question?.textContent).toBe('Run rm -rf build/?');
     // The reason rides the eyebrow — approval · <the kernel's own reason>.
     expect(screen.getByText(/cma:command_execution/)).toBeInTheDocument();
+  });
+
+  it('keeps absent kernel wording absent', () => {
+    const { container } = render(
+      <ApprovalCard
+        interrupt={{ id: 'a', reason: 'confirmation', message: null }}
+        onAnswer={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector('.approval__question')).toBeNull();
+    expect(screen.getByText(/confirmation/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
   });
 
   it('draws the command as code rather than as punctuation', () => {
@@ -233,7 +242,7 @@ describe('in the stream', () => {
 
   it('sends the decision through the client unchanged', async () => {
     const { session, conversation } = await conversationFrom('approval-granted', { upTo: 2 });
-    const operations = new AguiOperations('sesn_1', session.operations);
+    const operations = new AguiOperations(session.id, session.operations);
 
     await operations.resolveApproval(conversation.pending?.id ?? '', 'abort', 'run_9');
 

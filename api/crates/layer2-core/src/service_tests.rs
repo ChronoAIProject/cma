@@ -6,7 +6,8 @@
 use super::*;
 use crate::terminal::{ScreenSnapshot, TerminalGeometry};
 use crate::terminal_io::spawn_relay;
-use crate::test_support::{spec, user, FakeAdapter, FakeStore};
+use crate::test_support::{service, spec, user, FakeAdapter, FakeStore};
+use layer3_adapter::TerminalOutput;
 
 /// A screen model that records what it was fed, so the relay's behaviour
 /// can be observed without a real terminal parser.
@@ -40,7 +41,11 @@ impl ScreenModel for RecordingScreen {
 async fn the_relay_feeds_the_screen_with_no_client_attached() {
     // The whole point of the relay: a detached session keeps working, and
     // its screen stays current so a later attach is correct.
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(8);
+    let service = service(
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter::default()),
+    );
+    let (tx, rx) = mpsc::channel::<TerminalOutput>(8);
     let geometry = TerminalGeometry::default();
     let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
         Arc::new(Mutex::new(Box::new(RecordingScreen {
@@ -48,10 +53,18 @@ async fn the_relay_feeds_the_screen_with_no_client_attached() {
             seen: Vec::new(),
         })));
     let (live, _) = broadcast::channel(8);
+    let (ending, _) = tokio::sync::watch::channel(None);
 
-    spawn_relay(SessionId("sesn_test".into()), rx, Arc::clone(&screen), live);
+    spawn_relay(
+        service,
+        SessionId("sesn_test".into()),
+        rx,
+        Arc::clone(&screen),
+        live,
+        ending,
+    );
 
-    tx.send(b"painted".to_vec())
+    tx.send(TerminalOutput::Bytes(b"painted".to_vec()))
         .await
         .expect("relay accepts output");
     // Yield until the relay has drained the channel.
@@ -72,17 +85,31 @@ async fn the_relay_feeds_the_screen_with_no_client_attached() {
 async fn output_with_no_subscriber_is_not_an_error() {
     // A send into a broadcast with no receivers fails; the relay must treat
     // that as "detached", not as a fault that ends the session.
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(8);
+    let service = service(
+        Arc::new(FakeStore::default()),
+        Arc::new(FakeAdapter::default()),
+    );
+    let (tx, rx) = mpsc::channel::<TerminalOutput>(8);
     let screen: Arc<Mutex<Box<dyn ScreenModel>>> =
         Arc::new(Mutex::new(Box::new(RecordingScreen {
             geometry: TerminalGeometry::default(),
             seen: Vec::new(),
         })));
     let (live, _) = broadcast::channel(8);
-    spawn_relay(SessionId("sesn_test".into()), rx, Arc::clone(&screen), live);
+    let (ending, _) = tokio::sync::watch::channel(None);
+    spawn_relay(
+        service,
+        SessionId("sesn_test".into()),
+        rx,
+        Arc::clone(&screen),
+        live,
+        ending,
+    );
 
     for chunk in [b"one".to_vec(), b"two".to_vec()] {
-        tx.send(chunk).await.expect("relay still accepting");
+        tx.send(TerminalOutput::Bytes(chunk))
+            .await
+            .expect("relay still accepting");
     }
     for _ in 0..50 {
         if screen.lock().await.repaint_bytes().len() >= 6 {
@@ -149,7 +176,11 @@ async fn a_kernel_this_deployment_does_not_run_is_refused_before_anything_is_rec
         "got {err:?}"
     );
     assert!(
-        svc.list_sessions(&alice).await.is_empty(),
+        svc.list_sessions(&alice, &crate::SessionListQuery::default())
+            .await
+            .expect("session list is readable")
+            .items
+            .is_empty(),
         "nothing may be recorded for a session that was refused"
     );
 }

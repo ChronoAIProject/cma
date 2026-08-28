@@ -11,7 +11,10 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{ws::Message, FromRef, Path, Query, State, WebSocketUpgrade},
+    extract::{
+        ws::{close_code, CloseFrame, Message},
+        FromRef, Path, Query, State, WebSocketUpgrade,
+    },
     response::IntoResponse,
     routing::get,
     Router,
@@ -27,6 +30,13 @@ use crate::{InterfaceProfile, Operation};
 
 mod attach;
 
+#[cfg(feature = "test-support")]
+mod test_support;
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use test_support::{DisconnectGate, OperationGate, OutboundGate};
+
 use attach::serve;
 
 /// Conformance classes this interface satisfies.
@@ -40,6 +50,14 @@ const SCROLLBACK_LINES: u32 = 2000;
 
 /// Largest inbound frame accepted, in bytes.
 const MAX_FRAME_BYTES: u32 = 262_144;
+
+/// Signal names the public terminal contract accepts.
+const SUPPORTED_SIGNALS: &[&str] = &["INT", "TERM", "QUIT", "HUP"];
+
+/// Whether a signal name can be represented by the runtime's bounded mapping.
+fn supported_signal(sig: &str) -> bool {
+    SUPPORTED_SIGNALS.contains(&sig)
+}
 
 /// The interface profile.
 pub struct PtyInterface;
@@ -81,13 +99,29 @@ const PLANE_CHANGED_CLOSE_CODE: u16 = 4001;
 /// come back in a moment.
 const RUNTIME_REPLACED_CLOSE_CODE: u16 = 4002;
 
+/// The one reason currently carried by a process exit frame.
+const EXIT_REASON: &str = "exited";
+
 /// Why this terminal ended, in a code and a sentence.
 ///
 /// Every path through here says something. A terminal that closes with nothing
 /// is one whose owner reloads and takes the attachment back, which is the
 /// fight the reasons exist to prevent.
-fn ending(detached: Option<layer2_core::Detached>) -> (u16, &'static str) {
-    match detached {
+fn ending(detached: Option<layer2_core::Detached>) -> Vec<Message> {
+    let (code, reason) = match detached {
+        Some(layer2_core::Detached::ProcessExited { code }) => {
+            return vec![
+                ServerControl::Exit {
+                    code,
+                    reason: EXIT_REASON,
+                }
+                .to_message(),
+                Message::Close(Some(CloseFrame {
+                    code: close_code::NORMAL,
+                    reason: "".into(),
+                })),
+            ];
+        }
         Some(layer2_core::Detached::PlaneChanged) => (
             PLANE_CHANGED_CLOSE_CODE,
             "this session moved to the conversation plane and no longer has a terminal",
@@ -103,7 +137,16 @@ fn ending(detached: Option<layer2_core::Detached>) -> (u16, &'static str) {
             SUPERSEDED_CLOSE_CODE,
             "the owner attached this terminal from somewhere else",
         ),
-    }
+    };
+    vec![Message::Close(Some(CloseFrame {
+        code,
+        reason: reason.into(),
+    }))]
+}
+
+/// Frames for a runtime channel ending, if it carried a process report.
+fn reported_ending(detached: Option<layer2_core::Detached>) -> Vec<Message> {
+    detached.map_or_else(Vec::new, |detached| ending(Some(detached)))
 }
 
 /// How often the server proves the connection is still there.
@@ -150,6 +193,10 @@ enum ServerControl {
     Error {
         code: &'static str,
         detail: String,
+    },
+    Exit {
+        code: Option<i32>,
+        reason: &'static str,
     },
     Pong,
     Resources {
@@ -292,15 +339,15 @@ async fn admit(
     id: &SessionId,
     ticket: Option<String>,
     caller: Option<AuthenticatedCaller>,
-) -> Option<(Caller, AttachmentClaim)> {
+) -> Result<Option<(Caller, AttachmentClaim)>, layer2_core::store::StoreError> {
     match ticket {
         Some(ticket) => tickets
             .redeem(&ticket, id)
             .await
-            .map(|r| (r.caller, r.claim)),
+            .map(|redeemed| redeemed.map(|r| (r.caller, r.claim))),
         // The cookie path, unchanged: middleware verified the credential and
         // the caller attaches as themselves, exclusively.
-        None => caller.map(|AuthenticatedCaller(c)| (c, AttachmentClaim::Exclusive)),
+        None => Ok(caller.map(|AuthenticatedCaller(c)| (c, AttachmentClaim::Exclusive))),
     }
 }
 
@@ -320,7 +367,14 @@ async fn attach(
     caller: Option<AuthenticatedCaller>,
 ) -> impl IntoResponse {
     let id = SessionId(id);
-    let Some((caller, claim)) = admit(&tickets, &id, params.ticket, caller).await else {
+    let admitted = match admit(&tickets, &id, params.ticket, caller).await {
+        Ok(admitted) => admitted,
+        Err(error) => {
+            tracing::error!(session_id = %id, %error, "terminal ticket store failed");
+            return crate::auth::StoreUnavailable.into_response();
+        }
+    };
+    let Some((caller, claim)) = admitted else {
         // Refused before the upgrade, so the client gets an HTTP status it can
         // act on rather than a socket that opens and immediately closes.
         return crate::auth::NotAuthenticated.into_response();
@@ -344,6 +398,7 @@ fn error_code(err: &CoreError) -> &'static str {
         CoreError::InvalidRequest(_) => "invalid_request",
         CoreError::AlreadyAttached => "already_attached",
         CoreError::SessionTerminated => "session_terminated",
+        CoreError::SessionRotating => "session_rotating",
         CoreError::InvalidGeometry(_) => "invalid_geometry",
         // This interface attaches to an existing session and never authors a
         // platform policy. Keep the impossible variant explicit so the next
@@ -370,6 +425,7 @@ fn error_code(err: &CoreError) -> &'static str {
         // here rather than a frame that quietly says the wrong thing.
         CoreError::ServiceNotGranted(_) => "service_not_granted",
         CoreError::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
+        CoreError::SkillCatalogUnavailable(_) => "skill_catalogue_unavailable",
         // A card-change refusal occurs only while creating a session, which
         // this interface never does. It remains named so the exhaustive match
         // keeps the terminal vocabulary aligned with the core.

@@ -26,6 +26,8 @@ use serde::Serialize;
 /// mirrored here.
 #[derive(Debug, Serialize)]
 struct EventDoc {
+    #[serde(rename = "_cma_write_protocol")]
+    write_protocol: i32,
     session_id: String,
     seq: i64,
     appended_at: String,
@@ -35,8 +37,14 @@ struct EventDoc {
 /// Render an event for insertion.
 pub(super) fn to_document(event: &Event) -> Result<Document, StoreError> {
     let doc = EventDoc {
+        write_protocol: super::mongo::WRITE_PROTOCOL,
         session_id: event.session_id.0.clone(),
-        seq: event.seq as i64,
+        seq: i64::try_from(event.seq).map_err(|_| {
+            malformed(format!(
+                "seq {} exceeds the largest sequence MongoDB can store",
+                event.seq
+            ))
+        })?,
         appended_at: event.appended_at.clone(),
         kind: mongodb::bson::serialize_to_bson(&event.kind)
             .map_err(|error| StoreError::Malformed(error.to_string()))?,
@@ -121,6 +129,18 @@ pub(super) fn from_document_before_context_compaction(
 ) -> Result<StoredEvent, StoreError> {
     from_document_recognizing(doc, |tag| {
         tag != "context_compacted" && EventKind::recognizes_tag(tag)
+    })
+}
+
+#[cfg(test)]
+pub(super) fn from_document_before_runtime_markers(
+    doc: Document,
+) -> Result<StoredEvent, StoreError> {
+    from_document_recognizing(doc, |tag| {
+        !matches!(
+            tag,
+            "runtime_handover_started" | "runtime_incarnation_started" | "runtime_started"
+        ) && EventKind::recognizes_tag(tag)
     })
 }
 

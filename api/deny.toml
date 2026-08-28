@@ -62,6 +62,13 @@ allow = ["CC0-1.0"]
 name = "webpki-roots"
 allow = ["CDLA-Permissive-2.0"]
 
+# kube's platform verifier carries the same Mozilla CA root data through its
+# companion webpki-root-certs crate. Keep this exception crate-specific so the
+# licence gate still reviews every other bundled-data dependency independently.
+[[licenses.exceptions]]
+name = "webpki-root-certs"
+allow = ["CDLA-Permissive-2.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

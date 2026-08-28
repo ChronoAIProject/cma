@@ -4,27 +4,40 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+# Enables deterministic public-boundary synchronization used only by CMA's
+# composed WebSocket tests. It is absent from ordinary and release builds.
+test-support = []
+
 [dependencies]
 # For the terminal plane's raw input, which arrives base64-encoded because a
 # JSON string cannot carry an arbitrary control sequence.
 base64 = { workspace = true }
+async-trait = { workspace = true }
 axum = { workspace = true }
 futures-util = { workspace = true }
 layer2-core = { workspace = true }
+# Parses JSON media types for the profile extractor that inspects one buffered
+# body twice: once structurally for a safe field path and once through Serde's
+# authoritative request type.
+mime = "0.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Serializes continuation links with the same form encoding axum accepts.
+serde_urlencoded = "0.7"
+sha2 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what an attach ticket is drawn
 # from. Already a workspace dependency.
 uuid = { workspace = true }
 
 [dev-dependencies]
-# Parses a query string the way axum's Query extractor does, so a test can
-# assert what a client actually sends rather than what a struct looks like.
-serde_urlencoded = "0.7"
-# Only the tests implement a core port, and every port in this project is an
-# async trait. The interface layer itself defines none.
-async-trait = { workspace = true }
+# Applies the projection's patches with an independent RFC 6902 implementation,
+# so the canonical starting document is a proven wire contract rather than an
+# example that only this crate understands.
+json-patch = { version = "4.2", default-features = false }
 # Drives the actual router in path-precedence tests.
 tower = { version = "0.5", features = ["util"] }

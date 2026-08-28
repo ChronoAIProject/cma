@@ -13,7 +13,15 @@ use axum::Json;
 
 /// The capability document.
 pub(super) async fn declare() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
+    Json(document())
+}
+
+/// The capability document before the HTTP wrapper is applied.
+///
+/// Kept as one value constructor so the served route, documentation mirror,
+/// and cross-language fixture are assertions about the same source.
+pub(super) fn document() -> serde_json::Value {
+    serde_json::json!({
         "protocol": "ag-ui",
         "transports": ["sse"],
         // The machine-readable form of the document's §3, and the contract.
@@ -81,7 +89,7 @@ pub(super) async fn declare() -> Json<serde_json::Value> {
             "https://spec.chrono-ai.fun/cma/1.0/conf/agui-core",
             "https://spec.chrono-ai.fun/cma/1.0/conf/approvals"
         ]
-    }))
+    })
 }
 
 #[cfg(test)]

@@ -10,9 +10,10 @@ use axum::{
     extract::{FromRequestParts, OptionalFromRequestParts},
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
 use layer2_core::{Authorization, Caller, SubjectId};
+
+use crate::rest::{problem_document, problem_response};
 
 /// The authenticated principal for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,12 +113,62 @@ where
 /// a delegated credential is needed by almost none, so extracting it has to be
 /// a deliberate act rather than something that rides along by default.
 #[derive(Clone)]
-pub struct DelegatedCredential(pub String);
+pub struct DelegatedCredential {
+    value: String,
+    request_bound: bool,
+}
+
+impl DelegatedCredential {
+    /// A browser credential that follows the subject's renewable state.
+    pub fn subject(value: String) -> Self {
+        Self {
+            value,
+            request_bound: false,
+        }
+    }
+
+    /// A bearer credential whose exact authority belongs to this request.
+    pub fn request_bound(value: String) -> Self {
+        Self {
+            value,
+            request_bound: true,
+        }
+    }
+
+    /// Borrow the opaque value only where it must be delegated onward.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Consume the provenance wrapper where only the opaque value is needed.
+    pub fn into_value(self) -> String {
+        self.value
+    }
+
+    /// Carry both the value and its recovery policy into session creation.
+    pub fn into_caller_credential(self) -> layer2_core::CallerCredential {
+        if self.request_bound {
+            layer2_core::CallerCredential::request_bound(self.value)
+        } else {
+            self.value.into()
+        }
+    }
+
+    /// Whether this exact value must remain pinned across session recovery.
+    pub fn is_request_bound(&self) -> bool {
+        self.request_bound
+    }
+}
 
 impl std::fmt::Debug for DelegatedCredential {
     /// Redacted, so no accidental `{:?}` puts a live credential in a log.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "DelegatedCredential(<redacted {} bytes>)", self.0.len())
+        write!(
+            f,
+            "DelegatedCredential(<redacted {} bytes>, request_bound={})",
+            self.value.len(),
+            self.request_bound
+        )
     }
 }
 
@@ -127,16 +178,36 @@ pub struct NotAuthenticated;
 
 impl IntoResponse for NotAuthenticated {
     fn into_response(self) -> Response {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
-                "title": "Not authenticated",
-                "status": 401,
-                "detail": "This operation requires an authenticated subject.",
-            })),
-        )
-            .into_response()
+        let status = StatusCode::UNAUTHORIZED;
+        let mut body = problem_document(
+            status,
+            "not-authenticated",
+            "This operation requires an authenticated subject.",
+            "not_authenticated",
+        );
+        body["title"] = "Not authenticated".into();
+        problem_response(status, body)
+    }
+}
+
+/// The service could not establish identity because its durable store failed.
+///
+/// Deliberately distinct from [`NotAuthenticated`]: retrying a bad credential
+/// does not help, while retrying after a store outage is exactly the remedy.
+#[derive(Debug)]
+pub struct StoreUnavailable;
+
+impl IntoResponse for StoreUnavailable {
+    fn into_response(self) -> Response {
+        let status = StatusCode::SERVICE_UNAVAILABLE;
+        let mut body = problem_document(
+            status,
+            "store-failed",
+            "The service could not read or write its durable authentication state.",
+            "store_failed",
+        );
+        body["title"] = "Store unavailable".into();
+        problem_response(status, body)
     }
 }
 
@@ -158,7 +229,24 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::Request;
+    use axum::{
+        body::{to_bytes, Body},
+        http::{header, Request},
+        routing::get,
+        Router,
+    };
+    use tower::ServiceExt;
+
+    #[test]
+    fn delegated_credential_conversion_keeps_request_provenance_attached() {
+        let request = DelegatedCredential::request_bound("bearer".into()).into_caller_credential();
+        assert!(request.is_request_bound());
+        assert_eq!(request.as_ref(), "bearer");
+
+        let subject = DelegatedCredential::subject("browser".into()).into_caller_credential();
+        assert!(!subject.is_request_bound());
+        assert_eq!(subject.as_ref(), "browser");
+    }
 
     #[tokio::test]
     async fn a_subject_placed_by_middleware_is_extracted() {
@@ -181,9 +269,54 @@ mod tests {
         assert!(result.is_err(), "unauthenticated requests must be rejected");
     }
 
-    #[test]
-    fn rejection_renders_as_problem_json_with_401() {
-        let response = NotAuthenticated.into_response();
+    #[tokio::test]
+    async fn rejection_renders_as_a_coded_problem_document_with_401() {
+        async fn protected(_subject: AuthenticatedSubject) {}
+
+        let response = Router::new()
+            .route("/protected", get(protected))
+            .oneshot(
+                Request::get("/protected")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static(
+                "application/problem+json"
+            ))
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("problem documents are small"),
+        )
+        .expect("the problem document is json");
+        assert_eq!(body["code"], "not_authenticated");
+    }
+
+    #[tokio::test]
+    async fn a_store_outage_is_a_retryable_typed_503() {
+        let response = StoreUnavailable.into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static(
+                "application/problem+json"
+            ))
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("problem documents are small"),
+        )
+        .expect("the problem document is json");
+        assert_eq!(body["status"], 503);
+        assert_eq!(body["code"], "store_failed");
+        assert!(body["type"].as_str().unwrap().ends_with("/store-failed"));
     }
 }

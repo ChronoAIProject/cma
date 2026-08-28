@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { RuntimeLoss } from './RuntimeLoss';
-import type { RuntimeLoss as RuntimeLossState } from './conversation';
+import type { RuntimeLoss as RuntimeLossState } from '@chronoai/cma-sdk';
 
 function lost(cause?: string, noticedAt?: string): RuntimeLossState {
   return {

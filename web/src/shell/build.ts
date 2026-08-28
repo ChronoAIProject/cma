@@ -13,3 +13,15 @@
 declare const __CHRONO_BUILD__: string | undefined;
 
 export const BUILD: string = typeof __CHRONO_BUILD__ === 'string' ? __CHRONO_BUILD__ : 'dev';
+
+/**
+ * The public API base for the deployment serving this bundle.
+ *
+ * The deployment keeps every public interface on the browser's origin. Its
+ * Gateway routes API, auth, and discovery paths directly to the control plane,
+ * while nginx provides the same contract when the image is reached without
+ * that split. The origin is therefore the only value that cannot drift from
+ * the deployment a person actually opened. Kept beside the baked build id as shell metadata;
+ * no component invents or hardcodes an endpoint of its own.
+ */
+export const API_BASE_URL: string = window.location.origin;

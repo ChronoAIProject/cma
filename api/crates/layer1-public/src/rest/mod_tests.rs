@@ -279,7 +279,7 @@ async fn body_rejection(content_type: &str, body: &'static str) -> (StatusCode, 
     let rejection = Json::<CreateSessionRequest>::from_request(request, &())
         .await
         .expect_err("this body must be rejected");
-    let response = BodyProblem(rejection).into_response();
+    let response = BodyProblem::from(rejection).into_response();
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -291,7 +291,7 @@ async fn body_rejection(content_type: &str, body: &'static str) -> (StatusCode, 
 }
 
 #[tokio::test]
-async fn an_unknown_field_is_refused_and_named() {
+async fn an_unknown_field_is_refused_without_reflecting_the_body() {
     // The shape of request that produced #298: accepted, discarded, and
     // answered 201 for a session that was not what was asked for.
     let (status, body) = body_rejection(
@@ -301,15 +301,12 @@ async fn an_unknown_field_is_refused_and_named() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["code"], "invalid_request");
-    let detail = body["detail"].as_str().expect("detail is a string");
-    assert!(
-        detail.contains("nonsense"),
-        "it must name the field: {detail}"
+    assert_eq!(
+        body["detail"],
+        "The JSON body does not match this operation's request schema."
     );
-    assert!(
-        detail.contains("environment_profile"),
-        "and say what it would have taken: {detail}"
-    );
+    let rendered = serde_json::to_string(&body).expect("problem serializes");
+    assert!(!rendered.contains("claude_code"));
 }
 
 #[tokio::test]
@@ -325,10 +322,11 @@ async fn a_misspelled_profile_no_longer_starts_the_wrong_session() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(body["detail"]
-        .as_str()
-        .expect("detail is a string")
-        .contains("environmentProfile"));
+    assert_eq!(body["code"], "invalid_request");
+    assert_eq!(
+        body["detail"],
+        "The JSON body does not match this operation's request schema."
+    );
 }
 
 #[tokio::test]
@@ -699,7 +697,8 @@ mod reach {
     use super::*;
     use layer2_core::{
         Baseline, CatalogService, EnvironmentProfile, EnvironmentProfileId,
-        EnvironmentProfileService, EnvironmentProfileStore, ServiceId, StoreError,
+        EnvironmentProfileService, EnvironmentProfileSpec, EnvironmentProfileStore, Page,
+        PageRequest, ServiceId, StoreError,
     };
 
     /// A store that holds nothing: these tests never read a profile, which is
@@ -711,6 +710,14 @@ mod reach {
         async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
             Ok(())
         }
+        async fn replace_content(
+            &self,
+            _id: &EnvironmentProfileId,
+            _content: &EnvironmentProfileSpec,
+            _updated_at: &str,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
+        }
         async fn get(
             &self,
             _id: &EnvironmentProfileId,
@@ -720,8 +727,30 @@ mod reach {
         async fn list_for(
             &self,
             _owner: &layer2_core::SubjectId,
-        ) -> Result<Vec<EnvironmentProfile>, StoreError> {
-            Ok(Vec::new())
+            _page: &PageRequest,
+        ) -> Result<Page<EnvironmentProfile>, StoreError> {
+            Ok(Page {
+                items: Vec::new(),
+                next: None,
+            })
+        }
+        async fn set_preferred(
+            &self,
+            _owner: &layer2_core::SubjectId,
+            chosen: Option<&EnvironmentProfileId>,
+        ) -> Result<(), StoreError> {
+            if chosen.is_some() {
+                return Err(StoreError::Malformed(
+                    "an empty store has no selectable profile".into(),
+                ));
+            }
+            Ok(())
+        }
+        async fn preferred_for(
+            &self,
+            _owner: &layer2_core::SubjectId,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
         }
         async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
             Ok(())

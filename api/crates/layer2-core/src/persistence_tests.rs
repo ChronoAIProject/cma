@@ -11,7 +11,7 @@ use crate::error::CoreError;
 use crate::event::{Event, EventKind, StoredEvent, StoredEventKind};
 use crate::ids::SubjectId;
 use crate::session::SessionStatus;
-use crate::store::SessionStore;
+use crate::store::{SessionListQuery, SessionStore};
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{admin, await_settled, service, spec, user, FakeAdapter, FakeStore};
 
@@ -52,9 +52,10 @@ async fn a_restarted_service_still_lists_the_session() {
         .expect("session is created");
 
     let listed = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
-        .list_sessions(&caller)
-        .await;
-    assert_eq!(listed.len(), 1, "the list must come from the store");
+        .list_sessions(&caller, &crate::SessionListQuery::default())
+        .await
+        .expect("session list is readable");
+    assert_eq!(listed.items.len(), 1, "the list must come from the store");
 }
 
 #[tokio::test]
@@ -142,7 +143,12 @@ async fn one_subject_cannot_read_another_subjects_persisted_session() {
         Err(CoreError::Forbidden)
     ));
     assert!(
-        restarted.list_sessions(&user("mallory")).await.is_empty(),
+        restarted
+            .list_sessions(&user("mallory"), &crate::SessionListQuery::default())
+            .await
+            .expect("session list is readable")
+            .items
+            .is_empty(),
         "another subject's sessions must not be listed"
     );
 }
@@ -160,9 +166,14 @@ async fn a_privileged_reader_sees_persisted_sessions_it_does_not_own() {
         .expect("created");
 
     let listed = service(Arc::clone(&store), Arc::new(FakeAdapter::default()))
-        .list_sessions(&admin())
-        .await;
-    assert_eq!(listed.len(), 2, "the dashboard must see every session");
+        .list_sessions(&admin(), &crate::SessionListQuery::default())
+        .await
+        .expect("session list is readable");
+    assert_eq!(
+        listed.items.len(),
+        2,
+        "the dashboard must see every session"
+    );
 }
 
 #[tokio::test]
@@ -175,8 +186,12 @@ async fn a_caller_without_capabilities_cannot_create_a_session() {
             .await,
         Err(CoreError::Forbidden)
     ));
+    let persisted = store
+        .list_all(&SessionListQuery::default())
+        .await
+        .expect("readable");
     assert!(
-        store.list_all().await.expect("readable").is_empty(),
+        persisted.items.is_empty() && persisted.next.is_none(),
         "a refused request must write nothing"
     );
 }
@@ -200,6 +215,14 @@ async fn an_unreachable_store_is_reported_rather_than_read_as_absent() {
             Err(CoreError::RuntimeUnavailable(_))
         ),
         "an unreachable store must not report the session as missing"
+    );
+    assert!(
+        matches!(
+            svc.list_sessions(&caller, &crate::SessionListQuery::default())
+                .await,
+            Err(CoreError::RuntimeUnavailable(_))
+        ),
+        "an unreachable store must not report an empty session list"
     );
 }
 
@@ -269,7 +292,7 @@ async fn the_stored_runtime_reference_is_what_a_later_process_reclaims() {
     );
 }
 
-/// Terminal input is not routed by the persisted record, only by a live entry.
+/// A persisted session without a live runtime is unavailable, not absent.
 #[tokio::test]
 async fn driving_a_terminal_requires_a_live_runtime_not_merely_a_record() {
     let store = Arc::new(FakeStore::default());
@@ -280,12 +303,13 @@ async fn driving_a_terminal_requires_a_live_runtime_not_merely_a_record() {
         .expect("created");
 
     let restarted = service(Arc::clone(&store), Arc::new(FakeAdapter::default()));
-    assert!(matches!(
-        restarted
-            .send_input(&caller, &created.id, b"ls\n".to_vec())
-            .await,
-        Err(CoreError::SessionNotFound)
-    ));
+    let result = restarted
+        .send_input(&caller, &created.id, b"ls\n".to_vec())
+        .await;
+    assert!(
+        matches!(result, Err(CoreError::RuntimeUnavailable(_))),
+        "the durable session exists but has no live runtime yet: {result:?}"
+    );
 }
 
 #[tokio::test]

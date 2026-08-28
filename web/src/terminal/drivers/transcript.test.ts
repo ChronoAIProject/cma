@@ -16,15 +16,17 @@ function recordingSink() {
 }
 
 function respondWith(bytes: Uint8Array) {
+  const body = new Uint8Array(bytes.byteLength);
+  body.set(bytes);
   vi.stubGlobal(
     'fetch',
-    vi.fn(
-      () =>
-        Promise.resolve({
-          ok: true,
+    vi.fn(() =>
+      Promise.resolve(
+        new Response(body.buffer, {
           status: 200,
-          arrayBuffer: () => Promise.resolve(bytes.buffer),
-        }) as unknown as Promise<Response>,
+          headers: { 'Content-Type': 'application/octet-stream' },
+        }),
+      ),
     ),
   );
 }

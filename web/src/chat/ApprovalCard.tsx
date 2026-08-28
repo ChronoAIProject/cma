@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import type { InterruptOption } from '../agui';
+import type { InterruptOption } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
 import { renderInline } from './inline';
 import { parse } from './markdown';
-import type { PendingApproval } from './conversationModel';
+import type { PendingApproval } from '@chronoai/cma-sdk';
 import { timeOfDay } from '../sessions/sessionTime';
 import './ApprovalCard.css';
 
@@ -150,7 +150,9 @@ export function ApprovalCard({ interrupt, onAnswer, busy = false }: ApprovalCard
        * at `--text-title` + 1, and `AgentContent` would impose its own
        * paragraph typography over it.
        */}
-      <p className="approval__question">{questionOf(interrupt.message)}</p>
+      {interrupt.message === null ? null : (
+        <p className="approval__question">{questionOf(interrupt.message)}</p>
+      )}
 
       {/*
        * The answers the kernel offered, rendered from what arrived. A kernel

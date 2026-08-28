@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { CanvasNode } from './CanvasNode';
 import { gridColumns, isCanvasArrow, nextNodeIndex, selectLiveWindow } from './layout';
-import type { AguiTransport } from '../agui';
+import type { AguiTransport } from '@chronoai/cma-sdk';
 import type { LiveSession } from '../sessions/live';
 import { tabLabel } from '../sessions/sessionTime';
 import './SessionCanvas.css';

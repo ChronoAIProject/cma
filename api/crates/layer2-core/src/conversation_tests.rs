@@ -7,17 +7,270 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use layer3_adapter::KernelAdapter;
+use layer3_adapter::{KernelAdapter, PermissionLocator};
 
+use super::pending_approvals_from;
 use crate::authz::Caller;
 use crate::conversation_support::{
     asking, chunk, conversation, conversing, offering, said, until_logged,
 };
-use crate::event::EventKind;
+use crate::event::{Event, EventKind};
 use crate::ids::SessionId;
 use crate::service::SessionService;
 use crate::session::{SessionStatus, StopReason};
 use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+
+fn logged(seq: u64, kind: EventKind) -> Event {
+    Event {
+        session_id: SessionId("sesn_pending_approvals".into()),
+        seq,
+        kind,
+        appended_at: "2026-08-26T05:00:00Z".into(),
+    }
+}
+
+#[test]
+fn an_unresolved_approval_request_folds_as_pending() {
+    let events = vec![logged(
+        1,
+        EventKind::ApprovalRequested {
+            request_id: "approval-1".into(),
+            action: Some("run a command".into()),
+            detail: None,
+            locator: None,
+        },
+    )];
+
+    assert_eq!(
+        pending_approvals_from(&events)
+            .expect("history is consistent")
+            .pending,
+        HashMap::from([("approval-1".to_string(), None)])
+    );
+}
+
+#[test]
+fn a_resolved_approval_request_does_not_fold_as_pending() {
+    let events = vec![
+        logged(
+            1,
+            EventKind::ApprovalRequested {
+                request_id: "approval-1".into(),
+                action: Some("run a command".into()),
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(
+            2,
+            EventKind::ApprovalResolved {
+                request_id: "approval-1".into(),
+                allowed: true,
+            },
+        ),
+    ];
+
+    assert!(pending_approvals_from(&events)
+        .expect("history is consistent")
+        .pending
+        .is_empty());
+}
+
+#[test]
+fn interleaved_approval_requests_fold_independently() {
+    let events = vec![
+        logged(
+            1,
+            EventKind::ApprovalRequested {
+                request_id: "approval-1".into(),
+                action: Some("first action".into()),
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(2, EventKind::TurnStarted),
+        logged(
+            3,
+            EventKind::ApprovalRequested {
+                request_id: "approval-2".into(),
+                action: Some("second action".into()),
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(
+            4,
+            EventKind::ApprovalResolved {
+                request_id: "approval-1".into(),
+                allowed: false,
+            },
+        ),
+        logged(
+            5,
+            EventKind::ApprovalRequested {
+                request_id: "approval-3".into(),
+                action: Some("third action".into()),
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(
+            6,
+            EventKind::ApprovalResolved {
+                request_id: "approval-3".into(),
+                allowed: true,
+            },
+        ),
+    ];
+
+    assert_eq!(
+        pending_approvals_from(&events)
+            .expect("history is consistent")
+            .pending,
+        HashMap::from([("approval-2".to_string(), None)])
+    );
+}
+
+#[test]
+fn duplicate_requests_are_idempotent_but_changed_locators_fail_closed() {
+    let first = PermissionLocator::new(r#"{"version":1,"call":7}"#);
+    let different = PermissionLocator::new(r#"{"version":1,"call":8}"#);
+    let request = |seq, locator| {
+        logged(
+            seq,
+            EventKind::ApprovalRequested {
+                request_id: "stable-id".into(),
+                action: Some("run a command".into()),
+                detail: None,
+                locator: Some(locator),
+            },
+        )
+    };
+
+    let replayed = vec![request(1, first.clone()), request(2, first)];
+    assert_eq!(
+        pending_approvals_from(&replayed)
+            .expect("an identical replay is one request")
+            .pending
+            .len(),
+        1
+    );
+
+    let resolved_then_replayed = vec![
+        request(1, PermissionLocator::new("resolved")),
+        logged(
+            2,
+            EventKind::ApprovalResolved {
+                request_id: "stable-id".into(),
+                allowed: true,
+            },
+        ),
+        request(3, PermissionLocator::new("resolved")),
+    ];
+    assert!(
+        pending_approvals_from(&resolved_then_replayed)
+            .expect("a late duplicate keeps its resolved identity")
+            .pending
+            .is_empty(),
+        "a delivered request must not reopen after its resolution"
+    );
+
+    let changed = vec![
+        request(1, PermissionLocator::new("first")),
+        request(2, different),
+    ];
+    let error = pending_approvals_from(&changed)
+        .expect_err("one public id cannot be redirected to a different call");
+    assert!(error.contains("different delivery locator"), "got {error}");
+}
+
+#[test]
+fn runtime_and_conversation_boundaries_expire_old_approvals() {
+    let boundaries = vec![
+        EventKind::TurnStarted,
+        EventKind::TurnCompleted,
+        EventKind::ConversationOpened {
+            conversation_id: "replacement-conversation".into(),
+        },
+        EventKind::PlaneChanged {
+            from: crate::options::SessionMode::Conversation,
+            to: crate::options::SessionMode::Terminal,
+            snapshot_at: "2026-08-26T06:00:00Z".into(),
+        },
+        EventKind::RuntimeLost {
+            runtime_id: "runtime-old".into(),
+            cause: Some(crate::session::RuntimeLossCause::Displaced),
+        },
+        EventKind::StatusChanged {
+            status: SessionStatus::Idle,
+            stop_reason: Some(StopReason::UserTerminated),
+            detail: None,
+            capability: None,
+        },
+        EventKind::StatusChanged {
+            status: SessionStatus::Terminated,
+            stop_reason: Some(StopReason::UserTerminated),
+            detail: None,
+            capability: None,
+        },
+        EventKind::StatusChanged {
+            status: SessionStatus::Rotating,
+            stop_reason: None,
+            detail: None,
+            capability: None,
+        },
+    ];
+
+    for boundary in boundaries {
+        let events = vec![
+            logged(
+                1,
+                EventKind::ApprovalRequested {
+                    request_id: "obsolete".into(),
+                    action: None,
+                    detail: None,
+                    locator: None,
+                },
+            ),
+            logged(2, boundary.clone()),
+        ];
+        assert!(
+            pending_approvals_from(&events)
+                .expect("the boundary is understood")
+                .pending
+                .is_empty(),
+            "{boundary:?} must expire the old runtime's request"
+        );
+    }
+}
+
+#[test]
+fn requires_action_status_preserves_the_request_it_parks() {
+    let events = vec![
+        logged(
+            1,
+            EventKind::ApprovalRequested {
+                request_id: "still-waiting".into(),
+                action: None,
+                detail: None,
+                locator: None,
+            },
+        ),
+        logged(
+            2,
+            EventKind::StatusChanged {
+                status: SessionStatus::Idle,
+                stop_reason: Some(StopReason::RequiresAction),
+                detail: None,
+                capability: None,
+            },
+        ),
+    ];
+    assert!(pending_approvals_from(&events)
+        .expect("the wait is valid")
+        .pending
+        .contains_key("still-waiting"));
+}
 
 async fn report_usage(adapter: &Arc<FakeAdapter>, used: u64, window: u64) {
     let held = adapter.conversation.lock().await;
@@ -73,6 +326,293 @@ async fn await_ready(
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     panic!("session never became ready");
+}
+
+#[tokio::test]
+async fn runtime_updates_take_the_input_fence_before_conversation_ordering() {
+    let (service, _owner, id, _adapter) = conversation().await;
+    let link = service
+        .entries
+        .read()
+        .await
+        .get(&id)
+        .expect("the live entry is installed")
+        .conversation_link
+        .expect("the live entry carries its conversation link");
+    let input_gate = service.input_gates.gate(&id);
+    let input_writer = input_gate.write_owned().await;
+    let ordering = service.conversation_order_gates.gate(&id);
+    let fold = service.fold_update(
+        &id,
+        link,
+        layer3_adapter::ConversationUpdate::Lost { frames: 1 },
+        &ordering,
+    );
+    tokio::pin!(fold);
+
+    // Poll until the first blocked acquisition. The required order blocks on
+    // the held input writer before it can own conversation ordering. Reversing
+    // those gates leaves the ordering probe locked and recreates the rotation
+    // deadlock this test guards against.
+    tokio::select! {
+        biased;
+        result = &mut fold => panic!("the input fence did not block folding: {result:?}"),
+        () = tokio::task::yield_now() => {}
+    }
+    let ordering_probe = ordering
+        .try_lock()
+        .expect("a blocked input fence must not retain conversation ordering");
+    drop(ordering_probe);
+    drop(input_writer);
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), &mut fold)
+        .await
+        .expect("folding resumes after the input boundary opens");
+}
+
+#[tokio::test]
+async fn opening_replay_larger_than_the_channel_is_folded_in_fifo_order() {
+    let store = Arc::new(FakeStore::default());
+    let mut replay = (0..80).map(|_| chunk("x")).collect::<Vec<_>>();
+    replay.push(layer3_adapter::ConversationUpdate::TurnEnded(
+        layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+    ));
+    replay.push(layer3_adapter::ConversationUpdate::Asked(asking(
+        "opening-replay-approval",
+        "approve after replay",
+    )));
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        opening_updates: tokio::sync::Mutex::new(replay),
+        ..FakeAdapter::default()
+    });
+    let service = versioned_conversation_service(store, adapter, "runtime:opening-replay");
+    let owner = user("opening-replay-owner");
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("the conversation is accepted");
+    await_settled(&service, &owner, &created.id).await;
+    assert!(
+        until_logged(&service, &owner, &created.id, |kind| matches!(
+            kind,
+            EventKind::ApprovalRequested { request_id, .. }
+                if request_id == "opening-replay-approval"
+        ))
+        .await,
+        "the queued tail is folded after publication"
+    );
+    let settled = service
+        .get_session(&owner, &created.id)
+        .await
+        .expect("the replayed session remains readable");
+    assert_eq!(settled.status, SessionStatus::Idle);
+    assert_eq!(settled.stop_reason, Some(StopReason::RequiresAction));
+
+    let events = service
+        .events_since(&owner, &created.id, None)
+        .await
+        .expect("opening replay is durable");
+    let message = events
+        .iter()
+        .find(|event| matches!(&event.kind, EventKind::MessageCommitted { .. }))
+        .expect("the replayed chunks are committed as one message");
+    assert!(matches!(
+        &message.kind,
+        EventKind::MessageCommitted { content } if content == &"x".repeat(80)
+    ));
+    let completion = events
+        .iter()
+        .find(|event| matches!(event.kind, EventKind::TurnCompleted))
+        .expect("the replayed turn completion is durable");
+    assert!(
+        message.seq < completion.seq,
+        "the message must remain ahead of the completion that ended it"
+    );
+    service
+        .resolve_approval(
+            &owner,
+            &created.id,
+            "opening-replay-approval".into(),
+            crate::conversation::ApprovalDecision::Deny,
+        )
+        .await
+        .expect("provisioning installs the pending approval reconstructed by replay");
+}
+
+#[tokio::test]
+async fn failed_opening_discards_ordinary_replay_and_preserves_the_runtime() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let owner = user("failed-opening-owner");
+    let first = versioned_conversation_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:failed-opening",
+    );
+    let created = first
+        .create_session(&owner, spec())
+        .await
+        .expect("the original conversation is accepted");
+    assert_eq!(
+        await_settled(&first, &owner, &created.id).await.status,
+        SessionStatus::Ready
+    );
+    let before = first
+        .events_since(&owner, &created.id, None)
+        .await
+        .expect("original history is readable")
+        .last()
+        .map_or(0, |event| event.seq);
+    let original_runtime = first
+        .record(&created.id)
+        .await
+        .expect("the original runtime is durable")
+        .runtime_id;
+
+    adapter
+        .opening_updates
+        .lock()
+        .await
+        .push(layer3_adapter::ConversationUpdate::Asked(asking(
+            "discarded-opening-request",
+            "must not become durable",
+        )));
+    adapter
+        .refuse_conversation_open
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let replacement = versioned_conversation_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:failed-opening",
+    );
+    replacement.reconcile().await;
+
+    let later = replacement
+        .events_since(&owner, &created.id, Some(before))
+        .await
+        .expect("history remains readable");
+    assert!(
+        later.iter().all(|event| !matches!(
+            &event.kind,
+            EventKind::ApprovalRequested { request_id, .. }
+                if request_id == "discarded-opening-request"
+        )),
+        "ordinary replay from a refused opening must never be published"
+    );
+    let durable = replacement
+        .record(&created.id)
+        .await
+        .expect("the existing session remains durable");
+    assert_eq!(durable.runtime_id, original_runtime);
+    assert_eq!(durable.session.status, SessionStatus::Ready);
+}
+
+#[tokio::test]
+async fn generation_zero_replacement_fences_old_updates_and_the_actual_old_close() {
+    let store = Arc::new(FakeStore::default());
+    store.disable_coordination();
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let owner = user("compatibility-link-owner");
+    let service = versioned_conversation_service(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        "runtime:compatibility-link",
+    );
+    let created = service
+        .create_session(&owner, spec())
+        .await
+        .expect("the compatibility conversation is accepted");
+    assert_eq!(
+        await_settled(&service, &owner, &created.id).await.status,
+        SessionStatus::Ready
+    );
+
+    let (old_link, old_updates) = {
+        let entries = service.entries.read().await;
+        let entry = entries.get(&created.id).expect("the first link is live");
+        assert_eq!(entry.runtime_generation, 0);
+        let updates = adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the first runtime link is open")
+            .updates
+            .clone();
+        (
+            entry
+                .conversation_link
+                .expect("the first link has a local identity"),
+            updates,
+        )
+    };
+    let record = service
+        .record(&created.id)
+        .await
+        .expect("the compatibility runtime is durable");
+    service.entries.write().await.remove(&created.id);
+    service
+        .readopt(&record)
+        .await
+        .expect("the same runtime can publish a replacement link");
+    let new_link = service
+        .entries
+        .read()
+        .await
+        .get(&created.id)
+        .expect("the replacement link is live")
+        .conversation_link
+        .expect("the replacement has a local identity");
+    assert_ne!(old_link, new_link);
+
+    service
+        .send_prompt(&owner, &created.id, "keep the successor running".into())
+        .await
+        .expect("the successor accepts a prompt");
+    let before_stale = service
+        .events_since(&owner, &created.id, None)
+        .await
+        .expect("the successor history is readable")
+        .last()
+        .map_or(0, |event| event.seq);
+
+    let ordering = service.conversation_order_gates.gate(&created.id);
+    let blocked = ordering.lock().await;
+    old_updates
+        .send(chunk("stale predecessor output"))
+        .await
+        .expect("the predecessor receiver is still alive");
+    drop(old_updates);
+    tokio::task::yield_now().await;
+    drop(blocked);
+    for _ in 0..2 {
+        let barrier = ordering.lock().await;
+        drop(barrier);
+        tokio::task::yield_now().await;
+    }
+
+    let entry = service.entries.read().await;
+    let successor = entry
+        .get(&created.id)
+        .expect("the successor entry remains installed");
+    assert_eq!(successor.session.status, SessionStatus::Running);
+    assert!(successor.assembling.is_none());
+    drop(entry);
+    assert!(
+        service
+            .events_since(&owner, &created.id, Some(before_stale))
+            .await
+            .expect("the successor history remains readable")
+            .is_empty(),
+        "the predecessor's queued frame and channel close must not mutate the successor"
+    );
 }
 
 #[tokio::test]
@@ -353,6 +893,17 @@ async fn a_session_without_the_usage_capability_is_refused_by_name() {
     let created = svc.create_session(&alice, spec()).await.expect("created");
     await_settled(&svc, &alice, &created.id).await;
 
+    let revoked_owner = Caller::new(alice.subject.clone(), Default::default());
+    assert_eq!(
+        svc.get_usage(&revoked_owner, &created.id).await.err(),
+        Some(crate::error::CoreError::Forbidden),
+        "authorization is checked before the session's capability"
+    );
+    assert_eq!(
+        svc.get_usage(&user("mallory"), &created.id).await.err(),
+        Some(crate::error::CoreError::Forbidden),
+        "ownership is checked before revealing the session's capability"
+    );
     assert_eq!(
         svc.get_usage(&alice, &created.id).await.err(),
         Some(crate::error::CoreError::CapabilityUnsupported(
@@ -922,32 +1473,31 @@ async fn the_commands_a_kernel_offers_are_recorded_rather_than_only_broadcast() 
 
 #[tokio::test]
 async fn the_commands_a_kernel_offers_survive_arriving_before_the_entry_exists() {
-    /*
-     * The real timing, pinned directly. `entries` holds only sessions with a
-     * running runtime, and this announcement is made as the conversation
-     * opens — so arriving with no entry is the ordinary case for it, not a
-     * fault. Before the fallback it returned early and the list was gone.
-     */
-    let (svc, alice, id, adapter) = conversation().await;
-    svc.entries.write().await.remove(&id);
-
-    {
-        let held = adapter.conversation.lock().await;
-        let kernel = held.as_ref().expect("the conversation was opened");
-        kernel
-            .updates
-            .send(said(
-                layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[(
-                    "compact",
-                    "Summarise the conversation so far",
-                )])),
-            ))
-            .await
-            .expect("the core is listening");
-    }
+    // The opening receiver is the only authority allowed to persist a frame
+    // before the live entry exists. Drive the adapter's real opening path so
+    // this cannot pass through the stale-link fallback the durable protocol
+    // deliberately removed.
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        opening_updates: tokio::sync::Mutex::new(vec![said(
+            layer3_adapter::SessionUpdate::AvailableCommandsUpdate(offering(&[(
+                "compact",
+                "Summarise the conversation so far",
+            )])),
+        )]),
+        ..FakeAdapter::default()
+    });
+    let svc = versioned_conversation_service(store, adapter, "runtime:opening-commands");
+    let alice = user("opening-commands-owner");
+    let created = svc
+        .create_session(&alice, spec())
+        .await
+        .expect("the conversation is accepted");
+    await_settled(&svc, &alice, &created.id).await;
 
     assert!(
-        until_logged(&svc, &alice, &id, |kind| matches!(
+        until_logged(&svc, &alice, &created.id, |kind| matches!(
             kind,
             EventKind::AvailableCommandsSet { commands }
                 if commands.iter().any(|c| c.name == "compact")
@@ -987,33 +1537,28 @@ async fn a_kernel_that_offers_nothing_records_that_rather_than_staying_silent() 
 
 #[tokio::test]
 async fn a_sign_in_is_recorded_for_a_session_with_no_live_entry() {
-    /*
-     * The fallback itself, pinned directly rather than through the timing of
-     * an open. `entries` holds only sessions with a running runtime, so its
-     * absence is what the sign-in path has to survive — removing the entry
-     * from a settled session reproduces that exactly, and driving the update
-     * down the kernel's own channel keeps the test on the real path rather
-     * than on a hook that exists only for it.
-     */
-    let (svc, alice, id, adapter) = conversation().await;
-    svc.entries.write().await.remove(&id);
-
-    {
-        let held = adapter.conversation.lock().await;
-        let kernel = held.as_ref().expect("the conversation was opened");
-        kernel
-            .updates
-            .send(layer3_adapter::ConversationUpdate::SignInRequired {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        opening_updates: tokio::sync::Mutex::new(vec![
+            layer3_adapter::ConversationUpdate::SignInRequired {
                 url: "https://auth.example.test/device".to_string(),
                 code: Some("WDJB-MJHT".to_string()),
                 message: None,
-            })
-            .await
-            .expect("the core is listening");
-    }
+            },
+        ]),
+        ..FakeAdapter::default()
+    });
+    let svc = versioned_conversation_service(store, adapter, "runtime:opening-sign-in");
+    let alice = user("opening-sign-in-owner");
+    let created = svc
+        .create_session(&alice, spec())
+        .await
+        .expect("the conversation is accepted");
+    await_settled(&svc, &alice, &created.id).await;
 
     assert!(
-        until_logged(&svc, &alice, &id, |kind| matches!(
+        until_logged(&svc, &alice, &created.id, |kind| matches!(
             kind,
             EventKind::SignInRequired { code, .. } if code.as_deref() == Some("WDJB-MJHT")
         ))
@@ -1055,7 +1600,12 @@ async fn a_sign_in_for_a_session_nobody_holds_any_more_is_dropped_quietly() {
     // answering: a panic in that task would take the log with it.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
-        !svc.list_sessions(&alice).await.iter().any(|s| s.id == id),
+        !svc.list_sessions(&alice, &crate::SessionListQuery::default())
+            .await
+            .expect("session list is readable")
+            .items
+            .iter()
+            .any(|s| s.id == id),
         "the core must survive a sign-in for a session that no longer exists"
     );
 }

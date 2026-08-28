@@ -34,6 +34,14 @@ pub enum CoreError {
     #[error("session terminated")]
     SessionTerminated,
 
+    /// The session is being carried onto a replacement runtime.
+    ///
+    /// **Transient.** The handover completes on its own, after which the same
+    /// operation may be retried. Distinct from `SessionTerminated`: refusing
+    /// input here prevents it from reaching the runtime being torn down.
+    #[error("session rotating")]
+    SessionRotating,
+
     /// Another client already holds the exclusive terminal attachment.
     #[error("already attached")]
     AlreadyAttached,
@@ -144,6 +152,15 @@ pub enum CoreError {
     #[error("service catalogue unavailable: {0}")]
     ServiceCatalogUnavailable(String),
 
+    /// The skill catalogue could not produce a complete answer.
+    ///
+    /// **Transient.** This includes transport failures and an upstream page
+    /// walk whose cursor or bound cannot prove completeness. Distinct from a
+    /// missing runtime: replacing a session's sandbox cannot repair the skill
+    /// registry and would destroy working state for no reason.
+    #[error("skill catalogue unavailable: {0}")]
+    SkillCatalogUnavailable(String),
+
     /// The quote a caller accepted names a rate card no longer in force.
     ///
     /// Both ids are fields so an interface can tell the caller exactly what
@@ -194,6 +211,7 @@ impl CoreError {
             Self::EnvironmentProfileNotFound => "environment_profile_not_found",
             Self::Forbidden => "forbidden",
             Self::SessionTerminated => "session_terminated",
+            Self::SessionRotating => "session_rotating",
             Self::AlreadyAttached => "already_attached",
             Self::InvalidGeometry(_) => "invalid_geometry",
             Self::InvalidPressurePolicy(_) => "invalid_pressure_policy",
@@ -208,6 +226,7 @@ impl CoreError {
             Self::InvalidRequest(_) => "invalid_request",
             Self::ServiceNotGranted(_) => "service_not_granted",
             Self::ServiceCatalogUnavailable(_) => "service_catalogue_unavailable",
+            Self::SkillCatalogUnavailable(_) => "skill_catalogue_unavailable",
             Self::PriceChanged { .. } => "price_changed",
             Self::PriceListNotAppendOnly(_) => "price_list_not_append_only",
             Self::SettingsConflict(_) => "settings_conflict",
@@ -252,6 +271,7 @@ mod tests {
             CoreError::EnvironmentProfileNotFound,
             CoreError::Forbidden,
             CoreError::SessionTerminated,
+            CoreError::SessionRotating,
             CoreError::AlreadyAttached,
             CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).expect_err("zero width fails")),
             CoreError::InvalidPressurePolicy(
@@ -278,6 +298,7 @@ mod tests {
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("api-github".into()),
             CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::SkillCatalogUnavailable("down".into()),
             CoreError::PriceChanged {
                 quoted: "rate_old".into(),
                 in_force: "rate_new".into(),
@@ -295,6 +316,7 @@ mod tests {
                 | CoreError::EnvironmentProfileNotFound
                 | CoreError::Forbidden
                 | CoreError::SessionTerminated
+                | CoreError::SessionRotating
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
                 | CoreError::InvalidPressurePolicy(_)
@@ -309,6 +331,7 @@ mod tests {
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)
                 | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::SkillCatalogUnavailable(_)
                 | CoreError::PriceChanged { .. }
                 | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
@@ -353,6 +376,10 @@ mod tests {
         // caller told "runtime unavailable" would go looking.
         assert_ne!(
             CoreError::ServiceCatalogUnavailable("down".into()).code(),
+            CoreError::RuntimeUnavailable("down".into()).code(),
+        );
+        assert_ne!(
+            CoreError::SkillCatalogUnavailable("down".into()).code(),
             CoreError::RuntimeUnavailable("down".into()).code(),
         );
     }

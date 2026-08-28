@@ -1,31 +1,41 @@
 //! REST projection of environment profiles.
 //!
 //! A plain resource collection: create, read, replace, remove, plus the
-//! catalogue a client picks skills from. Every handler is a thin translation
-//! onto one core call — the ownership rule, the validation and the
+//! catalogue a client picks skills from. Ownership, validation and the
 //! non-revocable baseline all live in Layer 2, so no interface can apply a
-//! different version of them.
+//! different version of them. The preference action also rebuilds its released
+//! `/v1` collection response from bounded Layer 2 list pages after the core
+//! mutation succeeds.
 //!
 //! Variable values travel in and out because a client that could not read back
 //! what it stored could not offer an edit form. They are never logged here,
 //! and the core's own `Debug` keeps them out of a log elsewhere.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    routing::{get, put},
+    body::Bytes,
+    extract::{FromRequest, Path, Query, State},
+    http::{header, HeaderMap, Method, StatusCode},
+    response::{IntoResponse, Response},
     Json, Router,
 };
-use layer2_core::{EnvironmentProfileId, EnvironmentProfileService};
+use layer2_core::{
+    Caller, CoreError, EnvironmentProfile, EnvironmentProfileId, EnvironmentProfileService,
+    PageCursor, PageRequest, MAX_PAGE_SIZE,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
 use crate::rest::environments_shapes::{
-    MandatoryView, ProfileRequest, ProfileView, SkillCatalogView, SkillView,
+    decode_profile_request, unknown_profile_field, MandatoryView, ProfileRequest, ProfileView,
+    SkillCatalogView, SkillView, UnknownProfileField,
 };
-use crate::rest::Problem;
+use crate::rest::pagination::PageParams;
+use crate::rest::{problem_document, problem_response, BodyProblem, Problem, RequestFailure};
 
 /// Routes this resource contributes.
 ///
@@ -33,71 +43,191 @@ use crate::rest::Problem;
 /// from when authoring one; it is a static segment, which a router matches
 /// ahead of the identifier pattern beside it.
 pub fn router(service: Arc<EnvironmentProfileService>) -> Router {
-    Router::new()
-        .route("/api/v1/environment-profiles", get(list).post(create))
-        .route("/api/v1/environment-profiles/skills", get(skills))
-        .route("/api/v1/environment-profiles/services", get(services))
-        .route(
-            "/api/v1/environment-profiles/{id}",
-            get(read).put(replace).delete(remove),
-        )
+    documented_router(service).into()
+}
+
+pub(super) fn documented_router(service: Arc<EnvironmentProfileService>) -> OpenApiRouter {
+    OpenApiRouter::new()
+        .routes(routes!(list, create))
+        .routes(routes!(skills))
+        .routes(routes!(services))
+        .routes(routes!(read, replace, remove))
         /*
-         * Which profile this owner's sessions start from.
+         * Which profile clients should preselect for this owner.
          *
          * A collection rather than a flag on one profile, because setting it
          * changes two records — the one taking it and the one giving it up —
          * and a `PUT` on a single profile would describe only half of that.
-         * The answer is the whole list, so a client never has to guess which
-         * other rows moved.
+         * The released /v1 answer is the complete post-write collection, so a
+         * client never has to guess which other rows moved. It is assembled
+         * through bounded list pages after the mutation succeeds.
          */
-        .route("/api/v1/environment-profiles/preferred", put(prefer))
+        .routes(routes!(prefer))
         .with_state(service)
 }
 
+#[cfg(test)]
+#[path = "environments_tests.rs"]
+mod route_tests;
+
+/// A profile body gets one additional diagnostic over the shared JSON
+/// extractor: an identifier-shaped unknown field is named without reflecting
+/// any value that appeared beneath it.
+struct ProfileBody {
+    request: ProfileRequest,
+    echoed_id: Option<String>,
+}
+
+enum ProfileBodyProblem {
+    Body(BodyProblem),
+    InvalidSchema,
+    Unknown(UnknownProfileField),
+}
+
+impl<S> FromRequest<S> for ProfileBody
+where
+    S: Send + Sync,
+{
+    type Rejection = ProfileBodyProblem;
+
+    async fn from_request(
+        request: axum::extract::Request,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let accepts_profile_view = request.method() == Method::PUT;
+        if !json_content_type(request.headers()) {
+            return Err(ProfileBodyProblem::Body(
+                BodyProblem::missing_json_content_type(),
+            ));
+        }
+        let bytes = Bytes::from_request(request, state).await.map_err(|error| {
+            let rejection = axum::extract::rejection::JsonRejection::from(error);
+            ProfileBodyProblem::Body(BodyProblem::from(rejection))
+        })?;
+        let Json(value) = Json::<Value>::from_bytes(&bytes)
+            .map_err(|error| ProfileBodyProblem::Body(error.into()))?;
+        if let Some(unknown) = unknown_profile_field(&value, accepts_profile_view) {
+            return Err(ProfileBodyProblem::Unknown(unknown));
+        }
+        let (request, echoed_id) = decode_profile_request(value, accepts_profile_view)
+            .map_err(|_| ProfileBodyProblem::InvalidSchema)?;
+        Ok(Self { request, echoed_id })
+    }
+}
+
+fn json_content_type(headers: &HeaderMap) -> bool {
+    let Some(content_type) = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<mime::Mime>().ok())
+    else {
+        return false;
+    };
+    content_type.type_() == mime::APPLICATION
+        && (content_type.subtype() == mime::JSON || content_type.suffix() == Some(mime::JSON))
+}
+
+impl IntoResponse for ProfileBodyProblem {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Body(problem) => problem.into_response(),
+            Self::InvalidSchema => BodyProblem::invalid_data().into_response(),
+            Self::Unknown(unknown) => {
+                let status = StatusCode::UNPROCESSABLE_ENTITY;
+                let mut body = problem_document(
+                    status,
+                    "invalid-request",
+                    "The JSON body does not match this operation's request schema.",
+                    "invalid_request",
+                );
+                if let Some(object) = body.as_object_mut() {
+                    if let Some(field) = unknown.field {
+                        object.insert("field".into(), field.into());
+                    }
+                    if let Some(path) = unknown.path {
+                        object.insert("path".into(), path.into());
+                    }
+                }
+                problem_response(status, body)
+            }
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/environment-profiles",
+    tag = "environment profiles",
+    request_body = ProfileRequest,
+    responses((status = 201, description = "Profile created", body = ProfileView))
+)]
 async fn create(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Json(body): Json<ProfileRequest>,
-) -> Result<(StatusCode, Json<ProfileView>), Problem> {
-    let profile = service.create(&caller, body.try_into()?).await?;
+    ProfileBody { request, .. }: ProfileBody,
+) -> Result<(StatusCode, Json<ProfileView>), RequestFailure> {
+    let profile = service.create(&caller, request.try_into()?).await?;
     Ok((
         StatusCode::CREATED,
         Json(ProfileView::render(profile, &service)),
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/environment-profiles",
+    tag = "environment profiles",
+    params(("limit" = Option<u32>, Query), ("cursor" = Option<String>, Query)),
+    responses((status = 200, description = "Newest-first profile page", body = [ProfileView]))
+)]
 async fn list(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-) -> Result<Json<Vec<ProfileView>>, Problem> {
-    let profiles = service.list(&caller).await?;
-    Ok(Json(
-        profiles
-            .into_iter()
-            .map(|p| ProfileView::render(p, &service))
-            .collect(),
+    params: Result<Query<PageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<(axum::http::HeaderMap, Json<Vec<ProfileView>>), RequestFailure> {
+    let Query(params) = params?;
+    let profiles = service.list(&caller, &params.store_request()).await?;
+    let headers = params.next_headers("/api/v1/environment-profiles", profiles.next.as_ref());
+    Ok((
+        headers,
+        Json(
+            profiles
+                .items
+                .into_iter()
+                .map(|p| ProfileView::render(p, &service))
+                .collect(),
+        ),
     ))
 }
 
-/// Which profile the caller's sessions should start from.
+/// Which profile clients should preselect for the caller.
 ///
-/// `null` is a value rather than an omission: it clears the preference and
-/// returns them to the deployment's own defaults, which is a choice somebody
-/// makes rather than the absence of one. `deny_unknown_fields` so a caller who
-/// spells the field wrong is told, instead of silently clearing it.
-#[derive(Debug, Deserialize)]
+/// `null` is a value rather than an omission: it clears the preselection. The
+/// server never substitutes this value into a session-create request;
+/// `deny_unknown_fields` ensures a misspelling is reported instead of silently
+/// clearing it.
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct PreferredRequest {
     profile: Option<String>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/environment-profiles/preferred",
+    tag = "environment profiles",
+    request_body = PreferredRequest,
+    responses((status = 200, description = "Complete profile collection after preference change", body = [ProfileView]))
+)]
 async fn prefer(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Json(body): Json<PreferredRequest>,
-) -> Result<Json<Vec<ProfileView>>, Problem> {
+    body: Result<Json<PreferredRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<Vec<ProfileView>>, RequestFailure> {
+    let Json(body) = body?;
     let wanted = body.profile.map(EnvironmentProfileId);
-    let profiles = service.prefer(&caller, wanted.as_ref()).await?;
+    service.prefer(&caller, wanted.as_ref()).await?;
+    let profiles = complete_profile_collection(&service, &caller, wanted.as_ref()).await?;
     Ok(Json(
         profiles
             .into_iter()
@@ -106,6 +236,46 @@ async fn prefer(
     ))
 }
 
+/// Rebuild the released `/v1` action response without an unbounded store read.
+async fn complete_profile_collection(
+    service: &EnvironmentProfileService,
+    caller: &Caller,
+    pinned_preferred: Option<&EnvironmentProfileId>,
+) -> Result<Vec<EnvironmentProfile>, CoreError> {
+    let mut profiles = Vec::new();
+    let mut cursor: Option<PageCursor> = None;
+    let mut seen = HashSet::new();
+    loop {
+        let mut page = service
+            .list(caller, &PageRequest::new(MAX_PAGE_SIZE, cursor))
+            .await?;
+        // Another preference write may land between pages. `/v1` promises the
+        // post-write answer for this request, so every page is normalized to
+        // the winner this request validated and wrote rather than whichever
+        // winner happened to be visible during that individual page read.
+        for profile in &mut page.items {
+            profile.preferred = pinned_preferred == Some(&profile.id);
+        }
+        profiles.extend(page.items);
+        match page.next {
+            Some(next) if seen.insert(next.clone()) => cursor = Some(next),
+            Some(_) => {
+                return Err(CoreError::RuntimeUnavailable(
+                    "environment profile listing repeated its continuation cursor".into(),
+                ))
+            }
+            None => return Ok(profiles),
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/environment-profiles/{id}",
+    tag = "environment profiles",
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Profile", body = ProfileView))
+)]
 async fn read(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -115,18 +285,36 @@ async fn read(
     Ok(Json(ProfileView::render(profile, &service)))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/environment-profiles/{id}",
+    tag = "environment profiles",
+    params(("id" = String, Path)),
+    request_body = ProfileRequest,
+    responses((status = 200, description = "Replaced profile", body = ProfileView))
+)]
 async fn replace(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    Json(body): Json<ProfileRequest>,
-) -> Result<Json<ProfileView>, Problem> {
+    ProfileBody { request, echoed_id }: ProfileBody,
+) -> Result<Json<ProfileView>, RequestFailure> {
+    if echoed_id.as_deref().is_some_and(|echoed| echoed != id) {
+        return Err(BodyProblem::invalid_data().into());
+    }
     let profile = service
-        .update(&caller, &EnvironmentProfileId(id), body.try_into()?)
+        .update(&caller, &EnvironmentProfileId(id), request.try_into()?)
         .await?;
     Ok(Json(ProfileView::render(profile, &service)))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/environment-profiles/{id}",
+    tag = "environment profiles",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Profile deleted"))
+)]
 async fn remove(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -142,12 +330,18 @@ async fn remove(
 /// and this service's own identity would answer with a different one. The
 /// mandatory entries travel alongside so a client can draw them as fixed
 /// rather than inferring which of them cannot be unticked.
+#[utoipa::path(
+    get,
+    path = "/api/v1/environment-profiles/services",
+    tag = "environment profiles",
+    responses((status = 200, description = "Available service catalogue", body = ServiceCatalogView))
+)]
 async fn services(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<axum::Extension<DelegatedCredential>>,
 ) -> Result<Json<ServiceCatalogView>, Problem> {
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     let services = service
         .available_services(&caller, credential.as_deref())
         .await?;
@@ -170,7 +364,7 @@ async fn services(
 }
 
 /// A service as the picker renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ServiceView {
     id: String,
     name: String,
@@ -179,13 +373,19 @@ pub struct ServiceView {
 }
 
 /// The picker's answer.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ServiceCatalogView {
     services: Vec<ServiceView>,
     /// Which of them every session reaches whatever the profile says.
     mandatory: Vec<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/environment-profiles/skills",
+    tag = "environment profiles",
+    responses((status = 200, description = "Available skill catalogue", body = SkillCatalogView))
+)]
 async fn skills(
     State(service): State<Arc<EnvironmentProfileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -193,7 +393,7 @@ async fn skills(
     // it the catalogue answers as this service, which sees only what is public.
     credential: Option<axum::Extension<DelegatedCredential>>,
 ) -> Result<Json<SkillCatalogView>, Problem> {
-    let credential = credential.map(|axum::Extension(c)| c.0);
+    let credential = credential.map(|axum::Extension(c)| c.into_value());
     let skills = service
         .available_skills(&caller, credential.as_deref())
         .await?;
@@ -205,6 +405,8 @@ async fn skills(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use layer2_core::{
         CredentialMode, EnvironmentProfile, EnvironmentProfileSpec, EnvironmentVariable,
         PermissionMode, ReasoningEffort, SessionSize, SkillId, SoftwarePackage,
@@ -212,7 +414,9 @@ mod tests {
 
     use super::*;
     use axum::response::IntoResponse;
-    use layer2_core::{Baseline, CoreError, EnvironmentProfileStore, StoreError, SubjectId};
+    use layer2_core::{
+        Baseline, CoreError, EnvironmentProfileStore, Page, PageRequest, StoreError, SubjectId,
+    };
 
     /// A store that holds nothing, for the cases that never reach it.
     struct EmptyStore;
@@ -221,6 +425,14 @@ mod tests {
     impl EnvironmentProfileStore for EmptyStore {
         async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
             Ok(())
+        }
+        async fn replace_content(
+            &self,
+            _id: &EnvironmentProfileId,
+            _content: &EnvironmentProfileSpec,
+            _updated_at: &str,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
         }
         async fn get(
             &self,
@@ -231,8 +443,30 @@ mod tests {
         async fn list_for(
             &self,
             _owner: &SubjectId,
-        ) -> Result<Vec<EnvironmentProfile>, StoreError> {
-            Ok(Vec::new())
+            _page: &PageRequest,
+        ) -> Result<Page<EnvironmentProfile>, StoreError> {
+            Ok(Page {
+                items: Vec::new(),
+                next: None,
+            })
+        }
+        async fn set_preferred(
+            &self,
+            _owner: &SubjectId,
+            chosen: Option<&EnvironmentProfileId>,
+        ) -> Result<(), StoreError> {
+            if chosen.is_some() {
+                return Err(StoreError::Malformed(
+                    "an empty store has no selectable profile".into(),
+                ));
+            }
+            Ok(())
+        }
+        async fn preferred_for(
+            &self,
+            _owner: &SubjectId,
+        ) -> Result<Option<EnvironmentProfile>, StoreError> {
+            Ok(None)
         }
         async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
             Ok(())
@@ -282,6 +516,118 @@ mod tests {
         // Building the router is what proves the two can coexist, and a
         // conflict would otherwise surface as a panic at startup.
         let _ = router(service());
+    }
+
+    #[tokio::test]
+    async fn the_compatibility_walk_rejects_a_longer_cursor_cycle() {
+        #[derive(Default)]
+        struct CyclingStore {
+            lists: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl EnvironmentProfileStore for CyclingStore {
+            async fn upsert(&self, _profile: &EnvironmentProfile) -> Result<(), StoreError> {
+                Ok(())
+            }
+
+            async fn replace_content(
+                &self,
+                _id: &EnvironmentProfileId,
+                _content: &EnvironmentProfileSpec,
+                _updated_at: &str,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
+            }
+
+            async fn get(
+                &self,
+                _id: &EnvironmentProfileId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
+            }
+
+            async fn list_for(
+                &self,
+                _owner: &SubjectId,
+                page: &PageRequest,
+            ) -> Result<Page<EnvironmentProfile>, StoreError> {
+                self.lists.fetch_add(1, Ordering::SeqCst);
+                let id = match page.cursor().map(|cursor| cursor.id.as_str()) {
+                    None => "cursor-a",
+                    Some("cursor-a") => "cursor-b",
+                    Some("cursor-b") => "cursor-a",
+                    Some(_) => {
+                        return Err(StoreError::Malformed(
+                            "the test received an unexpected cursor".into(),
+                        ))
+                    }
+                };
+                Ok(Page {
+                    items: Vec::new(),
+                    next: Some(PageCursor::new("2026-08-25T00:00:00Z", id)),
+                })
+            }
+
+            async fn set_preferred(
+                &self,
+                _owner: &SubjectId,
+                chosen: Option<&EnvironmentProfileId>,
+            ) -> Result<(), StoreError> {
+                if chosen.is_some() {
+                    return Err(StoreError::Malformed(
+                        "the cycling store has no selectable profile".into(),
+                    ));
+                }
+                Ok(())
+            }
+
+            async fn preferred_for(
+                &self,
+                _owner: &SubjectId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(None)
+            }
+
+            async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
+                Ok(())
+            }
+        }
+
+        let store = Arc::new(CyclingStore::default());
+        let service = EnvironmentProfileService::new(
+            Arc::clone(&store) as Arc<dyn EnvironmentProfileStore>,
+            Baseline::default(),
+            None,
+            None,
+            Default::default(),
+            Arc::new(layer2_core::PlatformSettingsService::unconfigured()),
+        );
+        let caller = layer2_core::Caller::new(
+            SubjectId("subject-a".into()),
+            layer2_core::Authorization::from_capabilities([
+                layer2_core::Capability::ManageOwnEnvironmentProfiles,
+            ]),
+        );
+
+        let failure = match prefer(
+            State(service),
+            AuthenticatedCaller(caller),
+            Ok(Json(PreferredRequest { profile: None })),
+        )
+        .await
+        {
+            Err(failure) => failure,
+            Ok(_) => panic!("a repeated cursor must not produce a partial collection"),
+        };
+
+        match failure {
+            RequestFailure::Refused(Problem(CoreError::RuntimeUnavailable(detail))) => {
+                assert!(detail.contains("repeated its continuation cursor"));
+            }
+            _ => panic!("a cursor cycle must be reported as store unavailability"),
+        }
+        assert_eq!(store.lists.load(Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -377,6 +723,20 @@ mod tests {
                 Ok(())
             }
 
+            async fn replace_content(
+                &self,
+                id: &EnvironmentProfileId,
+                content: &EnvironmentProfileSpec,
+                updated_at: &str,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                let mut profiles = self.0.lock().unwrap();
+                let Some(profile) = profiles.iter_mut().find(|profile| profile.id == *id) else {
+                    return Ok(None);
+                };
+                profile.apply_content(content, updated_at);
+                Ok(Some(profile.clone()))
+            }
+
             async fn get(
                 &self,
                 _id: &EnvironmentProfileId,
@@ -387,8 +747,57 @@ mod tests {
             async fn list_for(
                 &self,
                 _owner: &SubjectId,
-            ) -> Result<Vec<EnvironmentProfile>, StoreError> {
-                Ok(self.0.lock().unwrap().clone())
+                page: &PageRequest,
+            ) -> Result<Page<EnvironmentProfile>, StoreError> {
+                let mut profiles = self.0.lock().unwrap().clone();
+                profiles.truncate(page.limit() as usize);
+                Ok(Page {
+                    items: profiles,
+                    next: None,
+                })
+            }
+
+            async fn set_preferred(
+                &self,
+                owner: &SubjectId,
+                chosen: Option<&EnvironmentProfileId>,
+            ) -> Result<(), StoreError> {
+                let mut profiles = self.0.lock().unwrap();
+                if let Some(id) = chosen {
+                    let selected = profiles
+                        .iter()
+                        .find(|profile| profile.id == *id && &profile.owner == owner);
+                    if selected.is_none() {
+                        return Err(StoreError::Malformed(
+                            "selected environment profile is not owned by the subject".into(),
+                        ));
+                    }
+                }
+                for profile in profiles
+                    .iter_mut()
+                    .filter(|profile| &profile.owner == owner)
+                {
+                    profile.preferred = chosen.is_some_and(|id| profile.id == *id);
+                }
+                Ok(())
+            }
+
+            async fn preferred_for(
+                &self,
+                owner: &SubjectId,
+            ) -> Result<Option<EnvironmentProfile>, StoreError> {
+                Ok(self
+                    .0
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|profile| &profile.owner == owner && profile.preferred)
+                    .max_by(|a, b| {
+                        a.updated_at
+                            .cmp(&b.updated_at)
+                            .then_with(|| a.id.0.cmp(&b.id.0))
+                    })
+                    .cloned())
             }
 
             async fn delete(&self, _id: &EnvironmentProfileId) -> Result<(), StoreError> {
@@ -416,12 +825,23 @@ mod tests {
         )
         .expect("parses");
 
-        let refusal = create(State(service), AuthenticatedCaller(caller), Json(body)).await;
+        let refusal = create(
+            State(service),
+            AuthenticatedCaller(caller),
+            ProfileBody {
+                request: body,
+                echoed_id: None,
+            },
+        )
+        .await;
         let problem = match refusal {
             Err(problem) => problem,
             Ok(_) => panic!("a zero size must be refused"),
         };
-        assert!(matches!(problem.0, CoreError::InvalidSessionSize(_)));
+        assert!(matches!(
+            &problem,
+            RequestFailure::Refused(Problem(CoreError::InvalidSessionSize(_)))
+        ));
         let response = problem.into_response();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)

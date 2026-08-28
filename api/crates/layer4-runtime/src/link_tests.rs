@@ -154,6 +154,52 @@ fn the_control_vocabulary_still_parses_from_its_tag() {
     assert!(serde_json::from_str::<ControlFrame>(r#"{"t":"nope"}"#).is_err());
 }
 
+#[tokio::test]
+async fn a_correlated_credential_is_installed_before_its_matching_result() {
+    let state = AppState::for_test(&["/bin/echo"]);
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    control(
+        r#"{"t":"credential","operation_id":"opaque-17","value":"secret"}"#,
+        "sbx_credential",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+
+    let answer = answers.recv().await.expect("installation is acknowledged");
+    assert!(
+        state.credential.is_set().await,
+        "the result must follow the holder mutation"
+    );
+    let answer: serde_json::Value = serde_json::from_str(&answer).expect("result is JSON");
+    assert_eq!(answer["t"], "credential_result");
+    assert_eq!(answer["operation_id"], "opaque-17");
+    assert_eq!(answer["installed"], true);
+}
+
+#[tokio::test]
+async fn a_legacy_credential_installs_without_an_unsolicited_result() {
+    let state = AppState::for_test(&["/bin/echo"]);
+    let (replies, mut answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    control(
+        r#"{"t":"credential","value":"legacy-secret"}"#,
+        "sbx_legacy_credential",
+        &state,
+        None,
+        &replies,
+    )
+    .await;
+
+    assert!(state.credential.is_set().await);
+    assert!(matches!(
+        answers.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+}
+
 #[test]
 fn a_switch_names_the_program_to_restart() {
     // The command is the kernel's own front-end name, carried verbatim; the
@@ -165,6 +211,41 @@ fn a_switch_names_the_program_to_restart() {
         switch,
         ControlFrame::SwitchPlane { command } if command == "codex-acp"
     ));
+}
+
+async fn captured_signal_input(signals: &[&str]) -> Vec<u8> {
+    let state = AppState::for_test(&["/bin/echo"]);
+    let (session, _output) = state
+        .registry
+        .get_or_start("signal-map", "/bin/echo", 80, 24, "k")
+        .await
+        .expect("the test terminal starts");
+    let captured = session.capture_input_writes_for_test();
+    let (replies, _answers) = mpsc::channel::<String>(CONTROL_REPLIES);
+
+    for signal in signals {
+        let frame = serde_json::json!({ "t": "signal", "sig": signal }).to_string();
+        control(&frame, "signal-map", &state, Some(&session), &replies).await;
+    }
+
+    let bytes = captured
+        .lock()
+        .expect("the captured input is healthy")
+        .clone();
+    bytes
+}
+
+#[tokio::test]
+async fn every_documented_signal_writes_its_exact_control_byte() {
+    assert_eq!(
+        captured_signal_input(&["INT", "TERM", "QUIT", "HUP"]).await,
+        vec![0x03, 0x04, 0x1c, 0x04]
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_signal_writes_nothing() {
+    assert!(captured_signal_input(&["XYZ"]).await.is_empty());
 }
 
 #[tokio::test]
@@ -241,12 +322,83 @@ async fn telemetry_link(address: std::net::SocketAddr, interval_ms: u64) -> Clie
         .0
 }
 
+async fn terminal_link(address: std::net::SocketAddr, id: &str) -> ClientSocket {
+    let url = format!("ws://{address}/runtime/{id}/terminal?wire=1&cols=120&rows=40");
+    tokio_tungstenite::connect_async(url)
+        .await
+        .expect("the terminal link opens")
+        .0
+}
+
 async fn next_client_message(socket: &mut ClientSocket) -> tokio_tungstenite::tungstenite::Message {
     tokio::time::timeout(Duration::from_secs(5), socket.next())
         .await
-        .expect("the telemetry link answers in time")
-        .expect("the telemetry link remains open")
-        .expect("the telemetry frame is readable")
+        .expect("the runtime link answers in time")
+        .expect("the runtime link remains open")
+        .expect("the runtime frame is readable")
+}
+
+async fn terminal_output_until_exit(socket: &mut ClientSocket) -> (Vec<u8>, serde_json::Value) {
+    let mut output = Vec::new();
+    loop {
+        match next_client_message(socket).await {
+            tokio_tungstenite::tungstenite::Message::Binary(bytes) => {
+                let (lane, payload) = lanes::unframe(&bytes).expect("terminal output has a lane");
+                assert_eq!(lane, LANE_TERMINAL);
+                output.extend_from_slice(payload);
+            }
+            tokio_tungstenite::tungstenite::Message::Text(text) => {
+                let ending: serde_json::Value =
+                    serde_json::from_str(&text).expect("the process ending is JSON");
+                assert_eq!(ending["t"], "exit");
+                return (output, ending);
+            }
+            other => panic!("the process ended before reporting its status: {other:?}"),
+        }
+    }
+}
+
+async fn assert_normal_close(socket: &mut ClientSocket) {
+    let tokio_tungstenite::tungstenite::Message::Close(Some(close)) =
+        next_client_message(socket).await
+    else {
+        panic!("the exit report must be followed by a close frame");
+    };
+    assert_eq!(
+        close.code,
+        tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal
+    );
+}
+
+#[tokio::test]
+async fn a_pty_write_failure_waits_for_the_output_pump_to_finish() {
+    let (release_output, output_released) = tokio::sync::oneshot::channel();
+    let (output_finished, finished_output) = tokio::sync::oneshot::channel();
+    let (input_finished, finished_input) = tokio::sync::oneshot::channel();
+
+    let pump_out = tokio::spawn(async move {
+        let _ = output_released.await;
+        let _ = output_finished.send(());
+    });
+    let pump_in = tokio::spawn(async move {
+        let _ = input_finished.send(());
+        TerminalInputEnd::PtyWriteFailed
+    });
+    let finishing = tokio::spawn(finish_terminal_pumps(pump_out, pump_in));
+
+    finished_input
+        .await
+        .expect("the failed input pump completes first");
+    release_output
+        .send(())
+        .expect("the output pump is still being awaited");
+    tokio::time::timeout(Duration::from_secs(1), finishing)
+        .await
+        .expect("pump arbitration finishes")
+        .expect("pump arbitration does not panic");
+    finished_output
+        .await
+        .expect("a PTY write failure must not abort the ending reporter");
 }
 
 fn assert_telemetry_frame(message: tokio_tungstenite::tungstenite::Message) {
@@ -257,6 +409,236 @@ fn assert_telemetry_frame(message: tokio_tungstenite::tungstenite::Message) {
     assert_eq!(lane, lanes::LANE_TELEMETRY);
     let frame: serde_json::Value = serde_json::from_slice(payload).expect("the sample is JSON");
     assert!(frame["uptimeMs"].is_number());
+}
+
+#[tokio::test]
+async fn process_output_precedes_its_success_status_and_normal_close() {
+    let state = AppState::for_test(&["/bin/echo final-output"]);
+    let (address, server) = serve(state).await;
+    let mut socket = terminal_link(address, "sbx_success").await;
+
+    let tokio_tungstenite::tungstenite::Message::Text(ready) =
+        next_client_message(&mut socket).await
+    else {
+        panic!("the lane declaration must be the first frame");
+    };
+    let ready: serde_json::Value = serde_json::from_str(&ready).expect("the declaration is JSON");
+    assert_eq!(ready["t"], "ready");
+
+    let (output, exit) = terminal_output_until_exit(&mut socket).await;
+    assert!(
+        String::from_utf8_lossy(&output).contains("final-output"),
+        "the process's final output must arrive before its exit report"
+    );
+    assert_eq!(exit["code"], 0);
+    assert_normal_close(&mut socket).await;
+    server.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn input_after_process_exit_cannot_cancel_its_reported_ending() {
+    let state = AppState::for_test(&["/bin/sh"]);
+    let inspected = state.clone();
+    let (address, server) = serve(state).await;
+    let mut socket = terminal_link(address, "sbx_late_input").await;
+    assert!(matches!(
+        next_client_message(&mut socket).await,
+        tokio_tungstenite::tungstenite::Message::Text(_)
+    ));
+
+    let session = inspected
+        .registry
+        .session_for_test("sbx_late_input")
+        .await
+        .expect("the attached process is registered");
+    let mut exited = session.subscribe_exit();
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(
+                LANE_TERMINAL,
+                b"head -c 16777216 /dev/zero; printf late-; printf final-output; exit 31\n",
+            ),
+        ))
+        .await
+        .expect("the process receives its ending command");
+
+    // Do not read the large output yet. This holds the socket's output pump in
+    // a send while the supervisor independently reaps and latches the child.
+    tokio::time::timeout(Duration::from_secs(10), exited.changed())
+        .await
+        .expect("the process exits while its socket output is backed up")
+        .expect("the exit watch remains open");
+    assert_eq!(exited.borrow().expect("an exit was latched").code, Some(31));
+    // Some kernels accept writes to a retained PTY master after the slave has
+    // gone while others return EIO. Inject the same failure on every platform
+    // so this exercises the input pump's failure branch deterministically.
+    let input_failed = session.fail_input_writes_for_test();
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(LANE_TERMINAL, b"late"),
+        ))
+        .await
+        .expect("the in-flight keystroke reaches the runtime link");
+    tokio::time::timeout(Duration::from_secs(1), input_failed)
+        .await
+        .expect("the runtime reads the late input in time")
+        .expect("the injected writer observes the late input");
+
+    let (output, exit) = terminal_output_until_exit(&mut socket).await;
+    assert!(
+        String::from_utf8_lossy(&output).contains("late-final-output"),
+        "final output must still precede the ending"
+    );
+    assert_eq!(exit["code"], 31);
+    assert_normal_close(&mut socket).await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn signal_termination_reports_no_numeric_status_before_normal_close() {
+    let state = AppState::for_test(&["/bin/sh"]);
+    let (address, server) = serve(state).await;
+    let mut socket = terminal_link(address, "sbx_signal").await;
+    assert!(matches!(
+        next_client_message(&mut socket).await,
+        tokio_tungstenite::tungstenite::Message::Text(_)
+    ));
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(LANE_TERMINAL, b"exec /bin/sh -c 'kill -TERM $$'\n"),
+        ))
+        .await
+        .expect("the signal command reaches the shell");
+
+    let (_output, exit) = terminal_output_until_exit(&mut socket).await;
+    assert_eq!(exit["code"], serde_json::Value::Null);
+    assert_normal_close(&mut socket).await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn saturated_terminal_output_does_not_starve_a_control_reply() {
+    let state = AppState::for_test(&["/bin/sh", "codex-acp"]);
+    let registry = state.registry.clone();
+    let (address, server) = serve(state).await;
+    let mut socket = terminal_link(address, "sbx_fair_control").await;
+    assert!(matches!(
+        next_client_message(&mut socket).await,
+        tokio_tungstenite::tungstenite::Message::Text(_)
+    ));
+
+    let session = registry
+        .session_for_test("sbx_fair_control")
+        .await
+        .expect("the test terminal is registered");
+    let flooding = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let producer = tokio::spawn({
+        let flooding = std::sync::Arc::clone(&flooding);
+        async move {
+            while flooding.load(std::sync::atomic::Ordering::Acquire) {
+                // Refill beyond the lossy ring's capacity before yielding, so
+                // the output receive remains ready at every select point.
+                for _ in 0..1_024 {
+                    session.publish_output_for_test(b"saturated-output\n");
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+    });
+    loop {
+        if let tokio_tungstenite::tungstenite::Message::Binary(bytes) =
+            next_client_message(&mut socket).await
+        {
+            if lanes::unframe(&bytes).is_some_and(|(lane, payload)| {
+                lane == LANE_TERMINAL && payload == b"saturated-output\n"
+            }) {
+                break;
+            }
+        }
+    }
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            serde_json::json!({
+                "t": "switch_plane",
+                "command": "codex-acp",
+            })
+            .to_string(),
+        ))
+        .await
+        .expect("the switch request reaches the supervisor");
+
+    let reply = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let tokio_tungstenite::tungstenite::Message::Text(text) =
+                next_client_message(&mut socket).await
+            {
+                let value: serde_json::Value =
+                    serde_json::from_str(&text).expect("the control reply is JSON");
+                if value["t"] == SWITCH_RESULT {
+                    break value;
+                }
+            }
+        }
+    })
+    .await;
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(_) => {
+            flooding.store(false, std::sync::atomic::Ordering::Release);
+            producer.abort();
+            server.abort();
+            panic!("continuous terminal output starved control traffic");
+        }
+    };
+    assert_eq!(reply["accepted"], true);
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let tokio_tungstenite::tungstenite::Message::Binary(bytes) =
+                next_client_message(&mut socket).await
+            {
+                if lanes::unframe(&bytes).is_some_and(|(lane, payload)| {
+                    lane == LANE_TERMINAL && payload == b"saturated-output\n"
+                }) {
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .expect("terminal output remains pending after the control reply");
+    flooding.store(false, std::sync::atomic::Ordering::Release);
+    tokio::time::timeout(Duration::from_secs(1), producer)
+        .await
+        .expect("the bounded output producer stops")
+        .expect("the bounded output producer remains healthy");
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Binary(
+            lanes::frame(LANE_TERMINAL, b"exit\n"),
+        ))
+        .await
+        .expect("the test shell is ended");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let tokio_tungstenite::tungstenite::Message::Text(text) =
+                next_client_message(&mut socket).await
+            {
+                let value: serde_json::Value =
+                    serde_json::from_str(&text).expect("the process ending is JSON");
+                if value["t"] == "exit" {
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .expect("the test shell exits after its test output is drained");
+    server.abort();
 }
 
 #[tokio::test]

@@ -2,7 +2,7 @@
  * Which way the console arranges sessions: one at a time, or all at once.
  *
  * An arrangement, not a view (docs/Web_Style.md §1): it changes how the middle
- * column is drawn and nothing else, and the app carries exactly two views.
+ * column is drawn and nothing else, and the app carries exactly three views.
  *
  * **It is not a browser-only preference.** A terminal declares its own
  * measurements to the runtime drawing into it, so choosing the canvas asks
@@ -14,6 +14,8 @@
  * turn, it is a setting someone expects to survive closing the tab, and it is
  * not user content: knowing somebody prefers a canvas leaks nothing.
  */
+
+import { observeBrowserCompatibility } from '../observability/browserCompatibility';
 
 export type Arrangement = 'list' | 'canvas';
 
@@ -45,10 +47,21 @@ function canonicalArrangement(value: string | null): Arrangement | null {
   return isArrangement(value) ? value : null;
 }
 
-function readArrangement(store: Storage, key: string): string | null {
+function readArrangement(
+  store: Storage,
+  key: string,
+  observeCanonical: boolean = false,
+): string | null {
   try {
-    return store.getItem(key);
+    const value = store.getItem(key);
+    if (observeCanonical) {
+      observeBrowserCompatibility(['view-mode', 'canonical', 'read-ok']);
+    }
+    return value;
   } catch {
+    if (observeCanonical) {
+      observeBrowserCompatibility(['view-mode', 'canonical', 'read-blocked']);
+    }
     return null;
   }
 }
@@ -56,7 +69,9 @@ function readArrangement(store: Storage, key: string): string | null {
 function writeArrangement(store: Storage, arrangement: Arrangement): void {
   try {
     store.setItem(KEY, arrangement);
+    observeBrowserCompatibility(['view-mode', 'canonical', 'write-ok']);
   } catch {
+    observeBrowserCompatibility(['view-mode', 'canonical', 'write-blocked']);
     // Applying the arrangement does not depend on remembering it.
   }
 }
@@ -73,10 +88,11 @@ function writeArrangement(store: Storage, arrangement: Arrangement): void {
 export function loadArrangement(): Arrangement {
   const store = storage();
   if (store === null) {
+    observeBrowserCompatibility(['view-mode', 'canonical', 'read-blocked']);
     return DEFAULT_ARRANGEMENT;
   }
 
-  const rawCanonical = readArrangement(store, KEY);
+  const rawCanonical = readArrangement(store, KEY, true);
   const canonical = canonicalArrangement(rawCanonical);
   if (canonical !== null) {
     if (canonical !== rawCanonical) {
@@ -90,6 +106,7 @@ export function loadArrangement(): Arrangement {
     return DEFAULT_ARRANGEMENT;
   }
 
+  observeBrowserCompatibility(['view-mode', 'historical-key', 'fallback-used']);
   writeArrangement(store, historical);
   return historical;
 }
@@ -99,5 +116,7 @@ export function saveArrangement(arrangement: Arrangement): void {
   const store = storage();
   if (store !== null) {
     writeArrangement(store, arrangement);
+  } else {
+    observeBrowserCompatibility(['view-mode', 'canonical', 'write-blocked']);
   }
 }
