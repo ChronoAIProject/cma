@@ -41,16 +41,30 @@ data:
   CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE: "600"
   CHRONO_SERVER_RATE_CREATE_PER_MINUTE: "10"
   CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
-  # The Google external Application Load Balancer appends client IP and then
-  # forwarding-rule IP to X-Forwarded-For. Accept that chain only when the TCP
-  # peer is in an official GFE proxy range, then skip the rightmost LB token.
-  # Caller-prepended tokens remain to the left and are never selected. If the
-  # shared Gateway changes data plane, update these values with its source
-  # network and header contract rather than broadening trust speculatively. The
-  # app-origin HTTPRoute sends API, auth, and discovery paths straight to
-  # cma-api so a web-pod address never has to be trusted here.
+  # The Google external Application Load Balancer appends the upstream address
+  # and then forwarding-rule IP to X-Forwarded-For. Accept that chain only when
+  # the TCP peer is in an official GFE proxy range, then skip the rightmost LB
+  # token. The resulting token is the upstream GFE observed, not necessarily
+  # the visitor.
   CHRONO_SERVER_TRUSTED_PROXY_CIDRS: "35.191.0.0/16,130.211.0.0/22,2600:2d00:1:1::/64"
   CHRONO_SERVER_TRUSTED_PROXY_HOPS: "1"
+  # Both public CMA hostnames are Cloudflare-proxied. Advance from the
+  # GFE-observed edge to the next-left visitor only when the edge is in this
+  # reviewed set and that token exactly agrees with the single
+  # CF-Connecting-IP header. Missing/malformed/mismatched identity, a Worker or
+  # Pseudo-IPv4-overwrite marker, a direct-origin caller, or a new unreviewed
+  # edge range retains the GFE-observed upstream key. Startup accepts only an
+  # empty value or this exact build-pinned set and rejects overlap with the GFE
+  # set. These are the complete official ranges retrieved from
+  # https://www.cloudflare.com/ips-v4 and /ips-v6 on 2026-08-29. Release and
+  # runtime checks must compare both directions: an added range degrades to an
+  # edge-shared key, while a removed/reassigned range is a security alert and
+  # remains trusted until a reviewed build and configuration update land.
+  CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS: "173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32"
+  # The app-origin HTTPRoute sends API, auth, and discovery paths straight to
+  # cma-api, so a web-pod address never has to be trusted here. If the shared
+  # Gateway changes data plane, update the GFE and header contract rather than
+  # broadening trust speculatively.
   # Counters are process-local and this deployment is pinned to one API
   # replica. Scaling out without shared state multiplies effective allowances.
   # NyxID identity provider base URL. Endpoints are discovered, never hard-coded.
