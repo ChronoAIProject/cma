@@ -17,6 +17,7 @@
 use crate::authz::{Caller, Capability};
 use crate::error::CoreError;
 use crate::ids::SessionId;
+use crate::log::update_context_reference;
 use crate::service::SessionService;
 
 impl SessionService {
@@ -45,14 +46,14 @@ impl SessionService {
             return false;
         };
 
-        let (bytes, previously) = {
+        let (screen, previously) = {
             let entries = self.entries.read().await;
             let Some(entry) = entries.get(id) else {
                 return false;
             };
-            let bytes = entry.screen.lock().await.repaint_bytes();
-            (bytes, entry.captured_len)
+            (entry.screen.clone(), entry.captured_len)
         };
+        let bytes = screen.lock().await.repaint_bytes();
 
         // The transcript only ever grows within a session, so its length is
         // enough to tell whether anything happened — and comparing lengths
@@ -70,23 +71,53 @@ impl SessionService {
             }
         };
 
-        let record = {
-            let mut entries = self.entries.write().await;
-            let Some(entry) = entries.get_mut(id) else {
+        let commit = {
+            let entries = self.entries.read().await;
+            let Some(entry) = entries.get(id) else {
                 return false;
             };
-            entry.captured_len = len;
-            let changed = entry.context_ref.as_deref() != Some(reference.as_str());
-            entry.context_ref = Some(reference.clone());
-            changed
+            // A runtime may have been replaced while its object was uploading.
+            // Never mark the replacement screen as captured from the old one.
+            if !std::sync::Arc::ptr_eq(&entry.screen, &screen) {
+                return false;
+            }
+            (entry.context_ref.as_deref() != Some(reference.as_str()))
+                .then(|| update_context_reference(entry, reference.clone()))
         };
 
         // The reference is what a later process finds the transcript by, so it
-        // has to reach the record — but only when it actually changes, which
-        // for a stable key is once.
-        if record {
-            self.flush(id).await;
+        // has to reach the record before the live bookkeeping advances. A
+        // rejected commit leaves `captured_len` unchanged, so the next sweep
+        // retries the same stable object key.
+        let committed = match commit {
+            Some(commit) => match commit.committed().await {
+                Ok(record) => Some(record),
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %id,
+                        error = %error,
+                        "cannot persist the transcript reference"
+                    );
+                    return false;
+                }
+            },
+            None => None,
+        };
+
+        let mut entries = self.entries.write().await;
+        let Some(entry) = entries.get_mut(id) else {
+            return true;
+        };
+        if !std::sync::Arc::ptr_eq(&entry.screen, &screen) {
+            return true;
         }
+        if let Some(record) = committed {
+            entry.context_ref = record.context_ref;
+            entry.session.last_seq = record.session.last_seq;
+            let event_log = entry.event_log.clone();
+            event_log.synchronize_tail(&mut entry.session.last_seq);
+        }
+        entry.captured_len = len;
         true
     }
 
@@ -108,8 +139,12 @@ impl SessionService {
 
         // A live session's screen is ahead of anything stored, since capture
         // runs on a sweep rather than on every byte.
-        if let Some(entry) = self.entries.read().await.get(id) {
-            return Ok(entry.screen.lock().await.repaint_bytes());
+        let live_screen = {
+            let entries = self.entries.read().await;
+            entries.get(id).map(|entry| entry.screen.clone())
+        };
+        if let Some(screen) = live_screen {
+            return Ok(screen.lock().await.repaint_bytes());
         }
         Ok(self
             .stored_transcript(record.context_ref.as_deref())

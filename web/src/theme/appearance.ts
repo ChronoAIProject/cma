@@ -16,6 +16,8 @@
  * never expressed a preference gets pinned to whatever the page loaded with.
  */
 
+import { observeBrowserCompatibility } from '../observability/browserCompatibility';
+
 export type Appearance = 'light' | 'dark' | 'system';
 
 const STORAGE_KEY = 'cma:appearance';
@@ -29,8 +31,14 @@ function isAppearance(value: unknown): value is Appearance {
 function readAppearance(key: string): Appearance | null {
   try {
     const raw = window.localStorage.getItem(key);
+    if (key === STORAGE_KEY) {
+      observeBrowserCompatibility(['appearance', 'canonical', 'read-ok']);
+    }
     return isAppearance(raw) ? raw : null;
   } catch {
+    if (key === STORAGE_KEY) {
+      observeBrowserCompatibility(['appearance', 'canonical', 'read-blocked']);
+    }
     return null;
   }
 }
@@ -38,7 +46,9 @@ function readAppearance(key: string): Appearance | null {
 function writeAppearance(appearance: Appearance): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, appearance);
+    observeBrowserCompatibility(['appearance', 'canonical', 'write-ok']);
   } catch {
+    observeBrowserCompatibility(['appearance', 'canonical', 'write-blocked']);
     // Applying the preference does not depend on remembering it.
   }
 }
@@ -60,6 +70,7 @@ export function storedAppearance(): Appearance {
     return 'system';
   }
 
+  observeBrowserCompatibility(['appearance', 'historical-key', 'fallback-used']);
   writeAppearance(historical);
   return historical;
 }

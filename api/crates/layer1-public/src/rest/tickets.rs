@@ -12,13 +12,14 @@ use axum::extract::{Path, State};
 use axum::Json;
 use layer2_core::{AttachmentClaim, CoreError, SessionId, SessionService};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::auth::AuthenticatedCaller;
-use crate::rest::Problem;
+use crate::rest::{OptionalJson, ProblemDocument, RequestFailure};
 use crate::tickets::TerminalTickets;
 
 /// Request body for an attach ticket.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct TicketRequest {
     /// Whether this attachment should supersede whoever holds one.
     ///
@@ -30,7 +31,7 @@ pub struct TicketRequest {
 }
 
 /// An attach ticket, as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TicketView {
     ticket: String,
     expires_at: String,
@@ -43,22 +44,33 @@ pub struct TicketView {
 /// matters is the one `attach_terminal` performs on redemption. This one
 /// refuses early, so a caller who cannot attach is told now rather than
 /// through a socket that opens and closes.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sessions/{id}/terminal-ticket",
+    tag = "terminal",
+    params(("id" = String, Path)),
+    request_body(content = TicketRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Single-use terminal attachment ticket", body = TicketView),
+        (status = 503, description = "Durable ticket store unavailable", body = ProblemDocument, content_type = "application/problem+json")
+    )
+)]
 pub(super) async fn terminal_ticket(
     State(service): State<Arc<SessionService>>,
     State(tickets): State<Arc<TerminalTickets>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    body: Option<Json<TicketRequest>>,
-) -> Result<Json<TicketView>, Problem> {
+    OptionalJson(body): OptionalJson<TicketRequest>,
+) -> Result<Json<TicketView>, RequestFailure> {
     let id = SessionId(id);
-    // Reading the session is what establishes that this caller may have it at
-    // all; a subject who cannot see a session is told it does not exist, and
-    // gets no ticket for it either.
-    let session = service.get_session(&caller, &id).await?;
+    // Attachment lifecycle is decided before the plane-specific grant. This
+    // keeps a stale outgoing grant from masking rotation or termination, and
+    // prevents issuing a ticket the core would immediately refuse on redemption.
+    let session = service.session_for_interaction(&caller, &id).await?;
     if !session.capabilities.terminal {
-        return Err(Problem(CoreError::CapabilityUnsupported("terminal".into())));
+        return Err(CoreError::CapabilityUnsupported("terminal".into()).into());
     }
-    let takeover = body.map(|Json(b)| b.takeover).unwrap_or_default();
+    let takeover = body.map(|b| b.takeover).unwrap_or_default();
     let issued = tickets
         .issue(
             &caller,
@@ -69,7 +81,7 @@ pub(super) async fn terminal_ticket(
                 AttachmentClaim::Exclusive
             },
         )
-        .await;
+        .await?;
     Ok(Json(TicketView {
         ticket: issued.value,
         expires_at: issued.expires_at,

@@ -24,7 +24,6 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
     Json, Router,
 };
 use layer2_core::{
@@ -33,9 +32,13 @@ use layer2_core::{
     SessionService, SubjectId, UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::auth::{ActedUpon, AuthenticatedCaller};
-use crate::rest::{Problem, PROBLEM_BASE};
+use crate::rest::openapi_shapes;
+use crate::rest::pagination::AdminSessionPageParams;
+use crate::rest::{problem_document, problem_response, Problem, QueryProblem};
 
 mod settings;
 
@@ -64,17 +67,14 @@ struct NotAnOperator;
 
 impl IntoResponse for NotAnOperator {
     fn into_response(self) -> Response {
-        (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "type": format!("{PROBLEM_BASE}/not-an-operator"),
-                "title": "not an operator",
-                "status": 403,
-                "detail": "This operation requires an operator capability this caller does not hold.",
-                "code": "forbidden",
-            })),
-        )
-            .into_response()
+        let status = StatusCode::FORBIDDEN;
+        let body = problem_document(
+            status,
+            "not-an-operator",
+            "This operation requires an operator capability this caller does not hold.",
+            "forbidden",
+        );
+        problem_response(status, body)
     }
 }
 
@@ -108,12 +108,39 @@ impl IntoResponse for AdminProblem {
     }
 }
 
+/// An operator request can fail before or after its query is decoded.
+enum AdminRequestFailure {
+    Query(QueryProblem),
+    Refused(AdminProblem),
+}
+
+impl From<axum::extract::rejection::QueryRejection> for AdminRequestFailure {
+    fn from(error: axum::extract::rejection::QueryRejection) -> Self {
+        Self::Query(QueryProblem(error))
+    }
+}
+
+impl From<CoreError> for AdminRequestFailure {
+    fn from(error: CoreError) -> Self {
+        Self::Refused(AdminProblem::from(error))
+    }
+}
+
+impl IntoResponse for AdminRequestFailure {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Query(problem) => problem.into_response(),
+            Self::Refused(problem) => problem.into_response(),
+        }
+    }
+}
+
 /// Somebody who has used the service, as this interface renders them.
 ///
 /// The identifier is present because clients key on it, and it is deliberately
 /// not what a person is shown by: `label` is what a screen draws, falling back
 /// to the identifier only when the provider released nothing at all.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UserView {
     subject: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,18 +171,22 @@ impl From<RegisteredUser> for UserView {
 /// The core's own vocabulary is emitted directly rather than remapped: these
 /// strings are the record, and translating them here would mean two spellings
 /// of the same fact.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ActivityView {
     id: String,
     at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor: Option<String>,
+    #[schema(value_type = openapi_shapes::ActivityAction)]
     action: layer2_core::ActivityAction,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::ActivityTarget>)]
     target: Option<layer2_core::ActivityTarget>,
+    #[schema(value_type = openapi_shapes::ActivityOutcome)]
     outcome: layer2_core::ActivityOutcome,
     /// The parameters that were allowed to be kept. Never a secret: the core's
     /// allowlist is what decides, and there is no key for one.
+    #[schema(value_type = std::collections::BTreeMap<String, String>)]
     detail: layer2_core::ActivityDetail,
 }
 
@@ -177,16 +208,19 @@ impl From<ActivityRecord> for ActivityView {
 ///
 /// Carries its owner, which the ordinary session view does not: a list of
 /// everybody's work is unreadable without saying whose each row is.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AdminSessionView {
     id: String,
     owner: String,
     /// How the owner should be shown, when the directory knows a name for them.
     #[serde(skip_serializing_if = "Option::is_none")]
     owner_label: Option<String>,
+    #[schema(value_type = openapi_shapes::SessionStatus)]
     status: layer2_core::SessionStatus,
+    #[schema(value_type = openapi_shapes::RecoveryState)]
     recovery_state: layer2_core::RecoveryState,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::StopReason>)]
     stop_reason: Option<layer2_core::StopReason>,
     kernel: String,
     last_seq: u64,
@@ -213,14 +247,55 @@ impl AdminSessionView {
 }
 
 /// One runtime in service, as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeGenerationView {
+    Legacy,
+    Recorded,
+    Malformed,
+}
+
+/// Whether provider metadata agrees with the durable runtime authority.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAuthorityView {
+    Unaccounted,
+    CoordinationDisabled,
+    Legacy,
+    Matches,
+    Mismatch,
+}
+
+/// Why an exact runtime remains durably scheduled for cleanup.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeCleanupView {
+    UncommittedCandidate,
+    RetiredAuthority,
+}
+
+/// One runtime in service, as this interface renders it.
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RuntimeView {
     runtime: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation: Option<u64>,
+    generation_state: RuntimeGenerationView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    durable_runtime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    durable_generation: Option<u64>,
+    authority_state: RuntimeAuthorityView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cleanup_reason: Option<RuntimeCleanupView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     owner: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<openapi_shapes::SessionStatus>)]
     status: Option<layer2_core::SessionStatus>,
     /// Whether nothing in the record accounts for this runtime.
     unaccounted: bool,
@@ -232,7 +307,7 @@ pub struct RuntimeView {
 /// is then absent rather than empty. A client cannot accidentally read "we
 /// could not ask" as "there is nothing running", because there is no empty
 /// array there to read.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProviderInventoryView {
     kernel: String,
     observable: bool,
@@ -243,7 +318,7 @@ pub struct ProviderInventoryView {
 }
 
 /// Everything in service, as this interface renders it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InventoryView {
     /// How many runtimes are in service. Absent when a provider could not be
     /// asked, because a partial total presented as a total is the same lie as
@@ -271,12 +346,62 @@ impl InventoryView {
                         runtimes: Some(
                             runtimes
                                 .into_iter()
-                                .map(|r| RuntimeView {
-                                    unaccounted: r.is_unaccounted(),
-                                    runtime: r.runtime,
-                                    session: r.session.map(|s| s.0),
-                                    owner: r.owner.map(|o| o.0),
-                                    status: r.status,
+                                .map(|r| {
+                                    let (generation, generation_state) = match r.generation {
+                                        layer2_core::ProviderRuntimeGeneration::Legacy => {
+                                            (None, RuntimeGenerationView::Legacy)
+                                        }
+                                        layer2_core::ProviderRuntimeGeneration::Recorded(value) => {
+                                            (Some(value), RuntimeGenerationView::Recorded)
+                                        }
+                                        layer2_core::ProviderRuntimeGeneration::Malformed => {
+                                            (None, RuntimeGenerationView::Malformed)
+                                        }
+                                    };
+                                    RuntimeView {
+                                        unaccounted: r.is_unaccounted(),
+                                        runtime: r.runtime,
+                                        generation,
+                                        generation_state,
+                                        durable_runtime: r
+                                            .durable_authority
+                                            .as_ref()
+                                            .and_then(|authority| authority.runtime_id.clone()),
+                                        durable_generation: r
+                                            .durable_authority
+                                            .as_ref()
+                                            .filter(|authority| authority.generation != 0)
+                                            .map(|authority| authority.generation),
+                                        authority_state: match r.authority_comparison {
+                                            layer2_core::RuntimeAuthorityComparison::Unaccounted => {
+                                                RuntimeAuthorityView::Unaccounted
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::CoordinationDisabled => {
+                                                RuntimeAuthorityView::CoordinationDisabled
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::Legacy => {
+                                                RuntimeAuthorityView::Legacy
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::Matches => {
+                                                RuntimeAuthorityView::Matches
+                                            }
+                                            layer2_core::RuntimeAuthorityComparison::Mismatch => {
+                                                RuntimeAuthorityView::Mismatch
+                                            }
+                                        },
+                                        cleanup_reason: r.cleanup_reason.map(|reason| match reason {
+                                            layer2_core::RuntimeCleanupReason::UncommittedCandidate => {
+                                                RuntimeCleanupView::UncommittedCandidate
+                                            }
+                                            layer2_core::RuntimeCleanupReason::RetiredAuthority => {
+                                                RuntimeCleanupView::RetiredAuthority
+                                            }
+                                        }),
+                                        created_by: r.created_by,
+                                        session: r.session.map(|s| s.0),
+                                        owner: r.owner.map(|o| o.0),
+                                        status: r.status,
+                                    }
                                 })
                                 .collect(),
                         ),
@@ -319,6 +444,7 @@ pub struct ActivityParams {
 /// surface lives under one segment precisely so a gateway can restrict it as a
 /// unit, and a route added outside that segment would escape whatever protects
 /// it without anything noticing.
+#[cfg(test)]
 const OPERATOR_ROUTES: [&str; 8] = [
     "/api/v1/admin/users",
     "/api/v1/admin/activity",
@@ -335,23 +461,35 @@ const OPERATOR_ROUTES: [&str; 8] = [
 
 /// Routes this surface contributes.
 pub fn router(state: Arc<AdminState>) -> Router {
+    documented_router(state).into()
+}
+
+pub(super) fn documented_router(state: Arc<AdminState>) -> OpenApiRouter {
     let settings = settings::router(Arc::clone(&state.settings));
-    Router::new()
-        .route(OPERATOR_ROUTES[0], get(users))
-        .route(OPERATOR_ROUTES[1], get(activity))
-        .route(OPERATOR_ROUTES[2], get(runtimes))
-        .route(OPERATOR_ROUTES[3], get(sessions))
-        .route(OPERATOR_ROUTES[4], post(stop))
-        .route(OPERATOR_ROUTES[5], post(terminate))
+    OpenApiRouter::new()
+        .routes(routes!(users))
+        .routes(routes!(activity))
+        .routes(routes!(runtimes))
+        .routes(routes!(sessions))
+        .routes(routes!(stop))
+        .routes(routes!(terminate))
         .with_state(state)
         .merge(settings)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/users",
+    tag = "administration",
+    params(("limit" = Option<u32>, Query)),
+    responses((status = 200, description = "Registered users", body = [UserView]))
+)]
 async fn users(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Query(params): Query<DirectoryParams>,
-) -> Result<Json<Vec<UserView>>, AdminProblem> {
+    params: Result<Query<DirectoryParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Vec<UserView>>, AdminRequestFailure> {
+    let Query(params) = params?;
     let users = state
         .users
         .list(
@@ -364,11 +502,19 @@ async fn users(
     Ok(Json(users.into_iter().map(UserView::from).collect()))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/activity",
+    tag = "administration",
+    params(("actor" = Option<String>, Query), ("limit" = Option<u32>, Query)),
+    responses((status = 200, description = "Activity records", body = [ActivityView]))
+)]
 async fn activity(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Query(params): Query<ActivityParams>,
-) -> Result<Json<Vec<ActivityView>>, AdminProblem> {
+    params: Result<Query<ActivityParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Vec<ActivityView>>, AdminRequestFailure> {
+    let Query(params) = params?;
     let entries = state
         .activity
         .list(
@@ -382,6 +528,12 @@ async fn activity(
     Ok(Json(entries.into_iter().map(ActivityView::from).collect()))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/runtimes",
+    tag = "administration",
+    responses((status = 200, description = "Runtime inventory", body = InventoryView))
+)]
 async fn runtimes(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -390,23 +542,44 @@ async fn runtimes(
     Ok(Json(InventoryView::render(inventory)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/sessions",
+    tag = "administration",
+    params(
+        ("status" = Option<String>, Query),
+        ("limit" = Option<u32>, Query),
+        ("cursor" = Option<String>, Query)
+    ),
+    responses((status = 200, description = "Cross-owner session page", body = [AdminSessionView]))
+)]
 async fn sessions(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-) -> Result<Json<Vec<AdminSessionView>>, AdminProblem> {
+    params: Result<Query<AdminSessionPageParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<(axum::http::HeaderMap, Json<Vec<AdminSessionView>>), AdminRequestFailure> {
+    let Query(params) = params?;
     // Two core calls, each answering for its own capability. Reading everyone's
     // work and reading who those people are stay separate grants: the list is
     // opened by the first, and the second only decides whether the owners come
     // back named or as identifiers. Naming is scoped to the page, so a bounded
     // list stays bounded rather than dragging the whole directory behind it.
-    let sessions = state.sessions.list_all_sessions(&caller).await?;
-    let owners: Vec<SubjectId> = sessions.iter().map(|s| s.owner.clone()).collect();
+    let sessions = state
+        .sessions
+        .list_all_sessions(&caller, &params.store_query())
+        .await?;
+    let headers = params.next_headers("/api/v1/admin/sessions", sessions.next.as_ref());
+    let owners: Vec<SubjectId> = sessions.items.iter().map(|s| s.owner.clone()).collect();
     let names = state.users.names_known_to(&caller, &owners).await?;
-    Ok(Json(
-        sessions
-            .into_iter()
-            .map(|s| AdminSessionView::render(s, &names))
-            .collect(),
+    Ok((
+        headers,
+        Json(
+            sessions
+                .items
+                .into_iter()
+                .map(|s| AdminSessionView::render(s, &names))
+                .collect(),
+        ),
     ))
 }
 
@@ -415,6 +588,13 @@ async fn sessions(
 /// Refusals keep the session surface's rendering: this route does address an
 /// identifier, so a caller who may not act on it must not be able to learn
 /// whether it exists by the shape of the answer.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/sessions/{id}/terminate",
+    tag = "administration",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Session terminated by an operator"))
+)]
 async fn terminate(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -428,6 +608,13 @@ async fn terminate(
 }
 
 /// Release somebody's session's runtime, keeping the session.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/sessions/{id}/stop",
+    tag = "administration",
+    params(("id" = String, Path)),
+    responses((status = 204, description = "Session stopped by an operator"))
+)]
 async fn stop(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,

@@ -1,8 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Usage, formatTokens } from './Usage';
-import { fold } from './conversation';
-import { AguiConnection, MockSession, transcriptNamed, type AguiEvent } from '../agui';
+import { fold } from '@chronoai/cma-sdk';
+import { AguiConnection, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 
 /**
  * Usage, and the honest absence of it — `Web_Style.md` §18.5.
@@ -13,7 +14,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function conversationFrom(name: string) {
   const session = new MockSession(transcriptNamed(name));
   const seen: AguiEvent[] = [];
-  const connection = new AguiConnection(session.transport, 'sesn_1', {
+  const connection = new AguiConnection(session.transport, session.id, {
     backoffMs: 0,
     sleep: () => Promise.resolve(),
   });

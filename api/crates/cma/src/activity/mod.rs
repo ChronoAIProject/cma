@@ -1,9 +1,9 @@
-//! Recording every request the control plane is asked to serve.
+//! Recording every request the control plane admits for service.
 //!
 //! Sits inside the middleware that establishes who is calling and outside
 //! every handler, which is the only place that can see both the caller and how
 //! their request came out. What it produces is the core's vocabulary and
-//! nothing else — the translation lives in [`classify`], and Layer 2 never
+//! nothing else — the translation lives in [`classify()`], and Layer 2 never
 //! learns what carried the request.
 //!
 //! Two decisions worth knowing about.
@@ -13,6 +13,11 @@
 //! account of what happened that quietly loses entries under load is worth
 //! very little precisely when it is worth most. A write that fails is logged
 //! and never fails the caller's work.
+//!
+//! Rate-limit refusals happen outside this recorder. They are counted and
+//! sampled into structured logs by the limiter instead: making refused traffic
+//! buffer a body and await the MongoDB write it is protecting would let a flood
+//! move the expensive work ahead of the boundary.
 //!
 //! The body is buffered only for the requests that carry a parameter worth
 //! keeping, and only up to the same ceiling a handler would have accepted, so
@@ -29,22 +34,13 @@ use axum::{
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
-use layer1_public::{ActedUpon, AuthenticatedSubject, SettingsTouched};
+use layer1_public::{rest::HttpProblem, ActedUpon, AuthenticatedSubject, SettingsTouched};
 use layer2_core::{
     ActivityDetail, ActivityOutcome, ActivityRecord, ActivityService, DetailKey, SubjectId,
 };
 
 use crate::activity::classify::{classify, detail_from_body, detail_from_query, Classified};
-
-/// Largest request body this will read to record its parameters.
-///
-/// The same ceiling axum applies to a body a handler extracts, so a request
-/// too large to record is one that was never going to be served either. A
-/// different number here would mean refusing something the service accepts, or
-/// buffering something it does not.
-const MAX_RECORDED_BODY: usize = 2 * 1024 * 1024;
 
 /// Where requests are recorded.
 pub struct ActivityRecorder {
@@ -81,7 +77,7 @@ pub async fn record(
         .map(|s| s.0.clone());
 
     let (req, mut detail) = if classified.reads_body {
-        match axum::body::to_bytes(body, MAX_RECORDED_BODY).await {
+        match axum::body::to_bytes(body, crate::REQUEST_BODY_LIMIT_BYTES).await {
             Ok(bytes) => {
                 let detail = detail_from_body(classified.action, &bytes);
                 (Request::from_parts(parts, Body::from(bytes)), detail)
@@ -166,16 +162,7 @@ fn outcome_of(status: StatusCode) -> ActivityOutcome {
 
 /// The refusal for a body too large to serve.
 fn too_large() -> Response {
-    (
-        StatusCode::PAYLOAD_TOO_LARGE,
-        Json(serde_json::json!({
-            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/request-too-large",
-            "title": "request too large",
-            "status": 413,
-            "detail": "The request body exceeds what this service accepts.",
-        })),
-    )
-        .into_response()
+    HttpProblem::RequestTooLarge.into_response()
 }
 
 #[cfg(test)]

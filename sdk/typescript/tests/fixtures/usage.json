@@ -1,0 +1,6 @@
+{
+  "input_tokens": 184203,
+  "output_tokens": 9877,
+  "context_used": 41204,
+  "context_window": 200000
+}

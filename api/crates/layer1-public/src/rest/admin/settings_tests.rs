@@ -44,10 +44,11 @@ impl PlatformSettingsStore for FakeStore {
     }
 }
 
-fn app() -> Router {
+fn app() -> axum::Router {
     router(Arc::new(PlatformSettingsService::new(Arc::new(
         FakeStore::default(),
     ))))
+    .into()
 }
 
 fn request(method: Method, path: &str, body: Option<Value>, admin: bool) -> Request<Body> {
@@ -261,7 +262,7 @@ async fn deployment_capacity_can_be_conditionally_replaced_and_then_preserved() 
 
 #[tokio::test]
 async fn an_unconfigured_service_reads_defaults_and_refuses_a_save_by_name() {
-    let app = router(Arc::new(PlatformSettingsService::unconfigured()));
+    let app: axum::Router = router(Arc::new(PlatformSettingsService::unconfigured())).into();
     let read = app
         .clone()
         .oneshot(request(Method::GET, "/api/v1/admin/settings", None, true))

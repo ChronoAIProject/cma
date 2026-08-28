@@ -21,7 +21,7 @@
 //! is a filter that silently eats real output in the next.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
@@ -30,8 +30,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::supervisor;
+use crate::task_retirement::TaskRetirement;
 use crate::{
     AdapterError, ConversationChannel, ConversationInputSender, ConversationUpdate, PromptResponse,
+    TerminalInputSender,
 };
 
 /// The protocol version this client speaks.
@@ -97,6 +99,28 @@ pub struct Bridge {
     /// has to be matched to the JSON-RPC request that is still waiting — and
     /// to the options that request offered, which only it knows.
     pub(super) blocked: Mutex<HashMap<String, Blocked>>,
+    /// Answers accepted in the active turn, including ones restored from a
+    /// durable locator rather than observed on this socket.
+    ///
+    /// The whole response is retained so a duplicate delivery of the same
+    /// JSON-RPC request can receive the identical answer without asking its
+    /// owner a second time. Cleared at the prompt's terminal response so a
+    /// later turn may safely reuse a JSON-RPC correlation id.
+    pub(super) answered: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    /// How many prompt waiters this Bridge currently owns.
+    ///
+    /// More than one may exist while a runtime accepts steering. Counting them
+    /// keeps one prompt's completion from making a later live permission request
+    /// look like restart recovery merely because another prompt is still active.
+    pub(super) owned_prompt_waiters: Arc<AtomicUsize>,
+    /// A prompt begun on a replaced control plane whose terminal response no
+    /// longer has a process-local waiter.
+    ///
+    /// Set only when a permission route had to be reconstructed from durable
+    /// state. The next unmatched JSON-RPC response is then the blocked prompt
+    /// continuing to its terminal response, and must reach the core instead of
+    /// being discarded with the old connection's waiter.
+    pub(super) orphaned_prompt_response: AtomicBool,
 }
 
 /// A permission request the bridge is waiting on an answer to.
@@ -105,6 +129,12 @@ pub(super) struct Blocked {
     pub(super) call: serde_json::Value,
     /// The options the bridge offered, which an intent is rendered into.
     pub(super) options: Vec<crate::PermissionOption>,
+    /// Whether a prompt begun on this Bridge owns the eventual terminal answer.
+    ///
+    /// Captured when the request arrives. A runtime can replay a blocked request
+    /// onto a replacement socket, so presence in the live map alone does not
+    /// prove that this process owns the corresponding prompt waiter.
+    pub(super) owns_prompt_waiter: bool,
 }
 
 impl Bridge {
@@ -136,7 +166,7 @@ impl Bridge {
         // runtime they are about. A conversation link is the only link a
         // conversation-only kernel has, so without this such a session could
         // never confirm a switch and every one of them would rotate (#289).
-        switches: Option<(super::SwitchWaiters, String)>,
+        link: Option<super::LinkLifecycle>,
         // Whether this session spends its owner's own account with the model
         // vendor. It decides whether the agent has to be signed in before a
         // conversation can be opened at all — an unauthenticated kernel
@@ -144,7 +174,7 @@ impl Bridge {
         own_credential: bool,
         // Already being drained by the caller when this is called. See above.
         updates_tx: mpsc::Sender<ConversationUpdate>,
-    ) -> Result<(ConversationChannel, mpsc::Sender<crate::TerminalInput>), AdapterError> {
+    ) -> Result<(ConversationChannel, TerminalInputSender), AdapterError> {
         let (sink, mut source) = stream.split();
 
         // The pod's own declaration, read before anything else, because it
@@ -174,22 +204,31 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             session: Mutex::new(None),
             blocked: Mutex::new(HashMap::new()),
+            answered: Arc::new(Mutex::new(HashMap::new())),
+            owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
+            orphaned_prompt_response: AtomicBool::new(false),
         });
+        // This sender's channel identity is the generation of this socket.
+        // Keep it beside the reader so a late answer from this socket cannot
+        // settle a waiter installed by a replacement connection.
+        let control = super::control_lane(Arc::clone(&bridge.sink), link.clone());
+        let mut abort_on_drop = super::AbortLinkOnDrop::new(control.clone());
 
         let writer = Arc::clone(&bridge);
         let writer_updates = updates_tx.clone();
-        let (input, input_task) =
-            ConversationInputSender::spawn_with_abort(INPUT_BUFFER, move |input| {
-                let writer = Arc::clone(&writer);
-                let updates = writer_updates.clone();
-                async move { writer.drive(input, &updates).await }
-            });
+        let input = ConversationInputSender::spawn(INPUT_BUFFER, move |input| {
+            let writer = Arc::clone(&writer);
+            let updates = writer_updates.clone();
+            async move { writer.drive(input, &updates).await }
+        });
 
         // Read before anything is sent: the handshake's own answers arrive on
         // this loop, so it has to be running to receive them.
         let reader = Arc::clone(&bridge);
         let updates = updates_tx.clone();
-        tokio::spawn(async move {
+        let control_for_reader = control.downgrade();
+        let link_for_reader = link.clone();
+        let reader_task = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
                 match frame {
                     Ok(Message::Binary(bytes)) => match supervisor::unframe(&bytes) {
@@ -206,13 +245,22 @@ impl Bridge {
                         _ => {}
                     },
                     Ok(Message::Text(text)) => {
-                        // A runtime's answer to a plane switch, and nothing
-                        // else: the conversation itself travels framed on its
-                        // own lane.
-                        if let (Some(accepted), Some((waiters, runtime))) =
-                            (super::link::switch_answer(&text), switches.as_ref())
-                        {
-                            waiters.settle(runtime, accepted).await;
+                        // Runtime control answers; the conversation itself
+                        // travels framed on its own lane.
+                        if let Some(lifecycle) = link_for_reader.as_ref() {
+                            if let Some((operation_id, installed)) =
+                                super::link::credential_answer(&text)
+                            {
+                                if let Some(control) = control_for_reader.upgrade() {
+                                    lifecycle
+                                        .settle_credential(&control, &operation_id, installed)
+                                        .await;
+                                }
+                            } else if let Some(accepted) = super::link::switch_answer(&text) {
+                                if let Some(control) = control_for_reader.upgrade() {
+                                    lifecycle.settle(&control, accepted).await;
+                                }
+                            }
                         }
                     }
                     Ok(Message::Close(_)) => break,
@@ -223,32 +271,108 @@ impl Bridge {
                     }
                 }
             }
-            /*
-             * Every call still waiting on this link is answered by dropping
-             * its sender, which wakes the waiter at once with an error.
-             *
-             * Without this, a link that closed left its oneshots alive
-             * forever: the handshake, a mode change, and above all a prompt
-             * would await an answer that could no longer come, and the turn
-             * sat "running" until somebody gave up. A dead link is an answer,
-             * and it has to be delivered as one.
-             */
-            reader.pending.lock().await.clear();
-            input_task.abort();
+        });
+
+        let whole_retirement = TaskRetirement::default();
+        let whole_guard = whole_retirement.guard();
+        let (installed, installation) = if link.is_some() {
+            let (installed, installation) = tokio::sync::oneshot::channel();
+            (Some(installed), Some(installation))
+        } else {
+            (None, None)
+        };
+        let cleanup_bridge = Arc::clone(&bridge);
+        let input_retired = input.retirement();
+        let input_abort = input.abort_handle();
+        let control_retired = control.retirement();
+        let control_abort = control.abort_handle();
+        let control_for_cleanup = control.downgrade();
+        let link_for_cleanup = link.clone();
+        let cleanup_task = tokio::spawn(async move {
+            let _whole_guard = whole_guard;
+            let mut reader = reader_task;
+            let input_ended = input_retired.clone();
+            let control_ended = control_retired.clone();
+            tokio::select! {
+                _ = input_ended.wait() => {
+                    reader.abort();
+                    let _ = reader.await;
+                    control_abort.abort();
+                    control_retired.wait().await;
+                }
+                _ = control_ended.wait() => {
+                    reader.abort();
+                    let _ = reader.await;
+                    input_abort.abort();
+                    input_retired.wait().await;
+                }
+                _ = &mut reader => {
+                    input_abort.abort();
+                    control_abort.abort();
+                    input_retired.wait().await;
+                    control_retired.wait().await;
+                }
+            }
+            // Dropping every waiter makes a dead link an immediate answer.
+            cleanup_bridge.pending.lock().await.clear();
+            if let (Some(lifecycle), Some(installation)) = (link_for_cleanup.as_ref(), installation)
+            {
+                if installation.await.is_ok() {
+                    if let Some(control) = control_for_cleanup.upgrade() {
+                        lifecycle.forget(&control).await;
+                    }
+                }
+            }
             tracing::info!("conversation link ended");
         });
+
+        if let Some(lifecycle) = link.as_ref() {
+            if !lifecycle
+                .register(
+                    control.clone(),
+                    whole_retirement.clone(),
+                    installed.expect("a registered link has an installation barrier"),
+                )
+                .await
+            {
+                control.abort();
+                let _ = cleanup_task.await;
+                let _ = bridge.sink.lock().await.close().await;
+                return Err(AdapterError::Unavailable(
+                    "the conversation link was superseded while opening".into(),
+                ));
+            }
+        }
 
         // A conversation to rejoin wins over one the pod says it was handed.
         // They answer different questions — one is a control plane taking back
         // over a live runtime, the other a runtime taking over a session — and
         // when both are present the first is the more recent truth.
-        bridge
+        let handshake = bridge
             .handshake(rejoin, resuming, cwd, mode, own_credential)
-            .await?;
+            .await;
+        if let Err(error) = handshake {
+            // The runtime may reject the handshake while deliberately keeping
+            // its socket open. Stop every detached owner before returning, or
+            // repeated readoption attempts accumulate sockets and relay tasks.
+            control.abort();
+            let _ = cleanup_task.await;
+            let _ = bridge.sink.lock().await.close().await;
+            return Err(error);
+        }
         let conversation_id = bridge.session.lock().await.clone();
+        if let Some(lifecycle) = link.as_ref() {
+            if !lifecycle.is_current(&control).await {
+                control.abort();
+                let _ = cleanup_task.await;
+                let _ = bridge.sink.lock().await.close().await;
+                return Err(AdapterError::Unavailable(
+                    "the conversation link ended or was superseded while opening".into(),
+                ));
+            }
+        }
 
-        let control = super::control_lane(Arc::clone(&bridge.sink));
-
+        abort_on_drop.disarm();
         Ok((
             ConversationChannel {
                 input,

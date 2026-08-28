@@ -6,6 +6,8 @@
 //! was started before it was sent, and the mode — when there is one — is
 //! settled before the caller is handed a channel it may prompt.
 
+use std::sync::Arc;
+
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -14,7 +16,27 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::Bridge;
 use crate::supervisor;
-use crate::AdapterError;
+use crate::{AdapterError, RuntimeHandle};
+
+fn hosted() -> super::super::HostedKernel {
+    super::super::HostedKernel::new(
+        crate::sandbox::SandboxClient::new("http://127.0.0.1:1", "test-key"),
+        super::super::SandboxShape::default(),
+        "test-kernel",
+        ".codex/skills",
+        "AGENTS.md",
+    )
+}
+
+async fn wait_until_link_is_gone(kernel: &super::super::HostedKernel, handle: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while kernel.link_to(handle).await.is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the closed generation is promptly removed");
+}
 
 /// What the fake bridge did during one handshake.
 struct Handshake {
@@ -128,6 +150,50 @@ async fn bridging_offering(
     });
 
     (url, served)
+}
+
+async fn bridge_holding_initialize() -> (
+    String,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let (started, started_rx) = tokio::sync::oneshot::channel();
+    let served = tokio::spawn(async move {
+        let mut started = Some(started);
+        let (socket, _) = listener.accept().await.expect("a client");
+        let mut ws = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        ws.send(Message::Text(declaration(None)))
+            .await
+            .expect("the declaration is sent");
+        while let Some(frame) = ws.next().await {
+            match frame {
+                Ok(Message::Binary(bytes))
+                    if supervisor::unframe(&bytes)
+                        .is_some_and(|(lane, _)| lane == supervisor::LANE_CONVERSATION) =>
+                {
+                    if let Some(started) = started.take() {
+                        let _ = started.send(());
+                    }
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
+        while let Some(frame) = ws.next().await {
+            match frame {
+                Ok(Message::Close(_)) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    (url, started_rx, served)
 }
 
 /// A bridge that asks its owner to sign in, and waits there.
@@ -262,6 +328,27 @@ async fn connect(
     stream
 }
 
+/// Send one framed JSON-RPC value from a fixture bridge.
+async fn send_rpc(ws: &mut WebSocketStream<tokio::net::TcpStream>, value: serde_json::Value) {
+    let body = value.to_string();
+    let framed = supervisor::frame(supervisor::LANE_CONVERSATION, body.as_bytes());
+    ws.send(Message::Binary(framed)).await.expect("frame sent");
+}
+
+/// Receive one framed JSON-RPC value at a fixture bridge.
+async fn receive_rpc(ws: &mut WebSocketStream<tokio::net::TcpStream>) -> serde_json::Value {
+    loop {
+        let frame = ws.next().await.expect("a frame").expect("a valid frame");
+        let Message::Binary(bytes) = frame else {
+            continue;
+        };
+        let Some((supervisor::LANE_CONVERSATION, payload)) = supervisor::unframe(&bytes) else {
+            continue;
+        };
+        return serde_json::from_slice(payload).expect("JSON-RPC");
+    }
+}
+
 /// Open a bridge the way the core does: already draining before it calls.
 ///
 /// The receiver comes back beside the channel so a test can assert on what was
@@ -272,28 +359,105 @@ async fn open_bridge(
     cwd: String,
     mode: Option<String>,
     rejoin: Option<String>,
-    switches: Option<(super::super::SwitchWaiters, String)>,
+    link: Option<super::super::LinkLifecycle>,
     own_credential: bool,
 ) -> Result<
     (
         crate::ConversationChannel,
-        mpsc::Sender<crate::TerminalInput>,
+        crate::TerminalInputSender,
         mpsc::Receiver<crate::ConversationUpdate>,
     ),
     AdapterError,
 > {
     let (updates_tx, updates_rx) = mpsc::channel(64);
-    let (channel, control) = Bridge::open(
-        stream,
-        cwd,
-        mode,
-        rejoin,
-        switches,
-        own_credential,
-        updates_tx,
-    )
-    .await?;
+    let (channel, control) =
+        Bridge::open(stream, cwd, mode, rejoin, link, own_credential, updates_tx).await?;
     Ok((channel, control, updates_rx))
+}
+
+#[tokio::test]
+async fn a_close_as_open_finishes_cannot_register_a_dead_generation() {
+    // The fixture closes immediately after answering the two-call handshake.
+    // Previously the reader cleaned up first and the caller then inserted its
+    // dead control sender after `open` returned.
+    let kernel = hosted();
+    let handle = RuntimeHandle("sbx_close_during_open".into());
+    let (url, served) = bridging(None, None, Some(2)).await;
+    let stream = connect(&url).await;
+    let opened = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        None,
+        None,
+        Some(kernel.link_lifecycle(&handle.0)),
+        false,
+    )
+    .await;
+    match opened {
+        Ok((_channel, _control, _updates)) => {}
+        Err(AdapterError::Unavailable(reason))
+            if reason == "the conversation link ended or was superseded while opening" => {}
+        Err(error) => panic!("unexpected handshake-boundary error: {error}"),
+    }
+    served
+        .await
+        .expect("the fixture closes after the handshake");
+    wait_until_link_is_gone(&kernel, &handle.0).await;
+
+    assert!(
+        kernel.refresh_credential(&handle, "unused").await.is_err(),
+        "a closed queue must not report credential delivery"
+    );
+    let switched = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        kernel.switch_plane(&handle, "codex-acp"),
+    )
+    .await
+    .expect("a closed generation is rejected without waiting for the switch deadline");
+    assert!(
+        matches!(switched, Err(AdapterError::Unavailable(ref why)) if why.contains("no open link")),
+        "the closed generation is absent: {switched:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_conversation_close_removes_its_registered_generation() {
+    let kernel = hosted();
+    let handle = RuntimeHandle("sbx_close_after_open".into());
+    let (url, served) = bridging(None, None, None).await;
+    let stream = connect(&url).await;
+    let (channel, control, _updates) = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        None,
+        None,
+        Some(kernel.link_lifecycle(&handle.0)),
+        false,
+    )
+    .await
+    .expect("the live bridge opens");
+
+    let registered = kernel
+        .link_to(&handle.0)
+        .await
+        .expect("the bridge registers before returning");
+    assert!(registered.same_channel(&control));
+
+    served.abort();
+    let _ = served.await;
+    wait_until_link_is_gone(&kernel, &handle.0).await;
+    assert!(channel
+        .input
+        .send(crate::ConversationInput::Cancel)
+        .await
+        .is_err());
+    assert!(control
+        .send(crate::TerminalInput::Credential {
+            operation_id: "unused-operation".into(),
+            value: "unused".into(),
+        })
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -379,6 +543,74 @@ async fn a_session_whose_mode_did_not_take_is_refused_rather_than_started() {
         "the refusal must name the mode that was not honoured, got {err}"
     );
     served.abort();
+}
+
+#[tokio::test]
+async fn a_failed_handshake_closes_a_runtime_that_keeps_its_socket_open() {
+    let kernel = hosted();
+    let handle = RuntimeHandle("sbx_rejected_open".into());
+    // No call limit: after refusing the mode, the fixture deliberately waits
+    // for another frame and keeps the WebSocket open until the client leaves.
+    let (url, served) = bridging(None, Some("session/set_mode"), None).await;
+    let stream = connect(&url).await;
+    let error = open_bridge(
+        stream,
+        "/home/chrono".into(),
+        Some("read-only".into()),
+        None,
+        Some(kernel.link_lifecycle(&handle.0)),
+        false,
+    )
+    .await
+    .expect_err("a rejected mode fails the handshake");
+    assert!(matches!(error, AdapterError::Rejected(_)), "got {error:?}");
+
+    let observed = tokio::time::timeout(std::time::Duration::from_secs(1), served)
+        .await
+        .expect("the failed open closes its held runtime socket")
+        .expect("the fixture does not panic");
+    assert_eq!(
+        observed.asked,
+        vec!["initialize", "session/new", "session/set_mode"]
+    );
+    wait_until_link_is_gone(&kernel, &handle.0).await;
+}
+
+#[tokio::test]
+async fn canceling_open_during_a_held_handshake_retires_the_whole_generation() {
+    let kernel = hosted();
+    let handle = RuntimeHandle("sbx_canceled_acp_open".into());
+    let (url, initialize_started, served) = bridge_holding_initialize().await;
+    let stream = connect(&url).await;
+    let (updates, _received) = mpsc::channel(8);
+    let opening = tokio::spawn(Bridge::open(
+        stream,
+        "/home/chrono".into(),
+        None,
+        None,
+        Some(kernel.link_lifecycle(&handle.0)),
+        false,
+        updates,
+    ));
+
+    initialize_started
+        .await
+        .expect("the open reaches its held initialize call");
+    assert!(
+        kernel.link_to(&handle.0).await.is_some(),
+        "the generation is registered while its handshake is in flight"
+    );
+    opening.abort();
+    assert!(opening
+        .await
+        .expect_err("the open future is canceled")
+        .is_cancelled());
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), served)
+        .await
+        .expect("canceling open disconnects the held runtime peer")
+        .expect("the held bridge fixture does not panic");
+    wait_until_link_is_gone(&kernel, &handle.0).await;
 }
 
 #[tokio::test]
@@ -684,6 +916,572 @@ async fn every_request_this_bridge_sends_is_dispatchable() {
         );
         assert_eq!(frame["jsonrpc"], "2.0", "{frame}");
     }
+}
+
+#[tokio::test]
+async fn a_permission_answer_survives_replacing_the_entire_hosted_bridge() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let call_id = serde_json::json!("permission-call-before-restart");
+    let request = crate::RequestPermissionRequest::new(
+        crate::ConversationId::new("conv-durable-permission"),
+        crate::ToolCallUpdate::new(
+            crate::ToolCallId::new("tool-call-not-in-locator"),
+            crate::ToolCallUpdateFields::new().title("sensitive tool title".to_string()),
+        ),
+        vec![
+            crate::PermissionOption::new(
+                crate::PermissionOptionId::new("reject-once"),
+                "Reject this time".to_string(),
+                crate::PermissionOptionKind::RejectOnce,
+            ),
+            crate::PermissionOption::new(
+                crate::PermissionOptionId::new("allow-once"),
+                "Allow this time".to_string(),
+                crate::PermissionOptionKind::AllowOnce,
+            ),
+        ],
+    );
+    let request_params = serde_json::to_value(request).expect("the ACP request serializes");
+    let expected_call_id = call_id.clone();
+
+    let served = tokio::spawn(async move {
+        // The original control plane opens the conversation and receives the
+        // request during a real prompt. Closing this whole socket discards both
+        // its permission route and the waiter for that prompt's response.
+        let (socket, _) = listener.accept().await.expect("the first client");
+        let mut first = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        first
+            .send(Message::Text(declaration(None)))
+            .await
+            .expect("the declaration is sent");
+        let prompt_call = loop {
+            let call = receive_rpc(&mut first).await;
+            let method = call["method"].as_str().unwrap_or_default();
+            if method == "session/prompt" {
+                send_rpc(
+                    &mut first,
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": expected_call_id,
+                        "method": "session/request_permission",
+                        "params": request_params.clone(),
+                    }),
+                )
+                .await;
+                let prompt_call = call["id"].clone();
+                first.close(None).await.expect("the old link closes");
+                break prompt_call;
+            }
+            let result = if method == "session/new" {
+                serde_json::json!({ "sessionId": "conv-durable-permission" })
+            } else {
+                serde_json::json!({})
+            };
+            send_rpc(
+                &mut first,
+                serde_json::json!({ "jsonrpc": "2.0", "id": call["id"], "result": result }),
+            )
+            .await;
+        };
+
+        // A replacement control plane gets a new Bridge with an empty blocked
+        // and prompt-waiter maps, rejoins the held conversation, and returns the
+        // old permission call's response from the durable locator alone.
+        let (socket, _) = listener.accept().await.expect("the replacement client");
+        let mut replacement = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        replacement
+            .send(Message::Text(declaration(None)))
+            .await
+            .expect("the declaration is sent");
+        let initialize = receive_rpc(&mut replacement).await;
+        assert_eq!(initialize["method"], "initialize");
+        send_rpc(
+            &mut replacement,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": initialize["id"],
+                "result": {},
+            }),
+        )
+        .await;
+        // The runtime may replay the still-blocked request onto the replacement
+        // link. That repopulates `blocked`, but it does not recreate the old
+        // prompt waiter; its eventual response must still use the orphan path.
+        send_rpc(
+            &mut replacement,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": expected_call_id,
+                "method": "session/request_permission",
+                "params": request_params,
+            }),
+        )
+        .await;
+        let permission_answer = receive_rpc(&mut replacement).await;
+        send_rpc(
+            &mut replacement,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": prompt_call,
+                "result": { "stopReason": "end_turn" },
+            }),
+        )
+        .await;
+        permission_answer
+    });
+
+    let first_stream = connect(&url).await;
+    let (first_channel, first_control, mut first_updates) =
+        open_bridge(first_stream, "/home/chrono".into(), None, None, None, false)
+            .await
+            .expect("the original bridge opens");
+    first_channel
+        .input
+        .send(crate::ConversationInput::Prompt(vec![
+            crate::ContentBlock::from("run something guarded"),
+        ]))
+        .await
+        .expect("the original prompt reaches the bridge");
+    let asked = tokio::time::timeout(std::time::Duration::from_secs(1), first_updates.recv())
+        .await
+        .expect("the request arrives")
+        .expect("the update stream stays open");
+    let crate::ConversationUpdate::Asked(asked) = asked else {
+        panic!("expected a permission request, got {asked:?}");
+    };
+    let locator = asked
+        .locator
+        .expect("hosted requests carry a durable locator");
+    assert!(
+        !locator.as_str().contains("sensitive tool title")
+            && !locator.as_str().contains("tool-call-not-in-locator")
+            && !locator.as_str().contains("Allow this time"),
+        "the locator contains routing metadata, not the tool payload or option labels"
+    );
+    drop(first_channel);
+    drop(first_control);
+    drop(first_updates);
+
+    let replacement_stream = connect(&url).await;
+    let (replacement, _control, mut replacement_updates) = open_bridge(
+        replacement_stream,
+        "/home/chrono".into(),
+        None,
+        Some("conv-durable-permission".into()),
+        None,
+        false,
+    )
+    .await
+    .expect("the replacement bridge rejoins");
+    let replayed = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        replacement_updates.recv(),
+    )
+    .await
+    .expect("the runtime replays its blocked request")
+    .expect("the replacement update stream stays open");
+    let crate::ConversationUpdate::Asked(replayed) = replayed else {
+        panic!("expected the replayed permission request, got {replayed:?}");
+    };
+    assert_eq!(replayed.id, asked.id);
+    replacement
+        .input
+        .send(crate::ConversationInput::PermissionAnswer {
+            id: asked.id,
+            locator: Some(locator),
+            decision: crate::PermissionDecision::Allow,
+        })
+        .await
+        .expect("the restored answer reaches the hosted bridge");
+
+    let completed = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        replacement_updates.recv(),
+    )
+    .await
+    .expect("the old prompt's terminal response is not dropped")
+    .expect("the replacement update stream stays open");
+    assert!(
+        matches!(completed, crate::ConversationUpdate::TurnEnded(_)),
+        "the replacement must close the original turn, got {completed:?}"
+    );
+
+    let answer = served.await.expect("the fixture completes");
+    assert_eq!(
+        answer["id"], call_id,
+        "the original JSON-RPC call is answered"
+    );
+    assert_eq!(answer["result"]["outcome"]["outcome"], "selected");
+    assert_eq!(
+        answer["result"]["outcome"]["optionId"], "allow-once",
+        "the answer selects an option the original call genuinely offered"
+    );
+}
+
+#[tokio::test]
+async fn a_reused_json_rpc_permission_id_is_new_in_a_later_turn() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+
+    let served = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("a client");
+        let mut ws = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        ws.send(Message::Text(declaration(None)))
+            .await
+            .expect("the declaration is sent");
+
+        let first_prompt = loop {
+            let call = receive_rpc(&mut ws).await;
+            let method = call["method"].as_str().unwrap_or_default();
+            if method == "session/prompt" {
+                break call["id"].clone();
+            }
+            let result = if method == "session/new" {
+                serde_json::json!({ "sessionId": "conv-reused-permission-id" })
+            } else {
+                serde_json::json!({})
+            };
+            send_rpc(
+                &mut ws,
+                serde_json::json!({ "jsonrpc": "2.0", "id": call["id"], "result": result }),
+            )
+            .await;
+        };
+
+        let options = || {
+            vec![
+                crate::PermissionOption::new(
+                    crate::PermissionOptionId::new("allow-once"),
+                    "Allow once".to_string(),
+                    crate::PermissionOptionKind::AllowOnce,
+                ),
+                crate::PermissionOption::new(
+                    crate::PermissionOptionId::new("reject-once"),
+                    "Reject once".to_string(),
+                    crate::PermissionOptionKind::RejectOnce,
+                ),
+            ]
+        };
+        let request = |tool: &str, title: &str| {
+            crate::RequestPermissionRequest::new(
+                crate::ConversationId::new("conv-reused-permission-id"),
+                crate::ToolCallUpdate::new(
+                    crate::ToolCallId::new(tool),
+                    crate::ToolCallUpdateFields::new().title(title.to_string()),
+                ),
+                options(),
+            )
+        };
+
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "reused-call-id",
+                "method": "session/request_permission",
+                "params": request("first-tool", "first action"),
+            }),
+        )
+        .await;
+        let first_answer = receive_rpc(&mut ws).await;
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": first_prompt,
+                "result": { "stopReason": "end_turn" },
+            }),
+        )
+        .await;
+
+        let second_prompt = receive_rpc(&mut ws).await;
+        assert_eq!(second_prompt["method"], "session/prompt");
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "reused-call-id",
+                "method": "session/request_permission",
+                "params": request("second-tool", "second action"),
+            }),
+        )
+        .await;
+        let second_answer = receive_rpc(&mut ws).await;
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": second_prompt["id"],
+                "result": { "stopReason": "end_turn" },
+            }),
+        )
+        .await;
+        (first_answer, second_answer)
+    });
+
+    let stream = connect(&url).await;
+    let (channel, _control, mut updates) =
+        open_bridge(stream, "/home/chrono".into(), None, None, None, false)
+            .await
+            .expect("the bridge opens");
+    channel
+        .input
+        .send(crate::ConversationInput::Prompt(vec![
+            crate::ContentBlock::from("first turn"),
+        ]))
+        .await
+        .expect("the first prompt is sent");
+    let first = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+        .await
+        .expect("the first permission arrives")
+        .expect("the update stream stays open");
+    let crate::ConversationUpdate::Asked(first) = first else {
+        panic!("expected the first permission request, got {first:?}");
+    };
+    let public_id = first.id.clone();
+    channel
+        .input
+        .send(crate::ConversationInput::PermissionAnswer {
+            id: first.id,
+            locator: first.locator,
+            decision: crate::PermissionDecision::Allow,
+        })
+        .await
+        .expect("the first answer is sent");
+    let first_ending = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+        .await
+        .expect("the first turn ends")
+        .expect("the update stream stays open");
+    assert!(matches!(
+        first_ending,
+        crate::ConversationUpdate::TurnEnded(_)
+    ));
+
+    channel
+        .input
+        .send(crate::ConversationInput::Prompt(vec![
+            crate::ContentBlock::from("second turn"),
+        ]))
+        .await
+        .expect("the second prompt is sent");
+    let second = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+        .await
+        .expect("a reused JSON-RPC id is surfaced as a new request")
+        .expect("the update stream stays open");
+    let crate::ConversationUpdate::Asked(second) = second else {
+        panic!("expected the second permission request, got {second:?}");
+    };
+    assert_eq!(
+        second.id, public_id,
+        "the wire id and normalized options were deliberately reused"
+    );
+    channel
+        .input
+        .send(crate::ConversationInput::PermissionAnswer {
+            id: second.id,
+            locator: second.locator,
+            decision: crate::PermissionDecision::Deny,
+        })
+        .await
+        .expect("the second request accepts its own decision");
+    let second_ending = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+        .await
+        .expect("the second turn ends")
+        .expect("the update stream stays open");
+    assert!(matches!(
+        second_ending,
+        crate::ConversationUpdate::TurnEnded(_)
+    ));
+
+    let (first_answer, second_answer) = served.await.expect("the fixture completes");
+    assert_eq!(first_answer["result"]["outcome"]["optionId"], "allow-once");
+    assert_eq!(
+        second_answer["result"]["outcome"]["optionId"],
+        "reject-once"
+    );
+}
+
+#[tokio::test]
+async fn an_overlapping_prompt_keeps_ownership_of_its_permission_waiter() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port");
+    let url = format!("ws://{}/", listener.local_addr().expect("an address"));
+    let first_ended = Arc::new(tokio::sync::Notify::new());
+    let first_ended_at_runtime = Arc::clone(&first_ended);
+    let fixture_may_finish = Arc::new(tokio::sync::Notify::new());
+    let finish_fixture = Arc::clone(&fixture_may_finish);
+
+    let served = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("a client");
+        let mut ws = tokio_tungstenite::accept_async(socket)
+            .await
+            .expect("a websocket");
+        ws.send(Message::Text(declaration(None)))
+            .await
+            .expect("the declaration is sent");
+
+        let mut prompts = Vec::with_capacity(2);
+        while prompts.len() < 2 {
+            let call = receive_rpc(&mut ws).await;
+            let method = call["method"].as_str().unwrap_or_default();
+            if method == "session/prompt" {
+                prompts.push(call["id"].clone());
+                continue;
+            }
+            let result = if method == "session/new" {
+                serde_json::json!({ "sessionId": "conv-overlapping-prompts" })
+            } else {
+                serde_json::json!({})
+            };
+            send_rpc(
+                &mut ws,
+                serde_json::json!({ "jsonrpc": "2.0", "id": call["id"], "result": result }),
+            )
+            .await;
+        }
+
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": prompts[0],
+                "result": { "stopReason": "end_turn" },
+            }),
+        )
+        .await;
+        // Wait until the first prompt task has released its ownership. A Boolean
+        // would now say there were no local prompt waiters even though the second
+        // prompt is still pending.
+        first_ended_at_runtime.notified().await;
+
+        let request = crate::RequestPermissionRequest::new(
+            crate::ConversationId::new("conv-overlapping-prompts"),
+            crate::ToolCallUpdate::new(
+                crate::ToolCallId::new("second-prompt-tool"),
+                crate::ToolCallUpdateFields::new().title("second prompt action".to_string()),
+            ),
+            vec![
+                crate::PermissionOption::new(
+                    crate::PermissionOptionId::new("allow-once"),
+                    "Allow once".to_string(),
+                    crate::PermissionOptionKind::AllowOnce,
+                ),
+                crate::PermissionOption::new(
+                    crate::PermissionOptionId::new("reject-once"),
+                    "Reject once".to_string(),
+                    crate::PermissionOptionKind::RejectOnce,
+                ),
+            ],
+        );
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "permission-on-second-prompt",
+                "method": "session/request_permission",
+                "params": request,
+            }),
+        )
+        .await;
+        let permission_answer = receive_rpc(&mut ws).await;
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": prompts[1],
+                "result": { "stopReason": "end_turn" },
+            }),
+        )
+        .await;
+        // This deliberately unmatched response exposes a leaked orphan marker:
+        // it must be ignored rather than reported as a third completed turn.
+        send_rpc(
+            &mut ws,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 9_999_999,
+                "result": { "stopReason": "end_turn" },
+            }),
+        )
+        .await;
+        finish_fixture.notified().await;
+        permission_answer
+    });
+
+    let stream = connect(&url).await;
+    let (channel, _control, mut updates) =
+        open_bridge(stream, "/home/chrono".into(), None, None, None, false)
+            .await
+            .expect("the bridge opens");
+    for text in ["first prompt", "steer while the first is running"] {
+        channel
+            .input
+            .send(crate::ConversationInput::Prompt(vec![
+                crate::ContentBlock::from(text),
+            ]))
+            .await
+            .expect("the overlapping prompt is sent");
+    }
+
+    let first_ending = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+        .await
+        .expect("the first prompt ends")
+        .expect("the update stream stays open");
+    assert!(matches!(
+        first_ending,
+        crate::ConversationUpdate::TurnEnded(_)
+    ));
+    first_ended.notify_one();
+
+    let asked = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+        .await
+        .expect("the second prompt asks for permission")
+        .expect("the update stream stays open");
+    let crate::ConversationUpdate::Asked(asked) = asked else {
+        panic!("expected the second prompt's permission request, got {asked:?}");
+    };
+    channel
+        .input
+        .send(crate::ConversationInput::PermissionAnswer {
+            id: asked.id,
+            locator: asked.locator,
+            decision: crate::PermissionDecision::Allow,
+        })
+        .await
+        .expect("the live permission answer is sent");
+
+    let second_ending = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+        .await
+        .expect("the second prompt ends")
+        .expect("the update stream stays open");
+    assert!(matches!(
+        second_ending,
+        crate::ConversationUpdate::TurnEnded(_)
+    ));
+    match tokio::time::timeout(std::time::Duration::from_millis(50), updates.recv()).await {
+        Err(_) => {}
+        Ok(None) => panic!("the update stream closed before the fixture finished"),
+        Ok(Some(update)) => panic!("an unmatched response became a false turn ending: {update:?}"),
+    }
+    fixture_may_finish.notify_one();
+
+    let answer = served.await.expect("the fixture completes");
+    assert_eq!(
+        answer["result"]["outcome"]["optionId"], "allow-once",
+        "the live request receives the owner's decision"
+    );
 }
 
 #[test]

@@ -4,9 +4,183 @@
 //! read here but absent there is a divergence that will only show up in
 //! production, so the two must be changed together.
 
+use std::num::NonZeroU32;
+
 use axum::http::HeaderValue;
+use ipnet::IpNet;
 
 use crate::auth::AuthMode;
+use crate::store::AuthEncryptionKey;
+
+const MONGODB_CUTOVER_STAGE: &str = "CHRONO_MONGODB_CUTOVER_STAGE";
+const ADMISSION_RATE_REQUESTS_PER_MINUTE: u32 = 6_000;
+const HEALTH_RATE_REQUESTS_PER_MINUTE: u32 = 120;
+const MINIMUM_HEALTH_RATE_REQUESTS_PER_MINUTE: u32 = 30;
+const DEFAULT_RATE_REQUESTS_PER_MINUTE: u32 = 600;
+const CREATE_RATE_REQUESTS_PER_MINUTE: u32 = 10;
+const INPUT_RATE_REQUESTS_PER_MINUTE: u32 = 120;
+const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
+const MAX_TRUSTED_PROXY_HOPS: usize = 16;
+
+/// A deliberately incomplete control-plane startup used at a recovery boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MongoCutoverStage {
+    /// Migrate only the legacy session namespaces, then remain quiescent.
+    Legacy,
+}
+
+/// The only configuration a staged MongoDB cutover is allowed to observe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MongoCutoverStageConfig {
+    /// The stage selected by the operator.
+    pub stage: MongoCutoverStage,
+    /// Address for the maintenance-only health listener.
+    pub bind: String,
+    /// Connection string for the one store the stage opens.
+    pub mongodb_uri: String,
+    /// Database whose legacy namespaces are migrated.
+    pub mongodb_database: String,
+}
+
+impl MongoCutoverStageConfig {
+    /// Read a staged startup before the normal control-plane configuration.
+    pub fn from_env() -> Result<Option<Self>, String> {
+        Self::from_lookup(strict_env)
+    }
+
+    fn from_lookup(
+        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<Option<Self>, String> {
+        let stage = lookup(MONGODB_CUTOVER_STAGE)?.unwrap_or_default();
+        let stage = match stage.as_str() {
+            "" => return Ok(None),
+            "legacy" => MongoCutoverStage::Legacy,
+            _ => {
+                return Err(format!(
+                    "{MONGODB_CUTOVER_STAGE} must be unset or exactly \"legacy\""
+                ))
+            }
+        };
+
+        let legacy = lookup("CHRONO_MONGODB_LEGACY_CUTOVER")?.unwrap_or_default();
+        if legacy != "drained" {
+            return Err(
+                "CHRONO_MONGODB_CUTOVER_STAGE=legacy requires CHRONO_MONGODB_LEGACY_CUTOVER=drained after every legacy writer and its in-flight work have stopped"
+                    .into(),
+            );
+        }
+        let coordination = lookup("CHRONO_MONGODB_COORDINATION_CUTOVER")?.unwrap_or_default();
+        if !coordination.is_empty() {
+            return Err(
+                "CHRONO_MONGODB_CUTOVER_STAGE=legacy requires CHRONO_MONGODB_COORDINATION_CUTOVER to be unset so coordination activation cannot begin"
+                    .into(),
+            );
+        }
+
+        let bind = lookup_or(&mut lookup, "CHRONO_SERVER_BIND", "0.0.0.0:8080")?;
+        let mongodb_uri = require_from(&mut lookup, "CHRONO_MONGODB_URI")?;
+        let mongodb_database = lookup_or(&mut lookup, "CHRONO_MONGODB_DATABASE", "chrono_bot")?;
+        Ok(Some(Self {
+            stage,
+            bind,
+            mongodb_uri,
+            mongodb_database,
+        }))
+    }
+}
+
+/// Per-key request budgets enforced by this process.
+#[derive(Debug, Clone, Copy)]
+pub struct RateLimitConfig {
+    /// Cheap per-network admission decisions made before authentication.
+    pub admission_per_minute: NonZeroU32,
+    /// Health requests, isolated from caller traffic so probes remain viable.
+    pub health_per_minute: NonZeroU32,
+    /// Requests per minute for routes without a stricter operation budget.
+    pub default_per_minute: NonZeroU32,
+    /// Session creations per minute.
+    pub create_per_minute: NonZeroU32,
+    /// Session input deliveries per minute.
+    pub input_per_minute: NonZeroU32,
+}
+
+impl RateLimitConfig {
+    fn from_env() -> Result<Self, String> {
+        Ok(Self {
+            admission_per_minute: positive_u32(
+                "CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE",
+                ADMISSION_RATE_REQUESTS_PER_MINUTE,
+            )?,
+            health_per_minute: u32_at_least(
+                "CHRONO_SERVER_RATE_HEALTH_PER_MINUTE",
+                HEALTH_RATE_REQUESTS_PER_MINUTE,
+                MINIMUM_HEALTH_RATE_REQUESTS_PER_MINUTE,
+            )?,
+            default_per_minute: positive_u32(
+                "CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE",
+                DEFAULT_RATE_REQUESTS_PER_MINUTE,
+            )?,
+            create_per_minute: positive_u32(
+                "CHRONO_SERVER_RATE_CREATE_PER_MINUTE",
+                CREATE_RATE_REQUESTS_PER_MINUTE,
+            )?,
+            input_per_minute: positive_u32(
+                "CHRONO_SERVER_RATE_INPUT_PER_MINUTE",
+                INPUT_RATE_REQUESTS_PER_MINUTE,
+            )?,
+        })
+    }
+
+    #[cfg(test)]
+    fn sample() -> Self {
+        Self {
+            admission_per_minute: NonZeroU32::new(ADMISSION_RATE_REQUESTS_PER_MINUTE).unwrap(),
+            health_per_minute: NonZeroU32::new(HEALTH_RATE_REQUESTS_PER_MINUTE).unwrap(),
+            default_per_minute: NonZeroU32::new(DEFAULT_RATE_REQUESTS_PER_MINUTE).unwrap(),
+            create_per_minute: NonZeroU32::new(CREATE_RATE_REQUESTS_PER_MINUTE).unwrap(),
+            input_per_minute: NonZeroU32::new(INPUT_RATE_REQUESTS_PER_MINUTE).unwrap(),
+        }
+    }
+}
+
+/// Which TCP peers may supply the load balancer's client-address chain.
+#[derive(Debug, Clone)]
+pub struct TrustedProxyConfig {
+    /// Networks from which a forwarding header is accepted.
+    pub cidrs: Vec<IpNet>,
+    /// Tokens to skip from the right before selecting the client address.
+    pub forwarded_hops: usize,
+}
+
+impl TrustedProxyConfig {
+    fn from_env() -> Result<Self, String> {
+        let cidrs = parse_ip_networks(
+            "CHRONO_SERVER_TRUSTED_PROXY_CIDRS",
+            &var_or("CHRONO_SERVER_TRUSTED_PROXY_CIDRS", ""),
+        )?;
+        let forwarded_hops = parse_bounded_usize(
+            "CHRONO_SERVER_TRUSTED_PROXY_HOPS",
+            &var_or(
+                "CHRONO_SERVER_TRUSTED_PROXY_HOPS",
+                &DEFAULT_TRUSTED_PROXY_HOPS.to_string(),
+            ),
+            1,
+            MAX_TRUSTED_PROXY_HOPS,
+        )?;
+        Ok(Self {
+            cidrs,
+            forwarded_hops,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sample() -> Self {
+        Self {
+            cidrs: Vec::new(),
+            forwarded_hops: DEFAULT_TRUSTED_PROXY_HOPS,
+        }
+    }
+}
 
 /// Resolved configuration for the control plane.
 #[derive(Debug, Clone)]
@@ -17,6 +191,10 @@ pub struct Config {
     pub public_url: String,
     /// Origins permitted to call this API from a browser.
     pub cors_origins: Vec<HeaderValue>,
+    /// Per-key request budgets enforced by this process.
+    pub rate_limits: RateLimitConfig,
+    /// Peers whose load-balancer forwarding chain may identify a client.
+    pub trusted_proxies: TrustedProxyConfig,
     /// Base URL of the sandbox provider's lifecycle API.
     pub sandbox_base_url: String,
     /// API key for the sandbox provider.
@@ -98,6 +276,17 @@ pub struct Config {
     pub mongodb_uri: String,
     /// Database holding session records and their history.
     pub mongodb_database: String,
+    /// Explicit acknowledgement for the one-time legacy namespace cutover.
+    ///
+    /// This does not discover or stop old writers. It is accepted only when an
+    /// operator has already stopped every pre-cutover control plane and waited
+    /// for its MongoDB operations to drain.
+    pub mongodb_legacy_cutover: bool,
+    /// Explicit acknowledgement that every pre-coordination process and its
+    /// in-flight provider operations have permanently drained.
+    pub mongodb_coordination_cutover: bool,
+    /// Dedicated key for recoverable authentication secrets stored in MongoDB.
+    pub auth_encryption_key: AuthEncryptionKey,
     /// How long a recorded action is kept.
     ///
     /// Configuration rather than a constant because how far back a deployment
@@ -144,6 +333,8 @@ pub struct Config {
 /// would pin the test to itself and nothing else.
 const BASELINE_SERVICES: &str = "chrono-llm,ornn-api,ornn";
 
+const DEFAULT_SANDBOX_IMAGE: &str = "cma-runtime:dev";
+
 /// Deployment identity used only when a new installation omits the key.
 ///
 /// Existing installations set this explicitly because it is persisted into
@@ -156,11 +347,13 @@ impl Config {
     pub fn from_env() -> Result<Self, String> {
         let bind = var_or("CHRONO_SERVER_BIND", "0.0.0.0:8080");
         let public_url = var_or("CHRONO_SERVER_PUBLIC_URL", "http://localhost:8080");
+        let rate_limits = RateLimitConfig::from_env()?;
+        let trusted_proxies = TrustedProxyConfig::from_env()?;
         let sandbox_base_url = var_or(
             "CHRONO_SANDBOX_BASE_URL",
             "http://example-host-02.example-namespace.svc.cluster.local",
         );
-        let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", "chrono-bot-runtime:dev");
+        let sandbox_image = var_or("CHRONO_SANDBOX_IMAGE", DEFAULT_SANDBOX_IMAGE);
         // What a sandbox costs the namespace quota when its session names no
         // size. Read as opaque strings and handed to the provider unchanged:
         // these are Kubernetes quantities, and parsing them here would only
@@ -240,6 +433,16 @@ impl Config {
         // store would accept work it silently cannot keep.
         let mongodb_uri = require("CHRONO_MONGODB_URI")?;
         let mongodb_database = var_or("CHRONO_MONGODB_DATABASE", "chrono_bot");
+        let mongodb_legacy_cutover = parse_cutover_drain(
+            "CHRONO_MONGODB_LEGACY_CUTOVER",
+            &var_or("CHRONO_MONGODB_LEGACY_CUTOVER", ""),
+        )?;
+        let mongodb_coordination_cutover = parse_cutover_drain(
+            "CHRONO_MONGODB_COORDINATION_CUTOVER",
+            &var_or("CHRONO_MONGODB_COORDINATION_CUTOVER", ""),
+        )?;
+        let auth_encryption_key =
+            AuthEncryptionKey::from_base64(&require("CHRONO_AUTH_ENCRYPTION_KEY")?)?;
         // Ninety days by default: long enough to investigate something nobody
         // noticed at the time, short enough that a collection holding one
         // document per request does not grow without limit. A deployment with
@@ -304,6 +507,8 @@ impl Config {
             bind,
             public_url,
             cors_origins,
+            rate_limits,
+            trusted_proxies,
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
@@ -325,6 +530,9 @@ impl Config {
             platform_base_url,
             mongodb_uri,
             mongodb_database,
+            mongodb_legacy_cutover,
+            mongodb_coordination_cutover,
+            auth_encryption_key,
             activity_retention,
             context_bucket,
             storage_client_id,
@@ -349,11 +557,101 @@ fn var_or(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
+fn strict_env(key: &str) -> Result<Option<String>, String> {
+    match std::env::var(key) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{key} is not valid UTF-8 and cannot be interpreted"
+        )),
+    }
+}
+
+fn lookup_or(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    key: &str,
+    default: &str,
+) -> Result<String, String> {
+    Ok(lookup(key)?
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default.to_owned()))
+}
+
+fn require_from(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    key: &str,
+) -> Result<String, String> {
+    lookup(key)?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("{key} is required and was not set"))
+}
+
 fn require(key: &str) -> Result<String, String> {
     std::env::var(key)
         .ok()
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| format!("{key} is required and was not set"))
+}
+
+fn positive_u32(key: &str, default: u32) -> Result<NonZeroU32, String> {
+    parse_positive_u32(key, &var_or(key, &default.to_string()))
+}
+
+fn parse_positive_u32(key: &str, raw: &str) -> Result<NonZeroU32, String> {
+    let value: u32 = raw
+        .trim()
+        .parse()
+        .map_err(|e| format!("{key} must be a positive whole number, got {raw:?}: {e}"))?;
+    NonZeroU32::new(value).ok_or_else(|| format!("{key} must be greater than zero, got {raw:?}"))
+}
+
+fn u32_at_least(key: &str, default: u32, minimum: u32) -> Result<NonZeroU32, String> {
+    parse_u32_at_least(key, &var_or(key, &default.to_string()), minimum)
+}
+
+fn parse_u32_at_least(key: &str, raw: &str, minimum: u32) -> Result<NonZeroU32, String> {
+    let value = parse_positive_u32(key, raw)?;
+    if value.get() < minimum {
+        return Err(format!(
+            "{key} must be at least {minimum} so configured health probes cannot exhaust it, got {}",
+            value.get()
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_bounded_usize(
+    key: &str,
+    raw: &str,
+    minimum: usize,
+    maximum: usize,
+) -> Result<usize, String> {
+    let value: usize = raw
+        .trim()
+        .parse()
+        .map_err(|e| format!("{key} must be a whole number, got {raw:?}: {e}"))?;
+    if !(minimum..=maximum).contains(&value) {
+        return Err(format!(
+            "{key} must be between {minimum} and {maximum}, got {raw:?}"
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_ip_networks(key: &str, raw: &str) -> Result<Vec<IpNet>, String> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    raw.split(',')
+        .map(|part| {
+            let part = part.trim();
+            if part.is_empty() {
+                return Err(format!("{key} contains an empty network in {raw:?}"));
+            }
+            part.parse::<IpNet>()
+                .map_err(|e| format!("{key} contains an invalid IP network {part:?}: {e}"))
+        })
+        .collect()
 }
 
 /// Read a number of days as a duration.
@@ -376,6 +674,16 @@ fn parse_days(key: &str, raw: &str) -> Result<std::time::Duration, String> {
         return Err(format!("{key} must be at least one day, got {raw:?}"));
     }
     Ok(std::time::Duration::from_secs(days * 86_400))
+}
+
+fn parse_cutover_drain(key: &str, raw: &str) -> Result<bool, String> {
+    match raw {
+        "" => Ok(false),
+        "drained" => Ok(true),
+        _ => Err(format!(
+            "{key} must be unset or exactly \"drained\" after every incompatible CMA process and its MongoDB and provider operations have stopped"
+        )),
+    }
 }
 
 /// Read a comma-separated list, dropping blank entries.
@@ -416,6 +724,8 @@ impl Config {
             bind: "0.0.0.0:8080".into(),
             public_url: "http://x".into(),
             cors_origins: vec![],
+            rate_limits: RateLimitConfig::sample(),
+            trusted_proxies: TrustedProxyConfig::sample(),
             sandbox_base_url: "http://r".into(),
             sandbox_api_key: "k".into(),
             sandbox_image: "img".into(),
@@ -437,6 +747,12 @@ impl Config {
             platform_base_url: "http://p".into(),
             mongodb_uri: "mongodb://h/db".into(),
             mongodb_database: "db".into(),
+            mongodb_legacy_cutover: false,
+            mongodb_coordination_cutover: false,
+            auth_encryption_key: AuthEncryptionKey::from_base64(
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            )
+            .expect("test key has 32 decoded bytes"),
             activity_retention: std::time::Duration::from_secs(90 * 86_400),
             context_bucket: "bkt".into(),
             storage_client_id: "sa-id".into(),
@@ -450,7 +766,17 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
+
+    fn staged_config(values: &[(&str, &str)]) -> Result<Option<MongoCutoverStageConfig>, String> {
+        let values = values
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect::<BTreeMap<_, _>>();
+        MongoCutoverStageConfig::from_lookup(|key| Ok(values.get(key).cloned()))
+    }
 
     #[test]
     fn a_blank_value_falls_back_to_the_default() {
@@ -464,6 +790,14 @@ mod tests {
         assert_eq!(
             var_or("CHRONO_TEST_ABSENT_DEPLOYMENT_ID", DEFAULT_DEPLOYMENT_ID),
             "cma"
+        );
+    }
+
+    #[test]
+    fn a_new_deployment_defaults_to_the_cma_runtime_image() {
+        assert_eq!(
+            var_or("CHRONO_TEST_ABSENT_SANDBOX_IMAGE", DEFAULT_SANDBOX_IMAGE),
+            "cma-runtime:dev"
         );
     }
 
@@ -519,6 +853,192 @@ mod tests {
         let err =
             parse_days("CHRONO_ACTIVITY_RETENTION_DAYS", "0").expect_err("zero is not a retention");
         assert!(err.contains("at least one day"), "got {err}");
+    }
+
+    #[test]
+    fn request_rates_accept_only_positive_whole_numbers() {
+        assert_eq!(
+            parse_positive_u32("CHRONO_SERVER_RATE_CREATE_PER_MINUTE", " 17 ")
+                .expect("a positive rate is usable")
+                .get(),
+            17
+        );
+        for raw in ["0", "-1", "1.5", "many", ""] {
+            let error = parse_positive_u32("CHRONO_SERVER_RATE_CREATE_PER_MINUTE", raw)
+                .expect_err("an unusable rate must fail startup");
+            assert!(
+                error.contains("CHRONO_SERVER_RATE_CREATE_PER_MINUTE"),
+                "got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn health_rate_cannot_starve_the_declared_probe_schedule() {
+        assert_eq!(
+            u32_at_least(
+                "CHRONO_SERVER_RATE_HEALTH_PER_MINUTE",
+                HEALTH_RATE_REQUESTS_PER_MINUTE,
+                MINIMUM_HEALTH_RATE_REQUESTS_PER_MINUTE,
+            )
+            .unwrap()
+            .get(),
+            HEALTH_RATE_REQUESTS_PER_MINUTE
+        );
+        let error = parse_u32_at_least(
+            "CHRONO_SERVER_RATE_HEALTH_PER_MINUTE",
+            "29",
+            MINIMUM_HEALTH_RATE_REQUESTS_PER_MINUTE,
+        )
+        .expect_err("a probe-starving budget must be refused");
+        assert!(error.contains("at least 30"), "got {error}");
+    }
+
+    #[test]
+    fn trusted_proxy_configuration_is_explicit_and_bounded() {
+        let networks = parse_ip_networks(
+            "CHRONO_SERVER_TRUSTED_PROXY_CIDRS",
+            " 35.191.0.0/16, 2600:2d00:1:1::/64 ",
+        )
+        .expect("documented GFE networks parse");
+        assert_eq!(networks.len(), 2);
+        assert!(networks[0].contains(&"35.191.4.2".parse::<std::net::IpAddr>().unwrap()));
+        assert!(networks[1].contains(&"2600:2d00:1:1::9".parse::<std::net::IpAddr>().unwrap()));
+        assert!(parse_ip_networks("CIDRS", "").unwrap().is_empty());
+        for raw in [",", "35.191.0.0/16,", "not-a-network"] {
+            assert!(
+                parse_ip_networks("CHRONO_SERVER_TRUSTED_PROXY_CIDRS", raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+
+        assert_eq!(
+            parse_bounded_usize("CHRONO_SERVER_TRUSTED_PROXY_HOPS", "1", 1, 16).unwrap(),
+            1
+        );
+        for raw in ["0", "17", "many"] {
+            assert!(
+                parse_bounded_usize("CHRONO_SERVER_TRUSTED_PROXY_HOPS", raw, 1, 16).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cutover_gates_require_the_exact_post_drain_acknowledgement() {
+        assert!(!parse_cutover_drain("CUTOVER", "").unwrap());
+        assert!(parse_cutover_drain("CUTOVER", "drained").unwrap());
+        for unsafe_value in ["true", "yes", "drain", "DRAINED", " drained", "drained "] {
+            let error = parse_cutover_drain("CUTOVER", unsafe_value)
+                .expect_err("an imprecise acknowledgement must stay closed");
+            assert!(error.contains("exactly \"drained\""), "got {error}");
+        }
+    }
+
+    #[test]
+    fn the_legacy_cutover_stage_accepts_only_its_exact_flag_tuple() {
+        let config = staged_config(&[
+            (MONGODB_CUTOVER_STAGE, "legacy"),
+            ("CHRONO_MONGODB_LEGACY_CUTOVER", "drained"),
+            ("CHRONO_MONGODB_COORDINATION_CUTOVER", ""),
+            ("CHRONO_MONGODB_URI", "mongodb://stage.invalid/cma"),
+        ])
+        .expect("the exact staged tuple is usable")
+        .expect("the legacy stage is selected");
+        assert_eq!(config.stage, MongoCutoverStage::Legacy);
+        assert_eq!(config.bind, "0.0.0.0:8080");
+        assert_eq!(config.mongodb_database, "chrono_bot");
+
+        for stage in ["unknown", " Legacy", "legacy ", "LEGACY"] {
+            let error = staged_config(&[(MONGODB_CUTOVER_STAGE, stage)])
+                .expect_err("an unknown stage must fail before other configuration");
+            assert!(error.contains(MONGODB_CUTOVER_STAGE), "got {error}");
+        }
+        let secret_stage = "mongodb://operator:do-not-log-this@invalid";
+        let error = staged_config(&[(MONGODB_CUTOVER_STAGE, secret_stage)])
+            .expect_err("an invalid stage is refused without echoing its value");
+        assert!(!error.contains("do-not-log-this"), "got {error}");
+        for legacy in ["", "drain", " drained", "drained ", "DRAINED"] {
+            let error = staged_config(&[
+                (MONGODB_CUTOVER_STAGE, "legacy"),
+                ("CHRONO_MONGODB_LEGACY_CUTOVER", legacy),
+            ])
+            .expect_err("the stage requires an exact legacy drain acknowledgement");
+            assert!(
+                error.contains("CHRONO_MONGODB_LEGACY_CUTOVER=drained"),
+                "got {error}"
+            );
+        }
+        for coordination in ["drained", " ", "false"] {
+            let error = staged_config(&[
+                (MONGODB_CUTOVER_STAGE, "legacy"),
+                ("CHRONO_MONGODB_LEGACY_CUTOVER", "drained"),
+                ("CHRONO_MONGODB_COORDINATION_CUTOVER", coordination),
+            ])
+            .expect_err("coordination must remain structurally disabled in this stage");
+            assert!(
+                error.contains("CHRONO_MONGODB_COORDINATION_CUTOVER"),
+                "got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unselected_stage_observes_no_control_plane_configuration() {
+        let mut accessed = Vec::new();
+        let stage = MongoCutoverStageConfig::from_lookup(|key| {
+            accessed.push(key.to_owned());
+            Ok(None)
+        })
+        .expect("an absent stage is normal startup");
+        assert!(stage.is_none());
+        assert_eq!(accessed, [MONGODB_CUTOVER_STAGE]);
+    }
+
+    #[test]
+    fn the_legacy_stage_reads_only_its_six_narrow_keys() {
+        let values = BTreeMap::from([
+            (MONGODB_CUTOVER_STAGE, "legacy"),
+            ("CHRONO_MONGODB_LEGACY_CUTOVER", "drained"),
+            ("CHRONO_MONGODB_COORDINATION_CUTOVER", ""),
+            ("CHRONO_SERVER_BIND", "127.0.0.1:18080"),
+            ("CHRONO_MONGODB_URI", "mongodb://stage.invalid/cma"),
+            ("CHRONO_MONGODB_DATABASE", "stage_boundary"),
+        ]);
+        let mut accessed = Vec::new();
+        let config = MongoCutoverStageConfig::from_lookup(|key| {
+            accessed.push(key.to_owned());
+            values
+                .get(key)
+                .map(|value| Some((*value).to_owned()))
+                .ok_or_else(|| format!("stage read forbidden configuration key {key}"))
+        })
+        .expect("the narrow configuration is sufficient")
+        .expect("stage is selected");
+        assert_eq!(config.bind, "127.0.0.1:18080");
+        assert_eq!(config.mongodb_database, "stage_boundary");
+        assert_eq!(
+            accessed,
+            [
+                MONGODB_CUTOVER_STAGE,
+                "CHRONO_MONGODB_LEGACY_CUTOVER",
+                "CHRONO_MONGODB_COORDINATION_CUTOVER",
+                "CHRONO_SERVER_BIND",
+                "CHRONO_MONGODB_URI",
+                "CHRONO_MONGODB_DATABASE",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_stage_refuses_an_unreadable_environment_value() {
+        let error = MongoCutoverStageConfig::from_lookup(|key| {
+            Err(format!(
+                "{key} is not valid UTF-8 and cannot be interpreted"
+            ))
+        })
+        .expect_err("a non-text selector must not silently become normal startup");
+        assert!(error.contains(MONGODB_CUTOVER_STAGE), "got {error}");
     }
 
     #[test]

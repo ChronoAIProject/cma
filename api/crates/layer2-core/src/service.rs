@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use layer3_adapter::{KernelAdapter, TerminalInput};
+use layer3_adapter::{AdapterError, KernelAdapter, TerminalInput, TerminalInputSender};
 #[cfg(test)]
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::sync::{OwnedMutexGuard, RwLock};
@@ -51,20 +51,36 @@ impl SessionService {
     ) -> Arc<Self> {
         let SessionPorts {
             context,
+            handovers,
             credentials,
             skills,
+            skill_packs,
             settings,
         } = ports;
+        let sequences = Arc::new(crate::sequence::Sequences::default());
+        let event_logs = Arc::new(crate::log::EventLogs::new(
+            Arc::clone(&store),
+            Arc::clone(&sequences),
+        ));
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
+            lifecycle_gates: Default::default(),
+            input_gates: Default::default(),
+            readoption_gates: Default::default(),
+            conversation_order_gates: Default::default(),
+            prompt_gates: Default::default(),
             skills,
-            sequences: Arc::new(crate::sequence::Sequences::default()),
+            skill_packs,
+            sequences,
+            event_logs,
             starting: RwLock::new(HashSet::new()),
             rotation_refused: RwLock::new(HashSet::new()),
+            rotations_in_progress: RwLock::new(HashSet::new()),
             adapters,
             screen_factory,
             store,
             context,
+            handovers,
             credentials,
             environments,
             settings: settings.unwrap_or_else(|| Arc::new(PlatformSettingsService::unconfigured())),
@@ -72,10 +88,17 @@ impl SessionService {
             deployment_capacity_guard: Default::default(),
             runtime_version: deployment.runtime_version,
             identity: deployment.identity,
+            coordination_holder: format!("cma_{}", uuid::Uuid::new_v4().simple()),
             adopts_untagged: deployment.adopts_untagged,
             retry_backoff_ms: std::sync::atomic::AtomicU64::new(
                 crate::provision::DEFAULT_RETRY_BACKOFF_MS,
             ),
+            #[cfg(test)]
+            pause_next_live_install: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            live_install_paused: tokio::sync::Notify::new(),
+            #[cfg(test)]
+            live_install_resume: tokio::sync::Notify::new(),
         })
     }
 
@@ -90,7 +113,75 @@ impl SessionService {
 
     /// Release a bring-up claim, whatever its outcome.
     pub(crate) async fn finish_start(&self, id: &SessionId) {
+        self.rotations_in_progress.write().await.remove(id);
         self.starting.write().await.remove(id);
+    }
+
+    pub(crate) async fn rotation_in_progress(&self, id: &SessionId) -> bool {
+        self.rotations_in_progress.read().await.contains(id)
+    }
+
+    /// Keep legacy provider mutations from bypassing durable coordination.
+    ///
+    /// Compatibility stores and generation-zero sessions still use the old
+    /// lifecycle while the coordinated implementations are rolled out. Once a
+    /// non-zero authority exists, every provider mutation must arrive through a
+    /// lease-aware path; callers without one fail closed instead of falling back
+    /// to a handle-only adapter call. The remaining compatibility path has no
+    /// cross-replica object identity of its own and is limited to providers that
+    /// either capture immutable deletion identity inside the adapter or do not
+    /// reuse a handle while a lifecycle operation is in flight.
+    pub(crate) async fn require_compatibility_provider_mutation(
+        &self,
+        id: &SessionId,
+        operation: &str,
+    ) -> Result<(), CoreError> {
+        match self.store.runtime_authority(id).await {
+            Ok(Some(authority)) if authority.generation != 0 => {
+                Err(CoreError::RuntimeUnavailable(format!(
+                    "{operation} requires a durable session lease for coordinated runtime authority"
+                )))
+            }
+            Ok(Some(_)) | Err(StoreError::CoordinationDisabled) => Ok(()),
+            Ok(None) => Err(CoreError::SessionNotFound),
+            Err(error) => Err(store_failed(error)),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_next_live_install(&self) {
+        assert!(
+            !self
+                .pause_next_live_install
+                .swap(true, std::sync::atomic::Ordering::SeqCst),
+            "a live installation pause is already armed"
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_until_live_install_paused(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.live_install_paused.notified(),
+        )
+        .await
+        .expect("readiness was committed before the replacement entry was installed");
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resume_live_install(&self) {
+        self.live_install_resume.notify_one();
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn pause_live_install_if_armed(&self) {
+        if self
+            .pause_next_live_install
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.live_install_paused.notify_one();
+            self.live_install_resume.notified().await;
+        }
     }
 
     /// The environment profiles this service resolves sessions against.
@@ -274,7 +365,8 @@ impl SessionService {
         // use, or a store that cannot be read, must fail the request rather
         // than leave a session provisioning towards an environment it will
         // never get.
-        self.environments
+        let resolved_environment = self
+            .environments
             .resolve(caller, spec.environment_profile.as_ref())
             .await?;
 
@@ -362,6 +454,29 @@ impl SessionService {
             .refuse_ungranted(caller, spec.caller_credential.as_deref(), &granted_services)
             .await?;
 
+        // Resolved while the caller's delegated authority still exists, then
+        // staged in the same atomic create as the grant derived from these exact
+        // bytes. Reconciliation therefore never needs to recreate a private
+        // answer from a request credential that disappeared with this call.
+        let skill_packs = self
+            .resolve_skill_packs_for_creation(
+                spec.caller_credential.as_deref(),
+                &resolved_environment.skills,
+            )
+            .await?;
+        crate::store::validate_skill_packs(&skill_packs)
+            .map_err(CoreError::SkillCatalogUnavailable)?;
+        if !skill_packs.is_empty() && self.skill_packs.is_none() {
+            return Err(CoreError::RuntimeUnavailable(
+                "durable skill pack storage is not configured; refusing to create a session whose skills could not be recovered or erased"
+                    .into(),
+            ));
+        }
+        if let Some(store) = self.skill_packs.as_ref() {
+            store.validate(&skill_packs).map_err(store_failed)?;
+        }
+        let granted_skills = Self::granted_skills_for(&skill_packs);
+
         let (settings, settings_fallback) = self.settings.for_provisioning_observed().await;
         if settings_fallback.is_none() {
             if let Some(quoted) = spec.quoted_rate_card.as_ref() {
@@ -416,33 +531,52 @@ impl SessionService {
             rotated_at: None,
             capabilities,
             granted_services: Some(granted_services),
-            /*
-             * Not known yet, and deliberately not guessed.
-             *
-             * `agent.skills` here is the configuration's own list, before the
-             * baseline's mandated entries are folded in and before the
-             * registry has been asked — so writing it would record a set that
-             * is neither what was requested nor what arrives. Provisioning is
-             * the only place that knows which packs were actually fetched, and
-             * it is the only writer of this field.
-             *
-             * `None` until then says "not recorded", which is true for the
-             * seconds a session spends provisioning and stays true for one
-             * that never finished.
-             */
-            granted_skills: None,
+            granted_skills: Some(granted_skills),
             pricing,
             created_at: now_rfc3339(),
         };
 
         let mut record = SessionRecord::new(session.clone());
-        // Through the allocator like every other producer, even though nothing
-        // can yet be racing a session that did not exist a moment ago: a
-        // second place that decides what a sequence is, however safe today, is
-        // the shape of the defect this all exists to remove.
-        let first = self.sequences.take(&id, 0, 3);
-        record.session.last_seq = first + 2;
-        self.store.upsert(&record).await.map_err(store_failed)?;
+        record.skill_packs = crate::store::SkillPackState::Staged(skill_packs);
+        if let Err(error) = self
+            .create_durably(
+                &mut record,
+                vec![
+                    Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::SessionCreated,
+                        appended_at: String::new(),
+                    },
+                    Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::StatusChanged {
+                            status: SessionStatus::Provisioning,
+                            stop_reason: None,
+                            detail: None,
+                            capability: None,
+                        },
+                        appended_at: String::new(),
+                    },
+                    Event {
+                        session_id: id.clone(),
+                        seq: 0,
+                        kind: EventKind::Progress {
+                            stage: crate::session::ProvisioningStage::Accepted,
+                        },
+                        appended_at: String::new(),
+                    },
+                ],
+            )
+            .await
+        {
+            // This identifier was generated for this request and never became
+            // a session the caller can use. Keeping its three reserved event
+            // positions would retain one strong map key per failed creation.
+            self.sequences.forget(&id);
+            return Err(store_failed(error));
+        }
         drop(capacity_guard);
         if let Some(error) = settings_fallback.as_ref() {
             tracing::error!(
@@ -452,38 +586,6 @@ impl SessionService {
             );
         }
         limit_guard.record_written(self.store.as_ref()).await;
-        self.append_durably(
-            &id,
-            vec![
-                Event {
-                    session_id: id.clone(),
-                    seq: first,
-                    kind: EventKind::SessionCreated,
-                    appended_at: String::new(),
-                },
-                Event {
-                    session_id: id.clone(),
-                    seq: first + 1,
-                    kind: EventKind::StatusChanged {
-                        status: SessionStatus::Provisioning,
-                        stop_reason: None,
-                        detail: None,
-                        capability: None,
-                    },
-                    appended_at: String::new(),
-                },
-                Event {
-                    session_id: id.clone(),
-                    seq: first + 2,
-                    kind: EventKind::Progress {
-                        stage: crate::session::ProvisioningStage::Accepted,
-                    },
-                    appended_at: String::new(),
-                },
-            ],
-        )
-        .await
-        .map_err(store_failed)?;
 
         // Detached deliberately. The caller's connection may end at any moment
         // and must not take the runtime with it.
@@ -498,7 +600,10 @@ impl SessionService {
                     adapter,
                     geometry,
                     None,
-                    crate::provision_failure::Abandonment::Retire,
+                    crate::provision_support::BringUpContext::compatibility(
+                        crate::provision_failure::Abandonment::Retire,
+                        None,
+                    ),
                 )
                 .await;
         });
@@ -512,27 +617,76 @@ impl SessionService {
     /// Scoped to live sessions on purpose: this guards the terminal-driving
     /// operations, which are meaningless without a runtime to drive.
     pub(crate) async fn authorize(&self, caller: &Caller, id: &SessionId) -> Result<(), CoreError> {
+        self.session_for_interaction(caller, id).await?;
         let entries = self.entries.read().await;
-        let entry = entries.get(id).ok_or(CoreError::SessionNotFound)?;
-        if !entry.session.is_owned_by(&caller.subject) {
-            return Err(CoreError::Forbidden);
+        if let Some(entry) = entries.get(id) {
+            if !entry.session.is_owned_by(&caller.subject) {
+                return Err(CoreError::Forbidden);
+            }
+            if entry.session.status.is_terminal() {
+                return Err(CoreError::SessionTerminated);
+            }
+            // `is_interactive` also excludes provisioning and idle sessions, whose
+            // existing missing-runtime answers remain unchanged. Rotation alone
+            // still holds an outgoing channel that must not receive new input.
+            if entry.session.status.is_rotating() {
+                return Err(CoreError::SessionRotating);
+            }
+            return Ok(());
         }
-        if entry.session.status.is_terminal() {
-            return Err(CoreError::SessionTerminated);
-        }
-        Ok(())
+        drop(entries);
+        let rotation_in_progress = self.rotation_in_progress(id).await;
+        Err(self
+            .missing_live_session_error(caller, id, rotation_in_progress)
+            .await)
     }
 
-    pub(crate) async fn forward_input(&self, id: &SessionId, input: TerminalInput) {
-        let sender = {
-            let entries = self.entries.read().await;
-            entries.get(id).and_then(|e| e.input.clone())
+    /// Classify an operation whose live runtime entry disappeared.
+    ///
+    /// Compatibility handover can lack a live entry while provisioning its
+    /// replacement. The durable record identifies most of that interval; the
+    /// in-process marker spans the final boundary where readiness is durable but
+    /// the replacement entry is not installed yet. Both are consulted only after
+    /// the live lookup misses so ordinary terminal input retains its in-memory
+    /// path. Ownership is checked before lifecycle state so this fallback cannot
+    /// disclose another owner's session.
+    pub(crate) async fn missing_live_session_error(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+        rotation_in_progress: bool,
+    ) -> CoreError {
+        let record = match self.record(id).await {
+            Ok(record) => record,
+            Err(error) => return error,
         };
-        if let Some(tx) = sender {
-            if tx.send(input).await.is_err() {
-                tracing::warn!(session_id = %id, "runtime input channel closed");
-            }
+        if !record.session.is_owned_by(&caller.subject) {
+            return CoreError::Forbidden;
         }
+        if record.session.status.is_terminal() {
+            return CoreError::SessionTerminated;
+        }
+        if record.is_effectively_rotating() || rotation_in_progress {
+            return CoreError::SessionRotating;
+        }
+        CoreError::SessionNotFound
+    }
+
+    pub(crate) async fn forward_input(
+        &self,
+        id: &SessionId,
+        sender: &TerminalInputSender,
+        input: TerminalInput,
+    ) -> Result<(), CoreError> {
+        sender.send(input).await.map_err(|error| {
+            tracing::warn!(session_id = %id, %error, "terminal input was not delivered");
+            match error {
+                AdapterError::Unavailable(detail) => CoreError::RuntimeUnavailable(detail),
+                AdapterError::Rejected(detail)
+                | AdapterError::AtCapacity(detail)
+                | AdapterError::Unsupported(detail) => CoreError::RuntimeRefused(detail),
+            }
+        })
     }
 }
 

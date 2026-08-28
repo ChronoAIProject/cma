@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { fullTimestamp } from '../sessions/sessionTime';
 import { IconCloseOutline16 } from '../ui/icons';
-import type { MemoryPressure, Resources as ResourceReading } from './conversation';
+import type { MemoryPressure, Resources as ResourceReading } from '@chronoai/cma-sdk';
 import './Resources.css';
 
 interface ResourcesProps {

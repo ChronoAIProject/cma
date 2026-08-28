@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { AguiConnection, MockSession, transcriptNamed, type AguiEvent } from '../agui';
+import { AguiConnection, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 import { Context } from './Context';
 import { MessageStream } from './MessageStream';
-import { fold } from './conversation';
+import { fold } from '@chronoai/cma-sdk';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -13,7 +14,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function conversationFrom(name: string) {
   const session = new MockSession(transcriptNamed(name));
   const seen: AguiEvent[] = [];
-  const connection = new AguiConnection(session.transport, 'sesn_1', {
+  const connection = new AguiConnection(session.transport, session.id, {
     backoffMs: 0,
     sleep: () => Promise.resolve(),
   });
@@ -56,6 +57,12 @@ describe("the conversation's context", () => {
     const conversation = await conversationFrom('context-with-window');
     const { container } = render(<Context granted usage={conversation.usage} />);
 
+    expect(conversation.aguiState.usage).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      contextUsed: 42_100,
+      contextWindow: 200_000,
+    });
     expect(screen.getByText('42.1K / 200K context')).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/\b0\b/);
     expect(screen.getByRole('progressbar', { name: 'Conversation context used' })).toHaveAttribute(

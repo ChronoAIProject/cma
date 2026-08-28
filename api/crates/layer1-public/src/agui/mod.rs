@@ -22,15 +22,21 @@
 //! `docs/API_AGUI.md` governs. Where this code and that document disagree, one
 //! of them is wrong and it is usually this one.
 
+use std::time::Duration;
+
 use axum::{
     routing::{get, post},
     Router,
 };
 
-use crate::rest::{Problem, SessionsState};
+use crate::rest::SessionsState;
 use crate::{InterfaceProfile, Operation};
 
+mod admission;
 mod capabilities;
+#[cfg(test)]
+#[path = "contract_tests.rs"]
+mod contract_tests;
 mod frame;
 mod live;
 mod project;
@@ -38,6 +44,16 @@ mod replay;
 mod resources;
 mod run;
 mod run_ending;
+mod state;
+#[cfg(test)]
+#[path = "steer_tests.rs"]
+mod steer_tests;
+mod thread_alias;
+mod turn_admission;
+
+pub use state::initial_state;
+
+pub(super) const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Routes this interface contributes.
 pub fn router(state: SessionsState) -> Router {

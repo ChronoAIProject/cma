@@ -35,6 +35,15 @@ agent-client-protocol-schema = { version = "1.5", features = [
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
 futures-util = "0.3"
+governor = { version = "0.10", default-features = false, features = ["std", "dashmap"] }
+ipnet = "2.12"
+k8s-openapi = { version = "0.28", features = ["earliest"] }
+kube = { version = "4.2", default-features = false, features = [
+    "client",
+    "ring",
+    "rustls-tls",
+] }
+libc = "0.2"
 mongodb = { version = "3", default-features = false, features = [
     "bson-3",
     "compat-3-3-0",
@@ -50,7 +59,9 @@ portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
+    "stream",
 ] }
+ring = "0.17.14"
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
@@ -67,11 +78,16 @@ tokio = { version = "1", features = [
     "process",
 ] }
 tokio-tungstenite = "0.24"
-tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "request-id"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# This maintained Utoipa fork replaces the archived `paste` macro dependency
+# that cargo-deny rejects while preserving the handler-derived Axum integration.
+utoipa = { package = "meteroid-utoipa", version = "5.6", features = ["axum_extras"] }
+utoipa-axum = { package = "meteroid-utoipa-axum", version = "0.2" }
 uuid = { version = "1", features = ["v4", "serde"] }
 vt100 = "0.15"
+zeroize = "1.9.0"
 
 layer2-core = { path = "crates/layer2-core" }
 layer3-adapter = { path = "crates/layer3-adapter" }

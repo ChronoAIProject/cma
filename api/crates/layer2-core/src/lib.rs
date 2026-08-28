@@ -17,6 +17,8 @@ mod capacity_bounds;
 pub mod clock;
 pub mod conversation;
 mod conversation_log;
+mod conversation_opening;
+mod coordination;
 mod credentials;
 pub mod deployment_capacity;
 pub mod directory;
@@ -56,6 +58,12 @@ mod provision_tests;
 #[cfg(test)]
 mod adapter_support;
 #[cfg(test)]
+mod commit_fault_support;
+#[cfg(test)]
+mod conversation_coordination_tests;
+#[cfg(test)]
+mod conversation_readiness_tests;
+#[cfg(test)]
 mod conversation_support;
 #[cfg(test)]
 mod environment_support;
@@ -68,6 +76,8 @@ mod test_support;
 
 #[cfg(test)]
 mod allowance_tests;
+#[cfg(test)]
+mod approval_recovery_tests;
 #[cfg(test)]
 mod capacity_bounds_service_tests;
 #[cfg(test)]
@@ -86,6 +96,8 @@ mod pressure_tests;
 mod pricing_service_tests;
 #[cfg(test)]
 mod resources_tests;
+#[cfg(test)]
+mod runtime_interaction_tests;
 #[cfg(test)]
 mod spend_tests;
 
@@ -111,6 +123,9 @@ pub mod service;
 mod service_state;
 pub mod session;
 pub mod size;
+#[cfg(test)]
+#[path = "skill_pack_tests.rs"]
+mod skill_pack_tests;
 pub mod store;
 pub mod terminal;
 mod terminal_io;
@@ -128,23 +143,36 @@ pub use activity_service::ActivityService;
 pub use attach::AttachmentClaim;
 pub use authz::{Authorization, Caller, Capability};
 pub use capabilities::{servable_modes, Capability as SessionCapability, SessionCapabilities};
-pub use clock::rfc3339_at;
-pub use conversation::{ApprovalDecision, Usage};
+pub use clock::{rfc3339_at, seconds_from_rfc3339};
+pub use conversation::{ApprovalDecision, ApprovalResolution, ConversationReadinessError, Usage};
+pub use coordination::{
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
+    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeCleanupReason,
+    RuntimeReservation, SessionBoundary, SessionInteractionLeaseRequest, SessionLease,
+    SessionLeaseRequest, SessionOperation,
+};
+pub use credentials::CredentialDeliveryTarget;
 pub use deployment_capacity::{DeploymentCapacity, Reserved};
 pub use directory::{
     DirectoryQuery, PublicIdentity, RegisteredUser, UserDirectory, DEFAULT_DIRECTORY_LIMIT,
     MAX_DIRECTORY_LIMIT,
 };
 pub use environment::{
-    AgentConfiguration, Baseline, CatalogError, CatalogService, CatalogSkill, EnvironmentProfile,
-    EnvironmentProfileSpec, EnvironmentVariable, GrantedSkill, ResolvedEnvironment,
-    ServiceAvailability, ServiceCatalog, ServiceId, SkillCatalog, SkillId, SoftwarePackage,
+    AgentConfiguration, Baseline, CatalogError, CatalogService, CatalogSkill, DescribedSkill,
+    EnvironmentProfile, EnvironmentProfileSpec, EnvironmentVariable, GrantedSkill,
+    ResolvedEnvironment, ServiceAvailability, ServiceCatalog, ServiceId, SkillCatalog, SkillId,
+    SoftwarePackage,
 };
 pub use environment_service::EnvironmentProfileService;
 pub use error::CoreError;
 pub use event::{Event, EventKind, LiveFrame, StoredEvent, StoredEventKind};
 pub use ids::{EnvironmentProfileId, KernelId, SessionId, SubjectId};
-pub use inventory::{ProviderInventory, ProviderView, RuntimeEntry, RuntimeInventory};
+pub use inventory::{
+    ProviderInventory, ProviderRuntimeGeneration, ProviderView, RuntimeAuthorityComparison,
+    RuntimeEntry, RuntimeInventory,
+};
+pub use layer3_adapter::PermissionLocator;
 pub use limits::SessionAllowance;
 pub use options::{AgentOptions, CredentialMode, PermissionMode, ReasoningEffort, SessionMode};
 pub use platform::{
@@ -162,13 +190,17 @@ pub use service::{
     AttachmentHandle, Deployment, Detached, ScreenFactory, SessionPorts, SessionService,
 };
 pub use session::{
-    RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus, StopReason,
+    CallerCredential, RecoveryState, RuntimeLossCause, Session, SessionSpec, SessionStatus,
+    StopReason,
 };
 pub use size::{InvalidSessionSize, SessionSize};
 pub use spend::Spend;
 pub use store::{
-    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, SessionRecord,
-    SessionStore, SkillPack, SkillSource, StoreError, UserDirectoryStore,
+    ActivityStore, ContextStore, CredentialSource, EnvironmentProfileStore, HandoverSnapshot,
+    HandoverStore, OperationClaim, OperationReservation, OperationStore, Page, PageCursor,
+    PageRequest, PendingHandover, PendingHandoverTarget, SessionListQuery, SessionRecord,
+    SessionStore, SkillPack, SkillPackDigest, SkillPackState, SkillPackStore, SkillSource,
+    StoreError, UserDirectoryStore, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
 };
 pub use store::{PlatformSettingsStore, StoredSettings};
 pub use terminal::{InvalidGeometry, ScreenModel, ScreenSnapshot, TerminalGeometry};

@@ -12,6 +12,7 @@ use crate::event::{Event, StoredEvent};
 use crate::ids::SessionId;
 use crate::service::{store_failed, SessionService};
 use crate::session::Session;
+use crate::store::{Page, SessionListQuery, SessionRecord};
 
 impl SessionService {
     /// Read a session, scoped to its owner.
@@ -23,26 +24,54 @@ impl SessionService {
         Ok(record.session)
     }
 
-    /// List the subject's sessions, newest first.
-    pub async fn list_sessions(&self, caller: &Caller) -> Vec<Session> {
+    /// Read the lifecycle boundary an interaction must cross before capability.
+    ///
+    /// This is a non-authoritative preflight: the operation itself revalidates
+    /// after acquiring its delivery fences. It exists so an interface can keep
+    /// lifecycle precedence while deciding whether to reserve, defer, or issue
+    /// preparatory state. A recovered rotation may be durably `Provisioning` or
+    /// `Ready` while its replacement is installed, so its durable claim spans
+    /// that boundary across replicas. The process-local marker remains a
+    /// compatibility fallback while a legacy `Rotating` row is being claimed.
+    pub async fn session_for_interaction(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<Session, CoreError> {
+        caller.authorization.require(Capability::UseOwnSessions)?;
+        let record = self.record(id).await?;
+        if !record.session.is_owned_by(&caller.subject) {
+            return Err(CoreError::Forbidden);
+        }
+        if record.session.status.is_terminal() {
+            return Err(CoreError::SessionTerminated);
+        }
+        if record.is_effectively_rotating() || self.rotation_in_progress(id).await {
+            return Err(CoreError::SessionRotating);
+        }
+        Ok(record.session)
+    }
+
+    /// List the sessions visible to the caller, newest first.
+    pub async fn list_sessions(
+        &self,
+        caller: &Caller,
+        query: &SessionListQuery,
+    ) -> Result<Page<Session>, CoreError> {
         // A privileged reader sees every session; everyone else sees only their
         // own. The filter is here rather than in an interface so no interface
         // can forget it, and it is pushed into the query rather than applied
         // after so a large deployment does not read every record to show one.
         let result = if caller.authorization.allows(Capability::ReadAllSessions) {
-            self.store.list_all().await
+            self.store.list_all(query).await
         } else {
-            self.store.list_for(&caller.subject).await
+            self.store.list_for(&caller.subject, query).await
         };
-        match result {
-            Ok(records) => records.into_iter().map(|r| r.session).collect(),
-            Err(e) => {
-                // Listing is a read: report nothing rather than pretend the
-                // caller has no sessions, and make the failure visible.
-                tracing::error!(error = %e, "cannot list sessions");
-                Vec::new()
-            }
-        }
+        let records = result.map_err(|e| {
+            tracing::error!(reader = %caller.subject, error = %e, "cannot list sessions");
+            store_failed(e)
+        })?;
+        Ok(records.map(|record| record.session))
     }
 
     /// The caller's current live-session allowance.
@@ -68,23 +97,37 @@ impl SessionService {
         })
     }
 
+    /// Load the record behind an event-log read, enforcing that log's grant.
+    async fn readable_event_log_record(
+        &self,
+        caller: &Caller,
+        id: &SessionId,
+    ) -> Result<SessionRecord, CoreError> {
+        let record = self.record(id).await?;
+        if !caller.may_read_event_log_owned_by(&record.session.owner) {
+            return Err(CoreError::Forbidden);
+        }
+        Ok(record)
+    }
+
     /// Every session there is, whoever owns it.
     ///
-    /// Distinct from `list_sessions` in two ways that matter to whoever is
-    /// watching the service rather than using it. It refuses a caller who is
-    /// not entitled to see across subjects instead of quietly narrowing to
-    /// their own work, and it reports a store it could not read instead of
-    /// answering with an empty list — an operator told there are no sessions
-    /// will act on that, and "the record is unreachable" is a different fact.
-    pub async fn list_all_sessions(&self, caller: &Caller) -> Result<Vec<Session>, CoreError> {
+    /// Distinct from `list_sessions` because it refuses a caller who is not
+    /// entitled to see across subjects instead of quietly narrowing to their
+    /// own work.
+    pub async fn list_all_sessions(
+        &self,
+        caller: &Caller,
+        query: &SessionListQuery,
+    ) -> Result<Page<Session>, CoreError> {
         caller.authorization.require(Capability::ReadAllSessions)?;
-        let records = self.store.list_all().await.map_err(store_failed)?;
+        let records = self.store.list_all(query).await.map_err(store_failed)?;
         tracing::info!(
             reader = %caller.subject,
-            returned = records.len(),
+            returned = records.items.len(),
             "every session was listed"
         );
-        Ok(records.into_iter().map(|r| r.session).collect())
+        Ok(records.map(|record| record.session))
     }
 
     /// Durable events for a session, optionally from a cursor.
@@ -105,10 +148,7 @@ impl SessionService {
         id: &SessionId,
         after: Option<u64>,
     ) -> Result<Vec<Event>, CoreError> {
-        let record = self.record(id).await?;
-        if !caller.may_read_event_log_owned_by(&record.session.owner) {
-            return Err(CoreError::Forbidden);
-        }
+        self.readable_event_log_record(caller, id).await?;
         let stored = self
             .store
             .events_since(id, after.unwrap_or(0))
@@ -118,6 +158,26 @@ impl SessionService {
             .into_iter()
             .filter_map(StoredEvent::into_known)
             .collect())
+    }
+
+    /// Highest durable sequence the event log for this session has reached.
+    ///
+    /// Scoped exactly like [`Self::events_since`]. In particular, a caller
+    /// granted cross-owner event-log reads does not also need the separate
+    /// cross-owner session-read grant merely to validate a replay position.
+    ///
+    /// The physical tail can lead a whole-record write, while a position an
+    /// older writer advertised remains reserved even when its event was lost.
+    /// The greater value is therefore the only head that rejects neither kind
+    /// of valid cursor.
+    pub async fn event_log_head(&self, caller: &Caller, id: &SessionId) -> Result<u64, CoreError> {
+        let advertised = self
+            .readable_event_log_record(caller, id)
+            .await?
+            .session
+            .last_seq;
+        let physical = self.store.event_tail(id).await.map_err(store_failed)?;
+        Ok(advertised.max(physical))
     }
 
     /// Watch what is happening on a session, as it happens.

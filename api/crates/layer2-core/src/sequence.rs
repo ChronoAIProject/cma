@@ -25,17 +25,28 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::ids::SessionId;
+use crate::store::StoreError;
 
 /// The one place a session's next event sequence is decided.
 ///
-/// Synchronous on purpose. Numbering happens while the entries lock is held,
-/// and an allocator that had to be awaited would either force that lock open
-/// or push the numbering somewhere it could race again. The lock here is held
-/// across a map lookup and an addition, and never across an await.
+/// Synchronous on purpose. The durable lane holds its own session lock across
+/// numbering and FIFO insertion, so an allocator that had to be awaited would
+/// split the exact boundary that prevents enqueue inversion. The lock here is
+/// held across a map lookup and an addition, and never across an await.
 #[derive(Default)]
 pub(crate) struct Sequences {
-    /// The highest sequence handed out for a session, while this process runs.
-    issued: Mutex<HashMap<SessionId, u64>>,
+    /// The highest sequence handed out and the durable floor observed for each
+    /// session while this process runs.
+    issued: Mutex<HashMap<SessionId, SequenceCursor>>,
+}
+
+#[derive(Default)]
+struct SequenceCursor {
+    issued: u64,
+    /// A store-authored tail can occupy a reservation that was already handed
+    /// to an in-flight local write. Rejection cleanup must never return that
+    /// durable position to the allocator.
+    durable_floor: u64,
 }
 
 impl Sequences {
@@ -47,13 +58,31 @@ impl Sequences {
     /// record is what a freshly started process has to start from. Whichever
     /// is higher wins, so a caller holding a stale copy cannot pull the
     /// sequence backwards over one that has already been issued.
+    #[cfg(test)]
     pub(crate) fn take(&self, id: &SessionId, floor: u64, count: u64) -> u64 {
+        self.try_take(id, floor, count)
+            .expect("test sequence allocation stays within u64")
+    }
+
+    /// Checked form used by the durable lane.
+    pub(crate) fn try_take(
+        &self,
+        id: &SessionId,
+        floor: u64,
+        count: u64,
+    ) -> Result<u64, StoreError> {
         let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
-        let last = issued.entry(id.clone()).or_insert(0);
-        *last = (*last).max(floor);
-        let first = *last + 1;
-        *last += count;
-        first
+        let cursor = issued.entry(id.clone()).or_default();
+        cursor.issued = cursor.issued.max(cursor.durable_floor).max(floor);
+        let first = cursor
+            .issued
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+        cursor.issued = cursor
+            .issued
+            .checked_add(count)
+            .ok_or_else(|| StoreError::Malformed(format!("event sequence overflow for {id}")))?;
+        Ok(first)
     }
 
     /// The highest sequence handed out, never below `floor`.
@@ -64,9 +93,65 @@ impl Sequences {
     /// position behind the log is what makes the next process start too low.
     pub(crate) fn issued(&self, id: &SessionId, floor: u64) -> u64 {
         let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
-        let last = issued.entry(id.clone()).or_insert(0);
-        *last = (*last).max(floor);
-        *last
+        let cursor = issued.entry(id.clone()).or_default();
+        cursor.issued = cursor.issued.max(cursor.durable_floor).max(floor);
+        cursor.issued
+    }
+
+    /// Record a tail that is already occupied in the durable event log.
+    ///
+    /// Unlike an ordinary allocator observation, this survives rejection
+    /// rewind. Authority switches use it because their marker is committed by
+    /// the store outside the process-local event lane.
+    pub(crate) fn observe_durable(&self, id: &SessionId, tail: u64) -> u64 {
+        let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
+        let cursor = issued.entry(id.clone()).or_default();
+        cursor.durable_floor = cursor.durable_floor.max(tail);
+        cursor.issued = cursor.issued.max(cursor.durable_floor);
+        cursor.issued
+    }
+
+    /// The highest position known to be durably occupied.
+    pub(crate) fn durable_floor(&self, id: &SessionId) -> u64 {
+        self.issued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .map_or(0, |cursor| cursor.durable_floor)
+    }
+
+    /// The currently issued tail, without creating an allocator entry.
+    pub(crate) fn current(&self, id: &SessionId) -> Option<u64> {
+        self.issued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .map(|cursor| cursor.issued)
+    }
+
+    /// Return an abandoned reservation to this session's lane.
+    ///
+    /// The lane serializes this with allocation and shifts every queued unit by
+    /// the same amount. Lowering is therefore safe here even though ordinary
+    /// observations may only move the allocator forward.
+    pub(crate) fn rewind(&self, id: &SessionId, count: u64) {
+        let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(cursor) = issued.get_mut(id) {
+            cursor.issued = cursor
+                .issued
+                .saturating_sub(count)
+                .max(cursor.durable_floor);
+        }
+    }
+
+    /// Reconcile every reservation in a lane to a store-authoritative tail.
+    ///
+    /// Called only while the lane lock excludes allocation. Unlike `issued`,
+    /// this may move backward when a missing local write is being closed.
+    pub(crate) fn reconcile(&self, id: &SessionId, tail: u64) {
+        let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
+        let cursor = issued.entry(id.clone()).or_default();
+        cursor.issued = tail.max(cursor.durable_floor);
     }
 
     /// Drop what is remembered about a session.
@@ -79,6 +164,11 @@ impl Sequences {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.issued.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 

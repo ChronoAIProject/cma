@@ -46,7 +46,30 @@ mod event;
 mod stream;
 mod types;
 
-pub use client::{Client, ClientBuilder, RetryPolicy};
+/// Executable integration guides shipped with the crate.
+///
+/// Each child module includes one file from `docs/`. Rustdoc therefore tests
+/// every Rust fence in the published guides as part of `cargo test --doc`.
+pub mod guides {
+    #[doc = include_str!("../docs/README.md")]
+    pub mod overview {}
+    #[doc = include_str!("../docs/quickstart.md")]
+    pub mod quickstart {}
+    #[doc = include_str!("../docs/authentication.md")]
+    pub mod authentication {}
+    #[doc = include_str!("../docs/sessions.md")]
+    pub mod sessions {}
+    #[doc = include_str!("../docs/streaming.md")]
+    pub mod streaming {}
+    #[doc = include_str!("../docs/operations.md")]
+    pub mod operations {}
+    #[doc = include_str!("../docs/errors.md")]
+    pub mod errors {}
+    #[doc = include_str!("../docs/reference.md")]
+    pub mod reference {}
+}
+
+pub use client::{Client, ClientBuilder, ResponseMetadata, RetryPolicy};
 pub use error::{Error, Result};
 pub use event::{
     AvailableCommand, ConfigOption, Event, EventKind, PlanStep, ProvisioningStage,
@@ -54,7 +77,9 @@ pub use event::{
 };
 pub use stream::EventStream;
 pub use types::{
-    Agent, ApprovalDecision, CreateSessionRequest, CredentialMode, PermissionMode, PublicIdentity,
-    Reach, ReasoningEffort, RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput,
-    SessionPricing, SessionSize, SessionStatus, Skill, StopReason, TerminalGeometry, Usage,
+    Agent, ApprovalDecision, Conformance, CreateSessionRequest, CredentialMode, MAX_PAGE_SIZE,
+    MIN_PAGE_SIZE, Page, PageContinuation, PageWalkLimits, PermissionMode, PublicIdentity, Reach,
+    ReasoningEffort, RecoveryState, ScreenSnapshot, Session, SessionId, SessionInput,
+    SessionPageRequest, SessionPricing, SessionSize, SessionStatus, Skill, StopReason,
+    TerminalGeometry, Usage,
 };

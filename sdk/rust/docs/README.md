@@ -1,72 +1,51 @@
 # CMA Rust SDK
 
+<!-- nav: 10 Overview -->
+
 `cma-sdk` is the asynchronous backend client for CMA's REST interface. It is a
 standalone Cargo project, uses Tokio and rustls, and has no dependency on CMA's
 service crates.
 
-## Install
+## Use from the repository
 
-The in-tree version remains `0.0.0`; the release pipeline stamps the published
-crate from the repository tag. During repository development, use a path
-dependency:
+This crate is repository-only, carries `publish = false`, and is not published to
+crates.io. Add it by path from a checkout:
 
-```toml
-[dependencies]
-cma-sdk = { path = "../chrono-bot/sdk/rust" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```sh
+cargo add cma-sdk --path /path/to/cma/sdk/rust
+cargo add tokio --features macros,rt-multi-thread
 ```
 
-## Authenticate
+The in-tree version remains `0.0.0` because no registry release is produced. CI
+installs the crate by path into a fresh consumer, which proves the examples use
+only its exported surface.
 
-CMA accepts a bearer access credential. Supply it through a callback so a
-long-running service can return the current value after rotation:
+## Guides
 
-```rust
-use cma_sdk::Client;
+The navigation comment immediately after each H1 is build metadata for CMA's
+Developer surface. Its form is `<!-- nav: <order> <label> -->`. These same files
+are included under `cma_sdk::guides`, so every Rust fence is a cargo doctest.
 
-# fn client() -> Result<Client, Box<dyn std::error::Error>> {
-let client = Client::builder("https://cma.example.com")?
-    .credential_provider(|| std::env::var("CMA_ACCESS_TOKEN"))
-    .build()?;
-# Ok(client)
-# }
-```
+| Guide | Use it for |
+|---|---|
+| [Quickstart](quickstart.md) | Create a session and consume its stream |
+| [Authentication](authentication.md) | Bearer providers and credential rotation |
+| [Sessions](sessions.md) | Creation, lifecycle, conformance, and SDK scope |
+| [Streaming](streaming.md) | Cursors, reconnects, events, and cancellation |
+| [Operations](operations.md) | Input, approvals, control, terminal REST, and usage |
+| [Errors](errors.md) | Typed failures and retry decisions |
+| [Reference](reference.md) | Locally generated rustdoc and public exports |
 
-The callback runs separately for every request attempt and stream reconnect.
-Its result is marked sensitive before it enters the HTTP request. `Debug` for
-the builder and client is implemented manually and never renders the callback
-or its captured values.
+## Scope
 
-## Create And Drive A Session
+This crate currently exposes anonymous deployment conformance discovery, session
+create/list/read, durable event streaming, input, approval resolution, interrupt,
+steer, terminal resize and screen snapshot, and usage. It deliberately does not
+expose the live bidirectional PTY WebSocket, environment-profile administration,
+pricing, resources, or session stop/revive/delete operations. An absent method is
+an absence, not an invitation to assume a wire shape.
 
-The complete runnable source is [`../examples/readme.rs`](../examples/readme.rs).
-It creates a session, opens its typed event stream, sends input, and interrupts
-the in-flight turn. The same file is compiled in the crate and copied into a
-fresh scratch project by CI, proving that it uses only the published API.
-
-Every operation accepts the client by shared reference. Dropping an operation
-future or `EventStream` cancels only that work; it does not poison the client.
-Unary requests have a per-request timeout. Transport failures reconnect with
-bounded exponential backoff and jitter, while an explicit HTTP `Retry-After`
-on `429` or `503` takes precedence.
-
-## Errors
-
-All operations return `cma_sdk::Error`:
-
-- `CapabilityRefused { capability }` is permanent for this session and is
-  never inferred from prose.
-- `Api { status, code, message }` is a machine-readable service refusal.
-- `Transport { message }` may succeed on a later attempt.
-- `Protocol { message }` means the received boundary was malformed or drifted.
-
-Known event types are fully typed. A future discriminator becomes
-`EventKind::Unknown` carrying the complete JSON payload, so an older client can
-advance its cursor without discarding or misrepresenting the event. A malformed
-payload under a known discriminator is a `Protocol` error.
-
-## Terminal Scope
-
-Terminal resize and screen snapshot are included. The live bidirectional PTY
-byte stream is deliberately absent from this version because it is a separate,
-CLI-shaped public interface rather than a REST operation.
+These guides explain how to use the crate. The authoritative wire documents are
+the [REST contract](../../../docs/API_REST.md),
+[API overview](../../../docs/API_Overview.md), and
+[PTY contract](../../../docs/API_PTY.md).

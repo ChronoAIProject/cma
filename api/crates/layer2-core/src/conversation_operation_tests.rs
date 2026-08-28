@@ -5,21 +5,64 @@
 //! are about what an owner does.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use layer3_adapter::{ConversationInput, PermissionDecision};
+use layer3_adapter::{AdapterError, ContentBlock, ConversationInput, PermissionDecision};
 
-use crate::conversation::ApprovalDecision;
-use crate::conversation_support::{asking, chunk, conversation, said, until_logged, until_sent};
-use crate::event::EventKind;
+use crate::conversation::{ApprovalDecision, ApprovalResolution};
+use crate::conversation_support::{
+    asking, chunk, conversation, conversation_with, conversing, said, until_logged, until_sent,
+};
+use crate::coordination::{SessionLease, SessionOperation};
+use crate::error::CoreError;
+use crate::event::{Event, EventKind, StoredEvent};
 use crate::session::{SessionStatus, StopReason};
-use crate::test_support::{await_settled, service, spec, user, FakeAdapter, FakeStore};
+use crate::store::SessionStore;
+use crate::test_support::{
+    await_settled, environments_defaulting_to, service, service_with_environments,
+    service_with_environments_on_version, spec, user, FakeAdapter, FakeStore,
+};
+
+async fn wait_for_conversation_interaction(
+    store: &FakeStore,
+    id: &crate::ids::SessionId,
+) -> SessionLease {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(lease) = store
+                .active_session_lease(id)
+                .await
+                .filter(|lease| lease.operation == SessionOperation::Interact)
+            {
+                return lease;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the conversation interaction lease is acquired")
+}
+
+async fn wait_for_conversation_interaction_release(store: &FakeStore, id: &crate::ids::SessionId) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while store.active_session_lease(id).await.is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the conversation interaction lease is released");
+}
 
 #[tokio::test]
-async fn a_prompt_reaches_the_runtime() {
+async fn an_idle_prompt_needs_no_steer_grant() {
     let (svc, alice, id, adapter) = conversation().await;
+    let idle = svc.get_session(&alice, &id).await.expect("readable");
+    assert_eq!(idle.status, SessionStatus::Ready);
+    assert!(!idle.capabilities.steer);
+
     svc.send_prompt(&alice, &id, "what is in this repository?".into())
         .await
-        .expect("the owner may prompt their own session");
+        .expect("an idle conversation needs no mid-turn input grant");
 
     let sent = until_sent(&adapter, |input| {
         matches!(input, ConversationInput::Prompt(_))
@@ -29,6 +72,414 @@ async fn a_prompt_reaches_the_runtime() {
         sent.iter()
             .any(|input| matches!(input, ConversationInput::Prompt(_))),
         "a prompt must reach the runtime: {sent:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_prompt_records_the_turn_boundary_before_its_owner_message() {
+    let (svc, alice, id, _adapter) = conversation().await;
+    let turn_seq = svc
+        .send_prompt(&alice, &id, "open the turn".into())
+        .await
+        .expect("the owner may prompt their own session");
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("the prompt history is readable");
+    assert_eq!(
+        events
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::TurnStarted))
+            .expect("the prompt records a turn boundary")
+            .seq,
+        turn_seq,
+        "prompt admission returns the exact boundary allocated to this request"
+    );
+    let prompt_events = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::TurnStarted => Some(&event.kind),
+            EventKind::OwnerMessage { .. } => Some(&event.kind),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        matches!(
+            prompt_events.as_slice(),
+            [EventKind::TurnStarted, EventKind::OwnerMessage { content }]
+                if content == "open the turn"
+        ),
+        "the durable turn must open before its owner message: {prompt_events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_runtime_completion_cannot_overtake_the_prompt_turn_boundary() {
+    let (svc, alice, id, adapter) = conversation().await;
+    let updates = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation is open")
+        .updates
+        .clone();
+    let input = layer3_adapter::ConversationInputSender::spawn(1, move |input| {
+        let updates = updates.clone();
+        async move {
+            if matches!(input, ConversationInput::Prompt(_)) {
+                updates
+                    .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                        layer3_adapter::PromptResponse::new(
+                            layer3_adapter::TurnStopReason::EndTurn,
+                        ),
+                    ))
+                    .await
+                    .expect("the core is folding runtime updates");
+                // Let the folder observe the completion before delivery is
+                // acknowledged. Without the conversation-order gate it folds
+                // the ending here, ahead of the boundary below.
+                tokio::task::yield_now().await;
+            }
+            Ok(())
+        }
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(input);
+
+    svc.send_prompt(&alice, &id, "finish immediately".into())
+        .await
+        .expect("the prompt was delivered");
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::TurnCompleted
+        ))
+        .await,
+        "the immediate completion must still be recorded"
+    );
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("the completed prompt history is readable");
+    let turn = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::TurnStarted | EventKind::OwnerMessage { .. } | EventKind::TurnCompleted => {
+                Some(&event.kind)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        matches!(
+            turn.as_slice(),
+            [
+                EventKind::TurnStarted,
+                EventKind::OwnerMessage { content },
+                EventKind::TurnCompleted
+            ] if content == "finish immediately"
+        ),
+        "the accepted prompt must be recorded before its effects: {turn:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_mid_turn_prompt_without_steer_reaches_neither_runtime_nor_log() {
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "begin the turn".into())
+        .await
+        .expect("the idle prompt starts the turn");
+
+    let sent_before = until_sent(&adapter, |input| {
+        matches!(input, ConversationInput::Prompt(_))
+    })
+    .await;
+    let events_before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
+    let cursor = events_before.last().expect("the turn was recorded").seq;
+
+    assert_eq!(
+        svc.send_prompt(&alice, &id, "redirect the running turn".into())
+            .await,
+        Err(CoreError::CapabilityUnsupported("steer".into()))
+    );
+
+    tokio::task::yield_now().await;
+    let sent_after = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains open")
+        .sent()
+        .await;
+    assert_eq!(
+        sent_after.len(),
+        sent_before.len(),
+        "the refused prompt must send no input to the runtime: {sent_after:?}"
+    );
+
+    let appended = svc
+        .events_since(&alice, &id, Some(cursor))
+        .await
+        .expect("history readable");
+    assert!(
+        !appended.iter().any(|event| matches!(
+            event.kind,
+            EventKind::OwnerMessage { .. } | EventKind::TurnStarted
+        )),
+        "the refused prompt must append neither owner input nor a turn boundary: {appended:?}"
+    );
+    assert!(
+        appended.is_empty(),
+        "a capability refusal must not change the log at all: {appended:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_running_rotation_claim_precedes_the_missing_steer_grant() {
+    let (svc, alice, id, adapter) = conversation().await;
+    svc.send_prompt(&alice, &id, "begin the claimed turn".into())
+        .await
+        .expect("the idle prompt starts the turn");
+
+    let sent_before = until_sent(&adapter, |input| {
+        matches!(input, ConversationInput::Prompt(_))
+    })
+    .await;
+    let events_before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
+    let cursor = events_before.last().expect("the turn was recorded").seq;
+
+    let mut record = svc
+        .store
+        .get(&id)
+        .await
+        .expect("the running boundary is readable")
+        .expect("the session remains durable");
+    assert_eq!(record.session.status, SessionStatus::Running);
+    assert!(!record.session.capabilities.steer);
+    record.rotation_claim = Some("rotn_running_without_steer".into());
+    record.revision = svc
+        .store
+        .commit_session_idempotent("test-running-rotation-claim", &record, &[])
+        .await
+        .expect("the rotation claim is durable");
+
+    assert_eq!(
+        svc.send_prompt(&alice, &id, "must wait for publication".into())
+            .await,
+        Err(CoreError::SessionRotating),
+        "a durable handover fence must win over a missing mid-turn grant"
+    );
+
+    tokio::task::yield_now().await;
+    let sent_after = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains open")
+        .sent()
+        .await;
+    assert_eq!(
+        sent_after.len(),
+        sent_before.len(),
+        "the outgoing runtime sees no input"
+    );
+    assert!(
+        svc.events_since(&alice, &id, Some(cursor))
+            .await
+            .expect("history readable")
+            .is_empty(),
+        "the refused prompt appends no durable work"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_idle_prompts_admit_one_before_the_other_can_decide_to_steer() {
+    let (svc, alice, id, _adapter) = conversation().await;
+    let before = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history readable");
+    let cursor = before.last().expect("session readiness was recorded").seq;
+
+    let delivered = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let (first_started, first_is_started) = tokio::sync::oneshot::channel();
+    let (release_first, first_may_finish) = tokio::sync::oneshot::channel();
+    let mut first_started = Some(first_started);
+    let mut first_may_finish = Some(first_may_finish);
+    let delivered_by_runtime = Arc::clone(&delivered);
+    let held_input = layer3_adapter::ConversationInputSender::spawn(2, move |input| {
+        let started = first_started.take();
+        let may_finish = first_may_finish.take();
+        let delivered = Arc::clone(&delivered_by_runtime);
+        async move {
+            delivered.lock().await.push(input);
+            if let Some(started) = started {
+                let _ = started.send(());
+            }
+            if let Some(may_finish) = may_finish {
+                let _ = may_finish.await;
+            }
+            Ok(())
+        }
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(held_input);
+
+    let first_service = Arc::clone(&svc);
+    let first_caller = alice.clone();
+    let first_id = id.clone();
+    let first = tokio::spawn(async move {
+        first_service
+            .send_prompt(&first_caller, &first_id, "first prompt".into())
+            .await
+    });
+    first_is_started
+        .await
+        .expect("the first prompt reached runtime delivery");
+
+    let second = svc.send_prompt(&alice, &id, "second prompt".into());
+    tokio::pin!(second);
+    tokio::select! {
+        biased;
+        result = &mut second => panic!("the second prompt did not wait: {result:?}"),
+        () = tokio::task::yield_now() => {}
+    }
+    assert_eq!(
+        delivered.lock().await.len(),
+        1,
+        "only the admitted prompt may reach runtime delivery"
+    );
+
+    release_first
+        .send(())
+        .expect("the first prompt is still awaiting release");
+    first
+        .await
+        .expect("the first prompt task completes")
+        .expect("the idle prompt is admitted");
+    assert_eq!(
+        second.await,
+        Err(CoreError::CapabilityUnsupported("steer".into()))
+    );
+
+    let delivered = delivered.lock().await;
+    assert_eq!(
+        delivered
+            .iter()
+            .filter(|input| matches!(input, ConversationInput::Prompt(_)))
+            .count(),
+        1,
+        "the refused concurrent prompt must never reach the runtime: {delivered:?}"
+    );
+    drop(delivered);
+
+    let appended = svc
+        .events_since(&alice, &id, Some(cursor))
+        .await
+        .expect("history readable");
+    assert_eq!(
+        appended.len(),
+        3,
+        "one prompt appends one turn boundary, owner message, and status: {appended:?}"
+    );
+    let owner_messages = appended
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::OwnerMessage { content } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        owner_messages,
+        vec!["first prompt"],
+        "only the admitted prompt may append owner input: {appended:?}"
+    );
+    assert_eq!(
+        appended
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::TurnStarted))
+            .count(),
+        1,
+        "only the admitted prompt may append a turn boundary: {appended:?}"
+    );
+    assert_eq!(
+        appended
+            .iter()
+            .filter(|event| matches!(
+                event.kind,
+                EventKind::StatusChanged {
+                    status: SessionStatus::Running,
+                    ..
+                }
+            ))
+            .count(),
+        1,
+        "only the admitted prompt may append a running transition: {appended:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_mid_turn_prompt_with_steer_reaches_the_test_runtime() {
+    let mut capabilities = conversing();
+    capabilities.steer = true;
+    let (svc, alice, id, adapter) = conversation_with(capabilities).await;
+    let first_boundary = svc
+        .send_prompt(&alice, &id, "begin the turn".into())
+        .await
+        .expect("the idle prompt starts the turn");
+    let steered_boundary = svc
+        .send_prompt(&alice, &id, "redirect the running turn".into())
+        .await
+        .expect("the advertised mid-turn input grant is honoured");
+
+    let sent = until_sent(&adapter, |input| match input {
+        ConversationInput::Prompt(content) => content.iter().any(|block| match block {
+            layer3_adapter::ContentBlock::Text(text) => text.text == "redirect the running turn",
+            _ => false,
+        }),
+        _ => false,
+    })
+    .await;
+    assert_eq!(
+        sent.iter()
+            .filter(|input| matches!(input, ConversationInput::Prompt(_)))
+            .count(),
+        2,
+        "both prompts must reach a stub that advertises mid-turn input: {sent:?}"
+    );
+    let boundaries = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("prompt history is readable")
+        .into_iter()
+        .filter(|event| matches!(event.kind, EventKind::TurnStarted))
+        .map(|event| event.seq)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        boundaries,
+        [first_boundary, steered_boundary],
+        "each accepted prompt returns its own durable boundary"
     );
 }
 
@@ -71,6 +522,500 @@ async fn an_undeliverable_interrupt_is_runtime_unavailable() {
         Err(crate::error::CoreError::RuntimeUnavailable(
             "the runtime link is gone".to_string()
         ))
+    );
+}
+
+#[tokio::test]
+async fn a_second_service_readopts_before_fenced_interrupt_delivery() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let first = service_with_environments(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        Arc::clone(&profiles),
+    );
+    let alice = user("conversation-readoption-owner");
+    let created = first.create_session(&alice, spec()).await.expect("created");
+    await_settled(&first, &alice, &created.id).await;
+
+    let second = service_with_environments(Arc::clone(&store), Arc::clone(&adapter), profiles);
+    assert!(!second.entries.read().await.contains_key(&created.id));
+    second
+        .interrupt_turn(&alice, &created.id)
+        .await
+        .expect("the second service readopts and interrupts");
+
+    let conversation = adapter.conversation.lock().await;
+    let sent = conversation
+        .as_ref()
+        .expect("the readopted conversation is live")
+        .sent()
+        .await;
+    assert!(matches!(sent.as_slice(), [ConversationInput::Cancel]));
+    assert!(second.entries.read().await.contains_key(&created.id));
+}
+
+#[tokio::test]
+async fn a_stale_conversation_generation_reaches_no_sender() {
+    let (svc, alice, id, adapter) = conversation().await;
+    let mut entries = svc.entries.write().await;
+    let entry = entries.get_mut(&id).expect("the conversation is live");
+    entry.runtime_generation = entry
+        .runtime_generation
+        .checked_add(1)
+        .expect("test generations remain bounded");
+    drop(entries);
+
+    assert_eq!(
+        svc.interrupt_turn(&alice, &id).await,
+        Err(CoreError::RuntimeUnavailable(
+            "the live channel belongs to another runtime authority".into()
+        ))
+    );
+    assert!(adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains live")
+        .sent()
+        .await
+        .is_empty());
+}
+
+#[tokio::test]
+async fn caller_cancellation_before_interrupt_delivery_retires_the_owned_lease() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let svc = service_with_environments(Arc::clone(&store), Arc::clone(&adapter), profiles);
+    let alice = user("cancelled-interrupt-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let input_fence = svc.input_gates.gate(&created.id).write_owned().await;
+    let caller = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let alice = alice.clone();
+        let id = created.id.clone();
+        async move { svc.interrupt_turn(&alice, &id).await }
+    });
+    let held = wait_for_conversation_interaction(&store, &created.id).await;
+    caller.abort();
+    assert!(caller.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        store.active_session_lease(&created.id).await,
+        Some(held),
+        "the owned interrupt retains its lease while the local gate is blocked"
+    );
+
+    drop(input_fence);
+    wait_for_conversation_interaction_release(&store, &created.id).await;
+    assert!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the conversation remains live")
+            .sent()
+            .await
+            .is_empty(),
+        "cancellation before the final authority check reaches no sender"
+    );
+
+    svc.interrupt_turn(&alice, &created.id)
+        .await
+        .expect("a successor interrupt proceeds after owned cleanup");
+    assert!(matches!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("the conversation remains live")
+            .sent()
+            .await
+            .as_slice(),
+        [ConversationInput::Cancel]
+    ));
+}
+
+#[tokio::test]
+async fn every_conversation_input_is_refused_while_rotating_and_reusable_afterward() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let svc = service_with_environments(Arc::clone(&store), Arc::clone(&adapter), profiles);
+    let alice = user("rotating-conversation-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.status = SessionStatus::Rotating;
+    record.revision = store
+        .commit_session_idempotent("conversation-test-mark-rotating", &record, &[])
+        .await
+        .expect("rotation is durable");
+    {
+        let mut entries = svc.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("live entry");
+        entry.session.status = SessionStatus::Rotating;
+        entry.pending_approvals.insert("approval-1".into(), None);
+    }
+
+    assert_eq!(
+        svc.send_prompt(&alice, &created.id, "must wait".into())
+            .await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&alice, &created.id).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &alice,
+            &created.id,
+            "approval-1".into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert!(
+        adapter
+            .conversation
+            .lock()
+            .await
+            .as_ref()
+            .expect("conversation is open")
+            .sent()
+            .await
+            .is_empty(),
+        "nothing may reach the outgoing conversation"
+    );
+
+    record.session.status = SessionStatus::Ready;
+    record.revision = store
+        .commit_session_idempotent("conversation-test-finish-rotation", &record, &[])
+        .await
+        .expect("handover completed");
+    {
+        let mut entries = svc.entries.write().await;
+        let entry = entries.get_mut(&created.id).expect("replacement entry");
+        entry.session.status = SessionStatus::Ready;
+        entry.pending_approvals.clear();
+    }
+
+    svc.send_prompt(&alice, &created.id, "retry now".into())
+        .await
+        .expect("the same prompt succeeds after rotation");
+    svc.interrupt_turn(&alice, &created.id)
+        .await
+        .expect("the same interrupt succeeds after rotation");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("replacement entry")
+        .pending_approvals
+        .insert("approval-1".into(), None);
+    svc.resolve_approval(
+        &alice,
+        &created.id,
+        "approval-1".into(),
+        ApprovalDecision::Allow,
+    )
+    .await
+    .expect("the same approval succeeds after rotation");
+
+    let sent = until_sent(&adapter, |input| {
+        matches!(input, ConversationInput::PermissionAnswer { .. })
+    })
+    .await;
+    assert!(sent
+        .iter()
+        .any(|input| matches!(input, ConversationInput::Prompt(_))));
+    assert!(sent
+        .iter()
+        .any(|input| matches!(input, ConversationInput::Cancel)));
+    assert!(sent
+        .iter()
+        .any(|input| matches!(input, ConversationInput::PermissionAnswer { .. })));
+
+    record.session.status = SessionStatus::Terminated;
+    store.seed(&record).await.expect("termination is durable");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("terminal entry")
+        .session
+        .status = SessionStatus::Terminated;
+    assert_eq!(
+        svc.send_prompt(&alice, &created.id, "cannot retry".into())
+            .await,
+        Err(crate::error::CoreError::SessionTerminated)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&alice, &created.id).await,
+        Err(crate::error::CoreError::SessionTerminated)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &alice,
+            &created.id,
+            "approval-1".into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::SessionTerminated)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn conversation_input_crosses_a_real_rotation_only_after_replacement() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let svc = service_with_environments_on_version(
+        Arc::clone(&store),
+        Arc::clone(&adapter),
+        profiles,
+        "runtime:2",
+    );
+    let alice = user("real-rotating-conversation-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let outgoing = adapter
+        .conversation
+        .lock()
+        .await
+        .take()
+        .expect("the outgoing conversation is open");
+    let mut record = store
+        .get(&created.id)
+        .await
+        .expect("readable")
+        .expect("present");
+    record.session.runtime_version = Some("runtime:1".into());
+    store.seed(&record).await.expect("old version is durable");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("outgoing entry")
+        .session
+        .runtime_version = Some("runtime:1".into());
+
+    adapter.pause_next_provision();
+    svc.pause_next_live_install();
+    let reconciling = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        async move { svc.reconcile().await }
+    });
+    adapter.wait_until_provision_paused().await;
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the authoritative outgoing entry remains installed")
+            .session
+            .status,
+        SessionStatus::Rotating,
+        "the outgoing entry remains present but cannot accept input"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("rotation is readable")
+            .expect("session remains durable")
+            .session
+            .status,
+        SessionStatus::Rotating
+    );
+
+    const PROMPT: &str = "retry this exact prompt";
+    const APPROVAL: &str = "approval-1";
+    assert_eq!(
+        svc.send_prompt(&alice, &created.id, PROMPT.into()).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&alice, &created.id).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &alice,
+            &created.id,
+            APPROVAL.into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    let foreign = user("foreign-conversation-observer");
+    assert_eq!(
+        svc.send_prompt(&foreign, &created.id, PROMPT.into()).await,
+        Err(crate::error::CoreError::Forbidden)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&foreign, &created.id).await,
+        Err(crate::error::CoreError::Forbidden)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &foreign,
+            &created.id,
+            APPROVAL.into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::Forbidden)
+    );
+    assert!(
+        outgoing.sent().await.is_empty(),
+        "nothing may reach the outgoing conversation"
+    );
+
+    adapter.resume_provision();
+    svc.wait_until_live_install_paused().await;
+    assert_eq!(
+        svc.entries
+            .read()
+            .await
+            .get(&created.id)
+            .expect("the outgoing entry remains until replacement installation")
+            .session
+            .status,
+        SessionStatus::Rotating,
+        "durable readiness alone must not make the outgoing entry interactive"
+    );
+    assert_eq!(
+        store
+            .get(&created.id)
+            .await
+            .expect("readiness is readable")
+            .expect("session remains durable")
+            .session
+            .status,
+        SessionStatus::Ready
+    );
+    assert_eq!(
+        svc.send_prompt(&alice, &created.id, PROMPT.into()).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.interrupt_turn(&alice, &created.id).await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert_eq!(
+        svc.resolve_approval(
+            &alice,
+            &created.id,
+            APPROVAL.into(),
+            ApprovalDecision::Allow,
+        )
+        .await,
+        Err(crate::error::CoreError::SessionRotating)
+    );
+    assert!(
+        outgoing.sent().await.is_empty(),
+        "the durable readiness boundary still cannot reach the outgoing conversation"
+    );
+    svc.resume_live_install();
+    assert_eq!(
+        reconciling
+            .await
+            .expect("reconciliation task completes")
+            .rotated_sessions,
+        1
+    );
+    let settled = await_settled(&svc, &alice, &created.id).await;
+    assert_eq!(settled.runtime_version.as_deref(), Some("runtime:2"));
+    let replacement = adapter
+        .conversation
+        .lock()
+        .await
+        .take()
+        .expect("the replacement conversation is open");
+
+    svc.send_prompt(&alice, &created.id, PROMPT.into())
+        .await
+        .expect("the same prompt succeeds after rotation");
+    svc.interrupt_turn(&alice, &created.id)
+        .await
+        .expect("the same interrupt succeeds after rotation");
+    svc.entries
+        .write()
+        .await
+        .get_mut(&created.id)
+        .expect("replacement entry")
+        .pending_approvals
+        .insert(APPROVAL.into(), None);
+    svc.resolve_approval(
+        &alice,
+        &created.id,
+        APPROVAL.into(),
+        ApprovalDecision::Allow,
+    )
+    .await
+    .expect("the same approval succeeds after rotation");
+
+    let sent = replacement.sent().await;
+    assert_eq!(sent.len(), 3, "only the three retried inputs are delivered");
+    assert!(matches!(
+        &sent[0],
+        ConversationInput::Prompt(content)
+            if content == &vec![ContentBlock::from(PROMPT)]
+    ));
+    assert!(matches!(sent[1], ConversationInput::Cancel));
+    assert!(matches!(
+        &sent[2],
+        ConversationInput::PermissionAnswer { id, decision, .. }
+            if id == APPROVAL && *decision == PermissionDecision::Allow
+    ));
+    assert!(
+        outgoing.sent().await.is_empty(),
+        "retries are delivered only to the replacement conversation"
     );
 }
 
@@ -356,10 +1301,69 @@ async fn the_tokens_a_turn_spent_are_recorded_when_it_ends() {
 }
 
 #[tokio::test]
-async fn usage_never_falls_when_a_session_is_carried_onto_a_new_runtime() {
-    // A replacement runtime counts afresh. Taking the latest would show
-    // somebody their usage decreasing; adding them would count the history the
-    // new runtime resumed from twice.
+async fn usage_sums_the_maxima_on_both_sides_of_a_legacy_rotation() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter {
+        capabilities: conversing(),
+        ..FakeAdapter::default()
+    });
+    let profiles = environments_defaulting_to(crate::environment::AgentConfiguration {
+        kernel: crate::test_support::kernel(),
+        mode: crate::options::SessionMode::Conversation,
+        ..Default::default()
+    });
+    let svc = service_with_environments(Arc::clone(&store), adapter, profiles);
+    let alice = user("legacy-usage-owner");
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+
+    let kinds = [
+        EventKind::UsageReported {
+            input_tokens: 100_000,
+            output_tokens: 50_000,
+            context_used: 80_000,
+            context_window: Some(200_000),
+        },
+        EventKind::StatusChanged {
+            status: SessionStatus::Rotating,
+            stop_reason: None,
+            detail: Some("moving onto a replacement runtime".into()),
+            capability: None,
+        },
+        EventKind::UsageReported {
+            input_tokens: 10_000,
+            output_tokens: 5_000,
+            context_used: 9_000,
+            context_window: Some(200_000),
+        },
+    ];
+    let legacy = kinds
+        .into_iter()
+        .enumerate()
+        .map(|(offset, kind)| {
+            StoredEvent::from(Event {
+                session_id: created.id.clone(),
+                seq: offset as u64 + 1,
+                kind,
+                appended_at: "2026-08-27T00:00:00Z".into(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut record = store.get(&created.id).await.unwrap().unwrap();
+    record.session.last_seq = legacy.last().unwrap().seq;
+    store.seed(&record).await.expect("legacy record is durable");
+    *store.events.lock().await = legacy;
+
+    let usage = svc.get_usage(&alice, &created.id).await.expect("readable");
+    assert_eq!((usage.input_tokens, usage.output_tokens), (110_000, 55_000));
+    assert_eq!(usage.context_used, 9_000);
+}
+
+#[tokio::test]
+async fn a_lower_report_within_one_runtime_does_not_reduce_usage() {
+    // Runtime counters are cumulative totals. A missing update can be corrected
+    // by a later one, while a transient lower report must not erase the maximum
+    // already recorded for this incarnation.
     let (svc, alice, id, adapter) = conversation().await;
     svc.send_prompt(&alice, &id, "one".into())
         .await
@@ -395,7 +1399,7 @@ async fn usage_never_falls_when_a_session_is_carried_onto_a_new_runtime() {
     let usage = svc.get_usage(&alice, &id).await.expect("readable");
     assert_eq!(
         usage.input_tokens, 8000,
-        "a fresh runtime's smaller count must not shrink what has been spent"
+        "a smaller report in one incarnation must not shrink what has been spent"
     );
 }
 
@@ -433,7 +1437,7 @@ async fn answering_an_approval_reaches_the_runtime_and_the_record() {
     assert!(
         sent.iter().any(|input| matches!(
             input,
-            ConversationInput::PermissionAnswer { id, decision }
+            ConversationInput::PermissionAnswer { id, decision, .. }
                 if id == "req-1" && *decision == PermissionDecision::Allow
         )),
         "the answer must reach the runtime, which is the only thing that can act on it: {sent:?}"
@@ -447,6 +1451,14 @@ async fn answering_an_approval_reaches_the_runtime_and_the_record() {
         &e.kind,
         EventKind::ApprovalResolved { request_id, allowed } if request_id == "req-1" && *allowed
     )));
+
+    assert_eq!(
+        svc.resolve_approval(&alice, &id, "req-1".into(), ApprovalDecision::Allow)
+            .await
+            .err(),
+        Some(crate::error::CoreError::InvalidState),
+        "an answered approval cannot be resolved a second time"
+    );
 }
 
 #[tokio::test]
@@ -461,6 +1473,298 @@ async fn answering_something_nothing_is_waiting_for_is_refused() {
             .err(),
         Some(crate::error::CoreError::InvalidState)
     );
+}
+
+#[tokio::test]
+async fn an_immediate_completion_cannot_overtake_approval_resolution() {
+    let (svc, alice, id, adapter) = conversation().await;
+    let updates = {
+        let held = adapter.conversation.lock().await;
+        let conversation = held.as_ref().expect("the conversation was opened");
+        conversation
+            .updates
+            .send(layer3_adapter::ConversationUpdate::Asked(asking(
+                "req-racing-completion",
+                "finish after this answer",
+            )))
+            .await
+            .expect("the core is listening");
+        conversation.updates.clone()
+    };
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::ApprovalRequested { request_id, .. }
+                if request_id == "req-racing-completion"
+        ))
+        .await
+    );
+
+    let input = layer3_adapter::ConversationInputSender::spawn(1, move |input| {
+        let updates = updates.clone();
+        async move {
+            if matches!(input, ConversationInput::PermissionAnswer { .. }) {
+                updates
+                    .send(layer3_adapter::ConversationUpdate::TurnEnded(
+                        layer3_adapter::PromptResponse::new(
+                            layer3_adapter::TurnStopReason::EndTurn,
+                        ),
+                    ))
+                    .await
+                    .expect("the core continues folding runtime updates");
+                // Give the folder a chance to contend for the ordering gate
+                // before the permission delivery is acknowledged.
+                tokio::task::yield_now().await;
+            }
+            Ok(())
+        }
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(input);
+
+    svc.resolve_approval(
+        &alice,
+        &id,
+        "req-racing-completion".into(),
+        ApprovalDecision::Allow,
+    )
+    .await
+    .expect("the answer is delivered and recorded");
+    assert!(
+        until_logged(&svc, &alice, &id, |kind| matches!(
+            kind,
+            EventKind::TurnCompleted
+        ))
+        .await,
+        "the immediate completion is eventually recorded"
+    );
+
+    let events = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("approval history is readable");
+    let resolved = events
+        .iter()
+        .position(|event| matches!(event.kind, EventKind::ApprovalResolved { .. }))
+        .expect("the answer is durable");
+    let completed = events
+        .iter()
+        .position(|event| matches!(event.kind, EventKind::TurnCompleted))
+        .expect("the ending is durable");
+    assert!(
+        resolved < completed,
+        "resolution must precede the runtime effect it enabled: {events:?}"
+    );
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&id).expect("the conversation remains live");
+    assert!(entry.pending_approvals.is_empty());
+    assert!(
+        entry.approval_locators.is_empty(),
+        "turn completion expires duplicate-delivery fingerprints"
+    );
+}
+
+#[tokio::test]
+async fn an_invalid_approval_batch_sends_and_mutates_nothing() {
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let updates = &held.as_ref().expect("the conversation was opened").updates;
+        for request_id in ["req-batch-1", "req-batch-2"] {
+            updates
+                .send(layer3_adapter::ConversationUpdate::Asked(asking(
+                    request_id,
+                    "batch preflight",
+                )))
+                .await
+                .expect("the core is listening");
+        }
+    }
+    for request_id in ["req-batch-1", "req-batch-2"] {
+        assert!(
+            until_logged(&svc, &alice, &id, |kind| matches!(
+                kind,
+                EventKind::ApprovalRequested { request_id: recorded, .. }
+                    if recorded == request_id
+            ))
+            .await
+        );
+    }
+    let cursor = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history is readable")
+        .last()
+        .expect("the requests are durable")
+        .seq;
+
+    assert_eq!(
+        svc.resolve_approvals(&alice, &id, &[]).await,
+        Err(CoreError::InvalidState)
+    );
+    assert_eq!(
+        svc.resolve_approvals(
+            &alice,
+            &id,
+            &[
+                ApprovalResolution::new("req-batch-1", ApprovalDecision::Allow),
+                ApprovalResolution::new("req-batch-1", ApprovalDecision::Deny),
+            ],
+        )
+        .await,
+        Err(CoreError::InvalidState),
+        "duplicate IDs are rejected before delivery"
+    );
+    assert_eq!(
+        svc.resolve_approvals(
+            &alice,
+            &id,
+            &[
+                ApprovalResolution::new("req-batch-1", ApprovalDecision::Allow),
+                ApprovalResolution::new("req-stale", ApprovalDecision::Deny),
+            ],
+        )
+        .await,
+        Err(CoreError::InvalidState),
+        "a stale later ID cannot consume the valid prefix"
+    );
+
+    let sent = adapter
+        .conversation
+        .lock()
+        .await
+        .as_ref()
+        .expect("the conversation remains open")
+        .sent()
+        .await;
+    assert!(
+        sent.iter()
+            .all(|input| !matches!(input, ConversationInput::PermissionAnswer { .. })),
+        "preflight failures send no answers: {sent:?}"
+    );
+    let entries = svc.entries.read().await;
+    let pending = &entries
+        .get(&id)
+        .expect("the session remains live")
+        .pending_approvals;
+    assert_eq!(pending.len(), 2);
+    assert!(pending.contains_key("req-batch-1"));
+    assert!(pending.contains_key("req-batch-2"));
+    drop(entries);
+    assert!(
+        svc.events_since(&alice, &id, Some(cursor))
+            .await
+            .expect("history remains readable")
+            .is_empty(),
+        "preflight failures append no resolution events"
+    );
+}
+
+#[tokio::test]
+async fn an_accepted_batch_prefix_is_durable_before_a_later_delivery_error() {
+    let (svc, alice, id, adapter) = conversation().await;
+    {
+        let held = adapter.conversation.lock().await;
+        let updates = &held.as_ref().expect("the conversation was opened").updates;
+        for request_id in ["req-prefix-1", "req-prefix-2"] {
+            updates
+                .send(layer3_adapter::ConversationUpdate::Asked(asking(
+                    request_id,
+                    "partial delivery",
+                )))
+                .await
+                .expect("the core is listening");
+        }
+    }
+    for request_id in ["req-prefix-1", "req-prefix-2"] {
+        assert!(
+            until_logged(&svc, &alice, &id, |kind| matches!(
+                kind,
+                EventKind::ApprovalRequested { request_id: recorded, .. }
+                    if recorded == request_id
+            ))
+            .await
+        );
+    }
+    let cursor = svc
+        .events_since(&alice, &id, None)
+        .await
+        .expect("history is readable")
+        .last()
+        .expect("the requests are durable")
+        .seq;
+
+    let delivered = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let delivered_by_runtime = Arc::clone(&delivered);
+    let input = layer3_adapter::ConversationInputSender::spawn(2, move |input| {
+        let delivered = Arc::clone(&delivered_by_runtime);
+        async move {
+            let refused = matches!(
+                &input,
+                ConversationInput::PermissionAnswer { id, .. } if id == "req-prefix-2"
+            );
+            delivered.lock().await.push(input);
+            if refused {
+                Err(AdapterError::Rejected("second answer refused".into()))
+            } else {
+                Ok(())
+            }
+        }
+    });
+    svc.entries
+        .write()
+        .await
+        .get_mut(&id)
+        .expect("the session is live")
+        .conversation = Some(input);
+
+    assert_eq!(
+        svc.resolve_approvals(
+            &alice,
+            &id,
+            &[
+                ApprovalResolution::new("req-prefix-1", ApprovalDecision::Allow),
+                ApprovalResolution::new("req-prefix-2", ApprovalDecision::Deny),
+            ],
+        )
+        .await,
+        Err(CoreError::RuntimeRefused("second answer refused".into()))
+    );
+
+    let delivered = delivered.lock().await;
+    let delivered_ids = delivered
+        .iter()
+        .filter_map(|input| match input {
+            ConversationInput::PermissionAnswer { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(delivered_ids, ["req-prefix-1", "req-prefix-2"]);
+    drop(delivered);
+    let appended = svc
+        .events_since(&alice, &id, Some(cursor))
+        .await
+        .expect("the accepted prefix is readable before the error returns");
+    assert!(appended.iter().any(|event| matches!(
+        &event.kind,
+        EventKind::ApprovalResolved { request_id, allowed }
+            if request_id == "req-prefix-1" && *allowed
+    )));
+    assert!(appended.iter().all(|event| !matches!(
+        &event.kind,
+        EventKind::ApprovalResolved { request_id, .. } if request_id == "req-prefix-2"
+    )));
+    let entries = svc.entries.read().await;
+    let pending = &entries
+        .get(&id)
+        .expect("the session remains live")
+        .pending_approvals;
+    assert!(!pending.contains_key("req-prefix-1"));
+    assert!(pending.contains_key("req-prefix-2"));
 }
 
 #[tokio::test]

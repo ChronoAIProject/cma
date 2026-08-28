@@ -140,7 +140,7 @@ export function Sidebar({
       {collapsed || status === undefined ? null : <p className="sidebar__status">{status}</p>}
 
       {/*
-       * Operations moved into the account menu. It is one of §1's two views
+       * Operations moved into the account menu. It is one of §1's three views
        * and was the app bar's switch until §9 retired the bar; a row of its
        * own here made the foot a two-item navigation strip beside an account
        * control that omitted the one place an operator goes.

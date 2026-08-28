@@ -10,6 +10,7 @@ describe('the migrated landing, operations, and environment pages', () => {
       join(SRC, 'landing', 'Landing.css'),
       join(SRC, 'operator', 'OperatorPage.css'),
       join(SRC, 'environment', 'EnvironmentProfiles.css'),
+      join(SRC, 'developer', 'DeveloperSurface.css'),
     ];
 
     expect(

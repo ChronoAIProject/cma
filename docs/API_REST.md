@@ -24,11 +24,17 @@ Authorization: Bearer <access token>
 
 This is the form that CMA (ChronoAI Managed Agent) clients use. A server has no cookie jar, no redirect to follow and no browser to send to a login page, so the cookie is not available to it.
 
-The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so revocation takes effect within that window rather than immediately.
+The token is checked with the provider rather than decoded here, which is what makes a withdrawn token stop working. The answer is cached for up to a minute, so bearer-token revocation takes effect within that window rather than immediately.
+
+The capabilities behind a browser cookie have an authorization deadline no more than 60 seconds after the last complete provider answer and never later than the access token's own expiry. Once that deadline is due, a cookie request cannot use the stored authority until CMA obtains a complete provider answer under a durable, replica-safe single-flight claim. A complete reduced or empty permissions array takes effect on that request; `active: false` also quarantines the rejected access token and makes its retained refresh grant immediately eligible. If another worker is checking the subject, the provider is too slow, or every advertised answer is transport-failed, retryable, malformed, or incomplete, the request fails temporarily with `503` rather than exercising overdue privileges. The last complete grant remains stored for recovery but is not served while overdue. Introspection is authoritative independently of userinfo, so a healthy reduced or inactive introspection answer cannot be masked by userinfo `401` or `403`. A bounded 16-subject background batch advances a fairness cursor each sweep to prewarm and recover subjects without making revocation depend on draining the backlog.
+
+Browser sign-in does not require the provider to issue a refresh token. An access-token-only delegation remains usable through its access-token lifetime; once that nonrenewable token expires and CMA can no longer check it authoritatively, its cookie capabilities fail closed.
 
 Capabilities are the same either way: they come from the subject's roles as the provider reports them, so a client is never more privileged for having arrived over one route than the other.
 
 A request with neither credential is `401`. A request whose credential is valid but insufficient is `403`.
+The unauthenticated response carries `code: "not_authenticated"`; clients branch
+on that code and the status, never on its prose.
 
 
 | Concern | Rule |
@@ -38,15 +44,550 @@ A request with neither credential is `401`. A request whose credential is valid 
 | Errors | RFC 9457 `application/problem+json` |
 | Rate limiting | RFC 6585 `429` with RFC 9110 `Retry-After` |
 | Pagination | RFC 8288 `Link` with `rel="next"` |
-| Idempotency | **Not implemented.** No route reads `Idempotency-Key`; sending one is harmless and does nothing. This row previously said it was required on every side-effecting `POST`, which was never true — §9 asks for an absence to be declared rather than discovered |
+| Idempotency | Optional `Idempotency-Key` is honoured by `POST /sessions` and `POST /sessions/{id}/input`. Claims remain for 24 hours from the first request |
 | Timestamps | RFC 3339, UTC, always `Z` |
 | Versioning | Additive within `/v1`. A breaking change mints `/v2`; `/v1` is never redefined |
 
-Every response carries `X-Request-Id`. Include it in any support report.
+Every response carries `X-Request-Id`, including authentication failures and
+unmatched routes. A supplied value is echoed; otherwise CMA mints a UUID. The
+same value is attached to the request's tracing span. Include it in any support
+report.
+
+### Request limits
+
+CMA uses continuously refilled token buckets, not fixed one-minute windows.
+The configured rate is also the maximum burst:
+
+| Request class | Default rate and burst | Configuration |
+|---|---:|---|
+| Pre-authentication admission, per client network | 6,000 per minute | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` |
+| `GET` or `HEAD` on `/livez` and `/ready`, per client network | 120 per minute | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` |
+| Provision or rotate: `POST /sessions`, `POST /agui/run`, `POST /sessions/{id}/plane`, `POST /sessions/{id}/revive` | 10 per minute | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` |
+| Deliver a prompt: `POST /sessions/{id}/input`, `POST /sessions/{id}/steer` | 120 per minute | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` |
+| Every other admitted request | 600 per minute | `CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE` |
+
+Every non-preflight, non-health request first consumes the cheap network
+admission bucket, before authentication, body capture, or activity-store I/O.
+Health requests consume their dedicated network bucket instead. An admitted
+non-health request then consumes one operation bucket. Authenticated operation
+traffic on protected routes is keyed by resolved NyxID subject, so changing
+connections or credentials does not create another budget. Routes that are
+public by contract, including REST and AG-UI discovery and the browser auth
+flow, remain keyed by client network even when a request happens to carry a
+cookie or bearer token. Other anonymous traffic and the admission guard are
+also keyed by client network. An AG-UI run can create a billed session when its
+thread is absent, so it always uses the conservative creation budget; the
+middleware does not read its body or query session state to decide whether to
+protect the service.
+
+The direct TCP peer is used unless it belongs to a network explicitly listed in
+`CHRONO_SERVER_TRUSTED_PROXY_CIDRS`. Only then does CMA read
+`X-Forwarded-For`, skip `CHRONO_SERVER_TRUSTED_PROXY_HOPS` tokens from the
+right, and select the next token. The current Google load balancer appends
+`client-ip,load-balancer-ip`, so the configured hop count is one; any
+caller-supplied prefix stays to the left and cannot shard a budget. A missing,
+malformed, or too-short chain falls back to the TCP peer. IPv4-mapped IPv6 is
+the same key as IPv4, and ordinary IPv6 addresses are normalized to `/64`.
+Requests with no peer metadata share one unidentified-client bucket rather than
+bypassing protection. On the managed app hostname the Gateway routes `/api`,
+`/auth`, `/openapi.json`, and `/.well-known/agent-card.json` directly to
+`cma-api`, so the web pod is not an extra untrusted hop and every browser client
+retains its own selected network key.
+
+An exhausted bucket returns `429 application/problem+json` with code
+`rate_limited`. REST rejections retain the profile and service-description
+`Link` headers. `Retry-After` is a positive whole number of seconds, rounded up
+from the token's remaining wait, and is exposed through CORS. Waiting that many
+seconds makes at least one token available if no concurrent request consumes it
+first. Browser CORS preflight `OPTIONS` requests carrying both `Origin` and
+`Access-Control-Request-Method` are exempt and cached for up to one hour; they
+perform no authenticated application operation. An arbitrary `OPTIONS` request
+without that preflight shape consumes the ordinary route budget.
+
+Rejected traffic does not enter durable activity recording: doing a body read
+and MongoDB write for traffic rejected to protect those resources would put the
+expensive work ahead of the boundary. Rejections are counted in process and
+reported through exponentially sampled structured logs. The counters and token
+buckets are process-local. This deployment pins the API to one replica, where
+configured operation values are exact. Running N replicas without shared state
+makes effective allowances up to N times larger.
+
+Routes that consume request bodies are capped at 2 MiB (2,097,152 bytes). REST
+and AG-UI JSON routes that reach body collection return `413
+application/problem+json` with code `request_too_large` when that ceiling is
+crossed. Media-type validation is deliberately earlier on routes that can
+reject without reading: an oversized body with a missing or wrong JSON content
+type can therefore return coded `415 unsupported_media_type`. Bodyless routes
+and handlers that do not consume a supplied body make no unconditional 413
+promise.
+
+### Idempotent retries
+
+`POST /api/v1/sessions` and `POST /api/v1/sessions/{id}/input` are the two
+operations that read `Idempotency-Key`. They are the operations where a lost
+response would otherwise provision a second billed sandbox or deliver the same
+prompt twice. Other routes do not read the header.
+
+A key contains 1 to 255 visible ASCII bytes. It is scoped to the authenticated
+subject and the particular operation, so one subject cannot consume another's
+key and a session-create key does not collide with a session-input key. The
+first request reserves the key durably before doing any work. Its status,
+representation headers, and body are retained until that claim expires, 24
+hours after the first reservation. A retry with the exact same request body
+bytes receives the same status and byte-identical response body without
+performing the operation again. Per-request transport headers, including
+`X-Request-Id` and CORS headers, are generated for the retry rather than copied
+from the first request.
+
+A completed refusal is an outcome too. In particular, if session input records
+`409 session_rotating`, the same key and body continue to replay that refusal
+after the handover finishes. Wait until the session is usable, then mint a new
+key for the intended post-rotation attempt.
+
+Three refusals make ambiguous retries explicit:
+
+| Status and code | Meaning |
+|---|---|
+| `400 invalid_idempotency_key` | The key is empty, longer than 255 bytes, contains non-visible ASCII, or was supplied more than once |
+| `409 idempotency_in_flight` | The first request still owns the reservation. Retry shortly with the same key and body |
+| `422 idempotency_key_reused` | The key already names a different request body. Mint a new key; replaying the first response would be incorrect |
+
+If the durable claim store cannot be reached while reserving a key, the request
+fails with `503` and code `store_failed` before the session or prompt operation
+starts. The service never falls back to unprotected execution. If recording the
+result fails after the operation, the response is `503` and the pending claim
+continues to block duplicate execution. After 24 hours the claim expires and
+the key may be used again.
 
 ---
 
-## 2. Sessions
+## 2. Environment Profiles
+
+An environment profile is the named, reusable description from which sessions
+are created: variables, software, runtime and model choices, resource size,
+skills, service reach, and the owner's standing instructions. A session request
+selects the profile by `id`; it does not repeat these fields.
+
+Profiles are private to their owner. Collection reads contain only the caller's
+profiles, and read, replace, delete, and preference operations deliberately
+answer `404 environment_profile_not_found` for both an unknown identifier and a
+profile owned by somebody else. There is no operator cross-owner read for a
+resource whose variable values may contain credentials.
+
+### Write shape: `ProfileRequest`
+
+`POST` creates a profile and `PUT /{id}` fully replaces its writable contents.
+This field-complete create example is the canonical request shape:
+
+```http
+POST /api/v1/environment-profiles
+Content-Type: application/json
+```
+
+<!-- profile-request-example -->
+```json
+{
+  "name": "field-complete profile",
+  "variables": [
+    { "key": "PROFILE_MODE", "value": "round-trip" }
+  ],
+  "packages": [
+    { "name": "platform-cli", "version": "2.4.1" },
+    { "name": "ripgrep", "version": "14.1.1" }
+  ],
+  "agent": {
+    "kernel": "profile-kernel",
+    "mode": "conversation",
+    "model": "model-for-round-trip",
+    "reasoning_effort": "x_high",
+    "permission": "unrestricted",
+    "credential": "own",
+    "size": { "cpu_millis": 1500, "memory_mib": 3072 },
+    "record_tool_bodies": true,
+    "skills": ["mandatory-skill", "chosen-skill"]
+  },
+  "nyxid": {
+    "services": ["mandatory-service", "calendar"]
+  },
+  "agent_notes": "Keep the caller's standing instructions byte for byte."
+}
+```
+
+Top-level fields:
+
+| Field | Required | Default and meaning |
+|---|---:|---|
+| `name` | yes | Owner-visible name. Whitespace is trimmed; an empty name is refused |
+| `variables` | no | `[]`. Each entry requires string `key` and `value`. Values are opaque, stored, and returned so an editor can round-trip them |
+| `packages` | no | `[]`, before mandatory packages are merged. Each entry requires `name`; `version` is optional and is omitted from a response when unpinned |
+| `agent` | no | `{}`. The nested defaults are listed below |
+| `nyxid` | no | `{ "services": [] }`, before mandatory services are merged |
+| `agent_notes` | no | `""`. Owner-authored standing instructions, separate from non-editable platform instructions |
+
+`agent` fields:
+
+| Field | Required | Default and meaning |
+|---|---:|---|
+| `kernel` | no | The deployment's configured kernel on create and full replacement. Replacement omission does not preserve the current explicit selection; echo the value from GET to retain it |
+| `mode` | no | `"terminal"`; the other value is `"conversation"` |
+| `model` | no | No pinned model. It is omitted from the response when absent |
+| `reasoning_effort` | no | `"high"`; accepted values are `minimal`, `low`, `medium`, `high`, and `x_high` |
+| `permission` | no | `"guarded"`; the other values are `autonomous` and `unrestricted` |
+| `credential` | no | `"delegated"`; `"own"` means the agent uses the owner's model-vendor account. This is a mode, never credential material |
+| `size` | no | The deployment's reservation. When present, both positive integer fields `cpu_millis` and `memory_mib` are required; absent size is omitted from the response |
+| `record_tool_bodies` | no | `false`. Whether tool arguments and results are written to the durable conversation log. The response always carries this boolean |
+| `skills` | no | `[]`, before mandatory skills are merged. Entries are skill identifiers |
+
+Each writable list accepts at most 100 caller-controlled entries. `packages`,
+`skills`, and `nyxid.services` may render more than 100 entries after the
+deployment adds its mandatory baseline. A replacement accepts either the six
+writable fields or the complete `ProfileView` returned by GET, so a client may
+literally GET, transform writable content, and PUT that object back. In the full
+view, `id` must match the path; `mandatory`, `created_at`, `updated_at`, and
+`preferred` are type-checked read-only echoes and never overwrite current
+server-owned state. Those five fields remain invalid on create. An exact raw-view
+or writable-projection echo remains a no-op after the mandatory baseline grows,
+shrinks, or renames entries. Any changed replacement is validated against the
+current baseline: one occurrence of each current mandatory identifier is
+deployment-owned, while duplicates and retired mandatory identities count toward
+the caller's limit.
+
+Every object in this request is closed: unknown fields are refused at the top
+level and inside `variables`, `packages`, `agent`, `agent.size`, `nyxid`, and a
+replacement view's `mandatory` object.
+Create and replace both return `422 invalid_request` rather than silently
+discarding a misspelling. For a short identifier-shaped unknown key, the
+problem document names it in `field` and gives its object location in `path`
+(for example, `"field": "reasoningEffort"` and
+`"path": "agent.reasoningEffort"`). The human-readable detail stays fixed and
+no submitted scalar value is reflected. Non-identifier and unbounded keys are
+also refused but omitted from the diagnostic fields. For example, this is
+invalid:
+
+<!-- profile-invalid-request-example -->
+```json
+{
+  "name": "misspelled profile",
+  "agent": { "reasoningEffort": "x_high" }
+}
+```
+
+### Read shape: `ProfileView`
+
+Create, read, replace, list, and preference responses use one profile shape.
+Every accepted write field is rendered back. Server-owned fields are added:
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable profile identifier |
+| `name`, `variables`, `packages`, `agent`, `nyxid`, `agent_notes` | The writable contents after mandatory entries have been applied |
+| `mandatory.packages` | Package names the deployment puts back on every write |
+| `mandatory.skills` | Skill identifiers the deployment puts back on every write |
+| `created_at` | Creation time, retained across replacement |
+| `updated_at` | Last content-changing replacement time; an exact raw-view or writable-projection echo retains it |
+| `preferred` | Client-facing preselection state. A client may start its session form on this profile, but must still send its id in `POST /api/v1/sessions` |
+
+`agent.kernel`, `mode`, `reasoning_effort`, `permission`, `credential`,
+`record_tool_bodies`, and `skills` are always present. `agent.model` and
+`agent.size` are omitted when no value was selected. `packages[].version` is
+likewise omitted for an unpinned package. A boolean such as
+`record_tool_bodies` is never made ambiguous by omission.
+
+A profile stored before the deployment added a mandatory entry or began
+settling kernels is projected through the current baseline and configured
+kernel when read. This does not rewrite the stored record or advance
+`updated_at`; it gives legacy and newly written profiles the same writable
+projection in the wire shape.
+
+**`mandatory` marks entries, not a special profile.** Omitting a mandatory
+package or skill from a replacement does not remove it; the service merges it
+back and reports its identifier under `mandatory` so a client can render the
+entry as fixed. An owned profile containing mandatory entries can still be
+deleted with `204`; deleting the profile does not revoke the deployment's
+baseline from other profiles or sessions.
+
+**`201 Created`** returns a complete `ProfileView`. On creation, `created_at`
+and `updated_at` are identical because no later content replacement has occurred:
+
+<!-- profile-view-example -->
+```json
+{
+  "id": "envp_example",
+  "name": "field-complete profile",
+  "variables": [
+    { "key": "PROFILE_MODE", "value": "round-trip" }
+  ],
+  "packages": [
+    { "name": "platform-cli", "version": "2.4.1" },
+    { "name": "ripgrep", "version": "14.1.1" }
+  ],
+  "agent": {
+    "kernel": "profile-kernel",
+    "mode": "conversation",
+    "model": "model-for-round-trip",
+    "reasoning_effort": "x_high",
+    "permission": "unrestricted",
+    "credential": "own",
+    "size": { "cpu_millis": 1500, "memory_mib": 3072 },
+    "record_tool_bodies": true,
+    "skills": ["mandatory-skill", "chosen-skill"]
+  },
+  "nyxid": {
+    "services": ["mandatory-service", "calendar"]
+  },
+  "agent_notes": "Keep the caller's standing instructions byte for byte.",
+  "mandatory": {
+    "packages": ["platform-cli"],
+    "skills": ["mandatory-skill"]
+  },
+  "created_at": "2026-08-25T09:00:00Z",
+  "updated_at": "2026-08-25T09:00:00Z",
+  "preferred": false
+}
+```
+
+### List
+
+```http
+GET /api/v1/environment-profiles?limit=50
+```
+
+**`200 OK`** is a newest-first array of complete `ProfileView` rows:
+
+<!-- profile-list-response-example -->
+```json
+[
+  {
+    "id": "envp_example",
+    "name": "field-complete profile",
+    "variables": [
+      { "key": "PROFILE_MODE", "value": "round-trip" }
+    ],
+    "packages": [
+      { "name": "platform-cli", "version": "2.4.1" },
+      { "name": "ripgrep", "version": "14.1.1" }
+    ],
+    "agent": {
+      "kernel": "profile-kernel",
+      "mode": "conversation",
+      "model": "model-for-round-trip",
+      "reasoning_effort": "x_high",
+      "permission": "unrestricted",
+      "credential": "own",
+      "size": { "cpu_millis": 1500, "memory_mib": 3072 },
+      "record_tool_bodies": true,
+      "skills": ["mandatory-skill", "chosen-skill"]
+    },
+    "nyxid": {
+      "services": ["mandatory-service", "calendar"]
+    },
+    "agent_notes": "Keep the caller's standing instructions byte for byte.",
+    "mandatory": {
+      "packages": ["platform-cli"],
+      "skills": ["mandatory-skill"]
+    },
+    "created_at": "2026-08-25T09:00:00Z",
+    "updated_at": "2026-08-25T09:00:00Z",
+    "preferred": false
+  }
+]
+```
+
+`limit` defaults to `50` and is clamped to `1..=200`. `cursor` is the opaque
+value from `Link: <...>; rel="next"`; the final page has no next link. Profiles
+do not accept the session-only `status` filter. Unknown parameters, malformed
+cursors, or a cursor issued for another collection return `400 invalid_query`.
+
+### Read, replace, and delete
+
+```http
+GET /api/v1/environment-profiles/{id}
+```
+
+**`200 OK`** returns the complete `ProfileView` shown above. Unknown and foreign
+identifiers both return `404 environment_profile_not_found`.
+
+Replacement is a full-document PUT, not a patch:
+
+```http
+PUT /api/v1/environment-profiles/{id}
+Content-Type: application/json
+```
+
+<!-- profile-request-example -->
+```json
+{
+  "name": "replacement profile",
+  "agent": {
+    "kernel": "profile-kernel",
+    "record_tool_bodies": false
+  }
+}
+```
+
+**`200 OK`** returns the replaced `ProfileView`. Omitted writable fields reset
+to their documented defaults, after which mandatory entries are merged back.
+The profile keeps its `id`, `created_at`, and `preferred` value. A malformed or
+unknown field returns `400` or `422`; an unknown or foreign id returns `404`.
+An exact complete-`ProfileView` echo (or its writable projection) whose normalized
+contents already match performs no store write and retains `updated_at`, so the
+returned `ProfileView` stays byte-identical. Read-only fields in a transformed
+view do not overwrite current server state. That includes legacy profiles
+projected through a baseline or kernel that changed after they were stored.
+
+```http
+DELETE /api/v1/environment-profiles/{id}
+```
+
+**`204 No Content`** deletes an owned profile, including one that contains
+mandatory entries. Unknown and foreign ids return `404
+environment_profile_not_found`.
+
+### Skills catalogue
+
+```http
+GET /api/v1/environment-profiles/skills
+```
+
+**`200 OK`** returns selectable skills and the mandatory package/skill markers
+needed before the first profile exists:
+
+<!-- skill-catalog-response-example -->
+```json
+{
+  "skills": [
+    {
+      "id": "chosen-skill",
+      "name": "Repository review",
+      "description": "Review a repository without changing it",
+      "access": "owner"
+    }
+  ],
+  "mandatory": {
+    "packages": ["platform-cli"],
+    "skills": ["mandatory-skill"]
+  }
+}
+```
+
+`access` is optional display text supplied by the catalogue. A deployment with
+no skill catalogue returns the same shape with an empty `skills` array; profile
+writes remain available. If a configured skill catalogue cannot be read, this
+route returns a `503 skill_catalogue_unavailable` problem document; retrying
+the picker request is appropriate.
+
+### Services catalogue
+
+```http
+GET /api/v1/environment-profiles/services
+```
+
+**`200 OK`** returns services visible to this caller and the identifiers the
+deployment mandates:
+
+<!-- service-catalog-response-example -->
+```json
+{
+  "services": [
+    {
+      "id": "calendar",
+      "name": "Calendar",
+      "description": "Read and manage calendar events"
+    }
+  ],
+  "mandatory": ["mandatory-service"]
+}
+```
+
+`description` is optional. The catalogue is queried as the caller because its
+answer depends on their grants. With no service catalogue configured, the
+route returns `200` with an empty `services` array; profiles still store service
+selections and sessions still honour them. That absence is distinct from a
+configured catalogue outage: when the catalogue cannot be asked, this route
+returns a `503 service_catalogue_unavailable` problem document and the caller
+should retry.
+
+### Preferred profile
+
+Preference is client-facing preselection state. It is a collection-level PUT
+because selecting one profile also clears the previous winner; it is not a
+writable flag on an individual profile. A client may initialize its session
+form from the selected profile, but it must send that id explicitly as
+`environment_profile` when creating a session. The service never consults this
+state for an unqualified create, which always uses deployment defaults.
+
+```http
+PUT /api/v1/environment-profiles/preferred
+Content-Type: application/json
+```
+
+<!-- preferred-request-example -->
+```json
+{ "profile": "envp_example" }
+```
+
+`profile` must identify one profile the caller owns. The selected profile is
+validated before the previous preference is changed. Unknown and foreign ids
+both return `404 environment_profile_not_found`; a malformed or unknown body
+field returns `400` or `422`.
+
+**`200 OK`** is the complete post-write profile collection, newest first, with
+exactly the selected row carrying `preferred: true`:
+
+<!-- preferred-response-example -->
+```json
+[
+  {
+    "id": "envp_example",
+    "name": "field-complete profile",
+    "variables": [
+      { "key": "PROFILE_MODE", "value": "round-trip" }
+    ],
+    "packages": [
+      { "name": "platform-cli", "version": "2.4.1" },
+      { "name": "ripgrep", "version": "14.1.1" }
+    ],
+    "agent": {
+      "kernel": "profile-kernel",
+      "mode": "conversation",
+      "model": "model-for-round-trip",
+      "reasoning_effort": "x_high",
+      "permission": "unrestricted",
+      "credential": "own",
+      "size": { "cpu_millis": 1500, "memory_mib": 3072 },
+      "record_tool_bodies": true,
+      "skills": ["mandatory-skill", "chosen-skill"]
+    },
+    "nyxid": {
+      "services": ["mandatory-service", "calendar"]
+    },
+    "agent_notes": "Keep the caller's standing instructions byte for byte.",
+    "mandatory": {
+      "packages": ["platform-cli"],
+      "skills": ["mandatory-skill"]
+    },
+    "created_at": "2026-08-25T09:00:00Z",
+    "updated_at": "2026-08-25T09:00:00Z",
+    "preferred": true
+  }
+]
+```
+
+Clearing is expressed with an explicit `null` value:
+
+<!-- preferred-request-example -->
+```json
+{ "profile": null }
+```
+
+It returns the same complete collection with every row carrying
+`preferred: false`. The `/v1` response is intentionally complete for clients
+that replace their loaded collection with it; it is assembled through bounded
+owner-list pages even though the final JSON array has no profile-count limit.
+
+---
+
+## 3. Sessions
 
 ### Create
 
@@ -66,17 +607,17 @@ Content-Type: application/json
 | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cols`                | no       | Initial terminal width. Sent with `rows` or not at all                                                                                          |
 | `rows`                | no       | Initial terminal height                                                                                                                         |
-| `environment_profile` | no       | Id of a profile from `GET /api/v1/environment-profiles`. **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
+| `environment_profile` | no       | Id from [Environment Profiles](#2-environment-profiles). **Never carries secret values** — it selects a profile provisioned out of band. Omitting it is a choice too: the session starts the way this deployment says an unqualified one should |
 | `quoted_rate_card`    | no       | The `rate_card` from `GET /api/v1/pricing/quote`. If another card is now in force, creation is refused with `409 price_changed` before any session exists. Omit it for backward compatibility when no quote was taken |
 
 **These four are the whole body.** An earlier version of this section
 documented `llm_source` as required, along with `environment`, `workspace`,
 `concurrent_input` and `metadata`, and an `Idempotency-Key` header on every
-side-effecting `POST`. None of them has ever existed in the service. They were
-accepted and discarded in silence, so a caller who built to that contract got a
-working session and no indication that most of what they sent went nowhere.
-They are now refused by name, which is why the list above is exact rather than
-aspirational.
+side-effecting `POST`. The body fields have never existed in the service and are
+now refused by name. Idempotency is now deliberately narrower and real: the
+header is honoured on session creation and session input as described in
+[Idempotent retries](#idempotent-retries), rather than claimed for operations
+that do not read it.
 
 The profile is the whole description of the session — which agent, which model,
 how freely it acts, whose access it spends, what it carries, and how much CPU
@@ -84,9 +625,20 @@ and memory it reserves — so nothing else about the agent is sent here. The siz
 is the profile's: omitting `agent.size` takes the deployment's reservation, and
 the answer is frozen for the life of the session, including across a rotation.
 
-**A caller does not choose a kernel.** Which one a session runs on comes from the environment profile it names, or from what the deployment configured when it names none — one decision, made where a deployment already states it. There is no field for it, and that is deliberate: a request that could name one would be a request whose answer depended on who sent it.
+**A caller does not choose a kernel here.** Which one a session runs on comes
+from the [environment profile](#2-environment-profiles) it names, or from what
+the deployment configured when it names none. There is no session-create field
+for it, and that is deliberate: the reusable profile is the one place that
+states the complete agent configuration.
 
-**A field this endpoint does not know is refused, not ignored.** Sending `"kernel"` is the obvious thing to try, because `GET /api/v1/kernels` enumerates them — so it answers `422` with `invalid_request`, naming the field and listing what it would have accepted. It used to be discarded, and the session came back `201` on whichever kernel the profile actually resolved to, which is a request answered differently from how it was asked. To choose a kernel, name an environment profile whose `agent.kernel` is the one you want; `GET /api/v1/environment-profiles` shows each profile's.
+**A field this endpoint does not know is refused, not ignored.** Sending
+`"kernel"` is the obvious thing to try, because `GET /api/v1/kernels`
+enumerates them — so it answers `422` with `invalid_request`. Rejection details
+are fixed by error class rather than copied from Serde because other request
+bodies can carry credentials. It used to be discarded, and the session came
+back `201` on whichever kernel the profile actually resolved to. To choose a
+kernel, create or replace an [environment profile](#2-environment-profiles)
+whose `agent.kernel` is the one you want, then name its `id` here.
 
 A body that cannot be read keeps the status that says why: `415` when the `Content-Type` is not `application/json`, `400` when the JSON is malformed, `422` when it parsed and could not be honoured. All three carry the same problem document as every other failure.
 
@@ -102,6 +654,11 @@ service does not send and spelled `recovery_state` as an object it does not use.
   "status": "provisioning",
   "recovery_state": "normal",
   "kernel": "codex",
+  "agent": {
+    "permission": "guarded",
+    "reasoning_effort": "high",
+    "credential": "delegated"
+  },
   "cols": 120,
   "rows": 32,
   "last_seq": 0,
@@ -189,6 +746,33 @@ GET    /api/v1/sessions/{id}/transcript
 DELETE /api/v1/sessions/{id}
 ```
 
+`GET /api/v1/sessions` returns `200 []` only when the session store was read
+successfully and the caller genuinely has no visible sessions. If the store
+cannot be read, it returns a `503 runtime_unavailable` problem document; an
+unavailable list is never represented as an empty one.
+
+The session list is newest first and remains a JSON array. It accepts exactly
+these query parameters:
+
+| Parameter | Meaning |
+|---|---|
+| `status` | Exact lifecycle value to retain, such as `running`; omit it for every status |
+| `limit` | Page size, default `50`, clamped to `1..=200` (`0` becomes `1`) |
+| `cursor` | Opaque continuation copied from the previous response's next link |
+
+Rows are stably ordered by `created_at` descending and then session id
+descending. When another page exists the response carries
+`Link: </api/v1/sessions?...&cursor=...>; rel="next"`; the final page has no
+next link. Follow that link verbatim rather than decoding or constructing its
+cursor. Cursors are versioned and bound to the exact collection that issued
+them: owner, operator, and environment-profile cursors are not interchangeable.
+They also carry a canonical RFC 3339 store position. A misspelled or unknown
+parameter; malformed cursor encoding or payload; an unsupported cursor version;
+a noncanonical or nonsemantic cursor timestamp; an empty cursor identifier; or a
+cursor reused on another collection is refused with `400
+application/problem+json` and `code: "invalid_query"` rather than being silently
+ignored.
+
 `stop` releases the runtime and keeps the session: it goes `idle`, stays listed,
 stays readable, and nothing is being paid for. `revive` gives it a runtime
 again under the same id, with the same history and the same options — reviving
@@ -196,9 +780,58 @@ never mints a new session. When the owner is at or over their live-session
 limit, revive returns the same typed refusal as create and the session stays
 paused.
 
+The session returned by `revive` uses the same projection as create, list, and
+read. Its creator, granted reach, and recorded installed skills do not disappear
+because the route changed. Directory or catalogue outages cost human-readable
+names, not identifiers or the response itself. A newly created provisioning
+session can omit `agent.skills` until installation has actually been recorded.
+
 `DELETE` is terminal and irreversible. It is the only one of the three that loses anything, and it is not how you pause.
 
 `transcript` returns everything the session's terminal has shown, as the byte stream a terminal renders — `application/octet-stream`, not JSON, because escaping an escape-sequence stream into a string is a decision the server has no business making. It works whether or not a runtime exists, which is how a stopped session stays readable.
+
+### Environment profile list
+
+```http
+GET /api/v1/environment-profiles?limit=50&cursor=<opaque>
+```
+
+The owned-profile list uses the same stable newest-first array and pagination
+contract: `limit` defaults to `50` and is clamped to `1..=200`, `cursor` is
+opaque, and `Link: rel="next"` appears only when another page exists. Profiles
+do not accept the session-only `status` filter. Unknown parameters and malformed
+cursors return the same `400 invalid_query` problem document.
+
+### Preferred environment profile
+
+```http
+PUT /api/v1/environment-profiles/preferred
+Content-Type: application/json
+
+{ "profile": "envp_01K3" }
+```
+
+`profile` names one profile the caller owns. It is client-facing preselection
+state: a client starts its session form on that profile and sends the selected
+id explicitly in `POST /api/v1/sessions`. `null` clears the preselection. The
+service never substitutes a preferred id into an unqualified create request;
+omitting `environment_profile` always uses the deployment's defaults. The
+selected profile is validated before the existing preference is changed.
+
+The `200 OK` body is the complete post-write profile collection, newest first,
+with exactly the selected row carrying `preferred: true`. Clearing the choice
+returns the same complete collection with every row carrying `preferred: false`.
+This is the response released under `/v1`; existing clients replace their
+loaded collection with it, so narrowing it would make unchanged profiles
+disappear.
+
+The mutation itself remains bounded: it validates the selected profile, reads
+the previous winner, and asks the store to replace the preference without
+collecting the owner's profiles. After that succeeds, the compatibility
+response is assembled through the same owner-authorized list service as the
+GET route, walking newest-first store pages of at most 200 rows. The response
+is intentionally complete, but no individual persistence read is unbounded and
+there is no profile-count quota.
 
 ### Changing which plane a session is driven on
 
@@ -213,7 +846,11 @@ Content-Type: application/json
 
 **It is a rotation.** The session's conversation is captured, its sandbox is released, a replacement is started under the other front-end, and the agent resumes from the capture. The session keeps its identifier, its history, its configuration and its place in its owner's list; `rotations` and `rotated_at` move exactly as they do for a runtime upgrade, and `rotated_at` is the moment the conversation was taken — anything the agent did after it did not travel.
 
-**`200 OK`** returns the session mid-handover, `status: "rotating"`. That is the window in which a client must refuse input rather than accept and lose it; the session becomes usable again on its own, and the event stream says when.
+**`200 OK`** returns the session mid-handover, `status: "rotating"`. During that window the server refuses prompts, approvals, interrupts, terminal input, resize, signals, and terminal attachment with `409 session-rotating`; the intended operation may be attempted after the session becomes usable again on its own. A keyed session-input refusal is a completed idempotent outcome, so that later attempt needs a fresh `Idempotency-Key`; reusing the refused key replays its original `409`. A client that needs to time the retry can re-read this session until its status is no longer `rotating`, then act on the status it receives. Clients should disable input during that window for experience, but correctness does not depend on them doing so.
+
+The response still carries the session's creator, granted `reach`, and recorded
+installed skills, with catalogue names whenever available. A handover changes
+its plane; it does not turn a populated session into a partial representation.
 
 The granted set is re-derived and re-reported: a session moved to `conversation` stops conforming to `…/conf/terminal` and starts conforming to `…/conf/conversation`. A client that cached the old set will be refused by name, which is the point of refusing by name.
 
@@ -241,7 +878,8 @@ A read carries `reach`: the services this session's credential may call on its o
 
 This is the other half of a fact whose first half is `capabilities`. Capabilities are what a session can **do**; `reach` is what it can **touch**. A client showing one and not the other is describing half a session.
 
-The whole path — catalogue, profile, grant, credential, sandbox — is `docs/Services.md`.
+The whole path — catalogue, profile, grant, credential, sandbox — is documented
+in [Services](./Services.md).
 
 **It is the session's answer, not its profile's.** A session's reach is decided when it is provisioned and recorded on the session. A profile can be edited afterwards — widened, narrowed, or deleted — and the session keeps the scope it was provisioned with, so reading the profile to learn a running session's reach gives the wrong answer precisely when somebody has changed one. It survives a rotation for the same reason: a replaced runtime is the same session.
 
@@ -251,9 +889,51 @@ The whole path — catalogue, profile, grant, credential, sandbox — is `docs/S
 
 **Never a credential.** `reach` carries identifiers and display names. What a session may reach is a fact about its configuration; what it holds is not, and no token, no expiry and nothing that could be used to fingerprint one appears here.
 
+### Environment profiles and skill catalogue
+
+```http
+GET /api/v1/environment-profiles
+GET /api/v1/environment-profiles/skills
+```
+
+The skill route returns every registry entry the authenticated caller may put
+in a profile, plus the deployment's mandatory packages and skills. CMA follows
+the registry's opaque cursor with pages of 100, to an explicit ceiling of 50
+pages / 5,000 distinct skills. A terminal fiftieth page succeeds. If the
+registry advertises another page, omits pagination metadata or a required next
+cursor, repeats a cursor, or repeats a skill identity, the route returns a
+coded `503 skill_catalogue_unavailable` problem and no catalogue body. Its
+detail is fixed and never reflects an upstream URL, cursor, or transport error.
+The route never presents the pages collected so far as a complete picker.
+
+Session reads make one side-effect-free catalogue walk for all distinct recorded
+skill identifiers on the rendered response. That walk sends no fuzzy `q`, follows
+the same opaque cursor in pages of 100, and stops at the same ceiling of 50 pages
+/ 5,000 rows. It therefore enriches a valid profile containing 100 caller skills
+plus mandatory baseline skills in at most 50 upstream requests, rather than one
+request per grant. A repeated durable identifier keeps its first request order
+and consumes no separate work. The walk never calls Ornn's
+`/api/v1/skills/{idOrName}` detail route, whose authenticated GET records a
+package pull in Mongo and PostHog.
+
+Only an exact registry GUID or exact slug can supply `agent.skills[].name` and
+`description`; substring matches never do. Each result is keyed to the durable
+identifier it resolved, so a successful GUID cannot accidentally supply metadata
+for a colliding slug. A slug shared by multiple rows is ambiguous and remains
+raw without hiding metadata for other identifiers. A removed, inaccessible, or
+malformed entry likewise affects only identifiers it claims to represent.
+
+Enrichment is best-effort because the durable grants are already the authority.
+After a later page or transport failure, exact GUID matches collected on earlier
+pages remain usable; slug-only matches remain raw because an unseen page could
+still contain a colliding alias. If no safe metadata was collected, the catalogue
+failure is logged and the rendered response still carries every raw grant. In
+all cases enrichment changes only `name` and `description`: recorded order, `id`,
+and `version` remain byte-for-byte stable.
+
 ---
 
-## 3. Input, interrupt, steer
+## 4. Input, interrupt, steer
 
 ### One route, two planes
 
@@ -284,7 +964,7 @@ POST /api/v1/sessions/{id}/input
 
 `bytes_b64` is refused on a conversation session: a conversation takes words, and decoding bytes into a prompt would send something nobody typed. Sending both fields on a terminal session uses the bytes — a caller who supplied them meant something the text could not express.
 
-**On the terminal plane, input is how approvals are answered and how a turn is steered.** That kernel asks on its own screen, and the answer is a keypress. There is no separate operation for it, and §5 says so where a client would look.
+**On the terminal plane, input is how approvals are answered and how a turn is steered.** That kernel asks on its own screen, and the answer is a keypress. There is no separate operation for it, and §6 says so where a client would look.
 
 ### Interrupt
 
@@ -292,7 +972,7 @@ POST /api/v1/sessions/{id}/input
 POST /api/v1/sessions/{id}/interrupt
 ```
 
-Stops what the session is doing without ending it. On a conversation this cancels the turn in flight; on a terminal it delivers `SIGINT`.
+Stops what the session is doing without ending it. On a conversation this cancels the turn in flight; on a terminal it injects the in-band `0x03` control byte (Ctrl-C), not an OS signal.
 
 Interrupting requires the `interrupt` capability on a conversation session. Not every kernel has one — a wire can offer a prompt and no way to withdraw it — and a session whose kernel cannot is refused by name rather than left waiting for something that will not happen.
 
@@ -305,8 +985,6 @@ POST /api/v1/sessions/{id}/steer
 
 Redirects a turn already in progress, which is not the same as starting a new one. Projected only where the kernel advertises `steer`; elsewhere it returns the typed capability error. Subsets are declared, not discovered.
 
-Sending input while a turn is in flight resolves according to the session's `concurrent_input` policy; on `reject` it returns `409` with `problem.type` ending `/turn-in-progress`.
-
 ### While a terminal is attached
 
 A live PTY attachment holds the terminal exclusively, and that changes what these routes do:
@@ -315,7 +993,7 @@ A live PTY attachment holds the terminal exclusively, and that changes what thes
 |---|---|---|
 | `input` | `409` `/already-attached` | keystrokes injected into a live attachment land inside an escape sequence that client is drawing; afterwards neither side can tell which characters were whose |
 | `resize` | `409` `/already-attached` | the attached client declared the geometry it is drawing for, and resizing reflows a screen it is halfway through painting |
-| `interrupt` | **allowed** | a signal is not a keystroke — it does not enter the byte stream and cannot corrupt what is being drawn, and stopping a runaway command is exactly what an owner may need to do from elsewhere |
+| `interrupt` | **allowed** | it injects only the bounded, named `INT` control byte (`0x03`, Ctrl-C), rather than free-form input, and stopping a runaway command is exactly what an owner may need to do from elsewhere |
 
 The rule is about *this* route, not about the terminal. The client holding the attachment drives it through its own connection and is unaffected: refusing writes at the operation itself would refuse that client its own keystrokes.
 
@@ -323,45 +1001,104 @@ With no attachment live, all three operate the terminal directly.
 
 ---
 
-## 4. Events
+## 5. Events
 
-### Replay
-
-```http
-GET /api/v1/sessions/{id}/events?starting_after=1042&limit=200
-```
-
-Returns durable events in `seq` order, oldest first. `seq` is **monotonic per session**, so a cursor is one integer. Use `Link: rel="next"` to page.
-
-### Stream
+### Replay and follow
 
 ```http
-GET /api/v1/sessions/{id}/events/stream?starting_after=1042
+GET /api/v1/sessions/{id}/events?starting_after=1042
 Accept: text/event-stream
 ```
 
-Server-sent events. Each carries `id` (the `seq`) and `event` (the type).
+This single SSE route first replays every durable event after the optional
+per-session cursor, oldest first, and then follows the same log for new events.
+It does not have a separate JSON history page, a `limit` parameter, a `Link`
+header, or an `/events/stream` variant.
 
-```
-event: turn.started
+`starting_after` is the canonical query name. REST also accepts `after` as a
+compatibility alias. A valid numeric `Last-Event-ID` header takes precedence
+over either query spelling, matching automatic `EventSource` reconnects.
+Unknown, malformed, repeated, or combined canonical-and-alias query fields
+return a `400` problem document instead of silently replaying from the start.
+
+Each frame carries the sequence in `id` and uses SSE's default message event.
+The JSON `data` object is keyed `{seq, session_id, event}`, with the core event
+kind nested under `event`. Browser clients therefore use `onmessage`, not a
+named-event listener:
+
+```text
 id: 1043
-data: {"session_id":"sesn_01JD8Z3K7","seq":1043,"type":"turn.started"}
+data: {"seq":1043,"session_id":"sesn_01JD8Z3K7","event":{"type":"turn_started"}}
 
-event: approval.requested
 id: 1044
-data: {"session_id":"sesn_01JD8Z3K7","seq":1044,"type":"approval.requested",
-       "request_id":"apr_7Q2","action":"command_execution","detail":{"command":"rm -rf build/"}}
+data: {"seq":1044,"session_id":"sesn_01JD8Z3K7","event":{"type":"approval_requested","request_id":"apr_7Q2","action":"command_execution"}}
 ```
 
-**Reconnect correctly:** open the stream first, then `GET /events` for history, then deduplicate by `seq`. The stream does not replay what it missed while closed; `starting_after` does.
+**Reconnect correctly:** persist an event cursor only after committing that
+event's effect, then reopen this route with that cursor. Sending both the query
+cursor and `Last-Event-ID` is safe; the header wins, and clients should still
+deduplicate by `seq` across an uncertain disconnect.
 
-Delta events (`output.delta`, `thinking.delta`) are **stream-only and never persisted**. They exist for liveness. Anything durable arrives as a semantic event.
+Only durable semantic events appear on this route. Ephemeral terminal and
+message deltas travel on their interface-specific live connections; they are
+never stored and cannot be replayed here.
 
-A runtime the service established as lost arrives in an unnamed SSE frame with the core kind nested under `event`, exactly as the implementation sends it:
+A handover first records a unit discriminator immediately before its `rotating`
+status, in the same durable write:
 
 ```text
 id: 1045
-data: {"seq":1045,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_lost","runtime_id":"runtime_01K35QJ0","cause":"out_of_memory"}}
+data: {"seq":1045,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_handover_started"}}
+
+id: 1046
+data: {"seq":1046,"session_id":"sesn_01JD8Z3K7","event":{"type":"status_changed","status":"rotating"}}
+```
+
+`runtime_handover_started` means the outgoing runtime's cumulative token counter
+continues through this attempt. The unit event permanently selects marker-based
+usage accounting for this session, so later status changes are lifecycle state
+rather than token-counter boundaries. A rollback to the outgoing runtime writes
+no incarnation marker and keeps that counter in the same segment.
+
+The next marker depends on the store protocol. A compatibility store has no
+fencing generation, so it atomically names each newly provisioned runtime and
+appends this unit event in the same record commit:
+
+```text
+id: 1047
+data: {"seq":1047,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_incarnation_started"}}
+```
+
+Every `runtime_incarnation_started` begins another compatibility runtime
+incarnation. A provider attempt that never gets a durable handle writes none;
+retrying the same atomic commit through its idempotency receipt cannot append a
+duplicate unit.
+
+A coordinated store instead commits a successful runtime-authority switch with
+its positive durable generation:
+
+```text
+id: 1047
+data: {"seq":1047,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_started","generation":3}}
+```
+
+`runtime_started` is committed atomically with the coordinated authority switch,
+so a candidate that fails before taking authority writes none and retrying a
+completed switch does not write another. A strictly newer generation begins
+another runtime incarnation; duplicate or older generations are ignored by
+folds. Before these markers existed, `rotating` is the only retained candidate
+boundary in the durable log, so markerless history is segmented there as a
+legacy approximation. It does not prove that authority changed at that exact
+event; databases from unreleased coordination formats whose boundary can be
+later are refused during startup rather than reported as exactly accounted.
+Once any marker discriminator has appeared, `status_changed` is lifecycle state
+only: a modern handover can enter `rotating` and roll back to the same runtime.
+
+A runtime the service established as lost has the same envelope:
+
+```text
+id: 1048
+data: {"seq":1048,"session_id":"sesn_01JD8Z3K7","event":{"type":"runtime_lost","runtime_id":"runtime_01K35QJ0","cause":"out_of_memory"}}
 ```
 
 `runtime_lost` carries `runtime_id`, the opaque identifier of the runtime that is gone, and `cause` where the service could establish one. The cause is `out_of_memory`, `ended`, `failed`, `displaced`, or `unrecognised`; when nothing supplied a reason, `cause` is omitted rather than invented.
@@ -392,7 +1129,7 @@ closes an episode.
 
 ---
 
-## 5. Approvals
+## 6. Approvals
 
 ```http
 POST /api/v1/sessions/{id}/approvals/{request_id}
@@ -401,13 +1138,13 @@ POST /api/v1/sessions/{id}/approvals/{request_id}
 
 `decision` is `allow`, `deny`, or `abort`. Refusing one action and abandoning the turn are different intentions: `deny` refuses this and the turn carries on without it, `abort` refuses it and stops the turn. A client that meant the second and sent the first watches the agent try something else instead of stopping.
 
-**Conversation sessions only.** On a terminal session this returns the typed capability error naming `conversation`: that kernel asks on its own screen and its answer is a keypress, so the operation to use is `POST /input` with the bytes the prompt is waiting for (§3). Inventing an approval route there would be a second way to say something the session cannot hear.
+**Conversation sessions only.** On a terminal session this returns the typed capability error naming `conversation`: that kernel asks on its own screen and its answer is a keypress, so the operation to use is `POST /input` with the bytes the prompt is waiting for (§4). Inventing an approval route there would be a second way to say something the session cannot hear.
 
 While an approval is pending the session is `idle` with `stop_reason: requires_action`, and the pending request ids are listed on the session object. That state survives a client disconnect and a control plane restart — a request waiting when you reconnect is still answerable. Answering one nothing is waiting for is refused rather than forwarded.
 
 ---
 
-## 6. Terminal
+## 7. Terminal
 
 ```http
 GET  /api/v1/sessions/{id}/screen          → current rendered screen
@@ -427,6 +1164,8 @@ REST exposes these for clients that need terminal state without holding a stream
 
 The browser WebSocket API cannot set a header on an upgrade, so a bearer-authenticated frontend exchanges its credential here — over a route that *can* carry one — for a single-use, ~30-second, session- and subject-bound ticket, and presents that as `?ticket=…` on the upgrade. Same-origin cookie clients need none of this and attach unchanged.
 
+The ticket's bearer value is returned only to the caller. Durable custody records its one-way digest, session and subject binding, captured authorization and attachment claim, and expiry so another replica can consume it exactly once. A custody outage returns the typed, retryable `503 store_failed` problem on issue or redemption; it is not collapsed into an invalid-ticket `401`.
+
 `{"takeover": true}` supersedes whoever currently holds the attachment; the superseded client is sent a close frame naming the reason. Without it, attaching over a live attachment is a typed conflict.
 
 A session with no terminal capability is refused here with `capability_unsupported`, not issued a ticket for something it cannot do. The full contract, including what makes a ticket in a URL acceptable and what is never recorded, is in [API_PTY.md §2.1](./API_PTY.md).
@@ -435,7 +1174,7 @@ A session with no terminal capability is refused here with `capability_unsupport
 
 ---
 
-## 7. Pricing and usage
+## 8. Pricing and usage
 
 ### Quote a new session
 
@@ -507,9 +1246,30 @@ GET /api/v1/sessions/{id}/usage
 
 Requires the `usage` capability. Not every kernel reports token counts, and one that does not returns the typed capability error rather than a plausible zero.
 
-`context_window` is the ceiling the runtime stated for `context_used`. The key is absent where the runtime states none and is never zero; no interface estimates one.
+`context_window` is the latest ceiling a runtime stated for `context_used`.
+Absence on a later report does not erase an earlier stated ceiling. The key is
+absent when no report has stated one and is never zero; no interface estimates
+one.
 
-`input_tokens` and `output_tokens` are the **highest** totals this session's runtimes have reported, not the latest and not their sum. A session carried onto a replacement runtime is counted afresh by that runtime: taking the latest would show usage falling, and adding them would count the history the new runtime resumed from twice. `context_used` is how full the context is *now*, so it does fall when the agent summarises the conversation to make room. Each such fall is recorded as a durable `context_compacted` event carrying the previous reading, the new reading and the stated ceiling where one is known.
+`input_tokens` and `output_tokens` are the sum, over runtime incarnations, of
+the highest cumulative totals each incarnation reported. A runtime's totals can
+dip in a corrected report, so the maximum within one incarnation prevents usage
+from falling; a replacement runtime restarts its counters, so its maximum is
+added after each compatibility `runtime_incarnation_started` marker or a
+strictly newer coordinated `runtime_started` marker. Markerless history is
+segmented on legacy `status_changed` events that enter `rotating`, as the best
+boundary retained by those logs rather than a claim of exact authority timing.
+The first `runtime_handover_started`, `runtime_incarnation_started`, or
+`runtime_started` event permanently enables exact marker accounting, after
+which status changes do not close a segment. Duplicate or older coordinated
+generations are ignored.
+
+`context_used` is the latest nonzero context reading across all incarnations,
+so it can fall when the agent summarises the conversation to make room. A zero
+in turn-only accounting means no context reading and leaves the last real value
+standing. Each observed fall within one runtime is recorded as a durable
+`context_compacted` event carrying the previous reading, the new reading and the
+stated ceiling where one is known.
 
 ### Live sandbox resources
 
@@ -632,14 +1392,15 @@ decimal strings, never binary floating-point numbers.
 
 ---
 
-## 8. Capability declaration
+## 9. Capability declaration
 
 ```http
 GET /api/v1/conformance
 ```
 
 ```json
-{ "conformsTo": [
+{
+  "conformsTo": [
   "https://spec.chrono-ai.fun/cma/1.0/conf/rest-core",
   "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
   "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
@@ -647,8 +1408,18 @@ GET /api/v1/conformance
   "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
   "https://spec.chrono-ai.fun/cma/1.0/conf/terminal",
   "https://spec.chrono-ai.fun/cma/1.0/conf/usage"
-] }
+  ],
+  "version": "v0.7.0",
+  "build_sha": "8d74d0e55c39d9170d35f92b7818a5eb923bd201"
+}
 ```
+
+`version` is the release version baked into the API image, or `development` for
+a local build that supplied no release version. `build_sha` is the full source
+commit baked into the API image, or `development` for a local build that
+supplied no commit. Clients use these fields to establish which additive `/v1`
+contract a deployment is running; neither field is an authorization or
+capability grant.
 
 Representations carry `Link: <…/conf/rest-core>; rel="profile"`, and the service advertises `Link: </openapi.json>; rel="service-desc"`.
 
@@ -667,40 +1438,62 @@ GET /api/v1/kernels
 
 Which runtimes this deployment can back a session with, and which planes each one can be asked to serve. A caller still does not choose a kernel on a session — an environment profile names it — so this is what a client offers while somebody is *authoring* a profile.
 
+Kernel discovery requires authentication because it reports deployment-specific facts. The static `GET /api/v1/conformance` document remains public.
+
 `modes` is derived from what the adapter advertises, through the same code that decides a session's granted set. A pairing listed here is one the deployment will accept, and a pairing absent from it is refused with `capability_unsupported` naming the plane. That is the point of publishing it: the refusal belongs where the choice is being made, not after a session has been asked for.
 
 A runtime that serves neither plane is listed with an empty `modes`. It is still a runtime this deployment knows about, and reporting it as absent would be a different claim.
 
-The machine-readable contract is `GET /openapi.json` (OpenAPI 3.1), generated from code so it cannot drift.
+The machine-readable contract is anonymous `GET /openapi.json` (OpenAPI 3.1).
+It is generated from the annotated handlers through the same registrations
+that build the router, so adding a documented operation also adds its route.
+The document includes the RFC 9457 problem schema used by every refusal.
 
 ---
 
-## 9. Errors
+## 10. Errors
 
-```json
+```http
+HTTP/1.1 409 Conflict
+Content-Type: application/problem+json
+X-Request-Id: 94ea38a2-c2cb-4a43-9fe2-d25a60b59ec5
+
 {
-  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/turn-in-progress",
-  "title": "A turn is already in progress",
+  "type": "https://spec.chrono-ai.fun/cma/1.0/problems/session-terminated",
+  "title": "session terminated",
   "status": 409,
-  "detail": "Session sesn_01JD8Z3K7 has an active turn and its concurrent_input policy is 'reject'.",
-  "instance": "/api/v1/sessions/sesn_01JD8Z3K7/input",
-  "request_id": "req_01JD8Z4M2"
+  "detail": "session terminated",
+  "code": "session_terminated"
 }
 ```
 
 | Status | When |
 |---|---|
-| `400` | Malformed request |
-| `401` | Missing or invalid NyxID credential |
+| `400` | Malformed JSON (`code: "malformed_json"`), invalid query parameters (`code: "invalid_query"`), or an invalid operation key (`code: "invalid_idempotency_key"`) |
+| `401` | Missing or invalid NyxID credential (`code: "not_authenticated"`) |
 | `403` | Authenticated, but the session belongs to another subject |
-| `404` | No such session, or not visible to this subject |
-| `409` | Conflicts with current state — turn in progress, session terminated, live-session limit reached, or the quoted rate card is no longer in force |
-| `422` | Well-formed but semantically invalid — zero terminal dimension, zero session-size figure, or a stated size outside this deployment's bounds |
-| `429` | Rate limited; observe `Retry-After` |
+| `404` | No matching REST path (`code: "not_found"`), or no such session/resource visible to this subject |
+| `405` | The REST path exists but does not accept this method (`code: "method_not_allowed"`) |
+| `409` | Conflicts with current state - session rotating, session terminated, live-session limit reached, quoted rate card changed, or an operation with this key is still running (`code: "idempotency_in_flight"`) |
+| `413` | The request body exceeds 2 MiB / 2,097,152 bytes (`code: "request_too_large"`) |
+| `415` | A JSON route was sent another media type (`code: "unsupported_media_type"`) |
+| `422` | Well-formed but semantically invalid — zero terminal dimension, invalid session size, or an operation key reused with another body (`code: "idempotency_key_reused"`) |
+| `429` | The caller exhausted a route-class budget (`code: "rate_limited"`); observe the positive integer `Retry-After` |
 | `501` | The operation exists in the core but this interface does not project it |
 | `503` | Control plane recovering or failing over; retry |
 
-`501` responses name the missing capability in `detail`, so a client learns what is unavailable rather than guessing.
+Every error response includes a non-empty `code` and uses
+`Content-Type: application/problem+json`. Clients tell failures apart by that
+code and by status, never by prose. `501` responses name the missing capability
+in `detail`, so a client learns what is unavailable rather than guessing.
+
+### Session rotation
+
+`session_rotating` is a retryable, self-resolving `409` response with problem
+type `session-rotating`. The server refuses every conversation and terminal
+input operation until the handover completes, preventing accepted input from
+reaching the outgoing runtime. It is distinct from `session_terminated`, which
+is final and cannot become usable through waiting.
 
 ### The three service refusals
 
@@ -830,12 +1623,12 @@ Creation is refused before an identifier is minted or a record is written.
 Revive is refused before the paused record changes, so its history remains
 readable and its state remains `idle`. The limit applies only where an owner is
 asking for another runtime; reconciliation and rotation never reach it. See
-the advisory allowance route in §2 for counting, non-retroactivity, and the
+the advisory allowance route in §3 for counting, non-retroactivity, and the
 cross-replica enforcement boundary.
 
 ---
 
-## 10. Administration
+## 11. Administration
 
 Everything an operator can see and do lives under `/api/v1/admin/`, one segment so the whole surface can be restricted in front of the service as well as inside it. Each endpoint is gated on its own capability, and no capability is implied by another.
 
@@ -856,7 +1649,15 @@ Nothing under `/api/v1/admin/` is reachable on an everyday grant, including the 
 
 **Naming people is not a second gate.** `GET /api/v1/admin/sessions` needs only `cma:admin:sessions`. A caller who also holds `cma:admin:users` gets `owner_label` on each row; one who does not gets the rows with `owner` alone. A view is never refused because a *second* capability is missing, or an empty list would stop meaning "there is nothing".
 
-**No read is unbounded.** `GET /api/v1/admin/users` and `GET /api/v1/admin/activity` both take `limit`, both clamp it, and both default to 100.
+`GET /api/v1/admin/sessions` accepts the same exact `status`, clamped `limit`,
+and opaque `cursor` parameters as the caller-owned session list. It defaults to
+50 rows, never returns more than 200, remains a JSON array, and emits a next
+`Link` only when another page exists. Unknown parameters are refused with
+`400 invalid_query`.
+
+**No read is unbounded.** The admin session collection uses cursor pages as
+described above. `GET /api/v1/admin/users` and `GET /api/v1/admin/activity`
+both take `limit`, both clamp it, and both default to 100.
 
 **Refusals.** A caller without an operator capability gets `403` with `problem.type` ending `/not-an-operator` on the collections — they name no identifier, so there is nothing to protect by pretending it is missing. The two control endpoints keep the session surface's `404`, because they do address an identifier and a refusal must not confirm one exists. That `404` is byte-for-byte the one a session that does not exist produces: same status, same `type`, same `title`, same `detail`, same `code`. A body that differed would answer the question the status withholds.
 
@@ -1263,7 +2064,7 @@ Both are recorded in the activity log with the operator as `actor` and the sessi
 
 ---
 
-## 11. What the caller may do
+## 12. What the caller may do
 
 A browser client asks who it is at `GET /auth/session`, and the answer says what that identity may do:
 

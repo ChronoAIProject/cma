@@ -5,11 +5,12 @@ use std::sync::Arc;
 use axum::{extract::State, Json};
 use layer2_core::{SessionAllowance, SessionService};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::auth::AuthenticatedCaller;
 use crate::rest::Problem;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(super) struct AllowanceView {
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<u32>,
@@ -27,6 +28,12 @@ impl From<SessionAllowance> for AllowanceView {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions/allowance",
+    tag = "sessions",
+    responses((status = 200, description = "Caller's live-session allowance", body = AllowanceView))
+)]
 pub(super) async fn read(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
