@@ -481,6 +481,7 @@ export async function errorFromResponse(
   }
   const code = nonEmptyText(body.code);
   const detail = nonEmptyText(body.detail) ?? nonEmptyText(body.title);
+  const retryAfterMs = retryAfterMilliseconds(response);
   if (detail === undefined) {
     return new ProtocolError(`HTTP ${String(response.status)} problem document carried no detail`);
   }
@@ -489,7 +490,7 @@ export async function errorFromResponse(
     const capability = nonEmptyText(body.capability);
     return capability === undefined
       ? new ProtocolError('capability_unsupported problem omitted its typed capability field')
-      : new CapabilityRefused(response.status, detail, capability, requestId);
+      : new CapabilityRefused(response.status, detail, capability, requestId, retryAfterMs);
   }
   if (code === 'session_limit_reached') {
     return new SessionLimitReached(
@@ -498,6 +499,7 @@ export async function errorFromResponse(
       nonNegativeInteger(body.limit),
       nonNegativeInteger(body.live),
       requestId,
+      retryAfterMs,
     );
   }
   if (code === 'deployment_at_capacity') {
@@ -509,9 +511,32 @@ export async function errorFromResponse(
       nonNegativeInteger(body.free_cpu_millis),
       nonNegativeInteger(body.free_memory_mib),
       requestId,
+      retryAfterMs,
     );
   }
-  return new ApiError(response.status, detail, code, requestId);
+  return new ApiError(response.status, detail, code, requestId, retryAfterMs);
+}
+
+const MAX_RETRY_AFTER_MS = 2_147_483_647;
+
+/** Parse only a positive RFC Retry-After value that a JavaScript timer can represent. */
+function retryAfterMilliseconds(response: Response): number | undefined {
+  const value = response.headers.get('retry-after')?.trim();
+  if (value === undefined || value === '') return undefined;
+  if (/^[0-9]+$/.test(value)) {
+    const seconds = Number(value);
+    const milliseconds = seconds * 1_000;
+    return Number.isSafeInteger(milliseconds) &&
+      milliseconds > 0 &&
+      milliseconds <= MAX_RETRY_AFTER_MS
+      ? milliseconds
+      : undefined;
+  }
+  const deadline = Date.parse(value);
+  const milliseconds = Math.ceil(deadline - Date.now());
+  return Number.isFinite(milliseconds) && milliseconds > 0 && milliseconds <= MAX_RETRY_AFTER_MS
+    ? milliseconds
+    : undefined;
 }
 
 async function readText(response: Response, signal?: AbortSignal): Promise<string> {

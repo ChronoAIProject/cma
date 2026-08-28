@@ -349,6 +349,15 @@ export class Cma {
     );
   }
 
+  /** Queue an immediate read-only provider status observation for an open pull request. */
+  refreshPullRequestStatus(
+    id: string,
+    expectedRevision: number,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.refreshPullRequestStatus(this.#config, id, expectedRevision, options);
+  }
+
   /** Cancel one Launch while retaining its durable history. */
   cancelLaunch(
     id: string,
@@ -357,6 +366,15 @@ export class Cma {
     options: triggers.TriggerCommandOptions,
   ): Promise<triggers.Launch> {
     return triggers.cancelLaunch(this.#config, id, expectedRevision, snapshotDigest, options);
+  }
+
+  completeLaunch(
+    id: string,
+    expectedRevision: number,
+    snapshotDigest: string,
+    options: triggers.TriggerCommandOptions,
+  ): Promise<triggers.Launch> {
+    return triggers.completeLaunch(this.#config, id, expectedRevision, snapshotDigest, options);
   }
 
   /** Replay durable Launch progress after one accepted cursor. */

@@ -17,8 +17,26 @@ const REQUIRED_CAPABILITIES = [
 const TRIGGER_KERNELS = ['codex'] as const;
 const PERMISSION_CEILINGS = ['guarded', 'autonomous'] as const;
 const BILLING_MODES = ['contributor', 'zero_cost', 'sponsored'] as const;
+const TRIGGER_PREVIEW_COST_KINDS = [
+  'exact_zero',
+  'contributor_estimate',
+  'quote_unavailable',
+] as const;
 const PUBLISHER_ROLES = ['owner', 'admin', 'maintain'] as const;
 const CONNECTION_STATES = ['active', 'inactive', 'disconnected', 'revoked', 'expired'] as const;
+const SOURCE_MODES = ['pinned_commit', 'branch_head_at_launch'] as const;
+const SCOPE_CLASSES = ['public_repository', 'workflow'] as const;
+const REPOSITORY_OPERATION_CLASSES = [
+  'repository_read',
+  'tree_read',
+  'object_create',
+  'launch_ref_create',
+  'launch_ref_update',
+  'status_read',
+] as const;
+const CREDENTIAL_ROUTES = ['contributor_connection', 'sponsored_grant'] as const;
+const WORKFLOW_CHANGE_POLICIES = ['refuse', 'require_scope_and_confirmation'] as const;
+const EDITABLE_FIELDS = ['task_input', 'work_label', 'resource_size', 'timeout'] as const;
 const LAUNCH_STATES = [
   'draft',
   'auth_required',
@@ -185,6 +203,7 @@ const CONFIRMATION_ACTIONS = [
   'recover_prompt',
   'new_launch',
   'cancel',
+  'complete',
 ] as const;
 
 export type JsonPrimitive = string | number | boolean | null;
@@ -208,6 +227,25 @@ export interface SessionSize {
   readonly memory_mib: number;
 }
 
+/** Public cost of the immutable Trigger defaults, before authenticated review. */
+export type TriggerPreviewCost =
+  | {
+      readonly kind: 'exact_zero';
+      readonly currency: 'USD';
+      readonly amount_micros: 0;
+      readonly display: string;
+    }
+  | {
+      readonly kind: 'contributor_estimate';
+      readonly currency: 'USD';
+      readonly amount_micros: number;
+      readonly display: string;
+      readonly quoted_at: string;
+    }
+  | {
+      readonly kind: 'quote_unavailable';
+    };
+
 export interface TriggerPreview {
   readonly public_id: string;
   readonly availability: 'published' | 'retired';
@@ -226,6 +264,7 @@ export interface TriggerPreview {
   readonly timeout_ceiling_seconds: number;
   readonly billing_mode: 'contributor' | 'zero_cost' | 'sponsored';
   readonly pricing_policy_reference: string;
+  readonly estimated_cost: TriggerPreviewCost;
   readonly revision_digest: string;
 }
 
@@ -359,7 +398,7 @@ export interface TriggerCommercialPolicy {
   readonly policy_reference: string;
 }
 
-export type TriggerEditableField = 'task_input' | 'branch_suffix' | 'resource_size' | 'timeout';
+export type TriggerEditableField = 'task_input' | 'work_label' | 'resource_size' | 'timeout';
 
 export interface TriggerOverridePolicy {
   readonly editable_fields: readonly TriggerEditableField[];
@@ -607,7 +646,7 @@ export interface LaunchReachStatus {
 
 export interface LaunchOverrides {
   readonly task_inputs: Readonly<Record<string, JsonValue>>;
-  readonly branch_suffix?: string;
+  readonly work_label?: string;
   readonly resource_size?: SessionSize;
   readonly timeout_seconds?: number;
   readonly optional_checks: readonly [];
@@ -615,7 +654,7 @@ export interface LaunchOverrides {
 
 export interface EffectiveConfiguration {
   readonly rendered_prompt: string;
-  readonly branch_suffix: string;
+  readonly work_label: string;
   readonly permission: TriggerPermissionCeiling;
   readonly resource_size: SessionSize;
   readonly timeout_seconds: number;
@@ -824,6 +863,12 @@ export interface PullRequestRecord {
   readonly updated_at: string;
   readonly provider_created_at: string | null;
   readonly provider_updated_at: string | null;
+  /** Safe failure from the latest read-only provider status observation. */
+  readonly status_failure: LaunchFailure | null;
+  /** Provider correlation identifier for the latest status observation. */
+  readonly provider_request_id: string | null;
+  /** Whether the observed provider head still equals CMA's retained Launch head. */
+  readonly head_matches_launch: boolean | null;
 }
 
 export interface PullRequestDraft extends Omit<
@@ -845,6 +890,9 @@ export interface PullRequestDraft extends Omit<
   | 'updated_at'
   | 'provider_created_at'
   | 'provider_updated_at'
+  | 'status_failure'
+  | 'provider_request_id'
+  | 'head_matches_launch'
 > {
   readonly launch_id: string;
   readonly target_provider_id: number | null;
@@ -912,6 +960,14 @@ export type LaunchEventKind =
   | { readonly type: 'recovery_authorized'; readonly effect: LaunchEffectKind }
   | { readonly type: 'delivery_changed'; readonly state: PromptDeliveryState }
   | { readonly type: 'reach_changed'; readonly reach: LaunchReachStatus }
+  | {
+      readonly type: 'pull_request_status_changed';
+      readonly state: PullRequestState;
+      readonly mergeability: Mergeability;
+      readonly checks: PullRequestCheckSummaryState;
+      readonly failure: LaunchFailure | null;
+    }
+  | { readonly type: 'pull_request_status_refresh_requested' }
   | { readonly type: 'confirmation_recorded'; readonly action: LaunchConfirmationAction }
   | { readonly type: 'cleanup_planned'; readonly target_count: number }
   | { readonly type: 'cleanup_completed'; readonly target_count: number }
@@ -941,7 +997,8 @@ export type LaunchConfirmationAction =
   | 'update_pull_request'
   | 'recover_prompt'
   | 'new_launch'
-  | 'cancel';
+  | 'cancel'
+  | 'complete';
 
 export interface LaunchEvent {
   readonly sequence: number;
@@ -972,6 +1029,7 @@ export interface DiffReview {
 export interface LaunchListRequest {
   readonly state?: LaunchState;
   readonly trigger_public_id?: string;
+  readonly session_id?: string;
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -1128,7 +1186,7 @@ export async function listTriggerConnections(
   config: ResolvedConfig,
   options: OperationOptions = {},
 ): Promise<readonly TriggerConnection[]> {
-  const body = objectOf(
+  const body = safeObject(
     await request(config, '/api/v1/trigger-connections', { ...options, expectedStatus: 200 }),
     'Trigger connections',
   );
@@ -1269,7 +1327,11 @@ export async function listLaunches(
   const params = new URLSearchParams();
   if (page.state !== undefined) params.set('state', page.state);
   if (page.trigger_public_id !== undefined) params.set('trigger_public_id', page.trigger_public_id);
-  params.set('limit', String(page.limit ?? 50));
+  if (page.session_id !== undefined) {
+    identifier(page.session_id, 'session id');
+    params.set('session_id', page.session_id);
+  }
+  params.set('limit', String(pageLimit(page.limit ?? 50, 'Launch')));
   if (page.cursor !== undefined) params.set('cursor', page.cursor);
   return decodeCursorPage(
     await request(config, `/api/v1/launches?${params.toString()}`, {
@@ -1278,6 +1340,7 @@ export async function listLaunches(
     }),
     decodeLaunch,
     'Launches',
+    [['items', '*', 'pull_request', 'provider_request_id']],
   );
 }
 
@@ -1462,6 +1525,25 @@ export async function confirmPullRequest(
   );
 }
 
+/** Queue an immediate read-only provider status observation for an open pull request. */
+export async function refreshPullRequestStatus(
+  config: ResolvedConfig,
+  launchId: string,
+  expectedRevision: number,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return decodeLaunch(
+    await command(
+      config,
+      `${launchPath(launchId)}/pull-request/refresh`,
+      'POST',
+      { expected_revision: expectedRevision },
+      202,
+      options,
+    ),
+  );
+}
+
 export async function cancelLaunch(
   config: ResolvedConfig,
   launchId: string,
@@ -1473,6 +1555,26 @@ export async function cancelLaunch(
     await command(
       config,
       `${launchPath(launchId)}/cancel`,
+      'POST',
+      { expected_revision: expectedRevision, snapshot_digest: snapshotDigest },
+      200,
+      options,
+    ),
+  );
+}
+
+/** Finish CMA orchestration after handing an open pull request to its maintainers. */
+export async function completeLaunch(
+  config: ResolvedConfig,
+  launchId: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return decodeLaunch(
+    await command(
+      config,
+      `${launchPath(launchId)}/complete`,
       'POST',
       { expected_revision: expectedRevision, snapshot_digest: snapshotDigest },
       200,
@@ -1544,15 +1646,51 @@ async function command(
 function decodeTriggerPreview(raw: unknown): TriggerPreview {
   const body = safeObject(raw, 'Trigger preview');
   requireText(body, 'public_id', 'Trigger preview');
-  requireText(body, 'revision_digest', 'Trigger preview');
-  requireText(body, 'public_summary', 'Trigger preview');
-  requireInteger(body, 'repository_id', 'Trigger preview');
   requireEnum(body, 'availability', TRIGGER_AVAILABILITIES, 'Trigger preview');
+  requireText(body, 'publisher_display_identity', 'Trigger preview');
+  requireInteger(body, 'repository_id', 'Trigger preview');
+  requireText(body, 'repository_owner', 'Trigger preview');
+  requireText(body, 'repository_name', 'Trigger preview');
   requireEnum(body, 'visibility', REPOSITORY_VISIBILITIES, 'Trigger preview');
+  requireBoolean(body, 'allow_forking', 'Trigger preview');
+  requireText(body, 'public_summary', 'Trigger preview');
   requireEnum(body, 'permission_ceiling', PERMISSION_CEILINGS, 'Trigger preview');
-  requireEnum(body, 'billing_mode', BILLING_MODES, 'Trigger preview');
   requireEnumArray(body, 'required_capabilities', REQUIRED_CAPABILITIES, 'Trigger preview');
+  decodeSessionSize(body.resource_default, 'Trigger preview resource_default');
+  decodeSessionSize(body.resource_ceiling, 'Trigger preview resource_ceiling');
+  requireInteger(body, 'timeout_default_seconds', 'Trigger preview');
+  requireInteger(body, 'timeout_ceiling_seconds', 'Trigger preview');
+  requireEnum(body, 'billing_mode', BILLING_MODES, 'Trigger preview');
+  requireText(body, 'pricing_policy_reference', 'Trigger preview');
+  decodeTriggerPreviewCost(body.estimated_cost);
+  requireText(body, 'revision_digest', 'Trigger preview');
   return body as unknown as TriggerPreview;
+}
+
+function decodeTriggerPreviewCost(raw: unknown): TriggerPreviewCost {
+  const cost = safeObject(raw, 'Trigger preview estimated cost');
+  const kind = requireEnum(
+    cost,
+    'kind',
+    TRIGGER_PREVIEW_COST_KINDS,
+    'Trigger preview estimated cost',
+  );
+  if (kind === 'quote_unavailable') return cost as unknown as TriggerPreviewCost;
+
+  const currency = requireText(cost, 'currency', 'Trigger preview estimated cost');
+  if (currency !== 'USD') {
+    throw new ProtocolError('Trigger preview estimated cost carried an invalid currency');
+  }
+  const amount = requireInteger(cost, 'amount_micros', 'Trigger preview estimated cost');
+  requireText(cost, 'display', 'Trigger preview estimated cost');
+  if (kind === 'exact_zero') {
+    if (amount !== 0) {
+      throw new ProtocolError('Trigger preview exact-zero cost carried a non-zero amount');
+    }
+    return cost as unknown as TriggerPreviewCost;
+  }
+  requireText(cost, 'quoted_at', 'Trigger preview estimated cost');
+  return cost as unknown as TriggerPreviewCost;
 }
 
 function decodeTriggerDraft(raw: unknown): TriggerDraft {
@@ -1560,7 +1698,10 @@ function decodeTriggerDraft(raw: unknown): TriggerDraft {
   requireText(body, 'id', 'Trigger draft');
   requireText(body, 'selected_service_id', 'Trigger draft');
   requireInteger(body, 'version', 'Trigger draft');
-  safeObject(body.content, 'Trigger draft content');
+  requireInteger(body, 'next_revision_number', 'Trigger draft');
+  decodeTriggerRevisionContent(body.content, 'Trigger draft content');
+  requireText(body, 'created_at', 'Trigger draft');
+  requireText(body, 'updated_at', 'Trigger draft');
   return body as unknown as TriggerDraft;
 }
 
@@ -1570,11 +1711,16 @@ function decodeTriggerRevision(raw: unknown): TriggerRevision {
   requireText(body, 'public_id', 'Trigger revision');
   requireText(body, 'digest', 'Trigger revision');
   requireEnum(body, 'availability', TRIGGER_AVAILABILITIES, 'Trigger revision');
-  safeObject(body.content, 'Trigger revision content');
-  if (body.authority !== undefined) {
-    const authority = safeObject(body.authority, 'Trigger publisher authority');
-    requireEnum(authority, 'role', PUBLISHER_ROLES, 'Trigger publisher authority');
-  }
+  decodeTriggerRevisionContent(body.content, 'Trigger revision content');
+  const authority = safeObject(body.authority, 'Trigger publisher authority');
+  requireText(authority, 'service_id', 'Trigger publisher authority');
+  requireInteger(authority, 'service_state_version', 'Trigger publisher authority');
+  requireInteger(authority, 'account_id', 'Trigger publisher authority');
+  requireText(authority, 'account_login', 'Trigger publisher authority');
+  requireEnum(authority, 'role', PUBLISHER_ROLES, 'Trigger publisher authority');
+  requireText(authority, 'verified_at', 'Trigger publisher authority');
+  requireText(body, 'published_at', 'Trigger revision');
+  requireNullableText(body, 'retired_at', 'Trigger revision');
   return body as unknown as TriggerRevision;
 }
 
@@ -1583,6 +1729,12 @@ function decodeConnection(raw: unknown): TriggerConnection {
   requireText(body, 'service_id', 'Trigger connection');
   requireInteger(body, 'state_version', 'Trigger connection');
   requireEnum(body, 'state', CONNECTION_STATES, 'Trigger connection');
+  requireNullableInteger(body, 'account_id', 'Trigger connection');
+  requireNullableText(body, 'account_node_id', 'Trigger connection');
+  requireNullableText(body, 'account_login', 'Trigger connection');
+  requireNullableText(body, 'avatar_url', 'Trigger connection');
+  requireTextArray(body, 'granted_scopes', 'Trigger connection');
+  requireNullableText(body, 'consent_observed_at', 'Trigger connection');
   return body as unknown as TriggerConnection;
 }
 
@@ -1605,13 +1757,18 @@ function decodeRepositorySelection(raw: unknown): TriggerRepositorySelection {
   requireText(repository, 'canonical_owner', 'Trigger repository identity');
   requireText(repository, 'canonical_name', 'Trigger repository identity');
   requireEnum(repository, 'visibility', REPOSITORY_VISIBILITIES, 'Trigger repository identity');
+  requireBoolean(repository, 'allow_forking', 'Trigger repository identity');
   requireText(repository, 'default_branch', 'Trigger repository identity');
   requireText(repository, 'selected_ref', 'Trigger repository identity');
+  for (const optional of ['fork_parent_id', 'fork_source_id']) {
+    if (repository[optional] !== undefined)
+      requireInteger(repository, optional, 'Trigger repository identity');
+  }
   return body as unknown as TriggerRepositorySelection;
 }
 
 export function decodeLaunch(raw: unknown): Launch {
-  const body = safeObject(raw, 'Launch');
+  const body = safeObject(raw, 'Launch', [['pull_request', 'provider_request_id']]);
   requireText(body, 'id', 'Launch');
   requireText(body, 'trigger_public_id', 'Launch');
   requireText(body, 'revision_digest', 'Launch');
@@ -1620,7 +1777,7 @@ export function decodeLaunch(raw: unknown): Launch {
   requireText(body, 'draft_expires_at', 'Launch');
   if (!Array.isArray(body.steps)) throw new ProtocolError('Launch steps was not an array');
   for (const step of body.steps) decodeLaunchStep(step);
-  decodeTriggerRevisionContentEnums(body.revision_content);
+  decodeTriggerRevisionContent(body.revision_content, 'Launch revision content');
   const effective = safeObject(body.effective, 'Launch effective configuration');
   requireEnum(effective, 'permission', PERMISSION_CEILINGS, 'Launch effective configuration');
   if (body.blocked_reason !== undefined && body.blocked_reason !== null) {
@@ -1679,33 +1836,156 @@ export function decodeLaunch(raw: unknown): Launch {
   return body as unknown as Launch;
 }
 
-function decodeTriggerRevisionContentEnums(raw: unknown): void {
-  const content = safeObject(raw, 'Launch revision content');
-  if (content.upstream !== undefined) {
-    const upstream = safeObject(content.upstream, 'Launch upstream revision');
-    requireEnum(
-      upstream,
-      'source_mode',
-      ['pinned_commit', 'branch_head_at_launch'] as const,
-      'Launch upstream revision',
-    );
-    const repository = safeObject(upstream.repository, 'Launch upstream repository');
-    requireEnum(repository, 'visibility', REPOSITORY_VISIBILITIES, 'Launch upstream repository');
+function decodeTriggerRevisionContent(raw: unknown, label: string): TriggerRevisionContent {
+  const content = safeObject(raw, label);
+  requireInteger(content, 'schema_version', label);
+  requireText(content, 'trigger_id', label);
+  requireInteger(content, 'revision_number', label);
+  requireText(content, 'publisher_subject_id', label);
+  requireText(content, 'publisher_display_identity', label);
+
+  const upstream = safeObject(content.upstream, `${label} upstream`);
+  decodeRepositoryIdentity(upstream.repository, `${label} upstream repository`);
+  requireEnum(upstream, 'source_mode', SOURCE_MODES, `${label} upstream`);
+  if (upstream.observed_source_sha !== undefined) {
+    requireText(upstream, 'observed_source_sha', `${label} upstream`);
   }
-  if (content.session !== undefined) {
-    const session = safeObject(content.session, 'Launch session policy');
-    requireEnum(session, 'permission_ceiling', PERMISSION_CEILINGS, 'Launch session policy');
-    requireEnumArray(
-      session,
-      'required_capabilities',
-      REQUIRED_CAPABILITIES,
-      'Launch session policy',
-    );
+  requireText(upstream, 'contribution_base_ref', `${label} upstream`);
+  decodeTriggerTask(content.task, `${label} task`);
+  decodeTriggerSessionPolicy(content.session, `${label} session`);
+  decodeRepositoryAccessPolicy(content.repository_access, `${label} repository access`);
+  decodeSetupPolicy(content.setup, `${label} setup`);
+  decodeContributionPolicy(content.contribution, `${label} contribution`);
+  decodeCommercialPolicy(content.commercial_policy, `${label} commercial policy`);
+  decodeOverridePolicy(content.override_policy, `${label} override policy`);
+  const projection = safeObject(content.public_projection, `${label} public projection`);
+  requireInteger(projection, 'version', `${label} public projection`);
+  return content as unknown as TriggerRevisionContent;
+}
+
+function decodeRepositoryIdentity(raw: unknown, label: string): RepositoryIdentity {
+  const repository = safeObject(raw, label);
+  requireInteger(repository, 'repository_id', label);
+  requireText(repository, 'repository_node_id', label);
+  requireInteger(repository, 'owner_id', label);
+  requireText(repository, 'owner_node_id', label);
+  requireText(repository, 'canonical_owner', label);
+  requireText(repository, 'canonical_name', label);
+  requireEnum(repository, 'visibility', REPOSITORY_VISIBILITIES, label);
+  requireBoolean(repository, 'allow_forking', label);
+  requireText(repository, 'default_branch', label);
+  requireText(repository, 'selected_ref', label);
+  for (const optional of ['fork_parent_id', 'fork_source_id']) {
+    if (repository[optional] !== undefined) requireInteger(repository, optional, label);
   }
-  if (content.commercial_policy !== undefined) {
-    const commercial = safeObject(content.commercial_policy, 'Launch commercial policy');
-    requireEnum(commercial, 'billing_mode', BILLING_MODES, 'Launch commercial policy');
+  return repository as unknown as RepositoryIdentity;
+}
+
+function decodeSessionSize(raw: unknown, label: string): SessionSize {
+  const size = safeObject(raw, label);
+  requireInteger(size, 'cpu_millis', label);
+  requireInteger(size, 'memory_mib', label);
+  return size as unknown as SessionSize;
+}
+
+function decodeTriggerTask(raw: unknown, label: string): TriggerTask {
+  const task = safeObject(raw, label);
+  requireText(task, 'public_summary', label);
+  requireText(task, 'prompt_template', label);
+  requireInteger(task, 'renderer_version', label);
+  const fields = requireArray(task, 'input_fields', label);
+  for (const rawField of fields) {
+    const field = safeObject(rawField, `${label} input field`);
+    requireText(field, 'key', `${label} input field`);
+    decodeTriggerInputKind(field.kind, `${label} input kind`);
+    requireBoolean(field, 'required', `${label} input field`);
+    requireBoolean(field, 'editable', `${label} input field`);
   }
+  return task as unknown as TriggerTask;
+}
+
+function decodeTriggerInputKind(raw: unknown, label: string): TriggerInputFieldKind {
+  if (raw === 'boolean') return raw;
+  const kind = safeObject(raw, label);
+  const variants = ['text', 'integer', 'choice'].filter((variant) => variant in kind);
+  if (variants.length !== 1 || Object.keys(kind).length !== 1) {
+    throw new ProtocolError(`${label} was invalid`);
+  }
+  switch (variants[0]) {
+    case 'text': {
+      const bounds = safeObject(kind.text, `${label} text bounds`);
+      requireInteger(bounds, 'min_bytes', `${label} text bounds`);
+      requireInteger(bounds, 'max_bytes', `${label} text bounds`);
+      break;
+    }
+    case 'integer': {
+      const bounds = safeObject(kind.integer, `${label} integer bounds`);
+      requireSafeInteger(bounds, 'minimum', `${label} integer bounds`);
+      requireSafeInteger(bounds, 'maximum', `${label} integer bounds`);
+      break;
+    }
+    case 'choice': {
+      const choice = safeObject(kind.choice, `${label} choice values`);
+      requireTextArray(choice, 'values', `${label} choice values`);
+      break;
+    }
+  }
+  return kind as unknown as TriggerInputFieldKind;
+}
+
+function decodeTriggerSessionPolicy(raw: unknown, label: string): TriggerSessionPolicy {
+  const session = safeObject(raw, label);
+  requireEnumArray(session, 'required_capabilities', REQUIRED_CAPABILITIES, label);
+  requireEnum(session, 'permission_ceiling', PERMISSION_CEILINGS, label);
+  requireText(session, 'sandbox_profile', label);
+  const resources = safeObject(session.resources, `${label} resources`);
+  decodeSessionSize(resources.default, `${label} default resources`);
+  decodeSessionSize(resources.ceiling, `${label} resource ceiling`);
+  requireInteger(session, 'timeout_default_seconds', label);
+  requireInteger(session, 'timeout_ceiling_seconds', label);
+  return session as unknown as TriggerSessionPolicy;
+}
+
+function decodeRepositoryAccessPolicy(raw: unknown, label: string): TriggerRepositoryAccessPolicy {
+  const policy = safeObject(raw, label);
+  requireEnum(policy, 'credential_route', CREDENTIAL_ROUTES, label);
+  requireEnumArray(policy, 'required_scope_classes', SCOPE_CLASSES, label);
+  requireEnumArray(policy, 'allowed_operation_classes', REPOSITORY_OPERATION_CLASSES, label);
+  requireEnum(policy, 'workflow_change_policy', WORKFLOW_CHANGE_POLICIES, label);
+  return policy as unknown as TriggerRepositoryAccessPolicy;
+}
+
+function decodeSetupPolicy(raw: unknown, label: string): TriggerSetupPolicy {
+  const setup = safeObject(raw, label);
+  requireEnum(setup, 'executor_policy', ['disabled'] as const, label);
+  requireTextArray(setup, 'steps', label);
+  return setup as unknown as TriggerSetupPolicy;
+}
+
+function decodeContributionPolicy(raw: unknown, label: string): TriggerContributionPolicy {
+  const contribution = safeObject(raw, label);
+  requireText(contribution, 'branch_prefix', label);
+  requireEnum(contribution, 'commit_attribution', ['contributor_no_reply'] as const, label);
+  const pullRequest = safeObject(contribution.pull_request, `${label} pull request`);
+  requireText(pullRequest, 'title_template', `${label} pull request`);
+  requireText(pullRequest, 'body_template', `${label} pull request`);
+  return contribution as unknown as TriggerContributionPolicy;
+}
+
+function decodeCommercialPolicy(raw: unknown, label: string): TriggerCommercialPolicy {
+  const policy = safeObject(raw, label);
+  requireEnum(policy, 'billing_mode', BILLING_MODES, label);
+  requireText(policy, 'policy_reference', label);
+  return policy as unknown as TriggerCommercialPolicy;
+}
+
+function decodeOverridePolicy(raw: unknown, label: string): TriggerOverridePolicy {
+  const policy = safeObject(raw, label);
+  requireEnumArray(policy, 'editable_fields', EDITABLE_FIELDS, label);
+  const optionalChecks = requireArray(policy, 'optional_checks', label);
+  if (optionalChecks.length !== 0)
+    throw new ProtocolError(`${label} optional_checks was not empty`);
+  return policy as unknown as TriggerOverridePolicy;
 }
 
 function decodeLaunchStep(raw: unknown): LaunchStep {
@@ -1783,16 +2063,31 @@ function decodeContributionRecord(raw: unknown): ContributionRecord {
 }
 
 function decodePullRequestRecord(raw: unknown): PullRequestRecord {
-  const pullRequest = safeObject(raw, 'Launch pull request');
+  const pullRequest = safeObject(raw, 'Launch pull request', [['provider_request_id']]);
   requireEnum(pullRequest, 'operation', PULL_REQUEST_OPERATIONS, 'Launch pull request');
   requireEnum(pullRequest, 'state', PULL_REQUEST_STATES, 'Launch pull request');
   requireEnum(pullRequest, 'mergeability', MERGEABILITIES, 'Launch pull request');
   requireEnum(pullRequest, 'checks', CHECK_SUMMARY_STATES, 'Launch pull request');
+  for (const nullable of ['status_failure', 'provider_request_id', 'head_matches_launch']) {
+    if (!(nullable in pullRequest)) {
+      throw new ProtocolError(`Launch pull request omitted ${nullable}`);
+    }
+  }
+  if (pullRequest.status_failure !== null) decodeLaunchFailure(pullRequest.status_failure);
+  if (pullRequest.provider_request_id !== null) {
+    requireText(pullRequest, 'provider_request_id', 'Launch pull request');
+  }
+  if (
+    pullRequest.head_matches_launch !== null &&
+    typeof pullRequest.head_matches_launch !== 'boolean'
+  ) {
+    throw new ProtocolError('Launch pull request carried an invalid head_matches_launch');
+  }
   return pullRequest as unknown as PullRequestRecord;
 }
 
 function decodeDiffReview(raw: unknown): DiffReview {
-  const body = safeObject(raw, 'Launch diff review');
+  const body = safeObject(raw, 'Launch diff review', [['pull_request', 'provider_request_id']]);
   requireText(body, 'launch_id', 'Launch diff review');
   requireInteger(body, 'revision_number', 'Launch diff review');
   requireEnum(body, 'state', LAUNCH_STATES, 'Launch diff review');
@@ -1929,6 +2224,15 @@ function decodeLaunchEventKind(raw: unknown): LaunchEventKind {
     case 'reach_changed':
       decodeLaunchReach(kind.reach);
       break;
+    case 'pull_request_status_changed':
+      requireEnum(kind, 'state', PULL_REQUEST_STATES, 'Launch pull-request status event');
+      requireEnum(kind, 'mergeability', MERGEABILITIES, 'Launch pull-request status event');
+      requireEnum(kind, 'checks', CHECK_SUMMARY_STATES, 'Launch pull-request status event');
+      if (!('failure' in kind)) {
+        throw new ProtocolError('Launch pull-request status event omitted failure');
+      }
+      if (kind.failure !== null) decodeLaunchFailure(kind.failure);
+      break;
     case 'confirmation_recorded':
       requireEnum(kind, 'action', CONFIRMATION_ACTIONS, 'Launch confirmation event');
       break;
@@ -1939,6 +2243,7 @@ function decodeLaunchEventKind(raw: unknown): LaunchEventKind {
     case 'draft_updated':
     case 'connection_selected':
     case 'started':
+    case 'pull_request_status_refresh_requested':
     case 'cancelled':
       break;
     default:
@@ -1951,15 +2256,20 @@ function decodeCursorPage<T>(
   raw: unknown,
   decode: (value: unknown) => T,
   name: string,
+  allowedForbiddenPaths: readonly (readonly string[])[] = [],
 ): CursorPage<T> {
-  const body = safeObject(raw, name);
+  const body = safeObject(raw, name, allowedForbiddenPaths);
   if (!Array.isArray(body.items)) throw new ProtocolError(`${name} items was not an array`);
   if (body.next_cursor !== null && typeof body.next_cursor !== 'string')
     throw new ProtocolError(`${name} next_cursor was invalid`);
   return { items: body.items.map(decode), next_cursor: body.next_cursor };
 }
 
-function safeObject(raw: unknown, name: string): Record<string, unknown> {
+function safeObject(
+  raw: unknown,
+  name: string,
+  allowedForbiddenPaths: readonly (readonly string[])[] = [],
+): Record<string, unknown> {
   const object = objectOf(raw, name);
   assertJsonValue(object, name, new Set());
   for (const forbidden of [
@@ -1983,7 +2293,9 @@ function safeObject(raw: unknown, name: string): Record<string, unknown> {
     'prompt_origin_key',
     'prompt_payload_hash',
   ]) {
-    if (containsKey(object, forbidden)) throw new ProtocolError(`${name} leaked ${forbidden}`);
+    if (containsKey(object, forbidden, [], allowedForbiddenPaths)) {
+      throw new ProtocolError(`${name} leaked ${forbidden}`);
+    }
   }
   return object;
 }
@@ -2008,12 +2320,27 @@ function assertJsonValue(value: unknown, name: string, seen: Set<object>): void 
   seen.delete(value);
 }
 
-function containsKey(value: unknown, key: string): boolean {
+function containsKey(
+  value: unknown,
+  key: string,
+  path: readonly string[],
+  allowedPaths: readonly (readonly string[])[],
+): boolean {
   if (typeof value !== 'object' || value === null) return false;
-  if (!Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, key)) return true;
-  return (Array.isArray(value) ? value : Object.values(value)).some((entry) =>
-    containsKey(entry, key),
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsKey(entry, key, [...path, '*'], allowedPaths));
+  }
+  if (Object.prototype.hasOwnProperty.call(value, key)) {
+    const found = [...path, key];
+    if (!allowedPaths.some((allowed) => pathsEqual(found, allowed))) return true;
+  }
+  return Object.entries(value).some(([name, entry]) =>
+    containsKey(entry, key, [...path, name], allowedPaths),
   );
+}
+
+function pathsEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((part, index) => part === right[index]);
 }
 
 function requireText(body: Record<string, unknown>, field: string, name: string): string {
@@ -2060,10 +2387,72 @@ function requireEnumArray<const T extends string>(
   return value.map((entry) => requireEnumValue(entry, allowed, `${name} ${field}`));
 }
 
-function requireInteger(body: Record<string, unknown>, field: string, name: string): number {
+function requireArray(
+  body: Record<string, unknown>,
+  field: string,
+  name: string,
+): readonly unknown[] {
   const value = body[field];
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
+  if (!Array.isArray(value)) throw new ProtocolError(`${name} carried an invalid ${field}`);
+  return value;
+}
+
+function requireTextArray(
+  body: Record<string, unknown>,
+  field: string,
+  name: string,
+): readonly string[] {
+  return requireArray(body, field, name).map((value) => {
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new ProtocolError(`${name} carried an invalid ${field}`);
+    }
+    return value;
+  });
+}
+
+function requireBoolean(body: Record<string, unknown>, field: string, name: string): boolean {
+  const value = body[field];
+  if (typeof value !== 'boolean') {
     throw new ProtocolError(`${name} carried an invalid ${field}`);
+  }
+  return value;
+}
+
+function requireNullableText(
+  body: Record<string, unknown>,
+  field: string,
+  name: string,
+): string | null {
+  if (!Object.prototype.hasOwnProperty.call(body, field)) {
+    throw new ProtocolError(`${name} omitted ${field}`);
+  }
+  if (body[field] === null) return null;
+  return requireText(body, field, name);
+}
+
+function requireNullableInteger(
+  body: Record<string, unknown>,
+  field: string,
+  name: string,
+): number | null {
+  if (!Object.prototype.hasOwnProperty.call(body, field)) {
+    throw new ProtocolError(`${name} omitted ${field}`);
+  }
+  if (body[field] === null) return null;
+  return requireInteger(body, field, name);
+}
+
+function requireSafeInteger(body: Record<string, unknown>, field: string, name: string): number {
+  const value = body[field];
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    throw new ProtocolError(`${name} carried an invalid ${field}`);
+  }
+  return value;
+}
+
+function requireInteger(body: Record<string, unknown>, field: string, name: string): number {
+  const value = requireSafeInteger(body, field, name);
+  if (value < 0) throw new ProtocolError(`${name} carried an invalid ${field}`);
   return value;
 }
 
@@ -2119,11 +2508,16 @@ function launchPath(launchId: string): string {
 }
 
 function cursorTarget(path: string, limit: number, cursor?: string): string {
-  if (!Number.isSafeInteger(limit) || limit < 1)
-    throw new ValidationError('Trigger page limit must be a positive integer');
-  const params = new URLSearchParams({ limit: String(limit) });
+  const params = new URLSearchParams({ limit: String(pageLimit(limit, 'Trigger')) });
   if (cursor !== undefined) params.set('cursor', cursor);
   return `${path}?${params.toString()}`;
+}
+
+function pageLimit(limit: number, name: string): number {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+    throw new ValidationError(`${name} page limit must be an integer from 1 through 200`);
+  }
+  return limit;
 }
 
 function validateIdempotencyKey(key: string): void {

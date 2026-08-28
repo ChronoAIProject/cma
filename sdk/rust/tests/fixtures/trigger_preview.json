@@ -29,5 +29,11 @@
   "timeout_ceiling_seconds": 7200,
   "billing_mode": "zero_cost",
   "pricing_policy_reference": "public-zero-cost-v1",
+  "estimated_cost": {
+    "kind": "exact_zero",
+    "currency": "USD",
+    "amount_micros": 0,
+    "display": "$0.00"
+  },
   "revision_digest": "e49c49f8e2459f64d9f594ec060c89254d7dc03f07b468db5f51bd0f87603086"
 }

@@ -59,6 +59,12 @@ side-effect-free. Repeating `create_or_resume_launch` after another README click
 returns the contributor's current nonterminal Launch for that immutable revision;
 `create_new_launch` is the explicit path for a separate resource-consuming Launch.
 
+Match `preview.estimated_cost` before displaying money. `ExactZero` is exact
+under the immutable zero-cost policy. `ContributorEstimate` prices the published
+default resources and timeout from the current deployment rate card, but
+authenticated review recalculates and pins the effective configuration.
+`QuoteUnavailable` carries no amount and must not be treated as zero.
+
 Connection preflight is an authenticated read and takes no idempotency key.
 Beginning or reconnecting consent returns a NyxID authorization URL; the caller
 redirects the browser there and resumes the same Launch after CMA's callback. The
@@ -136,6 +142,12 @@ review. `runtime_admission.kernel` is the closed, server-owned kernel selection
 shown before Start; it is independent of the runtime image string and capability
 inventory. Workflow acknowledgement is required only when `workflow_paths` is
 nonempty and does not grant additional GitHub scope.
+
+Publisher policy validation remains HTTP `422` with code
+`invalid_trigger_request`. The Problem Details extensions
+`validation_category` and `remediation` provide safe next actions for repository
+identity/policy/ref, scope/capability, and commercial policy without returning
+the rejected value or provider evidence.
 
 ## Progress, failure, and recovery
 
@@ -216,6 +228,7 @@ GitHub and takes no idempotency key. Confirmation uses the proposal's
 use cma_sdk::{
     Client, LaunchConfirmationRequest, PullRequestConfirmRequest,
     PullRequestOperation, PullRequestReviewRequest,
+    PullRequestStatusRefreshRequest,
 };
 
 # async fn contribute(
@@ -272,6 +285,17 @@ client
         "pull-request-open-01",
     )
     .await?;
+
+let launch = client.read_launch(&launch.id).await?;
+client
+    .refresh_pull_request_status(
+        &launch.id,
+        PullRequestStatusRefreshRequest {
+            expected_revision: launch.revision_number,
+        },
+        "pull-request-status-refresh-01",
+    )
+    .await?;
 # Ok(())
 # }
 ```
@@ -280,6 +304,43 @@ Accepted responses may precede the provider effect. Continue progress replay unt
 the Launch records the contribution or reconciled pull request. Later changes use
 a new diff and the explicit `Update` operation. CMA never force-pushes an
 unexpected branch head and never silently changes Open into Update.
+
+An opened PR stays `PrOpen` and the same Launch remains available for another
+reviewed diff and explicit `Update`. `Completed` has two paths: a later read-only
+provider observation positively reports the PR merged, or the contributor calls
+`complete_launch` while the provider PR is still open:
+
+```rust,no_run
+# use cma_sdk::{Client, LaunchConfirmationRequest};
+# async fn finish(client: &Client, launch_id: &str) -> cma_sdk::Result<()> {
+let launch = client.read_launch(launch_id).await?;
+client
+    .complete_launch(
+        &launch.id,
+        LaunchConfirmationRequest {
+            expected_revision: launch.revision_number,
+            snapshot_digest: launch.effective.digest,
+        },
+        "finish-open-pr-handoff-01",
+    )
+    .await?;
+# Ok(())
+# }
+```
+
+Explicit completion performs no provider call, converges remaining reach to
+revocation, and leaves the fork, branch, commit, and open PR untouched. It closes
+further CMA contribution/Update/status commands for that Launch. The refresh
+command above only queues an immediate fenced observation and returns `202`; it
+does not call GitHub on the request thread. Reuse its key only for the exact same
+optimistic revision, then read progress for
+`PullRequestStatusRefreshRequested` and `PullRequestStatusChanged`.
+
+The PR projection's `status_failure`, `provider_request_id`, and
+`head_matches_launch` fields distinguish a safe read failure, provider
+correlation, and manual head drift. A false head match keeps the PR readable but
+disables CMA Update. `ClosedUnmerged` remains top-level `PrOpen` and should offer
+New Launch; CMA does not reopen it.
 
 `download_diff_artifact` returns the immutable artifact only after server-side
 ownership, retention, byte-length, and digest checks. Its `delete_after` value is
