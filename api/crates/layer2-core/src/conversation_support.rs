@@ -96,6 +96,7 @@ pub(crate) fn chunk(text: &str) -> ConversationUpdate {
 pub(crate) fn asking(id: &str, title: &str) -> PermissionRequest {
     PermissionRequest {
         id: id.to_string(),
+        locator: None,
         request: RequestPermissionRequest::new(
             ConversationId::new("sesn-under-test"),
             ToolCallUpdate::new(
@@ -126,8 +127,15 @@ pub(crate) fn conversing() -> KernelCapabilities {
 
 /// A live conversation session, and the runtime holding the other end.
 pub(crate) async fn conversation() -> (Arc<SessionService>, Caller, SessionId, Arc<FakeAdapter>) {
+    conversation_with(conversing()).await
+}
+
+/// A live conversation backed by a test kernel with an exact advertised set.
+pub(crate) async fn conversation_with(
+    capabilities: KernelCapabilities,
+) -> (Arc<SessionService>, Caller, SessionId, Arc<FakeAdapter>) {
     let adapter = Arc::new(FakeAdapter {
-        capabilities: conversing(),
+        capabilities,
         ..FakeAdapter::default()
     });
     let profiles =

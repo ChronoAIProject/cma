@@ -12,13 +12,52 @@
 //! lease exist only while a runtime is running and are rebuilt on attach;
 //! persisting them would be persisting a snapshot of something already gone.
 
+use std::{
+    collections::HashSet,
+    path::{Component, Path, PathBuf},
+    time::SystemTime,
+};
+
+use sha2::{Digest, Sha256};
+
 use crate::activity::{ActivityQuery, ActivityRecord};
+use crate::capabilities::SessionCapabilities;
+use crate::coordination::{
+    ConversationLink, ConversationOpeningLease, ConversationOpeningLeaseRequest,
+    ConversationWriteAuthority, RuntimeAuthority, RuntimeAuthorityRetirement,
+    RuntimeAuthoritySwitch, RuntimeCandidate, RuntimeCleanup, RuntimeReservation, SessionBoundary,
+    SessionInteractionLeaseRequest, SessionLease, SessionLeaseRequest,
+};
 use crate::directory::{DirectoryQuery, RegisteredUser};
-use crate::environment::{EnvironmentProfile, ServiceId};
+use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
 use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
-use crate::session::Session;
+use crate::options::SessionMode;
+use crate::session::{Session, SessionStatus};
 use crate::Reserved;
+
+/// Records one internal store read asks for while walking a complete set.
+///
+/// Full scans are legitimate for reconciliation and repair, but every query
+/// they issue remains bounded. Public interfaces choose their own smaller or
+/// equal page size before reaching this port.
+const INTERNAL_SCAN_PAGE_SIZE: u32 = MAX_PAGE_SIZE;
+
+/// Rows returned when a caller does not choose a page size.
+pub const DEFAULT_PAGE_SIZE: u32 = 50;
+
+/// No one store listing may ask persistence to materialize more than this many rows.
+pub const MAX_PAGE_SIZE: u32 = 200;
+
+/// Maximum bounded representation of all skill metadata and file bodies.
+pub const SKILL_PACK_PAYLOAD_LIMIT: usize = 4 * 1024 * 1024;
+/// Maximum number of separately granted skill directories in one session.
+pub const SKILL_PACK_COUNT_LIMIT: usize = 256;
+/// Maximum number of files materialized for all of a session's skills.
+pub const SKILL_PACK_FILE_LIMIT: usize = 4_096;
+const SKILL_PACK_NAME_LIMIT: usize = 255;
+const SKILL_PACK_PATH_LIMIT: usize = 4_096;
+const SKILL_PACK_VERSION_LIMIT: usize = 1_024;
 
 /// A session as it is stored.
 #[derive(Debug, Clone)]
@@ -32,6 +71,47 @@ pub struct SessionRecord {
     pub runtime_id: Option<String>,
     /// Where this session's accumulated agent context is stored, if any.
     pub context_ref: Option<String>,
+    /// Unique owner of an in-progress runtime handover.
+    ///
+    /// Kept on the durable record rather than the public session because it is
+    /// a compare token, not user-visible lifecycle state. History may advance a
+    /// record's revision while a runtime is being captured; this claim lets the
+    /// handover rebase over that history without mistaking a later rotation of
+    /// the same runtime for its own work. It remains present after the public
+    /// status advances from `Rotating` until the replacement runtime has been
+    /// published locally, so every control-plane replica observes the same
+    /// non-interactive boundary during recovery and readoption.
+    #[doc(hidden)]
+    pub rotation_claim: Option<String>,
+    /// Durable recovery instructions for a compatibility handover.
+    ///
+    /// Compatibility stores cannot keep H1 authoritative while provisioning
+    /// H2. This descriptor therefore names the separately stored snapshot and
+    /// the exact target that must be published after H1 is cleared. Its claim
+    /// must equal [`Self::rotation_claim`] while the handover is active; an
+    /// explicit owner stop may clear the active claim and retain the descriptor
+    /// on an `Idle` session for verified revive. Every other mismatch is fenced
+    /// rather than interpreted. It is cleared atomically with the claim only
+    /// after H2 is published.
+    #[doc(hidden)]
+    pub pending_handover: Option<PendingHandover>,
+    /// Durable custody of the exact skill bytes this session was granted.
+    ///
+    /// This is internal work state, not part of the caller-visible session.
+    /// [`SkillPackState::Staged`] closes the gap between the atomic session
+    /// create and the separate object store: until the latter confirms its
+    /// write, the database still carries the exact bytes reconciliation needs.
+    /// Bounded list reads may carry [`SkillPackState::StagedSummary`] instead;
+    /// [`SessionStore::get`] remains the exact-read boundary.
+    pub skill_packs: SkillPackState,
+    /// Store-owned optimistic revision.
+    ///
+    /// Zero means the record has not been created yet. Stores increment this
+    /// after every atomic record/event commit. It is deliberately absent from
+    /// the public `Session`: callers do not choose or observe persistence
+    /// concurrency tokens.
+    #[doc(hidden)]
+    pub revision: u64,
 }
 
 impl SessionRecord {
@@ -41,12 +121,430 @@ impl SessionRecord {
             session,
             runtime_id: None,
             context_ref: None,
+            rotation_claim: None,
+            pending_handover: None,
+            skill_packs: SkillPackState::Legacy,
+            revision: 0,
+        }
+    }
+
+    /// Whether this durable record is still inside a runtime handover.
+    ///
+    /// The public status describes the current provisioning stage. The claim
+    /// spans the later `Provisioning` and `Ready` publication gaps that status
+    /// alone cannot identify across control-plane replicas.
+    pub(crate) fn is_effectively_rotating(&self) -> bool {
+        self.session.status.is_rotating() || self.rotation_claim.is_some()
+    }
+}
+
+/// Durable instructions for completing one compatibility runtime handover.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingHandover {
+    /// Exact rotation owner. Must equal the record's rotation claim.
+    pub claim: String,
+    /// Stable object-store reference returned for this session's handover blob.
+    pub snapshot_ref: String,
+    /// Conservative time at which the first usable snapshot was captured.
+    pub snapshot_at: String,
+    /// Rotation count at the exact source boundary.
+    pub rotations_from: u32,
+    /// Rotation count to publish with the target semantics.
+    pub rotations_to: u32,
+    /// Session semantics to publish after H1 is durably gone.
+    pub target: PendingHandoverTarget,
+}
+
+/// The semantic change a pending compatibility handover must publish.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PendingHandoverTarget {
+    /// Move onto this exact recorded runtime version.
+    RuntimeVersion {
+        from_runtime_version: Option<String>,
+        runtime_version: String,
+    },
+    /// Move onto this plane with the capabilities derived before teardown.
+    Plane {
+        from_mode: SessionMode,
+        mode: SessionMode,
+        capabilities: SessionCapabilities,
+    },
+}
+
+/// Claim-bound opaque bytes stored outside the session document.
+///
+/// `None` is distinct from an empty snapshot on the storage wire. Rotation
+/// writes `Some`, while retaining the distinction makes malformed or future
+/// envelope versions fail closed instead of silently becoming blank restores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoverSnapshot {
+    /// Claim whose descriptor is allowed to consume these bytes.
+    pub claim: String,
+    /// Capture time for these exact bytes.
+    pub snapshot_at: String,
+    /// Opaque adapter state, when the envelope contains a captured snapshot.
+    pub restore: Option<Vec<u8>>,
+}
+
+/// Where the exact skill bytes belonging to a session can be recovered.
+///
+/// The database remains the authority throughout the object-store handoff.
+/// Every transition is an optimistic session-record write, and external writes
+/// use a deterministic per-session key so replaying a committed intent is safe.
+/// SHA-256 over the exact ordered skill-pack representation installed in a runtime.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SkillPackDigest([u8; 32]);
+
+impl SkillPackDigest {
+    /// Hash a canonical, unambiguous sequence of pack metadata, paths, and bodies.
+    pub fn for_packs(packs: &[SkillPack]) -> Self {
+        fn length(hasher: &mut Sha256, value: usize) {
+            hasher.update((value as u64).to_be_bytes());
+        }
+
+        fn bytes(hasher: &mut Sha256, value: &[u8]) {
+            length(hasher, value.len());
+            hasher.update(value);
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"cma-skill-packs-sha256-v1\0");
+        length(&mut hasher, packs.len());
+        for pack in packs {
+            bytes(&mut hasher, pack.name.as_bytes());
+            match pack.version.as_deref() {
+                Some(version) => {
+                    hasher.update([1]);
+                    bytes(&mut hasher, version.as_bytes());
+                }
+                None => hasher.update([0]),
+            }
+            length(&mut hasher, pack.files.len());
+            for (path, body) in &pack.files {
+                bytes(&mut hasher, path.as_bytes());
+                bytes(&mut hasher, body);
+            }
+        }
+        Self(hasher.finalize().into())
+    }
+
+    /// Rebuild a digest read from persistence only when it has the exact width.
+    pub fn from_slice(bytes: &[u8]) -> Option<Self> {
+        <[u8; 32]>::try_from(bytes).ok().map(Self)
+    }
+
+    /// Exact binary representation used by persistence adapters.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for SkillPackDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for SkillPackDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SkillPackDigest")
+            .field(&self.to_string())
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Default)]
+pub enum SkillPackState {
+    /// No custody state was recorded by the version that wrote this session.
+    #[default]
+    Legacy,
+    /// Exact bytes remain in the session record until external custody lands.
+    Staged(Vec<SkillPack>),
+    /// A legacy runtime is still authoritative while these exact bytes are
+    /// prepared for its replacement.
+    ///
+    /// The source identity lets reconciliation distinguish H1 from H2 after an
+    /// authority switch whose Ready commit was interrupted. A generation of
+    /// zero is the compatibility boundary and is paired with the exact handle;
+    /// coordinated runtimes require the monotonic nonzero generation too.
+    LegacyHandover {
+        /// Exact provider handle of H1 at the handover boundary.
+        source_runtime_id: String,
+        /// Durable authority generation of H1, or zero in compatibility mode.
+        source_generation: u64,
+        /// Exact bytes already chosen for H2. They are never registry-refetched.
+        packs: Vec<SkillPack>,
+        /// Receipt for the same bytes in external custody, when available.
+        stored_digest: Option<SkillPackDigest>,
+    },
+    /// A bounded listing observed inline custody but deliberately omitted its bytes.
+    ///
+    /// This is a read projection, never durable state. It preserves the fact
+    /// that cleanup or recovery work remains without allowing a caller to
+    /// mistake redacted bytes for an exact empty grant. Any operation that
+    /// needs to mutate the session must reload it through [`SessionStore::get`].
+    StagedSummary,
+    /// The deterministic object-store key holds bytes matching this digest.
+    Stored {
+        /// Integrity receipt for every ordered name, version, path, and body.
+        digest: SkillPackDigest,
+    },
+    /// The session is terminal but its external bytes have not been removed.
+    CleanupPending,
+    /// Cleanup completed; no skill bytes remain for this session.
+    Cleaned,
+}
+
+impl std::fmt::Debug for SkillPackState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Legacy => f.write_str("Legacy"),
+            Self::Staged(packs) => {
+                let files = packs.iter().map(|pack| pack.files.len()).sum::<usize>();
+                let bytes = packs
+                    .iter()
+                    .flat_map(|pack| &pack.files)
+                    .map(|(_, body)| body.len())
+                    .sum::<usize>();
+                f.debug_struct("Staged")
+                    .field("packs", &packs.len())
+                    .field("files", &files)
+                    .field("bytes", &bytes)
+                    .finish()
+            }
+            Self::LegacyHandover {
+                source_runtime_id,
+                source_generation,
+                packs,
+                stored_digest,
+            } => {
+                let files = packs.iter().map(|pack| pack.files.len()).sum::<usize>();
+                let bytes = packs
+                    .iter()
+                    .flat_map(|pack| &pack.files)
+                    .map(|(_, body)| body.len())
+                    .sum::<usize>();
+                f.debug_struct("LegacyHandover")
+                    .field("source_runtime_id", source_runtime_id)
+                    .field("source_generation", source_generation)
+                    .field("packs", &packs.len())
+                    .field("files", &files)
+                    .field("bytes", &bytes)
+                    .field("stored_digest", stored_digest)
+                    .finish()
+            }
+            Self::StagedSummary => f.write_str("StagedSummary"),
+            Self::Stored { digest } => f.debug_struct("Stored").field("digest", digest).finish(),
+            Self::CleanupPending => f.write_str("CleanupPending"),
+            Self::Cleaned => f.write_str("Cleaned"),
         }
     }
 }
 
+/// The stable position after which a newest-first listing continues.
+///
+/// Creation timestamps are not unique, so the durable resource identifier is
+/// the tie-breaker. Stores sort both descending and return rows strictly older
+/// than this pair.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PageCursor {
+    /// Creation time of the last row already returned.
+    pub created_at: String,
+    /// Durable identifier of that row.
+    pub id: String,
+}
+
+impl PageCursor {
+    /// Name one stable position in a listing.
+    pub fn new(created_at: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            created_at: created_at.into(),
+            id: id.into(),
+        }
+    }
+}
+
+/// One bounded request against a newest-first store listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageRequest {
+    /// Most rows the caller may receive.
+    limit: u32,
+    /// Last row already received, when this continues an earlier page.
+    cursor: Option<PageCursor>,
+}
+
+impl PageRequest {
+    /// Build a request, keeping every store query within the supported bounds.
+    pub fn new(limit: u32, cursor: Option<PageCursor>) -> Self {
+        Self {
+            limit: limit.clamp(1, MAX_PAGE_SIZE),
+            cursor,
+        }
+    }
+
+    /// The clamped number of rows the store may return.
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
+
+    /// The last row already returned, when this continues another page.
+    pub fn cursor(&self) -> Option<&PageCursor> {
+        self.cursor.as_ref()
+    }
+}
+
+impl Default for PageRequest {
+    fn default() -> Self {
+        Self::new(DEFAULT_PAGE_SIZE, None)
+    }
+}
+
+/// Filters attached to a bounded session listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionListQuery {
+    /// Bounds and continuation position.
+    pub page: PageRequest,
+    /// Exact lifecycle state to retain, or every state when absent.
+    pub status: Option<SessionStatus>,
+}
+
+impl SessionListQuery {
+    /// Build one bounded session listing request.
+    pub fn new(page: PageRequest, status: Option<SessionStatus>) -> Self {
+        Self { page, status }
+    }
+}
+
+impl Default for SessionListQuery {
+    fn default() -> Self {
+        Self::new(PageRequest::default(), None)
+    }
+}
+
+/// One bounded store answer and the position of the following page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page<T> {
+    /// Rows in stable newest-first order.
+    pub items: Vec<T>,
+    /// Last returned row when at least one further row exists.
+    pub next: Option<PageCursor>,
+}
+
+impl<T> Page<T> {
+    /// Transform rows without changing the continuation position.
+    pub fn map<U>(self, mut render: impl FnMut(T) -> U) -> Page<U> {
+        Page {
+            items: self.items.into_iter().map(&mut render).collect(),
+            next: self.next,
+        }
+    }
+}
+
+/// Constant-space cursor for a complete walk of durable sessions.
+///
+/// Each store read is bounded, and only the last accepted key is retained
+/// between reads. The ordering checks are part of the authority boundary: a
+/// malformed continuation must fail closed instead of silently skipping rows
+/// or cycling forever while reconciliation infers that a record is absent.
+#[derive(Debug, Default)]
+pub(crate) struct SessionScan {
+    cursor: Option<PageCursor>,
+    finished: bool,
+}
+
+impl SessionScan {
+    /// Start a newest-first walk of every durable session.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Read and validate the next bounded page, or `None` after the complete set.
+    pub(crate) async fn next_page(
+        &mut self,
+        store: &dyn SessionStore,
+    ) -> Result<Option<Vec<SessionRecord>>, StoreError> {
+        if self.finished {
+            return Ok(None);
+        }
+        let requested = self.cursor.clone();
+        let page = store
+            .list_all(&SessionListQuery::new(
+                PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, requested.clone()),
+                None,
+            ))
+            .await?;
+        self.accept_page(requested.as_ref(), page)
+    }
+
+    fn accept_page(
+        &mut self,
+        requested: Option<&PageCursor>,
+        page: Page<SessionRecord>,
+    ) -> Result<Option<Vec<SessionRecord>>, StoreError> {
+        if page.items.len() > INTERNAL_SCAN_PAGE_SIZE as usize {
+            return Err(StoreError::Malformed(format!(
+                "session scan returned {} rows for a {INTERNAL_SCAN_PAGE_SIZE}-row request",
+                page.items.len()
+            )));
+        }
+        if page.items.is_empty() {
+            if page.next.is_some() {
+                return Err(StoreError::Malformed(
+                    "session scan returned a continuation after an empty page".into(),
+                ));
+            }
+            self.finished = true;
+            return Ok(None);
+        }
+
+        if requested
+            .is_some_and(|cursor| session_record_key(&page.items[0]) >= page_cursor_key(cursor))
+        {
+            return Err(StoreError::Malformed(
+                "session scan did not continue strictly below its requested cursor".into(),
+            ));
+        }
+        if page
+            .items
+            .windows(2)
+            .any(|rows| session_record_key(&rows[0]) <= session_record_key(&rows[1]))
+        {
+            return Err(StoreError::Malformed(
+                "session scan rows are not in strictly descending order".into(),
+            ));
+        }
+        if let Some(next) = page.next.as_ref() {
+            let last = page.items.last().expect("a non-empty page has a final row");
+            if page_cursor_key(next) != session_record_key(last) {
+                return Err(StoreError::Malformed(
+                    "session scan continuation does not name its final row".into(),
+                ));
+            }
+        }
+
+        self.cursor = page.next;
+        self.finished = self.cursor.is_none();
+        Ok(Some(page.items))
+    }
+}
+
+fn session_record_key(record: &SessionRecord) -> (&str, &str) {
+    (
+        record.session.created_at.as_str(),
+        record.session.id.as_str(),
+    )
+}
+
+fn page_cursor_key(cursor: &PageCursor) -> (&str, &str) {
+    (cursor.created_at.as_str(), cursor.id.as_str())
+}
+
 /// Failures a store may report.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum StoreError {
     /// The store could not be reached.
     #[error("store unavailable: {0}")]
@@ -54,7 +552,7 @@ pub enum StoreError {
     /// The stored data did not match what the core expects.
     #[error("stored data not usable: {0}")]
     Malformed(String),
-    /// A batch claimed a sequence the session already has.
+    /// A batch begins at or below the session's durable tail.
     ///
     /// Named rather than folded into `Unavailable` because the two call for
     /// opposite responses: a store that is down is retried unchanged, and a
@@ -62,29 +560,510 @@ pub enum StoreError {
     /// A caller that cannot tell them apart does neither, which is how a turn's
     /// events came to be dropped with nothing but a log line to say so.
     ///
-    /// `written` is how many of the batch the store accepted before the
-    /// collision. A caller re-numbering the remainder must skip those, or it
-    /// writes them a second time under a sequence nothing rejects.
-    #[error("sequence already taken: {written} of {total} events written")]
+    /// Event appends are atomic, so this error never means a prefix was
+    /// accepted. `expected` is the next durable position and `got` is the
+    /// already-held position at the start of the refused batch.
+    #[error("sequence already taken: expected {expected}, got {got}")]
     SequenceTaken {
-        /// Events accepted before the collision.
-        written: usize,
-        /// Events in the batch.
-        total: usize,
+        /// The next sequence the durable log can accept.
+        expected: u64,
+        /// The first sequence claimed by the refused batch.
+        got: u64,
     },
+    /// A batch would leave an unreadable hole in a session's event sequence.
+    ///
+    /// Separate from a sequence already taken: nothing in this batch was
+    /// accepted, and the missing lower sequence may still be in flight from
+    /// another control-plane process. The caller may retry the batch unchanged;
+    /// moving it higher would preserve the hole this error exists to expose.
+    #[error("non-contiguous append: expected sequence {expected}, got {got}")]
+    NonContiguousAppend {
+        /// The next sequence the durable log can accept.
+        expected: u64,
+        /// The first sequence that would skip it.
+        got: u64,
+    },
+    /// An update named a session which no longer exists durably.
+    #[error("session {id} no longer exists")]
+    SessionDeleted {
+        /// The deleted session.
+        id: SessionId,
+    },
+    /// An ordinary update attempted to return a terminated session to service.
+    #[error("session {id} is terminated")]
+    SessionTerminated {
+        /// The terminated session.
+        id: SessionId,
+    },
+    /// Another durable writer changed the record after this writer read it.
+    #[error("session revision changed: expected {expected}, found {actual}")]
+    RevisionConflict {
+        /// Revision carried by the refused writer.
+        expected: u64,
+        /// Revision currently durable.
+        actual: u64,
+    },
+    /// This store is running in a compatibility stage without coordination.
+    #[error("durable session coordination is not enabled")]
+    CoordinationDisabled,
+    /// Another unexpired operation currently owns this session.
+    #[error("session {id} is held by another operation")]
+    SessionLeaseHeld {
+        /// Session whose exclusive lease is occupied.
+        id: SessionId,
+    },
+    /// A runtime interaction met another active operation.
+    #[error("session {id} interaction is blocked by {operation:?}")]
+    SessionInteractionBlocked {
+        /// Session whose runtime is currently fenced.
+        id: SessionId,
+        /// Operation holding the durable fence.
+        operation: crate::coordination::SessionOperation,
+    },
+    /// The session no longer has the authority or status the caller observed.
+    #[error("session {id} authority changed")]
+    SessionAuthorityChanged {
+        /// Session whose boundary no longer matches.
+        id: SessionId,
+    },
+    /// This lease expired or was replaced by a later holder.
+    #[error("session {id} lease is no longer authoritative")]
+    SessionLeaseLost {
+        /// Session whose lease no longer matches.
+        id: SessionId,
+    },
+    /// Another unexpired conversation opening currently owns this session.
+    #[error("session {id} conversation opening is held by another replica")]
+    ConversationOpeningHeld {
+        /// Session whose opening claim is occupied.
+        id: SessionId,
+    },
+    /// This conversation opening expired, was released, or was replaced.
+    #[error("session {id} conversation opening is no longer authoritative")]
+    ConversationOpeningLost {
+        /// Session whose opening claim no longer matches.
+        id: SessionId,
+    },
+    /// A conversation write came from a link superseded by a later publication.
+    #[error("session {id} conversation link is no longer authoritative")]
+    ConversationLinkChanged {
+        /// Session whose published link no longer matches.
+        id: SessionId,
+    },
+    /// This runtime reservation expired, was replaced, or belongs to another lease.
+    #[error("session {id} runtime reservation is no longer authoritative")]
+    RuntimeReservationChanged {
+        /// Session whose reservation no longer matches.
+        id: SessionId,
+    },
+    /// A reservation was already registered against a different provider runtime.
+    #[error("session {id} runtime candidate changed")]
+    RuntimeCandidateChanged {
+        /// Session whose candidate no longer matches.
+        id: SessionId,
+    },
+    /// A cleanup debt was replaced, completed, or names current authority.
+    #[error("session {id} runtime cleanup changed")]
+    RuntimeCleanupChanged {
+        /// Session whose cleanup no longer matches.
+        id: SessionId,
+    },
+    /// Removing the session would erase authority needed to reclaim a runtime.
+    #[error(
+        "session {id} still has runtime authority {runtime_id:?} or {cleanup_debts} cleanup debts"
+    )]
+    SessionCleanupPending {
+        /// Session that cannot yet be removed safely.
+        id: SessionId,
+        /// Runtime still authoritative, when one remains.
+        runtime_id: Option<String>,
+        /// Number of unacknowledged cleanup debts.
+        cleanup_debts: usize,
+    },
+    /// Removing the session would erase ownership of exact external skill bytes.
+    #[error("session {id} still has unacknowledged skill pack cleanup")]
+    SessionSkillCleanupPending {
+        /// Session that must retain its row until skill cleanup is acknowledged.
+        id: SessionId,
+    },
+}
+
+/// One subject-scoped attempt to perform a named operation once.
+///
+/// The name, key, and fingerprint are opaque to the core. The interface that
+/// accepts the request decides how to derive them; persistence only guarantees
+/// that one exact fingerprint can hold a key until the claim expires.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationClaim {
+    subject: SubjectId,
+    operation: String,
+    key: String,
+    fingerprint: [u8; 32],
+    expires_at: SystemTime,
+}
+
+impl OperationClaim {
+    /// Build a durable operation claim.
+    pub fn new(
+        subject: SubjectId,
+        operation: impl Into<String>,
+        key: impl Into<String>,
+        fingerprint: [u8; 32],
+        expires_at: SystemTime,
+    ) -> Self {
+        Self {
+            subject,
+            operation: operation.into(),
+            key: key.into(),
+            fingerprint,
+            expires_at,
+        }
+    }
+
+    /// The subject whose operation this is.
+    pub fn subject(&self) -> &SubjectId {
+        &self.subject
+    }
+
+    /// The interface-defined operation name.
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+
+    /// The caller-supplied operation key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// A stable digest of everything that distinguishes this request.
+    pub fn fingerprint(&self) -> &[u8; 32] {
+        &self.fingerprint
+    }
+
+    /// When persistence may forget this claim and permit the key again.
+    pub fn expires_at(&self) -> SystemTime {
+        self.expires_at
+    }
+}
+
+/// What an atomic attempt to reserve an operation key found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationReservation {
+    /// This caller acquired a new claim and may perform the operation.
+    Acquired,
+    /// The same operation is still being performed elsewhere.
+    Pending,
+    /// The operation finished and its opaque outcome can be replayed.
+    Complete(Vec<u8>),
+    /// This key already names a different request fingerprint.
+    FingerprintMismatch,
+}
+
+/// Durable, subject-scoped operation claims and their opaque outcomes.
+///
+/// The stored bytes belong to the interface that produced them. Keeping them
+/// opaque here lets any interface use this guarantee without placing its
+/// response vocabulary in the core.
+#[async_trait::async_trait]
+pub trait OperationStore: Send + Sync {
+    /// Atomically acquire a new claim or inspect the one already holding it.
+    async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError>;
+
+    /// Replace a held claim's pending marker with its replayable outcome.
+    async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError>;
+}
+
+#[cfg(test)]
+mod operation_claim_tests {
+    use std::time::{Duration, SystemTime};
+
+    use super::*;
+
+    #[test]
+    fn a_claim_preserves_every_part_of_its_durable_identity() {
+        let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+        let claim = OperationClaim::new(
+            SubjectId("subject-a".into()),
+            "create-resource",
+            "attempt-a",
+            [9; 32],
+            expires_at,
+        );
+
+        assert_eq!(claim.subject(), &SubjectId("subject-a".into()));
+        assert_eq!(claim.operation(), "create-resource");
+        assert_eq!(claim.key(), "attempt-a");
+        assert_eq!(claim.fingerprint(), &[9; 32]);
+        assert_eq!(claim.expires_at(), expires_at);
+    }
 }
 
 /// Durable session records and their event history.
 #[async_trait::async_trait]
 pub trait SessionStore: Send + Sync {
-    /// Create or replace a session record.
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError>;
+    /// Verify that the store can answer a readiness probe.
+    ///
+    /// This exists only for the process readiness endpoint. Business paths use
+    /// their purpose-specific operations so a health check cannot become an
+    /// accidental substitute for handling a real store failure.
+    async fn ping(&self) -> Result<(), StoreError>;
 
     /// Read one session, whoever owns it. Ownership is decided above this.
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError>;
 
-    /// Every session owned by a subject, newest first.
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError>;
+    /// Read the separately stored runtime generation and handle.
+    ///
+    /// A compatibility-stage store returns [`StoreError::CoordinationDisabled`].
+    async fn runtime_authority(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Option<RuntimeAuthority>, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Acquire the one durable operation lease for a session.
+    ///
+    /// Retrying a token while its exact lease remains active is idempotent.
+    /// Once expired or released, that token is permanently spent and cannot
+    /// acquire authority again even when the session boundary is unchanged.
+    async fn acquire_session_lease(
+        &self,
+        _request: &SessionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Acquire a bounded lease for one runtime interaction.
+    ///
+    /// Unlike provider-operation acquisition, this does not retain a permanent
+    /// token receipt. The store issues each lease token from monotonic
+    /// per-session state, so expiry cannot make an old lease token authoritative
+    /// again while frequent terminal traffic keeps durable state bounded.
+    ///
+    /// Calls carrying one exact request nonce may overlap while an unavailable
+    /// outcome is recovered. Once one such call returns `Ok(lease)`, it must be
+    /// ordered after every earlier overlapping call with that nonce: no earlier
+    /// call may subsequently create or extend authority after exact release of
+    /// `lease`. This lets bounded request state recover cancellation without a
+    /// permanent receipt for every interaction.
+    async fn acquire_interaction_lease(
+        &self,
+        _request: &SessionInteractionLeaseRequest,
+    ) -> Result<SessionLease, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Extend a provider-operation lease using the store's authoritative clock.
+    ///
+    /// Interaction leases must use [`Self::renew_interaction_lease`], whose
+    /// authority check deliberately permits action-owned status changes.
+    async fn renew_session_lease(
+        &self,
+        _lease: &SessionLease,
+        _ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Extend an interaction lease while its exact runtime authority is current.
+    ///
+    /// The active token, holder, and operation must still match, as must the
+    /// runtime id and generation. Current lifecycle status is intentionally not
+    /// part of renewal: the interaction's retained work may own that transition.
+    async fn renew_interaction_lease(
+        &self,
+        _lease: &SessionLease,
+        _ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Move a held lease onto a status boundary this holder just committed.
+    async fn advance_session_lease(
+        &self,
+        _lease: &mut SessionLease,
+        _boundary: &SessionBoundary,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Release only this exact lease; a stale holder cannot release a successor.
+    async fn release_session_lease(&self, _lease: &SessionLease) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Reserve one pending conversation opening without replacing the active link.
+    ///
+    /// `session_lease` is required by coordinated callers and must be the real
+    /// current provider-operation lease. Compatibility callers pass none; the
+    /// store then conditions the claim on the exact runtime handle in `request`.
+    async fn acquire_conversation_opening(
+        &self,
+        _request: &ConversationOpeningLeaseRequest,
+        _session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationOpeningLease, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Extend an exact pending opening using the store's authoritative clock.
+    async fn renew_conversation_opening(
+        &self,
+        _opening: &ConversationOpeningLease,
+        _session_lease: Option<&SessionLease>,
+        _ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Promote a pending opening into the sole active conversation link.
+    ///
+    /// Publication is the cross-replica linearization point. It advances a
+    /// monotonic epoch and atomically makes every older link unable to commit.
+    async fn publish_conversation_link(
+        &self,
+        _opening: &ConversationOpeningLease,
+        _session_lease: Option<&SessionLease>,
+    ) -> Result<ConversationLink, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Release this exact opening, including a publication whose response was
+    /// never observed; stale release cannot retire a successor link.
+    async fn release_conversation_opening(
+        &self,
+        _opening: &ConversationOpeningLease,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Check one published link without changing the session or its history.
+    ///
+    /// Conversation frames use this as their durable admission point before
+    /// changing replica-local state or broadcasting liveness. Publication and
+    /// validation must therefore observe one total order for a session.
+    async fn validate_conversation_link(&self, _link: &ConversationLink) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Reserve a never-reused runtime generation while holding a lease.
+    async fn reserve_runtime_generation(
+        &self,
+        _lease: &SessionLease,
+        _reservation_token: &str,
+    ) -> Result<RuntimeReservation, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Register the provider handle returned for one exact reservation.
+    async fn register_runtime_candidate(
+        &self,
+        _lease: &SessionLease,
+        _reservation: &RuntimeReservation,
+        _runtime_id: &str,
+    ) -> Result<RuntimeCandidate, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Atomically switch the session record, durable authority, and event log.
+    ///
+    /// The switch advances `Session.last_seq` and appends exactly one
+    /// `RuntimeStarted` marker for the candidate generation in the same commit
+    /// that changes authority. Other lifecycle fields and events remain intact,
+    /// including writes committed while provisioning was in flight. The
+    /// candidate generation must strictly exceed current authority. An
+    /// unknown-result retry returns its receipt only while that switch is still
+    /// the durable lease boundary; a later switch can never be mistaken for the
+    /// earlier result or append the marker again.
+    async fn switch_runtime_authority(
+        &self,
+        _lease: &mut SessionLease,
+        _candidate: &RuntimeCandidate,
+    ) -> Result<RuntimeAuthoritySwitch, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Atomically clear current authority and retain its exact cleanup debt.
+    ///
+    /// `retirement_token` is generated once per logical operation. Retrying it
+    /// after an unknown store result returns the same receipt only while this
+    /// lease still owns the resulting boundary.
+    async fn retire_runtime_authority(
+        &self,
+        _lease: &mut SessionLease,
+        _retirement_token: &str,
+    ) -> Result<RuntimeAuthorityRetirement, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Cleanup debts currently durable for one session.
+    async fn runtime_cleanup_debts(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Vec<RuntimeCleanup>, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Whether absent generation metadata is an exact, stable legacy identity.
+    ///
+    /// This may become true only as a monotonic store-protocol promotion after
+    /// every legacy writer has been fenced by the store's exact old-writer-drain
+    /// acknowledgement; merely observing no legacy writers at one instant is
+    /// not sufficient. The default retains generation-zero cleanup debt for an
+    /// operator or a later capable binary.
+    async fn legacy_runtime_cleanup_authorized(&self) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    /// Acknowledge exact cleanup after a conditional provider teardown succeeds.
+    async fn acknowledge_runtime_cleanup(
+        &self,
+        _lease: &SessionLease,
+        _cleanup: &RuntimeCleanup,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// One bounded page of a subject's sessions, newest first.
+    ///
+    /// Stores whose exact records can carry large staged blobs may return
+    /// [`SkillPackState::StagedSummary`] here. The public session fields remain
+    /// exact; code that will mutate a returned record must first reload it with
+    /// [`Self::get`].
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &SessionListQuery,
+    ) -> Result<Page<SessionRecord>, StoreError>;
+
+    /// Walk all of one subject's records through bounded store reads.
+    ///
+    /// Used by internal accounting fallbacks, never by a public list handler.
+    async fn scan_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
+        let mut records = Vec::new();
+        let mut cursor = None;
+        let mut seen = HashSet::new();
+        loop {
+            let page = self
+                .list_for(
+                    owner,
+                    &SessionListQuery::new(
+                        PageRequest::new(INTERNAL_SCAN_PAGE_SIZE, cursor.clone()),
+                        None,
+                    ),
+                )
+                .await?;
+            records.extend(page.items);
+            match page.next {
+                Some(next) if seen.insert(next.clone()) => cursor = Some(next),
+                Some(_) => {
+                    return Err(StoreError::Malformed(
+                        "session listing repeated its continuation cursor".into(),
+                    ))
+                }
+                None => return Ok(records),
+            }
+        }
+    }
 
     /// How many of this subject's sessions are recorded as wanting a runtime.
     ///
@@ -96,10 +1075,10 @@ pub trait SessionStore: Send + Sync {
     /// runtime and would then refuse a session its owner is entitled to start.
     async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
         Ok(self
-            .list_for(owner)
+            .scan_for(owner)
             .await?
             .into_iter()
-            .filter(|record| record.session.status.wants_runtime())
+            .filter(|record| record.session.wants_runtime())
             .count() as u32)
     }
 
@@ -110,19 +1089,30 @@ pub trait SessionStore: Send + Sync {
     /// runs on every session creation.
     async fn reserved_capacity(&self) -> Result<Reserved, StoreError>;
 
-    /// Every session, newest first. For the monitoring surface.
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError>;
+    /// One bounded page of every session, newest first.
+    ///
+    /// As with [`Self::list_for`], staged skill bytes may be represented by
+    /// [`SkillPackState::StagedSummary`] and must be reloaded before mutation.
+    async fn list_all(&self, query: &SessionListQuery) -> Result<Page<SessionRecord>, StoreError>;
 
     /// Remove a session and its history permanently.
     ///
     /// Distinct from ending one: a terminated session stays visible until its
-    /// owner chooses to remove it.
+    /// owner chooses to remove it. A coordination-enabled store keeps cleanup
+    /// authority with the live session row, so it must refuse with
+    /// [`StoreError::SessionCleanupPending`] while a runtime remains authoritative
+    /// or any exact runtime cleanup debt is unacknowledged, and
+    /// [`StoreError::SessionSkillCleanupPending`] until external skill custody is
+    /// explicitly [`SkillPackState::Cleaned`].
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError>;
 
     /// Append durable events.
     ///
     /// Sequence numbers are allocated by the caller and are monotonic per
-    /// session, so a store must preserve them rather than assign its own.
+    /// session, so a store must preserve them rather than assign its own. A
+    /// batch may become readable only when its first sequence follows the
+    /// session's durable tail and every sequence inside it is contiguous.
+    /// The append is atomic: a refusal commits no prefix of the batch.
     ///
     /// **A sequence a session already has must be refused**, and refused as
     /// `SequenceTaken` rather than as a general failure. The core allocates,
@@ -130,7 +1120,88 @@ pub trait SessionStore: Send + Sync {
     /// the store is the only place the clash is visible. A store that accepts
     /// a duplicate leaves two events answering to one cursor, and the client
     /// reading history sees one of them.
+    ///
+    /// **A batch that skips the next durable sequence must be refused** as
+    /// `NonContiguousAppend`. A reader advances its cursor to every event it
+    /// sees, so accepting a higher sequence while a lower batch is in flight
+    /// makes that lower event permanently invisible to that reader.
+    ///
+    /// `RuntimeStarted` is reserved for `switch_runtime_authority`, which
+    /// commits it with the authority receipt and session boundary. Every
+    /// ordinary batch passed to this method or any of the three idempotent
+    /// record/event commit methods must refuse that kind as `Malformed`.
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError>;
+
+    /// Atomically replace a session record and append its state-change events.
+    ///
+    /// The record and batch must either both become durable or neither may.
+    /// In particular, `record.session.last_seq` must never become visible ahead
+    /// of the events that establish that position. The same collision and
+    /// contiguity contract as `append_events` applies.
+    ///
+    /// `write_id` identifies the whole atomic unit, including an empty event
+    /// batch. Retrying a committed ID must return its resulting revision
+    /// without applying the record again. That distinction matters when a
+    /// later record-only writer has already committed.
+    ///
+    /// A store upgrading data written by the former two-step contract must
+    /// treat the greater of the physical event tail and the record's advertised
+    /// `last_seq` as the durable sequence floor. Already-advertised missing
+    /// positions cannot safely be reused, because a client may already hold
+    /// that cursor. A record-only update may preserve a higher physical tail,
+    /// but may not introduce a higher tail of its own.
+    ///
+    /// Termination is irreversible. An update may keep a terminated record
+    /// terminated while clearing durable references, but must refuse any
+    /// transition from a durable terminal status back to a live status as
+    /// [`StoreError::SessionTerminated`].
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError>;
+
+    /// Atomically commit a session write only while its conversation authority
+    /// is still current. A committed `write_id` remains replayable after later
+    /// publication; otherwise an old opening or active link is refused before
+    /// any record or event mutation becomes durable.
+    async fn commit_conversation_idempotent(
+        &self,
+        _write_id: &str,
+        _authority: &ConversationWriteAuthority,
+        _record: &SessionRecord,
+        _events: &[Event],
+    ) -> Result<u64, StoreError> {
+        Err(StoreError::CoordinationDisabled)
+    }
+
+    /// Atomically create a session and its initial events.
+    ///
+    /// Separate from update so a stale writer can never recreate a session
+    /// another replica deleted. A create requires revision zero; an update
+    /// requires the named durable revision and must never upsert.
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError>;
+
+    /// The highest sequence currently durable for a session, or zero.
+    ///
+    /// Implementations may override this with an indexed tail query. The
+    /// default is intentionally based on events, never on `Session.last_seq`:
+    /// a whole-record write may legitimately lag the event log.
+    async fn event_tail(&self, id: &SessionId) -> Result<u64, StoreError> {
+        Ok(self
+            .events_since(id, 0)
+            .await?
+            .into_iter()
+            .map(|event| event.seq)
+            .max()
+            .unwrap_or(0))
+    }
 
     /// Events after a cursor, in sequence order.
     async fn events_since(
@@ -152,8 +1223,23 @@ pub trait SessionStore: Send + Sync {
 /// hold a different opinion about who may read what.
 #[async_trait::async_trait]
 pub trait EnvironmentProfileStore: Send + Sync {
-    /// Create or replace a profile.
+    /// Create a profile with a new identifier.
     async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError>;
+
+    /// Atomically replace caller-controlled content on an existing profile.
+    ///
+    /// Implementations must update only the fields carried by `content` plus
+    /// `updated_at`. The current `owner`, `created_at`, and `preferred` values
+    /// are server-owned and must survive even when they changed after the
+    /// service read the row. This operation must never upsert: `Ok(None)` means
+    /// the identifier no longer exists, while `Ok(Some(_))` returns the complete
+    /// post-update row including its current server-owned fields.
+    async fn replace_content(
+        &self,
+        id: &EnvironmentProfileId,
+        content: &EnvironmentProfileSpec,
+        updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError>;
 
     /// Read one profile, whoever owns it.
     async fn get(
@@ -161,8 +1247,36 @@ pub trait EnvironmentProfileStore: Send + Sync {
         id: &EnvironmentProfileId,
     ) -> Result<Option<EnvironmentProfile>, StoreError>;
 
-    /// Every profile owned by a subject, newest first.
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError>;
+    /// One bounded page of a subject's profiles, newest first.
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError>;
+
+    /// Replace every stored preference claim for an owner with one chosen profile, or none.
+    ///
+    /// The chosen identifier must still name one of the owner's profiles when
+    /// this operation begins. Implementations must validate that before
+    /// clearing an existing claim. This is a mutation rather than a listing:
+    /// it must not collect or return the owner's profiles while doing the
+    /// replacement.
+    async fn set_preferred(
+        &self,
+        owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError>;
+
+    /// The winning preferred profile, where one or more records claim it.
+    ///
+    /// This lookup must retain at most one profile. It is deliberately a
+    /// required store operation: implementing it by collecting a complete
+    /// profile listing would make both listing one page and changing the
+    /// preference grow with the owner's history.
+    async fn preferred_for(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError>;
 
     /// Remove a profile permanently.
     ///
@@ -255,12 +1369,68 @@ pub trait CredentialSource: Send + Sync {
     /// `services` is the profile's selection, carried verbatim and never read
     /// here. The core does not know what a service is; it knows only that the
     /// answer depends on which ones were chosen.
+    ///
+    /// `caller_credential` is present only on the initiating request. A source
+    /// may use it to establish per-session custody, but recovery must work from
+    /// the custody record because no request credential exists after restart.
+    ///
+    /// Store failures are returned explicitly. `Ok(None)` means no credential
+    /// is available; it must never stand in for unknown durable custody.
     async fn credential_for(
         &self,
         session: &SessionId,
         subject: &SubjectId,
         services: &[ServiceId],
-    ) -> Option<String>;
+        caller_credential: Option<&crate::session::CallerCredential>,
+    ) -> Result<Option<String>, StoreError>;
+
+    /// Select the credential for one exact runtime delivery target.
+    ///
+    /// Called only after the receiving runtime generation exists and while the
+    /// core owns the runtime's durable interaction or lifecycle authority. A
+    /// source with pending custody must use this as its ordering point: select
+    /// the pending value when one exists and bind it to `target` atomically
+    /// before returning it. If a prior target's acknowledgement wins first, the
+    /// retry must instead return the newly current value.
+    ///
+    /// The default re-reads ordinary selection at this late boundary. Sources
+    /// that maintain current/pending custody must override it.
+    async fn prepare_credential_delivery(
+        &self,
+        session: &SessionId,
+        subject: &SubjectId,
+        services: &[ServiceId],
+        caller_credential: Option<&crate::session::CallerCredential>,
+        _target: &crate::CredentialDeliveryTarget,
+    ) -> Result<Option<String>, StoreError> {
+        self.credential_for(session, subject, services, caller_credential)
+            .await
+    }
+
+    /// Confirm a correlated acknowledgement for an exact runtime target.
+    ///
+    /// Sources with pending custody promote only when both the delivered value
+    /// and `target` still match their durable binding. Returning `false` leaves
+    /// the runtime without local delivery evidence so a later pass retries.
+    async fn confirm_credential_delivery(
+        &self,
+        _session: &SessionId,
+        _subject: &SubjectId,
+        _services: &[ServiceId],
+        _delivered_value: &str,
+        _target: &crate::CredentialDeliveryTarget,
+    ) -> Result<bool, StoreError> {
+        Ok(true)
+    }
+
+    /// Whether this session should receive later subject-token renewals.
+    ///
+    /// Sources that mint per-session credentials or pin an initiating bearer
+    /// return false. On failure callers must conservatively avoid replacing a
+    /// credential whose provenance is unknown.
+    async fn tracks_subject_credential(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(true)
+    }
 
     /// Give up whatever was issued for a session that has ended.
     ///
@@ -268,7 +1438,14 @@ pub trait CredentialSource: Send + Sync {
     /// the second must happen even when nobody is asking for a credential. A
     /// credential nothing will ever present again is one nobody is watching,
     /// which is the kind worth taking back.
-    async fn release(&self, session: &SessionId);
+    ///
+    /// A store failure leaves the recorded credential discoverable for a later
+    /// reconciliation pass and is returned to the caller.
+    ///
+    /// Implementations must be idempotent for one exact session. Lifecycle and
+    /// reconciliation deliberately retry this call when a process can fail
+    /// after durable runtime cleanup but before observing custody retirement.
+    async fn release(&self, session: &SessionId) -> Result<(), StoreError>;
 }
 
 /// The agent's accumulated context, stored whole.
@@ -286,6 +1463,28 @@ pub trait ContextStore: Send + Sync {
 
     /// Remove a session's context.
     async fn delete(&self, reference: &str) -> Result<(), StoreError>;
+}
+
+/// Stable object storage for compatibility runtime handovers.
+///
+/// Separate from [`ContextStore`]: terminal context is a whole transcript at a
+/// fixed key, while this is opaque adapter state with a claim-bound envelope.
+/// Implementations keep one stable object per session, overwrite it on `put`,
+/// retain it after successful publication, and remove it with the session.
+#[async_trait::async_trait]
+pub trait HandoverStore: Send + Sync {
+    /// Store one claim-bound envelope and return its stable reference.
+    async fn put(&self, id: &SessionId, snapshot: HandoverSnapshot) -> Result<String, StoreError>;
+
+    /// Load a stored envelope after binding its reference to this session.
+    async fn get_for(
+        &self,
+        id: &SessionId,
+        reference: &str,
+    ) -> Result<Option<HandoverSnapshot>, StoreError>;
+
+    /// Remove the stable handover object derived for this session.
+    async fn delete_for(&self, id: &SessionId) -> Result<(), StoreError>;
 }
 
 #[cfg(test)]
@@ -319,6 +1518,13 @@ mod tests {
         }
     }
 
+    fn listed_record(created_at: &str, id: &str) -> SessionRecord {
+        let mut session = session();
+        session.created_at = created_at.into();
+        session.id = SessionId(id.into());
+        SessionRecord::new(session)
+    }
+
     #[test]
     fn a_new_record_references_no_runtime_and_no_context() {
         // Both are acquired later: a session exists before a sandbox does, and
@@ -326,6 +1532,7 @@ mod tests {
         let r = SessionRecord::new(session());
         assert!(r.runtime_id.is_none());
         assert!(r.context_ref.is_none());
+        assert_eq!(r.skill_packs, SkillPackState::Legacy);
     }
 
     #[test]
@@ -334,6 +1541,207 @@ mod tests {
         let r = SessionRecord::new(s.clone());
         assert_eq!(r.session.id, s.id);
         assert_eq!(r.session.owner, s.owner);
+    }
+
+    #[test]
+    fn session_scan_accepts_strict_continuations_and_finishes() {
+        let mut scan = SessionScan::new();
+        let first = scan
+            .accept_page(
+                None,
+                Page {
+                    items: vec![
+                        listed_record("2026-01-02T00:00:00Z", "sesn_3"),
+                        listed_record("2026-01-02T00:00:00Z", "sesn_2"),
+                    ],
+                    next: Some(PageCursor::new("2026-01-02T00:00:00Z", "sesn_2")),
+                },
+            )
+            .expect("the first page is valid")
+            .expect("the first page has rows");
+        assert_eq!(first.len(), 2);
+
+        let requested = scan.cursor.clone().expect("the scan retained one cursor");
+        let last = scan
+            .accept_page(
+                Some(&requested),
+                Page {
+                    items: vec![listed_record("2026-01-02T00:00:00Z", "sesn_1")],
+                    next: None,
+                },
+            )
+            .expect("the final page is valid")
+            .expect("the final page has a row");
+        assert_eq!(last[0].session.id.as_str(), "sesn_1");
+        assert!(scan.finished);
+        assert!(scan.cursor.is_none());
+    }
+
+    #[test]
+    fn session_scan_rejects_pages_that_cannot_prove_progress() {
+        let malformed = |requested: Option<PageCursor>, page: Page<SessionRecord>| {
+            matches!(
+                SessionScan::new().accept_page(requested.as_ref(), page),
+                Err(StoreError::Malformed(_))
+            )
+        };
+
+        assert!(malformed(
+            None,
+            Page {
+                items: (0..=INTERNAL_SCAN_PAGE_SIZE)
+                    .rev()
+                    .map(|index| {
+                        listed_record("2026-01-02T00:00:00Z", &format!("sesn_{index:03}"))
+                    })
+                    .collect(),
+                next: None,
+            }
+        ));
+        assert!(malformed(
+            None,
+            Page {
+                items: Vec::new(),
+                next: Some(PageCursor::new("2026-01-02T00:00:00Z", "sesn_2")),
+            }
+        ));
+        assert!(malformed(
+            None,
+            Page {
+                items: vec![
+                    listed_record("2026-01-02T00:00:00Z", "sesn_1"),
+                    listed_record("2026-01-02T00:00:00Z", "sesn_2"),
+                ],
+                next: None,
+            }
+        ));
+        assert!(malformed(
+            Some(PageCursor::new("2026-01-02T00:00:00Z", "sesn_2")),
+            Page {
+                items: vec![listed_record("2026-01-02T00:00:00Z", "sesn_3")],
+                next: None,
+            }
+        ));
+        assert!(malformed(
+            None,
+            Page {
+                items: vec![listed_record("2026-01-02T00:00:00Z", "sesn_2")],
+                next: Some(PageCursor::new("2026-01-02T00:00:00Z", "sesn_1")),
+            }
+        ));
+    }
+
+    #[test]
+    fn staged_skill_bytes_are_redacted_from_debug_output() {
+        let pack = SkillPack {
+            name: "private-review".into(),
+            version: Some("1".into()),
+            files: vec![("SKILL.md".into(), b"private-body-marker".to_vec())],
+        };
+
+        let pack_debug = format!("{pack:?}");
+        assert!(
+            pack_debug.contains("19"),
+            "body length is useful: {pack_debug}"
+        );
+        assert!(!pack_debug.contains("112, 114, 105, 118, 97, 116, 101"));
+
+        let staged_debug = format!("{:?}", SkillPackState::Staged(vec![pack]));
+        assert_eq!(staged_debug, "Staged { packs: 1, files: 1, bytes: 19 }");
+    }
+
+    #[test]
+    fn skill_pack_digest_has_a_stable_known_vector() {
+        let packs = vec![SkillPack {
+            name: "ab".into(),
+            version: Some("1".into()),
+            files: vec![("c".into(), b"de".to_vec())],
+        }];
+
+        assert_eq!(
+            SkillPackDigest::for_packs(&packs).to_string(),
+            "95f7b8402925276b2738d192f9e36f57252ad7184cb8318ba16611bc98a02976"
+        );
+    }
+
+    #[test]
+    fn skill_pack_digest_frames_every_field_and_preserves_order() {
+        let pack = |name: &str, version: Option<&str>, path: &str, body: &[u8]| SkillPack {
+            name: name.into(),
+            version: version.map(str::to_owned),
+            files: vec![(path.into(), body.to_vec())],
+        };
+        let baseline = vec![pack("ab", None, "c", b"de"), pack("f", Some(""), "g", b"h")];
+
+        assert_ne!(
+            SkillPackDigest::for_packs(&baseline),
+            SkillPackDigest::for_packs(&[
+                pack("a", None, "bc", b"de"),
+                pack("f", Some(""), "g", b"h"),
+            ])
+        );
+        assert_ne!(
+            SkillPackDigest::for_packs(&baseline),
+            SkillPackDigest::for_packs(
+                &[pack("ab", None, "c", b"de"), pack("f", None, "g", b"h"),]
+            )
+        );
+        let mut reordered = baseline.clone();
+        reordered.reverse();
+        assert_ne!(
+            SkillPackDigest::for_packs(&baseline),
+            SkillPackDigest::for_packs(&reordered)
+        );
+    }
+
+    #[test]
+    fn skill_pack_validation_rejects_paths_that_change_or_collide_on_disk() {
+        let pack = |name: &str, paths: &[&str]| SkillPack {
+            name: name.into(),
+            version: None,
+            files: paths
+                .iter()
+                .map(|path| ((*path).into(), Vec::new()))
+                .collect(),
+        };
+
+        for invalid in [
+            pack("../review", &["SKILL.md"]),
+            pack("review", &["../SKILL.md"]),
+            pack("review", &["/tmp/SKILL.md"]),
+            pack("review", &["references//api.md"]),
+            pack("review", &["references/./api.md"]),
+            pack("review", &["SKILL.md", "SKILL.md"]),
+        ] {
+            assert!(validate_skill_packs(&[invalid]).is_err());
+        }
+        assert!(validate_skill_packs(&[
+            pack("review", &["SKILL.md"]),
+            pack("review", &["references/api.md"]),
+        ])
+        .is_err());
+        assert!(
+            validate_skill_packs(&[pack("review", &["SKILL.md", "references/api.md"],)]).is_ok()
+        );
+    }
+
+    #[test]
+    fn skill_pack_validation_bounds_metadata_and_zero_length_files() {
+        let too_many = SkillPack {
+            name: "review".into(),
+            version: None,
+            files: (0..=SKILL_PACK_FILE_LIMIT)
+                .map(|index| (format!("references/{index}.md"), Vec::new()))
+                .collect(),
+        };
+        assert!(validate_skill_packs(&[too_many]).is_err());
+
+        let oversized = SkillPack {
+            name: "review".into(),
+            version: None,
+            files: vec![("SKILL.md".into(), vec![0; SKILL_PACK_PAYLOAD_LIMIT])],
+        };
+        assert!(validate_skill_packs(&[oversized]).is_err());
     }
 }
 
@@ -393,7 +1801,7 @@ pub struct StoredSettings {
 }
 
 /// One skill, fetched and ready to be written.
-#[derive(Debug, Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SkillPack {
     /// The directory it occupies, which is the name the agent invokes.
     pub name: String,
@@ -406,6 +1814,165 @@ pub struct SkillPack {
     pub version: Option<String>,
     /// Each file, relative to that directory, exactly as the registry names it.
     pub files: Vec<(String, Vec<u8>)>,
+}
+
+impl std::fmt::Debug for SkillPack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let files = self
+            .files
+            .iter()
+            .map(|(path, body)| (path, body.len()))
+            .collect::<Vec<_>>();
+        f.debug_struct("SkillPack")
+            .field("name", &self.name)
+            .field("version", &self.version)
+            .field("files", &files)
+            .finish()
+    }
+}
+
+/// Validate the bounded, unambiguous file tree represented by resolved packs.
+///
+/// The size budget uses a conservative upper bound for escaped metadata plus
+/// fixed framing, so any accepted collection can be staged and encoded without
+/// first cloning an attacker-controlled number of paths or header fields.
+pub fn validate_skill_packs(packs: &[SkillPack]) -> Result<(), String> {
+    if packs.len() > SKILL_PACK_COUNT_LIMIT {
+        return Err(format!(
+            "a session may carry at most {SKILL_PACK_COUNT_LIMIT} skill packs"
+        ));
+    }
+
+    let mut names = HashSet::with_capacity(packs.len());
+    let mut file_count = 0_usize;
+    let mut representation = 64_usize;
+    for pack in packs {
+        if pack.name.len() > SKILL_PACK_NAME_LIMIT || !is_canonical_skill_path(&pack.name, true) {
+            return Err(format!(
+                "skill pack name {:?} is not a safe single path component",
+                pack.name
+            ));
+        }
+        if !names.insert(pack.name.as_str()) {
+            return Err(format!("skill pack name {:?} is duplicated", pack.name));
+        }
+        if pack.files.is_empty() {
+            return Err(format!("skill pack {:?} carries no files", pack.name));
+        }
+        if pack.version.as_ref().is_some_and(|version| {
+            version.len() > SKILL_PACK_VERSION_LIMIT || version.chars().any(char::is_control)
+        }) {
+            return Err(format!(
+                "skill pack {:?} carries an invalid version",
+                pack.name
+            ));
+        }
+
+        representation = add_skill_metadata_bound(representation, pack.name.len(), 64)?;
+        if let Some(version) = pack.version.as_ref() {
+            representation = add_skill_metadata_bound(representation, version.len(), 0)?;
+        }
+        let mut paths = HashSet::with_capacity(pack.files.len());
+        for (path, body) in &pack.files {
+            file_count = file_count.checked_add(1).ok_or_else(skill_pack_too_large)?;
+            if file_count > SKILL_PACK_FILE_LIMIT {
+                return Err(format!(
+                    "a session may carry at most {SKILL_PACK_FILE_LIMIT} skill files"
+                ));
+            }
+            if path.len() > SKILL_PACK_PATH_LIMIT || !is_canonical_skill_path(path, false) {
+                return Err(format!(
+                    "skill file path {path:?} in pack {:?} is not a safe canonical relative path",
+                    pack.name
+                ));
+            }
+            if !paths.insert(path.as_str()) {
+                return Err(format!(
+                    "skill file path {path:?} in pack {:?} is duplicated",
+                    pack.name
+                ));
+            }
+            representation = add_skill_metadata_bound(representation, path.len(), 64)?;
+            representation = representation
+                .checked_add(body.len())
+                .ok_or_else(skill_pack_too_large)?;
+            if representation > SKILL_PACK_PAYLOAD_LIMIT {
+                return Err(skill_pack_too_large());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn add_skill_metadata_bound(total: usize, bytes: usize, framing: usize) -> Result<usize, String> {
+    total
+        .checked_add(framing)
+        .and_then(|total| {
+            bytes
+                .checked_mul(6)
+                .and_then(|bytes| total.checked_add(bytes))
+        })
+        .filter(|total| *total <= SKILL_PACK_PAYLOAD_LIMIT)
+        .ok_or_else(skill_pack_too_large)
+}
+
+fn skill_pack_too_large() -> String {
+    format!("skill packs exceed the {SKILL_PACK_PAYLOAD_LIMIT}-byte bounded representation")
+}
+
+fn is_canonical_skill_path(raw: &str, single_component: bool) -> bool {
+    if raw.is_empty() || raw.chars().any(char::is_control) {
+        return false;
+    }
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        return false;
+    }
+    let mut normalized = PathBuf::new();
+    let mut count = 0_usize;
+    for component in path.components() {
+        let Component::Normal(part) = component else {
+            return false;
+        };
+        normalized.push(part);
+        count += 1;
+    }
+    count > 0 && (!single_component || count == 1) && normalized.as_os_str() == path.as_os_str()
+}
+
+/// Durable custody for the exact skill packs a session was given.
+///
+/// Separate from [`SkillSource`]: the source resolves a caller-visible choice
+/// once, while this store replays those already-resolved opaque bytes when no
+/// caller is present. The port accepts no credential, so an implementation
+/// cannot accidentally persist the authority used to fetch a private pack.
+///
+/// Implementations must bound both writes and reads before materializing the
+/// stored representation. A missing value is a real legacy state and is
+/// distinct from a store failure: only the former permits the core to fall back
+/// to the source.
+#[async_trait::async_trait]
+pub trait SkillPackStore: Send + Sync {
+    /// Reject a deterministic representation failure before a session is recorded.
+    ///
+    /// The default enforces the core's structural and allocation bounds. A
+    /// concrete adapter should additionally validate its exact wire encoding.
+    fn validate(&self, packs: &[SkillPack]) -> Result<(), StoreError> {
+        validate_skill_packs(packs)
+            .map_err(|error| StoreError::Malformed(format!("invalid skill packs: {error}")))
+    }
+
+    /// Atomically replace the packs held for this session.
+    async fn put(&self, id: &SessionId, packs: &[SkillPack]) -> Result<(), StoreError>;
+
+    /// Read the exact packs held for this session, if any were ever stored.
+    async fn get(&self, id: &SessionId) -> Result<Option<Vec<SkillPack>>, StoreError>;
+
+    /// Remove the packs held for a session that has ended.
+    ///
+    /// Deleting an already-absent value must succeed so termination and repair
+    /// can safely replay cleanup.
+    async fn delete(&self, id: &SessionId) -> Result<(), StoreError>;
 }
 
 /// Where a session's skills come from.

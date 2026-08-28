@@ -57,11 +57,11 @@ The body is optional; omitting it means `takeover: false`.
 
 **What makes a ticket in a URL acceptable.** It is single-use — the second redemption is refused, and so is the second attempt after a refused first. It expires in about thirty seconds. It is bound to one session and one subject, and it grants nothing but the attachment it was issued for. A ticket presented against a different session is refused *and spent*. The long-lived credential never appears in a URL, a proxy log, or a browser history entry, which is the whole point of the exchange.
 
-**A ticket is never recorded.** The activity log keeps only what its classifier names, and `ticket` is not a name it knows. Nothing logs a ticket's value. Asking for a ticket is recorded as the attach it is for, with no query parameters and no body content.
+**The bearer ticket value is never recorded.** Durable ticket custody records only its SHA-256 digest plus the session, subject, captured authorization and attachment claim, and expiry needed to redeem it atomically on another replica. The digest cannot be presented as the ticket. The activity log keeps only what its classifier names, and `ticket` is not a name it knows; nothing logs the bearer value. Asking for a ticket is recorded as the attach it is for, with no query parameters and no body content.
 
 **Alternative considered.** The token could instead ride `Sec-WebSocket-Protocol`, which browsers do let a page set. The ticket is preferred because it keeps long-lived credentials out of the WebSocket layer entirely: a subprotocol header carries the real credential into every intermediary on the path and into whatever any of them logs, for the life of the connection, whereas a ticket's exposure is bounded to seconds and to one use.
 
-**Refusals happen before the upgrade.** A missing, spent, expired, or wrong-session ticket produces an HTTP `401` with a problem document, not a socket that opens and immediately closes — so a client can tell "you are not allowed" from "the terminal went away".
+**Refusals happen before the upgrade.** A missing, spent, expired, or wrong-session ticket produces an HTTP `401` with a problem document, not a socket that opens and immediately closes — so a client can tell "you are not allowed" from "the terminal went away". If durable ticket custody cannot be read or written, ticket issue or redemption returns the typed `503 store_failed` problem instead of pretending the ticket was invalid. That response is retryable.
 
 ### Framing
 
@@ -71,14 +71,57 @@ Binary frames are terminal bytes. Text frames are JSON control messages. There i
 |---|---|---|
 | C → S | binary | raw keystroke bytes written to the PTY master |
 | C → S | `{"t":"resize","cols":120,"rows":40}` | propagate to `TIOCSWINSZ` |
-| C → S | `{"t":"signal","sig":"INT"}` | out-of-band signal; `INT`, `TERM`, `QUIT`, `HUP` |
+| C → S | `{"t":"signal","sig":"INT"}` | named in-band control byte: `INT` -> `0x03` (Ctrl-C), `QUIT` -> `0x1c` (`Ctrl-\`), and `TERM`/`HUP` -> `0x04` (Ctrl-D/EOF). `TERM` and `HUP` are aliases; no OS signal is delivered. Any other name is rejected. |
 | C → S | `{"t":"ping"}` | keepalive |
 | S → C | binary | raw PTY output |
 | S → C | `{"t":"ready","cols":120,"rows":40,"snapshot":true,"resources":true}` | attached; a screen snapshot follows, then resource frames where declared |
-| S → C | `{"t":"exit","code":0,"reason":"end_turn"}` | the kernel process ended |
+| S → C | `{"t":"exit","code":0,"reason":"exited"}` | the kernel process ended |
 | S → C | `{"t":"resources",…}` | one whole live resource reading; every absent field is `null` |
 | S → C | `{"t":"error","code":"…","detail":"…"}` | typed failure |
 | S → C | `{"t":"pong"}` | keepalive response |
+
+### Refusal while an established socket is rotating
+
+A session can enter `rotating` after this socket has already received `ready`.
+From that moment, binary input, `resize`, and `signal` frames are refused with
+the same typed, retryable control frame:
+
+```json
+{ "t": "error", "code": "session_rotating", "detail": "…" }
+```
+
+The refused operation did not reach the outgoing runtime and is not buffered
+by the server. Rotation ends on its own. Clients should disable input for the
+duration, and may retry an intended operation only after the session is usable
+again (normally after the rotation close and a fresh attach reaches `ready`).
+Client-side disabling is an experience improvement; the server-side refusal is
+the correctness boundary. If supersession overlaps a frame the server already
+read, its `session_rotating` error is sent before the `4001` or `4002` close.
+Once supersession is observed, the server accepts no later client frame.
+
+### Process ending
+
+An `exit` frame reports the status of the supervised kernel process. `code` is
+an integer when the process returned a numeric exit status and is `null` when a
+signal ended it. `reason` is always the literal `"exited"`:
+
+```json
+{ "t": "exit", "code": null, "reason": "exited" }
+```
+
+The server drains the attachment's queued binary PTY output before this frame.
+The frame is followed immediately by a WebSocket Close frame with code `1000`
+(normal closure); no terminal bytes follow it.
+
+The report ends this live terminal attachment only. It does not change the
+session's durable lifecycle status: for example, a `ready` session remains
+`ready` until the session lifecycle independently changes it.
+
+If the runtime channel ends without reporting a process status, the server
+emits no `exit` frame and does not manufacture `code:0` or a normal process
+close. Likewise, a network failure or client disconnect carries no process
+status. Clients must treat the absence of `exit` as unknown, not as successful
+termination.
 
 A resource frame carries the same fourteen fields as the REST and AG-UI
 projections, under camel-case names:
@@ -207,13 +250,16 @@ Multi-viewer fan-out is not offered in this version. The server-side emulator ma
 
 All three are in the private range, and all three close with a reason rather than going quiet. They ask different things of whoever is looking — go to the other tab, stop looking for a terminal, wait a moment — which is why they cannot share a code.
 
+A process exit is separate from these attachment-control endings. It uses the
+`exit` text frame and subsequent normal close code `1000` described in §2.
+
 ### Approvals behave differently here, and it matters
 
 On every other interface, CMA intercepts a permission request and applies policy before the action runs. On this interface **the user answers the kernel's prompt directly in the terminal**, so the control plane's approval policy is not consulted.
 
 That is inherent to relaying a real terminal, not an oversight. Two consequences:
 
-- A session whose policy requires server-side approval should not be attachable over PTY. Enforce it at attach time, not in documentation.
+- Server-side approvals exist only on the conversation plane. The two planes are exclusive by construction, so a session whose policy is enforced by control-plane approval never holds the `terminal` capability. The terminal-capability gate refuses its PTY attachment by name as `capability_unsupported`, both at ticket issuance and when either attach path reaches the core. On the terminal plane, the session's permission mode is delivered into the kernel's own configuration and the owner answers the kernel's prompt in-TUI; ownership is required for every attachment, so nobody else can answer it.
 - A client holding a PTY attachment can type anything the kernel accepts, including shell escapes. The sandbox boundary is the only boundary. Treat PTY attachment as equivalent to shell access to that session's sandbox.
 
 ---

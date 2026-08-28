@@ -423,7 +423,7 @@ async fn an_old_resource_capability_is_settled_and_written_exactly_once() {
         .expect("readable")
         .expect("present");
     old.session.capabilities.resources = None;
-    store.upsert(&old).await.expect("old record written");
+    store.seed(&old).await.expect("old record written");
     let before = store.upserts.load(Ordering::SeqCst);
     let adapter_port: Arc<dyn KernelAdapter> = adapter;
 

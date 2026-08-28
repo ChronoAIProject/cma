@@ -205,7 +205,8 @@ JSON
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends build-essential python3; \
-    npm install --prefix /opt/dsh-install --no-audit --no-fund; \
+    NODE_OPTIONS=--max-old-space-size=4096 \
+        npm install --prefix /opt/dsh-install --no-audit --no-fund; \
     npm cache clean --force; \
     apt-get purge -y --auto-remove build-essential python3; \
     rm -rf /var/lib/apt/lists/*; \
@@ -382,6 +383,17 @@ RUN set -eux; \
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"cwd":"/home/chrono","provider":"chrono","model":"probe"}}' \
       | timeout 180 dsh --profile chrono \
       | grep -q '"serverInfo"'
+
+# Refresh the final filesystem after all expensive runtime layers are cached.
+# CI and release builds set this to their workflow attempt, so a newly fixed
+# Debian package cannot remain hidden behind an older successful image cache.
+ARG OS_SECURITY_REFRESH=local
+USER root
+RUN test -n "${OS_SECURITY_REFRESH}" \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+USER 10001:10001
 # CHRONO_RUNTIME_SNAPSHOT_DIR is where the kernel below records its
 # conversation, relative to HOME. The supervisor is kernel-neutral and does not
 # know this; the adapter that starts a sandbox sets it explicitly, and the value

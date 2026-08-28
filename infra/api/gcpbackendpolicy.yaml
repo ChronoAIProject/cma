@@ -11,9 +11,9 @@
 #
 # The terminal itself is a WebSocket held open for as long as someone is
 # working. This timeout bounds the whole connection, not just time-to-headers,
-# so a low value disconnects a healthy session on a fixed schedule. The proxy
-# in front of the app already allows an hour; that allowance is meaningless
-# while the balancer cuts the connection first.
+# so a low value disconnects a healthy session on a fixed schedule. Both the
+# API hostname and the app origin's API, auth, and discovery routes target this
+# policy directly.
 #
 # The value matches the neighbouring control plane rather than being chosen
 # independently, so the platform behaves consistently.

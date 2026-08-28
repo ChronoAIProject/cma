@@ -5,7 +5,10 @@
 //! there, so a test still has one place to import from.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 use tokio::sync::Mutex;
 
@@ -15,7 +18,7 @@ use crate::environment::{
 };
 use crate::environment_service::EnvironmentProfileService;
 use crate::ids::{EnvironmentProfileId, SubjectId};
-use crate::store::{EnvironmentProfileStore, StoreError};
+use crate::store::{EnvironmentProfileStore, Page, PageCursor, PageRequest, StoreError};
 
 /// The shipped policy, for tests whose subject is not platform configuration.
 pub(crate) fn unconfigured_settings() -> Arc<crate::PlatformSettingsService> {
@@ -29,14 +32,31 @@ pub(crate) fn unconfigured_settings() -> Arc<crate::PlatformSettingsService> {
 #[derive(Default)]
 pub(crate) struct FakeProfileStore {
     pub(crate) profiles: Mutex<HashMap<String, EnvironmentProfile>>,
+    pub(crate) list_calls: AtomicUsize,
+    pub(crate) preference_writes: AtomicUsize,
+    pub(crate) content_replacements: AtomicUsize,
+    replacement_interference: Mutex<Option<ReplacementInterference>>,
     /// When set, every operation fails, so callers can be checked against a
     /// store that is down rather than merely empty.
     pub(crate) broken: Mutex<bool>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ReplacementInterference {
+    Preferred(bool),
+    Delete,
+}
+
 impl FakeProfileStore {
     pub(crate) async fn fail_everything(&self) {
         *self.broken.lock().await = true;
+    }
+
+    pub(crate) async fn interfere_with_next_replacement(
+        &self,
+        interference: ReplacementInterference,
+    ) {
+        *self.replacement_interference.lock().await = Some(interference);
     }
 
     async fn guard(&self) -> Result<(), StoreError> {
@@ -58,6 +78,35 @@ impl EnvironmentProfileStore for FakeProfileStore {
         Ok(())
     }
 
+    async fn replace_content(
+        &self,
+        id: &EnvironmentProfileId,
+        content: &EnvironmentProfileSpec,
+        updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        self.guard().await?;
+        let interference = self.replacement_interference.lock().await.take();
+        let mut profiles = self.profiles.lock().await;
+        match interference {
+            Some(ReplacementInterference::Preferred(preferred)) => {
+                if let Some(profile) = profiles.get_mut(&id.0) {
+                    profile.preferred = preferred;
+                }
+            }
+            Some(ReplacementInterference::Delete) => {
+                profiles.remove(&id.0);
+            }
+            None => {}
+        }
+        let Some(profile) = profiles.get_mut(&id.0) else {
+            return Ok(None);
+        };
+        profile.apply_content(content, updated_at);
+        let profile = profile.clone();
+        self.content_replacements.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(profile))
+    }
+
     async fn get(
         &self,
         id: &EnvironmentProfileId,
@@ -66,16 +115,90 @@ impl EnvironmentProfileStore for FakeProfileStore {
         Ok(self.profiles.lock().await.get(&id.0).cloned())
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError> {
+        self.guard().await?;
+        self.list_calls.fetch_add(1, Ordering::SeqCst);
+        let mut profiles: Vec<_> = self
+            .profiles
+            .lock()
+            .await
+            .values()
+            .filter(|p| &p.owner == owner)
+            .filter(|profile| {
+                page.cursor().is_none_or(|cursor| {
+                    profile.created_at < cursor.created_at
+                        || (profile.created_at == cursor.created_at && profile.id.0 < cursor.id)
+                })
+            })
+            .cloned()
+            .collect();
+        profiles.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.id.0.cmp(&a.id.0))
+        });
+        let has_more = profiles.len() > page.limit() as usize;
+        profiles.truncate(page.limit() as usize);
+        let next = has_more.then(|| {
+            let last = profiles
+                .last()
+                .expect("a non-empty bounded page has a last row");
+            PageCursor::new(&last.created_at, &last.id.0)
+        });
+        Ok(Page {
+            items: profiles,
+            next,
+        })
+    }
+
+    async fn set_preferred(
+        &self,
+        owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError> {
+        self.guard().await?;
+        let mut profiles = self.profiles.lock().await;
+        if let Some(id) = chosen {
+            let selected = profiles
+                .get(&id.0)
+                .filter(|profile| &profile.owner == owner);
+            if selected.is_none() {
+                return Err(StoreError::Malformed(
+                    "selected environment profile is not owned by the subject".into(),
+                ));
+            }
+        }
+        for profile in profiles
+            .values_mut()
+            .filter(|profile| &profile.owner == owner)
+        {
+            profile.preferred = chosen.is_some_and(|id| profile.id == *id);
+        }
+        self.preference_writes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn preferred_for(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
         self.guard().await?;
         Ok(self
             .profiles
             .lock()
             .await
             .values()
-            .filter(|p| &p.owner == owner)
-            .cloned()
-            .collect())
+            .filter(|profile| &profile.owner == owner && profile.preferred)
+            .max_by(|a, b| {
+                a.updated_at
+                    .cmp(&b.updated_at)
+                    .then_with(|| a.id.0.cmp(&b.id.0))
+            })
+            .cloned())
     }
 
     async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError> {

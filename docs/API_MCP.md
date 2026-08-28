@@ -2,6 +2,8 @@
 
 **Priority 4 — for agent clients.**
 
+**This interface is not built yet.** Nothing below is served today; it is the design the implementation will be held to, and the endpoint refuses with `501` until then.
+
 CMA (ChronoAI Managed Agent) exposes itself as an **MCP server**, so any MCP-speaking agent — Claude Code, Codex, Cursor, or a custom one — can delegate work to a CMA session as a tool call, with no integration work beyond adding a server entry.
 
 See [API_Overview.md](./API_Overview.md) for the core operation set and session model.
@@ -51,7 +53,7 @@ Four tools. Deliberately few — an MCP client is delegating a task, not driving
 
 Creates a session, delivers the task, and — with `wait: true` — blocks until the turn completes or an approval is required. Returns the session id, final status, and the agent's summary.
 
-This interface is not built yet, and the shape above is a proposal rather than a description. One part of it is already known to be wrong: `kernel` is not a caller's to choose. Which one a session runs on comes from the environment profile it names or from what the deployment configured, and whoever implements this should drop the argument rather than invent a way to honour it.
+One part of the proposed shape above is already known to be wrong: `kernel` is not a caller's to choose. Which one a session runs on comes from the environment profile it names or from what the deployment configured, and whoever implements this should drop the argument rather than invent a way to honour it.
 
 `wait: false` returns the session id immediately for a caller that will poll.
 

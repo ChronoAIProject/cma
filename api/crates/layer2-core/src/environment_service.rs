@@ -19,13 +19,13 @@ use std::sync::Arc;
 use crate::authz::{Caller, Capability};
 use crate::clock::now_rfc3339;
 use crate::environment::{
-    AgentConfiguration, Baseline, CatalogSkill, EnvironmentProfile, EnvironmentProfileSpec,
-    ResolvedEnvironment, ServiceAvailability, SkillCatalog,
+    AgentConfiguration, Baseline, CatalogSkill, DescribedSkill, EnvironmentProfile,
+    EnvironmentProfileSpec, ResolvedEnvironment, ServiceAvailability, SkillCatalog, SkillId,
 };
 use crate::error::CoreError;
 use crate::ids::{EnvironmentProfileId, SubjectId};
 use crate::platform_service::PlatformSettingsService;
-use crate::store::{EnvironmentProfileStore, StoreError};
+use crate::store::{EnvironmentProfileStore, Page, PageRequest, StoreError};
 
 #[path = "environment_warnings.rs"]
 mod warnings;
@@ -207,6 +207,32 @@ impl EnvironmentProfileService {
         }
     }
 
+    /// Apply the deployment-owned content and defaults projected on every read.
+    fn apply_deployment_defaults(&self, spec: &mut EnvironmentProfileSpec) {
+        self.baseline.apply(spec);
+        self.settle_kernel(spec);
+    }
+
+    /// Project a stored profile through today's deployment-owned defaults.
+    ///
+    /// Profiles written before a baseline entry was introduced, or before
+    /// kernels were settled on write, must expose the same writable shape as a
+    /// newly stored profile. This is a read projection only: old records are
+    /// not rewritten just because somebody viewed them.
+    fn normalize_profile(&self, profile: EnvironmentProfile) -> EnvironmentProfile {
+        let mut spec = profile.to_spec();
+        self.apply_deployment_defaults(&mut spec);
+        EnvironmentProfile {
+            name: spec.name,
+            agent: spec.agent,
+            variables: spec.variables,
+            packages: spec.packages,
+            services: spec.services,
+            agent_notes: spec.agent_notes,
+            ..profile
+        }
+    }
+
     /// Which services a session started with this selection may reach.
     ///
     /// Always includes what the deployment mandates, whichever profile is
@@ -268,9 +294,10 @@ impl EnvironmentProfileService {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
-        // Validated before the baseline is merged, so a caller is never told
-        // their request is too large because of entries the platform added.
-        spec.validate()?;
+        // One mandatory occurrence per distinct identity is deployment-owned.
+        // This accepts 100 caller entries both before and after the baseline is
+        // rendered into an echo, without letting duplicates evade the bound.
+        spec.validate_with_baseline(&self.baseline)?;
         self.baseline.apply(&mut spec);
         self.settle_kernel(&mut spec);
 
@@ -286,9 +313,8 @@ impl EnvironmentProfileService {
             agent_notes: spec.agent_notes,
             created_at: now.clone(),
             updated_at: now,
-            // A new profile is not its owner's default. Making one so is a
-            // decision they take, and taking it for them would move where
-            // every later session starts as a side effect of authoring.
+            // Authoring a profile does not also make it the client's initial
+            // selection. Preselection is a separate choice.
             preferred: false,
         };
         self.store.upsert(&profile).await.map_err(store_failed)?;
@@ -317,34 +343,50 @@ impl EnvironmentProfileService {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
-        self.owned(caller, id).await
+        Ok(self.normalize_profile(self.owned(caller, id).await?))
     }
 
-    /// Every profile the caller owns, newest first.
-    pub async fn list(&self, caller: &Caller) -> Result<Vec<EnvironmentProfile>, CoreError> {
+    /// One bounded page of profiles the caller owns, newest first.
+    pub async fn list(
+        &self,
+        caller: &Caller,
+        page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, CoreError> {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
+        let preferred = self
+            .store
+            .preferred_for(&caller.subject)
+            .await
+            .map_err(store_failed)?
+            .map(|profile| profile.id);
         let mut profiles = self
             .store
-            .list_for(&caller.subject)
+            .list_for(&caller.subject, page)
             .await
             .map_err(store_failed)?;
-        settle_preferred(&mut profiles);
+        for profile in &mut profiles.items {
+            profile.preferred = preferred.as_ref() == Some(&profile.id);
+        }
+        profiles.items = profiles
+            .items
+            .into_iter()
+            .map(|profile| self.normalize_profile(profile))
+            .collect();
         Ok(profiles)
     }
 
-    /// Make one of the caller's profiles the one their sessions start from.
+    /// Record the profile a client should preselect for this caller.
     ///
-    /// At most one may hold it, so the others are cleared in the same call.
-    /// There is no transaction across the store port, so this is written to be
-    /// safe without one: a write that half-succeeds leaves either two claims or
-    /// none, and both are resolved on read rather than left to be discovered —
-    /// see `settle_preferred`.
+    /// The answer is a bounded change set rather than another profile listing:
+    /// it contains the previously visible preference when that row was cleared,
+    /// followed by the selected row when there is one. It therefore contains at
+    /// most two profiles regardless of how many the caller owns.
     ///
-    /// Passing `None` clears the preference, which is a real choice: it returns
-    /// the caller to the deployment's own defaults rather than being the
-    /// absence of one.
+    /// Passing `None` clears the preselection. The service never consults this
+    /// state while creating a session; an unqualified create continues to use
+    /// the deployment defaults.
     pub async fn prefer(
         &self,
         caller: &Caller,
@@ -353,32 +395,40 @@ impl EnvironmentProfileService {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
-        // Read through `owned` so a profile the caller does not own is refused
-        // by the same rule every other operation is refused by.
-        if let Some(wanted) = id {
-            self.owned(caller, wanted).await?;
-        }
-
-        let mut profiles = self
+        // Validate before asking the store to clear anything. A profile the
+        // caller does not own is refused by the same rule as every other read.
+        let selected = match id {
+            Some(wanted) => Some(self.owned(caller, wanted).await?),
+            None => None,
+        };
+        let previous = self
             .store
-            .list_for(&caller.subject)
+            .preferred_for(&caller.subject)
             .await
             .map_err(store_failed)?;
-        for profile in &mut profiles {
-            let wanted = id.is_some_and(|chosen| &profile.id == chosen);
-            if profile.preferred == wanted {
-                continue;
+        self.store
+            .set_preferred(&caller.subject, id)
+            .await
+            .map_err(store_failed)?;
+
+        let mut changed = Vec::with_capacity(2);
+        if let Some(mut old) = previous {
+            if selected.as_ref().is_none_or(|new| old.id != new.id) {
+                old.preferred = false;
+                changed.push(old);
             }
-            profile.preferred = wanted;
-            self.store.upsert(profile).await.map_err(store_failed)?;
+        }
+        if let Some(mut new) = selected {
+            new.preferred = true;
+            changed.push(new);
         }
         tracing::info!(
             owner = %caller.subject,
             profile_id = id.map(|chosen| chosen.0.as_str()).unwrap_or("<none>"),
-            "the profile this owner's sessions start from"
+            "the environment profile this owner's clients should preselect"
         );
-        settle_preferred(&mut profiles);
-        Ok(profiles)
+        debug_assert!(changed.len() <= 2);
+        Ok(changed)
     }
 
     /// Replace a profile's contents, keeping its identity and creation time.
@@ -386,34 +436,41 @@ impl EnvironmentProfileService {
         &self,
         caller: &Caller,
         id: &EnvironmentProfileId,
-        mut spec: EnvironmentProfileSpec,
+        spec: EnvironmentProfileSpec,
     ) -> Result<EnvironmentProfile, CoreError> {
         caller
             .authorization
             .require(Capability::ManageOwnEnvironmentProfiles)?;
         let existing = self.owned(caller, id).await?;
-        spec.validate()?;
-        // Applied again on every write: this is what makes removing a mandatory
-        // entry impossible rather than merely discouraged.
-        self.baseline.apply(&mut spec);
+        let mut normalized_spec = spec.clone();
+        self.apply_deployment_defaults(&mut normalized_spec);
+        normalized_spec.name = normalized_spec.name.trim().to_string();
 
-        let profile = EnvironmentProfile {
-            id: existing.id,
-            owner: existing.owner,
-            name: spec.name.trim().to_string(),
-            variables: spec.variables,
-            packages: spec.packages,
-            agent: spec.agent,
-            services: spec.services,
-            agent_notes: spec.agent_notes,
-            created_at: existing.created_at,
-            updated_at: now_rfc3339(),
-            // Carried across an edit. Editing a profile is not choosing where
-            // sessions start from, and silently clearing it would move that
-            // the next time somebody fixed a typo in its name.
-            preferred: existing.preferred,
-        };
-        self.store.upsert(&profile).await.map_err(store_failed)?;
+        // PUT remains a full replacement, but replacing a resource with its
+        // current normalized contents changes nothing. Compare before bounded
+        // validation so a retired mandatory identity in a legacy profile does
+        // not make its exact projection un-echoable. Every changed replacement
+        // is still validated against today's baseline, where that retired
+        // identity is caller-controlled.
+        let normalized_existing = self.normalize_profile(existing);
+        if normalized_existing.to_spec() == normalized_spec {
+            return Ok(normalized_existing);
+        }
+
+        // Changed writes retain the established validation contract: validate
+        // exactly what the caller supplied, then persist its normalized form.
+        spec.validate_with_baseline(&self.baseline)?;
+
+        let updated_at = now_rfc3339();
+        let profile = self
+            .store
+            .replace_content(id, &normalized_spec, &updated_at)
+            .await
+            .map_err(store_failed)?
+            .ok_or(CoreError::EnvironmentProfileNotFound)?;
+        // The store preserves server-owned state atomically and returns what is
+        // current after the write, including a preference changed concurrently.
+        let profile = self.normalize_profile(profile);
         self.warn_ungranted(caller, None, &profile.services).await;
         self.warn_out_of_bounds(caller, profile.agent.size).await;
         tracing::info!(profile_id = %profile.id, owner = %profile.owner, "environment profile replaced");
@@ -528,7 +585,34 @@ impl EnvironmentProfileService {
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "cannot list selectable skills");
-                CoreError::RuntimeUnavailable(format!("skill catalogue: {e}"))
+                CoreError::SkillCatalogUnavailable(e.to_string())
+            })
+    }
+
+    /// Describe the named skills through the catalogue's bounded projection.
+    ///
+    /// Session views already hold the durable grant. This lookup supplies only
+    /// display metadata for those identifiers, so an adapter can use one
+    /// bounded projection instead of one upstream request per durable grant.
+    pub async fn describe_skills(
+        &self,
+        caller: &Caller,
+        credential: Option<&str>,
+        skills: &[SkillId],
+    ) -> Result<Vec<DescribedSkill>, CoreError> {
+        caller
+            .authorization
+            .require(Capability::ManageOwnEnvironmentProfiles)?;
+        let Some(catalog) = self.catalog.as_ref() else {
+            tracing::debug!("no skill catalogue is configured");
+            return Ok(Vec::new());
+        };
+        catalog
+            .describe(&caller.subject, credential, skills)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "cannot describe session skills");
+                CoreError::SkillCatalogUnavailable(e.to_string())
             })
     }
 
@@ -576,24 +660,3 @@ mod environment_resolution_tests;
 #[cfg(test)]
 #[path = "environment_service_tests.rs"]
 mod tests;
-
-/// Leave at most one profile claiming to be the owner's default.
-///
-/// The store has no transaction, so a half-finished `prefer` can leave two
-/// claims. Rather than trusting the write, the read settles it: the most
-/// recently updated wins, and the rest are reported as what they are. None
-/// claiming it is not a fault — it means the owner has not chosen one, and
-/// their sessions start from the deployment's own defaults.
-fn settle_preferred(profiles: &mut [EnvironmentProfile]) {
-    let winner = profiles
-        .iter()
-        .filter(|profile| profile.preferred)
-        .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
-        .map(|profile| profile.id.clone());
-    let Some(winner) = winner else {
-        return;
-    };
-    for profile in profiles.iter_mut() {
-        profile.preferred = profile.id == winner;
-    }
-}

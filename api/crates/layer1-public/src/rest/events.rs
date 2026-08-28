@@ -22,10 +22,11 @@ use axum::{
 use futures_util::stream::{self, Stream};
 use layer2_core::{SessionId, SessionService};
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use crate::auth::AuthenticatedCaller;
 
-use super::Problem;
+use super::RequestFailure;
 
 /// How often the log is re-read while a client is listening.
 ///
@@ -35,20 +36,49 @@ use super::Problem;
 /// events, so an idle stream costs one small read per interval.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Cursor {
     /// Resume after this sequence. Absent means from the beginning.
-    after: Option<u64>,
+    ///
+    /// Named as the client sends it. The name is part of the contract and is
+    /// documented; a server reading a different one silently replays
+    /// everything on every reconnect, which is what happened here.
+    #[serde(default, alias = "after")]
+    starting_after: Option<u64>,
+}
+
+impl Cursor {
+    /// Where this client is resuming from.
+    ///
+    /// Read through a method so a test asserts the parsed query rather than
+    /// the struct's shape: the bug this guards was a name the server never
+    /// read, and a test that constructs the struct directly cannot see one.
+    fn starting_after(&self) -> Option<u64> {
+        self.starting_after
+    }
 }
 
 /// Stream a session's events, resuming from a cursor.
+#[utoipa::path(
+    get,
+    path = "/api/v1/sessions/{id}/events",
+    tag = "events",
+    params(
+        ("id" = String, Path),
+        ("starting_after" = Option<u64>, Query),
+        ("Last-Event-Id" = Option<u64>, Header)
+    ),
+    responses((status = 200, description = "Resumable server-sent event stream", body = String, content_type = "text/event-stream"))
+)]
 pub(super) async fn stream(
     State(service): State<Arc<SessionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    Query(cursor): Query<Cursor>,
+    cursor: Result<Query<Cursor>, axum::extract::rejection::QueryRejection>,
     headers: HeaderMap,
-) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, Problem> {
+) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, RequestFailure> {
+    let Query(cursor) = cursor?;
     let id = SessionId(id);
 
     // A reconnecting browser sends the last id it saw. Preferring it over the
@@ -58,7 +88,7 @@ pub(super) async fn stream(
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok())
-        .or(cursor.after)
+        .or(cursor.starting_after())
         .unwrap_or(0);
 
     // Authorised once, here, so a stream cannot outlive the caller's right to
@@ -123,17 +153,37 @@ fn to_sse(event: &layer2_core::Event) -> SseEvent {
 
 /// The JSON object carried in an SSE frame.
 fn event_payload(event: &layer2_core::Event) -> serde_json::Value {
+    let mut kind = serde_json::to_value(&event.kind)
+        .expect("the core event vocabulary is always JSON serializable");
+    // Delivery locators are durable adapter state, not part of the owner-facing
+    // event contract. The public request id is the only value a client returns.
+    if let Some(object) = kind.as_object_mut() {
+        object.remove("locator");
+    }
     serde_json::json!({
         "seq": event.seq,
         "session_id": event.session_id.0,
-        "event": event.kind,
+        "event": kind,
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use super::*;
     use layer2_core::{Event, EventKind, RuntimeLossCause, SessionStatus};
+
+    #[test]
+    fn both_cursor_spellings_parse_to_the_same_resume_position() {
+        for query in ["starting_after=42", "after=42"] {
+            let cursor: Cursor = serde_urlencoded::from_str(query).expect("cursor parses");
+            assert_eq!(cursor.starting_after(), Some(42), "for {query}");
+        }
+
+        let cursor: Cursor = serde_urlencoded::from_str("").expect("an absent cursor parses");
+        assert_eq!(cursor.starting_after(), None);
+    }
 
     #[test]
     fn the_frame_id_is_the_sequence_so_a_client_can_resume() {
@@ -190,6 +240,80 @@ mod tests {
     }
 
     #[test]
+    fn a_runtime_authority_marker_reaches_rest_with_its_generation() {
+        let event = Event {
+            session_id: SessionId("sesn_1".into()),
+            seq: 10,
+            kind: EventKind::RuntimeStarted {
+                generation: NonZeroU64::new(3).expect("the sample generation is positive"),
+            },
+            appended_at: "2026-08-27T03:12:00Z".into(),
+        };
+
+        assert_eq!(
+            event_payload(&event),
+            serde_json::json!({
+                "seq": 10,
+                "session_id": "sesn_1",
+                "event": { "type": "runtime_started", "generation": 3 }
+            })
+        );
+        let rendered = format!("{:?}", to_sse(&event));
+        assert!(rendered.contains("runtime_started"), "got {rendered}");
+        assert!(rendered.contains("10"), "got {rendered}");
+    }
+
+    #[test]
+    fn a_runtime_handover_marker_reaches_rest_as_a_unit_event() {
+        let event = Event {
+            session_id: SessionId("sesn_1".into()),
+            seq: 10,
+            kind: EventKind::RuntimeHandoverStarted,
+            appended_at: "2026-08-27T03:11:00Z".into(),
+        };
+
+        assert_eq!(
+            event_payload(&event),
+            serde_json::json!({
+                "seq": 10,
+                "session_id": "sesn_1",
+                "event": { "type": "runtime_handover_started" }
+            })
+        );
+        let rendered = format!("{:?}", to_sse(&event));
+        assert!(
+            rendered.contains("runtime_handover_started"),
+            "got {rendered}"
+        );
+        assert!(rendered.contains("10"), "got {rendered}");
+    }
+
+    #[test]
+    fn a_compatibility_incarnation_marker_reaches_rest_as_a_unit_event() {
+        let event = Event {
+            session_id: SessionId("sesn_1".into()),
+            seq: 11,
+            kind: EventKind::RuntimeIncarnationStarted,
+            appended_at: "2026-08-27T03:11:01Z".into(),
+        };
+
+        assert_eq!(
+            event_payload(&event),
+            serde_json::json!({
+                "seq": 11,
+                "session_id": "sesn_1",
+                "event": { "type": "runtime_incarnation_started" }
+            })
+        );
+        let rendered = format!("{:?}", to_sse(&event));
+        assert!(
+            rendered.contains("runtime_incarnation_started"),
+            "got {rendered}"
+        );
+        assert!(rendered.contains("11"), "got {rendered}");
+    }
+
+    #[test]
     fn the_sdk_event_fixture_is_produced_by_the_server_serializer() {
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../../tests/fixtures/rest-sdk/event.json"))
@@ -201,10 +325,32 @@ mod tests {
                 request_id: "req_fixture".into(),
                 action: Some("Run the release command".into()),
                 detail: Some("This command writes a release tag".into()),
+                locator: None,
             },
             appended_at: "2026-08-24T08:01:00Z".into(),
         };
 
         assert_eq!(event_payload(&event), fixture);
+    }
+
+    #[test]
+    fn adapter_delivery_locators_never_enter_the_public_event_stream() {
+        let event = Event {
+            session_id: SessionId("sesn_locator_private".into()),
+            seq: 9,
+            kind: EventKind::ApprovalRequested {
+                request_id: "req_public".into(),
+                action: Some("run a command".into()),
+                detail: None,
+                locator: Some(layer2_core::PermissionLocator::new(
+                    "private-json-rpc-call-and-options",
+                )),
+            },
+            appended_at: "2026-08-26T08:00:00Z".into(),
+        };
+
+        let payload = event_payload(&event);
+        assert!(payload["event"].get("locator").is_none());
+        assert!(!payload.to_string().contains("private-json-rpc"));
     }
 }

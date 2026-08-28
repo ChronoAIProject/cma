@@ -19,11 +19,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Release notes validator regressions
+        run: .github/release-notes-tests.sh
+      - name: Release planning tests
+        run: bash .github/plan-release-tests.sh
+      - name: Release image reconciliation tests
+        run: bash .github/reconcile-release-image-tests.sh
+      - name: Release image pre-publish absence tests
+        run: bash .github/assert-release-image-tags-absent-tests.sh
+      - name: GitHub release reconciliation tests
+        run: bash .github/reconcile-github-release-tests.sh
+      - name: Release image export tests
+        run: bash .github/export-release-image-tests.sh
+      - name: Release image import tests
+        run: bash .github/import-release-images-tests.sh
+      - name: Pinned Skopeo transport integration
+        run: bash .github/skopeo-transport-tests.sh
       - name: Root contains only permitted entries
         run: |
           allowed=".git .github api web infra docs sdk CLAUDE.md README.md .gitignore .dockerignore"
           fail=0
-          for entry in $(ls -A); do
+          shopt -s dotglob nullglob
+          for entry in *; do
             case " $allowed " in
               *" $entry "*) ;;
               *) echo "::error::disallowed root entry: $entry"; fail=1 ;;
@@ -152,6 +169,61 @@ jobs:
           manifest-path: api/Cargo.toml
           command: check advisories licenses bans sources
 
+  sdk-typescript:
+    name: TypeScript SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: Install (lockfile integrity)
+        run: npm ci
+      - name: Server fixtures are byte-identical
+        run: |
+          diff -ru ../../api/crates/layer1-public/tests/fixtures/rest-sdk tests/fixtures
+          diff -ru ../../api/crates/layer1-public/tests/fixtures/agui-sdk tests/agui-fixtures
+      - name: Format
+        run: npm run format:check
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests and coverage
+        run: npm run test:coverage
+      - name: Build
+        run: npm run build
+      - name: Documentation examples
+        run: npm run docs:check
+      - name: Repository package contents
+        run: npm pack --dry-run
+      - name: Scratch Node consumer
+        run: |
+          archive=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
+          scratch=$(mktemp -d)
+          cd "$scratch"
+          npm init --yes >/dev/null
+          npm install --silent --ignore-scripts "$RUNNER_TEMP/$archive"
+          node --input-type=module <<'NODE'
+          import { createClient } from '@chronoai/cma-sdk';
+          import { transcriptNamed } from '@chronoai/cma-sdk/testing';
+
+          const client = createClient({ baseUrl: 'https://example.invalid' });
+          if (typeof client.createSession !== 'function' || typeof client.streamEvents !== 'function') {
+            throw new Error('the package entry point did not expose the client surface');
+          }
+          if (transcriptNamed('plain-turn').frames.length === 0) {
+            throw new Error('the package testing entry point did not expose its fixtures');
+          }
+          NODE
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
   sdk-rust:
     name: Rust SDK
     runs-on: ubuntu-latest
@@ -217,7 +289,15 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            sdk/typescript/package-lock.json
+            web/package-lock.json
+      - name: Install TypeScript SDK (lockfile integrity)
+        working-directory: sdk/typescript
+        run: npm ci
+      - name: Build TypeScript SDK
+        working-directory: sdk/typescript
+        run: npm run build
       - name: Install (lockfile integrity)
         run: npm ci
       - name: Format
@@ -263,6 +343,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - name: HTTPRoute ownership
+        run: ruby .github/scripts/check-http-route-backends.rb
       - name: kubeconform
         run: |
           curl -sSL -o kubeconform.tar.gz \
@@ -327,6 +412,9 @@ jobs:
           platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: false
           outputs: type=cacheonly
+          build-args: |
+            CHRONO_BUILD_SHA=${{ github.sha }}
+            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           # Scoped per component so api and web never overwrite each other's
           # cache. A branch's first run is still cold, since it can only read
           # what the base branch has already populated.
@@ -342,6 +430,9 @@ jobs:
           push: false
           load: true
           tags: cma-${{ matrix.component }}:ci
+          build-args: |
+            CHRONO_BUILD_SHA=${{ github.sha }}
+            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0

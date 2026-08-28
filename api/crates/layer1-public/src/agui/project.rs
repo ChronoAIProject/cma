@@ -45,6 +45,23 @@ impl Projected {
             ending: None,
         }
     }
+
+    /// Make completion of this projection the durable resume point.
+    ///
+    /// Applied after the exhaustive event-kind match, so every current and
+    /// future projection arm inherits the invariant without remembering to
+    /// stamp its own frames. Clearing the leading frames here also protects the
+    /// rule if an arm constructs an `AguiEvent` without using `make`.
+    fn with_final_cursor(mut self, seq: u64) -> Self {
+        let Some((last, leading)) = self.events.split_last_mut() else {
+            return self;
+        };
+        for frame in leading {
+            frame.seq = None;
+        }
+        last.seq = Some(seq);
+        self
+    }
 }
 
 /// Project one durable event.
@@ -59,10 +76,11 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
         thread_id: thread_id.to_string(),
         body,
         timestamp: timestamp.clone(),
-        seq: Some(event.seq),
+        seq: None,
+        live: false,
     };
 
-    match &event.kind {
+    let projected = match &event.kind {
         EventKind::TurnStarted => Projected {
             events: vec![make("RUN_STARTED", serde_json::json!({}))],
             ending: None,
@@ -175,8 +193,16 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             let mut delta = vec![
                 serde_json::json!({ "op": "replace", "path": "/usage/inputTokens", "value": input_tokens }),
                 serde_json::json!({ "op": "replace", "path": "/usage/outputTokens", "value": output_tokens }),
-                serde_json::json!({ "op": "replace", "path": "/usage/contextUsed", "value": context_used }),
             ];
+            // Turn accounting uses zero to mean that it carried no context
+            // reading. Keep the initial or last real reading in that case.
+            if *context_used > 0 {
+                delta.push(serde_json::json!({
+                    "op": "replace",
+                    "path": "/usage/contextUsed",
+                    "value": context_used,
+                }));
+            }
             if let Some(window) = context_window {
                 delta.push(serde_json::json!({
                     "op": "replace",
@@ -270,19 +296,48 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             request_id,
             action,
             detail,
-        } => Projected {
+            ..
+        } => {
+            let reason = reason_for(action.as_deref());
+            let message = detail.clone().or_else(|| action.clone());
+            Projected {
+                events: vec![
+                    make(
+                        "RUN_FINISHED",
+                        serde_json::json!({ "outcome": {
+                            "type": "interrupt",
+                            "interrupts": [{
+                                "id": request_id,
+                                "reason": reason,
+                                "message": message,
+                            }],
+                        }}),
+                    ),
+                    make(
+                        "STATE_DELTA",
+                        serde_json::json!({ "delta": [{
+                            "op": "add",
+                            "path": pending_approval_path(request_id),
+                            "value": {
+                                "id": request_id,
+                                "reason": reason,
+                                "message": message,
+                            },
+                        }] }),
+                    ),
+                ],
+                ending: Some(Ending::Interrupted),
+            }
+        }
+        EventKind::ApprovalResolved { request_id, .. } => Projected {
             events: vec![make(
-                "RUN_FINISHED",
-                serde_json::json!({ "outcome": {
-                    "type": "interrupt",
-                    "interrupts": [{
-                        "id": request_id,
-                        "reason": reason_for(action.as_deref()),
-                        "message": detail.clone().or_else(|| action.clone()),
-                    }],
-                }}),
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "remove",
+                    "path": pending_approval_path(request_id),
+                }] }),
             )],
-            ending: Some(Ending::Interrupted),
+            ending: None,
         },
         EventKind::TurnCompleted => Projected {
             events: vec![make(
@@ -290,6 +345,20 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                 serde_json::json!({ "outcome": { "type": "complete" } }),
             )],
             ending: Some(Ending::Finished),
+        },
+        // Provisioning is durable, including while a rotation's replacement
+        // runtime starts. Project the Layer 2 value itself so AG-UI and REST
+        // cannot acquire two spellings for the same stage.
+        EventKind::Progress { stage } => Projected {
+            events: vec![make(
+                "STATE_DELTA",
+                serde_json::json!({ "delta": [{
+                    "op": "replace",
+                    "path": "/progress",
+                    "value": stage,
+                }] }),
+            )],
+            ending: None,
         },
         // A session that failed or was stopped ends the run saying so. A
         // client left waiting on a stream that simply stops cannot tell that
@@ -327,7 +396,20 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
                 )],
                 ending: Some(Ending::Failed),
             },
-            false => Projected::nothing(),
+            // The Layer 2 value is the REST value too. Serializing it here,
+            // rather than mapping variants to local strings, keeps one status
+            // vocabulary across both interfaces.
+            false => Projected {
+                events: vec![make(
+                    "STATE_DELTA",
+                    serde_json::json!({ "delta": [{
+                        "op": "replace",
+                        "path": "/status",
+                        "value": status,
+                    }] }),
+                )],
+                ending: None,
+            },
         },
         /*
          * The agent is waiting for its owner to sign in to their own account.
@@ -467,10 +549,11 @@ pub(super) fn project(event: &Event, run_id: &str, thread_id: &str) -> Projected
             ending: None,
         },
         // Recorded for the log's own sake and carried by other interfaces. No
-        // honest AG-UI shape exists for a resize or an attachment, and an
-        // approval's resolution is already known to whoever sent it.
+        // honest AG-UI shape exists for an authority marker, resize or
+        // attachment.
         _ => Projected::nothing(),
-    }
+    };
+    projected.with_final_cursor(event.seq)
 }
 
 /// A message identifier derived from the sequence that carried it.
@@ -491,6 +574,19 @@ fn reason_for(action: Option<&str>) -> String {
         Some(action) => format!("cma:{action}"),
         None => "confirmation".to_string(),
     }
+}
+
+/// The dynamic state member owned by one approval request.
+fn pending_approval_path(request_id: &str) -> String {
+    format!(
+        "/pendingApprovals/{}",
+        escape_json_pointer_token(request_id)
+    )
+}
+
+/// Encode one RFC 6901 reference token, in the order the RFC requires.
+fn escape_json_pointer_token(token: &str) -> String {
+    token.replace('~', "~0").replace('/', "~1")
 }
 
 #[cfg(test)]

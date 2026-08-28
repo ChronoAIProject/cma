@@ -1,16 +1,16 @@
 # API Overview
 
-CMA (ChronoAI Managed Agent) exposes five public interfaces. Each is a **projection** of one core session model — never a separate product with its own semantics.
+CMA (ChronoAI Managed Agent) serves three public interfaces today: AG-UI, REST, and PTY. MCP and A2A are designed but not built; their documented entry points refuse with `501 Not Implemented` instead of presenting a missing route as a deployment failure. Every served interface and future design is a **projection** of one core session model — never a separate product with its own semantics.
 
-This document defines the shared vocabulary. The five interface documents define how each protocol expresses it:
+This document defines the shared vocabulary. The five interface documents describe three served protocols and two future designs:
 
 | Priority | Interface | Client | Document |
 |---|---|---|---|
 | 1 | AG-UI | frontend clients | [API_AGUI.md](./API_AGUI.md) |
 | 2 | REST | backend server clients | [API_REST.md](./API_REST.md) |
 | 3 | PTY | CLI-like streaming clients | [API_PTY.md](./API_PTY.md) |
-| 4 | MCP | agent clients | [API_MCP.md](./API_MCP.md) |
-| 5 | A2A | agent clients | [API_A2A.md](./API_A2A.md) |
+| 4 | MCP — designed, not yet served | agent clients | [API_MCP.md](./API_MCP.md) |
+| 5 | A2A — designed, not yet served | agent clients | [API_A2A.md](./API_A2A.md) |
 
 ---
 
@@ -35,20 +35,22 @@ Nine semantic operations. Layer 2 owns them; Layer 1 projects them.
 
 ### Which interface projects which operation
 
-| Operation | AG-UI | REST | PTY | MCP | A2A |
+| Operation | AG-UI | REST | PTY | MCP[^designed-only] | A2A[^designed-only] |
 |---|:---:|:---:|:---:|:---:|:---:|
 | `create_session` | ● implicit | ● | — | ● implicit | ● implicit |
 | `send_input` | ● | ● | ● | ● | ● |
 | `stream_events` | ● | ● | ● | — | ● |
 | `resolve_approval` | ● | ● | ● at the TUI | ● | ● |
 | `interrupt` | ● | ● | ● | — | ● |
-| `steer` | ● | ● | ● | — | — |
+| `steer` | ● | ● | — | — | — |
 | `resize_terminal` | — | ● | ● | — | — |
 | `screen_snapshot` | — | ● | ● | — | — |
 | `get_usage` | ● | ● | — | — | ● |
 | `change_plane` | ○ observed | ● | ○ observed | — | — |
 
-● served · ○ observed but not initiated · — absent
+● projected · ○ observed but not initiated · — absent
+
+[^designed-only]: MCP and A2A are designed, not yet served. Their documented endpoints refuse with `501` until the interfaces are implemented.
 
 **`change_plane` is administration, not conversation.** AG-UI and PTY are told when it happens — a state delta carrying both planes and the snapshot moment, and a typed close frame naming where the session went — and neither offers a way to ask for it. That is a declared subset under rule 3, not an omission: a protocol whose vocabulary is runs and messages has no honest shape for "stop being a terminal", and a terminal that could talk itself out of existence would be a control with nothing left to draw its answer on. REST serves it, as the superset facade serves everything.
 
@@ -85,7 +87,7 @@ provisioning ──► ready ──► running ⇄ idle ──► terminated
 
 `idle` is the state most often misread. A session whose bot pod was reclaimed to save resources is `idle`, and it revives under the same session id.
 
-`rotating` is the second. It means the runtime image has moved on and this session is being carried onto the current one: its conversation is captured, the sandbox is replaced, and the agent resumes from the capture. **Clients must refuse input while it lasts** — a keystroke sent now reaches a sandbox being torn down, so it would be accepted and then lost. It is not a failure, it needs no action from the owner, and it ends on its own.
+`rotating` is the second. It means the runtime image has moved on and this session is being carried onto the current one: its conversation is captured, the sandbox is replaced, and the agent resumes from the capture. **The server refuses input while it lasts with `409 session-rotating`**, so nothing can reach the sandbox being torn down. Clients should also disable input during this window for a clear experience, but correctness does not depend on them doing so. It is not a failure, it needs no action from the owner, and it ends on its own.
 
 ### Runtime version
 
@@ -122,8 +124,9 @@ Every terminal or paused state carries one: `end_turn`, `user_terminated`, `idle
 
 The event log is the single source of truth and the reason every interface can be a lossless projection.
 
-- **Append-only**, with a **monotonic `seq` per session**. Not a global sequence.
-- Resumable: `?starting_after=<seq>` replays from a cursor. One integer of server state; no `Last-Event-ID` plumbing.
+- **Append-only**, with a **monotonic `seq` per session**. Not a global sequence. Per session, new events are committed and become readable in strictly increasing, contiguous `seq` order. A state-changing batch becomes durable atomically with its session record; retrying an uncertain result exposes neither a partial batch nor a repeated semantic event. A position already advertised by a deployment predating atomic commits remains reserved if its event was lost, so an upgrade never reuses a cursor a client may already hold.
+- **Resumable.** `?starting_after=<seq>` means “send durable events after this sequence.” REST also accepts `?after=<seq>` as a compatibility alias. On `GET /api/v1/sessions/{id}/events`, a valid `Last-Event-ID` header takes precedence over either query spelling, so an automatically reconnecting browser continues after the last frame it received.
+- **REST replay is SSE, not a separate JSON page.** The events route replays and then follows the same stream; it has no `Link`-paged history surface. Each durable frame uses SSE's default event type, carries its sequence as `id`, and carries `data` keyed `{seq, session_id, event}`. An `EventSource` client receives these frames through `onmessage`, not a named-event listener.
 - **Durable events are semantic.** The complete set, which is what `EventKind` holds and nothing more:
 
   | | |
@@ -142,7 +145,7 @@ The event log is the single source of truth and the reason every interface can b
 
 - **Ephemeral events are deltas.** Token-level message pieces and terminal bytes are streamed for liveness and never persisted — deliberately, because numbering them would punch permanent holes in the sequence a resuming client cursors on, and replaying them would show somebody their conversation being typed a second time. A client that misses them recovers from the committed message, or from a screen snapshot.
 
-Clients reconnect by opening the stream first, then reading history, then deduplicating on event id — never by assuming the stream replays.
+Clients reconnect the interface's event stream from the last durable cursor and deduplicate on that cursor. REST's one events route performs both the replay and the follow; it does not require a second history request.
 
 ---
 
@@ -164,17 +167,17 @@ There is no separate approvals resource. Approvals ride the event stream, so the
 
 ## 5. Capability declaration
 
-No specification defines a named conformance profile for agent services. CMA therefore declares its own, and publishes it through each protocol's **native** mechanism rather than inventing a parallel one:
+No specification defines a named conformance profile for agent services. CMA therefore defines its own. The three served interfaces publish it through each protocol's **native** mechanism; the A2A and MCP rows record future declaration mechanisms and are not live discovery surfaces:
 
 | Interface | Declaration surface |
 |---|---|
 | REST | `GET /conformance` returning `conformsTo[]` of class URIs |
 | AG-UI | `GET /agui/capabilities`, plus `AgentCapabilities` on the SDK object |
-| A2A | Agent Card `capabilities`, with CMA-specific operations in one extension |
-| MCP | `ServerCapabilities` from `server/discover`, extensions under `ai.chrono/` |
+| A2A (designed, not yet served) | Future Agent Card `capabilities`, with CMA-specific operations in one extension |
+| MCP (designed, not yet served) | Future `ServerCapabilities` from `server/discover`, extensions under `ai.chrono/` |
 | PTY | the `ready` control frame |
 
-The same class URIs appear in every surface, so one vocabulary is visible everywhere. If a standard later emerges, a new major contract version may adopt it without changing this version's identifiers in place.
+The same class URIs appear in every served declaration surface, and the future interfaces must use them when implemented, so the vocabulary stays consistent. If a standard later emerges, a new major contract version may adopt it without changing this version's identifiers in place.
 
 The classes:
 
@@ -198,14 +201,16 @@ A capability is declared only where it has been demonstrated against the kernel 
 
 ---
 
-## 6. Rules that hold across all five
+## 6. Rules for all five interface designs
 
-1. **One core.** Every interface calls Layer 2 and only Layer 2. No interface talks to a kernel adapter.
+These rules govern the three served implementations and are obligations for future MCP and A2A implementations.
+
+1. **One core.** Every implemented interface calls Layer 2 and only Layer 2. No interface talks to a kernel adapter.
 2. **No business logic in Layer 1.** An interface translates; it does not decide.
-3. **Subsets are declared, not discovered.** A client can ask what an interface projects.
+3. **Subsets are declared, not discovered.** Before an interface is served, its client must be able to ask what it projects.
 4. **Errors are typed and name what is missing.** Never a bare status code.
-5. **Concurrent input has one answer.** A second turn arriving while one is in flight resolves identically on every interface. The policy is `reject`, `enqueue`, `interrupt`, or `rollback`, selected per session at creation and reported in its capability document.
-6. **Identity is NyxID.** Every interface authenticates the same subject and scopes every operation to it. No interface has its own user model. What a session may reach on that subject's behalf, and how the credential gets there without entering the sandbox, is `docs/Services.md`.
+5. **Concurrent input has one answer.** A second turn arriving while one is in flight must resolve identically on every implemented interface. The policy is `reject`, `enqueue`, `interrupt`, or `rollback`, selected per session at creation and reported in its capability document.
+6. **Identity is NyxID.** Every implemented interface authenticates the same subject and scopes every operation to it. No interface has its own user model. What a session may reach on that subject's behalf, and how the credential gets there without entering the sandbox, is `docs/Services.md`.
 
 ---
 

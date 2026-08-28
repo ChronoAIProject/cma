@@ -11,8 +11,10 @@
 use std::future::Future;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::task_retirement::TaskRetirement;
 use crate::AdapterError;
 
 /// How long a local adapter has to deliver one operation to its runtime link.
@@ -36,6 +38,34 @@ pub use agent_client_protocol_schema::v1::{
 };
 pub use agent_client_protocol_schema::v1::{MessageId, Usage as TurnUsage};
 
+/// Opaque adapter-owned information needed to deliver a permission answer.
+///
+/// The core records and returns this value without interpreting it. That lets
+/// an adapter reconnect after a control-plane replacement without teaching
+/// the durable layer its wire protocol, while keeping the tool payload and
+/// every credential out of history.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PermissionLocator(String);
+
+impl PermissionLocator {
+    /// Wrap an adapter's versioned locator representation.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Borrow the opaque representation at the adapter boundary that owns it.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for PermissionLocator {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PermissionLocator(<opaque>)")
+    }
+}
+
 /// A decision the runtime is blocked on, and the handle to answer it with.
 #[derive(Debug, Clone)]
 pub struct PermissionRequest {
@@ -47,6 +77,12 @@ pub struct PermissionRequest {
     /// back from them minutes later — possibly after a restart, and possibly
     /// through a different interface than the one that showed it.
     pub id: String,
+    /// Adapter-owned delivery information that survives a control-plane
+    /// replacement.
+    ///
+    /// Absent for adapters that can answer from the public id alone, and for
+    /// requests produced by builds predating durable delivery locators.
+    pub locator: Option<PermissionLocator>,
     /// What the runtime is asking to do, and the answers it will accept.
     ///
     /// The offered options come from the runtime rather than from here. A
@@ -66,10 +102,12 @@ pub enum ConversationInput {
     PermissionAnswer {
         /// The request being answered, as [`PermissionRequest::id`] named it.
         id: String,
+        /// The durable adapter-owned route recorded with the request.
+        locator: Option<PermissionLocator>,
         /// What the owner decided.
         ///
         /// An intent rather than one of the runtime's own options, on the same
-        /// terms as [`RuntimeOptions`]: the caller says what was decided and
+        /// terms as [`crate::RuntimeOptions`]: the caller says what was decided and
         /// the adapter renders it into whatever this runtime offered. Only the
         /// adapter knows what those options meant, and a caller choosing one by
         /// name would have to learn a vocabulary that differs per kernel and
@@ -90,6 +128,29 @@ struct PendingInput {
     delivered: oneshot::Sender<Result<(), AdapterError>>,
 }
 
+struct AbortWriterOnDrop {
+    abort: tokio::task::AbortHandle,
+    armed: bool,
+}
+
+impl AbortWriterOnDrop {
+    fn new(abort: tokio::task::AbortHandle) -> Self {
+        Self { abort, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AbortWriterOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.abort.abort();
+        }
+    }
+}
+
 /// The sending half of a runtime conversation.
 ///
 /// A Tokio sender confirms only that a queue slot accepted a value. It says
@@ -99,6 +160,8 @@ struct PendingInput {
 #[derive(Clone)]
 pub struct ConversationInputSender {
     inner: mpsc::Sender<PendingInput>,
+    abort: tokio::task::AbortHandle,
+    retirement: TaskRetirement,
 }
 
 impl std::fmt::Debug for ConversationInputSender {
@@ -126,6 +189,14 @@ impl ConversationInputSender {
 
     /// Send one operation and wait until the adapter has delivered it.
     pub async fn send(&self, input: ConversationInput) -> Result<(), AdapterError> {
+        self.send_with_deadline(input, DELIVERY_DEADLINE).await
+    }
+
+    async fn send_with_deadline(
+        &self,
+        input: ConversationInput,
+        deadline: Duration,
+    ) -> Result<(), AdapterError> {
         let (delivered, receipt) = oneshot::channel();
         self.inner
             .try_send(PendingInput { input, delivered })
@@ -138,18 +209,28 @@ impl ConversationInputSender {
                 }
             })?;
 
-        tokio::time::timeout(DELIVERY_DEADLINE, receipt)
-            .await
-            .map_err(|_| {
-                AdapterError::Unavailable(
+        let mut abort_on_drop = AbortWriterOnDrop::new(self.abort.clone());
+        let result = match tokio::time::timeout(deadline, receipt).await {
+            Err(_) => {
+                self.retire().await;
+                Err(AdapterError::Unavailable(
                     "the conversation input task did not deliver the operation".to_string(),
-                )
-            })?
-            .map_err(|_| {
-                AdapterError::Unavailable(
+                ))
+            }
+            Ok(Err(_)) => {
+                self.retire().await;
+                Err(AdapterError::Unavailable(
                     "the conversation input task ended before delivery".to_string(),
-                )
-            })?
+                ))
+            }
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(error))) => {
+                self.retire().await;
+                Err(error)
+            }
+        };
+        abort_on_drop.disarm();
+        result
     }
 
     /// Hosted adapters stop this consumer when the socket's read half ends.
@@ -162,13 +243,49 @@ impl ConversationInputSender {
         Fut: Future<Output = Result<(), AdapterError>> + Send + 'static,
     {
         let (inner, mut pending) = mpsc::channel::<PendingInput>(capacity);
+        let retirement = TaskRetirement::default();
+        let retired = retirement.guard();
         let task = tokio::spawn(async move {
+            let _retired = retired;
             while let Some(PendingInput { input, delivered }) = pending.recv().await {
-                let _ = delivered.send(handler(input).await);
+                let result = handler(input).await;
+                let failed = result.is_err();
+                if failed {
+                    pending.close();
+                }
+                let _ = delivered.send(result);
+                if failed {
+                    break;
+                }
             }
         });
         let abort = task.abort_handle();
-        (Self { inner }, abort)
+        (
+            Self {
+                inner,
+                abort: abort.clone(),
+                retirement,
+            },
+            abort,
+        )
+    }
+
+    pub(crate) async fn retire(&self) {
+        self.abort.abort();
+        self.retirement.wait().await;
+    }
+
+    pub(crate) fn abort_handle(&self) -> tokio::task::AbortHandle {
+        self.abort.clone()
+    }
+
+    pub(crate) fn retirement(&self) -> TaskRetirement {
+        self.retirement.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_retired(&self) {
+        self.retirement.wait().await;
     }
 }
 
@@ -275,21 +392,88 @@ pub struct ConversationChannel {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use tokio::sync::{oneshot, Notify};
+
     use super::*;
+
+    #[tokio::test]
+    async fn writer_failure_is_returned_and_closes_the_generation() {
+        let input = ConversationInputSender::spawn(1, |_input| async {
+            Err(AdapterError::Unavailable("socket write failed".into()))
+        });
+
+        assert!(matches!(
+            input.send(ConversationInput::Cancel).await,
+            Err(AdapterError::Unavailable(detail)) if detail == "socket write failed"
+        ));
+        input.wait_retired().await;
+        assert!(matches!(
+            input.send(ConversationInput::Cancel).await,
+            Err(AdapterError::Unavailable(detail))
+                if detail == "the conversation input task has ended"
+        ));
+    }
 
     #[tokio::test]
     async fn a_queue_slot_without_a_draining_consumer_is_not_delivery() {
         // This is the shape that used to produce a false success: the receiver
         // is alive, so Tokio accepts the value, but no task ever reads it.
-        let (inner, _held_open) = mpsc::channel(1);
-        let input = ConversationInputSender { inner };
+        let input = ConversationInputSender::spawn(1, |_input| std::future::pending());
 
         let error = input
-            .send(ConversationInput::Cancel)
+            .send_with_deadline(ConversationInput::Cancel, Duration::from_millis(10))
             .await
             .expect_err("an undrained queue did not deliver an interrupt");
 
         assert!(matches!(error, AdapterError::Unavailable(message)
             if message.contains("did not deliver")));
+    }
+
+    #[tokio::test]
+    async fn canceling_a_receipt_wait_poisons_its_writer_generation() {
+        let (started, started_rx) = oneshot::channel();
+        let mut started = Some(started);
+        let resume = Arc::new(Notify::new());
+        let wrote = Arc::new(AtomicBool::new(false));
+        let input = ConversationInputSender::spawn(1, {
+            let resume = Arc::clone(&resume);
+            let wrote = Arc::clone(&wrote);
+            move |_input| {
+                let started = started.take();
+                let resume = Arc::clone(&resume);
+                let wrote = Arc::clone(&wrote);
+                async move {
+                    if let Some(started) = started {
+                        let _ = started.send(());
+                    }
+                    resume.notified().await;
+                    wrote.store(true, Ordering::SeqCst);
+                    Ok(())
+                }
+            }
+        });
+
+        let delivery = tokio::spawn({
+            let input = input.clone();
+            async move { input.send(ConversationInput::Cancel).await }
+        });
+        started_rx.await.expect("the writer started the operation");
+        delivery.abort();
+        assert!(delivery
+            .await
+            .expect_err("delivery was canceled")
+            .is_cancelled());
+        input.wait_retired().await;
+
+        resume.notify_waiters();
+        tokio::task::yield_now().await;
+        assert!(!wrote.load(Ordering::SeqCst));
+        assert!(matches!(
+            input.send(ConversationInput::Cancel).await,
+            Err(AdapterError::Unavailable(detail)) if detail == "the conversation input task has ended"
+        ));
     }
 }

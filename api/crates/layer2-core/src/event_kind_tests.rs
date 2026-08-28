@@ -1,5 +1,7 @@
 //! The durable vocabulary, walked variant by variant.
 
+use std::num::NonZeroU64;
+
 use super::{AvailableCommand, ConfigOption, EventKind, PlanStep};
 use crate::session::{RuntimeLossCause, SessionStatus, StopReason};
 
@@ -112,6 +114,7 @@ fn one_of_every_kind() -> Vec<EventKind> {
             request_id: "r-1".into(),
             action: Some("run a command".into()),
             detail: None,
+            locator: None,
         },
         EventKind::ApprovalResolved {
             request_id: "r-1".into(),
@@ -127,6 +130,11 @@ fn one_of_every_kind() -> Vec<EventKind> {
             limit_bytes: 1_000,
             peak_permille: 970,
             duration_seconds: 181,
+        },
+        EventKind::RuntimeHandoverStarted,
+        EventKind::RuntimeIncarnationStarted,
+        EventKind::RuntimeStarted {
+            generation: NonZeroU64::new(7).expect("the sample generation is positive"),
         },
         EventKind::RuntimeLost {
             runtime_id: "sbx_1".into(),
@@ -172,12 +180,54 @@ fn one_of_every_kind() -> Vec<EventKind> {
             | EventKind::ApprovalResolved { .. }
             | EventKind::MemoryPressureOpened { .. }
             | EventKind::MemoryPressureClosed { .. }
+            | EventKind::RuntimeHandoverStarted
+            | EventKind::RuntimeIncarnationStarted
+            | EventKind::RuntimeStarted { .. }
             | EventKind::RuntimeLost { .. }
             | EventKind::PlaneChanged { .. }
             | EventKind::SignInRequired { .. } => {}
         }
     }
     all
+}
+
+#[test]
+fn a_runtime_handover_start_is_a_unit_discriminator() {
+    let json =
+        serde_json::to_value(EventKind::RuntimeHandoverStarted).expect("the marker serializes");
+    assert_eq!(
+        json,
+        serde_json::json!({ "type": "runtime_handover_started" })
+    );
+}
+
+#[test]
+fn a_compatibility_runtime_incarnation_start_is_a_unit_marker() {
+    let json = serde_json::to_value(EventKind::RuntimeIncarnationStarted)
+        .expect("the compatibility marker serializes");
+    assert_eq!(
+        json,
+        serde_json::json!({ "type": "runtime_incarnation_started" })
+    );
+}
+
+#[test]
+fn a_runtime_start_carries_a_positive_generation() {
+    let json = serde_json::to_value(EventKind::RuntimeStarted {
+        generation: NonZeroU64::new(12).expect("the sample generation is positive"),
+    })
+    .expect("serializes");
+    assert_eq!(
+        json,
+        serde_json::json!({ "type": "runtime_started", "generation": 12 })
+    );
+    assert!(
+        serde_json::from_value::<EventKind>(
+            serde_json::json!({ "type": "runtime_started", "generation": 0 })
+        )
+        .is_err(),
+        "zero cannot identify a runtime authority generation"
+    );
 }
 
 #[test]

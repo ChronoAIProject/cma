@@ -31,10 +31,10 @@ const Console = lazy(async () => {
  * One page frame, two states.
  *
  * Unauthenticated it is a terminal that introduces itself and takes a prompt;
- * authenticated it is the same frame carrying the two views docs/Web_Style.md
- * §1 admits — sessions and operations.
+ * authenticated it is the same frame carrying the three views docs/Web_Style.md
+ * §1 admits — sessions, operations and Developer.
  *
- * There is still no router and no second route. The app bar's switch chooses
+ * There is still no router and no second route. Account-menu actions choose
  * between views and nothing is pushed onto history, which is what keeps the
  * frame from becoming navigation. A view is where somebody is right now, so it
  * does not persist; an arrangement is a setting about how a list is drawn, and

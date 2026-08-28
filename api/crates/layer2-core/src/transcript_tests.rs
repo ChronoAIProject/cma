@@ -8,12 +8,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::commit_fault_support::CommitFaultStore;
+use crate::event::Event;
 use crate::ids::SessionId;
-use crate::store::{ContextStore, SessionStore, StoreError};
+use crate::store::{ContextStore, SessionRecord, SessionStore, StoreError};
 use crate::terminal::TerminalGeometry;
 use crate::test_support::{
-    admin, await_settled, credential_on, service, service_with_context, service_with_credentials,
-    spec, user, write_screen, FakeAdapter, FakeStore,
+    admin, await_settled, credential_on, service, service_over_with_context, service_with_context,
+    service_with_credentials, spec, user, write_screen, FakeAdapter, FakeStore,
 };
 
 /// Context held in memory, keyed the way a real object store keys it.
@@ -38,6 +40,10 @@ impl ContextStore for FakeContext {
         self.objects.lock().await.remove(reference);
         Ok(())
     }
+}
+
+fn is_context_reference_commit(record: &SessionRecord, events: &[Event]) -> bool {
+    events.is_empty() && record.context_ref.is_some()
 }
 
 #[tokio::test]
@@ -70,6 +76,44 @@ async fn a_stopped_session_can_still_be_read() {
         transcript, b"hello from the agent",
         "stopping a session must not throw away what it showed"
     );
+}
+
+#[tokio::test]
+async fn a_live_transcript_wait_does_not_hold_the_session_entry_map() {
+    let store = Arc::new(FakeStore::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("live-transcript-lock-owner");
+    let svc = service(Arc::clone(&store), Arc::clone(&adapter));
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    let screen = {
+        let entries = svc.entries.read().await;
+        entries
+            .get(&created.id)
+            .expect("the session is live")
+            .screen
+            .clone()
+    };
+    let screen_guard = screen.lock().await;
+    let transcript = svc.session_transcript(&alice, &created.id);
+    tokio::pin!(transcript);
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+
+    assert!(matches!(
+        std::future::Future::poll(transcript.as_mut(), &mut context),
+        std::task::Poll::Pending
+    ));
+    let entries = svc
+        .entries
+        .try_write()
+        .expect("a transcript waiting for the screen releases the session entry map");
+    drop(entries);
+
+    drop(screen_guard);
+    assert!(transcript
+        .await
+        .expect("the live transcript is readable")
+        .is_empty());
 }
 
 #[tokio::test]
@@ -162,6 +206,147 @@ async fn what_a_session_showed_survives_the_process_that_showed_it() {
     assert_eq!(
         transcript, b"work in progress",
         "a session taken back over must show what it showed before"
+    );
+}
+
+#[tokio::test]
+async fn a_conflicted_transcript_reference_remains_retryable() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_context_reference_commit,
+    ));
+    let context = Arc::new(FakeContext::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("transcript-conflict-owner");
+    let svc = service_over_with_context(
+        store.clone(),
+        adapter,
+        Arc::clone(&context) as Arc<dyn ContextStore>,
+    );
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    write_screen(&svc, &created.id, b"retry this transcript").await;
+
+    store.pause_next();
+    let capture = tokio::spawn({
+        let svc = Arc::clone(&svc);
+        let id = created.id.clone();
+        async move { svc.capture_transcript(&id).await }
+    });
+    store.wait_until_held().await;
+    let mut rival = inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("rival reads the record");
+    rival.context_ref = Some("transcripts/a-rival-reference".into());
+    inner
+        .commit_session_idempotent("rival-transcript-reference", &rival, &[])
+        .await
+        .expect("the rival context reference commits first");
+    store.release();
+
+    assert!(
+        !capture.await.expect("capture task completes"),
+        "a conflicted record reference is not reported as captured"
+    );
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("session remains live");
+        assert_eq!(entry.captured_len, 0);
+        assert!(entry.context_ref.is_none());
+    }
+    assert_eq!(
+        inner
+            .get(&created.id)
+            .await
+            .unwrap()
+            .expect("record remains present")
+            .context_ref
+            .as_deref(),
+        Some("transcripts/a-rival-reference")
+    );
+    assert_eq!(
+        context
+            .objects
+            .lock()
+            .await
+            .get(&format!("transcripts/{}", created.id.0))
+            .map(Vec::as_slice),
+        Some(b"retry this transcript".as_slice()),
+        "the stable uploaded object is retained after the record conflict"
+    );
+
+    assert!(
+        svc.capture_transcript(&created.id).await,
+        "unchanged live bookkeeping makes the next sweep retry"
+    );
+    let durable = inner.get(&created.id).await.unwrap().unwrap();
+    assert_eq!(
+        durable.context_ref.as_deref(),
+        Some(format!("transcripts/{}", created.id.0).as_str())
+    );
+}
+
+#[tokio::test]
+async fn four_transcript_reference_outages_leave_the_capture_retryable() {
+    let inner = Arc::new(FakeStore::default());
+    let store = Arc::new(CommitFaultStore::new(
+        Arc::clone(&inner),
+        is_context_reference_commit,
+    ));
+    let context = Arc::new(FakeContext::default());
+    let adapter = Arc::new(FakeAdapter::default());
+    let alice = user("transcript-outage-owner");
+    let svc = service_over_with_context(
+        store.clone(),
+        adapter,
+        Arc::clone(&context) as Arc<dyn ContextStore>,
+    );
+    let created = svc.create_session(&alice, spec()).await.expect("created");
+    await_settled(&svc, &alice, &created.id).await;
+    write_screen(&svc, &created.id, b"persist after recovery").await;
+
+    store.fail_next(4);
+    assert!(
+        !svc.capture_transcript(&created.id).await,
+        "the fourth unavailable response is reported to the capture sweep"
+    );
+    assert_eq!(store.matched_calls(), 4);
+    {
+        let entries = svc.entries.read().await;
+        let entry = entries.get(&created.id).expect("session remains live");
+        assert_eq!(entry.captured_len, 0);
+        assert!(entry.context_ref.is_none());
+    }
+    assert!(inner
+        .get(&created.id)
+        .await
+        .unwrap()
+        .expect("record remains present")
+        .context_ref
+        .is_none());
+    assert!(
+        context
+            .objects
+            .lock()
+            .await
+            .contains_key(&format!("transcripts/{}", created.id.0)),
+        "the stable uploaded object is not deleted after a record outage"
+    );
+
+    assert!(
+        svc.capture_transcript(&created.id).await,
+        "the next sweep retries after the store recovers"
+    );
+    assert_eq!(store.matched_calls(), 5);
+    let entries = svc.entries.read().await;
+    let entry = entries.get(&created.id).expect("session remains live");
+    assert_eq!(entry.captured_len, b"persist after recovery".len());
+    assert_eq!(
+        entry.context_ref.as_deref(),
+        Some(format!("transcripts/{}", created.id.0).as_str())
     );
 }
 

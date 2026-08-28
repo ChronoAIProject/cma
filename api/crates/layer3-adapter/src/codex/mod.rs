@@ -18,7 +18,8 @@ use crate::sandbox::SandboxClient;
 use crate::ConversationUpdate;
 use crate::{
     AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, ResourceSample,
-    RuntimeHandle, RuntimeListing, RuntimeMode, RuntimeOptions, RuntimeSpec, TerminalChannel,
+    RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeMode, RuntimeOptions,
+    RuntimeReservationIdentity, RuntimeSpec, TerminalChannel,
 };
 use tokio::sync::mpsc;
 
@@ -116,15 +117,15 @@ impl KernelAdapter for CodexAdapter {
             self.hosted.workspace().to_string(),
             Some(permission::mode_for(options.permission).to_string()),
             options.resume_conversation.clone(),
-            Some((self.hosted.switch_waiters(), handle.0.clone())),
+            Some(self.hosted.link_lifecycle(&handle.0)),
             options.own_credential,
             updates,
         )
         .await?;
-        // Recorded here so a credential can reach a session that never attaches
-        // a terminal — which is every conversation session, and every session
-        // at all on a kernel that serves only conversations.
-        self.hosted.remember_link(&handle.0, control).await;
+        // The bridge records this control generation before its socket reader
+        // starts, so a close racing the end of the handshake cannot leave a
+        // dead sender registered here.
+        drop(control);
         Ok(conversation)
     }
 
@@ -164,6 +165,17 @@ impl KernelAdapter for CodexAdapter {
 
     async fn terminate(&self, handle: &RuntimeHandle) -> Result<(), AdapterError> {
         self.hosted.terminate(handle).await
+    }
+
+    async fn terminate_if_identity(&self, identity: &RuntimeIdentity) -> Result<(), AdapterError> {
+        self.hosted.terminate_if_identity(identity).await
+    }
+
+    async fn discover_runtime_candidates(
+        &self,
+        reservation: &RuntimeReservationIdentity,
+    ) -> Result<Vec<RuntimeHandle>, AdapterError> {
+        self.hosted.discover_runtime_candidates(reservation).await
     }
 }
 

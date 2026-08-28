@@ -6,6 +6,8 @@
 //! [`KNOWN_TAGS`], and an arm to the exhaustive match its tests walk — and it
 //! grows without the record types or the live lane having any opinion about it.
 
+use std::num::NonZeroU64;
+
 use serde::{Deserialize, Serialize};
 
 use crate::session::{SessionStatus, StopReason};
@@ -266,6 +268,14 @@ pub enum EventKind {
         /// Anything further the runtime offered about the request.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// Opaque adapter-owned information for delivering an answer after a
+        /// control-plane replacement.
+        ///
+        /// The core never interprets this value. It is absent on history from
+        /// builds predating durable approval routing and for adapters whose
+        /// public request id is sufficient.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        locator: Option<layer3_adapter::PermissionLocator>,
     },
     /// The session was moved onto the other plane, because its owner asked.
     ///
@@ -319,6 +329,34 @@ pub enum EventKind {
         /// A duration rather than wall-clock subtraction: event timestamps are
         /// display moments and do not provide a monotonic interval.
         duration_seconds: u32,
+    },
+    /// A runtime handover began without changing the active incarnation.
+    ///
+    /// Written immediately before the paired `Rotating` status in the same
+    /// durable event unit. The outgoing runtime's cumulative counter remains
+    /// current until either a coordinated [`Self::RuntimeStarted`] switch or a
+    /// compatibility [`Self::RuntimeIncarnationStarted`] publication. A failed
+    /// attempt can return to the same runtime and therefore has no matching
+    /// incarnation-start marker.
+    RuntimeHandoverStarted,
+    /// A compatibility store durably named a newly provisioned runtime.
+    ///
+    /// Written in the same atomic record/event commit that installs the
+    /// runtime handle. Compatibility stores have no durable fencing generation,
+    /// so every marker starts another incarnation. Failed provider attempts
+    /// that never become durable write none; an idempotently retried commit
+    /// writes the unit once.
+    RuntimeIncarnationStarted,
+    /// A runtime became the durable authority for this session.
+    ///
+    /// Written in the same atomic unit as the authority switch. A candidate
+    /// that never takes authority therefore writes no marker, and retrying an
+    /// already committed switch cannot write a second one. The generation is
+    /// the durable fencing value, so readers can ignore a duplicate or older
+    /// marker without treating it as another runtime incarnation.
+    RuntimeStarted {
+        /// Strictly positive durable runtime generation.
+        generation: NonZeroU64,
     },
     /// The session's runtime is gone, and the service has established it.
     ///
@@ -430,6 +468,9 @@ const KNOWN_TAGS: &[&str] = &[
     "approval_resolved",
     "memory_pressure_opened",
     "memory_pressure_closed",
+    "runtime_handover_started",
+    "runtime_incarnation_started",
+    "runtime_started",
     "runtime_lost",
     "plane_changed",
     "sign_in_required",

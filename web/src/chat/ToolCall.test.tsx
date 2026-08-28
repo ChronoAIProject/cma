@@ -4,8 +4,9 @@ import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ToolCall, sectionsOf } from './ToolCall';
 import { MessageStream } from './MessageStream';
-import { fold } from './conversation';
-import { AguiConnection, MockSession, transcriptNamed, type AguiEvent } from '../agui';
+import { fold } from '@chronoai/cma-sdk';
+import { AguiConnection, type AguiEvent } from '@chronoai/cma-sdk';
+import { MockSession, transcriptNamed } from '@chronoai/cma-sdk/testing';
 
 /**
  * Tool calls as structure — `Web_Style.md` §18.2.
@@ -16,7 +17,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function conversationFrom(name: string, options: { dropAfter?: number } = {}) {
   const session = new MockSession(transcriptNamed(name), options);
   const seen: AguiEvent[] = [];
-  const connection = new AguiConnection(session.transport, 'sesn_1', {
+  const connection = new AguiConnection(session.transport, session.id, {
     backoffMs: 0,
     sleep: () => Promise.resolve(),
   });

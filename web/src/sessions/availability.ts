@@ -125,18 +125,22 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
         // will be back.
         reason: 'This session is being moved to another runtime. It will come back.',
       };
-    case 'idle':
-      // Stopped. Readable, revivable, and not pretending to be either less or
-      // more than that.
+    case 'idle': {
+      // `requires_action` is parked on the client, not stopped. It stays
+      // readable but never offers Resume for a runtime that is already waiting.
+      const waitingForClient = session.stopReason === 'requires_action';
       return {
         interactive: false,
         canReconnect: false,
         canStop: false,
-        canRevive: true,
+        canRevive: !waitingForClient,
         canDelete: true,
         listed: true,
-        reason: 'This session is paused. Resume it to carry on.',
+        reason: waitingForClient
+          ? 'This session is waiting for you.'
+          : 'This session is paused. Resume it to carry on.',
       };
+    }
     case 'terminated':
       return {
         interactive: false,
@@ -153,6 +157,16 @@ export function abilitiesFor(session: Session, signingIn = false): SessionAbilit
           session.stopReason === 'error'
             ? 'This session ended because it failed.'
             : 'This session has ended.',
+      };
+    case 'unknown':
+      return {
+        interactive: false,
+        canReconnect: false,
+        canStop: false,
+        canRevive: false,
+        canDelete: false,
+        listed: true,
+        reason: 'This session is in an unrecognised state.',
       };
     default: {
       // Exhaustiveness: a new state must be given abilities deliberately

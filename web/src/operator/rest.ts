@@ -1,4 +1,11 @@
-import { ApiError } from '../api/client';
+import {
+  ApiError,
+  ProtocolError,
+  request,
+  requestPages,
+  resolveConfig,
+  type RequestOptions,
+} from '@chronoai/cma-sdk';
 import { PlatformSettingsConflict } from './types';
 import type {
   ActivityEntry,
@@ -37,49 +44,17 @@ import type {
  */
 
 const BASE = '/api/v1/admin';
+const config = resolveConfig();
 
-async function call(path: string, init?: RequestInit): Promise<unknown> {
-  let response: Response;
+async function call(path: string, options: RequestOptions = {}): Promise<unknown> {
   try {
-    response = await fetch(path, {
-      ...init,
-      // The session cookie is the credential; without this every call reads as
-      // anonymous and comes back refused.
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    });
+    return await request(config, path, options);
   } catch (cause) {
-    throw new ApiError(0, `cannot reach the control plane: ${String(cause)}`);
-  }
-  if (!response.ok) {
-    let detail = `request failed with ${response.status}`;
-    let code: string | undefined;
-    try {
-      const body = (await response.json()) as {
-        detail?: unknown;
-        title?: unknown;
-        code?: unknown;
-      };
-      const text = body?.detail ?? body?.title;
-      if (typeof text === 'string' && text !== '') {
-        detail = text;
-      }
-      if (typeof body?.code === 'string') {
-        code = body.code;
-      }
-    } catch {
-      // A body that is not a problem document leaves the status as the whole
-      // story, which is still better than reporting nothing.
+    if (cause instanceof ApiError && cause.code === 'settings_conflict') {
+      throw new PlatformSettingsConflict(cause.message);
     }
-    if (code === 'settings_conflict') {
-      throw new PlatformSettingsConflict(detail);
-    }
-    throw new ApiError(response.status, detail);
+    throw cause;
   }
-  if (response.status === 204) {
-    return null;
-  }
-  return (await response.json()) as unknown;
 }
 
 /** A field the control plane may have omitted. */
@@ -98,7 +73,7 @@ export function instant(value: unknown): number | undefined {
 
 function list(payload: unknown, what: string): readonly unknown[] {
   if (!Array.isArray(payload)) {
-    throw new ApiError(0, `the ${what} was not a list`);
+    throw new ProtocolError(`the ${what} was not a list`);
   }
   return payload;
 }
@@ -106,7 +81,7 @@ function list(payload: unknown, what: string): readonly unknown[] {
 /** An object-shaped payload, or a boundary failure fit to show an operator. */
 function object(payload: unknown, what: string): Record<string, unknown> {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    throw new ApiError(0, `the ${what} was not an object`);
+    throw new ProtocolError(`the ${what} was not an object`);
   }
   return payload as Record<string, unknown>;
 }
@@ -114,7 +89,7 @@ function object(payload: unknown, what: string): Record<string, unknown> {
 /** A required string that may deliberately be empty. */
 function prose(value: unknown, what: string): string {
   if (typeof value !== 'string') {
-    throw new ApiError(0, `the ${what} was not text`);
+    throw new ProtocolError(`the ${what} was not text`);
   }
   return value;
 }
@@ -122,7 +97,7 @@ function prose(value: unknown, what: string): string {
 /** An ordered set of editable prose blocks. */
 function proseBlocks(value: unknown, what: string): readonly string[] {
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
-    throw new ApiError(0, `the ${what} was not a list of text blocks`);
+    throw new ProtocolError(`the ${what} was not a list of text blocks`);
   }
   return [...value];
 }
@@ -130,7 +105,7 @@ function proseBlocks(value: unknown, what: string): readonly string[] {
 /** A positive integer setting, never rounded or silently repaired. */
 function positiveInteger(value: unknown, what: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
-    throw new ApiError(0, `the ${what} was not a positive integer`);
+    throw new ProtocolError(`the ${what} was not a positive integer`);
   }
   return value;
 }
@@ -138,7 +113,7 @@ function positiveInteger(value: unknown, what: string): number {
 /** A declared aggregate may be zero, but it must survive JSON exactly. */
 function nonNegativeInteger(value: unknown, what: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw new ApiError(0, `the ${what} was not a non-negative safe integer`);
+    throw new ProtocolError(`the ${what} was not a non-negative safe integer`);
   }
   return value;
 }
@@ -222,7 +197,7 @@ export function toStoredPlatformSettings(raw: unknown): StoredPlatformSettings {
     !Number.isSafeInteger(stored.revision) ||
     stored.revision < 0
   ) {
-    throw new ApiError(0, 'the platform settings revision was not a non-negative integer');
+    throw new ProtocolError('the platform settings revision was not a non-negative integer');
   }
   return {
     revision: stored.revision,
@@ -273,7 +248,7 @@ export function toPerson(raw: unknown): Person {
     last_seen?: unknown;
   };
   if (typeof p?.subject !== 'string' || p.subject === '') {
-    throw new ApiError(0, 'somebody arrived in the directory with no identifier');
+    throw new ProtocolError('somebody arrived in the directory with no identifier');
   }
   return {
     subject: p.subject,
@@ -307,7 +282,7 @@ export function toActivityEntry(raw: unknown): ActivityEntry {
     detail?: unknown;
   };
   if (typeof e?.id !== 'string' || e.id === '') {
-    throw new ApiError(0, 'an entry arrived with no identifier');
+    throw new ProtocolError('an entry arrived with no identifier');
   }
   const target = e.target as { kind?: unknown; id?: unknown } | undefined;
   return {
@@ -338,7 +313,7 @@ export function toAdminSession(raw: unknown): AdminSession {
     runtime_version?: unknown;
   };
   if (typeof s?.id !== 'string' || s.id === '') {
-    throw new ApiError(0, 'a session arrived with no identifier');
+    throw new ProtocolError('a session arrived with no identifier');
   }
   return {
     id: s.id,
@@ -444,7 +419,9 @@ export function createRestOperatorStore(): OperatorStore {
     },
 
     async sessions(): Promise<readonly AdminSession[]> {
-      return list(await call(`${BASE}/sessions`), 'session list').map(toAdminSession);
+      return requestPages(config, `${BASE}/sessions`, (payload) =>
+        list(payload, 'session list').map(toAdminSession),
+      );
     },
 
     async stopSession(id: string): Promise<void> {
@@ -466,10 +443,10 @@ export function createRestOperatorStore(): OperatorStore {
       return toStoredPlatformSettings(
         await call(`${BASE}/settings`, {
           method: 'PATCH',
-          body: JSON.stringify({
+          body: {
             expected_revision: expectedRevision,
             ...settingsRequest(settings),
-          }),
+          },
         }),
       );
     },
@@ -478,7 +455,7 @@ export function createRestOperatorStore(): OperatorStore {
       return toStoredPlatformSettings(
         await call(`${BASE}/settings/reset`, {
           method: 'POST',
-          body: JSON.stringify({ expected_revision: expectedRevision }),
+          body: { expected_revision: expectedRevision },
         }),
       );
     },

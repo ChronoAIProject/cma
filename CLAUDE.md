@@ -35,7 +35,7 @@ api/         backend — a single Rust project (workspace root lives here)
 web/         frontend — a single React project
 infra/       deployment manifests and Dockerfiles
 docs/        all documentation, markdown only
-sdk/         independently published TypeScript and Rust client SDKs
+sdk/         repository-only TypeScript and Rust client SDKs
 CLAUDE.md
 README.md
 .gitignore
@@ -44,7 +44,12 @@ README.md
 
 Adding any other root-level file or directory is a CI failure. Tooling config that would normally sit at root (`Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `package.json`, `tsconfig.json`, lockfiles) lives inside `api/`, `web/`, or the SDK it governs.
 
-`sdk/` contains published client SDKs. Each immediate subdirectory is one self-contained published artifact, with its own manifest, toolchain configuration, lockfile, source, tests, and package documentation; it does not join the service project under `api/` or `web/`.
+`sdk/` contains repository-only client SDKs. Each immediate subdirectory is one
+self-contained package, with its own manifest, toolchain configuration, lockfile,
+source, tests, and package documentation; it does not join the service project
+under `api/` or `web/`. Neither SDK is published to an external package registry:
+consumers use the checked-out source, while local package and scratch-consumer
+checks prove the exported surfaces without creating a distribution channel.
 
 ### `infra/` — fixed contents
 
@@ -72,16 +77,17 @@ infra/runtime/Dockerfile
 
 No additional manifests, no Helm charts, no kustomize overlays.
 
-`infra/web/gcpbackendpolicy.yaml` is here for the same reason its neighbour
-is, and was added after the absence was measured rather than predicted: the
-frontend's own hostname carries everything the browser calls, because the
-bundle uses same-origin paths and the image proxies them onward. Without a
-policy the balancer's default of thirty seconds bounds the whole response, and
-the conversation surface's event stream was being cut at exactly that, every
-time. A client resumes on its cursor so nothing durable is lost — what is lost
-is what is deliberately never durable, the message being typed and the agent's
-reasoning, which reads as an agent that keeps stalling rather than as a
-timeout.
+`infra/web/gcpbackendpolicy.yaml` was added after a missing backend timeout was
+measured rather than predicted. The browser still uses one origin, but the
+managed Gateway now routes its more-specific `/api` and `/auth` paths plus the
+two root-level discovery documents directly to `cma-api`; this preserves the
+load balancer's authoritative client chain and puts streams under the API
+policy. The web image keeps the same-origin nginx proxy as a fallback when it
+is reached without that route split, so the web policy remains explicit too.
+Without the applicable policy the balancer's thirty-second default cuts a live
+event stream while it is healthy. A client can replay durable frames, but the
+message being typed and the agent's live reasoning are deliberately not
+durable and disappear on each cut.
 
 The api-side five exist because the control plane depends on them by name. It
 runs as a named service account, receives the sandbox key through a named
@@ -99,7 +105,7 @@ infrastructure this repository consumes rather than owns.
 
 ### `docs/`
 
-All documentation lives in `docs/`, and every file in it is markdown. The only documentation outside it is this file, `README.md`, and markdown under `sdk/*/docs/`; SDK documentation lives beside the artifact it ships with and is the source rendered by the frontend.
+All documentation lives in `docs/`, and every file in it is markdown. The only documentation outside it is this file, `README.md`, and markdown under `sdk/*/docs/`; SDK documentation lives beside its implementation and is the source rendered by the frontend.
 
 ---
 
@@ -312,8 +318,16 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime}`, tagged with the version and with the short commit SHA. Both tags are immutable and neither is ever moved.
-- An annotated tag `vX.Y.Z` and a GitHub release are created. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
+- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
+- After all three current GHCR digests pass the writer/history verification, each exact root digest is exported as
+  an OCI archive plus JSON metadata in a one-day Actions transfer artifact.
+  These unencrypted archives are an additional, ephemeral distribution
+  surface: anyone who can download this internal repository's Actions
+  artifacts can receive the private images, and that audience is not assumed
+  to equal the GHCR package ACL. Retention limits duration, not readership.
+  The artifacts are not release assets, are never committed, and contain no
+  SDK package; both SDKs remain repository-only and unpublished.
+- An annotated tag `vX.Y.Z` and a GitHub release are created. An active, GET-verified `v*` tag ruleset must reject updates and deletions without a bypass. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 

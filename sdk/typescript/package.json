@@ -1,7 +1,47 @@
 {
   "name": "@chronoai/cma-sdk",
   "version": "0.0.0-dev",
-  "description": "TypeScript client SDK for CMA",
   "private": true,
-  "type": "module"
+  "description": "TypeScript client SDK for CMA",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "docs:check": "node scripts/check-docs.mjs",
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "eventsource-parser": "^4.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "^3.2.7",
+    "eslint": "^9.39.0",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.0"
+  }
 }
