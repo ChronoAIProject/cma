@@ -440,6 +440,64 @@ describe('what comes back', () => {
     expect((withoutId as ApiError).requestId).toBeUndefined();
   });
 
+  it('retains a validated Retry-After delay on a rate-limit error', async () => {
+    const limited = recorder(
+      {
+        status: 429,
+        json: () => Promise.resolve({ detail: 'slow down', code: 'rate_limited' }),
+      },
+      { 'retry-after': '17' },
+    );
+
+    const failure = await request(resolveConfig({ fetch: limited.impl }), '/x').catch(
+      (cause: unknown) => cause,
+    );
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).retryAfterMs).toBe(17_000);
+  });
+
+  it('converts a future HTTP-date Retry-After into a positive delay', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-28T00:00:00Z'));
+    try {
+      const limited = recorder(
+        {
+          status: 429,
+          json: () => Promise.resolve({ detail: 'slow down', code: 'rate_limited' }),
+        },
+        { 'retry-after': 'Fri, 28 Aug 2026 00:00:09 GMT' },
+      );
+
+      const failure = await request(resolveConfig({ fetch: limited.impl }), '/x').catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(ApiError);
+      expect((failure as ApiError).retryAfterMs).toBe(9_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['0', '-1', 'not-a-deadline', '999999999999999999999'])(
+    'does not expose an unusable Retry-After value %s',
+    async (retryAfter) => {
+      const limited = recorder(
+        {
+          status: 429,
+          json: () => Promise.resolve({ detail: 'slow down', code: 'rate_limited' }),
+        },
+        { 'retry-after': retryAfter },
+      );
+
+      const failure = await request(resolveConfig({ fetch: limited.impl }), '/x').catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(ApiError);
+      expect((failure as ApiError).retryAfterMs).toBeUndefined();
+    },
+  );
+
   it('falls back to the status when the body is not a problem document', async () => {
     const { impl } = recorder({
       ok: false,

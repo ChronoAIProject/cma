@@ -141,6 +141,48 @@ data:
   # at all: the storage service authorises objects by bucket ownership, so a
   # bucket created by any other identity is refused permanently.
   CHRONO_CONTEXT_BUCKET: "chrono-platform-bot"
+  # Trigger repository baselines and checkpoints have a distinct lifecycle
+  # from conversation context. This deployment deliberately keeps them in the
+  # same machine-identity-owned bucket under CMA's subject/Launch-scoped object
+  # prefix; changing either policy does not implicitly change this selection.
+  CHRONO_TRIGGER_WORKSPACE_BUCKET: "chrono-platform-bot"
+  # GitHub Trigger rollout is deployment-owned and starts fail-closed. Enabling
+  # the environment alone is insufficient: the publisher and numeric upstream
+  # repository must both be allowlisted, the deterministic user cohort must be
+  # non-zero, and orchestration must be unpaused. The capability kill switch is
+  # independent so disabling admission still converges existing delegated reach
+  # toward tombstone acknowledgement or confirmed agent-key revocation without
+  # terminating its session.
+  CHRONO_TRIGGER_ENABLED: "false"
+  CHRONO_TRIGGER_ORCHESTRATION_PAUSED: "true"
+  CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH: "true"
+  # Closed declaration for the exact CHRONO_SANDBOX_IMAGE. Keep this empty
+  # until that image has demonstrated every named capability; Trigger Launch
+  # admission fails closed when a published requirement is absent.
+  CHRONO_TRIGGER_RUNTIME_CAPABILITIES: ""
+  CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS: ""
+  CHRONO_TRIGGER_REPOSITORY_IDS: ""
+  CHRONO_TRIGGER_USER_COHORT_PERCENT: "0"
+  # Maximum files admitted into one reviewed publication. It cannot exceed the
+  # complete review schema's 1,000-file bound. Change it only with pinned-provider
+  # measurement evidence and keep the recorded value with the release evidence.
+  CHRONO_TRIGGER_CHANGED_FILE_LIMIT: "1000"
+  # Bound asynchronous fork readiness reconciliation. GitHub's documented
+  # support-escalation threshold supplies the five-minute default; it is an
+  # operational deadline, not a provider completion guarantee.
+  CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS: "300"
+  # Dry-run retains the exact CMA-owned baseline/checkpoint/diff plan but has no
+  # deletion port. Promote to execute only after reviewing dry-run inventory;
+  # execute reuses the normal fenced effect worker. Neither mode enumerates or
+  # removes sandboxes, forks, branches, commits, or pull requests.
+  CHRONO_TRIGGER_CLEANUP_MODE: "dry_run"
+  # Each independent in-process lane has a bounded page and concurrency budget.
+  # Missed ticks are skipped, page cursors are cycle-checked, and durable Launch
+  # leases remain the authority when more than one control plane sees a row.
+  CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS: "5"
+  CHRONO_TRIGGER_WORKER_PAGE_SIZE: "50"
+  CHRONO_TRIGGER_WORKER_MAX_PAGES: "20"
+  CHRONO_TRIGGER_WORKER_CONCURRENCY: "4"
   # This service's own machine identity on the identity platform, used for all
   # session-owned objects above. The identifier is not secret; its secret half
   # lives in the Secret, and they are delivered separately for that reason.
@@ -244,6 +286,12 @@ data:
   # which fails partway through somebody's work rather than refusing to start.
   CHRONO_SANDBOX_CPU: "1"
   CHRONO_SANDBOX_MEMORY: "1Gi"
+  # Public verification keys retained while runtime-policy signing keys rotate.
+  # The current public key is derived from the private signer at startup and is
+  # added to this map before it is passed to a sandbox. Previous values are a
+  # JSON object from key ID to standard-base64 Ed25519 public key. Public keys
+  # are configuration, never signing authority.
+  CHRONO_GITHUB_CAPABILITY_PREVIOUS_VERIFY_KEYS: "{}"
   # Path to the mounted OpenSandbox API key. Read from a file rather than an
   # environment variable so the credential can be delivered by a secret volume
   # and rotated without rewriting this ConfigMap.

@@ -63,3 +63,19 @@ fn a_stored_problem_supplies_every_required_run_error_field() {
     assert_eq!(code, "provisioning_timeout");
     assert_eq!(capability, None);
 }
+
+#[tokio::test]
+async fn recovery_required_names_the_durable_manual_boundary() {
+    let response = CoordinationProblem::RecoveryRequired.into_response();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("the problem body is bounded JSON");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("problem is JSON");
+
+    assert_eq!(body["code"], "agui_operation_recovery_required");
+    assert_eq!(
+        body["detail"],
+        "The previous AG-UI execution ended without a replay receipt. This runId remains fenced unless the original execution records its exact result; manual review of durable state is required."
+    );
+}

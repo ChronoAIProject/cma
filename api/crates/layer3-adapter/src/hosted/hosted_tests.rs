@@ -101,6 +101,312 @@ async fn credential_waiter_count(kernel: &HostedKernel) -> usize {
     kernel.credential_waiters.0.lock().await.len()
 }
 
+struct WorkspaceFixture {
+    base_url: String,
+    server: tokio::task::JoinHandle<Vec<(String, Vec<u8>)>>,
+}
+
+impl WorkspaceFixture {
+    async fn finish(self) -> Vec<(String, Vec<u8>)> {
+        tokio::time::timeout(std::time::Duration::from_secs(2), self.server)
+            .await
+            .expect("the workspace fixture received every request")
+            .expect("the workspace fixture did not panic")
+    }
+}
+
+async fn read_http_request(stream: &mut tokio::net::TcpStream) -> (String, Vec<u8>) {
+    let mut received = Vec::new();
+    let header_end = loop {
+        if let Some(position) = received.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position + 4;
+        }
+        let mut chunk = [0_u8; 4096];
+        let read = stream.read(&mut chunk).await.expect("fixture reads");
+        assert!(read > 0, "request ended before its headers");
+        received.extend_from_slice(&chunk[..read]);
+    };
+    let headers = String::from_utf8(received[..header_end].to_vec()).expect("headers are text");
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length").then(|| {
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .expect("content length is numeric")
+            })
+        })
+        .unwrap_or_default();
+    while received.len() - header_end < content_length {
+        let mut chunk = [0_u8; 4096];
+        let read = stream.read(&mut chunk).await.expect("fixture reads body");
+        assert!(read > 0, "request ended before its body");
+        received.extend_from_slice(&chunk[..read]);
+    }
+    (
+        headers,
+        received[header_end..header_end + content_length].to_vec(),
+    )
+}
+
+async fn write_json(stream: &mut tokio::net::TcpStream, body: serde_json::Value) {
+    let body = body.to_string();
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .expect("fixture responds");
+    stream.shutdown().await.expect("fixture closes");
+}
+
+async fn workspace_fixture(
+    readiness: serde_json::Value,
+    acknowledgement: Option<serde_json::Value>,
+) -> WorkspaceFixture {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("workspace fixture binds");
+    let address = listener
+        .local_addr()
+        .expect("workspace fixture has address");
+    let expected = if acknowledgement.is_some() { 3 } else { 2 };
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for ordinal in 0..expected {
+            let (mut stream, _) = listener.accept().await.expect("fixture accepts");
+            requests.push(read_http_request(&mut stream).await);
+            let response = match ordinal {
+                0 => serde_json::json!({ "endpoint": address.to_string() }),
+                1 => readiness.clone(),
+                2 => acknowledgement.clone().expect("a restore response exists"),
+                _ => unreachable!(),
+            };
+            write_json(&mut stream, response).await;
+        }
+        requests
+    });
+    WorkspaceFixture {
+        base_url: format!("http://{address}"),
+        server,
+    }
+}
+
+enum CheckpointResumeResponse {
+    Acknowledge(serde_json::Value),
+    Refuse,
+    Disconnect,
+}
+
+struct CheckpointFixture {
+    base_url: String,
+    server: tokio::task::JoinHandle<Vec<(String, Vec<u8>)>>,
+}
+
+impl CheckpointFixture {
+    async fn finish(self) -> Vec<(String, Vec<u8>)> {
+        tokio::time::timeout(std::time::Duration::from_secs(2), self.server)
+            .await
+            .expect("the checkpoint fixture completed")
+            .expect("the checkpoint fixture did not panic")
+    }
+}
+
+async fn write_http_bytes(
+    stream: &mut tokio::net::TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+) {
+    let reason = match status {
+        200 => "OK",
+        500 => "Internal Server Error",
+        _ => panic!("the checkpoint fixture does not name HTTP status {status}"),
+    };
+    let headers = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(headers.as_bytes())
+        .await
+        .expect("checkpoint fixture writes headers");
+    stream
+        .write_all(body)
+        .await
+        .expect("checkpoint fixture writes body");
+    stream.shutdown().await.expect("checkpoint fixture closes");
+}
+
+async fn checkpoint_fixture(
+    wire: Vec<u8>,
+    resume: Option<CheckpointResumeResponse>,
+) -> CheckpointFixture {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("checkpoint fixture binds");
+    let address = listener
+        .local_addr()
+        .expect("checkpoint fixture has address");
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for ordinal in 0..3 {
+            let (mut stream, _) = listener.accept().await.expect("checkpoint fixture accepts");
+            requests.push(read_http_request(&mut stream).await);
+            match ordinal {
+                0 => {
+                    write_json(
+                        &mut stream,
+                        serde_json::json!({ "endpoint": address.to_string() }),
+                    )
+                    .await
+                }
+                1 => {
+                    write_json(
+                        &mut stream,
+                        serde_json::json!({ "workspaceCheckpoint": { "version": 4 } }),
+                    )
+                    .await
+                }
+                2 => write_http_bytes(&mut stream, 200, "application/octet-stream", &wire).await,
+                _ => unreachable!(),
+            }
+        }
+
+        match resume {
+            Some(response) => {
+                let (mut stream, _) = listener
+                    .accept()
+                    .await
+                    .expect("checkpoint fixture accepts resume");
+                requests.push(read_http_request(&mut stream).await);
+                match response {
+                    CheckpointResumeResponse::Acknowledge(receipt) => {
+                        write_json(&mut stream, receipt).await
+                    }
+                    CheckpointResumeResponse::Refuse => {
+                        write_http_bytes(&mut stream, 500, "application/json", b"{}").await
+                    }
+                    CheckpointResumeResponse::Disconnect => {
+                        stream
+                            .shutdown()
+                            .await
+                            .expect("checkpoint fixture disconnects");
+                    }
+                }
+            }
+            None => {
+                if let Ok(Ok((mut stream, _))) =
+                    tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+                        .await
+                {
+                    requests.push(read_http_request(&mut stream).await);
+                    write_json(&mut stream, serde_json::json!({})).await;
+                }
+            }
+        }
+        requests
+    });
+    CheckpointFixture {
+        base_url: format!("http://{address}"),
+        server,
+    }
+}
+
+fn workspace_package() -> WorkspacePackage {
+    WorkspacePackage {
+        epoch: 7,
+        source_revision: "a".repeat(40),
+        baseline_manifest_digest: "b".repeat(64),
+        manifest_digest: "b".repeat(64),
+        archive_sha256: "c".repeat(64),
+        archive: vec![0, 1, 2, 3, 255],
+    }
+}
+
+fn checkpoint_request() -> WorkspaceCheckpointRequest {
+    WorkspaceCheckpointRequest {
+        epoch: 7,
+        version: 3,
+        source_revision: "a".repeat(40),
+        baseline_manifest_digest: "b".repeat(64),
+        disposition: crate::WorkspaceCheckpointDisposition::ResumeAfterCapture,
+    }
+}
+
+fn length_delimited(header: serde_json::Value, body: &[u8]) -> Vec<u8> {
+    let header = serde_json::to_vec(&header).unwrap();
+    let mut framed = (header.len() as u64).to_be_bytes().to_vec();
+    framed.extend_from_slice(&header);
+    framed.extend_from_slice(body);
+    framed
+}
+
+fn checkpoint_wire(request: &WorkspaceCheckpointRequest, writers_resumed: bool) -> Vec<u8> {
+    checkpoint_wire_with_receipt(request, writers_resumed, None, None, None)
+}
+
+fn checkpoint_wire_with_receipt(
+    request: &WorkspaceCheckpointRequest,
+    writers_resumed: bool,
+    writer_state: Option<&str>,
+    writer_resume_token: Option<&str>,
+    legacy_writer_hold_expires_at_unix_seconds: Option<u64>,
+) -> Vec<u8> {
+    let payload = b"edited\n";
+    let content_sha256 = hex(&Sha256::digest(payload));
+    let manifest_digest = "d".repeat(64);
+    let archive = length_delimited(
+        serde_json::json!({
+            "cma_workspace": WORKSPACE_ARCHIVE_VERSION,
+            "workspace_epoch": request.epoch,
+            "checkpoint_version": request.version,
+            "quiesced_writers": 2,
+            "source_revision": request.source_revision,
+            "manifest_digest": manifest_digest,
+            "entries": [{
+                "path": "README.md",
+                "kind": "regular",
+                "mode": 0o100644,
+                "size": payload.len(),
+                "content_sha256": content_sha256,
+                "provider_object_id": "c".repeat(40),
+                "offset": 0
+            }]
+        }),
+        payload,
+    );
+    let archive_sha256 = hex(&Sha256::digest(&archive));
+    let mut acknowledgement = serde_json::json!({
+        "cma_checkpoint": WORKSPACE_ARCHIVE_VERSION,
+        "workspace_epoch": request.epoch,
+        "checkpoint_version": request.version,
+        "source_revision": request.source_revision,
+        "manifest_digest": manifest_digest,
+        "archive_sha256": archive_sha256,
+        "entries": 1,
+        "bytes": payload.len(),
+        "quiesced_writers": 2,
+        "writers_resumed": writers_resumed,
+        "writer_state": writer_state,
+        "writer_resume_token": writer_resume_token,
+    });
+    if let Some(expiry) = legacy_writer_hold_expires_at_unix_seconds {
+        acknowledgement
+            .as_object_mut()
+            .expect("checkpoint acknowledgement is an object")
+            .insert(
+                "writer_hold_expires_at_unix_seconds".to_string(),
+                serde_json::json!(expiry),
+            );
+    }
+    length_delimited(acknowledgement, &archive)
+}
+
 /// Serve one HTTP response and then stop.
 async fn one_response_server(
     status: u16,
@@ -140,6 +446,149 @@ async fn one_response_server(
     (format!("http://{address}"), server)
 }
 
+enum RequiredPolicyReadiness {
+    Document(serde_json::Value),
+    Disconnect,
+}
+
+struct RequiredPolicyFixture {
+    base_url: String,
+    server: tokio::task::JoinHandle<Vec<String>>,
+}
+
+impl RequiredPolicyFixture {
+    async fn finish(self) -> Vec<String> {
+        tokio::time::timeout(std::time::Duration::from_secs(3), self.server)
+            .await
+            .expect("the required-policy fixture received cleanup")
+            .expect("the required-policy fixture did not panic")
+    }
+}
+
+async fn write_policy_fixture_response(
+    stream: &mut tokio::net::TcpStream,
+    status: u16,
+    body: serde_json::Value,
+) {
+    let body = body.to_string();
+    let reason = match status {
+        200 => "OK",
+        500 => "Internal Server Error",
+        _ => panic!("the required-policy fixture does not name HTTP status {status}"),
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .expect("the required-policy fixture responds");
+    stream
+        .shutdown()
+        .await
+        .expect("the required-policy fixture closes");
+}
+
+async fn required_policy_fixture(
+    readiness: RequiredPolicyReadiness,
+    cleanup_status: u16,
+) -> RequiredPolicyFixture {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the required-policy fixture binds");
+    let address = listener
+        .local_addr()
+        .expect("the required-policy fixture has an address");
+    let mut readiness = Some(readiness);
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        loop {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("the required-policy fixture accepts");
+            let (headers, _) = read_http_request(&mut stream).await;
+            let request = headers
+                .lines()
+                .next()
+                .expect("the request has a request line");
+            let mut parts = request.split_whitespace();
+            let method = parts.next().expect("the request names a method");
+            let path = parts.next().expect("the request names a path");
+            requests.push(format!("{method} {path}"));
+
+            match (method, path) {
+                ("POST", "/v1/sandboxes") | ("GET", "/v1/sandboxes/sbx-policy-candidate") => {
+                    write_policy_fixture_response(
+                        &mut stream,
+                        200,
+                        serde_json::json!({
+                            "id": "sbx-policy-candidate",
+                            "status": { "state": "running" },
+                            "metadata": {},
+                        }),
+                    )
+                    .await;
+                }
+                ("GET", path)
+                    if path.starts_with("/v1/sandboxes/sbx-policy-candidate/endpoints/9090") =>
+                {
+                    write_policy_fixture_response(
+                        &mut stream,
+                        200,
+                        serde_json::json!({ "endpoint": address.to_string() }),
+                    )
+                    .await;
+                }
+                ("GET", "/readyz") => match readiness
+                    .take()
+                    .expect("readiness is probed only once in these failure cases")
+                {
+                    RequiredPolicyReadiness::Document(body) => {
+                        write_policy_fixture_response(&mut stream, 200, body).await;
+                    }
+                    RequiredPolicyReadiness::Disconnect => {
+                        // A closed connection with no response is transport
+                        // failure, never negative capability evidence.
+                    }
+                },
+                ("DELETE", "/v1/sandboxes/sbx-policy-candidate") => {
+                    write_policy_fixture_response(
+                        &mut stream,
+                        cleanup_status,
+                        serde_json::json!({}),
+                    )
+                    .await;
+                    break;
+                }
+                _ => panic!("unexpected required-policy request: {method} {path}"),
+            }
+        }
+        requests
+    });
+    RequiredPolicyFixture {
+        base_url: format!("http://{address}"),
+        server,
+    }
+}
+
+fn assert_exact_policy_candidate_was_cleaned(requests: &[String]) {
+    assert_eq!(
+        requests.last().map(String::as_str),
+        Some("DELETE /v1/sandboxes/sbx-policy-candidate"),
+        "the failed candidate must be cleaned before the failure is returned"
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.starts_with("DELETE "))
+            .count(),
+        1,
+        "cleanup authority must target exactly one candidate"
+    );
+}
+
 /// Serve one provider listing response and then stop.
 async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
     one_response_server(200, body).await
@@ -149,8 +598,10 @@ async fn listing_provider(body: serde_json::Value) -> (String, tokio::task::Join
 fn spec() -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment: Default::default(),
@@ -159,6 +610,7 @@ fn spec() -> RuntimeSpec {
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: Default::default(),
     }
@@ -169,6 +621,398 @@ fn capacity() -> RuntimeCapacity {
         cpu_millis: NonZeroU32::new(1500).expect("the test capacity is non-zero"),
         memory_mib: NonZeroU32::new(3072).expect("the test capacity is non-zero"),
     }
+}
+
+#[tokio::test]
+async fn an_old_runtime_image_is_refused_without_sending_workspace_bytes() {
+    let fixture = workspace_fixture(serde_json::json!({ "status": "ready" }), None).await;
+    let kernel = hosted(&fixture.base_url);
+
+    let error = kernel
+        .hand_over_workspace("sbx-old", &workspace_package())
+        .await
+        .expect_err("an old image cannot take a trigger workspace");
+    assert!(matches!(error, AdapterError::Unsupported(_)));
+
+    let requests = fixture.finish().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0]
+        .0
+        .starts_with("GET /v1/sandboxes/sbx-old/endpoints/9090?"));
+    assert!(requests[1].0.starts_with("GET /readyz "));
+    assert!(requests.iter().all(|(_, body)| body.is_empty()));
+}
+
+#[tokio::test]
+async fn workspace_handover_sends_exact_bytes_and_requires_an_exact_acknowledgement() {
+    let package = workspace_package();
+    let fixture = workspace_fixture(
+        serde_json::json!({ "workspaceCheckpoint": { "version": 2 } }),
+        Some(serde_json::json!({
+            "workspace_epoch": package.epoch,
+            "source_revision": package.source_revision,
+            "baseline_manifest_digest": package.baseline_manifest_digest,
+            "manifest_digest": package.manifest_digest,
+            "entries": 0,
+            "bytes": 0
+        })),
+    )
+    .await;
+    let kernel = hosted(&fixture.base_url);
+
+    kernel
+        .hand_over_workspace("sbx-v2", &package)
+        .await
+        .expect("the exact acknowledgement is accepted");
+
+    let requests = fixture.finish().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests[2].0.starts_with(&format!(
+        "POST /runtime/workspace?epoch=7&source={}&baseline={}&manifest={}&archive={} ",
+        package.source_revision,
+        package.baseline_manifest_digest,
+        package.manifest_digest,
+        package.archive_sha256
+    )));
+    assert_eq!(requests[2].1, package.archive);
+}
+
+#[tokio::test]
+async fn workspace_handover_rejects_a_mismatched_success_acknowledgement() {
+    let package = workspace_package();
+    let fixture = workspace_fixture(
+        serde_json::json!({ "workspaceCheckpoint": { "version": 2 } }),
+        Some(serde_json::json!({
+            "workspace_epoch": package.epoch + 1,
+            "source_revision": package.source_revision,
+            "baseline_manifest_digest": package.baseline_manifest_digest,
+            "manifest_digest": package.manifest_digest,
+            "entries": 1,
+            "bytes": 5
+        })),
+    )
+    .await;
+    let kernel = hosted(&fixture.base_url);
+
+    let error = kernel
+        .hand_over_workspace("sbx-wrong", &package)
+        .await
+        .expect_err("a different workspace was not acknowledged");
+    assert!(matches!(error, AdapterError::Rejected(_)));
+
+    assert_eq!(fixture.finish().await.len(), 3);
+}
+
+#[test]
+fn checkpoint_capture_requires_v2_and_validates_the_exact_sealed_wire() {
+    assert!(!readiness_supports_workspace_checkpoint(
+        br#"{"workspaceCheckpoint":{"version":1}}"#,
+        crate::WorkspaceCheckpointDisposition::ResumeAfterCapture,
+    ));
+    assert!(readiness_supports_workspace_checkpoint(
+        br#"{"workspaceCheckpoint":{"version":2}}"#,
+        crate::WorkspaceCheckpointDisposition::ResumeAfterCapture,
+    ));
+    assert!(!readiness_supports_workspace_checkpoint(
+        br#"{"workspaceCheckpoint":{"version":3}}"#,
+        crate::WorkspaceCheckpointDisposition::HoldForTeardown,
+    ));
+    assert!(readiness_supports_workspace_checkpoint(
+        br#"{"workspaceCheckpoint":{"version":4}}"#,
+        crate::WorkspaceCheckpointDisposition::HoldForTeardown,
+    ));
+
+    let request = checkpoint_request();
+    let wire = checkpoint_wire(&request, true);
+    let package = parse_workspace_checkpoint(&wire, &request).expect("v2 checkpoint is valid");
+    assert_eq!(package.epoch, request.epoch);
+    assert_eq!(package.version, request.version);
+    assert_eq!(package.total_bytes, 7);
+    assert_eq!(package.quiesced_writers, 2);
+    assert_eq!(package.writer_state, crate::WorkspaceWriterState::Resumed);
+    assert!(package.writer_resume_token.is_none());
+    assert_eq!(package.entries.len(), 1);
+    assert_eq!(package.entries[0].path, "README.md");
+    assert_eq!(
+        package.archive_sha256,
+        hex(&Sha256::digest(&package.archive))
+    );
+}
+
+#[test]
+fn checkpoint_capture_rejects_unresumed_mismatched_truncated_and_corrupt_results() {
+    let request = checkpoint_request();
+    assert!(parse_workspace_checkpoint(&checkpoint_wire(&request, false), &request).is_err());
+
+    let mut other_version = request.clone();
+    other_version.version += 1;
+    assert!(parse_workspace_checkpoint(&checkpoint_wire(&request, true), &other_version).is_err());
+
+    let mut truncated = checkpoint_wire(&request, true);
+    truncated.pop();
+    assert!(parse_workspace_checkpoint(&truncated, &request).is_err());
+
+    let mut corrupt = checkpoint_wire(&request, true);
+    *corrupt.last_mut().unwrap() ^= 0xff;
+    assert!(parse_workspace_checkpoint(&corrupt, &request).is_err());
+}
+
+#[test]
+fn teardown_capture_requires_an_exact_non_expiring_writer_hold_receipt() {
+    let mut request = checkpoint_request();
+    request.disposition = crate::WorkspaceCheckpointDisposition::HoldForTeardown;
+    let token = "a".repeat(64);
+    let wire = checkpoint_wire_with_receipt(
+        &request,
+        false,
+        Some("held_for_teardown"),
+        Some(&token),
+        None,
+    );
+    let package = parse_workspace_checkpoint(&wire, &request).expect("the exact hold is accepted");
+    assert_eq!(
+        package.writer_state,
+        crate::WorkspaceWriterState::HeldForTeardown
+    );
+    assert_eq!(package.writer_resume_token.as_deref(), Some(token.as_str()));
+
+    assert!(parse_workspace_checkpoint(
+        &checkpoint_wire_with_receipt(
+            &request,
+            true,
+            Some("held_for_teardown"),
+            Some(&token),
+            None,
+        ),
+        &request,
+    )
+    .is_err());
+    assert!(parse_workspace_checkpoint(
+        &checkpoint_wire_with_receipt(&request, false, Some("held_for_teardown"), None, None,),
+        &request,
+    )
+    .is_err());
+    assert!(parse_workspace_checkpoint(
+        &checkpoint_wire_with_receipt(&request, false, Some("resumed"), Some(&token), None,),
+        &request,
+    )
+    .is_err());
+    assert!(parse_workspace_checkpoint(
+        &checkpoint_wire_with_receipt(
+            &request,
+            false,
+            Some("held_for_teardown"),
+            Some(&"g".repeat(64)),
+            None,
+        ),
+        &request,
+    )
+    .is_err());
+    assert!(parse_workspace_checkpoint(
+        &checkpoint_wire_with_receipt(
+            &request,
+            false,
+            Some("held_for_teardown"),
+            Some(&token),
+            Some(1),
+        ),
+        &request,
+    )
+    .is_err());
+}
+
+fn held_checkpoint_request() -> WorkspaceCheckpointRequest {
+    let mut request = checkpoint_request();
+    request.disposition = crate::WorkspaceCheckpointDisposition::HoldForTeardown;
+    request
+}
+
+fn assert_held_checkpoint_recovery_required(error: AdapterError) {
+    match error {
+        AdapterError::Unavailable(detail) => {
+            assert_eq!(detail, HELD_CHECKPOINT_RECOVERY_ERROR);
+        }
+        other => panic!("an indeterminate writer hold must require recovery, got {other}"),
+    }
+}
+
+#[tokio::test]
+async fn malformed_held_checkpoint_resumes_the_exact_token_once_and_preserves_rejection() {
+    let request = held_checkpoint_request();
+    let token = "a".repeat(64);
+    let mut wire = checkpoint_wire_with_receipt(
+        &request,
+        false,
+        Some("held_for_teardown"),
+        Some(&token),
+        None,
+    );
+    *wire.last_mut().expect("checkpoint has an archive") ^= 0xff;
+    let original = parse_workspace_checkpoint(&wire, &request)
+        .expect_err("the corrupt archive is rejected")
+        .to_string();
+    let fixture = checkpoint_fixture(
+        wire,
+        Some(CheckpointResumeResponse::Acknowledge(serde_json::json!({
+            "resume_token": token,
+            "writers_resumed": true,
+        }))),
+    )
+    .await;
+    let kernel = hosted(&fixture.base_url);
+
+    let error = kernel
+        .checkpoint_workspace(&RuntimeHandle("sbx-held-corrupt".into()), &request)
+        .await
+        .expect_err("the corrupt checkpoint remains rejected after recovery");
+    assert!(matches!(&error, AdapterError::Rejected(_)));
+    assert_eq!(error.to_string(), original);
+
+    let requests = fixture.finish().await;
+    assert_eq!(requests.len(), 4);
+    assert!(requests[2]
+        .0
+        .starts_with("POST /runtime/workspace/checkpoint?"));
+    assert!(requests[3]
+        .0
+        .starts_with("POST /runtime/workspace/checkpoint/resume "));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[3].1).unwrap(),
+        serde_json::json!({ "resume_token": "a".repeat(64) })
+    );
+}
+
+#[tokio::test]
+async fn held_checkpoint_without_a_valid_resume_token_requires_recovery_without_resuming() {
+    for token in [None, Some("g".repeat(64))] {
+        let request = held_checkpoint_request();
+        let wire = checkpoint_wire_with_receipt(
+            &request,
+            false,
+            Some("held_for_teardown"),
+            token.as_deref(),
+            None,
+        );
+        let fixture = checkpoint_fixture(wire, None).await;
+        let kernel = hosted(&fixture.base_url);
+
+        let error = kernel
+            .checkpoint_workspace(&RuntimeHandle("sbx-held-no-token".into()), &request)
+            .await
+            .expect_err("an unprovable hold cannot be returned as an ordinary rejection");
+        assert_held_checkpoint_recovery_required(error);
+        assert_eq!(fixture.finish().await.len(), 3);
+    }
+}
+
+#[tokio::test]
+async fn held_checkpoint_resume_transport_failure_requires_recovery_after_one_attempt() {
+    let request = held_checkpoint_request();
+    let token = "b".repeat(64);
+    let mut wire = checkpoint_wire_with_receipt(
+        &request,
+        false,
+        Some("held_for_teardown"),
+        Some(&token),
+        None,
+    );
+    wire.pop();
+    let fixture = checkpoint_fixture(wire, Some(CheckpointResumeResponse::Disconnect)).await;
+    let kernel = hosted(&fixture.base_url);
+
+    let error = kernel
+        .checkpoint_workspace(&RuntimeHandle("sbx-held-disconnect".into()), &request)
+        .await
+        .expect_err("an unacknowledged resume requires durable recovery");
+    assert_held_checkpoint_recovery_required(error);
+
+    let requests = fixture.finish().await;
+    assert_eq!(requests.len(), 4);
+    assert!(requests[3]
+        .0
+        .starts_with("POST /runtime/workspace/checkpoint/resume "));
+}
+
+#[tokio::test]
+async fn held_checkpoint_resume_refusal_or_mismatched_receipt_requires_recovery() {
+    let token = "c".repeat(64);
+    let responses = [
+        CheckpointResumeResponse::Refuse,
+        CheckpointResumeResponse::Acknowledge(serde_json::json!({
+            "resume_token": "d".repeat(64),
+            "writers_resumed": true,
+        })),
+    ];
+    for response in responses {
+        let request = held_checkpoint_request();
+        let mut wire = checkpoint_wire_with_receipt(
+            &request,
+            false,
+            Some("held_for_teardown"),
+            Some(&token),
+            None,
+        );
+        wire.pop();
+        let fixture = checkpoint_fixture(wire, Some(response)).await;
+        let kernel = hosted(&fixture.base_url);
+
+        let error = kernel
+            .checkpoint_workspace(&RuntimeHandle("sbx-held-refusal".into()), &request)
+            .await
+            .expect_err("anything short of an exact resume receipt requires recovery");
+        assert_held_checkpoint_recovery_required(error);
+
+        let requests = fixture.finish().await;
+        assert_eq!(requests.len(), 4);
+        assert!(requests[3]
+            .0
+            .starts_with("POST /runtime/workspace/checkpoint/resume "));
+    }
+}
+
+#[tokio::test]
+async fn periodic_checkpoint_parse_failure_never_uses_the_teardown_resume_path() {
+    let request = checkpoint_request();
+    let mut wire = checkpoint_wire(&request, true);
+    wire.pop();
+    let fixture = checkpoint_fixture(wire, None).await;
+    let kernel = hosted(&fixture.base_url);
+
+    let error = kernel
+        .checkpoint_workspace(&RuntimeHandle("sbx-periodic-corrupt".into()), &request)
+        .await
+        .expect_err("the malformed periodic checkpoint is rejected");
+    assert!(matches!(error, AdapterError::Rejected(_)));
+    assert_eq!(fixture.finish().await.len(), 3);
+}
+
+#[tokio::test]
+async fn valid_held_checkpoint_stays_held_without_calling_resume() {
+    let request = held_checkpoint_request();
+    let token = "e".repeat(64);
+    let wire = checkpoint_wire_with_receipt(
+        &request,
+        false,
+        Some("held_for_teardown"),
+        Some(&token),
+        None,
+    );
+    let fixture = checkpoint_fixture(wire, None).await;
+    let kernel = hosted(&fixture.base_url);
+
+    let checkpoint = kernel
+        .checkpoint_workspace(&RuntimeHandle("sbx-held-valid".into()), &request)
+        .await
+        .expect("a valid held checkpoint remains held for teardown");
+    assert_eq!(
+        checkpoint.writer_state,
+        crate::WorkspaceWriterState::HeldForTeardown
+    );
+    assert_eq!(
+        checkpoint.writer_resume_token.as_deref(),
+        Some(token.as_str())
+    );
+    assert_eq!(fixture.finish().await.len(), 3);
 }
 
 #[test]
@@ -283,6 +1127,27 @@ fn sandboxes_do_not_expire_on_a_timer() {
         SandboxShape::default().timeout_seconds.is_none(),
         "a default lifetime would terminate active sessions"
     );
+}
+
+#[test]
+fn a_pinned_trigger_timeout_overrides_the_deployment_shape() {
+    let shape = SandboxShape {
+        timeout_seconds: Some(7_200),
+        ..SandboxShape::default()
+    };
+    assert_eq!(shape.timeout_for(Some(900)), Some(900));
+    assert_eq!(shape.timeout_for(None), Some(7_200));
+}
+
+#[tokio::test]
+async fn a_zero_runtime_timeout_is_refused_before_a_provider_request() {
+    let kernel = hosted("http://127.0.0.1:1");
+    let mut request = spec();
+    request.timeout_seconds = Some(0);
+    assert!(matches!(
+        kernel.provision(&request, BTreeMap::new()).await,
+        Err(AdapterError::Rejected(detail)) if detail.contains("timeout")
+    ));
 }
 
 #[test]
@@ -890,6 +1755,486 @@ fn a_malformed_or_unrelated_control_frame_is_not_a_credential_result() {
 }
 
 #[test]
+fn runtime_policy_results_are_closed_and_require_complete_acknowledgement_metadata() {
+    for text in [
+        r#"{"t":"github_capability_result","operation_id":"opaque","accepted":true}"#,
+        r#"{"t":"github_capability_result","operation_id":"opaque","accepted":true,"generation":1,"fence":2}"#,
+        r#"{"t":"github_capability_result","operation_id":"opaque","accepted":false}"#,
+        r#"{"t":"github_capability_result","accepted":false,"refusal":"expired"}"#,
+        r#"{"t":"credential_result","operation_id":"opaque","accepted":false,"refusal":"expired"}"#,
+        "not json",
+    ] {
+        assert_eq!(
+            super::link::runtime_policy_answer(text),
+            None,
+            "accepted partial policy result {text}"
+        );
+    }
+    assert_eq!(
+        super::link::runtime_policy_answer(
+            r#"{"t":"github_capability_result","operation_id":"opaque","accepted":true,"generation":3,"fence":7,"revoked":false}"#,
+        ),
+        Some((
+            "opaque".into(),
+            super::link::RuntimePolicyAnswer {
+                accepted: true,
+                generation: Some(3),
+                fence: Some(7),
+                revoked: Some(false),
+                refusal: None,
+            },
+        ))
+    );
+    assert_eq!(
+        super::link::runtime_policy_answer(
+            r#"{"t":"github_capability_result","operation_id":"opaque","accepted":false,"refusal":"expired"}"#,
+        ),
+        Some((
+            "opaque".into(),
+            super::link::RuntimePolicyAnswer {
+                accepted: false,
+                generation: None,
+                fence: None,
+                revoked: None,
+                refusal: Some("expired".into()),
+            },
+        ))
+    );
+}
+
+#[test]
+fn runtime_policy_input_is_an_identical_text_control_frame_on_both_wire_dialects() {
+    for framed in [false, true] {
+        let message = HostedKernel::encode(
+            TerminalInput::RuntimePolicy {
+                operation_id: "policy-operation".into(),
+                envelope: "signed-envelope".into(),
+            },
+            framed,
+        );
+        let Message::Text(body) = message else {
+            panic!("runtime policy must travel on the text control lane");
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed,
+            serde_json::json!({
+                "t": "github_capability",
+                "operation_id": "policy-operation",
+                "envelope": "signed-envelope",
+            })
+        );
+    }
+}
+
+#[test]
+fn runtime_policy_readiness_requires_the_exact_name_version_and_runtime_support() {
+    let ready = |name: &str, version: u64, supported: bool| {
+        serde_json::json!({
+            "status": "ready",
+            "githubCapability": {
+                "name": name,
+                "version": version,
+                "runtime": { "supported": supported },
+            }
+        })
+        .to_string()
+    };
+    assert!(super::readiness_supports_runtime_policy(
+        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, true).as_bytes()
+    ));
+    for body in [
+        ready("github_capability_v2", super::RUNTIME_POLICY_VERSION, true),
+        ready(
+            "github_capability_v1",
+            super::RUNTIME_POLICY_VERSION + 1,
+            true,
+        ),
+        ready("github_capability_v1", super::RUNTIME_POLICY_VERSION, false),
+        "{}".into(),
+        "not-json".into(),
+    ] {
+        assert!(!super::readiness_supports_runtime_policy(body.as_bytes()));
+    }
+}
+
+#[test]
+fn runtime_policy_observation_accepts_only_consistent_closed_tuples() {
+    let body = |runtime: serde_json::Value| {
+        serde_json::json!({
+            "status": "ready",
+            "githubCapability": {
+                "name": "github_capability_v1",
+                "version": super::RUNTIME_POLICY_VERSION,
+                "runtime": runtime,
+            }
+        })
+        .to_string()
+    };
+    let active = super::parse_runtime_policy_observation(
+        body(serde_json::json!({
+            "required": true,
+            "supported": true,
+            "installed": true,
+            "revoked": false,
+            "launchId": "018f6d65-22a4-7e6b-9b1f-39e58d506f01",
+            "generation": 7,
+            "fence": 9,
+            "expiresAtEpochSeconds": 1_800_000_000_u64,
+            "lastRefusal": "operation_denied",
+        }))
+        .as_bytes(),
+    )
+    .expect("the complete active tuple is observed");
+    assert_eq!(active.generation, Some(7));
+    assert_eq!(active.fence, Some(9));
+    assert_eq!(
+        active.last_refusal,
+        Some(crate::RuntimePolicyRefusal::OperationDenied)
+    );
+
+    let empty = super::parse_runtime_policy_observation(
+        body(serde_json::json!({
+            "required": true,
+            "supported": true,
+            "installed": false,
+            "revoked": false,
+            "lastRefusal": "missing_policy",
+        }))
+        .as_bytes(),
+    )
+    .expect("a same-runtime supervisor restart has an explicit empty tuple");
+    assert!(!empty.installed);
+
+    for runtime in [
+        serde_json::json!({
+            "required": true,
+            "supported": true,
+            "installed": false,
+            "revoked": false,
+            "generation": 7,
+        }),
+        serde_json::json!({
+            "required": true,
+            "supported": false,
+            "installed": false,
+            "revoked": false,
+        }),
+        serde_json::json!({
+            "required": true,
+            "supported": true,
+            "installed": true,
+            "revoked": false,
+            "launchId": "launch",
+            "generation": 0,
+            "fence": 9,
+            "expiresAtEpochSeconds": 1_800_000_000_u64,
+        }),
+        serde_json::json!({
+            "required": true,
+            "supported": true,
+            "installed": true,
+            "revoked": true,
+            "launchId": "launch",
+            "generation": 7,
+            "fence": 9,
+            "expiresAtEpochSeconds": 1_800_000_000_u64,
+        }),
+        serde_json::json!({
+            "required": true,
+            "supported": true,
+            "installed": false,
+            "revoked": false,
+            "lastRefusal": "provider_words_must_not_cross_layer_3",
+        }),
+    ] {
+        assert!(
+            super::parse_runtime_policy_observation(body(runtime).as_bytes()).is_err(),
+            "accepted an inconsistent or open runtime policy tuple"
+        );
+    }
+}
+
+#[test]
+fn runtime_gateway_probe_readiness_requires_the_exact_name_version_and_support_flag() {
+    let ready = |name: &str, version: u64, supported: bool| {
+        serde_json::json!({
+            "status": "ready",
+            "runtimeGatewayProbe": {
+                "name": name,
+                "version": version,
+                "supported": supported,
+            }
+        })
+        .to_string()
+    };
+    assert!(super::readiness_supports_runtime_gateway_probe(
+        ready(
+            "runtime_gateway_probe_v1",
+            super::RUNTIME_GATEWAY_PROBE_VERSION,
+            true,
+        )
+        .as_bytes()
+    ));
+    for body in [
+        ready(
+            "runtime_gateway_probe_v2",
+            super::RUNTIME_GATEWAY_PROBE_VERSION,
+            true,
+        ),
+        ready(
+            "runtime_gateway_probe_v1",
+            super::RUNTIME_GATEWAY_PROBE_VERSION + 1,
+            true,
+        ),
+        ready(
+            "runtime_gateway_probe_v1",
+            super::RUNTIME_GATEWAY_PROBE_VERSION,
+            false,
+        ),
+        "{}".into(),
+        "not-json".into(),
+    ] {
+        assert!(!super::readiness_supports_runtime_gateway_probe(
+            body.as_bytes()
+        ));
+    }
+}
+
+#[tokio::test]
+async fn required_policy_transport_failure_remains_unavailable_after_exact_cleanup() {
+    let fixture = required_policy_fixture(RequiredPolicyReadiness::Disconnect, 200).await;
+    let mut request = spec();
+    request.runtime_policy_required = true;
+
+    let error = hosted(&fixture.base_url)
+        .provision(&request, BTreeMap::new())
+        .await
+        .expect_err("transport loss cannot prove that a runtime image is unsupported");
+    assert!(
+        matches!(error, AdapterError::Unavailable(_)),
+        "got {error:?}"
+    );
+    assert_exact_policy_candidate_was_cleaned(&fixture.finish().await);
+}
+
+#[tokio::test]
+async fn a_valid_old_policy_image_is_unsupported_only_after_exact_cleanup() {
+    let fixture = required_policy_fixture(
+        RequiredPolicyReadiness::Document(serde_json::json!({ "status": "ready" })),
+        200,
+    )
+    .await;
+    let mut request = spec();
+    request.runtime_policy_required = true;
+
+    let error = hosted(&fixture.base_url)
+        .provision(&request, BTreeMap::new())
+        .await
+        .expect_err("valid negative capability evidence permanently refuses the image");
+    assert!(
+        matches!(error, AdapterError::Unsupported(_)),
+        "got {error:?}"
+    );
+    assert_exact_policy_candidate_was_cleaned(&fixture.finish().await);
+}
+
+#[tokio::test]
+async fn malformed_policy_readiness_remains_retryable_after_exact_cleanup() {
+    let fixture = required_policy_fixture(
+        RequiredPolicyReadiness::Document(serde_json::json!("not a readiness document")),
+        200,
+    )
+    .await;
+    let mut request = spec();
+    request.runtime_policy_required = true;
+
+    let error = hosted(&fixture.base_url)
+        .provision(&request, BTreeMap::new())
+        .await
+        .expect_err("malformed readiness cannot prove image incompatibility");
+    assert!(
+        matches!(error, AdapterError::Unavailable(_)),
+        "got {error:?}"
+    );
+    assert_exact_policy_candidate_was_cleaned(&fixture.finish().await);
+}
+
+#[tokio::test]
+async fn failed_exact_cleanup_reports_probe_and_cleanup_as_unavailable() {
+    let fixture = required_policy_fixture(
+        RequiredPolicyReadiness::Document(serde_json::json!({ "status": "ready" })),
+        500,
+    )
+    .await;
+    let mut request = spec();
+    request.runtime_policy_required = true;
+
+    let error = hosted(&fixture.base_url)
+        .provision(&request, BTreeMap::new())
+        .await
+        .expect_err("failed cleanup must override a permanent image classification");
+    let AdapterError::Unavailable(detail) = error else {
+        panic!("cleanup failure was misclassified as {error:?}");
+    };
+    assert!(
+        detail.contains("does not advertise"),
+        "missing probe context: {detail}"
+    );
+    assert!(detail.contains("500"), "missing cleanup context: {detail}");
+    assert_exact_policy_candidate_was_cleaned(&fixture.finish().await);
+}
+
+#[test]
+fn runtime_gateway_probe_wire_outcomes_are_closed_and_complete() {
+    use crate::RuntimeGatewayProbeOutcome as Outcome;
+
+    for (wire, expected) in [
+        ("allowed", Outcome::Allowed),
+        (
+            "command_sandbox_initialization_failed",
+            Outcome::CommandSandboxInitializationFailed,
+        ),
+        (
+            "gateway_network_initialization_failed",
+            Outcome::GatewayNetworkInitializationFailed,
+        ),
+        ("policy_denied", Outcome::PolicyDenied),
+        ("provider_denied", Outcome::ProviderDenied),
+        ("transient_broker_failure", Outcome::TransientBrokerFailure),
+    ] {
+        let encoded = format!(r#"{{"version":1,"outcome":"{wire}"}}"#);
+        let receipt: super::RuntimeGatewayProbeWireReceipt =
+            serde_json::from_str(&encoded).expect("a named closed outcome parses");
+        assert_eq!(
+            crate::RuntimeGatewayProbeOutcome::from(receipt.outcome),
+            expected
+        );
+    }
+    for malformed in [
+        r#"{"version":1,"outcome":"future_outcome"}"#,
+        r#"{"version":1,"outcome":"allowed","provider_body":"secret"}"#,
+        r#"{"version":1}"#,
+        r#"{"outcome":"allowed"}"#,
+        "not-json",
+    ] {
+        assert!(
+            serde_json::from_str::<super::RuntimeGatewayProbeWireReceipt>(malformed).is_err(),
+            "accepted malformed receipt: {malformed}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn hosted_gateway_probe_sends_only_the_exact_numeric_binding() {
+    let fixture = workspace_fixture(
+        serde_json::json!({
+            "runtimeGatewayProbe": {
+                "name": "runtime_gateway_probe_v1",
+                "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
+                "supported": true,
+            }
+        }),
+        Some(serde_json::json!({ "version": 1, "outcome": "allowed" })),
+    )
+    .await;
+    let kernel = hosted(&fixture.base_url);
+    let request = crate::RuntimeGatewayProbeRequest {
+        version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
+        service_id: "service-1.a_b".into(),
+        resource_id: 30,
+    };
+
+    let receipt = kernel
+        .probe_runtime_gateway(&RuntimeHandle("sbx-probe".into()), &request)
+        .await
+        .expect("the exact closed receipt is accepted");
+
+    assert_eq!(receipt.version, crate::RUNTIME_GATEWAY_PROBE_VERSION);
+    assert_eq!(receipt.outcome, crate::RuntimeGatewayProbeOutcome::Allowed);
+    let requests = fixture.finish().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests[2].0.starts_with("POST /runtime/gateway-probe "));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&requests[2].1).unwrap(),
+        serde_json::json!({
+            "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            "service_id": "service-1.a_b",
+            "resource_id": 30,
+        })
+    );
+}
+
+#[tokio::test]
+async fn hosted_gateway_probe_rejects_invalid_requests_old_images_and_unknown_receipts() {
+    let kernel = hosted("http://127.0.0.1:1");
+    for request in [
+        crate::RuntimeGatewayProbeRequest {
+            version: crate::RUNTIME_GATEWAY_PROBE_VERSION + 1,
+            service_id: "service-1".into(),
+            resource_id: 30,
+        },
+        crate::RuntimeGatewayProbeRequest {
+            version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: "service/credential=secret".into(),
+            resource_id: 30,
+        },
+        crate::RuntimeGatewayProbeRequest {
+            version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
+            service_id: "service-1".into(),
+            resource_id: 0,
+        },
+    ] {
+        assert!(matches!(
+            kernel
+                .probe_runtime_gateway(&RuntimeHandle("sbx-invalid".into()), &request)
+                .await,
+            Err(AdapterError::Rejected(detail)) if detail == "runtime gateway probe request metadata is invalid"
+        ));
+    }
+
+    let old = workspace_fixture(serde_json::json!({ "status": "ready" }), None).await;
+    let error = hosted(&old.base_url)
+        .probe_runtime_gateway(
+            &RuntimeHandle("sbx-old".into()),
+            &crate::RuntimeGatewayProbeRequest {
+                version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
+                service_id: "service-1".into(),
+                resource_id: 30,
+            },
+        )
+        .await
+        .expect_err("an old image cannot claim the probe protocol");
+    assert!(matches!(error, AdapterError::Unsupported(_)));
+    assert_eq!(old.finish().await.len(), 2);
+
+    let unknown = workspace_fixture(
+        serde_json::json!({
+            "runtimeGatewayProbe": {
+                "name": "runtime_gateway_probe_v1",
+                "version": crate::RUNTIME_GATEWAY_PROBE_VERSION,
+                "supported": true,
+            }
+        }),
+        Some(serde_json::json!({ "version": 1, "outcome": "future_outcome" })),
+    )
+    .await;
+    let error = hosted(&unknown.base_url)
+        .probe_runtime_gateway(
+            &RuntimeHandle("sbx-unknown".into()),
+            &crate::RuntimeGatewayProbeRequest {
+                version: crate::RUNTIME_GATEWAY_PROBE_VERSION,
+                service_id: "service-1".into(),
+                resource_id: 30,
+            },
+        )
+        .await
+        .expect_err("an unknown receipt remains fail-closed");
+    assert!(matches!(error, AdapterError::Rejected(_)));
+    assert_eq!(unknown.finish().await.len(), 3);
+}
+
+#[test]
 fn terminal_input_is_framed_only_on_the_wire_that_has_lanes() {
     // Control travels as text and is identical on both dialects, which is what
     // lets a credential reach a pod that predates lanes and one that does not
@@ -960,6 +2305,37 @@ async fn a_conversations_control_lane_carries_a_credential() {
     assert_eq!(parsed["t"], "credential");
     assert_eq!(parsed["operation_id"], "credential-operation");
     assert_eq!(parsed["value"], "a-real-credential-value");
+}
+
+#[tokio::test]
+async fn a_conversations_control_lane_carries_runtime_policy() {
+    let sent: Arc<tokio::sync::Mutex<Vec<Message>>> = Arc::default();
+    let sink = Arc::new(tokio::sync::Mutex::new(Recorder(Arc::clone(&sent))));
+
+    let control = super::control_lane(sink, None);
+    control
+        .send(TerminalInput::RuntimePolicy {
+            operation_id: "policy-operation".into(),
+            envelope: "signed-envelope".into(),
+        })
+        .await
+        .expect("the lane accepts runtime policy");
+    for _ in 0..50 {
+        if !sent.lock().await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    let frames = sent.lock().await.clone();
+    assert_eq!(frames.len(), 1);
+    let Message::Text(body) = &frames[0] else {
+        panic!("runtime policy travels as a control frame: {frames:?}");
+    };
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(parsed["t"], "github_capability");
+    assert_eq!(parsed["operation_id"], "policy-operation");
+    assert_eq!(parsed["envelope"], "signed-envelope");
 }
 
 #[tokio::test]

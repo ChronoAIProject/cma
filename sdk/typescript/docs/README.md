@@ -58,6 +58,7 @@ check requires unique orders and labels and compiles every TypeScript fence.
 | [Authentication](authentication.md) | Browser cookies, bearer credentials, and rotation             |
 | [Sessions](sessions.md)             | Creation, lifecycle, capabilities, and management             |
 | [Streaming](streaming.md)           | Cursors, reconnects, events, and forward compatibility        |
+| [Triggers](triggers.md)             | Publish repository Triggers and run contribution Launches     |
 | [Operations](operations.md)         | Input, approvals, control, terminal REST, profiles, and usage |
 | [Errors](errors.md)                 | Typed failures and retry decisions                            |
 | [Reference](reference.md)           | Generated declarations and public entry points                |

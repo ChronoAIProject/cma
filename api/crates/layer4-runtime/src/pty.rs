@@ -47,6 +47,10 @@ pub struct PtySession {
     /// The process ending, latched so a reattach to an ended process still
     /// receives the real status rather than waiting on a channel that is done.
     exit: watch::Receiver<Option<ProcessExit>>,
+    /// The dedicated agent process session. Layer 4 retains this authority
+    /// after the primary exits because descendants may still belong to the
+    /// session and hold the workspace or terminal open.
+    writer_session_root: Option<i32>,
 }
 
 /// How the supervised process ended.
@@ -57,6 +61,9 @@ pub(crate) struct ProcessExit {
 }
 
 impl PtySession {
+    pub(crate) fn writer_session_root(&self) -> Option<i32> {
+        self.writer_session_root
+    }
     /// Watch for the process to end.
     pub(crate) fn subscribe_exit(&self) -> watch::Receiver<Option<ProcessExit>> {
         self.exit.clone()
@@ -224,6 +231,20 @@ impl PtyRegistry {
         self.inner.lock().await.len()
     }
 
+    /// Every retained agent process session this pod supervises.
+    ///
+    /// A latched primary exit does not retire the session root: a background
+    /// job may still hold and mutate the workspace until the kernel process
+    /// table proves otherwise during the writer fence.
+    pub(crate) async fn writer_session_roots(&self) -> Vec<i32> {
+        self.inner
+            .lock()
+            .await
+            .values()
+            .filter_map(|session| session.writer_session_root())
+            .collect()
+    }
+
     /// Inspect a started runtime from an in-crate integration test.
     #[cfg(test)]
     pub(crate) async fn session_for_test(&self, id: &str) -> Option<Arc<PtySession>> {
@@ -278,6 +299,11 @@ fn start_process(
         .map_err(std::io::Error::other)?;
     drop(pair.slave);
 
+    #[cfg(unix)]
+    let writer_session_root = child.process_id().and_then(|pid| i32::try_from(pid).ok());
+    #[cfg(not(unix))]
+    let writer_session_root = None;
+
     let mut reader = pair
         .master
         .try_clone_reader()
@@ -306,7 +332,14 @@ fn start_process(
     };
     std::thread::spawn(move || {
         #[cfg(unix)]
-        supervise_process(child, &mut reader, terminal_fd, &out, exit_tx);
+        supervise_process(
+            child,
+            &mut reader,
+            terminal_fd,
+            &out,
+            exit_tx,
+            writer_session_root,
+        );
         #[cfg(not(unix))]
         supervise_process(child, &mut reader, &out, exit_tx);
     });
@@ -317,6 +350,7 @@ fn start_process(
             writer: Arc::new(StdMutex::new(writer)),
             output,
             exit,
+            writer_session_root,
         },
         first_output,
     ))
@@ -345,8 +379,8 @@ fn supervise_process(
     terminal_fd: OwnedFd,
     output: &broadcast::Sender<Vec<u8>>,
     exit: watch::Sender<Option<ProcessExit>>,
+    process_group: Option<i32>,
 ) {
-    let process_group = child.process_id().and_then(|pid| i32::try_from(pid).ok());
     let mut terminal_open = true;
 
     loop {
@@ -596,6 +630,9 @@ mod tests {
             .await
             .expect("starts");
         let mut exited = session.subscribe_exit();
+        let writer_root = session
+            .writer_session_root()
+            .expect("the supervised process has a session root");
 
         session
             .write_input(b"sleep 3 &\nprintf primary-; printf final-output\nexit 7\n")
@@ -606,6 +643,11 @@ mod tests {
             .expect("the primary exit is not held behind the descendant")
             .expect("the exit watch remains open");
         assert_eq!(*exited.borrow(), Some(ProcessExit { code: Some(7) }));
+        assert_eq!(
+            session.writer_session_root(),
+            Some(writer_root),
+            "primary exit must not discard authority over possible descendants"
+        );
 
         let mut terminal = Vec::new();
         while let Ok(chunk) = output.try_recv() {
@@ -615,6 +657,41 @@ mod tests {
             String::from_utf8_lossy(&terminal).contains("primary-final-output"),
             "the primary's final output is drained before its status: {terminal:?}"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_live_descendant_after_primary_exit_is_still_quiesced_by_checkpoint_authority() {
+        let registry = PtyRegistry::new();
+        let (session, _output) = registry
+            .get_or_start("post-exit-writer", "/bin/sh", 80, 24, "k")
+            .await
+            .expect("the primary shell starts");
+        let root = session
+            .writer_session_root()
+            .expect("the primary shell has a process-session root");
+        let mut exited = session.subscribe_exit();
+
+        session
+            .write_input(b"set -m\ntrap '' HUP\n( trap '' HUP TERM; exec sleep 3 ) &\nexit 0\n")
+            .expect("the shell receives the descendant command");
+        tokio::time::timeout(Duration::from_secs(1), exited.changed())
+            .await
+            .expect("the primary exits while its background job remains")
+            .expect("the exit watch remains open");
+
+        assert_eq!(registry.writer_session_roots().await, vec![root]);
+        let writer_count = tokio::task::spawn_blocking(move || {
+            let mut fence = crate::writer_fence::WriterFence::quiesce([root])?;
+            let count = fence.writer_count()?;
+            fence.resume()?;
+            Ok::<_, String>(count)
+        })
+        .await
+        .expect("the writer-fence task joins")
+        .expect("the retained process session quiesces");
+
+        assert!(writer_count >= 1, "the live descendant must be fenced");
     }
 
     #[cfg(unix)]

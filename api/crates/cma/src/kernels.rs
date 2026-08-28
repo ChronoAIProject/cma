@@ -22,7 +22,10 @@ use layer3_adapter::{
 use crate::config::Config;
 
 /// Every kernel this deployment offers, by the identifier a session names.
-pub async fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
+pub async fn registry(
+    config: &Config,
+    runtime_policy_verification_keys: &str,
+) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
     let reclaimer = match BatchSandboxReclaimer::infer().await {
         Ok(reclaimer) => {
             tracing::info!(
@@ -42,19 +45,24 @@ pub async fn registry(config: &Config) -> HashMap<KernelId, Arc<dyn KernelAdapte
             None
         }
     };
-    registry_with_reclaimer(config, reclaimer.as_ref())
+    registry_with_reclaimer(config, reclaimer.as_ref(), runtime_policy_verification_keys)
 }
 
 fn registry_with_reclaimer(
     config: &Config,
     reclaimer: Option<&BatchSandboxReclaimer>,
+    runtime_policy_verification_keys: &str,
 ) -> HashMap<KernelId, Arc<dyn KernelAdapter>> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     // The only place a concrete runtime implementation is named. Everything
     // upstream of here selects by opaque identifier, which is what lets a
     // second kernel arrive as a directory in Layer 3 and a block here.
     let mut codex = CodexSandboxSpec::default();
-    deploy(config, &mut codex.deployment);
+    deploy(
+        config,
+        runtime_policy_verification_keys,
+        &mut codex.deployment,
+    );
     codex.deployment.upstream_base_url = config.upstream_base_url.clone();
     codex.deployment.upstream_model = config.upstream_model.clone();
     codex.deployment.upstream_wire_api = config.upstream_wire_api.clone();
@@ -66,7 +74,11 @@ fn registry_with_reclaimer(
     // The request shape this one speaks is its own rather than a deployment's
     // choice, so nothing here touches it.
     let mut claude_code = ClaudeCodeSandboxSpec::default();
-    deploy(config, &mut claude_code.deployment);
+    deploy(
+        config,
+        runtime_policy_verification_keys,
+        &mut claude_code.deployment,
+    );
     claude_code.deployment.upstream_base_url = config.claude_upstream_base_url.clone();
     claude_code.deployment.upstream_model = config.claude_upstream_model.clone();
     adapters.insert(
@@ -80,7 +92,11 @@ fn registry_with_reclaimer(
     // The request shape this one speaks is its own too, and its route is
     // declared in a profile the image bakes rather than passed at startup.
     let mut dsh = DshSandboxSpec::default();
-    deploy(config, &mut dsh.deployment);
+    deploy(
+        config,
+        runtime_policy_verification_keys,
+        &mut dsh.deployment,
+    );
     dsh.deployment.upstream_base_url = config.dsh_upstream_base_url.clone();
     dsh.deployment.upstream_model = config.dsh_upstream_model.clone();
     adapters.insert(
@@ -125,13 +141,14 @@ fn sandbox_client(config: &Config, reclaimer: Option<&BatchSandboxReclaimer>) ->
 /// not know about — the program a pod runs, the request shape its kernel
 /// speaks — would come back empty and silently replace what that kernel had
 /// set for itself.
-fn deploy(config: &Config, deployment: &mut Deployment) {
+fn deploy(config: &Config, runtime_policy_verification_keys: &str, deployment: &mut Deployment) {
     deployment.shape.image = config.sandbox_image.clone();
     deployment.shape.resource_limits = std::collections::BTreeMap::from([
         ("cpu".to_string(), config.sandbox_cpu.clone()),
         ("memory".to_string(), config.sandbox_memory.clone()),
     ]);
     deployment.platform_base_url = config.platform_base_url.clone();
+    deployment.runtime_policy_verification_keys = runtime_policy_verification_keys.to_string();
     // What the image is built with. Skills are deliberately absent from this:
     // they used to be assigned the very list they were checked against, so a
     // skill could never be found missing — and none was ever installed. They
@@ -173,7 +190,7 @@ mod tests {
                 "a kernel names both"
             );
 
-            deploy(&deployment_config(), &mut deployment);
+            deploy(&deployment_config(), "{}", &mut deployment);
 
             assert_eq!(deployment.bridge_command, bridge);
             assert_eq!(deployment.upstream_wire_api, wire);
@@ -198,7 +215,7 @@ mod tests {
             DshSandboxSpec::default().deployment,
         ];
         for deployment in &mut deployments {
-            deploy(&config, deployment);
+            deploy(&config, "{}", deployment);
         }
 
         for pair in deployments.windows(2) {
@@ -221,7 +238,7 @@ mod tests {
         let mut claude_code = ClaudeCodeSandboxSpec::default().deployment;
         let mut dsh = DshSandboxSpec::default().deployment;
         for deployment in [&mut codex, &mut claude_code, &mut dsh] {
-            deploy(&deployment_config(), deployment);
+            deploy(&deployment_config(), "{}", deployment);
         }
 
         assert_eq!(codex.agent_notes, "AGENTS.md");
@@ -250,7 +267,7 @@ mod tests {
         // request and here checks that the two agree. They must, or a session
         // asking for a kernel this deployment runs is told there is no such
         // kernel.
-        for (id, adapter) in registry_with_reclaimer(&Config::sample(), None) {
+        for (id, adapter) in registry_with_reclaimer(&Config::sample(), None, "") {
             assert_eq!(id.0, adapter.kernel_name(), "registered under the wrong id");
         }
     }
@@ -259,7 +276,7 @@ mod tests {
     fn every_kernel_can_do_at_least_one_thing() {
         // A kernel that declares nothing is the stub this milestone replaced.
         // Registering one would offer a session that cannot be started.
-        for (id, adapter) in registry_with_reclaimer(&Config::sample(), None) {
+        for (id, adapter) in registry_with_reclaimer(&Config::sample(), None, "") {
             let c = adapter.capabilities();
             assert!(
                 c.conversation || c.terminal,

@@ -21,6 +21,7 @@ The complete, executable integration guide lives in this package:
 - [Authentication](docs/authentication.md)
 - [Sessions](docs/sessions.md)
 - [Streaming](docs/streaming.md)
+- [Triggers](docs/triggers.md)
 - [Operations](docs/operations.md)
 - [Errors](docs/errors.md)
 - [Generated-reference entry points](docs/reference.md)

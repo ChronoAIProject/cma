@@ -22,12 +22,16 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | View           | What it is                                                                                |
 | -------------- | ----------------------------------------------------------------------------------------- |
 | **sessions**   | The default, and where the work happens. A list, one surface, and what is known about it. |
+| **trigger**    | A public Trigger preview and, after sign-in, the contributor's immutable launch review.   |
+| **launch**     | One durable Launch: automation progress, repository state, and its contribution review.   |
+| **publisher**  | Authoring and publishing immutable GitHub Trigger revisions. Available after sign-in.      |
 | **operations** | Running the service. Drawn only for a caller holding an operator capability.              |
 | **developer**  | Reading the public SDK guides bundled with this build. Available to every signed-in user. |
 
 Sessions has two **arrangements** of the same list — `list` and `canvas`. A plane is not a view and an
-arrangement is not a view: both change what the middle column draws and nothing else. There are three
-views, one page frame, and no navigation beyond them.
+arrangement is not a view: both change what the middle column draws and nothing else. There are six
+view families and one page frame. Trigger and Launch views are contextual deep links rather than
+permanent sidebar destinations; §13b defines their complete route set and return behavior.
 
 The four binding consequences survive this redesign untouched:
 
@@ -381,7 +385,9 @@ No icon font, no sprite sheet, no runtime fetch.
 ## 9. The frame
 
 A full-viewport three-column grid — **sidebar, centre, details** — with no app bar, no status band,
-no footer and no router.
+and no footer. A small client-side router owns only the canonical routes in §13b plus the existing
+signed-in utility views. Routing changes which view the centre and details columns project; it never
+starts work, confirms an action, retries a write, or treats a browser history event as authority.
 
 | Column  | Min | Max | Default        | Collapsed  |
 | ------- | --- | --- | -------------- | ---------- |
@@ -444,12 +450,12 @@ wrapping row would change the height of the column's foot as somebody drags it. 
 keeps the face and drops the two lines.
 
 Everything else the foot used to carry is **inside that row's menu**: appearance, environment
-profiles, Developer, operations where the caller holds the capability, and signing out. Each row
+profiles, GitHub Triggers, Developer, operations where the caller holds the capability, and signing out. Each row
 takes a leading glyph. The menu opens **upward** and holds the trigger's own width, so
 its edges are the row's edges — it sits at the foot of a column, so there is nowhere below it to go,
 and a list that is narrower than the control it came from reads as belonging to something else.
 
-Operations is still one of §1's three views and still not navigation: **one** entry, which names where
+Operations is still one of §1's signed-in utility views and still not navigation: **one** entry, which names where
 it goes — _Operations_, or _Back to sessions_ while the panel is showing. It does not mark itself as
 current, because a menu with a current value is a set of alternatives and these rows are actions.
 
@@ -588,6 +594,15 @@ you are sure. The tick is the safeguard; the warning glyph is the only red on th
 key is the ordinary primary. This is spent only where the consequence is loss — spending it on every
 destructive-sounding thing is how it stops being read.
 
+Ambiguous initial-task recovery is the one non-loss exception. CMA has already exhausted every
+automatic reconciliation path but cannot establish whether the first task started, so authorizing a
+replacement may execute it twice. Its dialog uses the same acknowledgement pattern, says both facts
+without euphemism, and keeps the retained revision, payload hash, and idempotency key. An ambiguous
+recovery response leaves that dialog mounted and non-dismissible while it offers only same-key
+reconciliation; a finite response restores ordinary dismissal. This exception is bounded to the
+server's explicit `recovery_required` prompt state and does not admit acknowledgement dialogs for
+ordinary retries.
+
 The rules §19 protects are unchanged by any of this: a control that can never work is **absent**; one
 that is currently unavailable is **disabled and says why**.
 
@@ -721,6 +736,111 @@ The notice may fade in once at its final position and then holds still. It never
 loops, and nothing in this component starts a keyframe animation. A track changing length uses only
 the shared curve and duration tokens. Urgency comes from placement, words, and failure ink, not from
 motion that competes with the session somebody is reading.
+
+---
+
+## 13b. Trigger and Launch workflows
+
+A README Trigger enters the product through one of five canonical routes. These are the whole public
+route vocabulary for the workflow; query strings never carry credentials, prompts, repository
+targets, confirmations, or provider state.
+
+| Route                            | View and authority                                                                                                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/triggers/:publicId`            | Side-effect-free public preview. After sign-in the same route adds the immutable revision, eligible GitHub connection, editable fields, and explicit Start review. |
+| `/launches/:launchId`            | Owner-only durable progress and repository view. Refresh and reconnect read server state and replay from the last acknowledged Launch cursor.                      |
+| `/launches/:launchId/recover`    | Owner-only GitHub authorization recovery for the same Launch. Opening it reads retained state; reconnect and replacement remain explicit authenticated actions.  |
+| `/launches/:launchId/contribute` | Owner-only diff review nested under the same Launch. Opening it is read-only; Publish branch and Open or Update pull request remain separate confirmations.        |
+| `/sessions/:sessionId`           | The existing sessions view with this session selected. A Trigger repository band links back to its owning Launch when one exists.                                  |
+
+The anonymous Trigger route uses a reduced frame: the brand remains, the centre owns the viewport,
+and signed-in session or account chrome is absent. Sign-in returns only to an allowlisted canonical
+route and consumes no Start action. Once authenticated, the normal frame returns. Browser Back moves
+between these route states without undoing a server action, and a missing, retired, unavailable, or
+wrong-owner resource is a complete typed view rather than a redirect to Sessions.
+
+The Launch view has one compact identity header followed by full-width bands, never cards nested in
+cards:
+
+1. Repository identity: upstream, contributor fork, launch branch, captured base/head revisions,
+   connection account, and current reach status.
+2. Automation progress: one stable row per server step, in server order.
+3. Session handoff: the canonical session link once provisioned.
+4. Contribution: latest checkpoint/diff, commit attribution, publication result, and linked PR.
+
+Every progress row has a fixed icon slot, a visible state word, the step label, timestamp, and safe
+detail. The closed vocabulary is **pending**, **running**, **completed**, **retryable**, **blocked**,
+and **failed**. Completed uses a check glyph and the word; running uses a labelled motion glyph that
+becomes a still glyph under reduced motion; retryable exposes Retry only when the server says the
+effect is repeatable. `auth_required`, `owner_credential_unavailable`, `service_inactive`,
+`feature_paused`, rotating/recovering, and terminal failure retain their distinct server language.
+None is inferred from elapsed time. A feature pause freezes the row and says **Paused by CMA**; it is
+not a failure and does not imply the active session was interrupted.
+
+Offline is a condition of the whole view and uses §11's fixed strip. The retained timeline stays
+visible but is marked **Last updated ...** and no stale response may move a step backward. Reconnect
+first opens replay at the last accepted cursor, then reconciles a fresh Launch snapshot. A cursor gap
+or stale revision discards optimistic local state, never the user's unsubmitted review fields.
+
+Repository, progress, workflow, diff, attribution, and PR data use typed rows with the component
+language already defined in §§12 and 13a:
+
+- A workflow warning is a full-width warning band with the exact baseline paths and a checkbox in
+  the Start review. It never implies GitHub granted Actions permission.
+- A diff is an unframed file list. Each row states path, add/delete counts, change kind, binary state,
+  and mode transition in text. Expanding a text file reveals its bounded patch in the code face.
+- Commit attribution shows author and committer as two labelled facts before Publish is enabled.
+- A PR band shows canonical link and number, base/head revisions, state, checks, and mergeability.
+  Mergeability is exactly **Computing**, **Mergeable**, or **Conflicting**; null never means conflict.
+  **Awaiting maintainer approval** is its own checks state and never a CMA retry failure.
+- An ordinary Update pull request preserves provider title/body. Explicit title/body edits show the
+  previously observed values and fail on concurrent provider change rather than overwriting it.
+- A closed-unmerged or merged PR has no Update control. The former offers the explicit New Launch
+  route, producing a new Launch-owned branch and marker while preserving the old Launch and PR link.
+- An open PR exposes a status refresh and **Finish CMA handoff**. Refresh queues a read-only provider
+  observation. Finish uses the standard confirmation dialog, makes no provider call, preserves the
+  fork, branch, commit, and open PR, and ends further contribution, Update, and refresh actions for
+  that Launch. A provider-observed merge finishes the Launch without this confirmation.
+
+Confirmations use §12.4's one-dialog rule. Review diff, Publish branch, Open pull request, and Update
+pull request are separate controls and separate server snapshots. Cancel closes the dialog without
+changing the Launch. While a command is in flight its one control is disabled with **Submitting**;
+repeated clicks reuse the same client idempotency key until a finite response arrives. An ambiguous
+write changes to **Reconciling** and exposes no second write button.
+
+An initial task in the exact conjunction `Launch failed_retryable`, blocked reason
+`recovery_required`, and delivery `recovery_required` exposes **Recover initial task**. Its §12.4
+dialog states that CMA cannot determine whether the previous task started and that another dispatch
+may execute it twice. The affirmative command remains unavailable until the owner acknowledges that
+consequence. It submits the retained delivery payload hash and Launch revision; an ambiguous response
+keeps the dialog open, disables dismissal, and exposes only **Reconcile recovery** against the same
+idempotency key. No nearby state, empty payload hash, ordinary retry, or inferred elapsed-time failure
+may expose this control.
+
+The interface decision is fixed before implementation:
+
+| Capability                                       | AG-UI                          | REST/SDK                                            | PTY    | MCP    | A2A    |
+| ------------------------------------------------ | ------------------------------ | --------------------------------------------------- | ------ | ------ | ------ |
+| Public preview                                   | Read-only companion projection | Public read                                         | Absent | Absent | Absent |
+| Launch/repository/PR snapshot                    | Read-only companion projection | Owner read                                          | Absent | Absent | Absent |
+| Launch progress replay                           | Read-only companion replay     | Owner cursor replay                                 | Absent | Absent | Absent |
+| Diff review and artifact read                    | Read-only companion projection | Owner read                                          | Absent | Absent | Absent |
+| Start, cancel, review, publish, PR confirmations/status refresh, finish | Absent                         | Owner mutation through the shared idempotency store | Absent | Absent | Absent |
+
+AG-UI declares this read-only subset under its `cma:trigger` custom capability. Its existing run and
+session event semantics do not change, and a Launch identifier is never presented as a session
+thread. REST remains the superset and the dashboard uses the same TypeScript client contract shipped
+to third parties. PTY cannot honestly draw this workflow; MCP and A2A remain unserved and their 501
+surfaces do not acquire Trigger operations.
+
+Everything here is governed by §15: semantic landmarks and headings precede ARIA, every row and
+dialog is keyboard operable, state is never colour-only, targets are at least 32px and become 44px
+below 30rem, and required text meets AA in both themes. On route load, focus goes to the view heading;
+the existing §15 prompt-focus rule still applies when `/sessions/:sessionId` opens a usable session.
+Progress updates are announced through one polite live summary rather than making every row live.
+Failures and explicit confirmation consequences use an assertive alert exactly once. On a narrow
+viewport the details column closes first, the progress and repository bands become one column, long
+repository names wrap, and no action is available only through hover.
 
 ---
 
@@ -1144,10 +1264,114 @@ denied. Other relative links remain readable text because this build bundles no 
 Images and raw HTML are not rendered on this surface. The `<!-- nav: order label -->` comment is build
 metadata, not article content.
 
-The build validates both SDK sets before the surface can ship: each has all eight named guides, each
+The build validates both SDK sets before the surface can ship: each has all nine named guides, each
 guide has exactly one leading H1 and one well-formed nav comment, orders and labels are unique, and the
 two sets carry the same filenames. Missing, extra or malformed input fails the build; there is no
 runtime empty state for a bundle CI was required to reject.
+
+---
+
+## 19b. GitHub Trigger publisher
+
+**An authenticated authoring surface, not a route and not part of Developer.** Every signed-in user
+may open it from an account-menu action named _GitHub Triggers_. The same row reads _Back to sessions_
+while the publisher is showing. Reloading returns to sessions, and selecting a session does the same.
+Opening any transient utility view while a Trigger, Launch, contribution, or session deep link is in
+the address bar first replaces that address with the home route; the requested utility view then
+draws. The address change is only a return to the page frame and never starts, saves, publishes, or
+retires work.
+
+The fixed first band has the session header's proportions, names **GitHub Triggers**, and carries one
+compact _New Trigger_ command. One scrollport beneath it owns the page. At desktop widths its content
+is centred on a 1,100px maximum axis and uses a 240px Trigger rail, a 32px gap and the remaining editor
+width. The rail is unframed and lists each mutable draft by public summary, canonical repository and
+draft version; the active row uses the existing selected-navigation ground, a 2px leading accent rule,
+weight and `aria-current`. At widths below 48rem, the rail becomes a full-width 40px native selector
+above the editor, the gap becomes 16px, and every two-column field row becomes one column. No label,
+repository name, prompt, URL, error or command may widen the viewport.
+
+The empty state is one sentence and the same _New Trigger_ command. Loading uses the existing skeleton
+treatment without claiming percentage progress. A failed initial read occupies the editor axis as an
+alert with an explicit Retry command. An existing draft stays visible if a later connection,
+repository, save, publish, copy or retirement operation fails.
+
+### Connection and repository
+
+Every draft names one exact reusable NyxID GitHub UserService. The connection section has a native
+selector whose options show the GitHub login where known and a shortened service identifier, followed
+by its state, granted scope classes and last verified account. The adjacent command is _Connect_ for a
+new service, _Reconnect_ for an inactive selected service, and _Check connection_ when an authorization
+window is outstanding or the browser could not observe it close. The publisher never displays or
+accepts a CMA key, GitHub token, OAuth code, NyxID token, or service credential.
+
+Connect and Reconnect synchronously open a blank popup from the activating gesture, request the exact
+authorization handoff, validate its HTTPS GitHub destination, and navigate that popup. CMA remains
+open with the draft intact. The original page polls preflight for that exact service on a bounded
+cadence and stops on active success, terminal failure, a five-minute timeout, cancellation, or
+unmount. A blocked popup is a named failure and leaves the manual check command. A failed handoff
+closes the blank popup. Cross-origin popup contents are never inspected; only its `closed` state is
+observed. Successful preflight refreshes the connection list and never silently selects a different
+service.
+
+Repository selection is a GitHub repository URL field and a _Verify repository_ command. Only the
+`https://github.com/{owner}/{name}` repository form is accepted; query, fragment, credentials, extra
+path segments and non-GitHub hosts are rejected before a request. Verification resolves through the
+exact selected UserService and replaces no typed field on failure. Success draws the server's
+canonical owner/name, visibility, default branch, source revision and forkability. Numeric and node
+identities remain protocol state and are never editable controls. Saving and publishing are disabled
+until the selected connection is active and the current URL has a matching successful resolution.
+
+### Draft editor
+
+The editor is unframed. Full-width sections separated by a hairline cover Repository, Task, Session,
+GitHub access, Contribution and Overrides. Section headings use 15/22 semibold type; field labels and
+help/error seats reuse §12.2. Textareas use the established field treatment and resize vertically.
+Numbers use bounded numeric inputs; closed choices use native selects; permission is a two-part
+segmented control; binary choices use checkboxes. Commands use the shared button hierarchy and icons.
+
+Task fields are ordered rows with key, kind, required, editable and kind-specific bounds or choices.
+Each row has symbol-only move and remove controls with tooltips and stable 36px targets. Adding a field
+is a text command with a plus glyph. Required fields expose a default control, because a required field
+without a default cannot be published. Setup execution is shown as fixed _Disabled_ with no command or
+steps editor. Contributor-owned credentials, the `cma/` branch prefix, no-reply attribution, public
+projection version and zero-cost policy are fixed facts rather than editable controls. Sponsored
+credentials and sponsored billing are absent, followed by one quiet _Unavailable in this release_
+status. The prompt and pull-request body render as plain text while editing; repository and publisher
+content is never interpreted as markup or HTML.
+
+Save carries the draft version that was read and uses one idempotency key for the unresolved logical
+command. Validation and server failures leave every entered value in place. A version conflict reads
+the current draft but does not overwrite the retained editor; a notice offers _Load current draft_ and
+_Retry with current version_. An ambiguous transport outcome changes the command status to
+_Reconciling_, suppresses duplicate writes, reads the draft, and clears the retained key only after a
+finite server response proves whether that command landed. Save never publishes.
+
+Publish opens the shared modal and names the next immutable revision number, repository, source mode
+and public summary. Its affirmative command is _Publish immutable revision_. On success the editor
+reads the mutable draft again because publishing advances its version and next revision number, then
+refreshes the revision list. A failed publish leaves both editor and confirmation context intact.
+
+### Immutable revisions
+
+The revision section is a chronological list beneath the draft editor, not cards inside the form.
+Each row names revision number, publication state, short digest, publication time and the authority
+login captured at publication. A published row carries symbol-only copy controls with tooltips for the
+public Trigger URL and README Markdown. Copy feedback is announced in a polite live region and never
+changes row geometry. The Markdown is one ordinary linked-image badge or text link whose destination
+is the same-origin canonical `/triggers/{public_id}` URL; it contains no credential or publisher-only
+identifier.
+
+Retirement requires the shared inline confirmation, names the revision number, and explains that
+existing Launches remain durable while new launches from that revision stop. Only published revisions
+offer it. A successful retirement replaces that row from the server response. A failed or ambiguous
+retirement keeps the confirmation and row visible and follows the same idempotency/reconciliation
+contract as Save.
+
+All editor sections follow document order under Tab. Rail buttons and task-row commands have visible
+focus, confirmations trap and restore focus through the shared primitives, status is announced without
+moving focus, and no pointer-only action exists. At narrow widths controls that would otherwise form a
+crowded row become full-width 44px targets. Reduced motion removes only decorative transitions; OAuth,
+validation, save, publish, reconciliation and retirement states remain equally explicit.
 
 ---
 
@@ -1322,3 +1546,8 @@ Append-only. Never edit or delete an entry.
 | 2026-08-24 | Completed #477's browser-state migration without resetting returning users: five preferences and pending content now write only `cma:*` keys, valid historical `chrono-bot:*` values are read canonical-first and copied forward, the pre-paint appearance path follows the same rule, and the product terminal ids migrate from `chronobot-*` to `cma-*`. Pending content remains per-tab and clears both names when consumed so an old prompt cannot replay.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | 2026-08-24 | Replaced §20's large animated SVG seat with the supplied live Three.js character while keeping the prompt interactive on the first frame. Defined a stable unframed square, theme-derived body, lens, studio and shadow colours, a still theme-inked fallback when WebGL cannot start, live appearance updates, visibility pausing and complete disposal. Bounded its float, pointer look, trailing hem, lens glint, contact shadow and press-to-spin under §14a, with reduced motion making every part still. Moved the existing animated SVG into the authenticated sidebar: it draws once when that shell mounts and keeps its quiet lens sweep, while its wrapper never inherits the former landing bob and session or view changes never remount it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | 2026-08-24 | Added §19a for the signed-in Developer surface. Admitted Developer as the third transient view without adding a route; fixed its account-menu return wording, session-selection return, header, scroll ownership, 200px desktop document rail, 748px unframed reading axis, 48rem narrow selector and two-part SDK control. Defined the deployment preface as the only non-repository prose, naming the current same-origin API base and the stated operator or identity-administrator path while credential issuance is not self-service. Required both eight-guide SDK sets to be bundled and validated at build time, with symmetric filenames, unique nav metadata and leading H1s. Reused the conversation markdown pipeline under a document policy with true heading ranks, stable duplicate-safe anchors, GFM tables, existing code treatment, safe external links, bundled-document switching, no raw HTML or images, and no runtime empty state for an invalid bundle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2026-08-27 | Added §13b and amended §§1 and 9 for the CMA Trigger workflow. The binding route set now covers public preview, authenticated review, durable Launch progress, contribution review, and session deep links without making navigation a side effect. Defined the repository/progress/diff/attribution/PR bands, closed progress and mergeability language, workflow acknowledgement, provider-metadata preservation, offline cursor recovery, mobile and assistive-technology behavior, and the public-interface split: AG-UI read/replay companion projections, REST/SDK mutations through the shared idempotency store, and explicit absence from PTY, MCP, and A2A.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2026-08-27 | Extended the Developer documentation bundle from eight to nine symmetric guides so the public Trigger and Launch SDK workflow is available in both TypeScript and Rust. The existing build-time rules remain unchanged: matching filenames, one leading H1, one nav record, and unique order and label metadata are still required before the frontend can build.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-08-27 | Added §19b and amended §§1 and 10 for the authenticated GitHub Trigger publisher. Admitted Publisher as the sixth view without adding a persistent route; defined deep-route return, the account-menu action, desktop and narrow draft navigation, exact NyxID UserService selection, bounded popup OAuth preflight, canonical repository verification, typed unframed policy editing, fixed MVP controls, optimistic concurrency and idempotent reconciliation, immutable publish confirmation, revision copying and retirement, retained failure state, untrusted-text rendering, and keyboard, focus, live-region, reduced-motion and narrow-target behavior. |
+| 2026-08-27 | Amended §§12.4 and 13b for explicit ambiguous initial-task recovery. Bounded the control to the exact Launch, blocked-reason, delivery-state, and retained-payload conjunction; required plain disclosure that CMA cannot establish whether the previous task started and that another dispatch may execute it twice; reused the acknowledgement safeguard as the one non-loss exception; and fixed ambiguous browser outcomes to a mounted, non-dismissible, same-key reconciliation state with frozen revision and payload authority. |
+| 2026-08-28 | Amended §13b to record the existing owner-only `/launches/:launchId/recover` route in the binding route vocabulary. The route restores retained GitHub authorization state after sign-in and does not itself perform a provider write. |

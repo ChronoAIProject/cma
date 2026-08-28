@@ -113,7 +113,7 @@ AG-UI is a separate, run-shaped projection for conversation frontends. Use
 `AguiConnection` and `AguiOperations` when building that surface; use
 `streamEvents` when consuming the durable session log. See the
 [AG-UI contract](../../../docs/API_AGUI.md) and
-[REST replay contract](../../../docs/API_REST.md#5-events).
+[REST replay contract](../../../docs/API_REST.md#6-events).
 
 `createAguiTransport` is a fetch-SSE transport, not a native `EventSource`
 wrapper. That distinction is required for a cross-origin browser: `fetch` can
