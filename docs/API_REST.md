@@ -82,17 +82,46 @@ protect the service.
 
 The direct TCP peer is used unless it belongs to a network explicitly listed in
 `CHRONO_SERVER_TRUSTED_PROXY_CIDRS`. Only then does CMA read
-`X-Forwarded-For`, skip `CHRONO_SERVER_TRUSTED_PROXY_HOPS` tokens from the
-right, and select the next token. The current Google load balancer appends
-`client-ip,load-balancer-ip`, so the configured hop count is one; any
-caller-supplied prefix stays to the left and cannot shard a budget. A missing,
-malformed, or too-short chain falls back to the TCP peer. IPv4-mapped IPv6 is
-the same key as IPv4, and ordinary IPv6 addresses are normalized to `/64`.
-Requests with no peer metadata share one unidentified-client bucket rather than
-bypassing protection. On the managed app hostname the Gateway routes `/api`,
-`/auth`, `/openapi.json`, and `/.well-known/agent-card.json` directly to
-`cma-api`, so the web pod is not an extra untrusted hop and every browser client
-retains its own selected network key.
+`X-Forwarded-For`, skip `CHRONO_SERVER_TRUSTED_PROXY_HOPS` GFE-owned tokens
+from the right, and select the upstream address the GFE observed. The current
+Google load balancer appends `upstream-ip,load-balancer-ip`, so the configured
+hop count is one.
+
+When that observed upstream belongs to
+`CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS`, CMA advances one more token toward the
+visitor only if exactly one valid `CF-Connecting-IP` header equals that
+next-left token and no `CF-Worker` or overwrite-mode `CF-Connecting-IPv6`
+marker is present. Class-E Cloudflare Pseudo IPv4 values are never visitor
+authority. A missing, duplicate, whitespace-padded, malformed, or mismatched
+Cloudflare identity, a Worker-marked or Pseudo-IPv4-overwrite request, or an
+upstream outside the pinned Cloudflare ranges keeps the GFE-observed upstream
+as the key and ignores every caller-supplied prefix. A missing, malformed, or
+too-short GFE chain falls back to the TCP peer. This conditional rule preserves
+per-visitor budgets through the reviewed Cloudflare path without allowing a
+direct-origin caller to select a spoofed prefix; a newly added, unreviewed
+Cloudflare range degrades to an edge-shared bucket until configuration and
+evidence are updated.
+
+Startup accepts Cloudflare trust only when the configured ranges are empty or
+exactly equal to the complete build-pinned 15-IPv4/7-IPv6 set, and it rejects
+any overlap with the configured GFE ranges. That source check does not detect a
+range Cloudflare later removes and another party acquires. Release evidence and
+runtime monitoring must compare the official IPv4 and IPv6 sets against the
+pin in both directions; any removed or reassigned pinned range is a security
+alert and the visitor-selection branch must not be exposed until a reviewed
+build and configuration update remove it. The frozen Cloudflare configuration
+must also keep Pseudo IPv4 disabled (or Add Header mode with the real
+`CF-Connecting-IP` and `X-Forwarded-For` retained), preserve visitor IP headers,
+and exclude Worker/transform behavior for these hostnames. Source support alone
+does not satisfy that production rollout gate.
+
+IPv4-mapped IPv6 is the same key as IPv4, and ordinary IPv6 addresses are
+normalized to `/64`. Requests with no peer metadata share one
+unidentified-client bucket rather than bypassing protection. On the managed app
+hostname the Gateway routes `/api`, `/auth`, `/openapi.json`, and
+`/.well-known/agent-card.json` directly to `cma-api`, so the web pod is not an
+extra untrusted hop and every browser client retains its own selected network
+key on the validated edge path.
 
 An exhausted bucket returns `429 application/problem+json` with code
 `rate_limited`. REST rejections retain the profile and service-description
