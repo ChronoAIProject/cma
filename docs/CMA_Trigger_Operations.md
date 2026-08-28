@@ -76,27 +76,147 @@ All controls are non-secret ConfigMap values. Invalid booleans, cleanup modes,
 numeric identities, percentages, page sizes, page budgets, and concurrency
 values fail startup rather than falling back to a broader policy.
 
-| Key | Initial value | Operational meaning |
-|---|---:|---|
-| `CHRONO_TRIGGER_ENABLED` | `false` | Environment admission. `false` refuses new publisher and Launch admission and pauses existing orchestration at its next durable boundary. |
-| `CHRONO_TRIGGER_ORCHESTRATION_PAUSED` | `true` | Emergency freeze for new Launch effects and not-yet-dispatched prompts. It does not interrupt a session. |
-| `CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH` | `true` | Requests capability revocation and prevents renewal. It remains independent from orchestration admission. |
-| `CHRONO_TRIGGER_RUNTIME_CAPABILITIES` | empty | Exact comma-separated capabilities provided by the pinned runtime image. Empty fails Trigger admission closed while ordinary sessions remain available. |
-| `CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS` | empty | Comma-separated exact NyxID subject IDs allowed to publish or launch. Empty denies all. |
-| `CHRONO_TRIGGER_REPOSITORY_IDS` | empty | Comma-separated numeric upstream GitHub repository IDs. Names are not accepted. Empty denies all. |
-| `CHRONO_TRIGGER_USER_COHORT_PERCENT` | `0` | Stable SHA-256 subject cohort from 0 through 100. Zero admits no contributor. |
-| `CHRONO_TRIGGER_CHANGED_FILE_LIMIT` | `1000` | Maximum files in one reviewed publication, bounded from 1 through the complete-review schema ceiling of 1,000. Retain pinned-provider measurement evidence for the selected deployment value. |
-| `CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS` | `300` | Persisted asynchronous fork-readiness deadline, bounded from 1 through 3,600 seconds. The five-minute default is GitHub's support-escalation threshold, not a provider completion guarantee. |
-| `CHRONO_TRIGGER_CLEANUP_MODE` | `dry_run` | `dry_run` persists an exact plan but has no deletion port. `execute` sends eligible cleanup through the normal fenced effect worker. |
-| `CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS` | `5` | Cadence of each independent lane, 1 through 300 seconds. Missed ticks are skipped. |
-| `CHRONO_TRIGGER_WORKER_PAGE_SIZE` | `50` | Candidate rows per page, bounded by the public core maximum. |
-| `CHRONO_TRIGGER_WORKER_MAX_PAGES` | `20` | Hard page ceiling per lane and pass, 1 through 100. |
-| `CHRONO_TRIGGER_WORKER_CONCURRENCY` | `4` | Hard concurrent candidate ceiling per lane, 1 through 32. |
+| Key                                             | Initial value | Operational meaning                                                                                                                                                                                                                       |
+| ----------------------------------------------- | ------------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CHRONO_TRIGGER_ENABLED`                        |       `false` | Environment admission. `false` refuses new publisher and Launch admission and pauses existing orchestration at its next durable boundary.                                                                                                 |
+| `CHRONO_TRIGGER_ORCHESTRATION_PAUSED`           |        `true` | Emergency freeze for new Launch effects and not-yet-dispatched prompts. It does not interrupt a session.                                                                                                                                  |
+| `CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH`         |        `true` | Requests capability revocation and prevents renewal. It remains independent from orchestration admission.                                                                                                                                 |
+| `CHRONO_TRIGGER_RUNTIME_CAPABILITIES`           |         empty | Exact comma-separated capabilities provided by the pinned runtime image. Empty fails Trigger admission closed while ordinary sessions remain available.                                                                                   |
+| `CHRONO_TRIGGER_PUBLIC_GITHUB_SERVICE_SLUG`     |         empty | Exact NyxID public-proxy service used only for credential-free repository metadata. Empty or unavailable makes a published preview return `repository_policy_unavailable`; it never selects the publisher's or contributor's UserService. |
+| `CHRONO_TRIGGER_SANDBOX_BASE_URL`               |         empty | Absolute HTTP(S) origin of the CMA-exclusive native OpenSandbox server. Paths, credentials, queries, and fragments are rejected. Empty keeps the versioned Trigger adapter unregistered.                                                  |
+| `CHRONO_TRIGGER_SANDBOX_NAMESPACE`              |         empty | Exact DNS-1123 workload namespace in which that authority creates `BatchSandbox` objects. It is also the boundary for discovery and fenced deletion and must be exclusive to CMA Trigger.                                                 |
+| `CHRONO_TRIGGER_SANDBOX_API_KEY_FILE`           |         empty | Read-only mounted file containing only the dedicated provider key. `CHRONO_TRIGGER_SANDBOX_API_KEY` is rejected, including when the file is also configured; local development uses a temporary mounted/file path too.                    |
+| `CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS`          |         empty | Comma-separated exact NyxID subject IDs allowed to publish or launch. Empty denies all.                                                                                                                                                   |
+| `CHRONO_TRIGGER_REPOSITORY_IDS`                 |         empty | Comma-separated numeric upstream GitHub repository IDs. Names are not accepted. Empty denies all.                                                                                                                                         |
+| `CHRONO_TRIGGER_USER_COHORT_PERCENT`            |           `0` | Stable SHA-256 subject cohort from 0 through 100. Zero admits no contributor.                                                                                                                                                             |
+| `CHRONO_TRIGGER_CHANGED_FILE_LIMIT`             |        `1000` | Maximum files in one reviewed publication, bounded from 1 through the complete-review schema ceiling of 1,000. Retain pinned-provider measurement evidence for the selected deployment value.                                             |
+| `CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS` |         `300` | Persisted asynchronous fork-readiness deadline, bounded from 1 through 3,600 seconds. The five-minute default is GitHub's support-escalation threshold, not a provider completion guarantee.                                              |
+| `CHRONO_TRIGGER_CLEANUP_MODE`                   |     `dry_run` | `dry_run` persists an exact plan but has no deletion port. `execute` sends eligible cleanup through the normal fenced effect worker.                                                                                                      |
+| `CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS`        |           `5` | Cadence of each independent lane, 1 through 300 seconds. Missed ticks are skipped.                                                                                                                                                        |
+| `CHRONO_TRIGGER_WORKER_PAGE_SIZE`               |          `50` | Candidate rows per page, bounded by the public core maximum.                                                                                                                                                                              |
+| `CHRONO_TRIGGER_WORKER_MAX_PAGES`               |          `20` | Hard page ceiling per lane and pass, 1 through 100.                                                                                                                                                                                       |
+| `CHRONO_TRIGGER_WORKER_CONCURRENCY`             |           `4` | Hard concurrent candidate ceiling per lane, 1 through 32.                                                                                                                                                                                 |
+
+Provision the public GitHub observer as a dedicated credential-free NyxID
+service, not as the ordinary credential-backed `api-github` service. Its closed
+configuration has `identity_propagation_mode=none`,
+`forward_access_token=false`, `inject_delegation_token=false`, no resale
+billing, the smallest NyxID anonymous rule `GET /repositories/**`, and a
+deployment-reviewed bounded daily quota. CMA narrows that wildcard locally to
+exactly one nonzero decimal repository-ID segment and emits no query or body.
+Before setting the slug, retain a live trace proving that neither a subject nor
+any credential reaches the downstream service. Also exercise route absence,
+quota exhaustion, malformed response, and transient failure; each must produce
+`repository_policy_unavailable` without offering sign-in or invoking publisher
+OAuth. Quota exhaustion therefore degrades published preview availability and
+must be sized and alerted as a release dependency. Retired previews do not call
+the observer.
+
+The Trigger provider origin, namespace, and key are one authority tuple. They
+must be either all absent or all present; a partial tuple fails startup. When
+`CHRONO_TRIGGER_ENABLED=true`, absence also fails startup. A complete tuple does
+not reuse the ordinary provider, an Aevatar tenant, another product's workload
+namespace, or another product's key. The namespace must be CMA-exclusive because
+Kubernetes RBAC cannot constrain `delete` by object label. The API key contents
+never belong in a ConfigMap, environment variable, or Kubernetes `Secret`.
+
+CMA reads both provider key files only during process startup. Rotating the
+Secret Manager source may update the CSI projection, but CMA does not reread it;
+verify the projected version and perform a controlled pod restart before
+claiming the new key is active.
+
+### Dedicated provider activation
+
+Adopt the native lane in this order. Do not run an unordered
+`kubectl apply -f infra/api/`:
+
+1. Provision and independently verify a CMA-owned OpenSandbox tenant/server,
+   dedicated API key, native runtime template, and CMA-exclusive workload
+   namespace. Record the external infrastructure owner and reviewed revision.
+2. Prove the final runtime image and template satisfy D-09 without privileged
+   mode, added capabilities, host networking, disabled Codex sandboxing, or a
+   global AppArmor/user-namespace relaxation.
+3. Apply a `Role` in the exact workload namespace granting only `get`, `list`,
+   and `delete` on `sandbox.opensandbox.io/batchsandboxes`, then bind it locally
+   to `chrono-bot/chrono-bot-ksa`. Do not substitute a cluster-wide grant.
+4. Provision the dedicated Secret Manager resource and grant the workload
+   identity access to only that secret.
+5. Apply the dedicated `SecretProviderClass` and non-overlapping read-only CSI
+   mount, verify the projected file, then configure the complete provider tuple
+   while Trigger remains disabled, orchestration remains paused, the capability
+   kill switch remains enabled, and runtime capabilities remain empty.
+6. Restart CMA deliberately and verify that `codex-trigger-native-v1` registers,
+   ordinary `codex` sessions still use their original lane, and provider-side
+   inventory contains zero unexpected Trigger objects.
+7. Run the provider-route, D-09, fenced-teardown, restart/recovery, and
+   post-stop inventory campaigns against the exact deployment revision.
+8. Declare demonstrated runtime capabilities, then advance the environment
+   flag, orchestration pause, kill switch, repository/publisher allowlists, and
+   user cohort one control at a time. Roll back the last control on any failure.
+
+### Provider-smoke inventory authority
+
+Do not give the real-provider smoke CMA's production reclaimer identity. The
+production Role in activation step 3 legitimately grants CMA `get`, `list`, and
+`delete` so the session lifecycle can discover and tear down its own
+`BatchSandbox`. The smoke observer is a separate identity. Its namespace-local,
+list-only Role contains exactly this one rule:
+
+```yaml
+apiGroups: ["sandbox.opensandbox.io"]
+resources: ["batchsandboxes"]
+verbs: ["list"]
+```
+
+Create both that Role and its RoleBinding in the exact Trigger workload
+namespace, and bind only the observer identity represented by the smoke
+kubeconfig. Do not use a `ClusterRole` or a cluster-wide binding. Before the
+smoke runs, its authorization check must prove that the identity can list
+`batchsandboxes.sandbox.opensandbox.io` only in that namespace; it must reject
+`get`, `watch`, `create`, `update`, `patch`, `delete`, and `deletecollection`, a
+cluster-wide `BatchSandbox` list, and namespace-local listing of `secrets`,
+`configmaps`, or `pods`.
+
+Store the exact namespace as the protected environment variable
+`CMA_TRIGGER_SMOKE_SANDBOX_NAMESPACE`. It must equal the deployed
+`CHRONO_TRIGGER_SANDBOX_NAMESPACE` and the closed fixture field
+`trigger_sandbox_namespace`; it is a reviewed deployment binding, never a
+dispatch input. Store only the observer kubeconfig's base64 representation in
+the protected environment secret `CMA_TRIGGER_SMOKE_KUBECONFIG_B64`. The
+workflow uses pinned `kubectl` v1.34.1, decodes that secret with `umask 077` to
+`${{ runner.temp }}/cma-trigger-smoke-kubeconfig`, enforces mode `0600`, and,
+under `always()`, removes the file before the evidence audit. Kubeconfig bytes,
+Kubernetes bearer tokens, client keys, and client certificates must not enter
+the fixture configuration, logs, or retained evidence.
+
+The smoke takes a complete, unpaginated namespace inventory and rejects any
+continuation token. A pass requires this authoritative sequence:
+
+| Observation     | Total | Entitled | Unexpected |
+| --------------- | ----: | -------: | ---------: |
+| `before_launch` |     0 |        0 |          0 |
+| `live_session`  |     1 |        1 |          0 |
+| `after_stop`    |     0 |        0 |          0 |
+
+The live object must match `opensandbox.io/id`, `cma/kernel`,
+`chrono-bot/kernel`, `cma/session`, `chrono-bot/session`,
+`cma/runtime-generation`, and `cma/runtime-reservation`. The evidence retains
+only the allowlisted API version and kind, namespace and name, UID, object and
+list `resourceVersion` values, creation and deletion timestamps, and those
+allowlisted label values. It replaces the raw runtime reservation with its
+SHA-256 fingerprint; the raw value must never be serialized. `counts.sandbox`
+is derived from `live_session.entitled_objects.length`, not from CMA Session
+state. After session stop, the observer polls until the namespace is empty and
+fails with `sandbox_leaked_after_stop` at the reconciliation deadline. Normal
+session stop is the sole sandbox teardown authority; the observer never mutates
+the object.
 
 The public MVP's Trigger kernel is not a contributor or publisher control. The
 composition root authoritatively pins it to Codex, every Launch review discloses
-`kernel: codex`, and Start/provisioning fail closed if that selection drifts.
-Runtime version strings and capability lists are never parsed to infer it.
+`kernel: codex-trigger-native-v1`, and Start/provisioning fail closed if that
+selection drifts. The versioned name also pins the dedicated native provider
+lane; ordinary sessions retain `kernel: codex`. Runtime version strings and
+capability lists are never parsed to infer either identity.
 
 Admission requires all of the environment, publisher, numeric repository, and
 user-cohort decisions to permit the request. Turning on only the environment
@@ -121,13 +241,13 @@ therefore allowlists exactly `127.0.0.2` and the runtime reserves every
 privileged port on that address that could otherwise expose a credential or
 control endpoint:
 
-| Listener | Purpose | Sandbox result |
-|---|---|---|
-| non-loopback pod IP on `9090` | Actual runtime supervisor ingress | Denied by the managed network allowlist |
-| `127.0.0.1:9091` | Actual model credential proxy | Denied by the managed network allowlist |
-| `127.0.0.2:9090` | Closed supervisor-denial front | `403` with `x-cma-trigger-loopback-isolation: denied` |
-| `127.0.0.2:9091` | Closed model-proxy-denial front | `403` with `x-cma-trigger-loopback-isolation: denied` |
-| `127.0.0.2:9092` | Signed Layer 4 platform and GitHub gateway | Permitted only after exact signed-policy evaluation |
+| Listener                      | Purpose                                    | Sandbox result                                        |
+| ----------------------------- | ------------------------------------------ | ----------------------------------------------------- |
+| non-loopback pod IP on `9090` | Actual runtime supervisor ingress          | Denied by the managed network allowlist               |
+| `127.0.0.1:9091`              | Actual model credential proxy              | Denied by the managed network allowlist               |
+| `127.0.0.2:9090`              | Closed supervisor-denial front             | `403` with `x-cma-trigger-loopback-isolation: denied` |
+| `127.0.0.2:9091`              | Closed model-proxy-denial front            | `403` with `x-cma-trigger-loopback-isolation: denied` |
+| `127.0.0.2:9092`              | Signed Layer 4 platform and GitHub gateway | Permitted only after exact signed-policy evaluation   |
 
 A Trigger runtime must resolve a non-loopback ingress address and must have
 both model and platform upstreams. Wildcard or loopback supervisor ingress,
@@ -146,12 +266,12 @@ typed failure and no prompt is sent. Release evidence must additionally show
 that raw `CONNECT` cannot tunnel to the real supervisor or model proxy.
 
 The pinned image carries the distribution `bubblewrap` at `/usr/bin/bwrap` so
-Codex does not fall back to its anonymous bundled helper. The D-09 runners are
-pinned to Ubuntu 24.04 and must install `apparmor-profiles` and `apparmor-utils`,
-copy `/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` to
-`/etc/apparmor.d/bwrap-userns-restrict`, load it with `apparmor_parser -r`, and
-observe both `bwrap (enforce)` and `unpriv_bwrap (enforce)` in the kernel profile
-inventory before starting the campaign.
+Codex does not fall back to its anonymous bundled helper. Following the
+[official Codex Ubuntu 24.04 sandbox setup](https://developers.openai.com/codex/sandboxing),
+the D-09 runners must install `apparmor-profiles` and `apparmor-utils`, copy
+`/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` to
+`/etc/apparmor.d/bwrap-userns-restrict`, and load it with `apparmor_parser -r`
+before starting the campaign.
 
 Only the disposable D-09 runtime container receives the reviewed outer
 `seccomp=unconfined`, `apparmor=unconfined`, and `systempaths=unconfined`
@@ -161,6 +281,12 @@ privileged mode, host networking, or permission to bypass the mandatory inner
 `cma-trigger` Codex sandbox. A command-sandbox initialization refusal is a
 provisioning failure. Disabling the global AppArmor user-namespace restriction
 or running Codex unsandboxed is prohibited.
+
+Mount writable workspace storage at `/home/chrono/workspace` and keep the
+Trigger repository root at `/home/chrono/workspace/repository`, as supplied by
+the dedicated adapter. Do not mount a volume directly on the repository root:
+Layer 4 verifies a restore in a sibling staging directory and atomically
+renames it into place, and Linux cannot replace an active mount point.
 
 Both credential proxies parse their configured base and the requested URI as
 structured URLs. They pin scheme, origin, and service-path prefix and reject
@@ -238,17 +364,17 @@ An external call already in progress may finish or become ambiguous and enter
 reconciliation. A flag cannot recall bytes already written. The next effect is
 always claimed only after a durable Launch lease and a fresh rollout decision.
 
-| Launch state | Orchestration pause | Capability kill switch | Session and user work |
-|---|---|---|---|
-| `draft` | No new Start or provider effect. Existing review remains readable. | Normally no reach exists to revoke. | No session is created or stopped. |
-| `auth_required` | Keep the failed effect on its original intent. Successful connection revalidation queues read-only reconciliation of that intent and returns to `resume_state`; it never repeats Start or blindly executes the provider write again. | Revoke retained reach if one exists and the failure requires it. | Any existing session and workspace remain intact; recovery creates neither. |
-| `preflight`, `fork_pending`, `fork_ready`, `branch_pending`, `workspace_pending`, `sandbox_pending`, `session_pending` | Finish only the external boundary already in progress, retain its result, then persist `feature_paused` before another claim. | Persist `revocation_pending`, then seek tombstone or agent-key acknowledgement. | A session that already exists stays intact; no inferred rollback deletes earlier resources. |
-| `prompt_pending` | Do not claim a not-yet-dispatched prompt. A committed dispatch fence follows the seven-state at-most-once recovery contract and is never blindly resent. | Revoke subsequent GitHub reach without ending the session. | Conversation, workspace, and visible history remain. |
-| `ready` | No new automatic GitHub/checkpoint effect is claimed. | Stop renewal and converge to effective revocation. | The session remains available for conversation, inspection, export, and recovery subject to the now-revoked GitHub reach. |
-| `contributing`, `pr_pending` | Freeze the next effect. Reconcile a possibly written checkpoint, branch, or PR before settling. | Stop subsequent session GitHub use; CMA-owned ambiguous writes still reconcile under their retained intent. | Workspace, fork, branch, commits, and PR are preserved. |
-| `pr_open` | No provider status read or write is claimed while rollout is paused. When permitted, fenced read-only status observation and explicit same-Launch Update resume; CMA never merges, reopens, or rewrites the PR automatically. Contributor-confirmed completion is a CMA-only handoff with no provider call. | A kill switch revokes remaining session reach and therefore prevents further agent GitHub work without ending the session. Completion also converges remaining reach to revocation. | Until completion, an open PR remains updateable through the reviewed flow. Contributor-confirmed handoff of an open PR or a positively observed merge advances to `completed`; either path preserves the fork, branch, commit, and PR. Closed-unmerged state remains readable and offers New Launch. |
-| `failed_retryable` | Preserve retry time and durable intent but do not retry while denied. | Revoke reach independently. | Recovery information and session linkage remain visible. |
-| `completed`, `failed_terminal`, `cancelled` | No ordinary orchestration. Retention execution is also frozen in `execute` mode until rollout permits it. | Converge any remaining reach to revocation before cleanup eligibility. | GitHub work and sandboxes are never selected by Trigger cleanup. |
+| Launch state                                                                                                           | Orchestration pause                                                                                                                                                                                                                                                                                         | Capability kill switch                                                                                                                                                              | Session and user work                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `draft`                                                                                                                | No new Start or provider effect. Existing review remains readable.                                                                                                                                                                                                                                          | Normally no reach exists to revoke.                                                                                                                                                 | No session is created or stopped.                                                                                                                                                                                                                                                                    |
+| `auth_required`                                                                                                        | Keep the failed effect on its original intent. Successful connection revalidation queues read-only reconciliation of that intent and returns to `resume_state`; it never repeats Start or blindly executes the provider write again.                                                                        | Revoke retained reach if one exists and the failure requires it.                                                                                                                    | Any existing session and workspace remain intact; recovery creates neither.                                                                                                                                                                                                                          |
+| `preflight`, `fork_pending`, `fork_ready`, `branch_pending`, `workspace_pending`, `sandbox_pending`, `session_pending` | Finish only the external boundary already in progress, retain its result, then persist `feature_paused` before another claim.                                                                                                                                                                               | Persist `revocation_pending`, then seek tombstone or agent-key acknowledgement.                                                                                                     | A session that already exists stays intact; no inferred rollback deletes earlier resources.                                                                                                                                                                                                          |
+| `prompt_pending`                                                                                                       | Do not claim a not-yet-dispatched prompt. A committed dispatch fence follows the seven-state at-most-once recovery contract and is never blindly resent.                                                                                                                                                    | Revoke subsequent GitHub reach without ending the session.                                                                                                                          | Conversation, workspace, and visible history remain.                                                                                                                                                                                                                                                 |
+| `ready`                                                                                                                | No new automatic GitHub/checkpoint effect is claimed.                                                                                                                                                                                                                                                       | Stop renewal and converge to effective revocation.                                                                                                                                  | The session remains available for conversation, inspection, export, and recovery subject to the now-revoked GitHub reach.                                                                                                                                                                            |
+| `contributing`, `pr_pending`                                                                                           | Freeze the next effect. Reconcile a possibly written checkpoint, branch, or PR before settling.                                                                                                                                                                                                             | Stop subsequent session GitHub use; CMA-owned ambiguous writes still reconcile under their retained intent.                                                                         | Workspace, fork, branch, commits, and PR are preserved.                                                                                                                                                                                                                                              |
+| `pr_open`                                                                                                              | No provider status read or write is claimed while rollout is paused. When permitted, fenced read-only status observation and explicit same-Launch Update resume; CMA never merges, reopens, or rewrites the PR automatically. Contributor-confirmed completion is a CMA-only handoff with no provider call. | A kill switch revokes remaining session reach and therefore prevents further agent GitHub work without ending the session. Completion also converges remaining reach to revocation. | Until completion, an open PR remains updateable through the reviewed flow. Contributor-confirmed handoff of an open PR or a positively observed merge advances to `completed`; either path preserves the fork, branch, commit, and PR. Closed-unmerged state remains readable and offers New Launch. |
+| `failed_retryable`                                                                                                     | Preserve retry time and durable intent but do not retry while denied.                                                                                                                                                                                                                                       | Revoke reach independently.                                                                                                                                                         | Recovery information and session linkage remain visible.                                                                                                                                                                                                                                             |
+| `completed`, `failed_terminal`, `cancelled`                                                                            | No ordinary orchestration. Retention execution is also frozen in `execute` mode until rollout permits it.                                                                                                                                                                                                   | Converge any remaining reach to revocation before cleanup eligibility.                                                                                                              | GitHub work and sandboxes are never selected by Trigger cleanup.                                                                                                                                                                                                                                     |
 
 An existing `owner_credential_unavailable`, `service_inactive`,
 `session_rotating`, `session_recovering`, `recovery_required`, or
@@ -260,13 +386,14 @@ stable `rollout_reason` values used by support tooling.
 
 ## 6. Scheduler and structured telemetry
 
-The process runs three independent interval loops:
+The process runs four independent interval loops:
 
-| Lane | Candidate source | Worker |
-|---|---|---|
-| `effects` | Active Launch states | Normal fenced effect execute/reconcile worker |
-| `capabilities` | Launches that may hold short-lived reach | Fenced renew/revoke worker |
-| `cleanup` | Terminal Launches past `workspace.delete_after` | Plan-only worker in `dry_run`; normal effect worker in `execute` |
+| Lane           | Candidate source                                              | Worker                                                                   |
+| -------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `effects`      | Active Launch states                                          | Normal fenced effect execute/reconcile worker                            |
+| `capabilities` | Launches that may hold short-lived reach                      | Fenced renew/revoke worker                                               |
+| `workspaces`   | Trigger Launches with a live runtime and checkpoint authority | Periodic coherent-checkpoint worker; paused orchestration defers capture |
+| `cleanup`      | Terminal Launches past `workspace.delete_after`               | Plan-only worker in `dry_run`; normal effect worker in `execute`         |
 
 Each page is only an inventory. The worker must still acquire the Launch lease
 and optimistic revision. Cursor repetition stops the pass, `max_pages` bounds a
@@ -352,19 +479,19 @@ Provider-caused waits and explicit user-action blocks are measured separately
 from CMA availability. A typed blocked state is a settled result, not a hidden
 success and not an infinite spinner.
 
-| Signal | Objective | Alert |
-|---|---|---|
-| Scheduler heartbeat | Every lane reports within `max(3 * interval, 60s)` | Page if any lane is absent for 2 objective windows while the process is Ready. |
-| Candidate pass | No `errors`, `failed`, or repeated cursor in 99.9% of passes | Warn on 3 consecutive affected passes; page on 12 affected passes or 5 minutes. |
-| Page budget | `page_budget_exhausted=false` | Warn after 3 consecutive passes; page if it persists for 15 minutes because work is arriving faster than the configured bound. |
-| Lease contention | A candidate normally acquires or is stale by the next pass | Warn when `not_acquired / candidates > 0.5` for 5 minutes with no completion; inspect the support lease before intervention. |
-| Durable step settlement | 99% of admitted non-user-blocked steps settle, defer with a retry time, or enter a typed block within 10 minutes | Page any Launch with no event and an expired lease for 10 minutes. |
-| At-most-once dispatch | Zero automatic repeat after `dispatch_fenced` without positive pre-write failure proof | Page on any recovery-required dispatch that is automatically claimed as execute. |
-| Capability expiry/revocation | No accepted stale policy beyond 60 seconds plus 5 seconds skew; confirmed revocation may be earlier | Page on policy acceptance outside the bound, generation rollback, or numeric-resource mismatch. Warn when `revocation_pending` survives beyond the bound plus two scheduler intervals. |
-| Cleanup eligibility | 99% of eligible plans appear within 15 minutes; execute completions within 24 hours | Warn on a 15-minute plan backlog; page on a 24-hour execute backlog or any widened/tampered target rejection. |
-| Session continuity | 100% across Trigger flags and cleanup | Page immediately if a flag or Trigger cleanup stops, rotates, blanks, or deletes a running session. |
-| Credential/content leakage | Zero | Page immediately on any credential, prompt, repository path/content, or provider body detected in logs, activity, support, or artifacts. Preserve the evidence under incident policy and revoke authority. |
-| Accepted Launch/PR request volume | Each successful Launch-create and PR-open activity counter stays within its deployment-approved absolute five-minute envelope; a disabled/zero cohort expects zero | Warn at or above 80% for 3 completed windows. Fire `TRIGGER-LAUNCH-PR-VOLUME` at an envelope breach in any completed window; missing counter/rule/envelope wiring blocks public exposure under `O-02`. |
+| Signal                            | Objective                                                                                                                                                          | Alert                                                                                                                                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scheduler heartbeat               | Every lane reports within `max(3 * interval, 60s)`                                                                                                                 | Page if any lane is absent for 2 objective windows while the process is Ready.                                                                                                                             |
+| Candidate pass                    | No `errors`, `failed`, or repeated cursor in 99.9% of passes                                                                                                       | Warn on 3 consecutive affected passes; page on 12 affected passes or 5 minutes.                                                                                                                            |
+| Page budget                       | `page_budget_exhausted=false`                                                                                                                                      | Warn after 3 consecutive passes; page if it persists for 15 minutes because work is arriving faster than the configured bound.                                                                             |
+| Lease contention                  | A candidate normally acquires or is stale by the next pass                                                                                                         | Warn when `not_acquired / candidates > 0.5` for 5 minutes with no completion; inspect the support lease before intervention.                                                                               |
+| Durable step settlement           | 99% of admitted non-user-blocked steps settle, defer with a retry time, or enter a typed block within 10 minutes                                                   | Page any Launch with no event and an expired lease for 10 minutes.                                                                                                                                         |
+| At-most-once dispatch             | Zero automatic repeat after `dispatch_fenced` without positive pre-write failure proof                                                                             | Page on any recovery-required dispatch that is automatically claimed as execute.                                                                                                                           |
+| Capability expiry/revocation      | No accepted stale policy beyond 60 seconds plus 5 seconds skew; confirmed revocation may be earlier                                                                | Page on policy acceptance outside the bound, generation rollback, or numeric-resource mismatch. Warn when `revocation_pending` survives beyond the bound plus two scheduler intervals.                     |
+| Cleanup eligibility               | 99% of eligible plans appear within 15 minutes; execute completions within 24 hours                                                                                | Warn on a 15-minute plan backlog; page on a 24-hour execute backlog or any widened/tampered target rejection.                                                                                              |
+| Session continuity                | 100% across Trigger flags and cleanup                                                                                                                              | Page immediately if a flag or Trigger cleanup stops, rotates, blanks, or deletes a running session.                                                                                                        |
+| Credential/content leakage        | Zero                                                                                                                                                               | Page immediately on any credential, prompt, repository path/content, or provider body detected in logs, activity, support, or artifacts. Preserve the evidence under incident policy and revoke authority. |
+| Accepted Launch/PR request volume | Each successful Launch-create and PR-open activity counter stays within its deployment-approved absolute five-minute envelope; a disabled/zero cohort expects zero | Warn at or above 80% for 3 completed windows. Fire `TRIGGER-LAUNCH-PR-VOLUME` at an envelope breach in any completed window; missing counter/rule/envelope wiring blocks public exposure under `O-02`.     |
 
 Dashboard panels must include README preview-to-review, review-to-Start, and
 Start-to-ready conversion; state duration percentiles; effect execute versus
@@ -381,12 +508,12 @@ are attached and exercised.
 
 ### Severity and alert routing
 
-| Severity | Meaning | Acknowledge and route |
-|---|---|---|
-| `SEV-0` | Credential/content disclosure, cross-owner or unauthorized effect, session loss/interruption, destructive cleanup, automatic duplicate task, or accepted policy beyond the security bound | Page the platform on-call and runbook owner immediately; appoint an incident commander; engage security plus the affected identity/runtime owner within 15 minutes |
-| `SEV-1` | Systematic inability to Start or recover, unknown external-write outcome without safe evidence, broken revocation lane, missing audit authority, accepted Launch/PR volume outside the approved rollout envelope, or sustained SLO breach affecting multiple users | Page the platform on-call and runbook owner; assign identity, runtime, storage, or provider owner as indicated; update at least every 30 minutes |
-| `SEV-2` | Bounded provider degradation, retry/backlog growth inside safety bounds, isolated stuck Launch, or expected legacy-runtime acknowledgement noise | Notify the owning team during the staffed window; assign a responder and review before widening rollout |
-| `SEV-3` | Isolated usability/documentation defect with no authority, data, continuity, or duplicate-effect risk | File and triage through the ordinary product queue |
+| Severity | Meaning                                                                                                                                                                                                                                                            | Acknowledge and route                                                                                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SEV-0`  | Credential/content disclosure, cross-owner or unauthorized effect, session loss/interruption, destructive cleanup, automatic duplicate task, or accepted policy beyond the security bound                                                                          | Page the platform on-call and runbook owner immediately; appoint an incident commander; engage security plus the affected identity/runtime owner within 15 minutes |
+| `SEV-1`  | Systematic inability to Start or recover, unknown external-write outcome without safe evidence, broken revocation lane, missing audit authority, accepted Launch/PR volume outside the approved rollout envelope, or sustained SLO breach affecting multiple users | Page the platform on-call and runbook owner; assign identity, runtime, storage, or provider owner as indicated; update at least every 30 minutes                   |
+| `SEV-2`  | Bounded provider degradation, retry/backlog growth inside safety bounds, isolated stuck Launch, or expected legacy-runtime acknowledgement noise                                                                                                                   | Notify the owning team during the staffed window; assign a responder and review before widening rollout                                                            |
+| `SEV-3`  | Isolated usability/documentation defect with no authority, data, continuity, or duplicate-effect risk                                                                                                                                                              | File and triage through the ordinary product queue                                                                                                                 |
 
 Provider and user-action blocks keep their typed product state even when an
 incident is open. Severity is an operator response classification; it never
@@ -396,18 +523,18 @@ The following stable alert IDs are the source links that saved alert rules must
 point back to. Each deployment maps them to its actual dashboard, rule, and
 notification target in release evidence:
 
-| Alert | Default severity | First response |
-|---|---:|---|
-| [`TRIGGER-SECURITY-LEAK`](#trigger-security-leak) | SEV-0 | Pause orchestration, engage security, preserve redacted evidence, and request revocation while tracking acknowledgement or expiry |
-| [`TRIGGER-SESSION-CONTINUITY`](#trigger-session-continuity) | SEV-0 | Stop rollout changes, preserve the session ledger/runtime evidence, and apply forward-safe rollback |
-| [`TRIGGER-DUPLICATE-DISPATCH`](#trigger-duplicate-dispatch) | SEV-0 | Fence the Launch, pause orchestration, and preserve all delivery generations; never send a compensating prompt |
-| [`TRIGGER-UNAUTHORIZED-EFFECT`](#trigger-unauthorized-effect) | SEV-0 | Enable both pause and capability kill switch and preserve numeric identity/policy evidence |
-| [`TRIGGER-LAUNCH-PR-VOLUME`](#trigger-launch-pr-volume) | SEV-1 | Stop cohort widening, compare safe request counters with unique durable Launch/PR records, and never delete or close user GitHub work as containment |
-| [`TRIGGER-CAPABILITY-BOUND`](#trigger-capability-bound) | SEV-1 | Keep revocation pending, stop renewal, inspect acknowledgement/expiry, and do not claim effective revocation early |
-| [`TRIGGER-STUCK-LAUNCH`](#trigger-stuck-launch) | SEV-1 | Use the owner-safe support lookup, inspect lease/effect evidence, and schedule only read-only reconciliation |
-| [`TRIGGER-SCHEDULER-HEALTH`](#trigger-scheduler-health) | SEV-1 | Compare all four lane heartbeats, page budget, cursor, and lease contention before changing concurrency |
-| [`TRIGGER-PROVIDER-DEGRADED`](#trigger-provider-degraded) | SEV-2 | Honor retry times, preserve public/session reads, and pause new external effects if failures spread |
-| [`TRIGGER-CLEANUP-DEBT`](#trigger-cleanup-debt) | SEV-2 | Return cleanup to dry-run on target/audit anomalies and inspect exact retained plans |
+| Alert                                                         | Default severity | First response                                                                                                                                       |
+| ------------------------------------------------------------- | ---------------: | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`TRIGGER-SECURITY-LEAK`](#trigger-security-leak)             |            SEV-0 | Pause orchestration, engage security, preserve redacted evidence, and request revocation while tracking acknowledgement or expiry                    |
+| [`TRIGGER-SESSION-CONTINUITY`](#trigger-session-continuity)   |            SEV-0 | Stop rollout changes, preserve the session ledger/runtime evidence, and apply forward-safe rollback                                                  |
+| [`TRIGGER-DUPLICATE-DISPATCH`](#trigger-duplicate-dispatch)   |            SEV-0 | Fence the Launch, pause orchestration, and preserve all delivery generations; never send a compensating prompt                                       |
+| [`TRIGGER-UNAUTHORIZED-EFFECT`](#trigger-unauthorized-effect) |            SEV-0 | Enable both pause and capability kill switch and preserve numeric identity/policy evidence                                                           |
+| [`TRIGGER-LAUNCH-PR-VOLUME`](#trigger-launch-pr-volume)       |            SEV-1 | Stop cohort widening, compare safe request counters with unique durable Launch/PR records, and never delete or close user GitHub work as containment |
+| [`TRIGGER-CAPABILITY-BOUND`](#trigger-capability-bound)       |            SEV-1 | Keep revocation pending, stop renewal, inspect acknowledgement/expiry, and do not claim effective revocation early                                   |
+| [`TRIGGER-STUCK-LAUNCH`](#trigger-stuck-launch)               |            SEV-1 | Use the owner-safe support lookup, inspect lease/effect evidence, and schedule only read-only reconciliation                                         |
+| [`TRIGGER-SCHEDULER-HEALTH`](#trigger-scheduler-health)       |            SEV-1 | Compare all four lane heartbeats, page budget, cursor, and lease contention before changing concurrency                                              |
+| [`TRIGGER-PROVIDER-DEGRADED`](#trigger-provider-degraded)     |            SEV-2 | Honor retry times, preserve public/session reads, and pause new external effects if failures spread                                                  |
+| [`TRIGGER-CLEANUP-DEBT`](#trigger-cleanup-debt)               |            SEV-2 | Return cleanup to dry-run on target/audit anomalies and inspect exact retained plans                                                                 |
 
 <a id="trigger-security-leak"></a>
 **TRIGGER-SECURITY-LEAK.** Do not copy the detected value into chat, an issue,
@@ -655,6 +782,26 @@ cleanup completion, or user confirmation from older data. Such inference would
 invent authority. A pre-feature database has no Trigger rows and needs only the
 indexes. Experimental Trigger rows that fail validation are quarantined from
 public exposure and handled as migration evidence, not rewritten in place.
+Launch query, effect, capability, cleanup, and connection-revocation
+inventories read bounded raw-BSON batches behind a separately validated string
+`_id`/`created_at` cursor envelope. A row whose aggregate cannot be decoded or
+whose duplicated query fields disagree is skipped without withholding valid
+neighbors and emits the redacted counter event
+`event_name=cma_trigger_launch_quarantine`, `schema_version=1`, `increment=1`.
+Its only differentiating fields are the closed `inventory` value (`query`,
+`worker`, `capability`, `cleanup`, or `connection_revocation`) and the closed
+`reason` value (`decode_failed` or `aggregate_validation_failed`); it never
+contains Launch, owner, repository, provider, correlation, or error data. CMA
+does not repair, reroute, revoke, or delete the quarantined row from fields it
+could not validate. Operators retain the event as migration evidence and may
+act only from independently verified identifiers.
+The one exact historical routing exception is a pre-versioned
+`runtime_admission` with no `kernel`: the predecessor schema had only the
+ordinary `codex` route, so CMA reads that absence as legacy `codex`, never as
+`codex-trigger-native-v1`. An explicitly stored legacy `codex` value remains
+readable for inspection, stop, and fenced cleanup. Current review, Start, and
+provisioning compare it with the configured native identity and refuse new
+effects; operators inventory and retire these rows rather than rerouting them.
 
 Before and after deployment, record:
 

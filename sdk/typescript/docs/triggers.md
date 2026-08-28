@@ -128,7 +128,7 @@ async function reviewAndStart(publicId: string): Promise<Launch> {
   ) {
     throw new Error('Launch admission evidence is incomplete');
   }
-  if (launch.runtime_admission.kernel !== 'codex') {
+  if (launch.runtime_admission.kernel !== 'codex-trigger-native-v1') {
     throw new Error('Unsupported locked Trigger kernel');
   }
 
@@ -143,6 +143,16 @@ async function reviewAndStart(publicId: string): Promise<Launch> {
 
 void reviewAndStart;
 ```
+
+The closed kernel vocabulary also decodes `codex` for a retained pre-versioned
+Launch. That value is historical and read-only. Clients may list and inspect
+the Launch, refresh its CMA snapshot and events, follow its existing session,
+read or download a retained diff artifact, create a separate New Launch, or
+cancel it. They must not offer overrides, connection selection, Start, diff
+capture, branch publication, pull-request review/open/update/status refresh,
+completion, or initial-prompt recovery. CMA fences those commands even if a
+stale client submits one. Any kernel other than exact `codex` or
+`codex-trigger-native-v1` is rejected as a protocol error.
 
 The OAuth callback never starts work. After CMA regains control, repeat
 `createOrResumeLaunch`, list the connections, select the exact returned
@@ -285,6 +295,11 @@ Contribution is four distinct decisions:
 4. `reviewPullRequest` seals an Open or Update proposal without writing GitHub;
    `confirmPullRequest` is a separate keyed command bound to its
    `intent_digest`.
+
+Each reviewed file always includes paired `additions` and `deletions`. They are
+exact numbers for text even when the bounded response omits `patch`, and both are
+`null` for binary content whose line counts are unavailable. Do not reconstruct
+statistics from `patch` or substitute zero for `null`.
 
 ```ts
 import { createClient } from '@chronoai/cma-sdk';

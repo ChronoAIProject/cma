@@ -8,7 +8,8 @@ use super::{
     Launch, LaunchEvent, LaunchId, LaunchOverrides, LaunchQuery, LaunchReviewAdmission,
     LaunchState, LaunchStore, PublicTriggerId, PublishedRevision, PublisherAuthority,
     StartAdmissionSnapshot, TriggerAvailability, TriggerDraft, TriggerId, TriggerPage,
-    TriggerPageRequest, TriggerPreview, TriggerPreviewCost, TriggerRevision,
+    TriggerPageRequest, TriggerPreview, TriggerPreviewAvailability, TriggerPreviewCost,
+    TriggerPreviewRepositoryPolicy, TriggerPreviewUnavailableReason, TriggerRevision,
     TriggerRevisionContent, TriggerRevisionId, TriggerRolloutDenial, TriggerRolloutPolicy,
     TriggerStore, TriggerStoreError, TriggerSupportLookup, TriggerSupportSnapshot,
     TriggerValidationError, WorkerLease,
@@ -84,6 +85,17 @@ pub trait TriggerAuthorityVerifier: Send + Sync {
         selected_service_id: &str,
         previous: Option<&ConnectionSnapshot>,
     ) -> Result<LaunchAuthority, TriggerServiceError>;
+
+    /// Resolve current repository policy through a credential-free public
+    /// observer. Implementations must not exercise publisher/contributor
+    /// authority or propagate a subject, bearer, connection ID, or provider
+    /// credential for this side-effect-free anonymous preview check.
+    async fn resolve_preview_repository_policy(
+        &self,
+        _revision: &TriggerRevision,
+    ) -> Result<TriggerPreviewRepositoryPolicy, TriggerServiceError> {
+        Err(TriggerAuthorityError::ProviderAuthenticationUnavailable.into())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -321,6 +333,8 @@ pub enum TriggerServiceError {
     Forbidden,
     #[error("Launch progress cursor {cursor} is beyond the durable event head {head}")]
     CursorBeyondEnd { cursor: u64, head: u64 },
+    #[error("the retained Launch runtime route is unavailable at {field}")]
+    RuntimeRouteUnavailable { field: String },
     #[error("trigger input is invalid: {0}")]
     Validation(#[from] TriggerValidationError),
     #[error("trigger persistence failed: {0}")]
@@ -541,6 +555,41 @@ impl TriggerService {
             .await?
             .ok_or(TriggerServiceError::NotFound)?;
         let mut preview = TriggerPreview::from(&revision);
+        if revision.availability == TriggerAvailability::Published {
+            match self
+                .authority
+                .resolve_preview_repository_policy(&revision)
+                .await
+            {
+                Ok(policy) => {
+                    preview.repository_owner = policy.repository.canonical_owner.clone();
+                    preview.repository_name = policy.repository.canonical_name.clone();
+                    preview.visibility = policy.repository.visibility;
+                    preview.allow_forking = policy.repository.allow_forking;
+                    if !policy.public_forkable {
+                        preview.availability = TriggerPreviewAvailability::Unavailable;
+                        preview.unavailable_reason =
+                            Some(TriggerPreviewUnavailableReason::UpstreamNotForkable);
+                    }
+                }
+                Err(error) => {
+                    preview.availability = TriggerPreviewAvailability::Unavailable;
+                    preview.unavailable_reason = Some(match error {
+                        TriggerServiceError::Authority(
+                            TriggerAuthorityError::UpstreamNotForkable,
+                        ) => TriggerPreviewUnavailableReason::UpstreamNotForkable,
+                        TriggerServiceError::Authority(TriggerAuthorityError::ResourceNotFound)
+                        | TriggerServiceError::NotFound => {
+                            TriggerPreviewUnavailableReason::UpstreamUnavailable
+                        }
+                        TriggerServiceError::Authority(TriggerAuthorityError::AuthorityDrift) => {
+                            TriggerPreviewUnavailableReason::UpstreamIdentityChanged
+                        }
+                        _ => TriggerPreviewUnavailableReason::RepositoryPolicyUnavailable,
+                    });
+                }
+            }
+        }
         if revision.content.commercial_policy.billing_mode == BillingMode::Contributor {
             preview.estimated_cost = self
                 .launch_admission
@@ -687,6 +736,30 @@ impl TriggerService {
             .await?
             .ok_or(TriggerServiceError::NotFound)?;
         require_owner(owner, &launch.owner)?;
+        Ok(launch)
+    }
+
+    /// Inspect the current Launch selected by a public Trigger re-click before
+    /// the caller enters the create-or-resume mutation. This deliberately does
+    /// not repair or replace retained state; the composition boundary decides
+    /// whether that durable runtime route is still eligible for public use.
+    pub async fn get_current_launch_for_public_trigger(
+        &self,
+        owner: &SubjectId,
+        public_id: &PublicTriggerId,
+    ) -> Result<Option<Launch>, TriggerServiceError> {
+        let revision = self
+            .triggers
+            .get_public_revision(public_id)
+            .await?
+            .ok_or(TriggerServiceError::NotFound)?;
+        let launch = self
+            .launches
+            .get_current_launch(owner, &revision.id)
+            .await?;
+        if let Some(launch) = launch.as_ref() {
+            require_owner(owner, &launch.owner)?;
+        }
         Ok(launch)
     }
 

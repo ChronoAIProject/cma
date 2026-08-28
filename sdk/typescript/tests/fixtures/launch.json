@@ -118,7 +118,7 @@
     },
     "timeout_seconds": 3600,
     "optional_checks": [],
-    "digest": "73beb723be6c3ecad23e5dbcbed26a050f6211fc19cc07a77e4b72ae2765cbd0"
+    "digest": "3b50460c2a1b7fa9ad28b596a21dcc6eac6fe1a14afeff3ce4de8dad0647a15b"
   },
   "pricing": {
     "policy_reference": "public-zero-cost-v1",
@@ -132,7 +132,7 @@
     "expires_at": "2026-08-27T12:00:00Z"
   },
   "runtime_admission": {
-    "kernel": "codex",
+    "kernel": "codex-trigger-native-v1",
     "runtime_version": "cma-trigger-test-runtime@sha256:admitted",
     "supported_capabilities": [
       "conversation",

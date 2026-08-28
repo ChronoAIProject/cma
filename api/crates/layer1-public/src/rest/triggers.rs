@@ -368,8 +368,10 @@ impl From<layer2_core::SessionSize> for SessionSizeView {
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct TriggerPreviewView {
     public_id: String,
-    #[schema(value_type = trigger_schema::TriggerAvailability)]
+    #[schema(value_type = trigger_schema::TriggerPreviewAvailability)]
     availability: String,
+    #[schema(value_type = Option<trigger_schema::TriggerPreviewUnavailableReason>)]
+    unavailable_reason: Option<String>,
     publisher_display_identity: String,
     repository_id: u64,
     repository_owner: String,
@@ -443,6 +445,7 @@ impl From<TriggerPreview> for TriggerPreviewView {
         Self {
             public_id: value.public_id.0,
             availability: enum_name(value.availability),
+            unavailable_reason: value.unavailable_reason.map(enum_name),
             publisher_display_identity: value.publisher_display_identity,
             repository_id: value.repository_id,
             repository_owner: value.repository_owner,
@@ -1139,8 +1142,56 @@ fn public_external_resource_ids(
         .collect()
 }
 
-impl From<Launch> for LaunchView {
-    fn from(value: Launch) -> Self {
+const PUBLIC_TRIGGER_KERNEL_ID: &str = "codex-trigger-native-v1";
+const LEGACY_PUBLIC_TRIGGER_KERNEL_ID: &str = "codex";
+
+fn classify_public_launch_runtime(
+    launch: &Launch,
+) -> Result<layer2_core::RuntimeAdmissionRoute, TriggerServiceError> {
+    launch
+        .validated_runtime_admission_route(
+            PUBLIC_TRIGGER_KERNEL_ID,
+            LEGACY_PUBLIC_TRIGGER_KERNEL_ID,
+            &layer2_core::CMA_TRIGGER_REQUIRED_CAPABILITIES,
+        )
+        .map_err(|error| TriggerServiceError::RuntimeRouteUnavailable {
+            field: error.field.unwrap_or_else(|| "runtime_admission".into()),
+        })
+}
+
+fn ensure_readable_launch_runtime(launch: &Launch) -> Result<(), TriggerServiceError> {
+    match classify_public_launch_runtime(launch)? {
+        layer2_core::RuntimeAdmissionRoute::Current
+        | layer2_core::RuntimeAdmissionRoute::Historical => Ok(()),
+        layer2_core::RuntimeAdmissionRoute::Invalid => {
+            Err(TriggerServiceError::RuntimeRouteUnavailable {
+                field: "runtime_admission".into(),
+            })
+        }
+    }
+}
+
+fn ensure_current_launch_runtime(launch: &Launch) -> Result<(), TriggerServiceError> {
+    match classify_public_launch_runtime(launch)? {
+        layer2_core::RuntimeAdmissionRoute::Current => Ok(()),
+        layer2_core::RuntimeAdmissionRoute::Historical => {
+            Err(TriggerServiceError::RuntimeRouteUnavailable {
+                field: "runtime_admission.kernel".into(),
+            })
+        }
+        layer2_core::RuntimeAdmissionRoute::Invalid => {
+            Err(TriggerServiceError::RuntimeRouteUnavailable {
+                field: "runtime_admission".into(),
+            })
+        }
+    }
+}
+
+impl TryFrom<Launch> for LaunchView {
+    type Error = TriggerServiceError;
+
+    fn try_from(value: Launch) -> Result<Self, Self::Error> {
+        ensure_readable_launch_runtime(&value)?;
         let launch_id = value.id.0.clone();
         let diff = value
             .diff
@@ -1155,7 +1206,7 @@ impl From<Launch> for LaunchView {
                 consent_observed_at: Some(connection.consent_observed_at),
             })
         });
-        Self {
+        Ok(Self {
             id: value.id.0,
             trigger_public_id: value.revision.public_id.0,
             revision_digest: value.revision_digest,
@@ -1191,7 +1242,7 @@ impl From<Launch> for LaunchView {
             draft_expires_at: value.draft_expires_at,
             started_at: value.started_at,
             terminal_at: value.terminal_at,
-        }
+        })
     }
 }
 
@@ -1460,7 +1511,35 @@ async fn owned_launch_command_id(
     value: String,
 ) -> Result<LaunchId, TriggerProblem> {
     let id = parse_launch_id(value)?;
-    state.triggers.get_launch(owner, &id).await?;
+    let launch = state.triggers.get_launch(owner, &id).await?;
+    ensure_current_launch_runtime(&launch)?;
+    Ok(id)
+}
+
+async fn owned_readable_launch_command_id(
+    state: &TriggersState,
+    owner: &layer2_core::SubjectId,
+    value: String,
+) -> Result<LaunchId, TriggerProblem> {
+    let id = parse_launch_id(value)?;
+    let launch = state.triggers.get_launch(owner, &id).await?;
+    ensure_readable_launch_runtime(&launch)?;
+    Ok(id)
+}
+
+async fn public_launch_resume_command_id(
+    state: &TriggersState,
+    owner: &layer2_core::SubjectId,
+    value: String,
+) -> Result<PublicTriggerId, TriggerProblem> {
+    let id = parse_public_id(value)?;
+    if let Some(current) = state
+        .triggers
+        .get_current_launch_for_public_trigger(owner, &id)
+        .await?
+    {
+        ensure_readable_launch_runtime(&current)?;
+    }
     Ok(id)
 }
 
@@ -2010,7 +2089,12 @@ async fn create_or_resume_launch(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<EmptyCommand>, BodyProblem>,
 ) -> Response {
-    let operation = format!("trigger-launch-create:{public_id}");
+    let public_id = match public_launch_resume_command_id(&state, &caller.subject, public_id).await
+    {
+        Ok(id) => id,
+        Err(error) => return error.into_response(),
+    };
+    let operation = format!("trigger-launch-create:{}", public_id.0);
     let (guard, body, _) =
         match command(key, Arc::clone(&state.operations), &caller, operation, body).await {
             Ok(parts) => parts,
@@ -2021,16 +2105,40 @@ async fn create_or_resume_launch(
             .authorization
             .require(layer2_core::Capability::CreateSession)?;
         body.map_err(RequestFailure::from)?;
-        let launch = state
+        let legacy_launch = match state
             .triggers
-            .create_or_resume_launch(
-                caller.subject.clone(),
-                &parse_public_id(public_id)?,
-                now(),
-                correlation_id(&headers),
-            )
-            .await?;
-        Ok((StatusCode::CREATED, Json(LaunchView::from(launch))).into_response())
+            .get_current_launch_for_public_trigger(&caller.subject, &public_id)
+            .await?
+        {
+            Some(current) => match classify_public_launch_runtime(&current)? {
+                layer2_core::RuntimeAdmissionRoute::Current => None,
+                layer2_core::RuntimeAdmissionRoute::Historical => Some(current),
+                layer2_core::RuntimeAdmissionRoute::Invalid => {
+                    return Err(TriggerServiceError::RuntimeRouteUnavailable {
+                        field: "runtime_admission".into(),
+                    }
+                    .into());
+                }
+            },
+            None => None,
+        };
+        // A normal README re-click returns the exact current historical
+        // Launch, even when its old draft deadline elapsed. Replacement and
+        // fresh admission require the explicit New Launch operation.
+        let launch = if let Some(legacy) = legacy_launch {
+            legacy
+        } else {
+            state
+                .triggers
+                .create_or_resume_launch(
+                    caller.subject.clone(),
+                    &public_id,
+                    now(),
+                    correlation_id(&headers),
+                )
+                .await?
+        };
+        Ok((StatusCode::CREATED, Json(LaunchView::try_from(launch)?)).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2082,7 +2190,7 @@ async fn create_new_launch(
                 correlation_id(&headers),
             )
             .await?;
-        Ok((StatusCode::CREATED, Json(LaunchView::from(launch))).into_response())
+        Ok((StatusCode::CREATED, Json(LaunchView::try_from(launch)?)).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2119,7 +2227,13 @@ async fn list_launches(
         )
         .await?;
     Ok(Json(LaunchPageView {
-        items: page.items.into_iter().map(Into::into).collect(),
+        // Exact legacy Launches remain visible for owner inspection and stop;
+        // malformed or unknown routes stay quarantined from this inventory.
+        items: page
+            .items
+            .into_iter()
+            .filter_map(|launch| LaunchView::try_from(launch).ok())
+            .collect(),
         next_cursor: page.next,
     }))
 }
@@ -2144,11 +2258,12 @@ pub(crate) async fn load_launch(
     owner: &layer2_core::SubjectId,
     launch_id: String,
 ) -> Result<LaunchView, TriggerServiceError> {
-    Ok(state
-        .triggers
-        .get_launch(owner, &parse_launch_id(launch_id)?)
-        .await?
-        .into())
+    LaunchView::try_from(
+        state
+            .triggers
+            .get_launch(owner, &parse_launch_id(launch_id)?)
+            .await?,
+    )
 }
 
 #[utoipa::path(
@@ -2190,7 +2305,7 @@ async fn update_launch_overrides(
                 correlation_id(&headers),
             )
             .await?;
-        Ok(Json(LaunchView::from(launch)).into_response())
+        Ok(Json(LaunchView::try_from(launch)?).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2235,7 +2350,7 @@ async fn select_launch_connection(
                 correlation_id(&headers),
             )
             .await?;
-        Ok(Json(LaunchView::from(launch)).into_response())
+        Ok(Json(LaunchView::try_from(launch)?).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2293,7 +2408,7 @@ async fn start_launch(
                 },
             )
             .await?;
-        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::try_from(launch)?)).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2345,7 +2460,7 @@ async fn review_launch_diff(
                 correlation_id(&headers),
             )
             .await?;
-        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::try_from(launch)?)).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2373,12 +2488,12 @@ pub(crate) async fn load_diff_review(
     owner: &layer2_core::SubjectId,
     launch_id: String,
 ) -> Result<DiffReviewView, TriggerServiceError> {
-    Ok(DiffReviewView::from_launch(
-        state
-            .triggers
-            .get_launch(owner, &parse_launch_id(launch_id)?)
-            .await?,
-    ))
+    let launch = state
+        .triggers
+        .get_launch(owner, &parse_launch_id(launch_id)?)
+        .await?;
+    ensure_readable_launch_runtime(&launch)?;
+    Ok(DiffReviewView::from_launch(launch))
 }
 
 #[utoipa::path(
@@ -2427,7 +2542,7 @@ async fn publish_launch_branch(
                 correlation_id(&headers),
             )
             .await?;
-        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::try_from(launch)?)).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2452,6 +2567,7 @@ async fn review_pull_request(
         .triggers
         .get_launch(&caller.subject, &launch_id)
         .await?;
+    ensure_current_launch_runtime(&launch)?;
     let (body, _) = body?.into_parts();
     let body = body.map_err(RequestFailure::from)?;
     let draft = launch
@@ -2558,7 +2674,7 @@ async fn refresh_pull_request_status(
                 correlation_id(&headers),
             )
             .await?;
-        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::try_from(launch)?)).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2612,7 +2728,7 @@ async fn confirm_pull_request(
                 },
             )
             .await?;
-        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::try_from(launch)?)).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2639,6 +2755,7 @@ async fn download_diff_artifact(
         .triggers
         .get_launch(&caller.subject, &launch_id)
         .await?;
+    ensure_readable_launch_runtime(&launch)?;
     let artifact = launch
         .diff
         .as_ref()
@@ -2714,7 +2831,8 @@ async fn cancel_launch(
     key: idempotency::IdempotencyKey,
     body: Result<idempotency::RequestBody<ConfirmLaunchRequest>, BodyProblem>,
 ) -> Response {
-    let launch_id = match owned_launch_command_id(&state, &caller.subject, launch_id).await {
+    let launch_id = match owned_readable_launch_command_id(&state, &caller.subject, launch_id).await
+    {
         Ok(id) => id,
         Err(error) => return error.into_response(),
     };
@@ -2744,7 +2862,7 @@ async fn cancel_launch(
                 correlation_id(&headers),
             )
             .await?;
-        Ok(Json(LaunchView::from(launch)).into_response())
+        Ok(Json(LaunchView::try_from(launch)?).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2796,7 +2914,7 @@ async fn complete_launch(
                 correlation_id(&headers),
             )
             .await?;
-        Ok(Json(LaunchView::from(launch)).into_response())
+        Ok(Json(LaunchView::try_from(launch)?).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2851,7 +2969,7 @@ async fn recover_initial_prompt(
                 },
             )
             .await?;
-        Ok((StatusCode::ACCEPTED, Json(LaunchView::from(launch))).into_response())
+        Ok((StatusCode::ACCEPTED, Json(LaunchView::try_from(launch)?)).into_response())
     }
     .await;
     guard.finish(result).await
@@ -2891,6 +3009,8 @@ pub(crate) async fn load_launch_progress(
     limit: usize,
 ) -> Result<LaunchProgressView, TriggerServiceError> {
     let launch_id = parse_launch_id(launch_id)?;
+    let launch = state.triggers.get_launch(owner, &launch_id).await?;
+    ensure_readable_launch_runtime(&launch)?;
     let events = state
         .triggers
         .progress(owner, &launch_id, after, limit)
@@ -3013,6 +3133,19 @@ impl IntoResponse for TriggerProblem {
                     "The requested Trigger resource does not exist.".into(),
                     None,
                 ),
+                TriggerServiceError::RuntimeRouteUnavailable { field } => {
+                    admission_remediation = Some(
+                        "Open a New Launch from the published Trigger. The retained Launch remains fenced from fresh work; an exact legacy route remains available for inspection, cancellation, and cleanup.",
+                    );
+                    (
+                        StatusCode::CONFLICT,
+                        "trigger-runtime-route-unavailable",
+                        "trigger_runtime_route_unavailable",
+                        "This retained Launch cannot run on the current Trigger runtime route."
+                            .into(),
+                        Some(field),
+                    )
+                }
                 TriggerServiceError::Validation(error)
                     if error.field.as_deref() == Some("draft_expires_at") =>
                 {

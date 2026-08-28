@@ -87,6 +87,18 @@ pub(crate) enum EffectExecution {
 /// Provider/runtime implementation for the closed Launch effect vocabulary.
 #[async_trait]
 pub(crate) trait EffectExecutor: Send + Sync {
+    /// Refuse a fresh effect before any provider/runtime admission read or
+    /// write. Reconciliation is deliberately excluded: a retained ambiguous
+    /// effect must still be observed to reduce uncertainty and cleanup debt.
+    fn refuse_execute(
+        &self,
+        _launch: &Launch,
+        _claim: &EffectClaim,
+        _correlation_id: &str,
+    ) -> Option<LaunchFailure> {
+        None
+    }
+
     /// Perform only reads and return the exact credential-free authority that
     /// must be committed before this claim may execute a provider write.
     async fn admit(
@@ -262,6 +274,15 @@ impl EffectWorker {
             self.record_rollout_resume(&launch, correlation_id).await;
         }
         if launch.state == layer2_core::LaunchState::PrOpen {
+            // Status polling is fresh provider I/O, not retained-effect
+            // reconciliation. Historical and malformed routes release their
+            // lease without reaching the adapter.
+            if !super::has_current_trigger_runtime_admission(&launch) {
+                self.triggers
+                    .release_worker(&launch.id, launch.revision_number, &lease)
+                    .await?;
+                return Ok(EffectRunOutcome::NoWork);
+            }
             if launch.pull_request_status_due(&acquired_at)? {
                 return self
                     .run_pull_request_status(launch, lease, correlation_id)
@@ -326,8 +347,13 @@ impl EffectWorker {
             .triggers
             .commit_worker(launch.revision_number, &lease, launch)
             .await?;
-        let execution = match claim.mode {
-            EffectClaimMode::Execute if effect_requires_authority_admission(claim.kind) => {
+        let execution = if claim.mode == EffectClaimMode::Execute {
+            if let Some(failure) = self
+                .executor
+                .refuse_execute(&launch, &claim, correlation_id)
+            {
+                EffectExecution::Failed { failure }
+            } else if effect_requires_authority_admission(claim.kind) {
                 match self.executor.admit(&launch, &claim).await {
                     Ok(Some(admission)) => {
                         let admitted_at = rfc3339_at(self.clock.now());
@@ -351,9 +377,11 @@ impl EffectWorker {
                     },
                     Err(execution) => execution,
                 }
+            } else {
+                self.executor.execute(&launch, &claim).await
             }
-            EffectClaimMode::Execute => self.executor.execute(&launch, &claim).await,
-            EffectClaimMode::Reconcile => self.executor.reconcile(&launch, &claim).await,
+        } else {
+            self.executor.reconcile(&launch, &claim).await
         };
         let settled_at = rfc3339_at(self.clock.now());
 
