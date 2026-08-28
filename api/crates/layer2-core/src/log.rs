@@ -2305,6 +2305,56 @@ impl SessionService {
         Ok(())
     }
 
+    /// Persist one initial-prompt state transition while inheriting unrelated
+    /// session history written after the caller's read.
+    ///
+    /// A concurrent writer that changes the prompt field itself is never
+    /// inherited. In particular, cancellation cannot replace a dispatch fence,
+    /// positive write evidence, or recovery state with a terminal marker.
+    pub(crate) async fn persist_initial_prompt_transition_durably(
+        &self,
+        record: &mut SessionRecord,
+        expected: Option<crate::PromptDeliveryState>,
+        initial: crate::InitialPromptDispatch,
+        event: Event,
+    ) -> Result<(), StoreError> {
+        if record
+            .initial_prompt
+            .as_ref()
+            .map(|current| current.delivery.state)
+            != expected
+            || !matches!(
+                event.kind,
+                EventKind::InitialPromptDeliveryChanged { state }
+                    if state == initial.delivery.state
+            )
+        {
+            return Err(StoreError::Malformed(
+                "initial-prompt transition does not match its observed state or event".into(),
+            ));
+        }
+        let before = record.clone();
+        record.initial_prompt = Some(initial);
+        let lane = self.event_logs.lane(&record.session.id);
+        lane.observe_record(&before);
+        let result = lane
+            .enqueue_commit_with(
+                CommitMode::UpdateInheriting,
+                record.clone(),
+                vec![event],
+                Some(RecordFields {
+                    initial_prompt: true,
+                    ..RecordFields::default()
+                }),
+                |_| {},
+            )
+            .complete
+            .await
+            .map_err(|_| StoreError::Unavailable("session write worker stopped".into()))??;
+        *record = result;
+        Ok(())
+    }
+
     /// Persist an exact proposal under one durable conversation predicate.
     pub(crate) async fn persist_conversation_durably(
         &self,

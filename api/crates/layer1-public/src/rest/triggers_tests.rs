@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,15 +22,15 @@ use layer2_core::{
     PublishedRevision, PublisherAuthority, PublisherRepositoryRole, PullRequestDefaults,
     QuotaSnapshot, ReachStatus, RepositoryAccessPolicy, RepositoryIdentity,
     RepositoryOperationClass, RepositoryVisibility, RequiredCapability, ResourcePolicy,
-    RuntimeAdmissionSnapshot, ScopeClass, SessionId, SessionLink, SessionSize, SetupPolicy,
-    SourceMode, StartAdmissionSnapshot, StoreError, SubjectId, TriggerAdmissionError,
-    TriggerAuthorityVerifier, TriggerConnection, TriggerConnectionAuthorization,
-    TriggerConnectionManager, TriggerDraft, TriggerId, TriggerLaunchAdmission, TriggerPage,
-    TriggerPageRequest, TriggerRepositorySelection, TriggerRevision, TriggerRevisionContent,
-    TriggerRevisionId, TriggerService, TriggerServiceError, TriggerSessionPolicy, TriggerStore,
-    TriggerStoreError, TriggerTask, UpstreamRevision, WorkerLease, WorkflowChangePolicy,
-    WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord,
-    TRIGGER_SCHEMA_VERSION,
+    RuntimeAdmissionSnapshot, ScopeClass, SessionCredentialAuthority, SessionId, SessionLink,
+    SessionSize, SetupPolicy, SourceMode, StartAdmissionSnapshot, StoreError, SubjectId,
+    TriggerAdmissionError, TriggerAuthorityVerifier, TriggerConnection,
+    TriggerConnectionAuthorization, TriggerConnectionManager, TriggerDraft, TriggerId,
+    TriggerLaunchAdmission, TriggerPage, TriggerPageRequest, TriggerRepositorySelection,
+    TriggerRevision, TriggerRevisionContent, TriggerRevisionId, TriggerService,
+    TriggerServiceError, TriggerSessionPolicy, TriggerStore, TriggerStoreError, TriggerTask,
+    UpstreamRevision, WorkerLease, WorkflowChangePolicy, WorkspaceCheckpoint, WorkspaceEntry,
+    WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord, TRIGGER_SCHEMA_VERSION,
 };
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
@@ -69,6 +69,8 @@ const SDK_PULL_REQUEST_REVIEW_REQUEST_FIXTURE: &str =
     include_str!("../../tests/fixtures/rest-sdk/pull_request_review_request.json");
 const SDK_PULL_REQUEST_CONFIRM_REQUEST_FIXTURE: &str =
     include_str!("../../tests/fixtures/rest-sdk/pull_request_confirm_request.json");
+const SDK_PULL_REQUEST_STATUS_REFRESH_REQUEST_FIXTURE: &str =
+    include_str!("../../tests/fixtures/rest-sdk/pull_request_status_refresh_request.json");
 
 #[tokio::test]
 async fn anonymous_preview_is_side_effect_free_and_prompt_free() {
@@ -108,6 +110,43 @@ async fn anonymous_preview_is_side_effect_free_and_prompt_free() {
     assert!(repeated.headers().get(header::SET_COOKIE).is_none());
     assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn launch_inventory_filters_one_owner_by_exact_session_id() {
+    let mut fixture = Fixture::new();
+    fixture.make_ready();
+    let app = fixture.router();
+
+    let matching = app
+        .clone()
+        .oneshot(authenticated_request(
+            Method::GET,
+            "/api/v1/launches?session_id=sesn_rest_ready&limit=1",
+            OWNER,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(matching.status(), StatusCode::OK);
+    let matching: Value =
+        serde_json::from_slice(&to_bytes(matching.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(matching["items"].as_array().unwrap().len(), 1);
+    assert_eq!(matching["items"][0]["id"], LAUNCH_ID);
+
+    let unrelated = app
+        .oneshot(authenticated_request(
+            Method::GET,
+            "/api/v1/launches?session_id=sesn_unrelated&limit=1",
+            OWNER,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unrelated.status(), StatusCode::OK);
+    let unrelated: Value =
+        serde_json::from_slice(&to_bytes(unrelated.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert!(unrelated["items"].as_array().unwrap().is_empty());
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -534,6 +573,13 @@ async fn private_rest_resources_conceal_wrong_owners_before_any_effect() {
             }),
         },
         Case {
+            label: "pull-request-status-refresh",
+            method: Method::POST,
+            owned_uri: format!("/api/v1/launches/{launch_id}/pull-request/refresh"),
+            missing_uri: format!("/api/v1/launches/{MISSING_LAUNCH_ID}/pull-request/refresh"),
+            body: json!({ "expected_revision": revision_number }),
+        },
+        Case {
             label: "artifact-download",
             method: Method::GET,
             owned_uri: format!(
@@ -549,6 +595,16 @@ async fn private_rest_resources_conceal_wrong_owners_before_any_effect() {
             method: Method::POST,
             owned_uri: format!("/api/v1/launches/{launch_id}/cancel"),
             missing_uri: format!("/api/v1/launches/{MISSING_LAUNCH_ID}/cancel"),
+            body: json!({
+                "expected_revision": revision_number,
+                "snapshot_digest": effective_digest.clone(),
+            }),
+        },
+        Case {
+            label: "launch-complete",
+            method: Method::POST,
+            owned_uri: format!("/api/v1/launches/{launch_id}/complete"),
+            missing_uri: format!("/api/v1/launches/{MISSING_LAUNCH_ID}/complete"),
             body: json!({
                 "expected_revision": revision_number,
                 "snapshot_digest": effective_digest.clone(),
@@ -735,6 +791,99 @@ async fn repeated_start_replays_the_exact_response_and_advances_once() {
 }
 
 #[tokio::test]
+async fn concurrent_start_requests_admit_one_attempt_and_replay_its_exact_response() {
+    let mut fixture = Fixture::new();
+    fixture.launch.draft_expires_at = "2099-08-27T12:00:00Z".into();
+    let admission = review_admission(&fixture.launch, NOW);
+    fixture.launch.apply_review_admission(admission).unwrap();
+    *fixture.store.launch.lock().unwrap() = Some(fixture.launch.clone());
+    fixture.operations.synchronize_next_reservations(2);
+
+    let launch_id = fixture.launch.id.0.clone();
+    let uri = format!("/api/v1/launches/{launch_id}/start");
+    let body = json!({
+        "expected_revision": 0,
+        "snapshot_digest": fixture.launch.effective.digest,
+    });
+    let app = fixture.router();
+    let (first, second) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            send(&app, Method::POST, &uri, body.clone(), "concurrent-start"),
+            send(&app, Method::POST, &uri, body.clone(), "concurrent-start"),
+        )
+    })
+    .await
+    .expect("both browser-tab Start requests cross the operation reservation");
+    fixture.operations.clear_reservation_barrier();
+
+    let (accepted, pending) = if first.0 == StatusCode::ACCEPTED {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    assert_eq!(accepted.0, StatusCode::ACCEPTED);
+    assert_eq!(pending.0, StatusCode::CONFLICT);
+    let pending_problem: Value = serde_json::from_slice(&pending.1).unwrap();
+    assert_eq!(pending_problem["code"], "idempotency_in_flight");
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        fixture
+            .store
+            .launch
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .revision_number,
+        1
+    );
+
+    let replay = send(&app, Method::POST, &uri, body, "concurrent-start").await;
+    assert_eq!(replay, accepted);
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn replayed_publisher_request_returns_the_exact_immutable_revision_once() {
+    let fixture = Fixture::new();
+    let trigger_id = fixture.store.draft.id.0.clone();
+    let uri = format!("/api/v1/triggers/{trigger_id}/publish");
+    let body = json!({
+        "expected_version": fixture.store.draft.version,
+        "selected_service_id": fixture.store.draft.selected_service_id.clone(),
+    });
+    let app = fixture.router();
+
+    let first = send_as(
+        &app,
+        Method::POST,
+        &uri,
+        body.clone(),
+        "one-publisher-request",
+        "publisher",
+    )
+    .await;
+    let replay = send_as(
+        &app,
+        Method::POST,
+        &uri,
+        body,
+        "one-publisher-request",
+        "publisher",
+    )
+    .await;
+
+    assert_eq!(first.0, StatusCode::CREATED);
+    assert_eq!(replay, first);
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.operations.writes.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.provider_calls.load(Ordering::SeqCst), 1);
+    assert!(fixture.store.published.lock().unwrap().is_some());
+}
+
+#[tokio::test]
 async fn same_connection_revalidation_resumes_the_original_failed_effect() {
     let mut fixture = Fixture::new();
     fixture.launch.state = LaunchState::Preflight;
@@ -767,6 +916,7 @@ async fn same_connection_revalidation_resumes_the_original_failed_effect() {
                 retry_at: None,
                 observed_at: "2026-08-26T12:00:01Z".into(),
             },
+            BTreeMap::new(),
             None,
             "2026-08-26T12:00:01Z",
         )
@@ -1089,6 +1239,166 @@ async fn pull_request_review_is_read_only_and_open_confirmation_is_idempotent() 
     assert!(!wire.contains("intent_key"));
     assert!(!wire.contains("idempotency_key_hash"));
     assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn pull_request_status_refresh_is_revisioned_idempotent_and_agui_read_only() {
+    let mut fixture = Fixture::new();
+    fixture.install_open_pull_request();
+    let launch_id = fixture.launch.id.0.clone();
+    let expected_revision = fixture.launch.revision_number;
+    let before_event = fixture.launch.event_high_water();
+    let uri = format!("/api/v1/launches/{launch_id}/pull-request/refresh");
+    let body = json!({ "expected_revision": expected_revision });
+
+    let first = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        body.clone(),
+        "refresh-open-pr-status",
+    )
+    .await;
+    let replay = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        body.clone(),
+        "refresh-open-pr-status",
+    )
+    .await;
+
+    assert_eq!(first.0, StatusCode::ACCEPTED);
+    assert_eq!(replay, first);
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.provider_calls.load(Ordering::SeqCst), 0);
+    let response: Value = serde_json::from_slice(&first.1).unwrap();
+    assert_eq!(response["revision_number"], expected_revision + 1);
+    assert_eq!(response["state"], "pr_open");
+    assert!(response["pull_request"]["status_failure"].is_null());
+    assert_eq!(
+        response["pull_request"]["provider_request_id"],
+        "github-request-fixture"
+    );
+    assert_eq!(response["pull_request"]["head_matches_launch"], false);
+
+    let retained = fixture.store.launch.lock().unwrap().clone().unwrap();
+    assert_eq!(retained.revision_number, expected_revision + 1);
+    assert!(retained
+        .pull_request
+        .as_ref()
+        .unwrap()
+        .status_sync
+        .next_attempt_at
+        .is_none());
+    assert!(matches!(
+        retained.events.last().map(|event| &event.kind),
+        Some(layer2_core::LaunchEventKind::PullRequestStatusRefreshRequested)
+    ));
+
+    let stale = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        body,
+        "refresh-open-pr-status-stale-revision",
+    )
+    .await;
+    assert_eq!(stale.0, StatusCode::CONFLICT);
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.provider_calls.load(Ordering::SeqCst), 0);
+
+    let agui = crate::agui::trigger::router(fixture.state());
+    let progress = agui
+        .clone()
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!(
+                "/api/v1/agui/launches/{launch_id}/events?starting_after={before_event}&follow=false"
+            ),
+            OWNER,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(progress.status(), StatusCode::OK);
+    let progress = to_bytes(progress.into_body(), usize::MAX).await.unwrap();
+    let progress = String::from_utf8(progress.to_vec()).unwrap();
+    assert!(
+        progress.contains("\"type\":\"pull_request_status_refresh_requested\""),
+        "{progress:?}"
+    );
+
+    let diff = agui
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/agui/launches/{launch_id}/diff"),
+            OWNER,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(diff.status(), StatusCode::OK);
+    let diff: Value =
+        serde_json::from_slice(&to_bytes(diff.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+        diff["pull_request"]["provider_request_id"],
+        "github-request-fixture"
+    );
+    assert_eq!(diff["pull_request"]["head_matches_launch"], false);
+}
+
+#[tokio::test]
+async fn contributor_completion_is_idempotent_and_leaves_the_provider_pull_request_open() {
+    let mut fixture = Fixture::new();
+    fixture.install_open_pull_request();
+    let launch_id = fixture.launch.id.0.clone();
+    let expected_revision = fixture.launch.revision_number;
+    let snapshot_digest = fixture.launch.effective.digest.clone();
+    let uri = format!("/api/v1/launches/{launch_id}/complete");
+    let body = json!({
+        "expected_revision": expected_revision,
+        "snapshot_digest": snapshot_digest,
+    });
+
+    let first = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        body.clone(),
+        "finish-open-pr-handoff",
+    )
+    .await;
+    let replay = send(
+        &fixture.router(),
+        Method::POST,
+        &uri,
+        body,
+        "finish-open-pr-handoff",
+    )
+    .await;
+
+    assert_eq!(first.0, StatusCode::OK);
+    assert_eq!(replay, first);
+    assert_eq!(fixture.store.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.provider_calls.load(Ordering::SeqCst), 0);
+    let response: Value = serde_json::from_slice(&first.1).unwrap();
+    assert_eq!(response["state"], "completed");
+    assert_eq!(response["pull_request"]["state"], "open");
+    assert_eq!(
+        response["pull_request"]["canonical_url"],
+        "https://github.com/upstream-owner/project/pull/17"
+    );
+    assert_eq!(response["reach"]["state"], "revocation_pending");
+
+    let retained = fixture.store.launch.lock().unwrap().clone().unwrap();
+    assert_eq!(retained.state, LaunchState::Completed);
+    assert_eq!(
+        retained.pull_request.as_ref().unwrap().state,
+        layer2_core::PullRequestState::Open
+    );
+    assert!(retained
+        .confirmations
+        .iter()
+        .any(|confirmation| { confirmation.action == ConfirmationAction::Complete }));
 }
 
 #[tokio::test]
@@ -1532,6 +1842,7 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         ("post", "/api/v1/launches/{launch_id}/pull-request/review"),
         ("post", "/api/v1/launches/{launch_id}/pull-request/open"),
         ("post", "/api/v1/launches/{launch_id}/pull-request/update"),
+        ("post", "/api/v1/launches/{launch_id}/pull-request/refresh"),
         (
             "get",
             "/api/v1/launches/{launch_id}/diff-artifacts/{artifact_id}/download",
@@ -1541,6 +1852,7 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
             "/api/v1/launches/{launch_id}/recover-initial-prompt",
         ),
         ("post", "/api/v1/launches/{launch_id}/cancel"),
+        ("post", "/api/v1/launches/{launch_id}/complete"),
         ("get", "/api/v1/launches/{launch_id}/events"),
     ];
 
@@ -1560,6 +1872,14 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
     }
 
     let document = serde_json::to_value(openapi).expect("OpenAPI serializes");
+    let launch_list_parameters = document["paths"]["/api/v1/launches"]["get"]["parameters"]
+        .as_array()
+        .expect("Launch inventory has query parameters");
+    assert!(launch_list_parameters.iter().any(|parameter| {
+        parameter["name"] == "session_id"
+            && parameter["in"] == "query"
+            && parameter["required"] == false
+    }));
     let schemas = document["components"]["schemas"]
         .as_object()
         .expect("Trigger OpenAPI has component schemas");
@@ -1573,6 +1893,8 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         "PermissionMode",
         "RequiredCapability",
         "BillingMode",
+        "TriggerPreviewCostView",
+        "ProblemDocument",
         "EditableField",
         "RepositoryAccessPolicy",
         "SetupPolicy",
@@ -1618,6 +1940,7 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         "CheckResult",
         "CommitIdentity",
         "WorkspaceManifest",
+        "RefreshPullRequestStatusRequest",
     ] {
         assert!(schemas.contains_key(name), "missing concrete schema {name}");
     }
@@ -1628,7 +1951,7 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
     );
     assert_eq!(
         schemas["EditableField"]["enum"],
-        json!(["task_input", "branch_suffix", "resource_size", "timeout"]),
+        json!(["task_input", "work_label", "resource_size", "timeout"]),
         "optional_checks remains an empty compatibility field in the public MVP"
     );
     assert_eq!(schemas["TriggerKernel"]["enum"], json!(["codex"]));
@@ -1665,6 +1988,11 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
         ("TriggerPreviewView", "visibility", "RepositoryVisibility"),
         ("TriggerPreviewView", "permission_ceiling", "PermissionMode"),
         ("TriggerPreviewView", "billing_mode", "BillingMode"),
+        (
+            "TriggerPreviewView",
+            "estimated_cost",
+            "TriggerPreviewCostView",
+        ),
         ("PublisherAuthorityView", "role", "PublisherRepositoryRole"),
         ("TriggerRevisionView", "availability", "TriggerAvailability"),
         ("TriggerConnectionView", "state", "ConnectionState"),
@@ -1689,10 +2017,96 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
             "{owner}.{field} must reference its closed wire vocabulary"
         );
     }
+    let status_failure = &schemas["PullRequestRecordView"]["properties"]["status_failure"];
+    let status_failure_wire = status_failure.to_string();
+    assert!(
+        status_failure_wire.contains("#/components/schemas/LaunchFailure")
+            && status_failure_wire.contains("null"),
+        "pull-request status failure must be a nullable concrete LaunchFailure: {status_failure}"
+    );
+    for (field, wire_type) in [
+        ("provider_request_id", "string"),
+        ("head_matches_launch", "boolean"),
+    ] {
+        let schema = &schemas["PullRequestRecordView"]["properties"][field];
+        let wire = schema.to_string();
+        assert!(
+            wire.contains(wire_type) && wire.contains("null"),
+            "PullRequestRecordView.{field} must be nullable {wire_type}: {schema}"
+        );
+    }
+    let event_wire = schemas["LaunchEventKindView"].to_string();
+    for kind in [
+        "pull_request_status_changed",
+        "pull_request_status_refresh_requested",
+    ] {
+        assert!(
+            event_wire.contains(kind),
+            "LaunchEventKindView omitted {kind}: {event_wire}"
+        );
+    }
+    assert_eq!(
+        schemas["RefreshPullRequestStatusRequest"]["required"],
+        json!(["expected_revision"])
+    );
+    let refresh = &document["paths"]["/api/v1/launches/{launch_id}/pull-request/refresh"]["post"];
+    assert_eq!(
+        refresh["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/RefreshPullRequestStatusRequest"
+    );
+    assert!(refresh["responses"].get("202").is_some());
+    assert!(refresh["parameters"].as_array().is_some_and(|parameters| {
+        parameters.iter().any(|parameter| {
+            parameter["name"] == "Idempotency-Key"
+                && parameter["in"] == "header"
+                && parameter["required"] == true
+        })
+    }));
     assert_eq!(
         schemas["TriggerPreviewView"]["properties"]["required_capabilities"]["items"]["$ref"],
         "#/components/schemas/RequiredCapability"
     );
+    let preview_cost = schemas["TriggerPreviewCostView"].to_string();
+    for required in [
+        "exact_zero",
+        "contributor_estimate",
+        "quote_unavailable",
+        "amount_micros",
+        "quoted_at",
+    ] {
+        assert!(
+            preview_cost.contains(required),
+            "public Trigger cost schema omitted {required}: {preview_cost}"
+        );
+    }
+    let problem = &schemas["ProblemDocument"]["properties"];
+    assert!(problem.get("remediation").is_some());
+    let validation_category = problem["validation_category"].to_string();
+    for category in [
+        "repository_identity",
+        "repository_policy",
+        "repository_ref",
+        "scope_capability",
+        "commercial_policy",
+        "trigger_policy",
+    ] {
+        assert!(
+            validation_category.contains(category),
+            "ProblemDocument omitted validation category {category}: {validation_category}"
+        );
+    }
+    for (method, path) in [
+        ("post", "/api/v1/triggers"),
+        ("put", "/api/v1/triggers/{trigger_id}"),
+        ("post", "/api/v1/triggers/{trigger_id}/publish"),
+    ] {
+        let response = &document["paths"][path][method]["responses"]["422"];
+        assert_eq!(
+            response["content"]["application/problem+json"]["schema"]["$ref"],
+            "#/components/schemas/ProblemDocument",
+            "{method} {path} must document actionable Trigger validation"
+        );
+    }
     for (field, target) in [
         ("blocked_reason", "LaunchBlockedReason"),
         ("failure", "LaunchFailure"),
@@ -1739,9 +2153,24 @@ fn trigger_openapi_catalogue_is_complete_concrete_and_only_preview_is_anonymous(
 
 #[test]
 fn launch_projection_excludes_credential_and_worker_internals() {
+    const CREDENTIAL_MARKER: &str = "SENSITIVE_CREDENTIAL_SENTINEL_RELEASE_673";
     let mut fixture = Fixture::new();
     fixture.make_ready();
     fixture.install_diff(b"retained review".to_vec());
+    let session_id = fixture.launch.session.as_ref().unwrap().session_id.clone();
+    fixture
+        .launch
+        .authority
+        .as_mut()
+        .expect("the reviewed Launch retains authority")
+        .session_credential_authority = Some(SessionCredentialAuthority {
+        session_id,
+        custody_generation: 9,
+        provider_key_id: CREDENTIAL_MARKER.into(),
+        provider_state_version: 11,
+        provider_expires_at_epoch_milliseconds: 4_000_000_000_000,
+        grant_fingerprint: "d".repeat(64),
+    });
     fixture.launch.steps[0].external_resource_ids = std::collections::BTreeMap::from([
         ("session_id".into(), "public-session-id".into()),
         (
@@ -1783,6 +2212,7 @@ fn launch_projection_excludes_credential_and_worker_internals() {
         "diff_artifact_object",
         "prompt_origin_key",
         "private-provider-request",
+        CREDENTIAL_MARKER,
     ] {
         assert!(!wire.contains(forbidden), "leaked {forbidden}");
     }
@@ -1859,7 +2289,7 @@ async fn progress_projection_excludes_worker_and_credential_internals() {
 async fn trigger_sdk_fixture_values() -> Vec<(&'static str, Value)> {
     let draft_fixture = Fixture::new();
     let mut fixture = Fixture::new();
-    fixture.install_published_contribution();
+    fixture.install_open_pull_request();
     let mut events = draft_fixture.launch.events.clone();
     events.push(LaunchEvent {
         sequence: events.last().map_or(1, |event| event.sequence + 1),
@@ -1871,7 +2301,27 @@ async fn trigger_sdk_fixture_values() -> Vec<(&'static str, Value)> {
             step: draft_fixture.launch.steps[0].clone(),
         },
     });
-    let draft = fixture
+    for kind in [
+        layer2_core::LaunchEventKind::PullRequestStatusRefreshRequested,
+        layer2_core::LaunchEventKind::PullRequestStatusChanged {
+            state: layer2_core::PullRequestState::Open,
+            mergeability: layer2_core::Mergeability::Mergeable,
+            checks: layer2_core::CheckSummaryState::Passing,
+            failure: None,
+        },
+    ] {
+        events.push(LaunchEvent {
+            sequence: events.last().map_or(1, |event| event.sequence + 1),
+            launch_id: fixture.launch.id.clone(),
+            occurred_at: NOW.into(),
+            correlation_id: "fixture-pr-status".into(),
+            progress: layer2_core::LaunchProgressState::from_launch(&draft_fixture.launch),
+            kind,
+        });
+    }
+    let mut proposal_fixture = Fixture::new();
+    proposal_fixture.install_published_contribution();
+    let draft = proposal_fixture
         .launch
         .pull_request_draft(PullRequestOperation::Open, None, None)
         .unwrap();
@@ -1932,12 +2382,16 @@ async fn trigger_sdk_fixture_values() -> Vec<(&'static str, Value)> {
             "pull_request_confirm_request.json",
             json!({
                 "expected_revision": fixture.launch.revision_number,
-                "snapshot_digest": fixture
+                "snapshot_digest": proposal_fixture
                     .launch
                     .pull_request_draft(PullRequestOperation::Open, None, None)
                     .unwrap()
                     .intent_digest
             }),
+        ),
+        (
+            "pull_request_status_refresh_request.json",
+            json!({ "expected_revision": fixture.launch.revision_number }),
         ),
     ]
 }
@@ -1966,6 +2420,10 @@ async fn trigger_sdk_fixtures_are_produced_and_parsed_by_server_types() {
             "pull_request_confirm_request.json",
             SDK_PULL_REQUEST_CONFIRM_REQUEST_FIXTURE,
         ),
+        (
+            "pull_request_status_refresh_request.json",
+            SDK_PULL_REQUEST_STATUS_REFRESH_REQUEST_FIXTURE,
+        ),
     ];
     for ((name, produced), (expected_name, source)) in
         trigger_sdk_fixture_values().await.into_iter().zip(expected)
@@ -1990,6 +2448,9 @@ async fn trigger_sdk_fixtures_are_produced_and_parsed_by_server_types() {
     let confirm: ConfirmPullRequestRequest =
         serde_json::from_str(SDK_PULL_REQUEST_CONFIRM_REQUEST_FIXTURE).unwrap();
     assert_eq!(confirm.expected_revision, 0);
+    let refresh: RefreshPullRequestStatusRequest =
+        serde_json::from_str(SDK_PULL_REQUEST_STATUS_REFRESH_REQUEST_FIXTURE).unwrap();
+    assert_eq!(refresh.expected_revision, 0);
 }
 
 #[tokio::test]
@@ -2032,6 +2493,11 @@ async fn authority_failures_keep_auth_drift_rate_limit_and_outage_distinct() {
             Authority::MalformedEvidence,
             StatusCode::BAD_GATEWAY,
             "trigger_provider_response_invalid",
+        ),
+        (
+            Authority::ProviderAuthenticationUnavailable,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "trigger_provider_authentication_unavailable",
         ),
         (
             Authority::UpstreamNotForkable,
@@ -2133,6 +2599,57 @@ async fn admission_failures_have_stable_status_codes_and_remediation() {
     assert_eq!(body["field"], "draft_expires_at");
     assert!(body["remediation"].as_str().unwrap().contains("New Launch"));
     assert!(!body.to_string().contains("private persistence detail"));
+}
+
+#[tokio::test]
+async fn trigger_validation_failures_have_safe_category_specific_remediation() {
+    for (field, category, remediation_fragment) in [
+        (
+            "upstream.repository_node_id",
+            "repository_identity",
+            "canonical numeric and node identities",
+        ),
+        ("upstream", "repository_policy", "policy permits forking"),
+        (
+            "upstream.selected_ref",
+            "repository_ref",
+            "safe existing ref",
+        ),
+        (
+            "repository_access.required_scope_classes",
+            "scope_capability",
+            "public-repository scope class",
+        ),
+        (
+            "session.required_capabilities",
+            "scope_capability",
+            "capabilities supported",
+        ),
+        (
+            "commercial_policy.policy_reference",
+            "commercial_policy",
+            "matching deployment-owned pricing policy",
+        ),
+    ] {
+        let response = TriggerProblem(TriggerServiceError::Validation(
+            layer2_core::TriggerValidationError::field(
+                field,
+                "private provider evidence and caller-controlled value",
+            ),
+        ))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(body["code"], "invalid_trigger_request");
+        assert_eq!(body["field"], field);
+        assert_eq!(body["validation_category"], category);
+        assert!(body["remediation"]
+            .as_str()
+            .is_some_and(|value| value.contains(remediation_fragment)));
+        assert!(!body.to_string().contains("private provider evidence"));
+        assert!(!body.to_string().contains("caller-controlled value"));
+    }
 }
 
 #[tokio::test]
@@ -2274,6 +2791,7 @@ impl Fixture {
         let store = Arc::new(FixtureStore {
             draft,
             revision: revision.clone(),
+            published: Mutex::new(None),
             launch: Mutex::new(Some(launch.clone())),
             writes: AtomicUsize::new(0),
         });
@@ -2536,6 +3054,7 @@ impl Fixture {
             commit_id: Some("e".repeat(40)),
             resulting_head: Some("e".repeat(40)),
             object_ids: vec!["d".repeat(40), "e".repeat(40)],
+            object_write: None,
             author: artifact.author.clone(),
             committer: artifact.committer.clone(),
             confirmation: Confirmation {
@@ -2553,6 +3072,62 @@ impl Fixture {
         self.launch.branch.as_mut().unwrap().current_head = "e".repeat(40);
         self.launch.contribution = Some(contribution);
         self.launch.state = LaunchState::PrPending;
+        *self.store.launch.lock().unwrap() = Some(self.launch.clone());
+        artifact
+    }
+
+    fn install_open_pull_request(&mut self) -> DiffArtifact {
+        let artifact = self.install_published_contribution();
+        let draft = self
+            .launch
+            .pull_request_draft(PullRequestOperation::Open, None, None)
+            .unwrap();
+        self.launch
+            .confirm_pull_request(
+                Confirmation {
+                    action: ConfirmationAction::OpenPullRequest,
+                    subject: self.launch.owner.clone(),
+                    snapshot_digest: draft.intent_digest,
+                    confirmed_at: NOW.into(),
+                    idempotency_key_hash: "fixture-open-pr".into(),
+                },
+                None,
+                None,
+                NOW,
+                "fixture-open-pr",
+            )
+            .unwrap();
+        let record = self.launch.pull_request.as_mut().unwrap();
+        record.provider_id = Some(9001);
+        record.provider_node_id = Some("PR_fixture".into());
+        record.number = Some(17);
+        record.canonical_url = Some("https://github.com/upstream-owner/project/pull/17".into());
+        record.state = layer2_core::PullRequestState::Open;
+        record.base_revision = Some(self.launch.source_sha.clone());
+        record.head_revision = Some("f".repeat(40));
+        record.observed_title = Some(record.intent.title.clone());
+        record.observed_body_digest = Some(record.intent.body_digest.clone());
+        record.mergeability = layer2_core::Mergeability::Conflicting;
+        record.checks = layer2_core::CheckSummaryState::Failing;
+        record.provider_created_at = Some(NOW.into());
+        record.provider_updated_at = Some(NOW.into());
+        record.status_sync = layer2_core::PullRequestStatusSync {
+            consecutive_failures: 1,
+            next_attempt_at: Some("2099-08-26T12:01:00Z".into()),
+            last_failure: Some(LaunchFailure {
+                class: FailureClass::RetryableTransient,
+                code: "github_status_unavailable".into(),
+                detail: "GitHub status could not be refreshed safely.".into(),
+                remediation: "CMA will retry the read-only status observation.".into(),
+                correlation_id: "fixture-pr-status".into(),
+                retry_at: Some("2099-08-26T12:01:00Z".into()),
+                observed_at: NOW.into(),
+            }),
+            provider_request_id: Some("github-request-fixture".into()),
+            head_matches_launch: Some(false),
+        };
+        record.validate_intent(&self.launch.id).unwrap();
+        self.launch.state = LaunchState::PrOpen;
         *self.store.launch.lock().unwrap() = Some(self.launch.clone());
         artifact
     }
@@ -2652,6 +3227,7 @@ impl DiffArtifactObjectStore for MemoryDiffArtifacts {
 struct FixtureStore {
     draft: TriggerDraft,
     revision: TriggerRevision,
+    published: Mutex<Option<PublishedRevision>>,
     launch: Mutex<Option<Launch>>,
     writes: AtomicUsize,
 }
@@ -2687,11 +3263,27 @@ impl TriggerStore for FixtureStore {
 
     async fn publish_revision(
         &self,
-        _expected_draft_version: u64,
-        _draft: &TriggerDraft,
-        _revision: &TriggerRevision,
+        expected_draft_version: u64,
+        draft: &TriggerDraft,
+        revision: &TriggerRevision,
     ) -> Result<PublishedRevision, TriggerStoreError> {
-        self.write_unimplemented()
+        if expected_draft_version != self.draft.version {
+            return Err(TriggerStoreError::RevisionConflict {
+                expected: expected_draft_version,
+                actual: self.draft.version,
+            });
+        }
+        let published = PublishedRevision {
+            draft: draft.clone(),
+            revision: revision.clone(),
+        };
+        let mut retained = self.published.lock().unwrap();
+        if retained.is_some() {
+            return Err(TriggerStoreError::AlreadyExists);
+        }
+        *retained = Some(published.clone());
+        self.writes.fetch_add(1, Ordering::SeqCst);
+        Ok(published)
     }
 
     async fn get_revision(
@@ -2773,10 +3365,33 @@ impl LaunchStore for FixtureStore {
 
     async fn list_launches(
         &self,
-        _query: &LaunchQuery,
+        query: &LaunchQuery,
     ) -> Result<TriggerPage<Launch>, TriggerStoreError> {
         Ok(TriggerPage {
-            items: self.launch.lock().unwrap().iter().cloned().collect(),
+            items: self
+                .launch
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|launch| {
+                    query
+                        .owner
+                        .as_ref()
+                        .is_none_or(|owner| &launch.owner == owner)
+                        && query
+                            .public_id
+                            .as_ref()
+                            .is_none_or(|public_id| &launch.revision.public_id == public_id)
+                        && query.session_id.as_ref().is_none_or(|session_id| {
+                            launch
+                                .session
+                                .as_ref()
+                                .is_some_and(|session| &session.session_id == session_id)
+                        })
+                        && (query.states.is_empty() || query.states.contains(&launch.state))
+                })
+                .cloned()
+                .collect(),
             next: None,
         })
     }
@@ -2842,32 +3457,88 @@ impl FixtureStore {
 struct MemoryOperations {
     entries: Mutex<HashMap<OperationKey, OperationEntry>>,
     writes: AtomicUsize,
+    reservation_barrier: Mutex<Option<Arc<tokio::sync::Barrier>>>,
 }
 
 type OperationKey = (String, String, String);
-type OperationEntry = ([u8; 32], Option<Vec<u8>>);
+
+struct OperationEntry {
+    claim_id: String,
+    fingerprint: [u8; 32],
+    outcome: Option<Vec<u8>>,
+    lease_expires_at: std::time::SystemTime,
+    recovery_required: bool,
+    outcome_expires_at: Option<std::time::SystemTime>,
+}
+
+impl MemoryOperations {
+    fn synchronize_next_reservations(&self, participants: usize) {
+        *self.reservation_barrier.lock().unwrap() =
+            Some(Arc::new(tokio::sync::Barrier::new(participants)));
+    }
+
+    fn clear_reservation_barrier(&self) {
+        *self.reservation_barrier.lock().unwrap() = None;
+    }
+}
 
 #[async_trait]
 impl OperationStore for MemoryOperations {
     async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError> {
+        let reservation_barrier = self.reservation_barrier.lock().unwrap().clone();
+        if let Some(barrier) = reservation_barrier.as_ref() {
+            barrier.wait().await;
+        }
         let key = (
             claim.subject().0.clone(),
             claim.operation().to_string(),
             claim.key().to_string(),
         );
-        let mut entries = self.entries.lock().unwrap();
-        match entries.get(&key) {
-            Some((fingerprint, _)) if fingerprint != claim.fingerprint() => {
-                Ok(OperationReservation::FingerprintMismatch)
+        let reservation = {
+            let mut entries = self.entries.lock().unwrap();
+            let now = std::time::SystemTime::now();
+            if entries.get(&key).is_some_and(|entry| {
+                entry.outcome.is_some()
+                    && entry
+                        .outcome_expires_at
+                        .is_some_and(|expires_at| expires_at <= now)
+            }) {
+                entries.remove(&key);
             }
-            Some((_, Some(outcome))) => Ok(OperationReservation::Complete(outcome.clone())),
-            Some((_, None)) => Ok(OperationReservation::Pending),
-            None => {
-                entries.insert(key, (*claim.fingerprint(), None));
-                self.writes.fetch_add(1, Ordering::SeqCst);
-                Ok(OperationReservation::Acquired)
+            match entries.get_mut(&key) {
+                Some(entry) if &entry.fingerprint != claim.fingerprint() => {
+                    OperationReservation::FingerprintMismatch
+                }
+                Some(entry) if entry.outcome.is_some() => OperationReservation::Complete(
+                    entry.outcome.as_ref().expect("checked above").clone(),
+                ),
+                Some(entry) if entry.recovery_required => OperationReservation::RecoveryRequired,
+                Some(entry) if entry.lease_expires_at <= now => {
+                    entry.recovery_required = true;
+                    OperationReservation::RecoveryRequired
+                }
+                Some(_) => OperationReservation::Pending,
+                None => {
+                    entries.insert(
+                        key,
+                        OperationEntry {
+                            claim_id: claim.claim_id().to_string(),
+                            fingerprint: *claim.fingerprint(),
+                            outcome: None,
+                            lease_expires_at: claim.lease_expires_at(),
+                            recovery_required: false,
+                            outcome_expires_at: None,
+                        },
+                    );
+                    self.writes.fetch_add(1, Ordering::SeqCst);
+                    OperationReservation::Acquired
+                }
             }
+        };
+        if let Some(barrier) = reservation_barrier {
+            barrier.wait().await;
         }
+        Ok(reservation)
     }
 
     async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError> {
@@ -2880,7 +3551,20 @@ impl OperationStore for MemoryOperations {
         let entry = entries
             .get_mut(&key)
             .ok_or_else(|| StoreError::Malformed("operation claim disappeared".into()))?;
-        entry.1 = Some(outcome);
+        if entry.claim_id != claim.claim_id() {
+            return Err(StoreError::Malformed(
+                "operation claim was replaced before completion".into(),
+            ));
+        }
+        entry.outcome = Some(outcome);
+        entry.recovery_required = false;
+        entry.outcome_expires_at = Some(
+            std::time::SystemTime::now()
+                .checked_add(claim.outcome_retention())
+                .ok_or_else(|| {
+                    StoreError::Malformed("operation outcome retention overflowed".into())
+                })?,
+        );
         self.writes.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -2907,7 +3591,7 @@ fn review_admission(launch: &Launch, now: &str) -> LaunchReviewAdmission {
             expires_at: launch.draft_expires_at.clone(),
         },
         runtime: RuntimeAdmissionSnapshot {
-            kernel: layer2_core::TriggerKernel::Codex,
+            kernel: layer2_core::KernelId::new("codex"),
             runtime_version: "cma-trigger-test-runtime@sha256:admitted".into(),
             supported_capabilities: launch
                 .revision

@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use unicode_normalization::UnicodeNormalization as _;
 
 use super::{
     CheckpointId, CommitIdentity, DiffArtifactId, LaunchId, ScopeClass, TriggerValidationError,
@@ -31,6 +32,8 @@ pub const MAX_DIFF_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 /// writing another object.
 pub const LIFECYCLE_CHECKPOINT_INTERVAL_SECONDS: u64 = 5 * 60;
 pub const LIFECYCLE_CHECKPOINT_RETRY_SECONDS: u64 = 30;
+const EMPTY_CONTENT_SHA256: &str =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,6 +136,10 @@ impl WorkspaceEntry {
     pub fn validate(&self) -> Result<(), TriggerValidationError> {
         validate_workspace_path(&self.path)?;
         validate_sha256("workspace.entries.content_sha256", &self.content_sha256)?;
+        validate_optional_object_id(
+            "workspace.entries.provider_object_id",
+            self.provider_object_id.as_deref(),
+        )?;
         match self.kind {
             WorkspaceEntryKind::Regular => {
                 if !matches!(self.mode, 0o100644 | 0o100755) || self.symlink_target.is_some() {
@@ -155,10 +162,15 @@ impl WorkspaceEntry {
                 )?;
             }
             WorkspaceEntryKind::Submodule => {
-                if self.mode != 0o160000 || self.symlink_target.is_some() {
+                if self.mode != 0o160000
+                    || self.size != 0
+                    || self.content_sha256 != EMPTY_CONTENT_SHA256
+                    || self.provider_object_id.is_none()
+                    || self.symlink_target.is_some()
+                {
                     return Err(TriggerValidationError::field(
                         format!("workspace.entries.{}", self.path),
-                        "a submodule must use mode 160000 and no symlink target",
+                        "a submodule must be an empty mode-160000 entry pinned to a Git commit",
                     ));
                 }
             }
@@ -188,14 +200,15 @@ impl WorkspaceManifest {
             ));
         }
         entries.sort_by(|left, right| left.path.cmp(&right.path));
-        let mut seen = BTreeSet::new();
+        let mut seen_aliases = BTreeSet::new();
         let mut total_bytes = 0_u64;
         for entry in &entries {
             entry.validate()?;
-            if !seen.insert(entry.path.as_str()) {
+            let alias = workspace_path_alias(&entry.path)?;
+            if !seen_aliases.insert(alias) {
                 return Err(TriggerValidationError::field(
                     "workspace.entries",
-                    format!("{} occurs more than once", entry.path),
+                    format!("{} aliases another workspace path", entry.path),
                 ));
             }
             total_bytes = total_bytes.checked_add(entry.size).ok_or_else(|| {
@@ -206,6 +219,21 @@ impl WorkspaceManifest {
             return Err(TriggerValidationError::field(
                 "workspace.total_bytes",
                 format!("exceeds the {MAX_REPOSITORY_BYTES}-byte repository limit"),
+            ));
+        }
+        if seen_aliases.iter().any(|alias| {
+            let mut parent = alias.as_str();
+            while let Some((prefix, _)) = parent.rsplit_once('/') {
+                if seen_aliases.contains(prefix) {
+                    return true;
+                }
+                parent = prefix;
+            }
+            false
+        }) {
+            return Err(TriggerValidationError::field(
+                "workspace.entries",
+                "a workspace path aliases a file as a directory",
             ));
         }
         let source_revision = source_revision.into();
@@ -929,24 +957,103 @@ fn validate_optional_sha256(
 }
 
 pub fn validate_workspace_path(path: &str) -> Result<(), TriggerValidationError> {
+    workspace_path_alias(path).map(|_| ())
+}
+
+pub fn validate_workspace_path_aliases<'a>(
+    paths: impl IntoIterator<Item = &'a str>,
+) -> Result<(), TriggerValidationError> {
+    let mut aliases = BTreeSet::new();
+    for path in paths {
+        if !aliases.insert(workspace_path_alias(path)?) {
+            return Err(TriggerValidationError::field(
+                "workspace.entries",
+                format!("{path} aliases another workspace path"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn workspace_path_alias(path: &str) -> Result<String, TriggerValidationError> {
     if path.is_empty()
         || path.len() > MAX_PATH_BYTES
         || path.starts_with('/')
         || path.contains('\\')
         || path.contains('\0')
-        || path.split('/').any(|segment| {
-            segment.is_empty()
-                || segment == "."
-                || segment == ".."
-                || segment.eq_ignore_ascii_case(".git")
-        })
     {
-        return Err(TriggerValidationError::field(
-            "workspace.path",
-            "is not a canonical relative path",
-        ));
+        return Err(invalid_workspace_path());
     }
-    Ok(())
+    let mut aliases = Vec::new();
+    for segment in path.split('/') {
+        let alias = segment
+            .nfkc()
+            .flat_map(char::to_lowercase)
+            .collect::<String>();
+        if segment.is_empty()
+            || segment.chars().any(unsafe_path_character)
+            || alias.is_empty()
+            || matches!(alias.as_str(), "." | "..")
+            || alias
+                .chars()
+                .any(|character| matches!(character, '/' | '\\' | ':'))
+            || alias.ends_with('.')
+            || alias.ends_with(' ')
+            || reserved_workspace_segment(&alias)
+        {
+            return Err(invalid_workspace_path());
+        }
+        aliases.push(alias);
+    }
+    Ok(aliases.join("/"))
+}
+
+fn invalid_workspace_path() -> TriggerValidationError {
+    TriggerValidationError::field("workspace.path", "is not a canonical relative path")
+}
+
+fn unsafe_path_character(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+fn reserved_workspace_segment(segment: &str) -> bool {
+    if matches!(
+        segment,
+        ".git"
+            | ".cma"
+            | ".chrono"
+            | ".nyxid"
+            | ".ssh"
+            | ".aws"
+            | ".gnupg"
+            | ".netrc"
+            | ".npmrc"
+            | ".pypirc"
+            | "credentials"
+            | "credentials.json"
+            | "id_rsa"
+            | "id_ed25519"
+    ) || segment == ".env"
+        || segment.starts_with(".env.")
+        || segment.starts_with(".cma-")
+        || segment.starts_with(".chrono-")
+    {
+        return true;
+    }
+    let stem = segment.split('.').next().unwrap_or(segment);
+    matches!(stem, "con" | "prn" | "aux" | "nul" | "clock$")
+        || stem
+            .strip_prefix("com")
+            .or_else(|| stem.strip_prefix("lpt"))
+            .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
 }
 
 fn validate_symlink_target(path: &str, target: &str) -> Result<(), TriggerValidationError> {
@@ -992,4 +1099,93 @@ pub(crate) fn validate_sha256(field: &str, digest: &str) -> Result<(), TriggerVa
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod submodule_tests {
+    use super::*;
+
+    fn entry() -> WorkspaceEntry {
+        WorkspaceEntry {
+            path: "vendor/library".into(),
+            kind: WorkspaceEntryKind::Submodule,
+            mode: 0o160000,
+            size: 0,
+            content_sha256: EMPTY_CONTENT_SHA256.into(),
+            provider_object_id: Some("a".repeat(40)),
+            symlink_target: None,
+        }
+    }
+
+    fn regular(path: &str) -> WorkspaceEntry {
+        WorkspaceEntry {
+            path: path.into(),
+            kind: WorkspaceEntryKind::Regular,
+            mode: 0o100644,
+            size: 1,
+            content_sha256: "b".repeat(64),
+            provider_object_id: Some("c".repeat(40)),
+            symlink_target: None,
+        }
+    }
+
+    #[test]
+    fn submodule_entries_are_inert_and_pinned_to_a_commit() {
+        entry().validate().expect("an inert gitlink is valid");
+
+        let mut with_payload = entry();
+        with_payload.size = 1;
+        assert!(with_payload.validate().is_err());
+
+        let mut blob_digest = entry();
+        blob_digest.content_sha256 = "b".repeat(64);
+        assert!(blob_digest.validate().is_err());
+
+        let mut unpinned = entry();
+        unpinned.provider_object_id = None;
+        assert!(unpinned.validate().is_err());
+
+        let mut invalid_object = entry();
+        invalid_object.provider_object_id = Some("not-a-git-object".into());
+        assert!(invalid_object.validate().is_err());
+    }
+
+    #[test]
+    fn control_reserved_and_compatibility_paths_are_not_workspace_names() {
+        for path in [
+            "line\nbreak.txt",
+            "bidi\u{202e}name.txt",
+            "NUL.txt",
+            "devices/COM1.log",
+            "devices/lpt9",
+            "trailing-dot.",
+            "trailing-space ",
+            "stream:name.txt",
+            ".cma-control/runtime.json",
+            "nested/.cma-control/config.toml",
+            "fullwidth\u{ff0f}slash.txt",
+        ] {
+            assert!(
+                validate_workspace_path(path).is_err(),
+                "{path:?} must fail before it becomes an archive path"
+            );
+        }
+        validate_workspace_path("docs/naive-\u{00ef}.md")
+            .expect("an ordinary non-ASCII repository path remains supported");
+    }
+
+    #[test]
+    fn case_unicode_and_file_directory_aliases_cannot_share_a_manifest() {
+        for paths in [
+            vec!["README.md", "readme.md"],
+            vec!["caf\u{00e9}.txt", "cafe\u{0301}.txt"],
+            vec!["Docs", "docs/guide.md"],
+        ] {
+            assert!(WorkspaceManifest::seal(
+                "a".repeat(40),
+                paths.into_iter().map(regular).collect(),
+            )
+            .is_err());
+        }
+    }
 }

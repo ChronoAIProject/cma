@@ -17,6 +17,43 @@ fn sdk_fixture(source: &str) -> serde_json::Value {
     serde_json::from_str(source).expect("the checked-in SDK fixture is JSON")
 }
 
+#[test]
+fn caller_request_ids_are_only_canonical_uuid_text() {
+    assert_eq!(
+        normalize_request_id("48800000-0000-4000-8000-000000000021"),
+        Some("48800000-0000-4000-8000-000000000021")
+    );
+    assert_eq!(
+        normalize_request_id(" \t48800000-0000-4000-8000-000000000022\t "),
+        Some("48800000-0000-4000-8000-000000000022")
+    );
+    for rejected in [
+        "",
+        "support-case-488",
+        "github_pat_token_shaped_but_not_logged",
+        "48800000000040008000000000000023",
+        "48800000-0000-4000-8000-00000000002A",
+        "-8800000-0000-4000-8000-000000000024",
+    ] {
+        assert_eq!(
+            normalize_request_id(rejected),
+            None,
+            "accepted {rejected:?}"
+        );
+    }
+
+    let mut repeated = HeaderMap::new();
+    repeated.append(
+        "x-request-id",
+        "48800000-0000-4000-8000-000000000024".parse().unwrap(),
+    );
+    repeated.append(
+        "x-request-id",
+        "48800000-0000-4000-8000-000000000025".parse().unwrap(),
+    );
+    assert_eq!(request_id_from_headers(&repeated), None);
+}
+
 fn sdk_session_view() -> SessionView {
     SessionView {
         id: "sesn_fixture".into(),

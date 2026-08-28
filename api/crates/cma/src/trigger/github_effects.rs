@@ -13,11 +13,12 @@ use layer2_core::{
     CleanupReceipt, CleanupTarget, ConnectionSnapshot, CoreError, DelegationState, DiffArtifact,
     DiffArtifactObjectStore, DiffValidationOutcome, EffectClaim, EffectClaimMode, FailureClass,
     Launch, LaunchAuthority, LaunchCapability, LaunchEffectKind, LaunchEffectResult, LaunchFailure,
-    RecoveryState, RepositoryIdentity, Session, SessionCredentialAuthority, SessionId, SessionLink,
-    SessionService, SessionStatus, TriggerAuthorityError, TriggerAuthorityVerifier,
-    TriggerServiceError, TriggerStoreError, WorkspaceCheckpoint, WorkspaceEntry,
-    WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord, BASELINE_IMPORT_CHUNK_BYTES,
-    CAPABILITY_MAX_LIFETIME_SECONDS, CAPABILITY_POLICY_VERSION,
+    PullRequestRecord, PullRequestState, RecoveryState, RepositoryIdentity, Session,
+    SessionCredentialAuthority, SessionId, SessionLink, SessionService, SessionStatus,
+    TriggerAuthorityError, TriggerAuthorityVerifier, TriggerServiceError, TriggerStoreError,
+    WorkspaceCheckpoint, WorkspaceEntry, WorkspaceEntryKind, WorkspaceManifest, WorkspaceRecord,
+    BASELINE_IMPORT_CHUNK_BYTES, CAPABILITY_MAX_LIFETIME_SECONDS, CAPABILITY_POLICY_VERSION,
+    PULL_REQUEST_STATUS_INTERVAL_SECONDS,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -27,11 +28,12 @@ use super::capability_signing::{
 #[cfg(test)]
 use super::github::WorkspaceSourceEntry;
 use super::github::{
-    build_baseline_archive_plan, validate_repository_rebinding, workspace_blob_metadata,
-    BranchContext, BranchReconciliation, ForkContext, ForkReconciliation, GithubBroker,
-    GithubBrokerError, WorkspaceBlobMetadata, WorkspaceContext, WorkspaceSourcePlan,
-    WorkspaceUnsupported,
+    build_baseline_archive_plan, observe_provider_requests, validate_repository_rebinding,
+    workspace_blob_metadata, BranchContext, BranchReconciliation, ForkContext, ForkReconciliation,
+    GithubBroker, GithubBrokerError, PullRequestContext, WorkspaceBlobMetadata, WorkspaceContext,
+    WorkspaceSourcePlan, WorkspaceUnsupported,
 };
+use super::pull_request_status::PullRequestStatusDisposition;
 use super::worker::{EffectExecution, EffectExecutor};
 use super::workspace_diff::{
     build_diff_artifact, build_invalid_diff_artifact, deterministic_diff_id, DiffBuildError,
@@ -39,12 +41,54 @@ use super::workspace_diff::{
 #[cfg(test)]
 use layer2_core::BaselineArchivePlan;
 
+#[cfg(test)]
 const DEFAULT_FORK_READINESS_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_PROVIDER_RETRY: Duration = Duration::from_secs(300);
 const MAX_RETRY_AFTER: u64 = 3_600;
 const STAGING_IMPORT_RETENTION_POLICY_ID: &str = "trigger-workspace-import-v1";
 #[cfg(test)]
 const TEST_CHANGED_FILE_LIMIT: u32 = 1_000;
+
+impl EffectExecution {
+    fn with_provider_request_id(mut self, provider_request_id: Option<String>) -> Self {
+        let Some(provider_request_id) = provider_request_id else {
+            return self;
+        };
+        let resources = match &mut self {
+            Self::Completed {
+                external_resource_ids,
+                ..
+            }
+            | Self::Progressed {
+                external_resource_ids,
+                ..
+            }
+            | Self::RetryLater {
+                external_resource_ids,
+                ..
+            }
+            | Self::ReconcileLater {
+                external_resource_ids,
+                ..
+            }
+            | Self::WaitLater {
+                external_resource_ids,
+                ..
+            }
+            | Self::RetryWithProgress {
+                external_resource_ids,
+                ..
+            }
+            | Self::ReconcileWithProgress {
+                external_resource_ids,
+                ..
+            } => external_resource_ids,
+            Self::FailedWithProgress { .. } | Self::Failed { .. } => return self,
+        };
+        resources.insert("provider_request_id".into(), provider_request_id);
+        self
+    }
+}
 
 #[derive(Debug, Clone)]
 struct CapabilityAuthorityEvidence {
@@ -177,6 +221,16 @@ trait GithubEffectPort: Send + Sync {
         let _ = context;
         Err(GithubBrokerError::Malformed(
             "the pull-request adapter is unavailable".into(),
+        ))
+    }
+
+    async fn observe_pull_request(
+        &self,
+        context: &super::github::PullRequestContext,
+    ) -> Result<PullRequestRecord, GithubBrokerError> {
+        let _ = context;
+        Err(GithubBrokerError::Malformed(
+            "the pull-request status adapter is unavailable".into(),
         ))
     }
 }
@@ -530,6 +584,13 @@ impl GithubEffectPort for GithubBroker {
         GithubBroker::read_workspace_blob(self, context, blob).await
     }
 
+    async fn observe_pull_request(
+        &self,
+        context: &PullRequestContext,
+    ) -> Result<PullRequestRecord, GithubBrokerError> {
+        GithubBroker::observe_pull_request(self, context).await
+    }
+
     async fn preflight_capability(
         &self,
         launch: &Launch,
@@ -661,6 +722,12 @@ pub(crate) struct GithubEffectExecutor {
     changed_file_limit: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GithubEffectRuntimeLimits {
+    pub(crate) fork_readiness_timeout: Duration,
+    pub(crate) changed_file_limit: u32,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct CapabilityRenewal {
     pub(crate) reach: layer2_core::ReachStatus,
@@ -701,7 +768,7 @@ impl GithubEffectExecutor {
         diff_store: Arc<dyn DiffArtifactObjectStore>,
         sessions: Arc<SessionService>,
         capability_signer: Arc<CapabilitySigner>,
-        changed_file_limit: u32,
+        limits: GithubEffectRuntimeLimits,
     ) -> Self {
         Self {
             github,
@@ -710,8 +777,8 @@ impl GithubEffectExecutor {
             diff_store: Some(diff_store),
             sessions: Some(Arc::new(SessionServiceEffectPort(sessions))),
             capability_signer: Some(capability_signer),
-            fork_readiness_timeout: DEFAULT_FORK_READINESS_TIMEOUT,
-            changed_file_limit,
+            fork_readiness_timeout: limits.fork_readiness_timeout,
+            changed_file_limit: limits.changed_file_limit,
         }
     }
 
@@ -1132,7 +1199,7 @@ impl GithubEffectExecutor {
         };
         if !reconcile_only {
             if let Err(execution) = require_live_effect_authority_admission(launch, claim) {
-                return execution;
+                return *execution;
             }
         }
         let result = if reconcile_only {
@@ -1254,7 +1321,7 @@ impl GithubEffectExecutor {
         };
         if !reconcile_only {
             if let Err(execution) = require_live_effect_authority_admission(launch, claim) {
-                return execution;
+                return *execution;
             }
         }
         let result = if reconcile_only {
@@ -1422,8 +1489,16 @@ impl GithubEffectExecutor {
             let needs_symlink_target = source.entries.iter().any(|entry| {
                 entry.provider_object_id == blob.provider_object_id && entry.mode == 0o120000
             });
-            let metadata = match workspace_blob_metadata(blob, &bytes, chunks, needs_symlink_target)
-            {
+            let needs_gitmodules = source.entries.iter().any(|entry| {
+                entry.provider_object_id == blob.provider_object_id && entry.path == ".gitmodules"
+            });
+            let metadata = match workspace_blob_metadata(
+                blob,
+                &bytes,
+                chunks,
+                needs_symlink_target,
+                needs_gitmodules,
+            ) {
                 Ok(metadata) => metadata,
                 Err(error) => return broker_failure(error, claim, false),
             };
@@ -1718,7 +1793,7 @@ impl GithubEffectExecutor {
         };
         let authority = match authority {
             Ok(authority) => authority,
-            Err(execution) => return execution,
+            Err(execution) => return *execution,
         };
         let Some(session) = launch.session.as_ref() else {
             return EffectExecution::Failed {
@@ -1801,7 +1876,7 @@ impl GithubEffectExecutor {
         if let Err(execution) =
             require_live_policy_install_authority(launch, claim, capability_renewal)
         {
-            return execution;
+            return *execution;
         }
         let Some(admitted_credential_authority) = authority
             .authority
@@ -1931,15 +2006,46 @@ impl GithubEffectExecutor {
                 ),
             };
         }
+        let evidence = match self.ensure_trigger_session(launch, claim).await {
+            Ok(evidence) => evidence,
+            Err(execution) => return execution,
+        };
+        let resources = session_resources(launch, claim, &evidence.session);
+        if let Some(execution) =
+            initial_dispatch_lifecycle_wait(claim, &evidence.session, &resources)
+        {
+            return execution;
+        }
         let delivery = match sessions.dispatch_initial_prompt(launch, claim).await {
             Ok(delivery) => delivery,
-            Err(error) => return session_failure(error, claim),
+            Err(CoreError::SessionRotating) => {
+                return session_wait_later(
+                    "The Trigger session began rotating before initial-task dispatch.",
+                    resources,
+                );
+            }
+            Err(error) => {
+                // Lifecycle can change after the observation above but before
+                // the session input fence is acquired. Re-observe before
+                // classifying the error so rotation/recovery remains a
+                // budget-neutral wait rather than a failed dispatch.
+                if let Ok(evidence) = self.ensure_trigger_session(launch, claim).await {
+                    let observed_resources = session_resources(launch, claim, &evidence.session);
+                    if let Some(execution) = initial_dispatch_lifecycle_wait(
+                        claim,
+                        &evidence.session,
+                        &observed_resources,
+                    ) {
+                        return execution;
+                    }
+                }
+                return session_failure(error, claim);
+            }
         };
         let result = LaunchEffectResult::InitialDispatch {
             delivery: delivery.clone(),
         };
-        let mut resources = retained_resources(launch, claim);
-        resources.insert("session_id".into(), delivery.session_id.0.clone());
+        let mut resources = resources;
         resources.insert("prompt_origin_key".into(), delivery.origin_key.clone());
         resources.insert("prompt_payload_hash".into(), delivery.payload_hash.clone());
         if let Some(sequence) = delivery.dispatch_fence_sequence {
@@ -1967,6 +2073,7 @@ impl GithubEffectExecutor {
                         Some(retry_at.clone()),
                     ),
                     retry_at,
+                    external_resource_ids: resources,
                 }
             }
             layer2_core::PromptDeliveryState::WriteConfirmed
@@ -2169,6 +2276,7 @@ impl GithubEffectExecutor {
                         Some(retry_at.clone()),
                     ),
                     retry_at,
+                    external_resource_ids: BTreeMap::new(),
                 };
             }
             Err(_) => {
@@ -2470,7 +2578,7 @@ impl GithubEffectExecutor {
         let authority = if claim.mode == EffectClaimMode::Execute {
             match admitted_effect_authority(launch, claim) {
                 Ok(authority) => authority,
-                Err(execution) => return execution,
+                Err(execution) => return *execution,
             }
         } else {
             match self.github.preflight_capability(launch).await {
@@ -2574,7 +2682,7 @@ impl GithubEffectExecutor {
                 .await
         } else {
             if let Err(execution) = require_live_effect_authority_admission(launch, claim) {
-                return execution;
+                return *execution;
             }
             self.github.publish_branch(&context, &plan).await
         } {
@@ -2586,12 +2694,36 @@ impl GithubEffectExecutor {
         let mut contribution = contribution.clone();
         let now = rfc3339_at(SystemTime::now());
         let published = match advance {
+            super::github::PublicationAdvance::ObjectWritePending(pending) => {
+                contribution.state = layer2_core::PublicationState::IntentRecorded;
+                contribution.base_tree_id = Some(pending.base_tree_id);
+                contribution.tree_id = pending.tree_id;
+                contribution.commit_id = None;
+                contribution.resulting_head = None;
+                contribution.object_ids = pending.object_ids;
+                contribution.object_write = Some(pending.object_write);
+                contribution.updated_at = now;
+                if contribution.validate_intent(&launch.id).is_err() {
+                    return publication_failure(
+                        claim,
+                        FailureClass::TerminalSecurity,
+                        "publication_object_intent_invalid",
+                        "The retained Git object recipe did not satisfy the durable publication intent.",
+                        "Contact support; CMA will not issue an object write.",
+                    );
+                }
+                return EffectExecution::Progressed {
+                    result: LaunchEffectResult::BranchPublication { contribution },
+                    external_resource_ids: retained_resources(launch, claim),
+                };
+            }
             super::github::PublicationAdvance::ObjectsWritten(prepared) => {
                 contribution.state = layer2_core::PublicationState::ObjectsWritten;
                 contribution.base_tree_id = Some(prepared.base_tree_id);
                 contribution.tree_id = Some(prepared.tree_id);
                 contribution.commit_id = Some(prepared.commit_id);
                 contribution.object_ids = prepared.object_ids;
+                contribution.object_write = None;
                 contribution.updated_at = now;
                 if contribution.validate_intent(&launch.id).is_err() {
                     return publication_failure(
@@ -2604,6 +2736,7 @@ impl GithubEffectExecutor {
                 }
                 return EffectExecution::Progressed {
                     result: LaunchEffectResult::BranchPublication { contribution },
+                    external_resource_ids: retained_resources(launch, claim),
                 };
             }
             super::github::PublicationAdvance::RefUpdatePending(prepared) => {
@@ -2624,6 +2757,7 @@ impl GithubEffectExecutor {
                 }
                 return EffectExecution::Progressed {
                     result: LaunchEffectResult::BranchPublication { contribution },
+                    external_resource_ids: retained_resources(launch, claim),
                 };
             }
             super::github::PublicationAdvance::Published(published) => published,
@@ -2670,7 +2804,7 @@ impl GithubEffectExecutor {
         };
         if !reconcile_only {
             if let Err(execution) = require_live_effect_authority_admission(launch, claim) {
-                return execution;
+                return *execution;
             }
         }
         let result = if reconcile_only {
@@ -2820,11 +2954,38 @@ impl GithubEffectExecutor {
             )]),
         }
     }
-}
 
-#[async_trait]
-impl EffectExecutor for GithubEffectExecutor {
-    async fn admit(
+    async fn observe_linked_pull_request_status(
+        &self,
+        launch: &Launch,
+        correlation_id: &str,
+    ) -> PullRequestStatusDisposition {
+        let (result, provider_request_id) = observe_provider_requests(async {
+            let context = PullRequestContext::for_status(launch)?;
+            self.github.observe_pull_request(&context).await
+        })
+        .await;
+        match result {
+            Ok(pull_request) => {
+                let next_attempt_at = (pull_request.state == PullRequestState::Open).then(|| {
+                    rfc3339_at(
+                        SystemTime::now()
+                            + Duration::from_secs(PULL_REQUEST_STATUS_INTERVAL_SECONDS),
+                    )
+                });
+                PullRequestStatusDisposition::Observed {
+                    pull_request: Box::new(pull_request),
+                    next_attempt_at,
+                    provider_request_id,
+                }
+            }
+            Err(error) => {
+                pull_request_status_failure(error, launch, correlation_id, provider_request_id)
+            }
+        }
+    }
+
+    async fn admit_effect(
         &self,
         launch: &Launch,
         claim: &EffectClaim,
@@ -2870,50 +3031,283 @@ impl EffectExecutor for GithubEffectExecutor {
         })?;
         Ok(Some(admission))
     }
+}
+
+#[async_trait]
+impl EffectExecutor for GithubEffectExecutor {
+    async fn refresh_pull_request_status(
+        &self,
+        launch: &Launch,
+        correlation_id: &str,
+    ) -> PullRequestStatusDisposition {
+        self.observe_linked_pull_request_status(launch, correlation_id)
+            .await
+    }
+
+    async fn admit(
+        &self,
+        launch: &Launch,
+        claim: &EffectClaim,
+    ) -> Result<Option<AuthorityAdmissionSnapshot>, EffectExecution> {
+        let (result, provider_request_id) =
+            observe_provider_requests(self.admit_effect(launch, claim)).await;
+        result.map_err(|execution| execution.with_provider_request_id(provider_request_id))
+    }
 
     async fn execute(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
-        match claim.kind {
-            LaunchEffectKind::Preflight => self.run_preflight(launch, claim).await,
-            LaunchEffectKind::Fork => self.run_fork(launch, claim, false).await,
-            LaunchEffectKind::Branch => self.run_branch(launch, claim, false).await,
-            LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
-            LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
-            LaunchEffectKind::Session => self.run_session(launch, claim).await,
-            LaunchEffectKind::Reach => self.run_reach(launch, claim, false).await,
-            LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
-            LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
-            LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
-            LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
-            LaunchEffectKind::PullRequest => self.run_pull_request(launch, claim, false).await,
-            LaunchEffectKind::Cleanup => self.run_cleanup(launch, claim).await,
-        }
+        let (execution, provider_request_id) = observe_provider_requests(async {
+            match claim.kind {
+                LaunchEffectKind::Preflight => self.run_preflight(launch, claim).await,
+                LaunchEffectKind::Fork => self.run_fork(launch, claim, false).await,
+                LaunchEffectKind::Branch => self.run_branch(launch, claim, false).await,
+                LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
+                LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
+                LaunchEffectKind::Session => self.run_session(launch, claim).await,
+                LaunchEffectKind::Reach => self.run_reach(launch, claim, false).await,
+                LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
+                LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
+                LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
+                LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
+                LaunchEffectKind::PullRequest => self.run_pull_request(launch, claim, false).await,
+                LaunchEffectKind::Cleanup => self.run_cleanup(launch, claim).await,
+            }
+        })
+        .await;
+        execution.with_provider_request_id(provider_request_id)
     }
 
     async fn reconcile(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution {
-        match claim.kind {
-            LaunchEffectKind::Preflight => self.run_preflight(launch, claim).await,
-            LaunchEffectKind::Fork => self.run_fork(launch, claim, true).await,
-            LaunchEffectKind::Branch => self.run_branch(launch, claim, true).await,
-            // Every provider call is a read or an idempotent write to the
-            // Launch's stable object key; repeating it reconciles the same bytes.
-            LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
-            LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
-            LaunchEffectKind::Session => self.run_session(launch, claim).await,
-            LaunchEffectKind::Reach => self.run_reach(launch, claim, false).await,
-            LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
-            LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
-            // Diff generation performs only fenced reads plus an immutable,
-            // content-addressed object write, so the same intent is safely
-            // repeatable during reconciliation.
-            LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
-            LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
-            LaunchEffectKind::PullRequest => self.run_pull_request(launch, claim, true).await,
-            // Deletion uses owner/Launch-derived object keys and treats an
-            // absent object as success, so reconciliation repeats the exact
-            // retained plan after any ambiguous or partial attempt.
-            LaunchEffectKind::Cleanup => self.run_cleanup(launch, claim).await,
-        }
+        let (execution, provider_request_id) = observe_provider_requests(async {
+            match claim.kind {
+                LaunchEffectKind::Preflight => self.run_preflight(launch, claim).await,
+                LaunchEffectKind::Fork => self.run_fork(launch, claim, true).await,
+                LaunchEffectKind::Branch => self.run_branch(launch, claim, true).await,
+                // Every provider call is a read or an idempotent write to the
+                // Launch's stable object key; repeating it reconciles the same bytes.
+                LaunchEffectKind::WorkspaceImport => self.run_workspace(launch, claim).await,
+                LaunchEffectKind::Sandbox => self.run_sandbox(launch, claim).await,
+                LaunchEffectKind::Session => self.run_session(launch, claim).await,
+                LaunchEffectKind::Reach => self.run_reach(launch, claim, false).await,
+                LaunchEffectKind::InitialDispatch => self.run_initial_dispatch(launch, claim).await,
+                LaunchEffectKind::Checkpoint => self.run_checkpoint(launch, claim).await,
+                // Diff generation performs only fenced reads plus an immutable,
+                // content-addressed object write, so the same intent is safely
+                // repeatable during reconciliation.
+                LaunchEffectKind::Diff => self.run_diff(launch, claim).await,
+                LaunchEffectKind::BranchPublication => self.run_publication(launch, claim).await,
+                LaunchEffectKind::PullRequest => self.run_pull_request(launch, claim, true).await,
+                // Deletion uses owner/Launch-derived object keys and treats an
+                // absent object as success, so reconciliation repeats the exact
+                // retained plan after any ambiguous or partial attempt.
+                LaunchEffectKind::Cleanup => self.run_cleanup(launch, claim).await,
+            }
+        })
+        .await;
+        execution.with_provider_request_id(provider_request_id)
     }
+}
+
+fn initial_dispatch_lifecycle_wait(
+    claim: &EffectClaim,
+    session: &Session,
+    resources: &BTreeMap<String, String>,
+) -> Option<EffectExecution> {
+    if session.status == SessionStatus::Rotating {
+        return Some(session_wait_later(
+            "The Trigger session is rotating; its initial task remains fenced and unsent.",
+            resources.clone(),
+        ));
+    }
+    match session.recovery_state {
+        RecoveryState::Normal => {}
+        RecoveryState::Recovering | RecoveryState::Unknown => {
+            return Some(session_wait_later(
+                "The Trigger session is recovering; CMA will not send or re-send its initial task.",
+                resources.clone(),
+            ));
+        }
+        RecoveryState::Idle
+        | RecoveryState::Degraded
+        | RecoveryState::Retired
+        | RecoveryState::Invalid => return Some(session_recovery_failure(claim)),
+    }
+    match session.status {
+        SessionStatus::Ready | SessionStatus::Running => None,
+        SessionStatus::Provisioning | SessionStatus::Rotating => Some(session_wait_later(
+            "The Trigger session is not yet interactive; its initial task remains unsent.",
+            resources.clone(),
+        )),
+        SessionStatus::Idle | SessionStatus::Terminated => Some(session_recovery_failure(claim)),
+    }
+}
+
+fn pull_request_status_failure(
+    error: GithubBrokerError,
+    launch: &Launch,
+    correlation_id: &str,
+    provider_request_id: Option<String>,
+) -> PullRequestStatusDisposition {
+    use GithubBrokerError as Error;
+
+    let correlation_id = if correlation_id.trim().is_empty() {
+        format!("cma-trigger:{}:pull-request-status", launch.id.0)
+    } else {
+        correlation_id.to_string()
+    };
+    let now = SystemTime::now();
+    let observed_at = rfc3339_at(now);
+    let retry = |class: FailureClass,
+                 code: &'static str,
+                 detail: &'static str,
+                 remediation: &'static str,
+                 retry_after: Option<&str>| {
+        let next_attempt_at =
+            rfc3339_at(now + pull_request_status_retry_delay(launch, retry_after));
+        PullRequestStatusDisposition::Retry {
+            failure: LaunchFailure {
+                class,
+                code: code.into(),
+                detail: detail.into(),
+                remediation: remediation.into(),
+                correlation_id: correlation_id.clone(),
+                retry_at: Some(next_attempt_at.clone()),
+                observed_at: observed_at.clone(),
+            },
+            next_attempt_at,
+            provider_request_id: provider_request_id.clone(),
+        }
+    };
+    let suspended = |class: FailureClass,
+                     code: &'static str,
+                     detail: &'static str,
+                     remediation: &'static str| {
+        PullRequestStatusDisposition::Suspended {
+            failure: LaunchFailure {
+                class,
+                code: code.into(),
+                detail: detail.into(),
+                remediation: remediation.into(),
+                correlation_id: correlation_id.clone(),
+                retry_at: None,
+                observed_at: observed_at.clone(),
+            },
+            provider_request_id: provider_request_id.clone(),
+        }
+    };
+    let fail_launch = |class: FailureClass,
+                       code: &'static str,
+                       detail: &'static str,
+                       remediation: &'static str| {
+        PullRequestStatusDisposition::FailLaunch {
+            failure: LaunchFailure {
+                class,
+                code: code.into(),
+                detail: detail.into(),
+                remediation: remediation.into(),
+                correlation_id: correlation_id.clone(),
+                retry_at: None,
+                observed_at: observed_at.clone(),
+            },
+            provider_request_id: provider_request_id.clone(),
+        }
+    };
+
+    match error {
+        Error::RateLimited { retry_after } => retry(
+            FailureClass::ResourceQuota,
+            "github_rate_limited",
+            "GitHub temporarily rate-limited the pull-request status read.",
+            "CMA will retry this read-only observation after the persisted provider backoff.",
+            retry_after.as_deref(),
+        ),
+        Error::Transient { .. } => retry(
+            FailureClass::RetryableTransient,
+            "github_temporarily_unavailable",
+            "GitHub pull-request status is temporarily unavailable.",
+            "CMA will retry the same read-only observation without changing the pull request.",
+            None,
+        ),
+        Error::OwnerCredentialUnavailable => fail_launch(
+            FailureClass::OwnerCredentialUnavailable,
+            "owner_credential_unavailable",
+            "CMA no longer holds usable sign-in authority for this status read.",
+            "Sign in again, then refresh the retained pull-request status.",
+        ),
+        Error::ProviderAuthenticationUnavailable | Error::InactiveReconnectUnavailable => fail_launch(
+            FailureClass::AuthRequired,
+            "github_provider_authentication_unavailable",
+            "This CMA deployment cannot complete GitHub authorization safely.",
+            "Use another active GitHub connection, or enable the exact service in NyxID and then refresh.",
+        ),
+        Error::ConnectionInactive => fail_launch(
+            FailureClass::ServiceInactive,
+            "github_service_inactive",
+            "The selected GitHub connection is inactive.",
+            "Enable the exact service in NyxID or choose another active connection, then refresh.",
+        ),
+        Error::ConnectionNotFound
+        | Error::ConnectionDisconnected
+        | Error::InsufficientScope { .. } => fail_launch(
+            FailureClass::AuthRequired,
+            "github_authorization_required",
+            "The selected GitHub connection no longer authorizes this status read.",
+            "Reconnect or select an eligible active GitHub connection, then refresh.",
+        ),
+        Error::PullRequestChanged => {
+            fail_launch(
+                FailureClass::TerminalSecurity,
+                "pull_request_identity_changed",
+                "The linked pull-request identity changed outside CMA's retained record.",
+                "Contact support; CMA will not bind this Launch to another pull request.",
+            )
+        }
+        Error::BranchHeadConflict | Error::UpstreamBaseConflict => {
+            suspended(
+                FailureClass::ConflictStaleHead,
+                "pull_request_status_stale",
+                "The retained branch or base no longer matches this Launch.",
+                "Review the current GitHub pull request; CMA will not overwrite or reset manually changed refs.",
+            )
+        }
+        Error::NotFound => suspended(
+            FailureClass::ConflictStaleHead,
+            "github_pull_request_not_found",
+            "The exact linked GitHub pull request no longer exists or is no longer visible.",
+            "Review the retained GitHub link and connection access; CMA will not create a replacement automatically.",
+        ),
+        Error::AuthorityDrift | Error::Malformed(_) | Error::AmbiguousWrite => fail_launch(
+            FailureClass::TerminalSecurity,
+            "github_pull_request_evidence_invalid",
+            "GitHub status evidence no longer matches the retained repository authority.",
+            "Contact support with the Launch correlation ID; CMA retained the link and performed no provider write.",
+        ),
+        Error::ConnectionNotPersonal
+        | Error::Forbidden
+        | Error::ForkingDisabled
+        | Error::ForkNetworkOccupied
+        | Error::UnsupportedWorkspace(_)
+        | Error::Rejected { .. } => suspended(
+            FailureClass::PolicyUserAction,
+            "github_status_policy_refused",
+            "GitHub policy refused this pull-request status read.",
+            "Review the selected account and repository policy, then request another status refresh.",
+        ),
+    }
+}
+
+fn pull_request_status_retry_delay(launch: &Launch, retry_after: Option<&str>) -> Duration {
+    if let Some(seconds) = retry_after
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+    {
+        return Duration::from_secs(seconds.min(MAX_RETRY_AFTER));
+    }
+    let failures = launch
+        .pull_request
+        .as_ref()
+        .map_or(0, |record| record.status_sync.consecutive_failures);
+    Duration::from_secs(2_u64.saturating_pow(failures.min(8).saturating_add(1)))
+        .min(MAX_PROVIDER_RETRY)
 }
 
 fn retained_cleanup_objects(
@@ -3312,6 +3706,7 @@ fn session_failure(error: CoreError, claim: &EffectClaim) -> EffectExecution {
                 Some(retry_at.clone()),
             ),
             retry_at,
+            external_resource_ids: BTreeMap::new(),
         }
     } else {
         EffectExecution::Failed {
@@ -3462,7 +3857,11 @@ fn broker_failure(
                     external_resource_ids: BTreeMap::new(),
                 }
             } else {
-                EffectExecution::RetryLater { failure, retry_at }
+                EffectExecution::RetryLater {
+                    failure,
+                    retry_at,
+                    external_resource_ids: BTreeMap::new(),
+                }
             }
         }
         Error::Transient { status } => transient_failure(
@@ -3486,6 +3885,18 @@ fn broker_failure(
                 None,
             ),
         },
+        Error::ProviderAuthenticationUnavailable | Error::InactiveReconnectUnavailable => {
+            EffectExecution::Failed {
+                failure: failure(
+                    FailureClass::AuthRequired,
+                    "github_provider_authentication_unavailable",
+                    "This CMA deployment cannot complete GitHub authorization safely.",
+                    "Use an active GitHub connection or a CMA deployment with provider-backed sign-in enabled.",
+                    claim,
+                    None,
+                ),
+            }
+        }
         Error::ConnectionInactive => EffectExecution::Failed {
             failure: failure(
                 FailureClass::ServiceInactive,
@@ -3585,8 +3996,8 @@ fn broker_failure(
                     "The repository contains a Git entry mode this Trigger flow cannot preserve.",
                 ),
                 WorkspaceUnsupported::Submodule => (
-                    "submodule_unsupported",
-                    "Git submodules are not dereferenced by the public Trigger flow.",
+                    "submodule_metadata_unsupported",
+                    "A Git submodule is missing its regular .gitmodules metadata or has an invalid gitlink representation.",
                 ),
                 WorkspaceUnsupported::LargeFileStorage => (
                     "git_lfs_unsupported",
@@ -3616,6 +4027,22 @@ fn broker_failure(
                     "GitHub refused the workflow-file update at the guarded ref boundary (HTTP {status})."
                 ),
                 "Reconnect GitHub with workflow authority or remove the workflow content change, then review again.",
+                claim,
+                None,
+            ),
+        },
+        Error::Rejected {
+            status,
+            kind: super::github::GithubRejectionKind::BranchProtection,
+            ..
+        } => EffectExecution::Failed {
+            failure: failure(
+                FailureClass::PolicyUserAction,
+                "github_branch_protection_refused",
+                format!(
+                    "GitHub branch protection or a repository ruleset refused this operation (HTTP {status})."
+                ),
+                "Review the repository protection or ruleset requirements, or ask a maintainer; CMA will not bypass protection.",
                 claim,
                 None,
             ),
@@ -3861,7 +4288,11 @@ fn transient_failure(
             external_resource_ids: BTreeMap::new(),
         }
     } else {
-        EffectExecution::RetryLater { failure, retry_at }
+        EffectExecution::RetryLater {
+            failure,
+            retry_at,
+            external_resource_ids: BTreeMap::new(),
+        }
     }
 }
 
@@ -3902,13 +4333,13 @@ fn unsupported_effect(claim: &EffectClaim) -> EffectExecution {
 fn admitted_effect_authority(
     launch: &Launch,
     claim: &EffectClaim,
-) -> Result<CapabilityAuthorityEvidence, EffectExecution> {
+) -> Result<CapabilityAuthorityEvidence, Box<EffectExecution>> {
     let admission = launch.effect_authority_admission(claim).map_err(|_| {
-        authority_admission_failure(
+        Box::new(authority_admission_failure(
             claim,
             "trigger_authority_admission_missing",
             "The exact effect fence has no committed authority admission.",
-        )
+        ))
     })?;
     authority_from_snapshot(admission, claim)
 }
@@ -3916,17 +4347,17 @@ fn admitted_effect_authority(
 fn require_live_effect_authority_admission(
     launch: &Launch,
     claim: &EffectClaim,
-) -> Result<(), EffectExecution> {
+) -> Result<(), Box<EffectExecution>> {
     let now = rfc3339_at(SystemTime::now());
     launch
         .effect_authority_admission_at(claim, &now)
         .map(|_| ())
         .map_err(|_| {
-            authority_admission_failure(
+            Box::new(authority_admission_failure(
                 claim,
                 "trigger_authority_lease_not_live",
                 "The admitted effect fence no longer owns a live provider-write lease.",
-            )
+            ))
         })
 }
 
@@ -3934,58 +4365,58 @@ fn require_live_policy_install_authority(
     launch: &Launch,
     claim: &EffectClaim,
     capability_renewal: bool,
-) -> Result<(), EffectExecution> {
+) -> Result<(), Box<EffectExecution>> {
     if !capability_renewal {
         return require_live_effect_authority_admission(launch, claim);
     }
     let lease = launch.lease.as_ref().ok_or_else(|| {
-        authority_admission_failure(
+        Box::new(authority_admission_failure(
             claim,
             "trigger_capability_authority_lease_not_live",
             "The admitted capability fence has no live policy-install lease.",
-        )
+        ))
     })?;
     if lease.fencing_token != claim.fence {
-        return Err(authority_admission_failure(
+        return Err(Box::new(authority_admission_failure(
             claim,
             "trigger_capability_authority_lease_not_live",
             "The admitted capability fence has no live policy-install lease.",
-        ));
+        )));
     }
     let now = rfc3339_at(SystemTime::now());
     launch
         .capability_authority_admission_for_at(lease, &now)
         .map(|_| ())
         .map_err(|_| {
-            authority_admission_failure(
+            Box::new(authority_admission_failure(
                 claim,
                 "trigger_capability_authority_lease_not_live",
                 "The admitted capability fence has no live policy-install lease.",
-            )
+            ))
         })
 }
 
 fn authority_from_snapshot(
     admission: &AuthorityAdmissionSnapshot,
     claim: &EffectClaim,
-) -> Result<CapabilityAuthorityEvidence, EffectExecution> {
+) -> Result<CapabilityAuthorityEvidence, Box<EffectExecution>> {
     Ok(CapabilityAuthorityEvidence {
         connection: admission.connection.clone(),
         authority: admission.authority.clone(),
         upstream: admission.upstream.clone(),
         fork: admission.fork.clone().ok_or_else(|| {
-            authority_admission_failure(
+            Box::new(authority_admission_failure(
                 claim,
                 "trigger_authority_admission_fork_missing",
                 "The committed authority admission has no numeric fork binding.",
-            )
+            ))
         })?,
         branch: admission.branch.clone().ok_or_else(|| {
-            authority_admission_failure(
+            Box::new(authority_admission_failure(
                 claim,
                 "trigger_authority_admission_branch_missing",
                 "The committed authority admission has no guarded branch binding.",
-            )
+            ))
         })?,
     })
 }
@@ -4131,7 +4562,11 @@ pub(in crate::trigger) mod tests {
             answers: impl IntoIterator<Item = Result<layer2_core::PromptDelivery, CoreError>>,
         ) -> Self {
             Self {
-                answers: Mutex::new(VecDeque::new()),
+                answers: Mutex::new(VecDeque::from([SessionAnswer::Evidence {
+                    status: SessionStatus::Ready,
+                    credential_ready: true,
+                    rotations: 0,
+                }])),
                 prompt_answers: Mutex::new(answers.into_iter().collect()),
                 checkpoint_answers: Mutex::new(VecDeque::new()),
                 checkpoint_requests: Mutex::new(Vec::new()),
@@ -6009,6 +6444,74 @@ pub(in crate::trigger) mod tests {
     }
 
     #[tokio::test]
+    async fn expired_persisted_fork_readiness_deadline_requires_recovery_without_another_write() {
+        let github = Arc::new(FakeGithub::new([ForkAnswer::Absent]));
+        let executor = GithubEffectExecutor::with_port(github.clone(), Duration::from_secs(300));
+        let mut launch = fork_launch();
+        let claim = claim(EffectClaimMode::Reconcile);
+        launch.effects.push(layer2_core::EffectRecord {
+            kind: claim.kind,
+            state: layer2_core::EffectState::Reconciling,
+            intent_key: claim.intent_key.clone(),
+            attempt: claim.attempt,
+            reconciliation_attempt: claim.reconciliation_attempt,
+            fence: claim.fence,
+            authority_admission: None,
+            provider_request_id: None,
+            external_resource_ids: BTreeMap::from([(
+                "fork_readiness_deadline".into(),
+                "1970-01-01T00:00:01Z".into(),
+            )]),
+            next_attempt_at: None,
+            last_failure: None,
+            updated_at: "2026-08-27T00:00:00Z".into(),
+        });
+
+        let result = executor.reconcile(&launch, &claim).await;
+
+        assert!(matches!(
+            result,
+            EffectExecution::Failed {
+                failure: LaunchFailure {
+                    class: FailureClass::RecoveryRequired,
+                    ref code,
+                    ..
+                }
+            } if code == "fork_readiness_deadline_exceeded"
+        ));
+        assert_eq!(github.create_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(github.reconcile_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn branch_protection_rejection_has_dedicated_user_action_remediation() {
+        let result = broker_failure(
+            GithubBrokerError::Rejected {
+                status: 422,
+                kind: super::super::github::GithubRejectionKind::BranchProtection,
+                provider_code: Some("protected_branch".into()),
+            },
+            &claim_for(
+                LaunchEffectKind::BranchPublication,
+                EffectClaimMode::Execute,
+            ),
+            false,
+        );
+
+        let EffectExecution::Failed { failure } = result else {
+            panic!("branch protection must be a terminal user-action failure");
+        };
+        assert_eq!(failure.class, FailureClass::PolicyUserAction);
+        assert_eq!(failure.code, "github_branch_protection_refused");
+        assert_ne!(failure.code, "github_policy_refused");
+        assert!(failure.detail.contains("HTTP 422"));
+        assert!(failure.detail.contains("branch protection"));
+        assert!(failure
+            .remediation
+            .contains("CMA will not bypass protection"));
+    }
+
+    #[tokio::test]
     async fn ambiguous_pull_request_create_moves_to_reconciliation_without_a_second_write() {
         let github = Arc::new(FakeGithub::with_pull_request_answers([Err(
             GithubBrokerError::AmbiguousWrite,
@@ -6092,6 +6595,214 @@ pub(in crate::trigger) mod tests {
                 }
             } if code == "pull_request_changed"
         ));
+    }
+
+    #[test]
+    fn pull_request_status_failures_use_the_closed_read_only_taxonomy() {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Lane {
+            Retry,
+            Suspended,
+            FailLaunch,
+        }
+
+        let launch = pull_request_launch();
+        let provider_request_id = "48800000-0000-4000-8000-000000000074";
+        let cases = [
+            (
+                GithubBrokerError::RateLimited {
+                    retry_after: Some("17".into()),
+                },
+                Lane::Retry,
+                FailureClass::ResourceQuota,
+                "github_rate_limited",
+            ),
+            (
+                GithubBrokerError::Transient { status: Some(503) },
+                Lane::Retry,
+                FailureClass::RetryableTransient,
+                "github_temporarily_unavailable",
+            ),
+            (
+                GithubBrokerError::OwnerCredentialUnavailable,
+                Lane::FailLaunch,
+                FailureClass::OwnerCredentialUnavailable,
+                "owner_credential_unavailable",
+            ),
+            (
+                GithubBrokerError::ProviderAuthenticationUnavailable,
+                Lane::FailLaunch,
+                FailureClass::AuthRequired,
+                "github_provider_authentication_unavailable",
+            ),
+            (
+                GithubBrokerError::InactiveReconnectUnavailable,
+                Lane::FailLaunch,
+                FailureClass::AuthRequired,
+                "github_provider_authentication_unavailable",
+            ),
+            (
+                GithubBrokerError::ConnectionNotFound,
+                Lane::FailLaunch,
+                FailureClass::AuthRequired,
+                "github_authorization_required",
+            ),
+            (
+                GithubBrokerError::ConnectionNotPersonal,
+                Lane::Suspended,
+                FailureClass::PolicyUserAction,
+                "github_status_policy_refused",
+            ),
+            (
+                GithubBrokerError::ConnectionInactive,
+                Lane::FailLaunch,
+                FailureClass::ServiceInactive,
+                "github_service_inactive",
+            ),
+            (
+                GithubBrokerError::ConnectionDisconnected,
+                Lane::FailLaunch,
+                FailureClass::AuthRequired,
+                "github_authorization_required",
+            ),
+            (
+                GithubBrokerError::InsufficientScope {
+                    required: "public_repo",
+                },
+                Lane::FailLaunch,
+                FailureClass::AuthRequired,
+                "github_authorization_required",
+            ),
+            (
+                GithubBrokerError::AuthorityDrift,
+                Lane::FailLaunch,
+                FailureClass::TerminalSecurity,
+                "github_pull_request_evidence_invalid",
+            ),
+            (
+                GithubBrokerError::Forbidden,
+                Lane::Suspended,
+                FailureClass::PolicyUserAction,
+                "github_status_policy_refused",
+            ),
+            (
+                GithubBrokerError::NotFound,
+                Lane::Suspended,
+                FailureClass::ConflictStaleHead,
+                "github_pull_request_not_found",
+            ),
+            (
+                GithubBrokerError::AmbiguousWrite,
+                Lane::FailLaunch,
+                FailureClass::TerminalSecurity,
+                "github_pull_request_evidence_invalid",
+            ),
+            (
+                GithubBrokerError::ForkingDisabled,
+                Lane::Suspended,
+                FailureClass::PolicyUserAction,
+                "github_status_policy_refused",
+            ),
+            (
+                GithubBrokerError::ForkNetworkOccupied,
+                Lane::Suspended,
+                FailureClass::PolicyUserAction,
+                "github_status_policy_refused",
+            ),
+            (
+                GithubBrokerError::BranchHeadConflict,
+                Lane::Suspended,
+                FailureClass::ConflictStaleHead,
+                "pull_request_status_stale",
+            ),
+            (
+                GithubBrokerError::UpstreamBaseConflict,
+                Lane::Suspended,
+                FailureClass::ConflictStaleHead,
+                "pull_request_status_stale",
+            ),
+            (
+                GithubBrokerError::PullRequestChanged,
+                Lane::FailLaunch,
+                FailureClass::TerminalSecurity,
+                "pull_request_identity_changed",
+            ),
+            (
+                GithubBrokerError::UnsupportedWorkspace(
+                    super::super::github::WorkspaceUnsupported::LargeFileStorage,
+                ),
+                Lane::Suspended,
+                FailureClass::PolicyUserAction,
+                "github_status_policy_refused",
+            ),
+            (
+                GithubBrokerError::Rejected {
+                    status: 422,
+                    kind: super::super::github::GithubRejectionKind::Validation,
+                    provider_code: Some("validation_failed".into()),
+                },
+                Lane::Suspended,
+                FailureClass::PolicyUserAction,
+                "github_status_policy_refused",
+            ),
+            (
+                GithubBrokerError::Malformed("invalid status evidence".into()),
+                Lane::FailLaunch,
+                FailureClass::TerminalSecurity,
+                "github_pull_request_evidence_invalid",
+            ),
+        ];
+
+        for (error, expected_lane, expected_class, expected_code) in cases {
+            let disposition = pull_request_status_failure(
+                error,
+                &launch,
+                "status-taxonomy",
+                Some(provider_request_id.into()),
+            );
+            let (lane, failure, retained_request_id, retry_deadline) = match disposition {
+                PullRequestStatusDisposition::Observed { .. } => {
+                    panic!("a broker failure cannot become a successful status observation")
+                }
+                PullRequestStatusDisposition::Retry {
+                    failure,
+                    next_attempt_at,
+                    provider_request_id,
+                } => (
+                    Lane::Retry,
+                    failure,
+                    provider_request_id,
+                    Some(next_attempt_at),
+                ),
+                PullRequestStatusDisposition::Suspended {
+                    failure,
+                    provider_request_id,
+                } => (Lane::Suspended, failure, provider_request_id, None),
+                PullRequestStatusDisposition::FailLaunch {
+                    failure,
+                    provider_request_id,
+                } => (Lane::FailLaunch, failure, provider_request_id, None),
+            };
+
+            assert_eq!(lane, expected_lane, "wrong lane for {expected_code}");
+            assert_eq!(
+                failure.class, expected_class,
+                "wrong class for {expected_code}"
+            );
+            assert_eq!(failure.code, expected_code);
+            assert_eq!(failure.correlation_id, "status-taxonomy");
+            assert_eq!(retained_request_id.as_deref(), Some(provider_request_id));
+            match expected_lane {
+                Lane::Retry => {
+                    assert_eq!(failure.retry_at, retry_deadline);
+                    assert!(failure.retry_at.is_some());
+                }
+                Lane::Suspended | Lane::FailLaunch => {
+                    assert!(failure.retry_at.is_none());
+                    assert!(retry_deadline.is_none());
+                }
+            }
+        }
     }
 
     #[tokio::test]
@@ -6914,6 +7625,105 @@ pub(in crate::trigger) mod tests {
     }
 
     #[tokio::test]
+    async fn initial_dispatch_waits_for_session_lifecycle_without_sending_or_resending() {
+        use layer2_core::PromptDeliveryState as State;
+
+        for (delivery_state, status, recovery_state, mode) in [
+            (
+                State::Queued,
+                SessionStatus::Rotating,
+                RecoveryState::Normal,
+                EffectClaimMode::Execute,
+            ),
+            (
+                State::WriteConfirmed,
+                SessionStatus::Ready,
+                RecoveryState::Recovering,
+                EffectClaimMode::Reconcile,
+            ),
+            (
+                State::ExecutionObserved,
+                SessionStatus::Ready,
+                RecoveryState::Unknown,
+                EffectClaimMode::Reconcile,
+            ),
+            (
+                State::Queued,
+                SessionStatus::Provisioning,
+                RecoveryState::Normal,
+                EffectClaimMode::Execute,
+            ),
+        ] {
+            let mut launch = initial_dispatch_launch();
+            if delivery_state != State::Queued {
+                launch.delivery = Some(prompt_delivery(&launch, delivery_state));
+            }
+            let sessions = Arc::new(FakeSessions::new([SessionAnswer::EvidenceWithRecovery {
+                status,
+                recovery_state,
+                credential_ready: true,
+                rotations: 1,
+            }]));
+            let executor = session_executor(Arc::clone(&sessions));
+            let claim = claim_for(LaunchEffectKind::InitialDispatch, mode);
+            let result = match mode {
+                EffectClaimMode::Execute => executor.execute(&launch, &claim).await,
+                EffectClaimMode::Reconcile => executor.reconcile(&launch, &claim).await,
+            };
+
+            assert!(matches!(result, EffectExecution::WaitLater { .. }));
+            assert_eq!(sessions.calls.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                sessions.prompt_calls.load(Ordering::SeqCst),
+                0,
+                "lifecycle wait for {delivery_state:?} must not cross the prompt boundary"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn initial_dispatch_rotation_refusal_and_recovery_race_remain_waits() {
+        let launch = initial_dispatch_launch();
+        let claim = claim_for(LaunchEffectKind::InitialDispatch, EffectClaimMode::Execute);
+        let rotating = Arc::new(FakeSessions::with_prompt_answers([Err(
+            CoreError::SessionRotating,
+        )]));
+        let executor = session_executor(Arc::clone(&rotating));
+
+        assert!(matches!(
+            executor.execute(&launch, &claim).await,
+            EffectExecution::WaitLater { .. }
+        ));
+        assert_eq!(rotating.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(rotating.prompt_calls.load(Ordering::SeqCst), 1);
+
+        let recovering = Arc::new(FakeSessions::with_prompt_answers([Err(
+            CoreError::RuntimeUnavailable("rotation raced initial dispatch".into()),
+        )]));
+        *recovering.answers.lock().unwrap() = VecDeque::from([
+            SessionAnswer::Evidence {
+                status: SessionStatus::Ready,
+                credential_ready: true,
+                rotations: 0,
+            },
+            SessionAnswer::EvidenceWithRecovery {
+                status: SessionStatus::Provisioning,
+                recovery_state: RecoveryState::Recovering,
+                credential_ready: true,
+                rotations: 1,
+            },
+        ]);
+        let executor = session_executor(Arc::clone(&recovering));
+
+        assert!(matches!(
+            executor.execute(&launch, &claim).await,
+            EffectExecution::WaitLater { .. }
+        ));
+        assert_eq!(recovering.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(recovering.prompt_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn initial_dispatch_without_an_active_reach_never_calls_the_session_port() {
         for reach in [None, Some(CapabilityRevocationState::Revoked)] {
             let mut launch = initial_dispatch_launch();
@@ -7253,6 +8063,54 @@ pub(in crate::trigger) mod tests {
     }
 
     #[tokio::test]
+    async fn publication_executor_retains_the_object_recipe_before_object_writes() {
+        let fixture = publication_launch();
+        let blob_id = fixture.launch.diff.as_ref().unwrap().files[0]
+            .new_provider_object_id
+            .clone()
+            .unwrap();
+        let pending = super::super::github::PendingGitData {
+            base_tree_id: "b".repeat(40),
+            tree_id: None,
+            object_ids: vec![blob_id],
+            object_write: layer2_core::PublicationObjectWrite {
+                version: layer2_core::PublicationObjectWrite::VERSION,
+                request_digest: "9".repeat(64),
+                phase: layer2_core::PublicationObjectPhase::BlobsPending,
+            },
+        };
+        let github = Arc::new(FakeGithub::with_publication_answers([Ok(
+            super::super::github::PublicationAdvance::ObjectWritePending(pending.clone()),
+        )]));
+        let store = Arc::new(FakeReviewStore::with_publication_reads(
+            [Ok(Some(fixture.checkpoint_archive.clone()))],
+            [Ok(Some(fixture.artifact_object.clone()))],
+        ));
+        let executor = publication_executor(github.clone(), store);
+        let mut launch = fixture.launch;
+        let claim = claim_for(
+            LaunchEffectKind::BranchPublication,
+            EffectClaimMode::Execute,
+        );
+
+        let EffectExecution::Progressed {
+            result: LaunchEffectResult::BranchPublication { contribution },
+            ..
+        } = execute_with_admission(&executor, &mut launch, &claim).await
+        else {
+            panic!("the sealed object recipe must be persisted before any object write");
+        };
+        assert_eq!(contribution.state, PublicationState::IntentRecorded);
+        assert_eq!(
+            contribution.base_tree_id.as_deref(),
+            Some(pending.base_tree_id.as_str())
+        );
+        assert_eq!(contribution.object_ids, pending.object_ids);
+        assert_eq!(contribution.object_write, Some(pending.object_write));
+        assert_eq!(github.publication_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn publication_storage_outages_and_missing_objects_have_named_boundaries() {
         let fixture = publication_launch();
         let github = Arc::new(FakeGithub::new([]));
@@ -7370,6 +8228,7 @@ pub(in crate::trigger) mod tests {
 
         let EffectExecution::Progressed {
             result: LaunchEffectResult::BranchPublication { contribution },
+            ..
         } = execute_with_admission(&executor, &mut launch, &phase_claim).await
         else {
             panic!("object creation must yield durable progress");
@@ -7382,6 +8241,7 @@ pub(in crate::trigger) mod tests {
 
         let EffectExecution::Progressed {
             result: LaunchEffectResult::BranchPublication { contribution },
+            ..
         } = execute_with_admission(&executor, &mut launch, &phase_claim).await
         else {
             panic!("freshly admitted object verification must yield a durable ref intent");

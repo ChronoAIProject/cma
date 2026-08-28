@@ -23,6 +23,7 @@ const REVIEWED_AT: &str = "2026-08-26T12:00:00Z";
 const STARTED_AT: &str = "2026-08-26T12:01:00Z";
 const RUNTIME_V1: &str = "cma-trigger-test-runtime@sha256:admitted";
 const RUNTIME_V2: &str = "cma-trigger-test-runtime@sha256:replacement";
+const TEST_KERNEL: &str = "trigger-test-kernel";
 
 struct MutableSettings(StdMutex<StoredSettings>);
 
@@ -236,7 +237,7 @@ fn build_service(
 ) -> Arc<SessionService> {
     let mut adapters: HashMap<KernelId, Arc<dyn KernelAdapter>> = HashMap::new();
     let handovers = Arc::clone(&adapter) as Arc<dyn crate::store::HandoverStore>;
-    adapters.insert(KernelId::new("codex"), adapter);
+    adapters.insert(KernelId::new(TEST_KERNEL), adapter);
     let profiles = Arc::new(crate::test_support::FakeProfileStore::default());
     let environments = EnvironmentProfileService::new(
         profiles,
@@ -244,7 +245,7 @@ fn build_service(
         None,
         None,
         AgentConfiguration {
-            kernel: KernelId::new("codex"),
+            kernel: KernelId::new(TEST_KERNEL),
             mode: SessionMode::Conversation,
             ..AgentConfiguration::default()
         },
@@ -267,7 +268,7 @@ fn build_service(
         Deployment {
             runtime_version: Some(runtime_version.into()),
             trigger_runtime_capabilities,
-            trigger_kernel: Some(KernelId::new("codex")),
+            trigger_kernel: Some(KernelId::new(TEST_KERNEL)),
             ..crate::test_support::owned()
         },
     );
@@ -347,7 +348,7 @@ async fn zero_cost_is_pinned_even_when_the_deployment_has_a_price() {
     assert_eq!(admission.pricing.rate, None);
     assert_eq!(admission.pricing.micros_per_hour, 0);
     assert_eq!(admission.pricing.estimated_micros, 0);
-    assert_eq!(admission.runtime.kernel, crate::TriggerKernel::Codex);
+    assert_eq!(admission.runtime.kernel, KernelId::new(TEST_KERNEL));
 
     let launch = ready_for_provisioning(&fixture, BillingMode::ZeroCost).await;
     let session = fixture
@@ -356,6 +357,76 @@ async fn zero_cost_is_pinned_even_when_the_deployment_has_a_price() {
         .await
         .expect("the zero-cost Trigger session is accepted");
     assert_eq!(session.pricing, None);
+}
+
+#[tokio::test]
+async fn public_contributor_estimate_uses_the_review_rate_and_trigger_defaults() {
+    let fixture = fixture(priced_settings());
+    let launch = launch(BillingMode::Contributor);
+
+    let cost = TriggerLaunchAdmission::preview_cost(
+        fixture.service.as_ref(),
+        &launch.revision,
+        REVIEWED_AT,
+    )
+    .await;
+
+    assert_eq!(
+        cost,
+        crate::TriggerPreviewCost::ContributorEstimate {
+            currency: "USD".into(),
+            // 500m CPU at 40,000 + 1 GiB at 5,000, for the one-hour default.
+            amount_micros: 25_000,
+            display: "$0.025".into(),
+            quoted_at: REVIEWED_AT.into(),
+        }
+    );
+
+    let mut reviewed = launch;
+    let admission = review(fixture.service.as_ref(), &mut reviewed)
+        .await
+        .expect("authenticated review uses the same deployment pricing");
+    assert_eq!(admission.pricing.estimated_micros, 25_000);
+}
+
+#[tokio::test]
+async fn public_contributor_estimate_is_unavailable_without_a_rate_card() {
+    let fixture = fixture(PlatformSettings::default());
+    let launch = launch(BillingMode::Contributor);
+
+    let cost = TriggerLaunchAdmission::preview_cost(
+        fixture.service.as_ref(),
+        &launch.revision,
+        REVIEWED_AT,
+    )
+    .await;
+
+    assert_eq!(cost, crate::TriggerPreviewCost::QuoteUnavailable);
+}
+
+#[tokio::test]
+async fn missing_configured_trigger_kernel_fails_review_without_inference() {
+    let mut fixture = fixture(PlatformSettings::default());
+    Arc::get_mut(&mut fixture.service)
+        .expect("the fixture retains the sole service handle")
+        .trigger_kernel = None;
+    let launch = launch(BillingMode::ZeroCost);
+
+    let error = TriggerLaunchAdmission::review(
+        fixture.service.as_ref(),
+        &launch.owner,
+        &launch,
+        REVIEWED_AT,
+    )
+    .await
+    .expect_err("a missing configured kernel must not be inferred");
+    assert_eq!(
+        error,
+        TriggerAdmissionError::CapabilityUnsupported {
+            capability: "trigger_kernel".into(),
+        }
+    );
+    assert_eq!(fixture.adapter.provision_calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

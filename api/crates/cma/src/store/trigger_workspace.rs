@@ -652,12 +652,10 @@ impl ChronoStorageTriggerWorkspaceStore {
             return Ok(());
         }
         match response {
-            Ok(response) if !upload_succeeded => {
-                return Err(TriggerStoreError::Unavailable(format!(
-                    "workspace upload returned {}",
-                    response.status()
-                )));
-            }
+            Ok(response) if !upload_succeeded => Err(TriggerStoreError::Unavailable(format!(
+                "workspace upload returned {}",
+                response.status()
+            ))),
             Err(error) => Err(TriggerStoreError::Unavailable(format!(
                 "upload workspace object: {error}"
             ))),
@@ -1035,6 +1033,12 @@ impl BaselineObjectStore for ChronoStorageTriggerWorkspaceStore {
                     "baseline manifest entry has no provider object identity".into(),
                 )
             })?;
+            if entry.kind == WorkspaceEntryKind::Submodule {
+                // A gitlink names a commit, not a blob. Its zero-byte archive
+                // entry preserves the pinned identity without placing that
+                // commit in the fetchable provider-blob inventory.
+                continue;
+            }
             let blob = inventory.get(provider_object_id).copied().ok_or_else(|| {
                 TriggerStoreError::Malformed(
                     "baseline manifest entry is outside the retained provider inventory".into(),
@@ -1190,12 +1194,21 @@ impl BaselineObjectStore for ChronoStorageTriggerWorkspaceStore {
                 }
             }
         }
-        self.delete_raw(&Self::import_retired_key(owner, launch))
-            .await?;
-        self.delete_raw(&Self::import_completed_key(owner, launch))
-            .await?;
-        self.delete_raw(&Self::import_index_key(owner, launch))
-            .await
+        self.delete_raw_verified(
+            &Self::import_retired_key(owner, launch),
+            IMPORT_RETIRED_MARKER.len() as u64,
+        )
+        .await?;
+        self.delete_raw_verified(
+            &Self::import_completed_key(owner, launch),
+            IMPORT_INDEX_MAX_BYTES,
+        )
+        .await?;
+        self.delete_raw_verified(
+            &Self::import_index_key(owner, launch),
+            IMPORT_INDEX_MAX_BYTES,
+        )
+        .await
     }
 
     async fn put_baseline(
@@ -1248,7 +1261,8 @@ impl BaselineObjectStore for ChronoStorageTriggerWorkspaceStore {
         reference: &str,
     ) -> Result<(), TriggerStoreError> {
         let key = Self::require_reference(owner, launch, reference)?;
-        self.delete_raw(&key).await?;
+        self.delete_raw_verified(&key, workspace_archive_limit())
+            .await?;
         self.delete_baseline_import(owner, launch).await
     }
 }
@@ -1322,7 +1336,8 @@ impl ChronoStorageTriggerWorkspaceStore {
             return Ok(());
         };
         let key = Self::require_recovery_conversation_reference(owner, checkpoint, pair)?;
-        self.delete_raw(&key).await
+        self.delete_raw_verified(&key, MAX_TRIGGER_CONVERSATION_SNAPSHOT_BYTES)
+            .await
     }
 }
 
@@ -1377,7 +1392,8 @@ impl CheckpointObjectStore for ChronoStorageTriggerWorkspaceStore {
         checkpoint: &WorkspaceCheckpoint,
     ) -> Result<(), TriggerStoreError> {
         let key = Self::require_checkpoint_reference(owner, checkpoint)?;
-        self.delete_raw(&key).await?;
+        self.delete_raw_verified(&key, workspace_archive_limit())
+            .await?;
         self.delete_recovery_conversation(owner, checkpoint).await
     }
 
@@ -1392,11 +1408,15 @@ impl CheckpointObjectStore for ChronoStorageTriggerWorkspaceStore {
                 "checkpoint intent cannot address an object".into(),
             ));
         }
-        self.delete_raw(&Self::checkpoint_intent_key(owner, launch, intent))
-            .await?;
-        self.delete_raw(&Self::recovery_conversation_intent_key(
-            owner, launch, intent,
-        ))
+        self.delete_raw_verified(
+            &Self::checkpoint_intent_key(owner, launch, intent),
+            workspace_archive_limit(),
+        )
+        .await?;
+        self.delete_raw_verified(
+            &Self::recovery_conversation_intent_key(owner, launch, intent),
+            MAX_TRIGGER_CONVERSATION_SNAPSHOT_BYTES,
+        )
         .await
     }
 }
@@ -1476,7 +1496,8 @@ impl DiffArtifactObjectStore for ChronoStorageTriggerWorkspaceStore {
                 "diff artifact does not belong to this subject and Launch".into(),
             ));
         }
-        self.delete_raw(&expected).await
+        self.delete_raw_verified(&expected, MAX_DIFF_ARTIFACT_BYTES)
+            .await
     }
 }
 
@@ -2199,6 +2220,7 @@ mod tests {
         objects: Arc<tokio::sync::Mutex<HashMap<String, StoredObject>>>,
         fail_upload_containing: Arc<tokio::sync::Mutex<Option<String>>>,
         fail_delete_containing: Arc<tokio::sync::Mutex<Option<String>>>,
+        retain_delete_containing: Arc<tokio::sync::Mutex<Option<String>>>,
     }
 
     #[derive(Deserialize)]
@@ -2262,6 +2284,15 @@ mod tests {
             return StatusCode::SERVICE_UNAVAILABLE;
         }
         drop(failure);
+        let mut retained = fixture.retain_delete_containing.lock().await;
+        if retained
+            .as_ref()
+            .is_some_and(|needle| query.key.contains(needle))
+        {
+            *retained = None;
+            return StatusCode::OK;
+        }
+        drop(retained);
         fixture.objects.lock().await.remove(&query.key);
         StatusCode::OK
     }
@@ -2532,6 +2563,112 @@ mod tests {
             ChronoStorageTriggerWorkspaceStore::require_reference(&bob, &launch, &alice_key)
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn baseline_import_keeps_gitlinks_out_of_the_provider_blob_inventory() {
+        let (base_url, fixture, server) = storage_fixture().await;
+        let launch = crate::trigger::worker::tests::launch_fixture();
+        let owner = launch.owner.clone();
+        let launch_id = launch.id.clone();
+        let source_revision = launch.source_sha.clone();
+        let store = recovery_store(base_url, Arc::new(TestLaunchStore::new(launch)));
+        let gitmodules = br#"[submodule "vendor/library"]
+	path = vendor/library
+	url = ../../shared/library.git
+"#;
+        let mut object = sha1::Sha1::new();
+        object.update(format!("blob {}\0", gitmodules.len()).as_bytes());
+        object.update(gitmodules);
+        let gitmodules_id = hex(&object.finalize());
+        let blob = BaselineImportBlob::new(&gitmodules_id, gitmodules.len() as u64).unwrap();
+        let chunk = BaselineImportChunk {
+            provider_object_id: gitmodules_id.clone(),
+            ordinal: 0,
+            bytes: gitmodules.len() as u64,
+            sha256: digest(gitmodules),
+        };
+        let source = crate::trigger::github::WorkspaceSourcePlan {
+            source_revision: source_revision.clone(),
+            tree_digest: "f".repeat(64),
+            entries: vec![
+                crate::trigger::github::WorkspaceSourceEntry {
+                    path: ".gitmodules".into(),
+                    mode: 0o100644,
+                    provider_object_id: gitmodules_id.clone(),
+                    bytes: gitmodules.len() as u64,
+                },
+                crate::trigger::github::WorkspaceSourceEntry {
+                    path: "vendor/library".into(),
+                    mode: 0o160000,
+                    provider_object_id: "b".repeat(40),
+                    bytes: 0,
+                },
+            ],
+            blobs: vec![blob.clone()],
+        };
+        let metadata = crate::trigger::github::workspace_blob_metadata(
+            &blob,
+            gitmodules,
+            vec![chunk.clone()],
+            false,
+            true,
+        )
+        .unwrap();
+        let (manifest, plan) = crate::trigger::github::build_baseline_archive_plan(
+            &source,
+            &BTreeMap::from([(gitmodules_id.clone(), metadata)]),
+        )
+        .unwrap();
+
+        store
+            .begin_baseline_import(
+                &owner,
+                &launch_id,
+                &source_revision,
+                &source.tree_digest,
+                &source.blobs,
+            )
+            .await
+            .unwrap();
+        store
+            .put_baseline_import_chunk(
+                &owner,
+                &launch_id,
+                &source_revision,
+                &blob,
+                &chunk,
+                gitmodules,
+            )
+            .await
+            .unwrap();
+        let outcome = store
+            .finalize_baseline_import(&owner, &launch_id, &manifest, plan)
+            .await
+            .expect("a gitlink is metadata rather than a missing provider blob");
+
+        let gitlink = outcome
+            .manifest
+            .entries
+            .iter()
+            .find(|entry| entry.kind == WorkspaceEntryKind::Submodule)
+            .unwrap();
+        assert_eq!(
+            gitlink.provider_object_id.as_deref(),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+        let retained = fixture.objects.lock().await;
+        let baseline = retained
+            .get(&outcome.object_reference)
+            .expect("the complete baseline archive is durable");
+        assert!(baseline
+            .bytes
+            .windows(b"../../shared/library.git".len())
+            .any(|window| window == b"../../shared/library.git"));
+        assert_eq!(source.blobs.len(), 1);
+        assert_eq!(source.blobs[0].provider_object_id, gitmodules_id);
+        drop(retained);
+        server.abort();
     }
 
     #[test]
@@ -3093,6 +3230,49 @@ mod tests {
         CheckpointObjectStore::delete_checkpoint(&store, &owner, &checkpoint)
             .await
             .expect("the retained descriptor makes paired deletion retryable");
+        assert!(fixture.objects.lock().await.is_empty());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn acknowledged_but_retained_checkpoint_delete_remains_retryable() {
+        let (base_url, fixture, server) = storage_fixture().await;
+        let (launch, origin, intent, captured, conversation) = recovery_fixture();
+        let owner = launch.owner.clone();
+        let launches = Arc::new(TestLaunchStore::new(launch));
+        let store = recovery_store(base_url, Arc::clone(&launches));
+        let receipt = store
+            .commit_checkpoint(
+                &owner,
+                &origin,
+                &intent,
+                1,
+                &captured,
+                &conversation,
+                "2026-08-27T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        let checkpoint = launches
+            .current()
+            .workspace
+            .unwrap()
+            .latest_checkpoint
+            .unwrap();
+        *fixture.retain_delete_containing.lock().await = Some(".pack".into());
+
+        let first = CheckpointObjectStore::delete_checkpoint(&store, &owner, &checkpoint)
+            .await
+            .expect_err("a successful response is not proof that an object was deleted");
+        assert!(matches!(first, TriggerStoreError::Unavailable(_)));
+        let objects = fixture.objects.lock().await;
+        assert!(objects.contains_key(&receipt.reference.workspace_object_reference));
+        assert!(objects.contains_key(&receipt.reference.conversation_object_reference));
+        drop(objects);
+
+        CheckpointObjectStore::delete_checkpoint(&store, &owner, &checkpoint)
+            .await
+            .expect("the retained deletion debt converges on retry");
         assert!(fixture.objects.lock().await.is_empty());
         server.abort();
     }

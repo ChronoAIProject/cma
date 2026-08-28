@@ -743,6 +743,7 @@ async fn compatibility_termination_retry_clears_a_terminal_residual_handover_des
         .await
         .expect("created");
     await_settled(&original, &caller, &created.id).await;
+    original.flush(&created.id).await;
     original
         .terminate_session(&caller, &created.id)
         .await

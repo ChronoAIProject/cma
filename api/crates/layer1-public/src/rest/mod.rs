@@ -35,7 +35,7 @@ mod tickets;
 mod trigger_openapi_shapes;
 pub(crate) mod triggers;
 
-pub(crate) use problems::{problem_document, problem_response};
+pub(crate) use problems::{problem_document, problem_response, TriggerValidationCategory};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
 
 use crate::auth::{AuthenticatedCaller, DelegatedCredential};
@@ -45,6 +45,39 @@ use pagination::SessionPageParams;
 
 /// Base URI for problem types this interface returns.
 pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/problems";
+
+/// Exact accepted caller correlation identifier length, in ASCII bytes.
+pub const REQUEST_ID_LENGTH: usize = 36;
+
+/// OpenAPI expression for the exact caller correlation identifier vocabulary.
+pub const REQUEST_ID_PATTERN: &str =
+    "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+/// Return one canonical caller request identifier, if the header map contains
+/// exactly one usable value.
+///
+/// Surrounding ASCII whitespace is normalized away. Only the canonical,
+/// lowercase, hyphenated rendering of an RFC UUID is accepted. Everything
+/// else, including multiple values, is rejected before it can reach logs,
+/// durable Trigger events, or a response header.
+pub fn request_id_from_headers(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all("x-request-id").iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    normalize_request_id(value.to_str().ok()?)
+}
+
+/// Normalize and validate the textual value of one `X-Request-Id` header.
+pub fn normalize_request_id(value: &str) -> Option<&str> {
+    let normalized = value.trim_matches(|character: char| character.is_ascii_whitespace());
+    if normalized.len() != REQUEST_ID_LENGTH {
+        return None;
+    }
+    let parsed = uuid::Uuid::parse_str(normalized).ok()?;
+    (parsed.hyphenated().to_string() == normalized).then_some(normalized)
+}
 
 /// Conformance classes this interface satisfies.
 const CONFORMS_TO: &[&str] = &[

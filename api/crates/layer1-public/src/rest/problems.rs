@@ -11,6 +11,18 @@ use utoipa::ToSchema;
 
 use super::PROBLEM_BASE;
 
+/// Stable, safe classes used to choose actionable Trigger validation help.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TriggerValidationCategory {
+    RepositoryIdentity,
+    RepositoryPolicy,
+    RepositoryRef,
+    ScopeCapability,
+    CommercialPolicy,
+    TriggerPolicy,
+}
+
 /// RFC 9457 problem details returned by every REST refusal.
 ///
 /// The last fields are typed extensions used by particular domain refusals.
@@ -26,6 +38,11 @@ pub struct ProblemDocument {
     code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(inline)]
+    validation_category: Option<TriggerValidationCategory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remediation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -289,6 +306,8 @@ pub(crate) fn problem_document(
         detail: detail.to_string(),
         code: code.to_string(),
         field: None,
+        validation_category: None,
+        remediation: None,
         path: None,
         capability: None,
         dimension: None,

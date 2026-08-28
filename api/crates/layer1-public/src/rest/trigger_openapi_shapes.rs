@@ -230,7 +230,7 @@ pub(super) struct CommercialPolicy {
 #[serde(rename_all = "snake_case")]
 pub(super) enum EditableField {
     TaskInput,
-    BranchSuffix,
+    WorkLabel,
     ResourceSize,
     Timeout,
 }
@@ -268,7 +268,7 @@ pub(super) struct TriggerRevisionContent {
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct LaunchOverrides {
     task_inputs: std::collections::BTreeMap<String, serde_json::Value>,
-    branch_suffix: Option<String>,
+    work_label: Option<String>,
     resource_size: Option<SessionSize>,
     timeout_seconds: Option<u32>,
     #[schema(min_items = 0, max_items = 0)]
@@ -278,7 +278,7 @@ pub(super) struct LaunchOverrides {
 #[derive(serde::Serialize, ToSchema)]
 pub(super) struct EffectiveConfiguration {
     rendered_prompt: String,
-    branch_suffix: String,
+    work_label: String,
     permission: PermissionMode,
     resource_size: SessionSize,
     timeout_seconds: u32,
@@ -543,6 +543,7 @@ pub(super) enum ConfirmationAction {
     PublishBranch,
     OpenPullRequest,
     UpdatePullRequest,
+    Complete,
     RecoverPrompt,
     NewLaunch,
     Cancel,

@@ -799,9 +799,7 @@ async fn authorize_effect_reconciliation(
                     expected_fence: body.expected_fence,
                     evidence_correlation_id: body.evidence_correlation_id,
                     now: timestamp,
-                    correlation_id: headers
-                        .get("x-request-id")
-                        .and_then(|value| value.to_str().ok())
+                    correlation_id: super::request_id_from_headers(&headers)
                         .map(str::to_string)
                         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 },

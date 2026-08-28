@@ -50,7 +50,15 @@ const TEST_SKILL_NAME: &str = "repository-review";
 const TEST_DELEGATED_CREDENTIAL: &str = "contract-delegated-credential";
 
 type OperationIdentity = (String, String, String);
-type HeldOperation = ([u8; 32], Option<Vec<u8>>, SystemTime);
+
+struct HeldOperation {
+    claim_id: String,
+    fingerprint: [u8; 32],
+    outcome: Option<Vec<u8>>,
+    lease_expires_at: SystemTime,
+    recovery_required: bool,
+    outcome_expires_at: Option<SystemTime>,
+}
 
 #[derive(Default)]
 struct MemoryOperations {
@@ -94,21 +102,38 @@ impl OperationStore for MemoryOperations {
         let identity = Self::identity(claim);
         let now = SystemTime::now();
         let mut state = self.state.lock().await;
-        if state
-            .get(&identity)
-            .is_some_and(|(_, _, expires_at)| *expires_at <= now)
-        {
+        if state.get(&identity).is_some_and(|held| {
+            held.outcome.is_some()
+                && held
+                    .outcome_expires_at
+                    .is_some_and(|expires_at| expires_at <= now)
+        }) {
             state.remove(&identity);
         }
-        let Some((fingerprint, outcome, _)) = state.get(&identity) else {
-            state.insert(identity, (*claim.fingerprint(), None, claim.expires_at()));
+        let Some(held) = state.get_mut(&identity) else {
+            state.insert(
+                identity,
+                HeldOperation {
+                    claim_id: claim.claim_id().to_string(),
+                    fingerprint: *claim.fingerprint(),
+                    outcome: None,
+                    lease_expires_at: claim.lease_expires_at(),
+                    recovery_required: false,
+                    outcome_expires_at: None,
+                },
+            );
             return Ok(OperationReservation::Acquired);
         };
-        if fingerprint != claim.fingerprint() {
+        if &held.fingerprint != claim.fingerprint() {
             return Ok(OperationReservation::FingerprintMismatch);
         }
-        Ok(match outcome {
+        Ok(match &held.outcome {
             Some(outcome) => OperationReservation::Complete(outcome.clone()),
+            None if held.recovery_required => OperationReservation::RecoveryRequired,
+            None if held.lease_expires_at <= now => {
+                held.recovery_required = true;
+                OperationReservation::RecoveryRequired
+            }
             None => OperationReservation::Pending,
         })
     }
@@ -129,26 +154,33 @@ impl OperationStore for MemoryOperations {
         let held = state
             .get_mut(&Self::identity(claim))
             .ok_or_else(|| StoreError::Malformed("test operation claim is missing".into()))?;
-        if held.2 != claim.expires_at() {
+        if held.claim_id != claim.claim_id() {
             return Err(StoreError::Malformed(
                 "test operation claim was replaced".into(),
             ));
         }
-        if &held.0 != claim.fingerprint() {
+        if &held.fingerprint != claim.fingerprint() {
             return Err(StoreError::Malformed(
                 "test operation fingerprint changed".into(),
             ));
         }
-        match held.1.as_ref() {
+        match held.outcome.as_ref() {
             Some(recorded) if recorded != &outcome => Err(StoreError::Malformed(
                 "test operation outcome changed".into(),
             )),
             Some(_) => Ok(()),
-            None if held.2 <= SystemTime::now() => Err(StoreError::Malformed(
-                "test operation claim expired before completion".into(),
-            )),
             None => {
-                held.1 = Some(outcome);
+                held.outcome = Some(outcome);
+                held.recovery_required = false;
+                held.outcome_expires_at = Some(
+                    SystemTime::now()
+                        .checked_add(claim.outcome_retention())
+                        .ok_or_else(|| {
+                            StoreError::Malformed(
+                                "test operation outcome retention overflowed".into(),
+                            )
+                        })?,
+                );
                 Ok(())
             }
         }
@@ -4570,15 +4602,28 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
                 operation["responses"]["default"]["$ref"], "#/components/responses/Problem",
                 "{method} {template} must type its refusals"
             );
-            assert!(
-                operation["parameters"]
-                    .as_array()
-                    .is_some_and(|parameters| parameters.iter().any(|parameter| {
+            let request_id_parameter = operation["parameters"]
+                .as_array()
+                .and_then(|parameters| {
+                    parameters.iter().find(|parameter| {
                         parameter["name"] == "X-Request-Id"
                             && parameter["in"] == "header"
                             && parameter["required"] == false
-                    })),
-                "{method} {template} must document caller correlation"
+                    })
+                })
+                .unwrap_or_else(|| panic!("{method} {template} must document caller correlation"));
+            assert_eq!(request_id_parameter["schema"]["type"], "string");
+            assert_eq!(
+                request_id_parameter["schema"]["minLength"],
+                layer1_public::rest::REQUEST_ID_LENGTH
+            );
+            assert_eq!(
+                request_id_parameter["schema"]["maxLength"],
+                layer1_public::rest::REQUEST_ID_LENGTH
+            );
+            assert_eq!(
+                request_id_parameter["schema"]["pattern"],
+                layer1_public::rest::REQUEST_ID_PATTERN
             );
             for (status, response) in operation["responses"]
                 .as_object()
@@ -4590,6 +4635,16 @@ async fn openapi_is_public_typed_and_covers_the_complete_rest_surface() {
                 assert_eq!(
                     response["headers"]["X-Request-Id"]["schema"]["type"], "string",
                     "{method} {template} {status} must document correlation"
+                );
+                assert_eq!(
+                    response["headers"]["X-Request-Id"]["schema"]["maxLength"],
+                    layer1_public::rest::REQUEST_ID_LENGTH,
+                    "{method} {template} {status} must bound correlation"
+                );
+                assert_eq!(
+                    response["headers"]["X-Request-Id"]["schema"]["pattern"],
+                    layer1_public::rest::REQUEST_ID_PATTERN,
+                    "{method} {template} {status} must document correlation syntax"
                 );
                 assert_eq!(
                     response["headers"]["Link"]["schema"]["type"], "string",
@@ -4726,7 +4781,7 @@ async fn request_ids_cover_success_auth_and_routing_failures_and_echo_callers() 
         .clone()
         .oneshot(
             Request::get("/api/v1/conformance")
-                .header("x-request-id", "support-case-488")
+                .header("x-request-id", "48800000-0000-4000-8000-000000000001")
                 .body(Body::empty())
                 .expect("request builds"),
         )
@@ -4734,13 +4789,43 @@ async fn request_ids_cover_success_auth_and_routing_failures_and_echo_callers() 
         .expect("router answers");
     assert_eq!(
         response.headers().get("x-request-id"),
-        Some(&HeaderValue::from_static("support-case-488"))
+        Some(&HeaderValue::from_static(
+            "48800000-0000-4000-8000-000000000001"
+        ))
+    );
+
+    let normalized = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/conformance")
+                .header(
+                    "x-request-id",
+                    HeaderValue::from_bytes(b" \t 48800000-0000-4000-8000-000000000002 \t ")
+                        .expect("surrounding whitespace is valid header text"),
+                )
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(
+        normalized.headers().get("x-request-id"),
+        Some(&HeaderValue::from_static(
+            "48800000-0000-4000-8000-000000000002"
+        )),
+        "accepted caller correlation is echoed only in canonical form"
     );
 
     for unusable in [
         HeaderValue::from_static(""),
         HeaderValue::from_bytes(b" \t ").expect("whitespace is a valid header value"),
         HeaderValue::from_bytes(&[0xff]).expect("opaque bytes are a valid header value"),
+        HeaderValue::from_static("request id has spaces"),
+        HeaderValue::from_static("-cannot-start-with-punctuation"),
+        HeaderValue::from_static("48800000000040008000000000000003"),
+        HeaderValue::from_static("48800000-0000-4000-8000-00000000000A"),
+        HeaderValue::from_str(&"x".repeat(layer1_public::rest::REQUEST_ID_LENGTH + 1))
+            .expect("the overlong fixture is still a legal HTTP header"),
     ] {
         let response = app
             .clone()
@@ -4767,6 +4852,25 @@ async fn request_ids_cover_success_auth_and_routing_failures_and_echo_callers() 
             "the replacement must be a generated UUID: {generated:?}"
         );
     }
+
+    let mut repeated = Request::get("/api/v1/conformance")
+        .body(Body::empty())
+        .expect("request builds");
+    repeated.headers_mut().append(
+        "x-request-id",
+        HeaderValue::from_static("48800000-0000-4000-8000-000000000004"),
+    );
+    repeated.headers_mut().append(
+        "x-request-id",
+        HeaderValue::from_static("48800000-0000-4000-8000-000000000005"),
+    );
+    let repeated = app.oneshot(repeated).await.expect("router answers");
+    let generated = repeated
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .expect("a repeated request id is replaced");
+    assert!(uuid::Uuid::parse_str(generated).is_ok());
 }
 
 #[tokio::test]
@@ -5740,7 +5844,8 @@ async fn an_in_flight_duplicate_is_a_named_conflict() {
         "session-create",
         "still-running",
         fingerprint,
-        SystemTime::now() + std::time::Duration::from_secs(86_400),
+        SystemTime::now() + std::time::Duration::from_secs(120),
+        std::time::Duration::from_secs(86_400),
     );
     assert_eq!(
         operations.reserve(&claim).await.unwrap(),
@@ -5759,6 +5864,116 @@ async fn an_in_flight_duplicate_is_a_named_conflict() {
     let body = assert_problem(response, StatusCode::CONFLICT).await;
     assert_eq!(body["code"], "idempotency_in_flight");
     assert!(store.state.lock().await.records.is_empty());
+}
+
+#[tokio::test]
+async fn an_expired_execution_lease_is_fenced_until_the_exact_outcome_arrives() {
+    use sha2::{Digest as _, Sha256};
+
+    let operations = MemoryOperations::default();
+    let fingerprint: [u8; 32] = Sha256::digest(b"{}").into();
+    let abandoned = OperationClaim::new(
+        SubjectId("subject-a".into()),
+        "trigger-launch-refresh:launch-a",
+        "crashed-request",
+        fingerprint,
+        SystemTime::UNIX_EPOCH,
+        std::time::Duration::from_secs(86_400),
+    );
+    assert_eq!(
+        operations.reserve(&abandoned).await.unwrap(),
+        OperationReservation::Acquired
+    );
+
+    let retry = OperationClaim::new(
+        SubjectId("subject-a".into()),
+        "trigger-launch-refresh:launch-a",
+        "crashed-request",
+        fingerprint,
+        SystemTime::now() + std::time::Duration::from_secs(120),
+        std::time::Duration::from_secs(86_400),
+    );
+    assert_eq!(
+        operations.reserve(&retry).await.unwrap(),
+        OperationReservation::RecoveryRequired,
+        "lease expiry fences the unknown execution instead of reacquiring it"
+    );
+    assert_eq!(
+        operations.reserve(&retry).await.unwrap(),
+        OperationReservation::RecoveryRequired,
+        "the recovery fence is durable across observers"
+    );
+    assert_eq!(
+        operations
+            .reserve(&OperationClaim::new(
+                SubjectId("subject-a".into()),
+                "trigger-launch-refresh:launch-a",
+                "crashed-request",
+                Sha256::digest(b"{ }").into(),
+                retry.lease_expires_at(),
+                std::time::Duration::from_secs(86_400),
+            ))
+            .await
+            .unwrap(),
+        OperationReservation::FingerprintMismatch,
+        "recovery does not weaken byte-exact request binding"
+    );
+
+    let exact_outcome = b"opaque exact HTTP response".to_vec();
+    operations
+        .complete(&abandoned, exact_outcome.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        operations.reserve(&retry).await.unwrap(),
+        OperationReservation::Complete(exact_outcome),
+        "a late owner completion converts the fence into normal exact replay"
+    );
+}
+
+#[tokio::test]
+async fn rest_names_an_abandoned_claim_without_reexecuting_its_command() {
+    use sha2::{Digest as _, Sha256};
+
+    let TestSurface {
+        app,
+        operations,
+        store,
+        caller,
+        ..
+    } = test_surface(true);
+    let claim = OperationClaim::new(
+        caller.subject.clone(),
+        "session-create",
+        "abandoned-create",
+        Sha256::digest(b"{}").into(),
+        SystemTime::UNIX_EPOCH,
+        std::time::Duration::ZERO,
+    );
+    assert_eq!(
+        operations.reserve(&claim).await.unwrap(),
+        OperationReservation::Acquired
+    );
+
+    let response = app
+        .oneshot(keyed_json_request(
+            Method::POST,
+            "/api/v1/sessions",
+            "abandoned-create",
+            "{}",
+        ))
+        .await
+        .expect("router answers");
+    let body = assert_problem(response, StatusCode::CONFLICT).await;
+    assert_eq!(body["code"], "idempotency_recovery_required");
+    assert_eq!(
+        body["detail"],
+        "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required."
+    );
+    assert!(
+        store.state.lock().await.records.is_empty(),
+        "an unknown prior execution is never acquired again"
+    );
 }
 
 #[tokio::test]
@@ -5912,18 +6127,24 @@ async fn an_expired_key_is_reusable_and_a_stale_completion_cannot_replace_it() {
         "session-create",
         "expired",
         fingerprint,
-        SystemTime::UNIX_EPOCH,
+        SystemTime::now() + std::time::Duration::from_secs(120),
+        std::time::Duration::ZERO,
     );
     assert_eq!(
         operations.reserve(&expired).await.unwrap(),
         OperationReservation::Acquired
     );
+    operations
+        .complete(&expired, b"expired outcome".to_vec())
+        .await
+        .unwrap();
     let current = OperationClaim::new(
         SubjectId("subject-a".into()),
         "session-create",
         "expired",
         fingerprint,
-        SystemTime::now() + std::time::Duration::from_secs(86_400),
+        SystemTime::now() + std::time::Duration::from_secs(120),
+        std::time::Duration::from_secs(86_400),
     );
     assert_eq!(
         operations.reserve(&current).await.unwrap(),

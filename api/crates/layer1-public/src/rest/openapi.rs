@@ -7,6 +7,7 @@ use utoipa::{openapi, PartialSchema, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::{ProblemDocument, SERVICE_VERSION};
+use super::{REQUEST_ID_LENGTH, REQUEST_ID_PATTERN};
 
 pub(super) const DOCUMENT_PATH: &str = "/openapi.json";
 
@@ -81,10 +82,17 @@ fn finish_document(document: &mut openapi::OpenApi) {
         )),
     );
 
+    let request_id_schema = openapi::ObjectBuilder::new()
+        .schema_type(openapi::Type::String)
+        .min_length(Some(REQUEST_ID_LENGTH))
+        .max_length(Some(REQUEST_ID_LENGTH))
+        .pattern(Some(REQUEST_ID_PATTERN))
+        .build();
     let request_id = openapi::header::HeaderBuilder::new()
         .description(Some(
-            "Correlation identifier echoed from the request or minted by CMA",
+            "Canonical correlation identifier accepted from the request or minted by CMA",
         ))
+        .schema(request_id_schema.clone())
         .build();
     let link = openapi::header::HeaderBuilder::new()
         .description(Some(
@@ -96,9 +104,9 @@ fn finish_document(document: &mut openapi::OpenApi) {
         .parameter_in(openapi::path::ParameterIn::Header)
         .required(openapi::Required::False)
         .description(Some(
-            "Optional non-empty text caller correlation identifier; usable values are echoed unchanged",
+            "Optional caller correlation identifier. CMA trims surrounding ASCII whitespace, accepts only one canonical lowercase hyphenated RFC UUID, and replaces invalid or repeated values with a generated UUID.",
         ))
-        .schema(Some(openapi::Object::with_type(openapi::Type::String)))
+        .schema(Some(request_id_schema))
         .build();
     let problem = openapi::response::ResponseBuilder::new()
         .description("RFC 9457 problem details")

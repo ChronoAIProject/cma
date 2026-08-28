@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Confirmation, ConfirmationAction, ContributionId, DiffArtifactId, LaunchId,
+    Confirmation, ConfirmationAction, ContributionId, DiffArtifactId, LaunchFailure, LaunchId,
     TriggerValidationError,
 };
 
@@ -42,6 +42,43 @@ pub enum PublicationState {
     Failed,
 }
 
+/// Durable cursor for reconstructing one immutable Git Data object recipe.
+///
+/// The cursor is recorded before any object POST. A response-loss recovery may
+/// therefore observe a content-addressed blob or repeat the exact sealed tree
+/// or commit request without inventing a new publication intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicationObjectPhase {
+    BlobsPending,
+    TreePending,
+    CommitPending,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationObjectWrite {
+    pub version: u32,
+    pub request_digest: String,
+    pub phase: PublicationObjectPhase,
+}
+
+impl PublicationObjectWrite {
+    pub const VERSION: u32 = 1;
+
+    fn validate(&self) -> Result<(), TriggerValidationError> {
+        if self.version != Self::VERSION {
+            return Err(TriggerValidationError::field(
+                "contribution.object_write.version",
+                "is not a supported Git object recipe version",
+            ));
+        }
+        validate_sha256(
+            "contribution.object_write.request_digest",
+            &self.request_digest,
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContributionRecord {
     pub id: ContributionId,
@@ -64,6 +101,8 @@ pub struct ContributionRecord {
     pub resulting_head: Option<String>,
     #[serde(default)]
     pub object_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_write: Option<PublicationObjectWrite>,
     pub author: CommitIdentity,
     pub committer: CommitIdentity,
     pub confirmation: Confirmation,
@@ -112,6 +151,16 @@ impl ContributionRecord {
         for object in &self.object_ids {
             validate_git_id("contribution.object_ids", object)?;
         }
+        if self
+            .object_ids
+            .windows(2)
+            .any(|pair| pair[0].as_str() >= pair[1].as_str())
+        {
+            return Err(TriggerValidationError::field(
+                "contribution.object_ids",
+                "must be a sorted unique Git object inventory",
+            ));
+        }
         let has_complete_objects =
             self.base_tree_id.is_some() && self.tree_id.is_some() && self.commit_id.is_some();
         let has_partial_objects = self.base_tree_id.is_some()
@@ -119,16 +168,36 @@ impl ContributionRecord {
             || self.commit_id.is_some()
             || !self.object_ids.is_empty();
         match self.state {
-            PublicationState::IntentRecorded
-                if has_partial_objects || self.resulting_head.is_some() =>
-            {
-                return Err(TriggerValidationError::field(
-                    "contribution.state",
-                    "intent_recorded cannot claim Git object or ref evidence",
-                ));
-            }
+            PublicationState::IntentRecorded => match self.object_write.as_ref() {
+                None if has_partial_objects || self.resulting_head.is_some() => {
+                    return Err(TriggerValidationError::field(
+                        "contribution.state",
+                        "an unprepared intent cannot claim Git object or ref evidence",
+                    ));
+                }
+                Some(write) => {
+                    write.validate()?;
+                    let valid_shape = self.base_tree_id.is_some()
+                        && self.commit_id.is_none()
+                        && self.resulting_head.is_none()
+                        && match write.phase {
+                            PublicationObjectPhase::BlobsPending
+                            | PublicationObjectPhase::TreePending => self.tree_id.is_none(),
+                            PublicationObjectPhase::CommitPending => self.tree_id.is_some(),
+                        };
+                    if !valid_shape {
+                        return Err(TriggerValidationError::field(
+                            "contribution.object_write",
+                            "does not match its retained Git object phase",
+                        ));
+                    }
+                }
+                None => {}
+            },
             PublicationState::ObjectsWritten | PublicationState::RefUpdatePending
-                if !has_complete_objects || self.resulting_head.is_some() =>
+                if !has_complete_objects
+                    || self.resulting_head.is_some()
+                    || self.object_write.is_some() =>
             {
                 return Err(TriggerValidationError::field(
                     "contribution.state",
@@ -136,7 +205,9 @@ impl ContributionRecord {
                 ));
             }
             PublicationState::Published
-                if !has_complete_objects || self.resulting_head != self.commit_id =>
+                if !has_complete_objects
+                    || self.resulting_head != self.commit_id
+                    || self.object_write.is_some() =>
             {
                 return Err(TriggerValidationError::field(
                     "contribution.state",
@@ -147,6 +218,7 @@ impl ContributionRecord {
             | PublicationState::RecoveryRequired
             | PublicationState::Failed
                 if has_partial_objects != has_complete_objects
+                    || self.object_write.is_some()
                     || self.resulting_head.as_ref().is_some_and(|head| {
                         self.commit_id
                             .as_ref()
@@ -219,6 +291,25 @@ pub enum CheckSummaryState {
 pub enum PullRequestOperation {
     Open,
     Update,
+}
+
+/// Durable cadence and failure evidence for read-only provider status refresh.
+///
+/// This state never authorizes a pull-request write. It exists so an in-process
+/// scheduler can resume status observation after a browser closes or a CMA
+/// replica restarts without polling GitHub on every scheduler tick.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PullRequestStatusSync {
+    #[serde(default)]
+    pub consecutive_failures: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_attempt_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failure: Option<LaunchFailure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_matches_launch: Option<bool>,
 }
 
 impl PullRequestOperation {
@@ -522,6 +613,10 @@ pub struct PullRequestRecord {
     pub provider_created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_updated_at: Option<String>,
+    /// Internal read-only provider refresh state. Public projections expose
+    /// the resulting PR fields and safe failure, never this worker cadence.
+    #[serde(default)]
+    pub status_sync: PullRequestStatusSync,
 }
 
 impl PullRequestRecord {

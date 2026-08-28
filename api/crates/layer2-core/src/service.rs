@@ -25,7 +25,7 @@ use crate::ids::{KernelId, SessionId};
 use crate::options::{AgentOptions, SessionMode};
 use crate::platform::PlatformSettings;
 use crate::platform_service::PlatformSettingsService;
-use crate::pricing::{format_usd, Quote, SessionPricing, CURRENCY};
+use crate::pricing::{estimate_micros, format_usd, Quote, SessionPricing, CURRENCY};
 use crate::session::{RecoveryState, Session, SessionSpec, SessionStatus};
 use crate::size::SessionSize;
 use crate::store::{SessionRecord, SessionStore, StoreError};
@@ -920,14 +920,12 @@ impl SessionService {
     ) -> Result<(), crate::TriggerAdmissionError> {
         let policy = &launch.revision.content.commercial_policy;
         let size = launch.effective.resource_size;
-        let estimated = (u128::from(pricing.micros_per_hour)
-            * u128::from(launch.effective.timeout_seconds))
-            / 3_600;
-        let estimated = u64::try_from(estimated).map_err(|_| {
-            crate::TriggerAdmissionError::PricingUnavailable(
-                "the pinned maximum session estimate exceeds the supported ledger".into(),
-            )
-        })?;
+        let estimated = estimate_micros(pricing.micros_per_hour, launch.effective.timeout_seconds)
+            .ok_or_else(|| {
+                crate::TriggerAdmissionError::PricingUnavailable(
+                    "the pinned maximum session estimate exceeds the supported ledger".into(),
+                )
+            })?;
         let common_is_valid = pricing.policy_reference == policy.policy_reference
             && pricing.billing_mode == policy.billing_mode
             && pricing.currency == CURRENCY
@@ -1001,23 +999,14 @@ impl SessionService {
                         "the contributor policy reference is not deployment-owned".into(),
                     ));
                 }
-                let quote = Self::quote_from_at(settings, Some(size), now.to_string())
-                    .map_err(|error| {
-                        crate::TriggerAdmissionError::PricingUnavailable(error.to_string())
-                    })?
-                    .ok_or_else(|| {
-                        crate::TriggerAdmissionError::PricingUnavailable(
-                            "contributor billing requires an in-force platform rate card".into(),
-                        )
-                    })?;
-                let estimated = (u128::from(quote.micros_per_hour)
-                    * u128::from(launch.effective.timeout_seconds))
-                    / 3_600;
-                let estimated_micros = u64::try_from(estimated).map_err(|_| {
-                    crate::TriggerAdmissionError::PricingUnavailable(
-                        "the maximum session estimate exceeds the supported ledger".into(),
-                    )
-                })?;
+                let quote = Self::trigger_contributor_quote(settings, size, now)?;
+                let estimated_micros =
+                    estimate_micros(quote.micros_per_hour, launch.effective.timeout_seconds)
+                        .ok_or_else(|| {
+                            crate::TriggerAdmissionError::PricingUnavailable(
+                                "the maximum session estimate exceeds the supported ledger".into(),
+                            )
+                        })?;
                 Ok(crate::PricingSnapshot {
                     policy_reference: policy.policy_reference.clone(),
                     billing_mode: policy.billing_mode,
@@ -1038,6 +1027,81 @@ impl SessionService {
         }
     }
 
+    fn trigger_contributor_quote(
+        settings: &PlatformSettings,
+        size: SessionSize,
+        now: &str,
+    ) -> Result<Quote, crate::TriggerAdmissionError> {
+        let quote = Self::quote_from_at(settings, Some(size), now.to_string())
+            .map_err(|error| crate::TriggerAdmissionError::PricingUnavailable(error.to_string()))?
+            .ok_or_else(|| {
+                crate::TriggerAdmissionError::PricingUnavailable(
+                    "contributor billing requires an in-force platform rate card".into(),
+                )
+            })?;
+        if quote.micros_per_hour == 0 {
+            return Err(crate::TriggerAdmissionError::PricingUnavailable(
+                "the contributor rate must produce a positive hourly amount".into(),
+            ));
+        }
+        Ok(quote)
+    }
+
+    async fn trigger_preview_cost(
+        &self,
+        revision: &crate::TriggerRevision,
+        now: &str,
+    ) -> crate::TriggerPreviewCost {
+        let policy = &revision.content.commercial_policy;
+        if policy.billing_mode != crate::BillingMode::Contributor
+            || policy.policy_reference != crate::CMA_TRIGGER_CONTRIBUTOR_POLICY_V1
+        {
+            return crate::TriggerPreviewCost::QuoteUnavailable;
+        }
+        let settings = match self.settings.for_trigger_admission().await {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(
+                    public_trigger_id = %revision.public_id,
+                    %error,
+                    "the public Trigger preview cannot read deployment pricing"
+                );
+                return crate::TriggerPreviewCost::QuoteUnavailable;
+            }
+        };
+        let quote = match Self::trigger_contributor_quote(
+            &settings,
+            revision.content.session.resources.default,
+            now,
+        ) {
+            Ok(quote) => quote,
+            Err(error) => {
+                tracing::debug!(
+                    public_trigger_id = %revision.public_id,
+                    %error,
+                    "the public Trigger preview has no contributor quote"
+                );
+                return crate::TriggerPreviewCost::QuoteUnavailable;
+            }
+        };
+        let Some(amount_micros) = estimate_micros(
+            quote.micros_per_hour,
+            revision.content.session.timeout_default_seconds,
+        ) else {
+            tracing::warn!(
+                public_trigger_id = %revision.public_id,
+                "the public Trigger estimate exceeds the supported ledger"
+            );
+            return crate::TriggerPreviewCost::QuoteUnavailable;
+        };
+        crate::TriggerPreviewCost::ContributorEstimate {
+            currency: quote.currency.into(),
+            amount_micros,
+            display: format_usd(amount_micros),
+            quoted_at: quote.quoted_at,
+        }
+    }
+
     fn trigger_runtime_snapshot(
         &self,
         launch: &crate::Launch,
@@ -1053,20 +1117,17 @@ impl SessionService {
             })?;
         let trigger_kernel = self.trigger_kernel.as_ref().ok_or_else(|| {
             crate::TriggerAdmissionError::CapabilityUnsupported {
-                capability: "conversation".into(),
+                capability: "trigger_kernel".into(),
             }
         })?;
-        let disclosed_kernel = match trigger_kernel.as_str() {
-            "codex" => crate::TriggerKernel::Codex,
-            _ => {
-                return Err(crate::TriggerAdmissionError::CapabilityUnsupported {
-                    capability: "trigger_kernel".into(),
-                })
-            }
-        };
+        if trigger_kernel.is_unset() {
+            return Err(crate::TriggerAdmissionError::CapabilityUnsupported {
+                capability: "trigger_kernel".into(),
+            });
+        }
         let adapter = self.adapters.get(trigger_kernel).ok_or_else(|| {
             crate::TriggerAdmissionError::CapabilityUnsupported {
-                capability: "conversation".into(),
+                capability: "trigger_kernel".into(),
             }
         })?;
         let kernel = adapter.capabilities();
@@ -1099,7 +1160,7 @@ impl SessionService {
             });
         }
         Ok(crate::RuntimeAdmissionSnapshot {
-            kernel: disclosed_kernel,
+            kernel: trigger_kernel.clone(),
             runtime_version,
             supported_capabilities: supported.into_iter().collect(),
             observed_at: now.to_string(),
@@ -1322,6 +1383,14 @@ impl SessionService {
 
 #[async_trait::async_trait]
 impl crate::TriggerLaunchAdmission for SessionService {
+    async fn preview_cost(
+        &self,
+        revision: &crate::TriggerRevision,
+        now: &str,
+    ) -> crate::TriggerPreviewCost {
+        self.trigger_preview_cost(revision, now).await
+    }
+
     async fn review(
         &self,
         owner: &crate::SubjectId,

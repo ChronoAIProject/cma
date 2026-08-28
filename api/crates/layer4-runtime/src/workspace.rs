@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest as _, Sha256};
+use unicode_normalization::UnicodeNormalization as _;
 
 pub const VERSION: u32 = 1;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -16,6 +17,8 @@ pub const MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 1_024;
 const MAX_HEADER_BYTES: usize = 128 * 1024 * 1024;
 pub const MAX_ARCHIVE_BYTES: usize = MAX_BYTES as usize + MAX_HEADER_BYTES + 8;
+const EMPTY_CONTENT_SHA256: &str =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -641,13 +644,22 @@ fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
     {
         return Err("workspace archive source revision is invalid".into());
     }
-    let mut seen = BTreeSet::new();
+    let mut seen_aliases = BTreeSet::new();
+    let mut previous_path: Option<&str> = None;
     let mut expected_offset = 0_u64;
     for entry in &header.entries {
-        validate_path(&entry.path)?;
-        if !seen.insert(entry.path.as_str()) {
-            return Err("workspace archive repeats a path".into());
+        let alias = workspace_path_alias(&entry.path)?;
+        if previous_path.is_some_and(|previous| {
+            previous >= entry.path.as_str()
+                || entry
+                    .path
+                    .strip_prefix(previous)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        }) || !seen_aliases.insert(alias)
+        {
+            return Err("workspace archive paths are repeated, nested, or out of order".into());
         }
+        previous_path = Some(&entry.path);
         if entry.offset != expected_offset {
             return Err("workspace archive entries overlap or contain a gap".into());
         }
@@ -661,9 +673,11 @@ fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
         match entry.kind {
             EntryKind::Regular if matches!(entry.mode, 0o100644 | 0o100755) => {}
             EntryKind::Symlink if entry.mode == 0o120000 => {}
-            EntryKind::Submodule => {
-                return Err("workspace archive contains an unsupported submodule".into())
-            }
+            EntryKind::Submodule
+                if entry.mode == 0o160000
+                    && entry.size == 0
+                    && entry.content_sha256 == EMPTY_CONTENT_SHA256
+                    && entry.provider_object_id.is_some() => {}
             _ => return Err("workspace archive contains an unsupported file mode".into()),
         }
         if let Some(object) = entry.provider_object_id.as_deref() {
@@ -682,6 +696,18 @@ fn validate_header(header: &Header, payload: &[u8]) -> Result<(), String> {
                     .map_err(|_| "workspace symlink target is not UTF-8".to_string())?,
             )?;
         }
+    }
+    if seen_aliases.iter().any(|alias| {
+        let mut parent = alias.as_str();
+        while let Some((prefix, _)) = parent.rsplit_once('/') {
+            if seen_aliases.contains(prefix) {
+                return true;
+            }
+            parent = prefix;
+        }
+        false
+    }) {
+        return Err("workspace archive paths alias a file as a directory".into());
     }
     if usize::try_from(expected_offset).ok() != Some(payload.len()) {
         return Err("workspace archive payload has trailing or missing bytes".into());
@@ -722,7 +748,9 @@ fn materialize(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), Str
                 symlink(target, &destination)
                     .map_err(|error| format!("create workspace symlink {}: {error}", entry.path))?;
             }
-            EntryKind::Submodule => unreachable!("submodules are rejected before extraction"),
+            EntryKind::Submodule => std::fs::create_dir(&destination).map_err(|error| {
+                format!("create inert submodule directory {}: {error}", entry.path)
+            })?,
         }
     }
     Ok(())
@@ -763,7 +791,25 @@ fn verify_materialized(root: &Path, entries: &[Entry], payload: &[u8]) -> Result
                     ));
                 }
             }
-            EntryKind::Submodule => unreachable!("submodules are rejected before extraction"),
+            EntryKind::Submodule => {
+                let empty = metadata.file_type().is_dir()
+                    && std::fs::read_dir(&path)
+                        .map_err(|error| {
+                            format!("inspect submodule directory {}: {error}", entry.path)
+                        })?
+                        .next()
+                        .transpose()
+                        .map_err(|error| {
+                            format!("inspect submodule directory {}: {error}", entry.path)
+                        })?
+                        .is_none();
+                if !empty {
+                    return Err(format!(
+                        "materialized submodule directory {} is not inert",
+                        entry.path
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -772,10 +818,14 @@ fn verify_materialized(root: &Path, entries: &[Entry], payload: &[u8]) -> Result
 fn verify_existing_tree(root: &Path, entries: &[Entry], payload: &[u8]) -> Result<(), String> {
     let expected_files = entries
         .iter()
+        .filter(|entry| entry.kind != EntryKind::Submodule)
         .map(|entry| entry.path.clone())
         .collect::<BTreeSet<_>>();
     let mut expected_directories = BTreeSet::new();
     for entry in entries {
+        if entry.kind == EntryKind::Submodule {
+            expected_directories.insert(entry.path.clone());
+        }
         let mut parent = Path::new(&entry.path).parent();
         while let Some(path) = parent {
             if path.as_os_str().is_empty() {
@@ -902,21 +952,62 @@ fn hash_optional_text(digest: &mut Sha256, value: Option<&str>) -> Result<(), St
 }
 
 fn validate_path(path: &str) -> Result<(), String> {
+    workspace_path_alias(path).map(|_| ())
+}
+
+fn workspace_path_alias(path: &str) -> Result<String, String> {
     if path.is_empty()
         || path.len() > MAX_PATH_BYTES
         || path.starts_with('/')
         || path.contains('\\')
         || path.contains('\0')
-        || path.split('/').any(|segment| {
-            segment.is_empty()
-                || segment == "."
-                || segment == ".."
-                || excluded_capture_segment(segment)
-        })
     {
         return Err("workspace archive contains a non-canonical path".into());
     }
-    Ok(())
+    let mut aliases = Vec::new();
+    for segment in path.split('/') {
+        let alias = segment
+            .nfkc()
+            .flat_map(char::to_lowercase)
+            .collect::<String>();
+        if segment.is_empty()
+            || segment.chars().any(unsafe_path_character)
+            || alias.is_empty()
+            || matches!(alias.as_str(), "." | "..")
+            || alias
+                .chars()
+                .any(|character| matches!(character, '/' | '\\' | ':'))
+            || alias.ends_with('.')
+            || alias.ends_with(' ')
+            || excluded_capture_segment(&alias)
+            || reserved_device_segment(&alias)
+        {
+            return Err("workspace archive contains a non-canonical path".into());
+        }
+        aliases.push(alias);
+    }
+    Ok(aliases.join("/"))
+}
+
+fn unsafe_path_character(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+fn reserved_device_segment(segment: &str) -> bool {
+    let stem = segment.split('.').next().unwrap_or(segment);
+    matches!(stem, "con" | "prn" | "aux" | "nul" | "clock$")
+        || stem
+            .strip_prefix("com")
+            .or_else(|| stem.strip_prefix("lpt"))
+            .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
 }
 
 fn excluded_capture_path(path: &str) -> bool {
