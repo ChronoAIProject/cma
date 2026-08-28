@@ -8,6 +8,9 @@
 //! It has no field for the credential used to fetch them, and this adapter is
 //! never given that credential. The service's own short-lived storage token is
 //! obtained separately for each object-store operation and is never serialized.
+//! Fenced mutation metadata travels in the object route's query because NyxID
+//! preserves that route metadata but does not promise to forward caller-defined
+//! `X-Chrono-*` headers.
 
 use std::{fmt::Write as _, io::Write, sync::Arc};
 
@@ -33,8 +36,6 @@ const ARCHIVE_LIMIT: usize = 4 * 1024 * 1024;
 const ACK_LIMIT: usize = 16 * 1024;
 const ARCHIVE_VERSION: u32 = 1;
 const CONTENT_TYPE: &str = "application/octet-stream";
-const MUTATION_GENERATION_HEADER: &str = "x-chrono-mutation-generation";
-const CONTENT_SHA256_HEADER: &str = "x-chrono-content-sha256";
 const FENCE_VERSION: u32 = 1;
 const STORE_GENERATION: u64 = 1;
 const DELETE_GENERATION: u64 = 2;
@@ -65,6 +66,22 @@ struct DeleteAcknowledgement {
     generation: u64,
     #[serde(rename = "fenceVersion")]
     fence_version: u32,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoreObjectQuery<'a> {
+    key: &'a str,
+    content_type: &'static str,
+    mutation_generation: u64,
+    content_sha256: &'a str,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteObjectQuery<'a> {
+    key: &'a str,
+    mutation_generation: u64,
 }
 
 #[derive(serde::Serialize)]
@@ -562,11 +579,14 @@ impl SkillPackStore for ChronoStorageSkillPackStore {
         let response = self
             .http
             .post(&url)
-            .query(&[("key", key.as_str()), ("contentType", CONTENT_TYPE)])
+            .query(&StoreObjectQuery {
+                key: &key,
+                content_type: CONTENT_TYPE,
+                mutation_generation: STORE_GENERATION,
+                content_sha256: &digest,
+            })
             .bearer_auth(self.tokens.token().await?)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-            .header(MUTATION_GENERATION_HEADER, STORE_GENERATION)
-            .header(CONTENT_SHA256_HEADER, &digest)
             .body(body)
             .send()
             .await
@@ -640,9 +660,11 @@ impl SkillPackStore for ChronoStorageSkillPackStore {
         let response = self
             .http
             .delete(&url)
-            .query(&[("key", key.as_str())])
+            .query(&DeleteObjectQuery {
+                key: &key,
+                mutation_generation: DELETE_GENERATION,
+            })
             .bearer_auth(self.tokens.token().await?)
-            .header(MUTATION_GENERATION_HEADER, DELETE_GENERATION)
             .send()
             .await
             .map_err(|error| StoreError::Unavailable(format!("DELETE {url}: {error}")))?;
@@ -839,12 +861,15 @@ mod tests {
     struct RecordedRequest {
         method: Method,
         path: String,
+        query: String,
         key: String,
         query_content_type: Option<String>,
+        query_mutation_generation: Option<String>,
+        query_content_sha256: Option<String>,
+        query_allow_recreate: Option<String>,
         authorization: Option<String>,
         header_content_type: Option<String>,
-        mutation_generation: Option<String>,
-        content_sha256: Option<String>,
+        x_chrono_headers: Vec<String>,
         body: Vec<u8>,
     }
 
@@ -889,6 +914,12 @@ mod tests {
         key: String,
         #[serde(rename = "contentType")]
         content_type: Option<String>,
+        #[serde(rename = "mutationGeneration")]
+        mutation_generation: Option<String>,
+        #[serde(rename = "contentSha256")]
+        content_sha256: Option<String>,
+        #[serde(rename = "allowRecreate")]
+        allow_recreate: Option<String>,
     }
 
     fn header(headers: &HeaderMap, name: reqwest::header::HeaderName) -> Option<String> {
@@ -908,18 +939,19 @@ mod tests {
         RecordedRequest {
             method,
             path: uri.path().to_string(),
+            query: uri.query().unwrap_or_default().to_string(),
             key: query.key,
             query_content_type: query.content_type,
+            query_mutation_generation: query.mutation_generation,
+            query_content_sha256: query.content_sha256,
+            query_allow_recreate: query.allow_recreate,
             authorization: header(headers, reqwest::header::AUTHORIZATION),
             header_content_type: header(headers, reqwest::header::CONTENT_TYPE),
-            mutation_generation: header(
-                headers,
-                reqwest::header::HeaderName::from_static(MUTATION_GENERATION_HEADER),
-            ),
-            content_sha256: header(
-                headers,
-                reqwest::header::HeaderName::from_static(CONTENT_SHA256_HEADER),
-            ),
+            x_chrono_headers: headers
+                .keys()
+                .filter(|name| name.as_str().starts_with("x-chrono-"))
+                .map(|name| name.as_str().to_string())
+                .collect(),
             body,
         }
     }
@@ -949,9 +981,9 @@ mod tests {
     ) -> Response {
         let request = recorded_request(Method::POST, uri, query, &headers, body.to_vec());
         let key = request.key.clone();
-        let digest = request.content_sha256.clone().unwrap_or_default();
+        let digest = request.query_content_sha256.clone().unwrap_or_default();
         let generation = request
-            .mutation_generation
+            .query_mutation_generation
             .as_deref()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or_default();
@@ -1023,7 +1055,7 @@ mod tests {
     ) -> Response {
         let request = recorded_request(Method::DELETE, uri, query, &headers, Vec::new());
         let generation = request
-            .mutation_generation
+            .query_mutation_generation
             .as_deref()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or_default();
@@ -1246,7 +1278,7 @@ x"#;
     }
 
     #[tokio::test]
-    async fn transport_uses_the_object_routes_bearer_auth_and_archive_content_type() {
+    async fn transport_uses_exact_fenced_queries_without_caller_headers() {
         let (base_url, fixture, server) = storage_fixture().await;
         let store = store(&base_url);
         let id = SessionId("sesn_wire".into());
@@ -1273,6 +1305,14 @@ x"#;
         assert_eq!(requests[0].method, Method::POST);
         assert_eq!(requests[0].path, "/api/buckets/bkt/objects");
         assert_eq!(requests[0].key, "sessions/sesn_wire/skill-packs.v1");
+        let encoded_key = "sessions%2Fsesn_wire%2Fskill-packs.v1";
+        let body_digest = sha256_hex(&requests[0].body);
+        assert_eq!(
+            requests[0].query,
+            format!(
+                "key={encoded_key}&contentType=application%2Foctet-stream&mutationGeneration=1&contentSha256={body_digest}"
+            )
+        );
         assert_eq!(
             requests[0].query_content_type.as_deref(),
             Some(CONTENT_TYPE)
@@ -1282,11 +1322,12 @@ x"#;
             Some(CONTENT_TYPE)
         );
         assert_eq!(requests[0].authorization.as_deref(), Some("Bearer tok"));
-        assert_eq!(requests[0].mutation_generation.as_deref(), Some("1"));
+        assert_eq!(requests[0].query_mutation_generation.as_deref(), Some("1"));
         assert_eq!(
-            requests[0].content_sha256.as_deref(),
-            Some(sha256_hex(&requests[0].body).as_str())
+            requests[0].query_content_sha256.as_deref(),
+            Some(body_digest.as_str())
         );
+        assert_eq!(requests[0].query_allow_recreate, None);
         assert_eq!(
             decode(&requests[0].body).expect("wire body is an archive"),
             expected
@@ -1294,19 +1335,33 @@ x"#;
 
         assert_eq!(requests[1].method, Method::GET);
         assert_eq!(requests[1].path, "/api/buckets/bkt/objects/download");
+        assert_eq!(requests[1].query, format!("key={encoded_key}"));
         assert_eq!(requests[1].key, requests[0].key);
         assert_eq!(requests[1].query_content_type, None);
         assert_eq!(requests[1].authorization.as_deref(), Some("Bearer tok"));
-        assert_eq!(requests[1].mutation_generation, None);
-        assert_eq!(requests[1].content_sha256, None);
+        assert_eq!(requests[1].query_mutation_generation, None);
+        assert_eq!(requests[1].query_content_sha256, None);
+        assert_eq!(requests[1].query_allow_recreate, None);
 
         for request in &requests[2..] {
             assert_eq!(request.method, Method::DELETE);
             assert_eq!(request.path, "/api/buckets/bkt/objects");
+            assert_eq!(
+                request.query,
+                format!("key={encoded_key}&mutationGeneration=2")
+            );
             assert_eq!(request.key, requests[0].key);
             assert_eq!(request.authorization.as_deref(), Some("Bearer tok"));
-            assert_eq!(request.mutation_generation.as_deref(), Some("2"));
-            assert_eq!(request.content_sha256, None);
+            assert_eq!(request.query_mutation_generation.as_deref(), Some("2"));
+            assert_eq!(request.query_content_sha256, None);
+            assert_eq!(request.query_allow_recreate, None);
+        }
+        for request in requests.iter() {
+            assert!(
+                request.x_chrono_headers.is_empty(),
+                "caller-defined mutation headers escaped into the request: {:?}",
+                request.x_chrono_headers
+            );
         }
         drop(requests);
         server.abort();
