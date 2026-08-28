@@ -55,8 +55,10 @@ impl ProvisioningStage {
     }
 }
 
-/// Lifecycle state of a session. `Idle` means the runtime was reclaimed while
-/// the session itself remains valid and revivable.
+/// Lifecycle state of a session. `Idle` ordinarily means the runtime was
+/// reclaimed while the session remains valid and revivable. The one exception
+/// is `Idle` with [`StopReason::RequiresAction`]: that is a turn parked on its
+/// owner while the runtime stays blocked on the answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
@@ -74,14 +76,15 @@ pub enum SessionStatus {
     /// `Provisioning` because nothing was asked for and nothing is starting
     /// from nothing — there is a conversation being carried across.
     Rotating,
-    /// Runtime reclaimed; session intact and revivable.
+    /// No work is progressing. Usually reclaimed and revivable; an approval
+    /// wait keeps its blocked runtime and is distinguished by its stop reason.
     Idle,
     /// Terminal state.
     Terminated,
 }
 
 impl SessionStatus {
-    /// Every status for which `wants_runtime()` is true.
+    /// Every status that wants a runtime without consulting a stop reason.
     pub const WANTING_RUNTIME: [Self; 4] = [
         Self::Provisioning,
         Self::Ready,
@@ -99,11 +102,10 @@ impl SessionStatus {
         matches!(self, Self::Rotating)
     }
 
-    /// Whether this session should have a runtime running for it right now.
+    /// Whether this status normally has a runtime running for it.
     ///
-    /// The desired state, against which reality is reconciled. A stopped
-    /// session deliberately wants none — that is what stopping meant — and a
-    /// terminated one is over.
+    /// Session-level reconciliation uses [`Session::wants_runtime`] so it can
+    /// distinguish a stopped idle session from an idle approval wait.
     pub fn wants_runtime(self) -> bool {
         matches!(
             self,
@@ -235,6 +237,72 @@ impl RecoveryState {
     }
 }
 
+/// A credential delegated by the caller while creating a session.
+///
+/// Browser credentials track the subject's renewable durable token. Bearer
+/// credentials are request-bound and must remain pinned to this exact value
+/// when the session is recovered later.
+#[derive(Clone)]
+pub struct CallerCredential {
+    value: String,
+    request_bound: bool,
+}
+
+impl CallerCredential {
+    /// Keep this exact request credential for the lifetime of the session.
+    pub fn request_bound(value: String) -> Self {
+        Self {
+            value,
+            request_bound: true,
+        }
+    }
+
+    /// Whether recovery must use this exact value rather than subject state.
+    pub fn is_request_bound(&self) -> bool {
+        self.request_bound
+    }
+}
+
+impl From<String> for CallerCredential {
+    fn from(value: String) -> Self {
+        Self {
+            value,
+            request_bound: false,
+        }
+    }
+}
+
+impl From<&str> for CallerCredential {
+    fn from(value: &str) -> Self {
+        value.to_string().into()
+    }
+}
+
+impl std::ops::Deref for CallerCredential {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl AsRef<str> for CallerCredential {
+    fn as_ref(&self) -> &str {
+        &self.value
+    }
+}
+
+impl std::fmt::Debug for CallerCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "CallerCredential(<redacted {} bytes>, request_bound={})",
+            self.value.len(),
+            self.request_bound
+        )
+    }
+}
+
 /// What a caller asks for when creating a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSpec {
@@ -270,7 +338,7 @@ pub struct SessionSpec {
     /// The core stores and forwards this without interpreting it. It is never
     /// serialized back out, never logged, and never rendered by an interface.
     #[serde(skip)]
-    pub caller_credential: Option<String>,
+    pub caller_credential: Option<CallerCredential>,
     /// The session's own credential, minted for it alone.
     ///
     /// Filled by the core during provisioning and never by a caller — an
@@ -422,6 +490,18 @@ pub struct Session {
 }
 
 impl Session {
+    /// Whether this session is entitled to keep a runtime right now.
+    ///
+    /// Most lifecycle states answer this from the status alone. An approval
+    /// wait is the deliberate exception: it is rendered as idle because the
+    /// turn is parked on its owner, but its runtime is still blocked on the
+    /// answer and must survive reconciliation and control-plane restarts.
+    pub fn wants_runtime(&self) -> bool {
+        self.status.wants_runtime()
+            || (self.status == SessionStatus::Idle
+                && self.stop_reason == Some(StopReason::RequiresAction))
+    }
+
     /// Whether `subject` may operate on this session.
     ///
     /// Ownership is the whole authorization model at this layer: there is no
@@ -487,6 +567,45 @@ mod tests {
                 "membership and predicate disagree for {status:?}"
             );
         }
+    }
+
+    #[test]
+    fn only_an_approval_wait_makes_an_idle_session_keep_its_runtime() {
+        let mut session = Session {
+            id: SessionId::generate(),
+            owner: SubjectId("subject-a".into()),
+            kernel: KernelId::new("example-runtime"),
+            status: SessionStatus::Idle,
+            recovery_state: RecoveryState::Normal,
+            stop_reason: None,
+            options: AgentOptions::default(),
+            environment_profile: None,
+            geometry: TerminalGeometry::default(),
+            last_seq: 0,
+            runtime_version: None,
+            rotations: 0,
+            rotated_at: None,
+            capabilities: Default::default(),
+            granted_services: None,
+            granted_skills: None,
+            pricing: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+
+        assert!(
+            !session.wants_runtime(),
+            "an ordinarily idle session is stopped"
+        );
+        session.stop_reason = Some(StopReason::UserTerminated);
+        assert!(
+            !session.wants_runtime(),
+            "a user-stopped session stays stopped"
+        );
+        session.stop_reason = Some(StopReason::RequiresAction);
+        assert!(
+            session.wants_runtime(),
+            "the runtime waiting for an approval must remain entitled"
+        );
     }
 
     #[test]

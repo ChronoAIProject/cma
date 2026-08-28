@@ -10,13 +10,13 @@
 
 use futures_util::TryStreamExt;
 use layer2_core::{
-    store::{EnvironmentProfileStore, StoreError},
+    store::{EnvironmentProfileStore, Page, PageCursor, PageRequest, StoreError},
     AgentConfiguration, CredentialMode, EnvironmentProfile, EnvironmentProfileId,
-    EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort, ServiceId, SessionMode,
-    SkillId, SoftwarePackage, SubjectId,
+    EnvironmentProfileSpec, EnvironmentVariable, KernelId, PermissionMode, ReasoningEffort,
+    ServiceId, SessionMode, SkillId, SoftwarePackage, SubjectId,
 };
 use mongodb::bson::doc;
-use mongodb::options::{IndexOptions, ReplaceOptions};
+use mongodb::options::{IndexOptions, ReplaceOptions, ReturnDocument};
 use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 
@@ -115,44 +115,98 @@ struct AgentDoc {
     skills: Vec<String>,
 }
 
+/// Fields an atomic content replacement is allowed to mutate.
+///
+/// Server-owned fields are absent by construction, so serializing this value
+/// cannot accidentally overwrite identity, ownership, creation time, or the
+/// client's current preselection.
+#[derive(Debug, Serialize)]
+struct ProfileContentDoc {
+    name: String,
+    variables: Vec<VariableDoc>,
+    packages: Vec<PackageDoc>,
+    /// Clear the legacy location whenever current content is written.
+    skills: Vec<String>,
+    agent: AgentDoc,
+    services: Vec<String>,
+    agent_notes: String,
+    updated_at: String,
+}
+
+fn variable_docs(variables: &[EnvironmentVariable]) -> Vec<VariableDoc> {
+    variables
+        .iter()
+        .map(|variable| VariableDoc {
+            key: variable.key.clone(),
+            value: variable.value.clone(),
+        })
+        .collect()
+}
+
+fn package_docs(packages: &[SoftwarePackage]) -> Vec<PackageDoc> {
+    packages
+        .iter()
+        .map(|package| PackageDoc {
+            name: package.name.clone(),
+            version: package.version.clone(),
+        })
+        .collect()
+}
+
+fn agent_doc(agent: &AgentConfiguration) -> AgentDoc {
+    AgentDoc {
+        kernel: agent.kernel.0.clone(),
+        mode: agent.mode,
+        model: agent.model.clone(),
+        reasoning_effort: agent.reasoning_effort,
+        permission: agent.permission,
+        credential: agent.credential,
+        size: agent.size,
+        record_tool_bodies: agent.record_tool_bodies,
+        skills: agent.skills.iter().map(|skill| skill.0.clone()).collect(),
+    }
+}
+
+fn profile_content_doc(content: &EnvironmentProfileSpec, updated_at: &str) -> ProfileContentDoc {
+    ProfileContentDoc {
+        name: content.name.clone(),
+        variables: variable_docs(&content.variables),
+        packages: package_docs(&content.packages),
+        skills: Vec::new(),
+        agent: agent_doc(&content.agent),
+        services: content
+            .services
+            .iter()
+            .map(|service| service.0.clone())
+            .collect(),
+        agent_notes: content.agent_notes.clone(),
+        updated_at: updated_at.to_string(),
+    }
+}
+
+fn profile_content_update(
+    content: &EnvironmentProfileSpec,
+    updated_at: &str,
+) -> Result<mongodb::bson::Document, StoreError> {
+    let fields = mongodb::bson::serialize_to_document(&profile_content_doc(content, updated_at))
+        .map_err(|_| StoreError::Malformed("profile content cannot be encoded".into()))?;
+    Ok(doc! { "$set": fields })
+}
+
 fn to_doc(p: &EnvironmentProfile) -> ProfileDoc {
     ProfileDoc {
         id: p.id.0.clone(),
         owner: p.owner.0.clone(),
         name: p.name.clone(),
-        variables: p
-            .variables
-            .iter()
-            .map(|v| VariableDoc {
-                key: v.key.clone(),
-                value: v.value.clone(),
-            })
-            .collect(),
-        packages: p
-            .packages
-            .iter()
-            .map(|s| PackageDoc {
-                name: s.name.clone(),
-                version: s.version.clone(),
-            })
-            .collect(),
+        variables: variable_docs(&p.variables),
+        packages: package_docs(&p.packages),
         // Written only in the agent section from here on. The legacy field is
         // emptied so a document is migrated by being saved, rather than
         // carrying two copies that can disagree.
         skills: Vec::new(),
         services: p.services.iter().map(|s| s.0.clone()).collect(),
         agent_notes: p.agent_notes.clone(),
-        agent: Some(AgentDoc {
-            kernel: p.agent.kernel.0.clone(),
-            mode: p.agent.mode,
-            model: p.agent.model.clone(),
-            reasoning_effort: p.agent.reasoning_effort,
-            permission: p.agent.permission,
-            credential: p.agent.credential,
-            size: p.agent.size,
-            record_tool_bodies: p.agent.record_tool_bodies,
-            skills: p.agent.skills.iter().map(|s| s.0.clone()).collect(),
-        }),
+        agent: Some(agent_doc(&p.agent)),
         created_at: p.created_at.clone(),
         updated_at: p.updated_at.clone(),
         preferred: p.preferred,
@@ -228,16 +282,27 @@ impl MongoEnvironmentProfileStore {
     async fn ensure_indexes(&self) -> Result<(), StoreError> {
         // Every list is by owner and newest first, which is the only query
         // shape this collection ever serves.
-        let owner = IndexModel::builder()
-            .keys(doc! { "owner": 1, "created_at": -1 })
-            .options(IndexOptions::builder().build())
-            .build();
-        self.profiles
-            .create_index(owner)
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("profile index: {e}")))?;
+        for index in profile_indexes() {
+            self.profiles
+                .create_index(index)
+                .await
+                .map_err(|e| StoreError::Unavailable(format!("profile index: {e}")))?;
+        }
         Ok(())
     }
+}
+
+fn profile_indexes() -> [IndexModel; 2] {
+    [
+        IndexModel::builder()
+            .keys(doc! { "owner": 1, "created_at": -1, "_id": -1 })
+            .options(IndexOptions::builder().build())
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "owner": 1, "preferred": 1, "updated_at": -1, "_id": -1 })
+            .options(IndexOptions::builder().build())
+            .build(),
+    ]
 }
 
 #[async_trait::async_trait]
@@ -252,6 +317,22 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
         Ok(())
     }
 
+    async fn replace_content(
+        &self,
+        id: &EnvironmentProfileId,
+        content: &EnvironmentProfileSpec,
+        updated_at: &str,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        let update = profile_content_update(content, updated_at)?;
+        self.profiles
+            .find_one_and_update(doc! { "_id": &id.0 }, update)
+            .return_document(ReturnDocument::After)
+            .upsert(false)
+            .await
+            .map(|profile| profile.map(from_doc))
+            .map_err(|e| StoreError::Unavailable(format!("replace profile content: {e}")))
+    }
+
     async fn get(
         &self,
         id: &EnvironmentProfileId,
@@ -264,11 +345,16 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
         Ok(found.map(from_doc))
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<EnvironmentProfile>, StoreError> {
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<EnvironmentProfile>, StoreError> {
         let mut cursor = self
             .profiles
-            .find(doc! { "owner": &owner.0 })
-            .sort(doc! { "created_at": -1 })
+            .find(profile_page_filter(owner, page))
+            .sort(profile_page_sort())
+            .limit(profile_page_fetch_limit(page))
             .await
             .map_err(|e| StoreError::Unavailable(format!("list profiles: {e}")))?;
         let mut out = Vec::new();
@@ -279,7 +365,71 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
         {
             out.push(from_doc(d));
         }
-        Ok(out)
+        let has_more = out.len() > page.limit() as usize;
+        if has_more {
+            out.pop();
+        }
+        let next = has_more.then(|| {
+            let last = out.last().expect("a non-empty bounded page has a last row");
+            PageCursor::new(&last.created_at, &last.id.0)
+        });
+        Ok(Page { items: out, next })
+    }
+
+    async fn set_preferred(
+        &self,
+        owner: &SubjectId,
+        chosen: Option<&EnvironmentProfileId>,
+    ) -> Result<(), StoreError> {
+        if let Some(id) = chosen {
+            let selected = self
+                .profiles
+                .find_one(doc! { "_id": &id.0, "owner": &owner.0 })
+                .await
+                .map_err(|e| StoreError::Unavailable(format!("validate preferred profile: {e}")))?;
+            if selected.is_none() {
+                return Err(StoreError::Malformed(
+                    "selected environment profile is not owned by the subject".into(),
+                ));
+            }
+        }
+
+        self.profiles
+            .update_many(
+                doc! { "owner": &owner.0, "preferred": true },
+                doc! { "$set": { "preferred": false } },
+            )
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("clear preferred profile: {e}")))?;
+
+        if let Some(id) = chosen {
+            let result = self
+                .profiles
+                .update_one(
+                    doc! { "_id": &id.0, "owner": &owner.0 },
+                    doc! { "$set": { "preferred": true } },
+                )
+                .await
+                .map_err(|e| StoreError::Unavailable(format!("set preferred profile: {e}")))?;
+            if result.matched_count != 1 {
+                return Err(StoreError::Unavailable(
+                    "selected environment profile disappeared while setting preference".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn preferred_for(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<Option<EnvironmentProfile>, StoreError> {
+        self.profiles
+            .find_one(doc! { "owner": &owner.0, "preferred": true })
+            .sort(doc! { "updated_at": -1, "_id": -1 })
+            .await
+            .map(|profile| profile.map(from_doc))
+            .map_err(|e| StoreError::Unavailable(format!("preferred profile: {e}")))
     }
 
     async fn delete(&self, id: &EnvironmentProfileId) -> Result<(), StoreError> {
@@ -289,6 +439,31 @@ impl EnvironmentProfileStore for MongoEnvironmentProfileStore {
             .map_err(|e| StoreError::Unavailable(format!("delete profile: {e}")))?;
         Ok(())
     }
+}
+
+fn profile_page_sort() -> mongodb::bson::Document {
+    doc! { "created_at": -1, "_id": -1 }
+}
+
+fn profile_page_fetch_limit(page: &PageRequest) -> i64 {
+    i64::from(page.limit().saturating_add(1))
+}
+
+fn profile_page_filter(owner: &SubjectId, page: &PageRequest) -> mongodb::bson::Document {
+    let mut filter = doc! { "owner": &owner.0 };
+    if let Some(cursor) = page.cursor() {
+        filter.insert(
+            "$or",
+            vec![
+                doc! { "created_at": { "$lt": &cursor.created_at } },
+                doc! {
+                    "created_at": &cursor.created_at,
+                    "_id": { "$lt": &cursor.id },
+                },
+            ],
+        );
+    }
+    filter
 }
 
 #[cfg(test)]
@@ -395,6 +570,100 @@ mod tests {
     }
 
     #[test]
+    fn a_content_update_cannot_name_any_server_owned_field() {
+        let mut content = profile().to_spec();
+        content.name = "replacement".into();
+        let update =
+            profile_content_update(&content, "2026-08-25T10:00:00Z").expect("content serializes");
+        let fields = update.get_document("$set").expect("an atomic set document");
+
+        for protected in ["_id", "owner", "created_at", "preferred"] {
+            assert!(
+                !fields.contains_key(protected),
+                "content replacement must not write {protected}"
+            );
+        }
+        assert_eq!(fields.get_str("name").unwrap(), "replacement");
+        assert_eq!(
+            fields.get_str("updated_at").unwrap(),
+            "2026-08-25T10:00:00Z"
+        );
+        assert!(fields.get_array("skills").unwrap().is_empty());
+        assert_eq!(
+            fields
+                .get_document("agent")
+                .unwrap()
+                .get_array("skills")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at MongoDB"]
+    async fn mongo_content_replacement_preserves_preference_and_never_upserts() {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
+            .expect("CHRONO_TEST_MONGODB_URI must name MongoDB");
+        let client = Client::with_uri_str(uri)
+            .await
+            .expect("test Mongo connects");
+        let unique = EnvironmentProfileId::generate();
+        let database = format!("chrono_profile_replace_{}", unique.as_str());
+        let store = MongoEnvironmentProfileStore::open(&client, &database)
+            .await
+            .expect("profile store opens");
+        let mut original = profile();
+        original.id = unique.clone();
+        store.upsert(&original).await.expect("profile is inserted");
+
+        let mut content = original.to_spec();
+        content.name = "replacement after set".into();
+        store
+            .set_preferred(&original.owner, Some(&original.id))
+            .await
+            .expect("preference is set concurrently");
+        let after_set = store
+            .replace_content(&original.id, &content, "2026-08-25T10:00:00Z")
+            .await
+            .expect("content replacement succeeds")
+            .expect("row still exists");
+        assert!(after_set.preferred);
+        assert_eq!(after_set.owner, original.owner);
+        assert_eq!(after_set.created_at, original.created_at);
+
+        content.name = "replacement after clear".into();
+        store
+            .set_preferred(&original.owner, None)
+            .await
+            .expect("preference is cleared concurrently");
+        let after_clear = store
+            .replace_content(&original.id, &content, "2026-08-25T11:00:00Z")
+            .await
+            .expect("content replacement succeeds")
+            .expect("row still exists");
+        assert!(!after_clear.preferred);
+
+        store.delete(&original.id).await.expect("row is deleted");
+        assert!(store
+            .replace_content(&original.id, &content, "2026-08-25T12:00:00Z")
+            .await
+            .expect("absence is not a store failure")
+            .is_none());
+        assert!(store
+            .get(&original.id)
+            .await
+            .expect("store reads")
+            .is_none());
+
+        client
+            .database(&database)
+            .drop()
+            .await
+            .expect("test database is removed");
+    }
+
+    #[test]
     fn a_document_written_before_a_field_existed_still_reads() {
         // Absent lists deserialize as empty rather than failing: a profile
         // stored by an older build must not become unreadable.
@@ -419,5 +688,42 @@ mod tests {
             .find(|p| p.name == "platform-cli")
             .expect("present");
         assert!(cli.version.is_none());
+    }
+
+    #[test]
+    fn profile_pages_fetch_one_sentinel_row_and_never_exceed_the_store_bound() {
+        let five = PageRequest::new(5, None);
+        let oversized = PageRequest::new(u32::MAX, None);
+
+        assert_eq!(profile_page_fetch_limit(&five), 6);
+        assert_eq!(oversized.limit(), 200);
+        assert_eq!(profile_page_fetch_limit(&oversized), 201);
+    }
+
+    #[test]
+    fn profile_page_filter_uses_the_timestamp_and_id_tie_breaker() {
+        let page = PageRequest::new(
+            50,
+            Some(PageCursor::new("2026-08-24T10:11:12Z", "envp_tied")),
+        );
+
+        assert_eq!(
+            profile_page_filter(&SubjectId("subject-a".into()), &page),
+            doc! {
+                "owner": "subject-a",
+                "$or": [
+                    { "created_at": { "$lt": "2026-08-24T10:11:12Z" } },
+                    {
+                        "created_at": "2026-08-24T10:11:12Z",
+                        "_id": { "$lt": "envp_tied" },
+                    },
+                ],
+            }
+        );
+        assert_eq!(profile_page_sort(), doc! { "created_at": -1, "_id": -1 });
+        assert_eq!(
+            profile_indexes()[0].keys,
+            doc! { "owner": 1, "created_at": -1, "_id": -1 }
+        );
     }
 }

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionRail } from './SessionRail';
 import { lastActivity } from './lastActivity';
 import type { Session, SessionLifecycle } from './types';
-import { NO_CAPABILITIES } from '../agui';
+import { NO_CAPABILITIES } from '@chronoai/cma-sdk';
 
 const COLLAPSED_KEY = 'cma:rail-collapsed';
 const LEGACY_COLLAPSED_KEY = 'chrono-bot:rail-collapsed';
@@ -132,6 +132,11 @@ describe('the rail row', () => {
     expect(container.textContent).toContain('Waiting for your answer');
     // The idle line — "Stopped — its sandbox was released" — is not drawn.
     expect(container.textContent).not.toContain('Stopped —');
+  });
+
+  it('reads requires_action directly before its approval event is folded', () => {
+    const waiting = session('waiting', 'idle', { stopReason: 'requires_action' });
+    expect(lastActivity(waiting)).toBe('Waiting for your answer');
   });
 
   it('never lets the activity line wrap', () => {

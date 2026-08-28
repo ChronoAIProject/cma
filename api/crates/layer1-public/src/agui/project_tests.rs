@@ -6,7 +6,7 @@
 //! stream fills with things that mean nothing to it.
 
 use super::*;
-use layer2_core::StopReason;
+use layer2_core::{session::ProvisioningStage, StopReason};
 
 /// A durable event as the log holds it.
 fn logged(seq: u64, kind: EventKind) -> Event {
@@ -26,6 +26,23 @@ fn projected(kind: EventKind) -> Projected {
 /// The event types produced, in order.
 fn kinds(p: &Projected) -> Vec<&'static str> {
     p.events.iter().map(|e| e.kind).collect()
+}
+
+/// Assert the resume point is projection completion, never a leading frame.
+fn assert_only_final_carries_cursor(projected: &Projected) {
+    let (last, leading) = projected
+        .events
+        .split_last()
+        .expect("the tested event has an AG-UI projection");
+    assert!(
+        leading.iter().all(|frame| frame.seq.is_none()),
+        "leading projection frames must not advance replay: {:?}",
+        leading
+            .iter()
+            .map(|frame| (frame.kind, frame.seq))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(last.seq, Some(7), "the final frame completes sequence 7");
 }
 
 #[test]
@@ -59,6 +76,7 @@ fn a_committed_message_arrives_whole_rather_than_as_pieces() {
         p.events.iter().all(|e| e.body["messageId"] == id),
         "one message is one identifier"
     );
+    assert_only_final_carries_cursor(&p);
 }
 
 #[test]
@@ -112,6 +130,7 @@ fn an_owner_message_arrives_as_a_user_turn() {
         p.events.iter().all(|e| e.body["messageId"] == id),
         "one message is one identifier"
     );
+    assert_only_final_carries_cursor(&p);
 }
 
 #[test]
@@ -145,6 +164,7 @@ fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
         arguments: None,
     });
     assert_eq!(kinds(&p), vec!["TOOL_CALL_START"]);
+    assert_eq!(p.events[0].seq, Some(7));
     assert_eq!(p.events[0].body["toolCallId"], "call-1");
     // `toolCallName` is the protocol's own field, and this assertion was
     // always right. What nothing checked was whether the *client* read it —
@@ -156,6 +176,49 @@ fn a_tool_call_carries_the_runtimes_own_word_for_what_it_is() {
         p.events[0].body["cma:toolKind"],
         "a-kind-this-build-has-never-seen"
     );
+}
+
+#[test]
+fn a_tool_call_start_with_arguments_advances_only_after_the_arguments() {
+    let p = projected(EventKind::ToolCallStarted {
+        call_id: "call-1".into(),
+        title: "read notes".into(),
+        kind: "read".into(),
+        arguments: Some(layer2_core::event::ToolBody {
+            text: r#"{"path":"notes.md"}"#.into(),
+            truncated: false,
+        }),
+    });
+
+    assert_eq!(kinds(&p), vec!["TOOL_CALL_START", "TOOL_CALL_ARGS"]);
+    assert_only_final_carries_cursor(&p);
+}
+
+#[test]
+fn a_tool_call_update_with_a_result_advances_only_after_the_result() {
+    let p = projected(EventKind::ToolCallUpdated {
+        call_id: "call-1".into(),
+        status: "completed".into(),
+        result: Some(layer2_core::event::ToolBody {
+            text: "the notes".into(),
+            truncated: false,
+        }),
+    });
+
+    assert_eq!(kinds(&p), vec!["TOOL_CALL_END", "TOOL_CALL_RESULT"]);
+    assert_only_final_carries_cursor(&p);
+}
+
+#[test]
+fn a_tool_call_update_without_a_result_advances_on_the_end() {
+    let p = projected(EventKind::ToolCallUpdated {
+        call_id: "call-1".into(),
+        status: "completed".into(),
+        result: None,
+    });
+
+    assert_eq!(kinds(&p), vec!["TOOL_CALL_END"]);
+    assert_eq!(p.events[0].seq, Some(7));
 }
 
 #[test]
@@ -193,6 +256,26 @@ fn a_usage_report_without_a_window_does_not_erase_one() {
 }
 
 #[test]
+fn turn_accounting_without_a_context_reading_does_not_erase_one() {
+    let p = projected(EventKind::UsageReported {
+        input_tokens: 0,
+        output_tokens: 0,
+        context_used: 0,
+        context_window: None,
+    });
+    let delta = p.events[0].body["delta"].as_array().expect("a patch list");
+
+    assert_eq!(delta.len(), 2);
+    assert_eq!(delta[0]["path"], "/usage/inputTokens");
+    assert_eq!(delta[0]["value"], 0);
+    assert_eq!(delta[1]["path"], "/usage/outputTokens");
+    assert_eq!(delta[1]["value"], 0);
+    assert!(delta
+        .iter()
+        .all(|patch| patch["path"] != "/usage/contextUsed"));
+}
+
+#[test]
 fn a_context_compaction_is_appended_to_state_without_an_invented_event_kind() {
     let p = projected(EventKind::ContextCompacted {
         was: 198_000,
@@ -218,14 +301,22 @@ fn an_approval_ends_the_run_to_ask() {
         request_id: "apr_7Q2".into(),
         action: Some("command_execution".into()),
         detail: Some("Run `rm -rf build/`?".into()),
+        locator: None,
     });
-    assert_eq!(kinds(&p), vec!["RUN_FINISHED"]);
+    assert_eq!(kinds(&p), vec!["RUN_FINISHED", "STATE_DELTA"]);
     assert_eq!(p.ending, Some(Ending::Interrupted));
     let outcome = &p.events[0].body["outcome"];
     assert_eq!(outcome["type"], "interrupt");
     assert_eq!(outcome["interrupts"][0]["id"], "apr_7Q2");
     assert_eq!(outcome["interrupts"][0]["reason"], "cma:command_execution");
     assert_eq!(outcome["interrupts"][0]["message"], "Run `rm -rf build/`?");
+    let patch = &p.events[1].body["delta"][0];
+    assert_eq!(patch["op"], "add");
+    assert_eq!(patch["path"], "/pendingApprovals/apr_7Q2");
+    assert_eq!(patch["value"]["id"], "apr_7Q2");
+    assert_eq!(patch["value"]["reason"], "cma:command_execution");
+    assert_eq!(patch["value"]["message"], "Run `rm -rf build/`?");
+    assert_only_final_carries_cursor(&p);
 }
 
 #[test]
@@ -236,12 +327,44 @@ fn an_approval_with_nothing_to_say_still_asks() {
         request_id: "apr_1".into(),
         action: None,
         detail: None,
+        locator: None,
     });
     assert_eq!(p.ending, Some(Ending::Interrupted));
     assert_eq!(
         p.events[0].body["outcome"]["interrupts"][0]["reason"],
         "confirmation"
     );
+    assert!(p.events[1].body["delta"][0]["value"]["message"].is_null());
+}
+
+#[test]
+fn an_approval_id_is_one_escaped_json_pointer_token() {
+    let p = projected(EventKind::ApprovalRequested {
+        request_id: "approval/~one".into(),
+        action: Some("file_write".into()),
+        detail: None,
+        locator: None,
+    });
+
+    assert_eq!(
+        p.events[1].body["delta"][0]["path"],
+        "/pendingApprovals/approval~1~0one"
+    );
+}
+
+#[test]
+fn resolving_an_approval_removes_its_pending_state_member() {
+    let p = projected(EventKind::ApprovalResolved {
+        request_id: "approval/~one".into(),
+        allowed: true,
+    });
+
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
+    assert!(p.ending.is_none());
+    let patch = &p.events[0].body["delta"][0];
+    assert_eq!(patch["op"], "remove");
+    assert_eq!(patch["path"], "/pendingApprovals/approval~1~0one");
+    assert_eq!(p.events[0].seq, Some(7));
 }
 
 #[test]
@@ -250,6 +373,82 @@ fn a_completed_turn_ends_the_run() {
     assert_eq!(kinds(&p), vec!["RUN_FINISHED"]);
     assert_eq!(p.ending, Some(Ending::Finished));
     assert_eq!(p.events[0].body["outcome"]["type"], "complete");
+}
+
+#[test]
+fn every_provisioning_stage_replaces_progress_with_its_layer_2_wire_value() {
+    let expected = [
+        "accepted",
+        "runtime_requested",
+        "runtime_created",
+        "skills_installed",
+        "attaching",
+        "ready",
+    ];
+
+    for (stage, expected) in ProvisioningStage::ALL.into_iter().zip(expected) {
+        let p = projected(EventKind::Progress { stage });
+        assert_eq!(kinds(&p), vec!["STATE_DELTA"], "for {stage:?}");
+        assert!(p.ending.is_none(), "for {stage:?}");
+        assert_eq!(p.events[0].seq, Some(7), "for {stage:?}");
+        assert_eq!(
+            p.events[0].body,
+            serde_json::json!({ "delta": [{
+                "op": "replace",
+                "path": "/progress",
+                "value": expected,
+            }] }),
+            "for {stage:?}"
+        );
+    }
+}
+
+#[test]
+fn every_session_status_keeps_the_layer_2_wire_spelling() {
+    for (status, expected) in [
+        (SessionStatus::Provisioning, "provisioning"),
+        (SessionStatus::Ready, "ready"),
+        (SessionStatus::Running, "running"),
+        (SessionStatus::Rotating, "rotating"),
+        (SessionStatus::Idle, "idle"),
+        (SessionStatus::Terminated, "terminated"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(status).expect("a session status serializes"),
+            serde_json::json!(expected),
+            "for {status:?}"
+        );
+    }
+}
+
+#[test]
+fn every_non_ending_status_change_replaces_status_once() {
+    for (status, expected) in [
+        (SessionStatus::Provisioning, "provisioning"),
+        (SessionStatus::Ready, "ready"),
+        (SessionStatus::Running, "running"),
+        (SessionStatus::Idle, "idle"),
+    ] {
+        let p = projected(EventKind::StatusChanged {
+            status,
+            stop_reason: (status == SessionStatus::Idle).then_some(StopReason::RequiresAction),
+            detail: None,
+            capability: None,
+        });
+
+        assert_eq!(kinds(&p), vec!["STATE_DELTA"], "for {status:?}");
+        assert!(p.ending.is_none(), "for {status:?}");
+        assert_eq!(p.events[0].seq, Some(7), "for {status:?}");
+        assert_eq!(
+            p.events[0].body,
+            serde_json::json!({ "delta": [{
+                "op": "replace",
+                "path": "/status",
+                "value": expected,
+            }] }),
+            "for {status:?}"
+        );
+    }
 }
 
 #[test]
@@ -270,6 +469,10 @@ fn a_session_that_stops_working_says_so_rather_than_going_quiet() {
         assert_eq!(kinds(&p), vec!["RUN_ERROR"], "for {reason:?}");
         assert_eq!(p.ending, Some(Ending::Failed), "for {reason:?}");
         assert_eq!(p.events[0].body["message"], "the model endpoint refused");
+        assert!(
+            p.events.iter().all(|event| event.kind != "STATE_DELTA"),
+            "an ending idle transition must not also replace /status for {reason:?}"
+        );
     }
 }
 
@@ -349,8 +552,12 @@ fn going_idle_to_wait_for_a_person_does_not_end_the_run_twice() {
         detail: None,
         capability: None,
     });
-    assert!(p.events.is_empty(), "got {:?}", kinds(&p));
+    assert_eq!(kinds(&p), vec!["STATE_DELTA"]);
     assert!(p.ending.is_none());
+    assert_eq!(
+        p.events[0].body["delta"][0],
+        serde_json::json!({ "op": "replace", "path": "/status", "value": "idle" })
+    );
 }
 
 #[test]
@@ -492,19 +699,20 @@ fn an_open_pressure_episode_without_an_old_append_time_carries_an_absent_since()
 
 #[test]
 fn what_this_interface_cannot_carry_becomes_nothing() {
-    // The core's log is the union of what every interface needs. A resize, an
-    // attachment, a screen — none has an honest shape here, and inventing one
-    // would put events in a client's stream that mean nothing to it.
+    // The core's log is the union of what every interface needs. An authority
+    // marker, resize, attachment, or screen has no honest shape here, and
+    // inventing one would put events in a client's stream that mean nothing.
     for kind in [
+        EventKind::RuntimeHandoverStarted,
+        EventKind::RuntimeIncarnationStarted,
+        EventKind::RuntimeStarted {
+            generation: std::num::NonZeroU64::new(3).expect("the sample generation is positive"),
+        },
         EventKind::TerminalAttached,
         EventKind::TerminalDetached,
         EventKind::TerminalResized {
             columns: 120,
             rows: 40,
-        },
-        EventKind::ApprovalResolved {
-            request_id: "apr_1".into(),
-            allowed: true,
         },
     ] {
         let p = project(&logged(7, kind.clone()), "run_1", "sesn_1");
@@ -682,6 +890,28 @@ async fn a_durable_frame_carries_its_sequence_as_the_sse_id() {
     let wire = on_the_wire(&projected.events[0]).await;
 
     assert!(wire.contains("id: 41"), "{wire:?}");
+}
+
+#[tokio::test]
+async fn a_leading_durable_projection_frame_carries_no_sse_id() {
+    let projected = project(
+        &logged(
+            41,
+            EventKind::MessageCommitted {
+                content: "the complete answer".into(),
+            },
+        ),
+        "run_1",
+        "sesn_1",
+    );
+    let wire = on_the_wire(&projected.events[0]).await;
+
+    assert!(!wire.contains("id:"), "{wire:?}");
+    assert!(
+        !wire.contains("\"cma:live\":true"),
+        "a cursorless projection frame is still durable history: {wire:?}"
+    );
+    assert!(wire.contains("\"type\":\"TEXT_MESSAGE_START\""), "{wire:?}");
 }
 
 #[tokio::test]

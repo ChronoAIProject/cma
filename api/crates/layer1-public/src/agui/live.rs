@@ -55,6 +55,7 @@ pub(super) fn project_live(frame: &LiveFrame, run_id: &str, thread_id: &str) -> 
             body: serde_json::json!({ "messageId": IN_FLIGHT, "delta": text }),
             timestamp: None,
             seq: None,
+            live: true,
         }),
         /*
          * `REASONING_MESSAGE_CONTENT`, and only it.
@@ -79,6 +80,7 @@ pub(super) fn project_live(frame: &LiveFrame, run_id: &str, thread_id: &str) -> 
             body: serde_json::json!({ "messageId": REASONING, "delta": text }),
             timestamp: None,
             seq: None,
+            live: true,
         }),
         // The actions the owner may invoke, as a state patch on the live lane.
         //
@@ -104,6 +106,7 @@ pub(super) fn project_live(frame: &LiveFrame, run_id: &str, thread_id: &str) -> 
             ]}),
             timestamp: None,
             seq: None,
+            live: true,
         }),
         LiveFrame::TerminalOutput(_) | LiveFrame::Exited { .. } => None,
     }

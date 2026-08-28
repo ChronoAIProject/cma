@@ -180,7 +180,10 @@ async fn an_unreachable_store_is_reported_as_unavailable_not_as_missing() {
 
     for err in [
         service.get(&owner, &created.id).await.expect_err("fails"),
-        service.list(&owner).await.expect_err("fails"),
+        service
+            .list(&owner, &PageRequest::new(200, None))
+            .await
+            .expect_err("fails"),
         service
             .create(&owner, profile_spec("another"))
             .await
@@ -239,7 +242,7 @@ async fn an_unreachable_catalogue_is_reported() {
         .await
         .expect_err("must be reported");
     assert!(
-        matches!(err, CoreError::RuntimeUnavailable(_)),
+        matches!(err, CoreError::SkillCatalogUnavailable(_)),
         "got {err:?}"
     );
 }

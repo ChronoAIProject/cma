@@ -32,12 +32,20 @@ const PROFILES = [
   agent: {
     kernel: 'codex',
     mode: 'conversation',
+    model: null,
     reasoning_effort: 'high',
     permission: 'guarded',
     credential: 'delegated',
+    size: { cpu_millis: 1000, memory_mib: 2048 },
+    record_tool_bodies: false,
+    skills: [],
   },
+  nyxid: { services: [] },
+  agent_notes: '',
+  mandatory: { packages: [], skills: [] },
   created_at: '2026-08-19T18:45:39Z',
   updated_at: '2026-08-19T18:45:39Z',
+  preferred: false,
 }));
 
 /** Two sessions, so the rail has rows to choose between. */
@@ -89,7 +97,7 @@ async function stub(page) {
     if (path === '/api/v1/kernels') {
       return void json({ kernels: [{ id: 'codex', modes: ['conversation', 'terminal'] }] });
     }
-    if (path === '/api/v1/environment-profiles') return void json({ profiles: PROFILES });
+    if (path === '/api/v1/environment-profiles') return void json(PROFILES);
     if (path.endsWith('/events')) {
       return void request.respond({ status: 200, contentType: 'text/event-stream', body: ':\n\n' });
     }
@@ -201,23 +209,49 @@ async function sidebarCollapses(page) {
     page.evaluate(() =>
       Math.round(document.querySelector('.sidebar')?.getBoundingClientRect().width ?? 0),
     );
-  const toggle = () =>
-    page.evaluate(() => {
-      const button = [...document.querySelectorAll('.sidebar button')].find((candidate) =>
-        candidate.hasAttribute('aria-expanded'),
+  const toggle = async () => {
+    const button = await page.$('.sidebar__toggle');
+    if (button === null) {
+      return false;
+    }
+    await button.click();
+    return true;
+  };
+  const waitForWidth = async (expanded, expected, narrower) => {
+    try {
+      await page.waitForFunction(
+        (nextExpanded, previousWidth, shouldNarrow) => {
+          const sidebar = document.querySelector('.sidebar');
+          const button = document.querySelector('.sidebar__toggle');
+          if (!(sidebar instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) {
+            return false;
+          }
+          const actual = Math.round(sidebar.getBoundingClientRect().width);
+          return (
+            button.getAttribute('aria-expanded') === String(nextExpanded) &&
+            (shouldNarrow ? actual < previousWidth : actual === previousWidth)
+          );
+        },
+        { polling: 'raf', timeout: 5000 },
+        expanded,
+        expected,
+        narrower,
       );
-      button?.click();
-      return button !== undefined;
-    });
+    } catch {
+      // The measured assertion below reports the bounded failure precisely.
+    }
+  };
 
   const before = await width();
   if (!(await toggle())) {
     return ['no control to close the sidebar'];
   }
-  await settle();
+  await waitForWidth(false, before, true);
   const closed = await width();
-  await toggle();
-  await settle();
+  if (!(await toggle())) {
+    return ['no control to reopen the sidebar'];
+  }
+  await waitForWidth(true, before, false);
   const reopened = await width();
 
   const problems = [];
@@ -271,6 +305,250 @@ async function selectingLeavesOperations(page) {
   await settle();
   const stuck = await page.evaluate(() => document.querySelector('[class*="operator"]') !== null);
   return stuck ? ['operations: choosing a session left the operator panel on screen'] : [];
+}
+
+/** Wait for AppFrame's observed width and animated tracks to reach a new viewport. */
+async function waitForDeveloperFrame(page, width, phoneControls) {
+  try {
+    await page.waitForFunction(
+      (expectedWidth, expectsPhoneControls) => {
+        const frame = document.querySelector('.frame');
+        const center = document.querySelector('.frame__center');
+        const details = document.querySelector('.frame__details');
+        const layout = document.querySelector('.developer__layout');
+        const rail = document.querySelector('.developer__rail');
+        const picker = document.querySelector('.developer__picker');
+        if (
+          !(frame instanceof HTMLElement) ||
+          !(center instanceof HTMLElement) ||
+          !(details instanceof HTMLElement) ||
+          !(layout instanceof HTMLElement) ||
+          !(rail instanceof HTMLElement) ||
+          !(picker instanceof HTMLElement)
+        ) {
+          return false;
+        }
+
+        const frameBox = frame.getBoundingClientRect();
+        const centerBox = center.getBoundingClientRect();
+        const detailsBox = details.getBoundingClientRect();
+        const railDisplay = getComputedStyle(rail).display;
+        const pickerDisplay = getComputedStyle(picker).display;
+        const controlsReady = expectsPhoneControls
+          ? railDisplay === 'none' && pickerDisplay !== 'none'
+          : railDisplay !== 'none' && pickerDisplay === 'none';
+        return (
+          window.innerWidth === expectedWidth &&
+          document.documentElement.clientWidth === expectedWidth &&
+          Math.abs(frameBox.width - window.innerWidth) <= 1 &&
+          controlsReady &&
+          frame.getAnimations().every((animation) => animation.playState === 'finished') &&
+          centerBox.left >= frameBox.left - 1 &&
+          centerBox.right <= frameBox.right + 1 &&
+          Math.abs(detailsBox.right - frameBox.right) <= 1
+        );
+      },
+      { polling: 'raf', timeout: 5000 },
+      width,
+      phoneControls,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The bundled Developer view remains readable and leaves no trap at either layout. */
+async function developerSurface(page) {
+  const problems = [];
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.evaluate(() => {
+    document.querySelector('.profile__trigger')?.click();
+  });
+  await settle();
+  const opened = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('[role^="menuitem"]')].find(
+      (candidate) => candidate.textContent?.trim() === 'Developer',
+    );
+    row?.click();
+    return row !== undefined;
+  });
+  if (!opened) {
+    return ['developer: the account menu offers no Developer action'];
+  }
+  await ready(page, '.developer__article h1', { label: 'the bundled Developer guide' });
+  await settle(250);
+
+  const desktop = await page.evaluate(() => {
+    const surface = document.querySelector('.developer');
+    const nav = document.querySelector('.developer__nav');
+    const reading = document.querySelector('.developer__reading');
+    const preface = document.querySelector('.developer__preface');
+    const article = document.querySelector('.developer__article');
+    if (
+      !(surface instanceof HTMLElement) ||
+      !(nav instanceof HTMLElement) ||
+      !(reading instanceof HTMLElement) ||
+      !(preface instanceof HTMLElement) ||
+      !(article instanceof HTMLElement)
+    ) {
+      return { missing: true };
+    }
+    const navBox = nav.getBoundingClientRect();
+    const readingBox = reading.getBoundingClientRect();
+    const prefaceBox = preface.getBoundingClientRect();
+    const articleBox = article.getBoundingClientRect();
+    return {
+      missing: false,
+      guides: document.querySelectorAll('.developer__document').length,
+      heading: article.querySelector('h1')?.textContent?.trim(),
+      base: preface.querySelector('code')?.textContent?.trim(),
+      origin: window.location.origin,
+      readingWidth: readingBox.width,
+      overlapsAcross: navBox.right > readingBox.left + 1,
+      overlapsDown: prefaceBox.bottom > articleBox.top + 1,
+      horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+    };
+  });
+  if (desktop.missing) {
+    return ['developer: the surface is incomplete'];
+  }
+  if (desktop.guides !== 8) {
+    problems.push(`developer: TypeScript draws ${String(desktop.guides)} guides, expected 8`);
+  }
+  if (desktop.heading !== 'CMA TypeScript SDK') {
+    problems.push(`developer: the first bundled heading is ${String(desktop.heading)}`);
+  }
+  if (desktop.base !== desktop.origin) {
+    problems.push(
+      `developer: API base ${String(desktop.base)} disagrees with ${String(desktop.origin)}`,
+    );
+  }
+  if (Math.abs(desktop.readingWidth - 748) > 1) {
+    problems.push(
+      `developer: the desktop reading axis is ${desktop.readingWidth.toFixed(1)}px, expected 748px`,
+    );
+  }
+  if (desktop.overlapsAcross || desktop.overlapsDown) {
+    problems.push('developer: navigation, preface and article overlap at desktop width');
+  }
+  if (desktop.horizontal) {
+    problems.push('developer: the desktop surface widens the viewport');
+  }
+
+  if (!(await press(page, 'Rust'))) {
+    problems.push('developer: the Rust SDK control is absent');
+  } else {
+    await settle(250);
+    const rustHeading = await page.evaluate(
+      () => document.querySelector('.developer__article h1')?.textContent?.trim() ?? '',
+    );
+    if (rustHeading !== 'CMA Rust SDK') {
+      problems.push(`developer: switching to Rust showed "${rustHeading}"`);
+    }
+  }
+
+  await page.setViewport({ width: 390, height: 844 });
+  const phoneLayoutSettled = await waitForDeveloperFrame(page, 390, true);
+  const phone = await page.evaluate(() => {
+    const frame = document.querySelector('.frame');
+    const center = document.querySelector('.frame__center');
+    const surface = document.querySelector('.developer');
+    const layout = document.querySelector('.developer__layout');
+    const rail = document.querySelector('.developer__rail');
+    const picker = document.querySelector('.developer__picker');
+    if (
+      !(frame instanceof HTMLElement) ||
+      !(center instanceof HTMLElement) ||
+      !(surface instanceof HTMLElement) ||
+      !(layout instanceof HTMLElement) ||
+      !(rail instanceof HTMLElement) ||
+      !(picker instanceof HTMLElement)
+    ) {
+      return { missing: true };
+    }
+    const rectangle = (element) => {
+      const box = element.getBoundingClientRect();
+      return { left: box.left, right: box.right, width: box.width };
+    };
+    const box = rectangle(layout);
+    const wideners = [...document.querySelectorAll('body *')]
+      .filter((element) => {
+        const candidate = element.getBoundingClientRect();
+        if (candidate.width === 0 || candidate.height === 0) return false;
+        const style = getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        return (
+          candidate.left < -1 ||
+          candidate.right > window.innerWidth + 1 ||
+          (element.scrollWidth > element.clientWidth + 1 && style.overflowX === 'visible')
+        );
+      })
+      .slice(0, 8)
+      .map((element) => {
+        const candidate = rectangle(element);
+        return {
+          element: `${element.tagName.toLowerCase()}${
+            element.getAttribute('class') === null
+              ? ''
+              : `.${element.getAttribute('class').trim().replaceAll(/\\s+/g, '.')}`
+          }`,
+          ...candidate,
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+        };
+      });
+    return {
+      missing: false,
+      rail: getComputedStyle(rail).display,
+      picker: getComputedStyle(picker).display,
+      offscreen: box.left < -1 || box.right > window.innerWidth + 1,
+      horizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
+      viewport: window.innerWidth,
+      document: {
+        clientWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      },
+      frame: rectangle(frame),
+      grid: getComputedStyle(frame).gridTemplateColumns,
+      frameAnimations: frame.getAnimations().map((animation) => animation.playState),
+      center: rectangle(center),
+      surface: rectangle(surface),
+      layout: box,
+      wideners,
+    };
+  });
+  if (phone.missing) {
+    problems.push('developer: the phone document controls are incomplete');
+  } else {
+    if (phone.rail !== 'none' || phone.picker === 'none') {
+      problems.push('developer: the phone layout does not replace the rail with its selector');
+    }
+    if (phone.offscreen || phone.horizontal) {
+      problems.push(
+        'developer: the phone surface widens or leaves the viewport ' +
+          JSON.stringify({ settled: phoneLayoutSettled, ...phone }),
+      );
+    }
+  }
+
+  await page.setViewport({ width: 1440, height: 900 });
+  await waitForDeveloperFrame(page, 1440, false);
+  const picked = await page.evaluate(() => {
+    const row = document.querySelector('.row-item');
+    row?.click();
+    return row !== null;
+  });
+  if (!picked) {
+    problems.push('developer: no session row remains available beside the surface');
+  } else {
+    await settle(250);
+    const stuck = await page.evaluate(() => document.querySelector('.developer') !== null);
+    if (stuck) {
+      problems.push('developer: choosing a session left Developer on screen');
+    }
+  }
+  return problems;
 }
 
 /**
@@ -410,6 +688,7 @@ async function main() {
       ...(await pickerReachable(page)),
       ...(await sidebarCollapses(page)),
       ...(await selectingLeavesOperations(page)),
+      ...(await developerSurface(page)),
       ...(await everyMenuLands(page)),
       ...(await accountMenuReads(page)),
     ];
@@ -423,8 +702,8 @@ async function main() {
       return;
     }
     console.log(
-      'signed-in surfaces: the picker, the sidebar toggle and the view switch all act, ' +
-        'and every menu lands inside the window',
+      'signed-in surfaces: the picker, sidebar toggle, Operations and Developer all act, ' +
+        'Developer fits both layouts, and every menu lands inside the window',
     );
   } finally {
     await close();

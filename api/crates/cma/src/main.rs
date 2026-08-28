@@ -8,31 +8,63 @@
 mod activity;
 mod auth;
 mod config;
+mod health;
 mod kernels;
 mod permissions;
+mod rate_limit;
 mod renewal;
 mod screen;
 mod skills;
 mod store;
 mod sweep;
 
-use std::sync::Arc;
+#[cfg(test)]
+mod pty_integration_tests;
 
-use axum::{routing::get, Json, Router};
+#[cfg(test)]
+#[path = "rate_limit_tests.rs"]
+mod rate_limit_tests;
+
+use std::{future::Future, net::SocketAddr, sync::Arc};
+
+use axum::{
+    body::Body,
+    extract::{DefaultBodyLimit, Request, State},
+    http::{header, HeaderMap, HeaderName, HeaderValue, Method},
+    middleware::Next,
+    response::Response,
+    routing::any,
+    Router,
+};
 use layer1_public::{
-    a2a::A2aInterface, agui::AguiInterface, mcp::McpInterface, pty::PtyInterface,
-    rest::RestInterface, InterfaceProfile,
+    a2a::A2aInterface,
+    agui::AguiInterface,
+    mcp::McpInterface,
+    pty::PtyInterface,
+    rest::{HttpProblem, RestInterface},
+    InterfaceProfile,
 };
 use layer2_core::{
     ActivityService, Baseline, EnvironmentProfileService, PlatformSettingsService, ScreenModel,
     SessionService, SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
 };
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::{
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+    trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
+};
+use tracing::Level;
 
 use crate::activity::ActivityRecorder;
 use crate::auth::{AuthState, SignInRecords};
-use crate::config::Config;
+use crate::config::{Config, MongoCutoverStage, MongoCutoverStageConfig};
 use crate::screen::VtScreen;
+
+pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const DEFAULT_LOG_FILTER: &str = "info";
+const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
+    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
+);
 
 fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     vec![
@@ -44,15 +76,359 @@ fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
     ]
 }
 
+fn interface_is_served(interface: &dyn InterfaceProfile) -> bool {
+    !matches!(interface.interface_id(), "mcp" | "a2a")
+}
+
+/// Compose the REST surface before protocol-specific and browser routes join it.
+///
+/// The three Layer 1 routers have different state, so the binary is where they
+/// meet. Applying the method fallback after all three are merged covers every
+/// declared REST path without giving any child router a conflicting fallback.
+/// The wildcard is path-scoped so `/auth/*` keeps the browser flow's own
+/// vocabulary.
+fn rest_api_router(
+    state: layer1_public::rest::SessionsState,
+    admin: Arc<layer1_public::rest::admin::AdminState>,
+) -> Router {
+    Router::new()
+        .merge(layer1_public::rest::complete_router(state, admin))
+        .route("/api/v1", any(|| async { HttpProblem::NotFound }))
+        .route("/api/v1/", any(|| async { HttpProblem::NotFound }))
+        .route("/api/v1/{*path}", any(|| async { HttpProblem::NotFound }))
+        .method_not_allowed_fallback(|| async { HttpProblem::MethodNotAllowed })
+        .layer(axum::middleware::from_fn(rest_links))
+}
+
+/// Advertise the REST profile and its machine-readable service description.
+async fn rest_links(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().append(header::LINK, REST_LINKS);
+    response
+}
+
+/// Apply the browser boundary shared by every public interface.
+///
+/// Origins remain an explicit deployment grant. A wildcard is incompatible
+/// with credentialed requests and would let any site embed this service.
+fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
+    router.layer(axum::middleware::from_fn_with_state(
+        Arc::new(CorsPolicy { origins }),
+        cors,
+    ))
+}
+
+#[derive(Clone)]
+struct CorsPolicy {
+    origins: Vec<HeaderValue>,
+}
+
+async fn cors(State(policy): State<Arc<CorsPolicy>>, request: Request, next: Next) -> Response {
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .filter(|origin| policy.origins.iter().any(|allowed| allowed == *origin))
+        .cloned();
+
+    if is_cors_preflight(&request) {
+        let mut response = Response::new(Body::empty());
+        add_preflight_vary(response.headers_mut());
+        if requested_cors_method_is_allowed(request.headers())
+            && requested_cors_headers_are_allowed(request.headers())
+        {
+            if let Some(origin) = origin {
+                add_cors_grant(response.headers_mut(), origin);
+                response.headers_mut().insert(
+                    header::ACCESS_CONTROL_ALLOW_METHODS,
+                    HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE"),
+                );
+                response.headers_mut().insert(
+                    header::ACCESS_CONTROL_ALLOW_HEADERS,
+                    HeaderValue::from_static(
+                        "content-type, authorization, last-event-id, idempotency-key, x-request-id",
+                    ),
+                );
+                response.headers_mut().insert(
+                    header::ACCESS_CONTROL_MAX_AGE,
+                    HeaderValue::from_static("3600"),
+                );
+            }
+        }
+        return response;
+    }
+
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .append(header::VARY, HeaderValue::from_static("origin"));
+    if let Some(origin) = origin {
+        add_cors_grant(response.headers_mut(), origin);
+        response.headers_mut().insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("link, retry-after, x-request-id"),
+        );
+    }
+    response
+}
+
+pub(crate) fn is_cors_preflight(request: &Request) -> bool {
+    request.method() == Method::OPTIONS
+        && request.headers().contains_key(header::ORIGIN)
+        && request
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
+}
+
+fn requested_cors_method_is_allowed(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCESS_CONTROL_REQUEST_METHOD)
+        .and_then(|value| Method::from_bytes(value.as_bytes()).ok())
+        .is_some_and(|method| {
+            matches!(
+                method,
+                Method::GET | Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+            )
+        })
+}
+
+fn requested_cors_headers_are_allowed(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::ACCESS_CONTROL_REQUEST_HEADERS)
+        .iter()
+        .all(|value| {
+            value.to_str().is_ok_and(|raw| {
+                raw.trim().is_empty()
+                    || raw.split(',').all(|candidate| {
+                        matches!(
+                            candidate.trim().to_ascii_lowercase().as_str(),
+                            "content-type"
+                                | "authorization"
+                                | "last-event-id"
+                                | "idempotency-key"
+                                | "x-request-id"
+                        )
+                    })
+            })
+        })
+}
+
+fn add_cors_grant(headers: &mut HeaderMap, origin: HeaderValue) {
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+        HeaderValue::from_static("true"),
+    );
+}
+
+fn add_preflight_vary(headers: &mut HeaderMap) {
+    for value in [
+        "origin",
+        "access-control-request-method",
+        "access-control-request-headers",
+    ] {
+        headers.append(header::VARY, HeaderValue::from_static(value));
+    }
+}
+
+/// Mint or accept a correlation id, put it on the request span, and echo it.
+fn with_request_context(router: Router) -> Router {
+    router
+        // Added in reverse wrapping order: the setter must run before tracing,
+        // while propagation must see the response produced by every handler.
+        // Validation wraps the setter so an unusable caller value is absent by
+        // the time the UUID fallback decides whether it needs to mint one.
+        .layer(PropagateRequestIdLayer::new(X_REQUEST_ID))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(request_span)
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .layer(SetRequestIdLayer::new(X_REQUEST_ID, MakeRequestUuid))
+        .layer(axum::middleware::from_fn(discard_unusable_request_id))
+}
+
+async fn discard_unusable_request_id(mut request: Request, next: Next) -> Response {
+    let usable = request
+        .headers()
+        .get(&X_REQUEST_ID)
+        .is_none_or(|value| value.to_str().is_ok_and(|text| !text.trim().is_empty()));
+    if !usable {
+        request.headers_mut().remove(&X_REQUEST_ID);
+    }
+    next.run(request).await
+}
+
+fn request_span(request: &Request) -> tracing::Span {
+    let request_id = request
+        .headers()
+        .get(&X_REQUEST_ID)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("<non-text request id>");
+    tracing::info_span!(
+        "http.request",
+        request_id = %request_id,
+        method = %request.method(),
+        path = %request.uri().path(),
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MongoCutoverPreparationError {
+    LegacyStage,
+    Bind,
+}
+
+async fn prepare_mongo_cutover_stage<
+    Listener,
+    RunStage,
+    StageFuture,
+    StageError,
+    Bind,
+    BindFuture,
+    BindError,
+>(
+    config: MongoCutoverStageConfig,
+    run_stage: RunStage,
+    bind: Bind,
+) -> Result<Listener, MongoCutoverPreparationError>
+where
+    RunStage: FnOnce(String, String) -> StageFuture,
+    StageFuture: Future<Output = Result<(), StageError>>,
+    Bind: FnOnce(String) -> BindFuture,
+    BindFuture: Future<Output = Result<Listener, BindError>>,
+{
+    let MongoCutoverStageConfig {
+        stage,
+        bind: bind_address,
+        mongodb_uri,
+        mongodb_database,
+    } = config;
+    match stage {
+        MongoCutoverStage::Legacy => run_stage(mongodb_uri, mongodb_database)
+            .await
+            .map_err(|_| MongoCutoverPreparationError::LegacyStage)?,
+    }
+    bind(bind_address)
+        .await
+        .map_err(|_| MongoCutoverPreparationError::Bind)
+}
+
+async fn serve_mongo_cutover_stage(config: MongoCutoverStageConfig) {
+    let bind = config.bind.clone();
+    // The store wrapper explicitly shuts its MongoDB client down before it
+    // returns. The listener bind is sequenced after that return, so successful
+    // liveness proves this process is already quiescent at the boundary.
+    let listener = match prepare_mongo_cutover_stage(
+        config,
+        |uri, database| async move {
+            crate::store::run_legacy_cutover_stage(&uri, &database).await
+        },
+        |bind| async move { tokio::net::TcpListener::bind(bind).await },
+    )
+    .await
+    {
+        Ok(listener) => listener,
+        Err(MongoCutoverPreparationError::LegacyStage) => {
+            tracing::error!("legacy MongoDB cutover stage failed; details intentionally omitted");
+            std::process::exit(2);
+        }
+        Err(MongoCutoverPreparationError::Bind) => {
+            tracing::error!(
+                "cannot bind cutover maintenance listener; details intentionally omitted"
+            );
+            std::process::exit(2);
+        }
+    };
+    tracing::info!(
+        bind = %bind,
+        reason = "legacy-cutover-staged",
+        "legacy MongoDB cutover staged; public interfaces remain unavailable"
+    );
+    if axum::serve(
+        listener,
+        health::legacy_cutover_router().into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .is_err()
+    {
+        tracing::error!(
+            "cutover maintenance server stopped with an error; details intentionally omitted"
+        );
+        std::process::exit(1);
+    }
+}
+
+struct StartupBootstrap {
+    cutover_stage: Result<Option<MongoCutoverStageConfig>, String>,
+    log_filter: tracing_subscriber::EnvFilter,
+}
+
+fn bootstrap_startup(
+    read_cutover_stage: impl FnOnce() -> Result<Option<MongoCutoverStageConfig>, String>,
+    read_normal_log_filter: impl FnOnce() -> tracing_subscriber::EnvFilter,
+) -> StartupBootstrap {
+    let cutover_stage = read_cutover_stage();
+    let log_filter = if matches!(&cutover_stage, Ok(None)) {
+        read_normal_log_filter()
+    } else {
+        // Staged and invalid-stage startup must not let an environment-provided
+        // directive expose driver or configuration details before the boundary.
+        tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER)
+    };
+    StartupBootstrap {
+        cutover_stage,
+        log_filter,
+    }
+}
+
+async fn dispatch_startup<RunStage, StageFuture, RunNormal, NormalFuture>(
+    cutover_stage: Result<Option<MongoCutoverStageConfig>, String>,
+    run_stage: RunStage,
+    run_normal: RunNormal,
+) -> Result<(), String>
+where
+    RunStage: FnOnce(MongoCutoverStageConfig) -> StageFuture,
+    StageFuture: Future<Output = ()>,
+    RunNormal: FnOnce() -> NormalFuture,
+    NormalFuture: Future<Output = ()>,
+{
+    match cutover_stage {
+        Ok(Some(config)) => run_stage(config).await,
+        Ok(None) => run_normal().await,
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    let StartupBootstrap {
+        cutover_stage,
+        log_filter,
+    } = bootstrap_startup(MongoCutoverStageConfig::from_env, || {
+        tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER))
+    });
+    tracing_subscriber::fmt().with_env_filter(log_filter).init();
 
+    if dispatch_startup(
+        cutover_stage,
+        serve_mongo_cutover_stage,
+        serve_normal_control_plane,
+    )
+    .await
+    .is_err()
+    {
+        tracing::error!(
+            "MongoDB cutover stage configuration is not usable; details intentionally omitted"
+        );
+        std::process::exit(2);
+    }
+}
+
+async fn serve_normal_control_plane() {
     let config = match Config::from_env() {
         Ok(c) => c,
         Err(e) => {
@@ -69,18 +445,33 @@ async fn main() {
         sandbox = %config.sandbox_base_url,
         sandbox_image = %config.sandbox_image,
         auth = config.auth_mode_name(),
+        rate_admission_per_minute = config.rate_limits.admission_per_minute.get(),
+        rate_health_per_minute = config.rate_limits.health_per_minute.get(),
+        rate_default_per_minute = config.rate_limits.default_per_minute.get(),
+        rate_create_per_minute = config.rate_limits.create_per_minute.get(),
+        rate_input_per_minute = config.rate_limits.input_per_minute.get(),
+        trusted_proxy_networks = config.trusted_proxies.cidrs.len(),
+        trusted_proxy_hops = config.trusted_proxies.forwarded_hops,
         "configuration loaded"
     );
 
     for iface in interfaces() {
-        tracing::info!(
-            interface = iface.interface_id(),
-            operations = iface.operations().len(),
-            "interface projected"
-        );
+        if interface_is_served(iface.as_ref()) {
+            tracing::info!(
+                interface = iface.interface_id(),
+                operations = iface.operations().len(),
+                "interface served"
+            );
+        } else {
+            tracing::info!(
+                interface = iface.interface_id(),
+                operations = iface.operations().len(),
+                "interface declared, not yet served"
+            );
+        }
     }
 
-    let adapters = crate::kernels::registry(&config);
+    let adapters = crate::kernels::registry(&config).await;
 
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
         Box::new(VtScreen::new(geometry)) as Box<dyn ScreenModel>
@@ -93,6 +484,10 @@ async fn main() {
         &config.mongodb_uri,
         &config.mongodb_database,
         config.activity_retention,
+        config.mongodb_legacy_cutover,
+        config.mongodb_coordination_cutover,
+        &config.deployment_id,
+        &config.auth_encryption_key,
     )
     .await
     {
@@ -105,6 +500,10 @@ async fn main() {
     let store = Arc::new(stores.sessions) as Arc<dyn layer2_core::SessionStore>;
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
     let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
+    let operation_store = Arc::new(stores.operations) as Arc<dyn layer2_core::OperationStore>;
+    let ticket_store =
+        Arc::new(stores.tickets) as Arc<dyn layer1_public::tickets::TerminalTicketStore>;
+    let auth_store = Arc::new(stores.auth) as Arc<dyn auth::persistence::AuthStore>;
     // The account of what this service is asked to do, and of who asks. Both
     // are opened with everything else rather than lazily: a control plane that
     // served traffic it could not account for would be discovered by somebody
@@ -116,8 +515,11 @@ async fn main() {
         "every request is recorded, and entries older than this are removed"
     );
 
-    // Context storage is optional: without it a session still works, it simply
-    // cannot carry its transcript into a new sandbox.
+    // Object storage is optional only for sessions that resolve no skill packs.
+    // Without it those sessions still work, but cannot persist a transcript or
+    // claim-bound handover snapshot. A session with packs is refused before its
+    // row is created because its exact private bytes could neither be recovered
+    // nor erased safely.
     //
     // It needs both an address and an identity, and switches off unless both
     // are present. Half a configuration would build a store that authenticates
@@ -135,37 +537,54 @@ async fn main() {
     // The bucket is as load-bearing as the identity: this service writes only
     // into the one it is given and creates none, so an unnamed bucket is not a
     // default to fall back on.
-    let context: Option<Arc<dyn layer2_core::ContextStore>> =
-        match identity.filter(|_| !config.context_bucket.trim().is_empty()) {
-            Some(tokens) => Some(Arc::new(crate::store::ChronoStorageContextStore::new(
-                format!(
-                    "{}/api/v1/proxy/s/chrono-storage-service",
-                    config.platform_base_url.trim_end_matches('/')
-                ),
+    let storage_base = format!(
+        "{}/api/v1/proxy/s/chrono-storage-service",
+        config.platform_base_url.trim_end_matches('/')
+    );
+    let storage = match identity.filter(|_| !config.context_bucket.trim().is_empty()) {
+        Some(tokens) => Some((
+            Arc::new(crate::store::ChronoStorageContextStore::new(
+                storage_base.clone(),
+                config.context_bucket.clone(),
+                Arc::clone(&tokens),
+            )),
+            Arc::new(crate::store::ChronoStorageSkillPackStore::new(
+                storage_base,
                 config.context_bucket.clone(),
                 tokens,
-            ))),
-            None => {
-                tracing::warn!(
-                    "session context will not be stored. CHRONO_PLATFORM_BASE_URL, \
+            )),
+        )),
+        None => {
+            tracing::warn!(
+                "session context, durable handover snapshots, and skill packs will not be stored. \
+                 CHRONO_PLATFORM_BASE_URL, \
                  CHRONO_STORAGE_CLIENT_ID, CHRONO_STORAGE_CLIENT_SECRET and \
                  CHRONO_CONTEXT_BUCKET are all required. The bucket must already \
                  exist and be owned by this identity — nothing here creates one. \
-                 No other service's credential is valid here."
-                );
-                None
-            }
-        };
+                 No other service's credential is valid here. Session creation \
+                 will refuse every resolved nonempty skill-pack set until this is configured."
+            );
+            None
+        }
+    };
+    let context = storage
+        .as_ref()
+        .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::ContextStore>);
+    let handovers = storage
+        .as_ref()
+        .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::store::HandoverStore>);
+    let skill_packs = storage.map(|(_, store)| store as Arc<dyn layer2_core::SkillPackStore>);
 
     // Built before the service because the service asks it for an owner's
     // credential whenever it has to put a runtime back under a session that
     // nobody is currently watching.
-    let auth_state = AuthState::new(
+    let auth_state = AuthState::with_store(
         config.auth_mode.clone(),
         Some(SignInRecords {
             users: Arc::clone(&users),
             activity: Arc::clone(&activity),
         }),
+        auth_store,
     );
     if !auth_state.requires_credential() {
         tracing::warn!(
@@ -238,9 +657,10 @@ async fn main() {
     let service = SessionService::new(
         adapters,
         screen_factory,
-        store,
+        Arc::clone(&store),
         layer2_core::SessionPorts {
             context,
+            handovers,
             credentials: Some(Arc::clone(&auth_state) as Arc<dyn layer2_core::CredentialSource>),
             // The same registry the profile editor picks from, asked for
             // contents rather than for names. A deployment without one still
@@ -248,6 +668,7 @@ async fn main() {
             skills: catalog
                 .clone()
                 .map(|c| c as Arc<dyn layer2_core::SkillSource>),
+            skill_packs,
             settings: Some(Arc::clone(&settings)),
         },
         Arc::clone(&environments),
@@ -289,79 +710,76 @@ async fn main() {
     // whose start-up died with an earlier process.
     sweep::spawn(Arc::clone(&service));
 
-    let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(config.cors_origins.clone()))
-        .allow_credentials(true)
-        .allow_headers([axum::http::header::CONTENT_TYPE])
-        .allow_methods([
-            axum::http::Method::GET,
-            axum::http::Method::POST,
-            axum::http::Method::PUT,
-            axum::http::Method::PATCH,
-            axum::http::Method::DELETE,
-        ]);
-
     // What somebody running the service can see and do. Its own router under
     // its own path segment so the whole surface can be restricted in front of
     // this process as well as inside it.
     // Minted where a credential can be carried and redeemed where one cannot,
     // so both surfaces are handed the same store.
-    let tickets = layer1_public::tickets::TerminalTickets::new();
+    let tickets = layer1_public::tickets::TerminalTickets::new(ticket_store);
 
-    let operator =
-        layer1_public::rest::admin::router(Arc::new(layer1_public::rest::admin::AdminState {
+    let public_state = layer1_public::rest::SessionsState {
+        sessions: Arc::clone(&service),
+        users: Arc::clone(&users),
+        tickets: Arc::clone(&tickets),
+        environments: Arc::clone(&environments),
+        operations: operation_store,
+    };
+    let rest = rest_api_router(
+        public_state.clone(),
+        Arc::new(layer1_public::rest::admin::AdminState {
             sessions: Arc::clone(&service),
             activity: Arc::clone(&activity),
             users: Arc::clone(&users),
             settings: Arc::clone(&settings),
-        }));
+        }),
+    );
+    let rate_limits =
+        rate_limit::RateLimiters::from_config(config.rate_limits, config.trusted_proxies.clone());
 
-    let app = Router::new()
-        .route("/livez", get(|| async { "ok" }))
-        .route("/ready", get(ready))
-        .merge(layer1_public::rest::router(
-            layer1_public::rest::SessionsState {
-                sessions: Arc::clone(&service),
-                users: Arc::clone(&users),
-                tickets: Arc::clone(&tickets),
-                environments: Arc::clone(&environments),
-            },
-        ))
-        .merge(layer1_public::rest::environments::router(Arc::clone(
-            &environments,
-        )))
-        // The priority-1 interface, sharing the facade's state because it
-        // projects the same sessions: a thread here is a session there, and
-        // two states would be two answers to the same question.
-        .merge(layer1_public::agui::router(
-            layer1_public::rest::SessionsState {
-                sessions: Arc::clone(&service),
-                users: Arc::clone(&users),
-                tickets: Arc::clone(&tickets),
-                environments: Arc::clone(&environments),
-            },
-        ))
-        .merge(operator)
-        .merge(layer1_public::pty::router(
-            layer1_public::pty::TerminalState {
-                sessions: Arc::clone(&service),
-                tickets: Arc::clone(&tickets),
-            },
-        ))
-        .merge(auth::router(Arc::clone(&auth_state)))
-        // Ordered deliberately. A layer added later wraps the ones before it,
-        // so identity is established first and recording sees both who called
-        // and how their request came out. Reversing these two would record
-        // every request as having no actor.
-        .layer(axum::middleware::from_fn_with_state(
-            ActivityRecorder::new(Arc::clone(&activity)),
-            activity::record,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&auth_state),
-            auth::attach_subject,
-        ))
-        .layer(cors);
+    let app = with_request_context(with_cors(
+        Router::new()
+            .merge(health::router(store))
+            .merge(rest)
+            // The priority-1 interface, sharing the facade's state because it
+            // projects the same sessions: a thread here is a session there, and
+            // two states would be two answers to the same question.
+            .merge(layer1_public::agui::router(public_state))
+            .merge(layer1_public::pty::router(
+                layer1_public::pty::TerminalState {
+                    sessions: Arc::clone(&service),
+                    tickets: Arc::clone(&tickets),
+                },
+            ))
+            .merge(layer1_public::mcp::router())
+            .merge(layer1_public::a2a::router())
+            .merge(auth::router(Arc::clone(&auth_state)))
+            // Added in reverse wrapping order. Activity records admitted work,
+            // never the traffic being refused to protect its own Mongo write.
+            .layer(axum::middleware::from_fn_with_state(
+                ActivityRecorder::new(Arc::clone(&activity)),
+                activity::record,
+            ))
+            // Exact route-class limits see the identity established outside
+            // them and run before activity buffers a body or writes MongoDB.
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&rate_limits),
+                rate_limit::enforce,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&auth_state),
+                auth::attach_subject,
+            ))
+            // A cheap network guard is outside authentication, bounding store
+            // lookups and bearer introspection as well as downstream work.
+            .layer(axum::middleware::from_fn_with_state(
+                rate_limits,
+                rate_limit::admit,
+            ))
+            // The extension is outermost so every body extractor sees the
+            // chosen ceiling. The activity recorder uses the same constant.
+            .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES)),
+        config.cors_origins.clone(),
+    ));
 
     let listener = match tokio::net::TcpListener::bind(&config.bind).await {
         Ok(l) => l,
@@ -372,17 +790,16 @@ async fn main() {
     };
     tracing::info!(bind = %config.bind, "control plane listening");
 
-    if let Err(e) = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
+    if let Err(e) = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
     {
         tracing::error!(error = %e, "server stopped with an error");
         std::process::exit(1);
     }
-}
-
-async fn ready() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ready" }))
 }
 
 async fn shutdown_signal() {
@@ -409,8 +826,252 @@ async fn shutdown_signal() {
 }
 
 #[cfg(test)]
+#[path = "rest_contract_tests.rs"]
+mod rest_contract_tests;
+
+#[cfg(test)]
+#[path = "interface_contract_tests.rs"]
+mod interface_contract_tests;
+
+#[cfg(test)]
 mod tests {
+    use std::sync::{atomic::AtomicUsize, atomic::Ordering, Mutex};
+
     use super::*;
+
+    fn legacy_stage_config() -> MongoCutoverStageConfig {
+        MongoCutoverStageConfig {
+            stage: MongoCutoverStage::Legacy,
+            bind: "127.0.0.1:18080".into(),
+            mongodb_uri: "mongodb://stage.invalid/cma".into(),
+            mongodb_database: "stage_database".into(),
+        }
+    }
+
+    #[test]
+    fn startup_resolves_the_stage_before_reading_the_normal_log_filter() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let stage_events = Arc::clone(&events);
+        let log_events = Arc::clone(&events);
+
+        let bootstrap = bootstrap_startup(
+            move || {
+                stage_events.lock().unwrap().push("cutover-stage");
+                Ok(None)
+            },
+            move || {
+                log_events.lock().unwrap().push("rust-log");
+                tracing_subscriber::EnvFilter::new("warn")
+            },
+        );
+
+        assert!(matches!(bootstrap.cutover_stage, Ok(None)));
+        assert_eq!(bootstrap.log_filter.to_string(), "warn");
+        assert_eq!(*events.lock().unwrap(), ["cutover-stage", "rust-log"]);
+    }
+
+    #[test]
+    fn staged_and_invalid_stage_startup_never_reads_rust_log() {
+        for cutover_stage in [
+            Ok(Some(legacy_stage_config())),
+            Err("invalid nonempty cutover stage".to_owned()),
+        ] {
+            let rust_log_reads = AtomicUsize::new(0);
+            let bootstrap = bootstrap_startup(
+                move || cutover_stage,
+                || {
+                    rust_log_reads.fetch_add(1, Ordering::SeqCst);
+                    tracing_subscriber::EnvFilter::new("trace")
+                },
+            );
+
+            assert_eq!(rust_log_reads.load(Ordering::SeqCst), 0);
+            assert_eq!(bootstrap.log_filter.to_string(), "info");
+        }
+    }
+
+    #[tokio::test]
+    async fn selected_stage_never_enters_normal_configuration_or_provider_startup() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let stage_calls = Arc::clone(&calls);
+        let normal_calls = Arc::clone(&calls);
+
+        dispatch_startup(
+            Ok(Some(legacy_stage_config())),
+            move |config| {
+                assert_eq!(config.stage, MongoCutoverStage::Legacy);
+                stage_calls.lock().unwrap().push("legacy-cutover");
+                std::future::ready(())
+            },
+            move || async move {
+                normal_calls.lock().unwrap().extend([
+                    "normal-config",
+                    "kernel-registry-and-sandbox",
+                    "mongodb-stores",
+                    "storage-and-skill-catalog",
+                    "nyxid-and-auth",
+                    "renewal-and-sweep",
+                    "public-listener",
+                ]);
+                panic!("normal configuration and providers are deliberately poisoned")
+            },
+        )
+        .await
+        .expect("the selected stage completes");
+
+        assert_eq!(*calls.lock().unwrap(), ["legacy-cutover"]);
+    }
+
+    #[tokio::test]
+    async fn invalid_stage_enters_neither_startup_branch() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let stage_calls = Arc::clone(&calls);
+        let normal_calls = Arc::clone(&calls);
+
+        let error = dispatch_startup(
+            Err("invalid nonempty cutover stage".to_owned()),
+            move |_| {
+                stage_calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(())
+            },
+            move || {
+                normal_calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(())
+            },
+        )
+        .await
+        .expect_err("an invalid selector cannot choose a startup branch");
+
+        assert_eq!(error, "invalid nonempty cutover stage");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn legacy_stage_completion_and_client_shutdown_precede_listener_bind() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let stage_events = Arc::clone(&events);
+        let bind_events = Arc::clone(&events);
+
+        let listener = prepare_mongo_cutover_stage(
+            legacy_stage_config(),
+            move |uri, database| async move {
+                assert_eq!(uri, "mongodb://stage.invalid/cma");
+                assert_eq!(database, "stage_database");
+                stage_events.lock().unwrap().push("stage-complete");
+                tokio::task::yield_now().await;
+                stage_events.lock().unwrap().push("client-shutdown");
+                Ok::<(), ()>(())
+            },
+            move |bind| async move {
+                assert_eq!(bind, "127.0.0.1:18080");
+                bind_events.lock().unwrap().push("listener-bind");
+                Ok::<_, ()>("maintenance-listener")
+            },
+        )
+        .await
+        .expect("the maintenance boundary prepares");
+
+        assert_eq!(listener, "maintenance-listener");
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["stage-complete", "client-shutdown", "listener-bind"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_legacy_stage_never_binds_the_listener() {
+        let bind_calls = Arc::new(AtomicUsize::new(0));
+        let observed_bind_calls = Arc::clone(&bind_calls);
+
+        let error = prepare_mongo_cutover_stage(
+            legacy_stage_config(),
+            |_, _| std::future::ready(Err::<(), _>("deliberate stage failure")),
+            move |_| {
+                observed_bind_calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Ok::<_, ()>(()))
+            },
+        )
+        .await
+        .expect_err("a failed migration cannot expose maintenance liveness");
+
+        assert_eq!(error, MongoCutoverPreparationError::LegacyStage);
+        assert_eq!(bind_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn request_span_records_correlation_without_query_credentials() {
+        use tracing::{field::Visit, span::Attributes, Subscriber};
+        use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer};
+
+        #[derive(Clone)]
+        struct Capture(Arc<std::sync::Mutex<Vec<(String, String)>>>);
+
+        struct Fields<'a>(&'a std::sync::Mutex<Vec<(String, String)>>);
+
+        impl Visit for Fields<'_> {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0
+                    .lock()
+                    .expect("capture lock is usable")
+                    .push((field.name().to_string(), format!("{value:?}")));
+            }
+        }
+
+        impl<S> Layer<S> for Capture
+        where
+            S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+        {
+            fn on_new_span(
+                &self,
+                attributes: &Attributes<'_>,
+                _id: &tracing::span::Id,
+                _context: Context<'_, S>,
+            ) {
+                attributes.record(&mut Fields(&self.0));
+            }
+        }
+
+        let fields = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry().with(Capture(Arc::clone(&fields)));
+        tracing::subscriber::with_default(subscriber, || {
+            let request = Request::get(
+                "/api/v1/sessions/sesn_trace_canary/terminal\
+                 ?ticket=pty-ticket-secret-488&code=oauth-code-secret-488\
+                 &state=oauth-state-secret-488",
+            )
+            .header("x-request-id", "support-case-488")
+            .body(axum::body::Body::empty())
+            .expect("request builds");
+            let _span = request_span(&request);
+        });
+        let fields = fields.lock().expect("capture lock is usable");
+        assert!(
+            fields
+                .iter()
+                .any(|(name, value)| name == "request_id" && value.contains("support-case-488")),
+            "request span must carry the support correlation id: {fields:?}"
+        );
+        assert!(
+            fields.iter().any(|(name, value)| {
+                name == "path" && value.contains("/api/v1/sessions/sesn_trace_canary/terminal")
+            }),
+            "request span must carry the request path: {fields:?}"
+        );
+        for secret in [
+            "pty-ticket-secret-488",
+            "oauth-code-secret-488",
+            "oauth-state-secret-488",
+        ] {
+            assert!(
+                fields.iter().all(|(_, value)| !value.contains(secret)),
+                "request span leaked query credential {secret}: {fields:?}"
+            );
+        }
+        assert!(
+            fields.iter().all(|(name, _)| name != "uri"),
+            "request span must not imply that it records a full URI: {fields:?}"
+        );
+    }
 
     #[test]
     fn every_interface_has_a_unique_id() {

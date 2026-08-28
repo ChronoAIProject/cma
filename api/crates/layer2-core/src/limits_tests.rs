@@ -37,6 +37,7 @@ struct ObservedStore {
 
 impl ObservedStore {
     fn new(inner: Arc<FakeStore>, mode: CountMode) -> Self {
+        inner.disable_coordination();
         Self {
             inner,
             mode,
@@ -46,12 +47,9 @@ impl ObservedStore {
     }
 
     fn racing(inner: Arc<FakeStore>) -> Self {
-        Self {
-            inner,
-            mode: CountMode::Delegate,
-            slow_writes: true,
-            count_calls: AtomicUsize::new(0),
-        }
+        let mut store = Self::new(inner, CountMode::Delegate);
+        store.slow_writes = true;
+        store
     }
 
     fn calls(&self) -> usize {
@@ -61,19 +59,20 @@ impl ObservedStore {
 
 #[async_trait::async_trait]
 impl SessionStore for ObservedStore {
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        if self.slow_writes {
-            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        }
-        self.inner.upsert(record).await
+    async fn ping(&self) -> Result<(), StoreError> {
+        self.inner.ping().await
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         self.inner.get(id).await
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
-        self.inner.list_for(owner).await
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &crate::SessionListQuery,
+    ) -> Result<crate::Page<SessionRecord>, StoreError> {
+        self.inner.list_for(owner, query).await
     }
 
     async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
@@ -91,8 +90,11 @@ impl SessionStore for ObservedStore {
         self.inner.reserved_capacity().await
     }
 
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
-        self.inner.list_all().await
+    async fn list_all(
+        &self,
+        query: &crate::SessionListQuery,
+    ) -> Result<crate::Page<SessionRecord>, StoreError> {
+        self.inner.list_all(query).await
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
@@ -101,6 +103,31 @@ impl SessionStore for ObservedStore {
 
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
         self.inner.append_events(events).await
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .commit_session_idempotent(write_id, record, events)
+            .await
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        if self.slow_writes {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+        self.inner
+            .create_session_idempotent(write_id, record, events)
+            .await
     }
 
     async fn events_since(
@@ -322,6 +349,7 @@ async fn revive_is_refused_when_another_session_occupies_the_slot() {
 #[tokio::test]
 async fn rereviving_a_live_session_returns_before_the_limit_is_queried() {
     let inner = Arc::new(FakeStore::default());
+    inner.disable_coordination();
     let adapter = Arc::new(FakeAdapter::default());
     let owner = user("owner");
     let unlimited = service_with_settings(
@@ -412,13 +440,20 @@ async fn the_default_store_count_uses_recorded_desired_state_and_owner() {
 
     let mut records = store.sessions.lock().await;
     records.clear();
-    for (index, status) in [
-        SessionStatus::Provisioning,
-        SessionStatus::Ready,
-        SessionStatus::Running,
-        SessionStatus::Rotating,
-        SessionStatus::Idle,
-        SessionStatus::Terminated,
+    for (index, (status, stop_reason)) in [
+        (SessionStatus::Provisioning, None),
+        (SessionStatus::Ready, None),
+        (SessionStatus::Running, None),
+        (SessionStatus::Rotating, None),
+        (SessionStatus::Idle, None),
+        (
+            SessionStatus::Idle,
+            Some(crate::session::StopReason::RequiresAction),
+        ),
+        (
+            SessionStatus::Terminated,
+            Some(crate::session::StopReason::UserTerminated),
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -426,6 +461,7 @@ async fn the_default_store_count_uses_recorded_desired_state_and_owner() {
         let mut record = template.clone();
         record.session.id = SessionId(format!("sesn_owner_{index}"));
         record.session.status = status;
+        record.session.stop_reason = stop_reason;
         records.insert(record.session.id.0.clone(), record);
     }
     let mut other = template;
@@ -435,12 +471,13 @@ async fn the_default_store_count_uses_recorded_desired_state_and_owner() {
     records.insert(other.session.id.0.clone(), other);
     drop(records);
 
-    assert_eq!(store.count_live_for(&owner.subject).await.unwrap(), 4);
+    assert_eq!(store.count_live_for(&owner.subject).await.unwrap(), 5);
 }
 
 #[tokio::test]
 async fn reconciliation_restores_every_live_record_without_counting() {
     let inner = Arc::new(FakeStore::default());
+    inner.disable_coordination();
     let adapter = Arc::new(FakeAdapter::default());
     let owner = user("owner");
     let first = service_with_settings(

@@ -50,12 +50,11 @@ const SETTINGS_WIRE = {
  * could ask never turns into a provider running nothing.
  */
 
-function respond(body: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
+function respond(body: unknown, status = 200, headers: HeadersInit = {}): Response {
+  return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
-    json: () => Promise.resolve(body),
-  } as unknown as Response;
+    headers: { 'Content-Type': 'application/json', ...headers },
+  });
 }
 
 afterEach(() => {
@@ -364,6 +363,38 @@ describe('talking to the control plane', () => {
     await expect(createRestOperatorStore().sessions()).rejects.toThrow(/was not a list/);
   });
 
+  it('keeps a session after the first fifty rows visible and actionable', async () => {
+    const first = Array.from({ length: 50 }, (_, index) => ({
+      id: `sesn_page_${String(index).padStart(2, '0')}`,
+      status: 'ready',
+      kernel: 'test',
+    }));
+    const afterFifty = { id: 'sesn_after_fifty', status: 'running', kernel: 'test' };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        respond(first, 200, {
+          Link: '</api/v1/admin/sessions?limit=50&cursor=opaque>; rel="next"',
+        }),
+      )
+      .mockResolvedValueOnce(respond([afterFifty]))
+      .mockResolvedValueOnce(respond(null, 204));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const store = createRestOperatorStore();
+    const sessions = await store.sessions();
+    expect(sessions).toHaveLength(51);
+    expect(sessions[50]?.id).toBe(afterFifty.id);
+    await store.terminateSession(sessions[50]?.id ?? 'missing');
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/v1/admin/sessions',
+      '/api/v1/admin/sessions?limit=50&cursor=opaque',
+      '/api/v1/admin/sessions/sesn_after_fifty/terminate',
+    ]);
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('POST');
+  });
+
   it('acts on a session through its own address, encoded', async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(null, 204));
     vi.stubGlobal('fetch', fetchMock);
@@ -378,7 +409,7 @@ describe('talking to the control plane', () => {
   });
 
   it('reads, conditionally replaces, and briefing-resets platform settings', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(respond(SETTINGS_WIRE));
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(respond(SETTINGS_WIRE)));
     vi.stubGlobal('fetch', fetchMock);
     const store = createRestOperatorStore();
     const current = await store.readPlatformSettings();

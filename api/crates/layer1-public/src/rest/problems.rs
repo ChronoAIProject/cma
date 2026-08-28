@@ -6,8 +6,122 @@ use axum::{
     Json,
 };
 use layer2_core::CoreError;
+use serde::Serialize;
+use utoipa::ToSchema;
 
 use super::PROBLEM_BASE;
+
+/// RFC 9457 problem details returned by every REST refusal.
+///
+/// The last fields are typed extensions used by particular domain refusals.
+/// They remain absent for other errors, so a generated client has one error
+/// type without losing the structured facts it can act on.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProblemDocument {
+    #[serde(rename = "type")]
+    problem_type: String,
+    title: String,
+    status: u16,
+    detail: String,
+    code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capability: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimension: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maximum: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_cpu_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_memory_mib: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    free_cpu_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    free_memory_mib: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quoted_rate_card: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rate_card: Option<String>,
+}
+
+/// An HTTP-level refusal raised outside a core operation.
+///
+/// These variants are public because the composition layer can reject a
+/// request before a Layer 1 handler runs. Their wire representation remains
+/// owned here, beside the domain-problem renderer, so every refusal has one
+/// serializer and one media type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpProblem {
+    /// The request body exceeded the service's accepted limit.
+    RequestTooLarge,
+    /// The caller exhausted the request budget for this route class.
+    RateLimited {
+        /// Whole seconds until one request token is expected to be available.
+        retry_after_seconds: u64,
+    },
+    /// No REST route matched the request path.
+    NotFound,
+    /// The REST route exists but does not accept this method.
+    MethodNotAllowed,
+}
+
+impl IntoResponse for HttpProblem {
+    fn into_response(self) -> Response {
+        if let Self::RateLimited {
+            retry_after_seconds,
+        } = self
+        {
+            let body = problem_document(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate-limited",
+                "This caller has exhausted the request budget for this route.",
+                "rate_limited",
+            );
+            let mut response = problem_response(StatusCode::TOO_MANY_REQUESTS, body);
+            response.headers_mut().insert(
+                header::RETRY_AFTER,
+                HeaderValue::from_str(&retry_after_seconds.max(1).to_string())
+                    .expect("a positive integer is a valid Retry-After value"),
+            );
+            return response;
+        }
+        let (status, slug, detail, code) = match self {
+            Self::RequestTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request-too-large",
+                "The request body exceeds what this service accepts.",
+                "request_too_large",
+            ),
+            Self::NotFound => (
+                StatusCode::NOT_FOUND,
+                "not-found",
+                "No REST route matches this request path.",
+                "not_found",
+            ),
+            Self::MethodNotAllowed => (
+                StatusCode::METHOD_NOT_ALLOWED,
+                "method-not-allowed",
+                "This REST route does not accept the request method.",
+                "method_not_allowed",
+            ),
+            Self::RateLimited { .. } => unreachable!("handled above"),
+        };
+        let body = problem_document(status, slug, detail, code);
+        problem_response(status, body)
+    }
+}
 
 /// A core failure rendered as an RFC 9457 problem document.
 pub struct Problem(pub(crate) CoreError);
@@ -30,6 +144,10 @@ impl IntoResponse for Problem {
             }
             CoreError::InvalidRequest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-request"),
             CoreError::SessionTerminated => (StatusCode::CONFLICT, "session-terminated"),
+            // A fresh request can succeed after the handover finishes on its
+            // own, unlike the final session-terminated conflict. A completed
+            // idempotency key still replays the refusal it recorded.
+            CoreError::SessionRotating => (StatusCode::CONFLICT, "session-rotating"),
             CoreError::AlreadyAttached => (StatusCode::CONFLICT, "already-attached"),
             CoreError::InvalidGeometry(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-geometry"),
             CoreError::InvalidPressurePolicy(_) => {
@@ -73,6 +191,10 @@ impl IntoResponse for Problem {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "service-catalogue-unavailable",
             ),
+            CoreError::SkillCatalogUnavailable(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "skill-catalogue-unavailable",
+            ),
             // The same request succeeds after the caller re-quotes. Time alone
             // does not clear it, so this is a conflict rather than a rate limit.
             CoreError::PriceChanged { .. } => (StatusCode::CONFLICT, "price-changed"),
@@ -91,7 +213,16 @@ impl IntoResponse for Problem {
             }
         };
 
-        let mut body = problem_document(status, slug, &rendered.to_string(), rendered.code());
+        // Upstream errors can contain request URLs and transport internals. The
+        // logs retain those for diagnosis; the public problem says only what a
+        // caller can act on and never reflects the upstream string.
+        let detail = match rendered {
+            CoreError::SkillCatalogUnavailable(_) => {
+                "The skill catalogue could not be read completely.".to_string()
+            }
+            _ => rendered.to_string(),
+        };
+        let mut body = problem_document(status, slug, &detail, rendered.code());
         if let Some(object) = body.as_object_mut() {
             match rendered {
                 // Names are fields rather than prose a client has to parse.
@@ -127,12 +258,7 @@ impl IntoResponse for Problem {
                 _ => {}
             }
         }
-        let mut response = (status, Json(body)).into_response();
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/problem+json"),
-        );
-        response
+        problem_response(status, body)
     }
 }
 
@@ -153,13 +279,43 @@ pub(crate) fn problem_document(
     detail: &str,
     code: &str,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "type": format!("{PROBLEM_BASE}/{slug}"),
-        "title": slug.replace('-', " "),
-        "status": status.as_u16(),
-        "detail": detail,
-        "code": code,
+    serde_json::to_value(ProblemDocument {
+        problem_type: format!("{PROBLEM_BASE}/{slug}"),
+        title: slug.replace('-', " "),
+        status: status.as_u16(),
+        detail: detail.to_string(),
+        code: code.to_string(),
+        field: None,
+        path: None,
+        capability: None,
+        dimension: None,
+        requested: None,
+        minimum: None,
+        maximum: None,
+        limit: None,
+        live: None,
+        requested_cpu_millis: None,
+        requested_memory_mib: None,
+        free_cpu_millis: None,
+        free_memory_mib: None,
+        quoted_rate_card: None,
+        rate_card: None,
     })
+    .expect("a problem document is serializable")
+}
+
+/// Put a completed problem document on the wire with its registered media type.
+///
+/// Every source of an HTTP refusal finishes here. Keeping the header beside the
+/// conversion means a new problem renderer cannot accidentally inherit Axum's
+/// ordinary `application/json` response type.
+pub(crate) fn problem_response(status: StatusCode, body: serde_json::Value) -> Response {
+    let mut response = (status, Json(body)).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/problem+json"),
+    );
+    response
 }
 
 #[cfg(test)]
@@ -185,6 +341,7 @@ mod tests {
             CoreError::EnvironmentProfileNotFound,
             CoreError::Forbidden,
             CoreError::SessionTerminated,
+            CoreError::SessionRotating,
             CoreError::AlreadyAttached,
             CoreError::InvalidGeometry(TerminalGeometry::new(0, 1).unwrap_err()),
             CoreError::InvalidPressurePolicy(
@@ -211,6 +368,7 @@ mod tests {
             CoreError::InvalidRequest("x".into()),
             CoreError::ServiceNotGranted("service".into()),
             CoreError::ServiceCatalogUnavailable("down".into()),
+            CoreError::SkillCatalogUnavailable("down".into()),
             CoreError::PriceChanged {
                 quoted: "rate_old".into(),
                 in_force: "rate_new".into(),
@@ -225,6 +383,7 @@ mod tests {
                 | CoreError::EnvironmentProfileNotFound
                 | CoreError::Forbidden
                 | CoreError::SessionTerminated
+                | CoreError::SessionRotating
                 | CoreError::AlreadyAttached
                 | CoreError::InvalidGeometry(_)
                 | CoreError::InvalidPressurePolicy(_)
@@ -239,6 +398,7 @@ mod tests {
                 | CoreError::InvalidRequest(_)
                 | CoreError::ServiceNotGranted(_)
                 | CoreError::ServiceCatalogUnavailable(_)
+                | CoreError::SkillCatalogUnavailable(_)
                 | CoreError::PriceChanged { .. }
                 | CoreError::PriceListNotAppendOnly(_)
                 | CoreError::SettingsConflict(_)
@@ -271,6 +431,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_skill_catalogue_failure_is_coded_and_does_not_reflect_upstream_detail() {
+        let (status, body) = rendered(CoreError::SkillCatalogUnavailable(
+            "GET https://registry.internal/secret?cursor=opaque failed".into(),
+        ))
+        .await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["code"], "skill_catalogue_unavailable");
+        assert!(body["type"]
+            .as_str()
+            .expect("problem type")
+            .ends_with("/skill-catalogue-unavailable"));
+        assert_eq!(
+            body["detail"],
+            "The skill catalogue could not be read completely."
+        );
+        assert!(!body.to_string().contains("registry.internal"));
+        assert!(!body.to_string().contains("opaque"));
+    }
+
+    #[tokio::test]
+    async fn a_rotating_session_is_a_retryable_conflict_distinct_from_termination() {
+        let (rotating_status, rotating) = rendered(CoreError::SessionRotating).await;
+        let (terminated_status, terminated) = rendered(CoreError::SessionTerminated).await;
+
+        assert_eq!(rotating_status, StatusCode::CONFLICT);
+        assert_eq!(terminated_status, StatusCode::CONFLICT);
+        assert_eq!(rotating["code"], "session_rotating");
+        assert!(rotating["type"]
+            .as_str()
+            .expect("problem type")
+            .ends_with("/session-rotating"));
+        assert_ne!(rotating["code"], terminated["code"]);
+        assert_ne!(rotating["type"], terminated["type"]);
+    }
+
+    #[tokio::test]
     async fn rewriting_a_sealed_price_is_unprocessable_and_not_a_conflict() {
         let (status, body) = rendered(CoreError::PriceListNotAppendOnly(
             "card rate_example changed field 'rate'".into(),
@@ -299,6 +496,18 @@ mod tests {
         assert_eq!(body["code"], "price_changed");
         assert_eq!(body["quoted_rate_card"], "rate_old");
         assert_eq!(body["rate_card"], "rate_new");
+    }
+
+    #[tokio::test]
+    async fn an_invalid_state_is_a_typed_conflict() {
+        let (status, body) = rendered(CoreError::InvalidState).await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            body["type"],
+            "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-state"
+        );
+        assert_eq!(body["code"], "invalid_state");
     }
 
     #[tokio::test]

@@ -32,7 +32,7 @@ async fn a_cookie_client_attaches_as_itself_and_exclusively() {
     // The path our own dashboard takes, unchanged by any of this: the
     // browser sends its cookie, middleware has already resolved who that
     // is, and no ticket is involved.
-    let tickets = TerminalTickets::new();
+    let tickets = TerminalTickets::in_memory();
     let (admitted, claim) = admit(
         &tickets,
         &SessionId("sesn_1".into()),
@@ -40,6 +40,7 @@ async fn a_cookie_client_attaches_as_itself_and_exclusively() {
         Some(AuthenticatedCaller(caller("subject-a"))),
     )
     .await
+    .expect("ticket store answers")
     .expect("an authenticated caller is admitted");
     assert_eq!(admitted.subject, SubjectId("subject-a".into()));
     assert_eq!(claim, AttachmentClaim::Exclusive);
@@ -49,14 +50,16 @@ async fn a_cookie_client_attaches_as_itself_and_exclusively() {
 async fn a_bearer_client_attaches_by_redeeming_its_ticket() {
     // The path a product frontend takes, because its browser cannot put a
     // credential on the upgrade at all.
-    let tickets = TerminalTickets::new();
+    let tickets = TerminalTickets::in_memory();
     let id = SessionId("sesn_1".into());
     let issued = tickets
         .issue(&caller("subject-a"), &id, AttachmentClaim::Takeover)
-        .await;
+        .await
+        .expect("ticket is stored");
 
     let (admitted, claim) = admit(&tickets, &id, Some(issued.value), None)
         .await
+        .expect("ticket store answers")
         .expect("a live ticket is admitted");
     assert_eq!(admitted.subject, SubjectId("subject-a".into()));
     assert_eq!(
@@ -68,9 +71,10 @@ async fn a_bearer_client_attaches_by_redeeming_its_ticket() {
 
 #[tokio::test]
 async fn an_upgrade_with_neither_a_ticket_nor_a_cookie_is_refused() {
-    let tickets = TerminalTickets::new();
+    let tickets = TerminalTickets::in_memory();
     assert!(admit(&tickets, &SessionId("sesn_1".into()), None, None)
         .await
+        .expect("ticket store answers")
         .is_none());
 }
 
@@ -78,13 +82,15 @@ async fn an_upgrade_with_neither_a_ticket_nor_a_cookie_is_refused() {
 async fn a_spent_ticket_does_not_fall_back_to_the_cookie() {
     // Otherwise single use would hold only for clients that had no cookie,
     // and a replayed ticket would succeed on a same-origin page.
-    let tickets = TerminalTickets::new();
+    let tickets = TerminalTickets::in_memory();
     let id = SessionId("sesn_1".into());
     let issued = tickets
         .issue(&caller("subject-a"), &id, AttachmentClaim::Exclusive)
-        .await;
+        .await
+        .expect("ticket is stored");
     admit(&tickets, &id, Some(issued.value.clone()), None)
         .await
+        .expect("ticket store answers")
         .expect("the first redemption works");
 
     assert!(admit(
@@ -94,6 +100,7 @@ async fn a_spent_ticket_does_not_fall_back_to_the_cookie() {
         Some(AuthenticatedCaller(caller("subject-a")))
     )
     .await
+    .expect("ticket store answers")
     .is_none());
 }
 
@@ -106,6 +113,14 @@ fn a_superseded_client_is_told_in_a_code_it_can_branch_on() {
     );
 }
 
+fn close_for(detached: Option<layer2_core::Detached>) -> (u16, String) {
+    let frames = ending(detached);
+    let Some(Message::Close(Some(close))) = frames.last() else {
+        panic!("an attachment ending must finish with a close frame: {frames:?}");
+    };
+    (close.code, close.reason.to_string())
+}
+
 #[test]
 fn each_kind_of_ending_has_its_own_code() {
     // The three ask different things of whoever is looking, so they cannot
@@ -113,9 +128,9 @@ fn each_kind_of_ending_has_its_own_code() {
     // is gone for good and the session is now a conversation, and one asks you
     // to come back in a moment.
     let codes = [
-        ending(Some(layer2_core::Detached::Superseded)).0,
-        ending(Some(layer2_core::Detached::PlaneChanged)).0,
-        ending(Some(layer2_core::Detached::RuntimeReplaced)).0,
+        close_for(Some(layer2_core::Detached::Superseded)).0,
+        close_for(Some(layer2_core::Detached::PlaneChanged)).0,
+        close_for(Some(layer2_core::Detached::RuntimeReplaced)).0,
     ];
     assert_eq!(
         codes
@@ -135,7 +150,7 @@ fn each_kind_of_ending_has_its_own_code() {
 
 #[test]
 fn a_session_that_left_the_terminal_plane_says_so_rather_than_going_quiet() {
-    let (code, reason) = ending(Some(layer2_core::Detached::PlaneChanged));
+    let (code, reason) = close_for(Some(layer2_core::Detached::PlaneChanged));
     assert_eq!(code, PLANE_CHANGED_CLOSE_CODE);
     assert!(
         reason.contains("conversation"),
@@ -148,9 +163,51 @@ fn an_attachment_lost_with_nothing_said_still_closes_with_a_reason() {
     // The channel can close without a word — an entry dropped for some other
     // cause. A terminal that ends silently is one whose owner reloads and
     // takes the attachment back, which is the fight this exists to prevent.
-    let (code, reason) = ending(None);
+    let (code, reason) = close_for(None);
     assert_eq!(code, SUPERSEDED_CLOSE_CODE);
     assert!(!reason.is_empty());
+}
+
+#[test]
+fn a_reported_process_exit_is_sent_before_a_normal_close() {
+    let frames = reported_ending(Some(layer2_core::Detached::ProcessExited {
+        code: Some(17),
+    }));
+    assert_eq!(frames.len(), 2, "got {frames:?}");
+
+    let Message::Text(text) = &frames[0] else {
+        panic!("the exit report must be a text control frame: {frames:?}");
+    };
+    let json: serde_json::Value = serde_json::from_str(text).expect("the exit frame is JSON");
+    assert_eq!(
+        json,
+        serde_json::json!({ "t": "exit", "code": 17, "reason": "exited" })
+    );
+
+    let Message::Close(Some(close)) = &frames[1] else {
+        panic!("the exit report must be followed by Close: {frames:?}");
+    };
+    assert_eq!(close.code, axum::extract::ws::close_code::NORMAL);
+    assert!(close.reason.is_empty());
+}
+
+#[test]
+fn a_signal_exit_carries_null_instead_of_fabricating_zero() {
+    let frames = reported_ending(Some(layer2_core::Detached::ProcessExited { code: None }));
+    let Message::Text(text) = &frames[0] else {
+        panic!("the exit report must be text: {frames:?}");
+    };
+    let json: serde_json::Value = serde_json::from_str(text).expect("the exit frame is JSON");
+    assert!(json["code"].is_null(), "got {json}");
+    assert_eq!(json["reason"], "exited");
+}
+
+#[test]
+fn an_unreported_runtime_channel_ending_emits_no_exit_or_clean_close() {
+    assert!(
+        reported_ending(None).is_empty(),
+        "transport loss is not evidence of process exit"
+    );
 }
 
 #[test]
@@ -174,6 +231,7 @@ fn each_remaining_failure_has_its_own_code() {
         error_code(&CoreError::SessionTerminated),
         "session_terminated"
     );
+    assert_eq!(error_code(&CoreError::SessionRotating), "session_rotating");
     assert_eq!(
         error_code(&CoreError::RuntimeUnavailable("x".into())),
         "runtime_unavailable"
@@ -285,4 +343,17 @@ fn control_frames_parse_from_their_tag() {
         serde_json::from_str(r#"{"t":"signal","sig":"INT"}"#).expect("signal parses");
     assert!(matches!(s, ClientControl::Signal { .. }));
     assert!(serde_json::from_str::<ClientControl>(r#"{"t":"nope"}"#).is_err());
+}
+
+#[test]
+fn every_documented_signal_name_is_supported() {
+    for signal in ["INT", "TERM", "QUIT", "HUP"] {
+        assert!(supported_signal(signal), "{signal} must remain accepted");
+    }
+}
+
+#[test]
+fn an_unknown_signal_name_is_rejected() {
+    assert!(!supported_signal("XYZ"));
+    assert!(!supported_signal("int"), "signal names are case-sensitive");
 }

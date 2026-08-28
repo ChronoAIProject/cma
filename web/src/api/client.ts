@@ -1,13 +1,14 @@
 /**
  * The dashboard's own CMA client.
  *
- * Everything below is the SDK (`web/src/sdk/`) bound to one configuration: the
+ * Everything below is `@chronoai/cma-sdk` bound to one configuration: the
  * empty one. That means same-origin paths authenticated by the cookie the
- * browser attaches, which is exactly what this deployment needs — the bundle
- * is served by a proxy that forwards `/api/` and `/auth/` onward, so no host
- * is compiled in and no token is ever handled in the browser. A build that
- * knew the API's address would need rebuilding to move it, and a token in
- * script gives up the one property an http-only cookie has.
+ * browser attaches, which is exactly what this deployment needs. The Gateway
+ * sends API, auth, and discovery paths on that origin directly to the control
+ * plane; nginx supplies the same paths when the image is reached without the
+ * managed route. No host is compiled in and no token is ever handled in the
+ * browser. A build that knew the API's address would need rebuilding to move
+ * it, and a token in script gives up the one property an http-only cookie has.
  *
  * The binding is the point rather than an implementation detail. `CLAUDE.md`
  * §1 makes this the reference client for the public interfaces, and a
@@ -21,7 +22,7 @@
  * call away; this module is only the one this app happens to hold.
  */
 
-import { createClient, type CreateSession } from '../sdk';
+import { createClient, type CreateSession } from '@chronoai/cma-sdk';
 import type {
   KernelOffer,
   Session,
@@ -31,9 +32,9 @@ import type {
   PricingQuote,
   SessionResourceStatus,
   SessionSpend,
-} from '../sdk';
+} from '@chronoai/cma-sdk';
 import { isStage, type Stage } from '../sessions/progress';
-import type { SignIn } from '../chat/conversationModel';
+import type { SignIn } from '@chronoai/cma-sdk';
 
 export {
   ApiError,
@@ -41,8 +42,13 @@ export {
   DeploymentAtCapacity,
   SessionLimitReached,
   toSession,
-} from '../sdk';
-export type { PricingQuote, SessionAllowance, SessionResourceStatus, SessionSpend } from '../sdk';
+} from '@chronoai/cma-sdk';
+export type {
+  PricingQuote,
+  SessionAllowance,
+  SessionResourceStatus,
+  SessionSpend,
+} from '@chronoai/cma-sdk';
 
 /**
  * The one client this app holds.
@@ -116,7 +122,7 @@ export function readSessionResources(
   id: string,
   signal?: AbortSignal,
 ): Promise<SessionResourceStatus> {
-  return bot.readResources(id, signal);
+  return bot.readResources(id, { signal });
 }
 
 /**
@@ -176,14 +182,23 @@ export function deleteSession(id: string): Promise<void> {
   return bot.deleteSession(id);
 }
 
-const LIFECYCLES: readonly SessionLifecycle[] = [
+const LIFECYCLES = [
   'provisioning',
   'ready',
   'running',
   'rotating',
   'idle',
   'terminated',
-];
+] as const satisfies readonly SessionLifecycle[];
+
+function lifecycleFrom(value: unknown): SessionLifecycle | undefined {
+  if (typeof value !== 'string' || value === '') {
+    return undefined;
+  }
+  return LIFECYCLES.includes(value as (typeof LIFECYCLES)[number])
+    ? (value as (typeof LIFECYCLES)[number])
+    : 'unknown';
+}
 
 /**
  * Follow a session's events until it stops provisioning.
@@ -192,14 +207,7 @@ const LIFECYCLES: readonly SessionLifecycle[] = [
  * learns what happened next. Resumes from a cursor and reconnects on its own,
  * which is why it is a stream of server-sent events rather than polling.
  *
- * Not in the SDK yet, and the reason is worth stating: `EventSource` cannot
- * carry an `Authorization` header, so this works only for a caller whose
- * credential is a cookie. Moving it as it stands would put an interface in the
- * SDK that silently fails for every cross-origin consumer, which is worse than
- * its absence — `CLAUDE.md` §9: declare what cannot be done rather than
- * offering it and dropping the request.
- *
- * Returns a cancel function; calling it closes the stream.
+ * Returns a cancel function; calling it aborts the active fetch or reconnect.
  */
 export function followSession(
   id: string,
@@ -208,83 +216,51 @@ export function followSession(
   onStage?: (stage: Stage) => void,
   onSignIn?: (signIn: SignIn) => void,
 ): () => void {
-  const source = new EventSource(`/api/v1/sessions/${encodeURIComponent(id)}/events`, {
-    withCredentials: true,
-  });
+  const controller = new AbortController();
 
-  source.onmessage = (message: MessageEvent) => {
-    let payload: {
-      event?: {
-        type?: string;
-        status?: string;
-        detail?: string;
-        stage?: string;
-        url?: string;
-        code?: string;
-        message?: string;
-      };
-    };
+  void (async () => {
     try {
-      payload = JSON.parse(String(message.data)) as typeof payload;
-    } catch {
-      // A frame we cannot read is not worth tearing the stream down for; the
-      // next one carries the same state.
-      return;
-    }
-    // A step on the way to ready, reported so the interface can say which
-    // part is taking the time rather than only that something is.
-    const stage = payload.event?.stage;
-    if (isStage(stage)) {
-      onStage?.(stage);
-    }
+      for await (const frame of bot.streamEvents(id, { signal: controller.signal })) {
+        const event = frame.event;
 
-    /*
-     * The agent has stopped to ask its owner to sign in. Raised from inside
-     * the conversation open, so it always arrives while the session is still
-     * provisioning — which is the only reason this stream carries it at all,
-     * since that is the one state whose surface is drawn from here rather
-     * than from the conversation.
-     *
-     * The address is the whole of the request; a kernel that gave no code is
-     * still actionable, so only the address is required.
-     */
-    if (payload.event?.type === 'sign_in_required') {
-      const url = payload.event.url;
-      if (typeof url === 'string' && url !== '') {
+        // A step on the way to ready, reported so the interface can say which
+        // part is taking the time rather than only that something is.
+        if (event.type === 'progress' && isStage(event.stage)) {
+          onStage?.(event.stage);
+        }
+
         /*
-         * Read defensively, the same way the AG-UI fold does. The wire sends
-         * `null` for a code the kernel did not declare separately — Codex puts
-         * it inside the sentence instead — and `null` is not `undefined`, so
-         * passing it through drew an empty code block above a Copy control
-         * that copied nothing. Absent has to arrive as absent.
+         * The agent has stopped to ask its owner to sign in. The SDK has
+         * already checked the frame's shape; this projection only turns wire
+         * nulls and empty optional strings into UI absence.
          */
-        const code = payload.event.code;
-        const message = payload.event.message;
-        onSignIn?.({
-          url,
-          code: typeof code === 'string' && code !== '' ? code : undefined,
-          message: typeof message === 'string' && message !== '' ? message : undefined,
-        });
+        if (event.type === 'sign_in_required' && typeof event.url === 'string') {
+          const code = event.code;
+          const message = event.message;
+          onSignIn?.({
+            url: event.url,
+            code: typeof code === 'string' && code !== '' ? code : undefined,
+            message: typeof message === 'string' && message !== '' ? message : undefined,
+          });
+        }
+
+        if (event.type === 'status_changed') {
+          const lifecycle = lifecycleFrom(event.status);
+          if (lifecycle !== undefined) {
+            // The detail explains a failure. Without it a session that could
+            // not start is indistinguishable from one that ended normally.
+            onStatus(lifecycle, typeof event.detail === 'string' ? event.detail : undefined);
+          }
+        }
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        onError(cause instanceof Error ? cause.message : String(cause));
       }
     }
+  })();
 
-    const status = payload.event?.status;
-    if (typeof status === 'string' && LIFECYCLES.includes(status as SessionLifecycle)) {
-      // The detail explains a failure. Without it a session that could not
-      // start is indistinguishable from one that ended normally.
-      onStatus(status as SessionLifecycle, payload.event?.detail);
-    }
-  };
-
-  source.onerror = () => {
-    // EventSource reconnects by itself, so this is only worth reporting if the
-    // browser has given up entirely.
-    if (source.readyState === EventSource.CLOSED) {
-      onError('lost contact with the control plane while starting the session');
-    }
-  };
-
-  return () => source.close();
+  return () => controller.abort();
 }
 
 /** URL of the terminal relay for a session. */

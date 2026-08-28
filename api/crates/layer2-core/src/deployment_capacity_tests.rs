@@ -111,6 +111,7 @@ struct ObservedStore {
 
 impl ObservedStore {
     fn new(inner: Arc<FakeStore>) -> Self {
+        inner.disable_coordination();
         Self {
             inner,
             reserved_calls: AtomicUsize::new(0),
@@ -136,19 +137,20 @@ impl ObservedStore {
 
 #[async_trait::async_trait]
 impl SessionStore for ObservedStore {
-    async fn upsert(&self, record: &SessionRecord) -> Result<(), StoreError> {
-        if self.slow_writes {
-            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        }
-        self.inner.upsert(record).await
+    async fn ping(&self) -> Result<(), StoreError> {
+        self.inner.ping().await
     }
 
     async fn get(&self, id: &SessionId) -> Result<Option<SessionRecord>, StoreError> {
         self.inner.get(id).await
     }
 
-    async fn list_for(&self, owner: &SubjectId) -> Result<Vec<SessionRecord>, StoreError> {
-        self.inner.list_for(owner).await
+    async fn list_for(
+        &self,
+        owner: &SubjectId,
+        query: &crate::SessionListQuery,
+    ) -> Result<crate::Page<SessionRecord>, StoreError> {
+        self.inner.list_for(owner, query).await
     }
 
     async fn count_live_for(&self, owner: &SubjectId) -> Result<u32, StoreError> {
@@ -165,8 +167,11 @@ impl SessionStore for ObservedStore {
         self.inner.reserved_capacity().await
     }
 
-    async fn list_all(&self) -> Result<Vec<SessionRecord>, StoreError> {
-        self.inner.list_all().await
+    async fn list_all(
+        &self,
+        query: &crate::SessionListQuery,
+    ) -> Result<crate::Page<SessionRecord>, StoreError> {
+        self.inner.list_all(query).await
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), StoreError> {
@@ -175,6 +180,31 @@ impl SessionStore for ObservedStore {
 
     async fn append_events(&self, events: &[Event]) -> Result<(), StoreError> {
         self.inner.append_events(events).await
+    }
+
+    async fn commit_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .commit_session_idempotent(write_id, record, events)
+            .await
+    }
+
+    async fn create_session_idempotent(
+        &self,
+        write_id: &str,
+        record: &SessionRecord,
+        events: &[Event],
+    ) -> Result<u64, StoreError> {
+        if self.slow_writes {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+        self.inner
+            .create_session_idempotent(write_id, record, events)
+            .await
     }
 
     async fn events_since(
@@ -448,7 +478,7 @@ async fn sized_records_are_checked_even_when_no_unsized_assumption_exists() {
 }
 
 #[tokio::test]
-async fn reserved_capacity_counts_only_the_four_runtime_wanting_states() {
+async fn reserved_capacity_includes_approval_waits_but_not_stopped_idle_sessions() {
     let store = Arc::new(FakeStore::default());
     assert_eq!(
         store.reserved_capacity().await.unwrap(),
@@ -466,13 +496,22 @@ async fn reserved_capacity_counts_only_the_four_runtime_wanting_states() {
 
     let mut records = store.sessions.lock().await;
     records.clear();
-    for (index, (status, session_size)) in [
-        (SessionStatus::Provisioning, Some(size(100, 200))),
-        (SessionStatus::Ready, None),
-        (SessionStatus::Running, Some(size(300, 400))),
-        (SessionStatus::Rotating, None),
-        (SessionStatus::Idle, Some(size(500, 600))),
-        (SessionStatus::Terminated, Some(size(700, 800))),
+    for (index, (status, stop_reason, session_size)) in [
+        (SessionStatus::Provisioning, None, Some(size(100, 200))),
+        (SessionStatus::Ready, None, None),
+        (SessionStatus::Running, None, Some(size(300, 400))),
+        (SessionStatus::Rotating, None, None),
+        (SessionStatus::Idle, None, Some(size(500, 600))),
+        (
+            SessionStatus::Idle,
+            Some(crate::session::StopReason::RequiresAction),
+            Some(size(700, 800)),
+        ),
+        (
+            SessionStatus::Terminated,
+            Some(crate::session::StopReason::UserTerminated),
+            Some(size(900, 1_000)),
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -480,6 +519,7 @@ async fn reserved_capacity_counts_only_the_four_runtime_wanting_states() {
         let mut record = template.clone();
         record.session.id = SessionId(format!("sesn_capacity_{index}"));
         record.session.status = status;
+        record.session.stop_reason = stop_reason;
         record.session.options.size = session_size;
         records.insert(record.session.id.0.clone(), record);
     }
@@ -488,10 +528,10 @@ async fn reserved_capacity_counts_only_the_four_runtime_wanting_states() {
     assert_eq!(
         store.reserved_capacity().await.unwrap(),
         Reserved {
-            sessions: 4,
+            sessions: 5,
             unsized_sessions: 2,
-            cpu_millis: 400,
-            memory_mib: 600,
+            cpu_millis: 1_100,
+            memory_mib: 1_400,
         }
     );
 }
@@ -568,6 +608,7 @@ async fn rotation_completes_while_the_deployment_is_at_capacity() {
     let rotated = store.get(&created.id).await.unwrap().unwrap();
     assert_eq!(rotated.session.status, SessionStatus::Ready);
     assert_eq!(rotated.session.rotations, 1);
+    replacement.reconcile().await;
     assert_eq!(adapter.running_count().await, 1);
 }
 

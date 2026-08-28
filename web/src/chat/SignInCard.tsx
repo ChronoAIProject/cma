@@ -1,4 +1,4 @@
-import type { SignIn } from './conversationModel';
+import type { SignIn } from '@chronoai/cma-sdk';
 import { CopyKey } from './CopyKey';
 import './SignInCard.css';
 
