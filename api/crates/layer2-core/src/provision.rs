@@ -293,9 +293,11 @@ impl SessionService {
         };
         let runtime_generation = candidate.as_ref().map_or_else(
             || {
-                runtime_policy_required
-                    .then(|| u64::from(session.rotations).saturating_add(1))
-                    .unwrap_or(0)
+                if runtime_policy_required {
+                    u64::from(session.rotations).saturating_add(1)
+                } else {
+                    0
+                }
             },
             |candidate| candidate.generation.get(),
         );

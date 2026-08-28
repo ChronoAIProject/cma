@@ -7,10 +7,14 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use layer2_core::{
     effect_requires_authority_admission, rfc3339_at, ActivityAction, ActivityOutcome,
-    ActivityRecord, ActivityService, ActivityTarget, AuthorityAdmissionSnapshot, DetailKey,
-    EffectClaim, EffectClaimMode, EffectCompletion, FailureClass, Launch, LaunchEffectKind,
-    LaunchEffectResult, LaunchFailure, LaunchId, TriggerService, TriggerServiceError,
+    ActivityRecord, ActivityService, ActivityTarget, AuthorityAdmissionSnapshot,
+    ConfirmationAction, DetailKey, EffectClaim, EffectClaimMode, EffectCompletion, FailureClass,
+    Launch, LaunchEffectKind, LaunchEffectResult, LaunchFailure, LaunchId, PromptDeliveryState,
+    TriggerService, TriggerServiceError,
 };
+
+use super::observability::{record_activity, TriggerAlert, OBSERVABILITY_SCHEMA_VERSION};
+use super::pull_request_status::PullRequestStatusDisposition;
 
 const DEFAULT_WORKER_LEASE: Duration = Duration::from_secs(120);
 const ROLLOUT_RESUMED_REASON: &str = "rollout_permitted";
@@ -39,10 +43,12 @@ pub(crate) enum EffectExecution {
     /// lease must perform the next external boundary for the same intent.
     Progressed {
         result: LaunchEffectResult,
+        external_resource_ids: BTreeMap<String, String>,
     },
     RetryLater {
         failure: LaunchFailure,
         retry_at: String,
+        external_resource_ids: BTreeMap<String, String>,
     },
     ReconcileLater {
         failure: LaunchFailure,
@@ -61,6 +67,7 @@ pub(crate) enum EffectExecution {
         result: LaunchEffectResult,
         failure: LaunchFailure,
         retry_at: String,
+        external_resource_ids: BTreeMap<String, String>,
     },
     ReconcileWithProgress {
         result: LaunchEffectResult,
@@ -93,6 +100,29 @@ pub(crate) trait EffectExecutor: Send + Sync {
     async fn execute(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution;
 
     async fn reconcile(&self, launch: &Launch, claim: &EffectClaim) -> EffectExecution;
+
+    /// Perform one read-only refresh of an already-linked provider pull
+    /// request. Implementations must not create, update, reopen, or otherwise
+    /// mutate the provider object from this boundary.
+    async fn refresh_pull_request_status(
+        &self,
+        _launch: &Launch,
+        correlation_id: &str,
+    ) -> PullRequestStatusDisposition {
+        PullRequestStatusDisposition::FailLaunch {
+            failure: LaunchFailure {
+                class: FailureClass::TerminalSecurity,
+                code: "pull_request_status_adapter_unavailable".into(),
+                detail: "The configured worker cannot refresh the linked pull request.".into(),
+                remediation: "Contact support; CMA retained the pull-request link and performed no provider write."
+                    .into(),
+                correlation_id: correlation_id.into(),
+                retry_at: None,
+                observed_at: rfc3339_at(SystemTime::now()),
+            },
+            provider_request_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,6 +197,18 @@ impl EffectWorker {
         expected_revision: u64,
         correlation_id: &str,
     ) -> Result<EffectRunOutcome, TriggerServiceError> {
+        // Keep Launch and effect-settlement state off the bounded stack of
+        // callers such as scheduler tasks and Tokio's test workers.
+        Box::pin(self.run_once_inner(id, expected_revision, correlation_id)).await
+    }
+
+    #[inline(never)]
+    async fn run_once_inner(
+        &self,
+        id: &LaunchId,
+        expected_revision: u64,
+        correlation_id: &str,
+    ) -> Result<EffectRunOutcome, TriggerServiceError> {
         let acquired = self.clock.now();
         let acquired_at = rfc3339_at(acquired);
         let lease_expires_at = rfc3339_at(acquired + self.lease_duration);
@@ -219,6 +261,17 @@ impl EffectWorker {
                 .await?;
             self.record_rollout_resume(&launch, correlation_id).await;
         }
+        if launch.state == layer2_core::LaunchState::PrOpen {
+            if launch.pull_request_status_due(&acquired_at)? {
+                return self
+                    .run_pull_request_status(launch, lease, correlation_id)
+                    .await;
+            }
+            self.triggers
+                .release_worker(&launch.id, launch.revision_number, &lease)
+                .await?;
+            return Ok(EffectRunOutcome::NoWork);
+        }
         let claim = match launch.claim_next_effect(&lease, &acquired_at, correlation_id) {
             Ok(Some(claim)) => claim,
             Ok(None) => {
@@ -235,6 +288,36 @@ impl EffectWorker {
                 return Err(error.into());
             }
         };
+
+        if automatic_duplicate_dispatch(&launch, &claim) {
+            let alert = TriggerAlert::DuplicateDispatch;
+            let delivery = launch
+                .delivery
+                .as_ref()
+                .expect("a duplicate-dispatch predicate requires delivery evidence");
+            tracing::error!(
+                event_name = "cma_trigger_alert_candidate",
+                schema_version = OBSERVABILITY_SCHEMA_VERSION,
+                alert_id = alert.id(),
+                severity = alert.severity(),
+                launch_id = %launch.id.0,
+                correlation_id,
+                effect = effect_code(claim.kind),
+                mode = %wire_code(claim.mode),
+                payload_hash = delivery.payload_hash,
+                recovery_generation = delivery.recovery_generation,
+                "Trigger automatic duplicate-dispatch alert candidate observed"
+            );
+            let _ = self
+                .triggers
+                .release_worker(&launch.id, launch.revision_number, &lease)
+                .await;
+            return Err(layer2_core::TriggerValidationError::field(
+                "initial_prompt.dispatch",
+                "an automatic replacement dispatch lacks an explicit owner recovery confirmation",
+            )
+            .into());
+        }
 
         // This CAS is the write-before-effect boundary. If it fails, the
         // adapter is never called. If the process dies afterward, takeover
@@ -293,18 +376,33 @@ impl EffectWorker {
                 )?;
                 (EffectRunOutcome::Completed, ActivityOutcome::Succeeded)
             }
-            EffectExecution::Progressed { result } => {
+            EffectExecution::Progressed {
+                result,
+                external_resource_ids,
+            } => {
                 launch.observe_effect_progress(
                     &lease,
                     &claim,
                     result,
+                    external_resource_ids,
                     &settled_at,
                     correlation_id,
                 )?;
                 (EffectRunOutcome::Deferred, ActivityOutcome::Succeeded)
             }
-            EffectExecution::RetryLater { failure, retry_at } => {
-                launch.fail_effect(&lease, &claim, failure, Some(retry_at), &settled_at)?;
+            EffectExecution::RetryLater {
+                failure,
+                retry_at,
+                external_resource_ids,
+            } => {
+                launch.fail_effect(
+                    &lease,
+                    &claim,
+                    failure,
+                    external_resource_ids,
+                    Some(retry_at),
+                    &settled_at,
+                )?;
                 (EffectRunOutcome::Deferred, ActivityOutcome::Failed)
             }
             EffectExecution::ReconcileLater {
@@ -344,15 +442,24 @@ impl EffectWorker {
                 result,
                 failure,
                 retry_at,
+                external_resource_ids,
             } => {
                 launch.observe_effect_progress(
                     &lease,
                     &claim,
                     result,
+                    external_resource_ids.clone(),
                     &settled_at,
                     correlation_id,
                 )?;
-                launch.fail_effect(&lease, &claim, failure, Some(retry_at), &settled_at)?;
+                launch.fail_effect(
+                    &lease,
+                    &claim,
+                    failure,
+                    external_resource_ids,
+                    Some(retry_at),
+                    &settled_at,
+                )?;
                 (EffectRunOutcome::Deferred, ActivityOutcome::Failed)
             }
             EffectExecution::ReconcileWithProgress {
@@ -365,6 +472,7 @@ impl EffectWorker {
                     &lease,
                     &claim,
                     result,
+                    external_resource_ids.clone(),
                     &settled_at,
                     correlation_id,
                 )?;
@@ -383,14 +491,15 @@ impl EffectWorker {
                     &lease,
                     &claim,
                     result,
+                    BTreeMap::new(),
                     &settled_at,
                     correlation_id,
                 )?;
-                launch.fail_effect(&lease, &claim, failure, None, &settled_at)?;
+                launch.fail_effect(&lease, &claim, failure, BTreeMap::new(), None, &settled_at)?;
                 (EffectRunOutcome::Failed, ActivityOutcome::Failed)
             }
             EffectExecution::Failed { failure } => {
-                launch.fail_effect(&lease, &claim, failure, None, &settled_at)?;
+                launch.fail_effect(&lease, &claim, failure, BTreeMap::new(), None, &settled_at)?;
                 (EffectRunOutcome::Failed, ActivityOutcome::Failed)
             }
         };
@@ -408,6 +517,128 @@ impl EffectWorker {
         Ok(outcome)
     }
 
+    async fn run_pull_request_status(
+        &self,
+        mut launch: Launch,
+        lease: layer2_core::WorkerLease,
+        correlation_id: &str,
+    ) -> Result<EffectRunOutcome, TriggerServiceError> {
+        let disposition = self
+            .executor
+            .refresh_pull_request_status(&launch, correlation_id)
+            .await;
+        let settled_at = rfc3339_at(self.clock.now());
+        let (outcome, audit_outcome) = match disposition {
+            PullRequestStatusDisposition::Observed {
+                pull_request,
+                next_attempt_at,
+                provider_request_id,
+            } => {
+                launch.observe_pull_request_status(
+                    &lease,
+                    *pull_request,
+                    next_attempt_at,
+                    provider_request_id,
+                    &settled_at,
+                    correlation_id,
+                )?;
+                (EffectRunOutcome::Completed, ActivityOutcome::Succeeded)
+            }
+            PullRequestStatusDisposition::Retry {
+                failure,
+                next_attempt_at,
+                provider_request_id,
+            } => {
+                launch.defer_pull_request_status(
+                    &lease,
+                    failure,
+                    Some(next_attempt_at),
+                    provider_request_id,
+                    &settled_at,
+                )?;
+                (EffectRunOutcome::Deferred, ActivityOutcome::Failed)
+            }
+            PullRequestStatusDisposition::Suspended {
+                failure,
+                provider_request_id,
+            } => {
+                launch.defer_pull_request_status(
+                    &lease,
+                    failure,
+                    None,
+                    provider_request_id,
+                    &settled_at,
+                )?;
+                (EffectRunOutcome::Deferred, ActivityOutcome::Failed)
+            }
+            PullRequestStatusDisposition::FailLaunch {
+                failure,
+                provider_request_id,
+            } => {
+                let launch_failure = failure.clone();
+                launch.defer_pull_request_status(
+                    &lease,
+                    failure,
+                    None,
+                    provider_request_id,
+                    &settled_at,
+                )?;
+                launch.fail(launch_failure, &settled_at)?;
+                (EffectRunOutcome::Failed, ActivityOutcome::Failed)
+            }
+        };
+        let committed = self
+            .triggers
+            .commit_worker(launch.revision_number, &lease, launch)
+            .await?;
+        let released = self
+            .triggers
+            .release_worker(&committed.id, committed.revision_number, &lease)
+            .await?;
+        self.record_pull_request_status(&released, correlation_id, audit_outcome)
+            .await;
+        Ok(outcome)
+    }
+
+    async fn record_pull_request_status(
+        &self,
+        launch: &Launch,
+        correlation_id: &str,
+        outcome: ActivityOutcome,
+    ) {
+        let record = launch.pull_request.as_ref();
+        let failure = record.and_then(|record| record.status_sync.last_failure.as_ref());
+        tracing::info!(
+            event_name = "cma_trigger_pull_request_status_settlement",
+            schema_version = OBSERVABILITY_SCHEMA_VERSION,
+            launch_id = %launch.id.0,
+            correlation_id,
+            pull_request_state = record.map(|record| wire_code(record.state)).unwrap_or_else(|| "missing".into()),
+            mergeability = record.map(|record| wire_code(record.mergeability)).unwrap_or_else(|| "unknown".into()),
+            checks = record.map(|record| wire_code(record.checks)).unwrap_or_else(|| "unknown".into()),
+            failure_class = failure.map(|failure| wire_code(failure.class)).unwrap_or_else(|| "none".into()),
+            failure_code = failure.map_or("none", |failure| failure.code.as_str()),
+            outcome = %wire_code(outcome),
+            "Trigger pull-request status worker settled one read-only provider observation"
+        );
+        if let Some(activity) = self.activity.as_ref() {
+            let mut activity_record = worker_record(
+                launch,
+                ActivityAction::TriggerEffectReconcile,
+                outcome,
+                correlation_id,
+            )
+            .with(DetailKey::Effect, "pull_request_status");
+            if let Some(provider_request_id) =
+                record.and_then(|record| record.status_sync.provider_request_id.as_ref())
+            {
+                activity_record =
+                    activity_record.with(DetailKey::ProviderRequestId, provider_request_id.clone());
+            }
+            record_activity(activity, activity_record).await;
+        }
+    }
+
     async fn record_rollout_pause(&self, launch: &Launch, correlation_id: &str, reason: &str) {
         tracing::info!(
             launch_id = %launch.id.0,
@@ -416,17 +647,17 @@ impl EffectWorker {
             "Trigger effect worker paused at a durable boundary"
         );
         if let Some(activity) = self.activity.as_ref() {
-            activity
-                .record(
-                    worker_record(
-                        launch,
-                        ActivityAction::TriggerOrchestrationPause,
-                        ActivityOutcome::Denied,
-                        correlation_id,
-                    )
-                    .with(DetailKey::RolloutReason, reason),
+            record_activity(
+                activity,
+                worker_record(
+                    launch,
+                    ActivityAction::TriggerOrchestrationPause,
+                    ActivityOutcome::Denied,
+                    correlation_id,
                 )
-                .await;
+                .with(DetailKey::RolloutReason, reason),
+            )
+            .await;
         }
     }
 
@@ -438,17 +669,17 @@ impl EffectWorker {
             "Trigger effect worker resumed from a durable rollout pause"
         );
         if let Some(activity) = self.activity.as_ref() {
-            activity
-                .record(
-                    worker_record(
-                        launch,
-                        ActivityAction::TriggerOrchestrationResume,
-                        ActivityOutcome::Succeeded,
-                        correlation_id,
-                    )
-                    .with(DetailKey::RolloutReason, ROLLOUT_RESUMED_REASON),
+            record_activity(
+                activity,
+                worker_record(
+                    launch,
+                    ActivityAction::TriggerOrchestrationResume,
+                    ActivityOutcome::Succeeded,
+                    correlation_id,
                 )
-                .await;
+                .with(DetailKey::RolloutReason, ROLLOUT_RESUMED_REASON),
+            )
+            .await;
         }
     }
 
@@ -464,29 +695,73 @@ impl EffectWorker {
             (_, EffectClaimMode::Execute) => ActivityAction::TriggerEffectExecute,
             (_, EffectClaimMode::Reconcile) => ActivityAction::TriggerEffectReconcile,
         };
+        let effect = launch
+            .effects
+            .iter()
+            .find(|effect| effect.intent_key == claim.intent_key);
         if let Some(activity) = self.activity.as_ref() {
             let mut record = worker_record(launch, action, outcome, correlation_id)
                 .with(DetailKey::Effect, effect_code(claim.kind))
                 .with(DetailKey::FencingToken, claim.fence.to_string());
-            if let Some(provider_request_id) = launch
-                .effects
-                .iter()
-                .find(|effect| effect.intent_key == claim.intent_key)
-                .and_then(|effect| effect.provider_request_id.as_ref())
+            if let Some(provider_request_id) =
+                effect.and_then(|effect| effect.provider_request_id.as_ref())
             {
                 record = record.with(DetailKey::ProviderRequestId, provider_request_id);
             }
-            activity.record(record).await;
+            record_activity(activity, record).await;
         }
+        let failure = effect.and_then(|effect| effect.last_failure.as_ref());
+        let failure_class = failure
+            .map(|failure| wire_code(failure.class))
+            .unwrap_or_else(|| "none".into());
+        let failure_code = failure.map_or("none", |failure| failure.code.as_str());
+        let effect_state = effect
+            .map(|effect| wire_code(effect.state))
+            .unwrap_or_else(|| "unknown".into());
         tracing::info!(
+            event_name = "cma_trigger_effect_settlement",
+            schema_version = OBSERVABILITY_SCHEMA_VERSION,
             launch_id = %launch.id.0,
             correlation_id,
             effect = effect_code(claim.kind),
-            mode = ?claim.mode,
+            mode = %wire_code(claim.mode),
             fence = claim.fence,
-            outcome = ?outcome,
+            outcome = %wire_code(outcome),
+            effect_state,
+            failure_class,
+            failure_code,
             "Trigger effect worker settled one durable boundary"
         );
+        if provider_degraded_failure_code(failure_code) {
+            let alert = TriggerAlert::ProviderDegraded;
+            tracing::warn!(
+                event_name = "cma_trigger_alert_candidate",
+                schema_version = OBSERVABILITY_SCHEMA_VERSION,
+                alert_id = alert.id(),
+                severity = alert.severity(),
+                launch_id = %launch.id.0,
+                correlation_id,
+                effect = effect_code(claim.kind),
+                failure_code,
+                "Trigger provider degradation alert candidate observed"
+            );
+        }
+        if unauthorized_effect_candidate(failure) {
+            let alert = TriggerAlert::UnauthorizedEffect;
+            tracing::error!(
+                event_name = "cma_trigger_alert_candidate",
+                schema_version = OBSERVABILITY_SCHEMA_VERSION,
+                alert_id = alert.id(),
+                severity = alert.severity(),
+                launch_id = %launch.id.0,
+                correlation_id,
+                effect = effect_code(claim.kind),
+                mode = %wire_code(claim.mode),
+                fence = claim.fence,
+                failure_code,
+                "Trigger unauthorized-effect alert candidate observed"
+            );
+        }
     }
 }
 
@@ -572,6 +847,42 @@ fn effect_code(kind: LaunchEffectKind) -> &'static str {
         LaunchEffectKind::PullRequest => "pull_request",
         LaunchEffectKind::Cleanup => "cleanup",
     }
+}
+
+fn provider_degraded_failure_code(code: &str) -> bool {
+    matches!(
+        code,
+        "github_rate_limited"
+            | "github_temporarily_unavailable"
+            | "github_provider_authentication_unavailable"
+            | "trigger_runtime_broker_temporarily_unavailable"
+    )
+}
+
+fn unauthorized_effect_candidate(failure: Option<&LaunchFailure>) -> bool {
+    failure.is_some_and(|failure| failure.class == FailureClass::TerminalSecurity)
+}
+
+/// Detect the invariant breach that would turn an ambiguous initial task into
+/// an automatic second owner turn. An explicit recovery confirmation grants
+/// exactly the next generation; a worker claim without it is stopped before
+/// the claim CAS or adapter boundary.
+fn automatic_duplicate_dispatch(launch: &Launch, claim: &EffectClaim) -> bool {
+    if claim.kind != LaunchEffectKind::InitialDispatch || claim.mode != EffectClaimMode::Execute {
+        return false;
+    }
+    let Some(delivery) = launch.delivery.as_ref() else {
+        return false;
+    };
+    if delivery.state != PromptDeliveryState::RecoveryRequired {
+        return false;
+    }
+    let recovery_confirmations = launch
+        .confirmations
+        .iter()
+        .filter(|confirmation| confirmation.action == ConfirmationAction::RecoverPrompt)
+        .count() as u64;
+    recovery_confirmations <= u64::from(delivery.recovery_generation)
 }
 
 #[cfg(test)]

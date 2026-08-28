@@ -17,9 +17,13 @@ impl Launch {
     /// Whether this Launch has permanently ended and must surrender GitHub
     /// authorization while leaving its session and conversation intact.
     pub fn capability_requires_revocation(&self) -> bool {
+        let contribution_ended = self.pull_request.as_ref().is_some_and(|pull_request| {
+            pull_request.state == crate::trigger::PullRequestState::ClosedUnmerged
+        });
         self.reach.as_ref().is_some_and(|reach| {
             reach.state == CapabilityRevocationState::RevocationPending
-                || (self.state.is_terminal() && reach.state != CapabilityRevocationState::Revoked)
+                || ((self.state.is_terminal() || contribution_ended)
+                    && reach.state != CapabilityRevocationState::Revoked)
         })
     }
 

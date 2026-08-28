@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ConfirmationAction, EffectState, FailureClass, Launch, LaunchBlockedReason, LaunchEffectKind,
-    LaunchEventKind, LaunchId, LaunchState, LaunchStepKey, LaunchStepStatus, PromptDeliveryState,
-    TriggerValidationError,
+    CheckSummaryState, ConfirmationAction, EffectState, FailureClass, Launch, LaunchBlockedReason,
+    LaunchEffectKind, LaunchEventKind, LaunchId, LaunchState, LaunchStepKey, LaunchStepStatus,
+    Mergeability, PromptDeliveryState, PullRequestState, TriggerValidationError,
 };
 use crate::{CapabilityRevocationState, SubjectId};
 
@@ -142,6 +142,13 @@ pub enum TriggerSupportEventKind {
         generation: u64,
         fence: u64,
     },
+    PullRequestStatusChanged {
+        state: PullRequestState,
+        mergeability: Mergeability,
+        checks: CheckSummaryState,
+        failure_code: Option<String>,
+    },
+    PullRequestStatusRefreshRequested,
     ConfirmationRecorded {
         action: ConfirmationAction,
     },
@@ -280,6 +287,20 @@ fn support_event(kind: &LaunchEventKind) -> TriggerSupportEventKind {
             generation: reach.policy_generation,
             fence: reach.policy_fence,
         },
+        LaunchEventKind::PullRequestStatusChanged {
+            state,
+            mergeability,
+            checks,
+            failure,
+        } => TriggerSupportEventKind::PullRequestStatusChanged {
+            state: *state,
+            mergeability: *mergeability,
+            checks: *checks,
+            failure_code: failure.as_ref().map(|failure| failure.code.clone()),
+        },
+        LaunchEventKind::PullRequestStatusRefreshRequested => {
+            TriggerSupportEventKind::PullRequestStatusRefreshRequested
+        }
         LaunchEventKind::ConfirmationRecorded { action } => {
             TriggerSupportEventKind::ConfirmationRecorded { action: *action }
         }

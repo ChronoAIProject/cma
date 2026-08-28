@@ -78,6 +78,12 @@ pub async fn record(
         .extensions
         .get::<AuthenticatedSubject>()
         .map(|s| s.0.clone());
+    let request_correlation_id = classified
+        .action
+        .is_trigger()
+        .then(|| layer1_public::rest::request_id_from_headers(&parts.headers))
+        .flatten()
+        .map(str::to_string);
 
     let (req, mut detail) = if classified.reads_body {
         match axum::body::to_bytes(body, crate::REQUEST_BODY_LIMIT_BYTES).await {
@@ -107,6 +113,9 @@ pub async fn record(
         (Request::from_parts(parts, body), ActivityDetail::new())
     };
     detail_from_query(query.as_deref(), &mut detail);
+    if let Some(correlation_id) = request_correlation_id {
+        detail.record(DetailKey::CorrelationId, correlation_id);
+    }
 
     let response = next.run(req).await;
     let outcome = outcome_of(response.status());
@@ -149,7 +158,7 @@ async fn store(
     entry.actor = actor;
     entry.target = classified.target.clone();
     entry.detail = detail;
-    recorder.activity.record(entry).await;
+    crate::trigger::observability::record_activity(&recorder.activity, entry).await;
 }
 
 /// How a response's status reads as an outcome.

@@ -170,10 +170,9 @@ fn provider_grant_fingerprint(response: &MintedKeyResponse) -> Option<String> {
     let mut digest = sha2::Sha256::new();
     use sha2::Digest as _;
     digest.update(b"cma-nyxid-agent-key-grant-v1\0");
-    for value in [response.scopes.trim()] {
-        digest.update((value.len() as u64).to_be_bytes());
-        digest.update(value.as_bytes());
-    }
+    let scopes = response.scopes.trim();
+    digest.update((scopes.len() as u64).to_be_bytes());
+    digest.update(scopes.as_bytes());
     for collection in [services, nodes] {
         digest.update((collection.len() as u64).to_be_bytes());
         for value in collection {

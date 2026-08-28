@@ -202,6 +202,44 @@ async fn a_request_to_a_path_this_service_does_not_serve_records_nothing() {
     assert!(store.entries.lock().await.is_empty());
 }
 
+#[tokio::test]
+async fn ordinary_trigger_activity_keeps_the_canonical_request_correlation() {
+    let store = Arc::new(FakeActivityStore::default());
+    let activity = ActivityService::new(Arc::clone(&store) as Arc<dyn ActivityStore>);
+    let app = Router::new()
+        .route(
+            "/api/v1/triggers/public/{id}",
+            get(|| async { axum::http::StatusCode::OK }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            ActivityRecorder::new(activity),
+            super::record,
+        ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port is available");
+    let addr = listener.local_addr().expect("the socket has an address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    reqwest::Client::new()
+        .get(format!("http://{addr}/api/v1/triggers/public/cmat_public"))
+        .header("x-request-id", "48800000-0000-4000-8000-000000000026")
+        .send()
+        .await
+        .expect("the Trigger preview reaches the server");
+    server.abort();
+
+    let entries = store.entries.lock().await.clone();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].action, ActivityAction::TriggerPreviewRead);
+    assert_eq!(
+        entries[0].detail.get(DetailKey::CorrelationId),
+        Some("48800000-0000-4000-8000-000000000026")
+    );
+}
+
 /// Drive an operator control route whose handler names the session's owner.
 ///
 /// Stands in for the real one at exactly the point that matters: the owner is

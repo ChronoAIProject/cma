@@ -17,6 +17,7 @@ use super::{
 
 const MAX_PULL_REQUEST_PAGES: u32 = 10;
 const PULL_REQUEST_PAGE_SIZE: usize = 100;
+const CHECK_STATUS_PAGE_SIZE: u64 = 100;
 const MAX_MERGEABILITY_POLLS: usize = 3;
 
 #[derive(Debug, Clone)]
@@ -26,6 +27,7 @@ pub(crate) struct PullRequestContext {
     upstream: RepositoryIdentity,
     fork: ForkRecord,
     record: PullRequestRecord,
+    launch_head_revision: String,
 }
 
 impl TryFrom<&Launch> for PullRequestContext {
@@ -90,6 +92,12 @@ impl TryFrom<&Launch> for PullRequestContext {
         {
             return Err(GithubBrokerError::AuthorityDrift);
         }
+        let launch_head_revision = launch
+            .branch
+            .as_ref()
+            .expect("the branch was validated above")
+            .current_head
+            .clone();
         Ok(Self {
             owner: launch.owner.clone(),
             connection: launch.connection.clone().ok_or_else(|| {
@@ -98,6 +106,72 @@ impl TryFrom<&Launch> for PullRequestContext {
             upstream,
             fork,
             record,
+            launch_head_revision,
+        })
+    }
+}
+
+impl PullRequestContext {
+    pub(crate) fn for_status(launch: &Launch) -> Result<Self, GithubBrokerError> {
+        if launch.state != layer2_core::LaunchState::PrOpen {
+            return Err(GithubBrokerError::Malformed(
+                "only a Launch with a linked pull request has provider status to refresh".into(),
+            ));
+        }
+        let record = launch.pull_request.clone().ok_or_else(|| {
+            GithubBrokerError::Malformed("the Launch has no pull-request record".into())
+        })?;
+        record
+            .validate_intent(&launch.id)
+            .map_err(|error| GithubBrokerError::Malformed(error.to_string()))?;
+        if record.state != PullRequestState::Open {
+            return Err(GithubBrokerError::Malformed(
+                "only an open pull request requires provider status refresh".into(),
+            ));
+        }
+        record.head_revision.as_deref().ok_or_else(|| {
+            GithubBrokerError::Malformed("the linked pull request has no observed head".into())
+        })?;
+        if launch
+            .branch
+            .as_ref()
+            .is_none_or(|branch| branch.name != record.intent.head_branch)
+            || launch.contribution.as_ref().is_none_or(|contribution| {
+                contribution.state != layer2_core::PublicationState::Published
+                    || contribution.resulting_head.is_none()
+            })
+        {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        let upstream = launch.revision.content.upstream.repository.clone();
+        let fork = launch.fork.clone().ok_or_else(|| {
+            GithubBrokerError::Malformed("the Launch has no reconciled fork".into())
+        })?;
+        if record.intent.upstream_repository_id != upstream.repository_id
+            || record.intent.upstream_repository_node_id != upstream.repository_node_id
+            || record.intent.fork_repository_id != fork.repository.repository_id
+            || record.intent.fork_repository_node_id != fork.repository.repository_node_id
+            || record.intent.base_ref != launch.revision.content.upstream.contribution_base_ref
+            || record.intent.head_owner != fork.repository.canonical_owner
+            || record.intent.head_branch != format!("cma/{}", launch.id.0)
+        {
+            return Err(GithubBrokerError::AuthorityDrift);
+        }
+        let launch_head_revision = launch
+            .branch
+            .as_ref()
+            .expect("the branch was validated above")
+            .current_head
+            .clone();
+        Ok(Self {
+            owner: launch.owner.clone(),
+            connection: launch.connection.clone().ok_or_else(|| {
+                GithubBrokerError::Malformed("the Launch has no selected connection".into())
+            })?,
+            upstream,
+            fork,
+            record,
+            launch_head_revision,
         })
     }
 }
@@ -159,6 +233,7 @@ struct PullRequestOwnerWire {
 
 #[derive(Debug, Deserialize)]
 struct CheckRunsWire {
+    total_count: u64,
     #[serde(default)]
     check_runs: Vec<CheckRunWire>,
 }
@@ -172,6 +247,7 @@ struct CheckRunWire {
 
 #[derive(Debug, Deserialize)]
 struct WorkflowRunsWire {
+    total_count: u64,
     #[serde(default)]
     workflow_runs: Vec<WorkflowRunWire>,
 }
@@ -196,6 +272,42 @@ impl GithubBroker {
         context: &PullRequestContext,
     ) -> Result<PullRequestAdvance, GithubBrokerError> {
         self.advance_pull_request(context, true).await
+    }
+
+    /// Refresh one already-linked pull request by its immutable numeric and
+    /// node identities. This path performs provider reads only and cannot
+    /// create, update, reopen, or otherwise mutate a pull request.
+    pub(crate) async fn observe_pull_request(
+        &self,
+        context: &PullRequestContext,
+    ) -> Result<PullRequestRecord, GithubBrokerError> {
+        let repositories = self.current_pull_request_repositories(context).await?;
+        let number = context.record.number.ok_or_else(|| {
+            GithubBrokerError::Malformed("the linked pull request has no number".into())
+        })?;
+        let wire = self
+            .pull_request_by_number(context, &repositories, number)
+            .await?;
+        if context.record.provider_id != Some(wire.id)
+            || context.record.provider_node_id.as_deref() != Some(wire.node_id.as_str())
+            || context.record.number != Some(wire.number)
+            || context.record.canonical_url.as_deref() != Some(wire.html_url.as_str())
+            || context.record.provider_created_at.as_deref() != Some(wire.created_at.as_str())
+        {
+            return Err(GithubBrokerError::PullRequestChanged);
+        }
+        let observed = self
+            .observed_record(context, &repositories, wire, None, false)
+            .await?;
+        if observed.provider_id != context.record.provider_id
+            || observed.provider_node_id != context.record.provider_node_id
+            || observed.number != context.record.number
+            || observed.canonical_url != context.record.canonical_url
+            || observed.provider_created_at != context.record.provider_created_at
+        {
+            return Err(GithubBrokerError::PullRequestChanged);
+        }
+        Ok(observed)
     }
 
     async fn advance_pull_request(
@@ -593,12 +705,33 @@ impl GithubBroker {
         &self,
         context: &PullRequestContext,
         repositories: &CurrentRepositories,
-        mut wire: PullRequestWire,
+        wire: PullRequestWire,
         base_revision: &str,
         head_revision: &str,
         require_intended_content: bool,
     ) -> Result<PullRequestRecord, GithubBrokerError> {
-        validate_pull_request_wire(context, repositories, &wire, base_revision, head_revision)?;
+        self.observed_record(
+            context,
+            repositories,
+            wire,
+            Some((base_revision, head_revision)),
+            require_intended_content,
+        )
+        .await
+    }
+
+    async fn observed_record(
+        &self,
+        context: &PullRequestContext,
+        repositories: &CurrentRepositories,
+        mut wire: PullRequestWire,
+        expected_revisions: Option<(&str, &str)>,
+        require_intended_content: bool,
+    ) -> Result<PullRequestRecord, GithubBrokerError> {
+        validate_observed_pull_request_wire(context, repositories, &wire)?;
+        if let Some((base_revision, head_revision)) = expected_revisions {
+            validate_pull_request_wire(context, repositories, &wire, base_revision, head_revision)?;
+        }
         if require_intended_content
             && (wire.title != context.record.intent.title
                 || wire.body.as_deref() != Some(context.record.intent.provider_body().as_str()))
@@ -612,10 +745,21 @@ impl GithubBroker {
             wire = self
                 .pull_request_by_number(context, repositories, wire.number)
                 .await?;
-            validate_pull_request_wire(context, repositories, &wire, base_revision, head_revision)?;
+            validate_observed_pull_request_wire(context, repositories, &wire)?;
+            if let Some((base_revision, head_revision)) = expected_revisions {
+                validate_pull_request_wire(
+                    context,
+                    repositories,
+                    &wire,
+                    base_revision,
+                    head_revision,
+                )?;
+            }
         }
+        let base_revision = wire.base.sha.to_ascii_lowercase();
+        let head_revision = wire.head.sha.to_ascii_lowercase();
         let checks = self
-            .pull_request_checks(context, repositories, head_revision)
+            .pull_request_checks(context, repositories, &head_revision)
             .await;
         let mut record = context.record.clone();
         record.provider_id = Some(wire.id);
@@ -623,8 +767,8 @@ impl GithubBroker {
         record.number = Some(wire.number);
         record.canonical_url = Some(wire.html_url.clone());
         record.state = pull_request_state(&wire)?;
-        record.base_revision = Some(base_revision.to_ascii_lowercase());
-        record.head_revision = Some(head_revision.to_ascii_lowercase());
+        record.base_revision = Some(base_revision);
+        record.head_revision = Some(head_revision);
         record.observed_title = Some(wire.title.clone());
         record.observed_body_digest = Some(format!(
             "{:x}",
@@ -639,6 +783,12 @@ impl GithubBroker {
         record.updated_at = layer2_core::rfc3339_at(std::time::SystemTime::now());
         record.provider_created_at = Some(wire.created_at);
         record.provider_updated_at = Some(wire.updated_at);
+        record.status_sync.head_matches_launch = Some(
+            record
+                .head_revision
+                .as_deref()
+                .is_some_and(|head| head.eq_ignore_ascii_case(&context.launch_head_revision)),
+        );
         record
             .validate_intent(&record.intent.launch_id)
             .map_err(|error| GithubBrokerError::Malformed(error.to_string()))?;
@@ -714,14 +864,9 @@ impl GithubBroker {
                 None,
             )
             .await;
-        summarize_checks(
-            checks
-                .ok()
-                .map(|observed| observed.value.check_runs)
-                .unwrap_or_default(),
-            runs.ok()
-                .map(|observed| observed.value.workflow_runs)
-                .unwrap_or_default(),
+        summarize_check_sources(
+            checks.map(|observed| observed.value),
+            runs.map(|observed| observed.value),
         )
     }
 }
@@ -771,6 +916,20 @@ fn validate_pull_request_wire(
     expected_base: &str,
     expected_head: &str,
 ) -> Result<(), GithubBrokerError> {
+    validate_observed_pull_request_wire(context, repositories, wire)?;
+    if !wire.base.sha.eq_ignore_ascii_case(expected_base)
+        || !wire.head.sha.eq_ignore_ascii_case(expected_head)
+    {
+        return Err(GithubBrokerError::PullRequestChanged);
+    }
+    Ok(())
+}
+
+fn validate_observed_pull_request_wire(
+    context: &PullRequestContext,
+    repositories: &CurrentRepositories,
+    wire: &PullRequestWire,
+) -> Result<(), GithubBrokerError> {
     validate_commit_sha(&wire.head.sha)?;
     validate_commit_sha(&wire.base.sha)?;
     if wire.id == 0
@@ -778,8 +937,6 @@ fn validate_pull_request_wire(
         || wire.node_id.trim().is_empty()
         || wire.node_id.len() > 255
         || !matches_pull_request_identity(context, repositories, wire)
-        || !wire.base.sha.eq_ignore_ascii_case(expected_base)
-        || !wire.head.sha.eq_ignore_ascii_case(expected_head)
         || wire.title.trim().is_empty()
         || wire.title.len() > 256
         || wire.created_at.trim().is_empty()
@@ -843,6 +1000,26 @@ fn marker_count(body: &str, marker: &str) -> usize {
     body.match_indices(marker).count()
 }
 
+fn summarize_check_sources(
+    checks: Result<CheckRunsWire, GithubBrokerError>,
+    workflows: Result<WorkflowRunsWire, GithubBrokerError>,
+) -> CheckSummaryState {
+    let (Ok(checks), Ok(workflows)) = (checks, workflows) else {
+        return CheckSummaryState::Unavailable;
+    };
+    if !complete_check_inventory(checks.total_count, checks.check_runs.len())
+        || !complete_check_inventory(workflows.total_count, workflows.workflow_runs.len())
+    {
+        return CheckSummaryState::Unavailable;
+    }
+    summarize_checks(checks.check_runs, workflows.workflow_runs)
+}
+
+fn complete_check_inventory(total_count: u64, returned_count: usize) -> bool {
+    total_count <= CHECK_STATUS_PAGE_SIZE
+        && u64::try_from(returned_count).is_ok_and(|returned| returned == total_count)
+}
+
 fn summarize_checks(
     checks: Vec<CheckRunWire>,
     workflows: Vec<WorkflowRunWire>,
@@ -886,6 +1063,7 @@ fn summarize_checks(
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
 
     use async_trait::async_trait;
     use axum::body::to_bytes;
@@ -909,6 +1087,8 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     enum CreateBehavior {
         Confirmed,
+        ConcurrentDuplicate,
+        BranchProtected,
         AmbiguousApplied,
         DuplicateApplied,
         ValidationRejected,
@@ -951,6 +1131,7 @@ mod tests {
         requests: Arc<Mutex<Vec<RecordedRequest>>>,
         pull_request: Arc<Mutex<Option<ProviderPullRequest>>>,
         create_behavior: CreateBehavior,
+        create_barrier: Option<Arc<tokio::sync::Barrier>>,
         fork_name: String,
         upstream_repository_lookups: Arc<AtomicUsize>,
         fork_repository_lookups: Arc<AtomicUsize>,
@@ -977,6 +1158,7 @@ mod tests {
                 requests: Arc::new(Mutex::new(Vec::new())),
                 pull_request: Arc::new(Mutex::new(None)),
                 create_behavior: CreateBehavior::Confirmed,
+                create_barrier: None,
                 fork_name: "project".into(),
                 upstream_repository_lookups: Arc::new(AtomicUsize::new(0)),
                 fork_repository_lookups: Arc::new(AtomicUsize::new(0)),
@@ -1001,7 +1183,10 @@ mod tests {
 
     impl ProviderFixture {
         fn authority_rebound(&self) -> bool {
-            self.connection_preflights.load(Ordering::SeqCst) > 1
+            // Exact authorization is intentionally read before active service
+            // membership. One completed service read therefore means the next
+            // authorization response belongs to the write-boundary preflight.
+            self.connection_preflights.load(Ordering::SeqCst) > 0
         }
 
         fn observe_connection_preflight(&self) -> bool {
@@ -1296,6 +1481,19 @@ mod tests {
                         })),
                     );
                 }
+                if matches!(fixture.create_behavior, CreateBehavior::BranchProtected) {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({
+                            "message": "Changes must be made through a pull request because this is a protected branch",
+                            "errors": [{
+                                "resource": "PullRequest",
+                                "field": "base",
+                                "code": "protected_branch"
+                            }]
+                        })),
+                    );
+                }
                 let body = body.expect("create request body");
                 let pull_request = ProviderPullRequest {
                     title: body["title"].as_str().unwrap().to_string(),
@@ -1305,6 +1503,35 @@ mod tests {
                     head_sha: fixture.branch_head.clone(),
                     mergeable: Some(true),
                 };
+                if matches!(fixture.create_behavior, CreateBehavior::ConcurrentDuplicate) {
+                    fixture
+                        .create_barrier
+                        .as_ref()
+                        .expect("the concurrent fixture has a barrier")
+                        .wait()
+                        .await;
+                    let mut stored = fixture.pull_request.lock().await;
+                    if stored.is_some() {
+                        return (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            Json(json!({
+                                "message": "Validation Failed",
+                                "errors": [{
+                                    "resource": "PullRequest",
+                                    "field": "head",
+                                    "code": "custom",
+                                    "message": "A pull request already exists for contributor:branch."
+                                }]
+                            })),
+                        );
+                    }
+                    *stored = Some(pull_request.clone());
+                    drop(stored);
+                    return (
+                        StatusCode::CREATED,
+                        Json(pull_request_wire(&fixture, &pull_request)),
+                    );
+                }
                 *fixture.pull_request.lock().await = Some(pull_request.clone());
                 match fixture.create_behavior {
                     CreateBehavior::Confirmed => (
@@ -1328,6 +1555,9 @@ mod tests {
                         })),
                     ),
                     CreateBehavior::ValidationRejected => unreachable!(),
+                    CreateBehavior::ConcurrentDuplicate | CreateBehavior::BranchProtected => {
+                        unreachable!()
+                    }
                 }
             }
             ("PATCH", actual) if actual == pull_path => {
@@ -1368,7 +1598,10 @@ mod tests {
                 } else {
                     Vec::new()
                 };
-                (StatusCode::OK, Json(json!({ "workflow_runs": runs })))
+                (
+                    StatusCode::OK,
+                    Json(json!({ "total_count": runs.len(), "workflow_runs": runs })),
+                )
             }
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1557,6 +1790,7 @@ mod tests {
             commit_id: Some(resulting_head.clone()),
             resulting_head: Some(resulting_head.clone()),
             object_ids: vec!["f".repeat(40)],
+            object_write: None,
             author: CommitIdentity {
                 name: "Contributor".into(),
                 email: "21+contributor@users.noreply.github.com".into(),
@@ -1639,6 +1873,7 @@ mod tests {
             updated_at: "2026-08-27T00:00:04Z".into(),
             provider_created_at: None,
             provider_updated_at: None,
+            status_sync: layer2_core::PullRequestStatusSync::default(),
         };
         record.intent_key = format!(
             "cma-trigger:{}:pr:{}:{}",
@@ -1671,8 +1906,8 @@ mod tests {
 
     fn assert_write_boundary_preflight(requests: &[RecordedRequest], write_index: usize) {
         let boundary = &requests[write_index - 7..write_index];
-        assert_eq!(boundary[0].uri, "/api/v1/user-services");
-        assert_eq!(boundary[1].uri, "/api/v1/keys/service-1/authorization");
+        assert_eq!(boundary[0].uri, "/api/v1/keys/service-1/authorization");
+        assert_eq!(boundary[1].uri, "/api/v1/user-services");
         assert!(boundary[2]
             .uri
             .starts_with("/api/v1/proxy/s/api-github/user?"));
@@ -1873,6 +2108,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_confirmations_converge_on_the_single_provider_pull_request() {
+        let fixture = ProviderFixture {
+            create_behavior: CreateBehavior::ConcurrentDuplicate,
+            create_barrier: Some(Arc::new(tokio::sync::Barrier::new(2))),
+            ..ProviderFixture::default()
+        };
+        let requests = Arc::clone(&fixture.requests);
+        let provider_record = Arc::clone(&fixture.pull_request);
+        let (base_url, server) = provider_server(fixture).await;
+        let context =
+            PullRequestContext::try_from(&provider_launch(PullRequestOperation::Open)).unwrap();
+        let broker = provider_broker(&base_url);
+
+        let (first, second) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                broker.write_pull_request(&context),
+                broker.write_pull_request(&context),
+            )
+        })
+        .await
+        .expect("both concurrent confirmations reach the provider");
+        server.abort();
+
+        for result in [first, second] {
+            assert!(matches!(
+                result,
+                Ok(PullRequestAdvance::Ready(record))
+                    if record.number == Some(7) && record.provider_id == Some(70)
+            ));
+        }
+        assert!(provider_record.lock().await.is_some());
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.method == "POST")
+                .count(),
+            2,
+            "both confirmations crossed the absence proof before provider uniqueness resolved them",
+        );
+    }
+
+    #[tokio::test]
     async fn timeout_after_create_is_reconciled_without_a_second_post() {
         let fixture = ProviderFixture {
             create_behavior: CreateBehavior::AmbiguousApplied,
@@ -1957,6 +2236,70 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn branch_protection_refusal_is_not_flattened_into_generic_forbidden() {
+        let fixture = ProviderFixture {
+            create_behavior: CreateBehavior::BranchProtected,
+            ..ProviderFixture::default()
+        };
+        let (base_url, server) = provider_server(fixture).await;
+        let context =
+            PullRequestContext::try_from(&provider_launch(PullRequestOperation::Open)).unwrap();
+
+        let result = provider_broker(&base_url)
+            .write_pull_request(&context)
+            .await;
+        server.abort();
+
+        assert!(matches!(
+            result,
+            Err(GithubBrokerError::Rejected {
+                status: 403,
+                kind: GithubRejectionKind::BranchProtection,
+                provider_code: Some(code),
+            }) if code == "protected_branch"
+        ));
+    }
+
+    #[tokio::test]
+    async fn mergeability_null_stays_computing_after_the_bounded_poll_budget() {
+        let launch = provider_launch(PullRequestOperation::Open);
+        let intent = &launch.pull_request.as_ref().unwrap().intent;
+        let fixture = ProviderFixture::default();
+        *fixture.pull_request.lock().await = Some(ProviderPullRequest {
+            title: intent.title.clone(),
+            body: intent.provider_body(),
+            state: "open".into(),
+            merged_at: None,
+            head_sha: "d".repeat(40),
+            mergeable: None,
+        });
+        let requests = Arc::clone(&fixture.requests);
+        let (base_url, server) = provider_server(fixture).await;
+        let context = PullRequestContext::try_from(&launch).unwrap();
+
+        let result = provider_broker(&base_url)
+            .write_pull_request(&context)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert!(matches!(
+            result,
+            PullRequestAdvance::Ready(record)
+                if record.mergeability == Mergeability::Computing
+        ));
+        assert_eq!(
+            requests
+                .lock()
+                .await
+                .iter()
+                .filter(|request| request.uri.contains("/pulls/7?"))
+                .count(),
+            MAX_MERGEABILITY_POLLS,
+        );
     }
 
     #[tokio::test]
@@ -2479,6 +2822,92 @@ mod tests {
                 }],
             ),
             CheckSummaryState::AwaitingMaintainerApproval
+        );
+    }
+
+    fn passing_check_runs(total_count: u64, returned_count: usize) -> CheckRunsWire {
+        CheckRunsWire {
+            total_count,
+            check_runs: (0..returned_count)
+                .map(|_| CheckRunWire {
+                    status: "completed".into(),
+                    conclusion: Some("success".into()),
+                })
+                .collect(),
+        }
+    }
+
+    fn passing_workflow_runs(total_count: u64, returned_count: usize) -> WorkflowRunsWire {
+        WorkflowRunsWire {
+            total_count,
+            workflow_runs: (0..returned_count)
+                .map(|_| WorkflowRunWire {
+                    status: "completed".into(),
+                    conclusion: Some("success".into()),
+                })
+                .collect(),
+        }
+    }
+
+    fn check_source_failure<T>() -> Result<T, GithubBrokerError> {
+        Err(GithubBrokerError::Malformed(
+            "simulated check-source failure".into(),
+        ))
+    }
+
+    #[test]
+    fn complete_check_sources_can_report_passing() {
+        assert_eq!(
+            summarize_check_sources(
+                Ok(passing_check_runs(1, 1)),
+                Ok(passing_workflow_runs(1, 1)),
+            ),
+            CheckSummaryState::Passing
+        );
+    }
+
+    #[test]
+    fn truncated_or_inconsistent_check_sources_are_unavailable() {
+        for (checks, workflows) in [
+            (
+                passing_check_runs(CHECK_STATUS_PAGE_SIZE + 1, CHECK_STATUS_PAGE_SIZE as usize),
+                passing_workflow_runs(0, 0),
+            ),
+            (
+                passing_check_runs(0, 0),
+                passing_workflow_runs(CHECK_STATUS_PAGE_SIZE + 1, CHECK_STATUS_PAGE_SIZE as usize),
+            ),
+            (passing_check_runs(2, 1), passing_workflow_runs(0, 0)),
+            (passing_check_runs(0, 0), passing_workflow_runs(0, 1)),
+        ] {
+            assert_eq!(
+                summarize_check_sources(Ok(checks), Ok(workflows)),
+                CheckSummaryState::Unavailable
+            );
+        }
+    }
+
+    #[test]
+    fn any_check_source_failure_is_unavailable() {
+        assert_eq!(
+            summarize_check_sources(check_source_failure(), Ok(passing_workflow_runs(1, 1)),),
+            CheckSummaryState::Unavailable
+        );
+        assert_eq!(
+            summarize_check_sources(Ok(passing_check_runs(1, 1)), check_source_failure()),
+            CheckSummaryState::Unavailable
+        );
+        assert_eq!(
+            summarize_check_sources(check_source_failure(), check_source_failure()),
+            CheckSummaryState::Unavailable
+        );
+    }
+
+    #[test]
+    fn check_source_total_counts_are_required_on_the_wire() {
+        assert!(serde_json::from_value::<CheckRunsWire>(json!({ "check_runs": [] })).is_err());
+        assert!(
+            serde_json::from_value::<WorkflowRunsWire>(json!({ "workflow_runs": [] })).is_err()
         );
     }
 
