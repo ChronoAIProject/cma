@@ -118,6 +118,15 @@ pub(crate) enum ControlFrame {
         operation_id: Option<String>,
         value: String,
     },
+    /// Install one authenticated, launch-scoped runtime policy or tombstone.
+    ///
+    /// The supervisor treats the envelope as policy data only. Signature,
+    /// audience and monotonic fencing are checked by the Layer 4 evaluator
+    /// before it can affect the credential-attaching proxy.
+    GithubCapability {
+        operation_id: String,
+        envelope: String,
+    },
     /// Restart the supervised program under a different front-end.
     ///
     /// The command must be one this pod was told at boot it may run; anything
@@ -141,6 +150,9 @@ pub(crate) const SWITCH_RESULT: &str = "switch_plane_result";
 
 /// The tag returned after a correlated credential was atomically installed.
 pub(crate) const CREDENTIAL_RESULT: &str = "credential_result";
+
+/// The tag returned after a signed GitHub policy/tombstone was settled.
+pub(crate) const GITHUB_CAPABILITY_RESULT: &str = "github_capability_result";
 
 /// A process ending sent to the control plane after its terminal is drained.
 #[derive(Debug, serde::Serialize)]
@@ -371,6 +383,7 @@ async fn relay_terminal(
                     } else {
                         bytes.to_vec()
                     };
+                    let _admission = state_in.startup_gate.read().await;
                     if let Err(e) = session_in.write_input(&typed) {
                         tracing::warn!(runtime = %runtime, error = %e, "pty write failed");
                         return TerminalInputEnd::PtyWriteFailed;
@@ -453,6 +466,45 @@ pub(crate) async fn control(
                         "the link closed before credential installation could be acknowledged"
                     );
                 }
+            }
+        }
+        Ok(ControlFrame::GithubCapability {
+            operation_id,
+            envelope,
+        }) => {
+            let result = state
+                .github_capability
+                .install(
+                    runtime,
+                    &envelope,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                )
+                .await;
+            let answer = match result {
+                Ok(receipt) => serde_json::json!({
+                    "t": GITHUB_CAPABILITY_RESULT,
+                    "operation_id": operation_id,
+                    "accepted": true,
+                    "generation": receipt.generation,
+                    "fence": receipt.fence,
+                    "revoked": receipt.revoked,
+                }),
+                Err(refusal) => serde_json::json!({
+                    "t": GITHUB_CAPABILITY_RESULT,
+                    "operation_id": operation_id,
+                    "accepted": false,
+                    "refusal": refusal.wire_name(),
+                }),
+            }
+            .to_string();
+            if replies.send(answer).await.is_err() {
+                tracing::warn!(
+                    runtime,
+                    "the link closed before GitHub capability installation could be acknowledged"
+                );
             }
         }
         Ok(ControlFrame::SwitchPlane { command }) => {

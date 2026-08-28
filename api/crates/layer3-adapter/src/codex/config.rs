@@ -47,23 +47,17 @@ model_reasoning_effort = "{effort}"
 # outer boundary and is not affected by these; they govern what the agent does
 # inside it.
 approval_policy = "{approval}"
-sandbox_mode = "{sandbox}"
+{legacy_sandbox}
+{trigger_profile}
 "#,
         effort = spec
             .options
             .reasoning_effort
             .clone()
             .unwrap_or_else(|| "medium".to_string()),
-        approval = match spec.options.permission {
-            RuntimePermission::Guarded => "on-request",
-            RuntimePermission::Autonomous => "on-failure",
-            RuntimePermission::Unrestricted => "never",
-        },
-        sandbox = match spec.options.permission {
-            RuntimePermission::Guarded => "read-only",
-            RuntimePermission::Autonomous => "workspace-write",
-            RuntimePermission::Unrestricted => "danger-full-access",
-        },
+        approval = approval_policy(spec),
+        legacy_sandbox = legacy_sandbox_setting(spec),
+        trigger_profile = trigger_permission_profile(spec),
     )
 }
 
@@ -103,7 +97,8 @@ model_reasoning_effort = "{effort}"
 # outer boundary and is not affected by these; they govern what the agent does
 # inside it.
 approval_policy = "{approval}"
-sandbox_mode = "{sandbox}"
+{legacy_sandbox}
+{trigger_profile}
 
 [model_providers.chrono]
 name = "Chrono LLM"
@@ -117,19 +112,63 @@ wire_api = "{wire_api}"
             .reasoning_effort
             .clone()
             .unwrap_or_else(|| "medium".to_string()),
-        approval = match spec.options.permission {
-            RuntimePermission::Guarded => "on-request",
-            RuntimePermission::Autonomous => "on-failure",
-            // No approvals at all. Survivable only because the sandbox is
-            // still the boundary; this removes the ones inside it.
-            RuntimePermission::Unrestricted => "never",
-        },
-        sandbox = match spec.options.permission {
-            RuntimePermission::Guarded => "read-only",
-            RuntimePermission::Autonomous => "workspace-write",
-            RuntimePermission::Unrestricted => "danger-full-access",
-        },
+        approval = approval_policy(spec),
+        legacy_sandbox = legacy_sandbox_setting(spec),
+        trigger_profile = trigger_permission_profile(spec),
     )
+}
+
+fn approval_policy(spec: &RuntimeSpec) -> &'static str {
+    if spec.runtime_policy_required {
+        return "never";
+    }
+    match spec.options.permission {
+        RuntimePermission::Guarded => "on-request",
+        RuntimePermission::Autonomous => "on-failure",
+        RuntimePermission::Unrestricted => "never",
+    }
+}
+
+fn legacy_sandbox_setting(spec: &RuntimeSpec) -> String {
+    if spec.runtime_policy_required {
+        // Permission profiles and legacy sandbox settings do not compose.
+        // Any sandbox_mode in the loaded config disables default_permissions.
+        return String::new();
+    }
+    let mode = match spec.options.permission {
+        RuntimePermission::Guarded => "read-only",
+        RuntimePermission::Autonomous => "workspace-write",
+        RuntimePermission::Unrestricted => "danger-full-access",
+    };
+    format!("sandbox_mode = \"{mode}\"")
+}
+
+/// Trigger sessions need unattended command execution, but their network is
+/// a managed loopback path rather than general provider egress. The runtime's
+/// signed policy remains authoritative for the service, numeric repository,
+/// ref, and operation after the request reaches that local gateway.
+fn trigger_permission_profile(spec: &RuntimeSpec) -> &'static str {
+    if !spec.runtime_policy_required {
+        return "";
+    }
+    r#"default_permissions = "cma-trigger"
+
+[features]
+network_proxy = true
+
+[permissions.cma-trigger]
+extends = ":workspace"
+
+[permissions.cma-trigger.network]
+enabled = true
+enable_socks5 = false
+enable_socks5_udp = false
+allow_upstream_proxy = false
+allow_local_binding = false
+
+[permissions.cma-trigger.network.domains]
+"127.0.0.2" = "allow"
+"#
 }
 
 /// The inert credential the agent presents to the loopback proxy.

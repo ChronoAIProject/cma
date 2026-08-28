@@ -90,21 +90,47 @@ export function AppFrame({
     if (element === null) {
       return;
     }
+    const measure = () => {
+      const width = element.getBoundingClientRect().width;
+      if (width > 0) {
+        setViewport(width);
+      }
+    };
     let frame: number | null = null;
-    const observer = new ResizeObserver(() => {
+    const scheduleMeasure = () => {
       // Coalesced to one measurement per frame: a resize drag fires this far
       // faster than anything can be laid out in response.
       frame ??= requestAnimationFrame(() => {
         frame = null;
-        const width = element.getBoundingClientRect().width;
-        if (width > 0) {
-          setViewport(width);
-        }
+        measure();
       });
-    });
+    };
+    const measureOnForeground = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      /*
+       * A background tab can defer requestAnimationFrame indefinitely. Its
+       * first ResizeObserver delivery may therefore still be queued when the
+       * user returns, leaving the centre at the zero-width initial solve.
+       * Foregrounding is rare and needs the repaired layout immediately, so
+       * bypass the frame throttle for this lifecycle edge.
+       */
+      measure();
+    };
+    const observer = new ResizeObserver(scheduleMeasure);
+    // ResizeObserver normally reports once after observe(), but a direct-load
+    // frame must not depend on that delivery to give its center a width.
+    measure();
     observer.observe(element);
+    window.addEventListener('resize', scheduleMeasure);
+    window.addEventListener('focus', measureOnForeground);
+    document.addEventListener('visibilitychange', measureOnForeground);
     return () => {
       observer.disconnect();
+      window.removeEventListener('resize', scheduleMeasure);
+      window.removeEventListener('focus', measureOnForeground);
+      document.removeEventListener('visibilitychange', measureOnForeground);
       if (frame !== null) {
         cancelAnimationFrame(frame);
       }

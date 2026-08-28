@@ -13,13 +13,14 @@ mod permission;
 
 pub use environment::CodexSandboxSpec;
 
-use crate::hosted::{acp, HostedKernel};
+use crate::hosted::{AcpConversationBinding, HostedKernel};
 use crate::sandbox::SandboxClient;
 use crate::ConversationUpdate;
 use crate::{
     AdapterError, ConversationChannel, KernelAdapter, KernelCapabilities, ResourceSample,
     RuntimeHandle, RuntimeIdentity, RuntimeListing, RuntimeMode, RuntimeOptions,
-    RuntimeReservationIdentity, RuntimeSpec, TerminalChannel,
+    RuntimeReservationIdentity, RuntimeSpec, TerminalChannel, WorkspaceCheckpointPackage,
+    WorkspaceCheckpointRequest,
 };
 use tokio::sync::mpsc;
 
@@ -42,6 +43,18 @@ impl CodexAdapter {
             ),
             spec,
         }
+    }
+
+    /// Bind Codex-specific permission vocabulary to shared hosted ACP.
+    fn conversation_binding(&self, options: &RuntimeOptions) -> AcpConversationBinding {
+        AcpConversationBinding::new(
+            Some(
+                permission::mode_for(options.permission, options.restricted_service_gateway)
+                    .to_string(),
+            ),
+            options.resume_conversation.clone(),
+            options.own_credential,
+        )
     }
 }
 
@@ -87,6 +100,7 @@ impl KernelAdapter for CodexAdapter {
         self.spec
             .deployment
             .refuse_undeliverable(&spec.environment)?;
+        self.spec.deployment.refuse_missing_policy_verifier(spec)?;
 
         self.hosted
             .provision(spec, self.environment_for(spec))
@@ -95,6 +109,24 @@ impl KernelAdapter for CodexAdapter {
 
     async fn snapshot(&self, handle: &RuntimeHandle) -> Result<Option<Vec<u8>>, AdapterError> {
         self.hosted.snapshot(handle).await
+    }
+
+    async fn checkpoint_workspace(
+        &self,
+        handle: &RuntimeHandle,
+        request: &WorkspaceCheckpointRequest,
+    ) -> Result<WorkspaceCheckpointPackage, AdapterError> {
+        self.hosted.checkpoint_workspace(handle, request).await
+    }
+
+    async fn resume_workspace_writers(
+        &self,
+        handle: &RuntimeHandle,
+        resume_token: &str,
+    ) -> Result<(), AdapterError> {
+        self.hosted
+            .resume_workspace_writers(handle, resume_token)
+            .await
     }
 
     async fn attach_terminal(
@@ -110,23 +142,9 @@ impl KernelAdapter for CodexAdapter {
         options: &RuntimeOptions,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel, AdapterError> {
-        let (stream, url) = self.hosted.connect(handle, Some("conv")).await?;
-        tracing::info!(sandbox = %handle.0, %url, "opening the sandbox conversation");
-        let (conversation, control) = acp::Bridge::open(
-            stream,
-            self.hosted.workspace().to_string(),
-            Some(permission::mode_for(options.permission).to_string()),
-            options.resume_conversation.clone(),
-            Some(self.hosted.link_lifecycle(&handle.0)),
-            options.own_credential,
-            updates,
-        )
-        .await?;
-        // The bridge records this control generation before its socket reader
-        // starts, so a close racing the end of the handshake cannot leave a
-        // dead sender registered here.
-        drop(control);
-        Ok(conversation)
+        self.hosted
+            .open_acp_conversation(handle, self.conversation_binding(options), updates)
+            .await
     }
 
     async fn refresh_credential(
@@ -135,6 +153,29 @@ impl KernelAdapter for CodexAdapter {
         credential: &str,
     ) -> Result<(), AdapterError> {
         self.hosted.refresh_credential(handle, credential).await
+    }
+
+    async fn install_runtime_policy(
+        &self,
+        handle: &RuntimeHandle,
+        envelope: &str,
+    ) -> Result<crate::RuntimePolicyReceipt, AdapterError> {
+        self.hosted.install_runtime_policy(handle, envelope).await
+    }
+
+    async fn observe_runtime_policy(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Result<crate::RuntimePolicyObservation, AdapterError> {
+        self.hosted.observe_runtime_policy(handle).await
+    }
+
+    async fn probe_runtime_gateway(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::RuntimeGatewayProbeRequest,
+    ) -> Result<crate::RuntimeGatewayProbeReceipt, AdapterError> {
+        self.hosted.probe_runtime_gateway(handle, request).await
     }
 
     async fn switch_plane(

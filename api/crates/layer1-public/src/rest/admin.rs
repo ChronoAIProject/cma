@@ -19,26 +19,34 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json, Router,
 };
 use layer2_core::{
-    ActivityQuery, ActivityRecord, ActivityService, Caller, CoreError, DirectoryQuery,
-    PlatformSettingsService, ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId,
-    SessionService, SubjectId, UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
+    ActivityQuery, ActivityRecord, ActivityService, AuthorizeEffectReconciliationCommand, Caller,
+    CoreError, DirectoryQuery, LaunchEffectKind, OperationStore, PlatformSettingsService,
+    ProviderView, RegisteredUser, RuntimeInventory, Session, SessionId, SessionService, SubjectId,
+    TriggerService, TriggerServiceError, TriggerSupportLookup, TriggerSupportSnapshot,
+    UserDirectory, DEFAULT_ACTIVITY_LIMIT, DEFAULT_DIRECTORY_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+
+use crate::TriggerSupportObserved;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::auth::{ActedUpon, AuthenticatedCaller};
 use crate::rest::openapi_shapes;
 use crate::rest::pagination::AdminSessionPageParams;
-use crate::rest::{problem_document, problem_response, Problem, QueryProblem};
+use crate::rest::trigger_openapi_shapes as trigger_schema;
+use crate::rest::{
+    idempotency, problem_document, problem_response, BodyProblem, Problem, QueryProblem,
+};
 
 mod settings;
 
@@ -56,6 +64,22 @@ pub struct AdminState {
     pub users: Arc<UserDirectory>,
     /// Deployment-wide policy read and changed by administrators.
     pub settings: Arc<PlatformSettingsService>,
+    /// Redacted GitHub Trigger support projection, absent only when this
+    /// deployment has no Trigger persistence configured.
+    pub triggers: Option<Arc<TriggerService>>,
+    /// Durable operation claims shared with every other idempotent REST command.
+    pub operations: Arc<dyn OperationStore>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct AuthorizeEffectReconciliationRequest {
+    expected_revision: u64,
+    #[schema(value_type = trigger_schema::LaunchEffectKind)]
+    effect: LaunchEffectKind,
+    intent_key: String,
+    expected_fence: u64,
+    evidence_correlation_id: String,
 }
 
 /// A refusal that names no resource.
@@ -438,6 +462,151 @@ pub struct ActivityParams {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TriggerSupportParams {
+    #[serde(default)]
+    launch_id: Option<String>,
+    #[serde(default)]
+    correlation_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TriggerSupportView {
+    launch_id: String,
+    owner: String,
+    revision_digest: String,
+    publisher: String,
+    upstream_repository_id: u64,
+    fork_repository_id: Option<u64>,
+    github_account_id: Option<u64>,
+    service_id: Option<String>,
+    session_id: Option<String>,
+    state: String,
+    blocked_reason: Option<String>,
+    created_at: String,
+    updated_at: String,
+    started_at: Option<String>,
+    terminal_at: Option<String>,
+    lease: Option<TriggerSupportLeaseView>,
+    cleanup: Option<TriggerSupportCleanupView>,
+    effects: Vec<TriggerSupportEffectView>,
+    timeline: Vec<TriggerSupportEventView>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct TriggerSupportLeaseView {
+    fence: u64,
+    acquired_at: String,
+    expires_at: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct TriggerSupportCleanupView {
+    retention_policy_id: String,
+    delete_after: String,
+    target_count: usize,
+    planned_at: String,
+    completed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct TriggerSupportEffectView {
+    kind: String,
+    state: String,
+    intent_key: String,
+    attempt: u32,
+    reconciliation_attempt: u32,
+    fence: u64,
+    provider_request_id: Option<String>,
+    external_resource_ids: std::collections::BTreeMap<String, String>,
+    failure_class: Option<String>,
+    failure_code: Option<String>,
+    failure_correlation_id: Option<String>,
+    next_attempt_at: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct TriggerSupportEventView {
+    sequence: u64,
+    occurred_at: String,
+    correlation_id: String,
+    #[schema(value_type = Object)]
+    kind: serde_json::Value,
+}
+
+impl From<TriggerSupportSnapshot> for TriggerSupportView {
+    fn from(value: TriggerSupportSnapshot) -> Self {
+        Self {
+            launch_id: value.launch_id.0,
+            owner: value.owner.0,
+            revision_digest: value.revision_digest,
+            publisher: value.publisher.0,
+            upstream_repository_id: value.upstream_repository_id,
+            fork_repository_id: value.fork_repository_id,
+            github_account_id: value.github_account_id,
+            service_id: value.service_id,
+            session_id: value.session_id,
+            state: enum_code(value.state),
+            blocked_reason: value.blocked_reason.map(enum_code),
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+            started_at: value.started_at,
+            terminal_at: value.terminal_at,
+            lease: value.lease.map(|lease| TriggerSupportLeaseView {
+                fence: lease.fence,
+                acquired_at: lease.acquired_at,
+                expires_at: lease.expires_at,
+            }),
+            cleanup: value.cleanup.map(|cleanup| TriggerSupportCleanupView {
+                retention_policy_id: cleanup.retention_policy_id,
+                delete_after: cleanup.delete_after,
+                target_count: cleanup.target_count,
+                planned_at: cleanup.planned_at,
+                completed_at: cleanup.completed_at,
+            }),
+            effects: value
+                .effects
+                .into_iter()
+                .map(|effect| TriggerSupportEffectView {
+                    kind: enum_code(effect.kind),
+                    state: enum_code(effect.state),
+                    intent_key: effect.intent_key,
+                    attempt: effect.attempt,
+                    reconciliation_attempt: effect.reconciliation_attempt,
+                    fence: effect.fence,
+                    provider_request_id: effect.provider_request_id,
+                    external_resource_ids: effect.external_resource_ids,
+                    failure_class: effect.failure_class.map(enum_code),
+                    failure_code: effect.failure_code,
+                    failure_correlation_id: effect.failure_correlation_id,
+                    next_attempt_at: effect.next_attempt_at,
+                    updated_at: effect.updated_at,
+                })
+                .collect(),
+            timeline: value
+                .timeline
+                .into_iter()
+                .map(|event| TriggerSupportEventView {
+                    sequence: event.sequence,
+                    occurred_at: event.occurred_at,
+                    correlation_id: event.correlation_id,
+                    kind: serde_json::to_value(event.kind)
+                        .expect("the closed support event serializes"),
+                })
+                .collect(),
+        }
+    }
+}
+
+fn enum_code(value: impl Serialize) -> String {
+    serde_json::to_value(value)
+        .expect("the closed support enum serializes")
+        .as_str()
+        .expect("the support enum uses a string wire shape")
+        .to_string()
+}
+
 /// Every path this surface serves.
 ///
 /// Named once so the router and the rule about them cannot drift: the whole
@@ -445,9 +614,11 @@ pub struct ActivityParams {
 /// unit, and a route added outside that segment would escape whatever protects
 /// it without anything noticing.
 #[cfg(test)]
-const OPERATOR_ROUTES: [&str; 8] = [
+const OPERATOR_ROUTES: [&str; 10] = [
     "/api/v1/admin/users",
     "/api/v1/admin/activity",
+    "/api/v1/admin/triggers/support",
+    "/api/v1/admin/triggers/launches/{launch_id}/reconcile",
     "/api/v1/admin/runtimes",
     "/api/v1/admin/sessions",
     // The same core operations the owner's own routes project. A second
@@ -469,6 +640,8 @@ pub(super) fn documented_router(state: Arc<AdminState>) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(users))
         .routes(routes!(activity))
+        .routes(routes!(trigger_support))
+        .routes(routes!(authorize_effect_reconciliation))
         .routes(routes!(runtimes))
         .routes(routes!(sessions))
         .routes(routes!(stop))
@@ -526,6 +699,160 @@ async fn activity(
         )
         .await?;
     Ok(Json(entries.into_iter().map(ActivityView::from).collect()))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/triggers/support",
+    tag = "administration",
+    params(
+        ("launch_id" = Option<String>, Query),
+        ("correlation_id" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, description = "Redacted Trigger Launch support timeline", body = TriggerSupportView),
+        (status = 503, description = "Trigger support storage is not configured")
+    )
+)]
+async fn trigger_support(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    params: Result<Query<TriggerSupportParams>, axum::extract::rejection::QueryRejection>,
+) -> Result<Response, Response> {
+    let Query(params) = params.map_err(|error| QueryProblem(error).into_response())?;
+    let lookup = match (params.launch_id, params.correlation_id) {
+        (Some(id), None) => layer2_core::LaunchId::parse(id)
+            .map(TriggerSupportLookup::Launch)
+            .map_err(|_| invalid_support_lookup()),
+        (None, Some(correlation)) => {
+            TriggerSupportLookup::correlation(correlation).map_err(|_| invalid_support_lookup())
+        }
+        _ => Err(invalid_support_lookup()),
+    }?;
+    let requested_correlation = match &lookup {
+        TriggerSupportLookup::CorrelationId(correlation_id) => Some(correlation_id.clone()),
+        TriggerSupportLookup::Launch(_) => None,
+    };
+    let snapshot = state
+        .triggers
+        .as_ref()
+        .ok_or_else(trigger_support_unavailable)?
+        .support(&caller, lookup)
+        .await
+        .map_err(trigger_support_problem)?;
+    let observed = TriggerSupportObserved {
+        launch_id: snapshot.launch_id.clone(),
+        correlation_id: requested_correlation,
+    };
+    let mut response = Json(TriggerSupportView::from(snapshot)).into_response();
+    response.extensions_mut().insert(observed);
+    Ok(response)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/triggers/launches/{launch_id}/reconcile",
+    tag = "administration",
+    params(("launch_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = AuthorizeEffectReconciliationRequest,
+    responses(
+        (status = 202, description = "Exact fenced effect authorized for read-only reconciliation"),
+        (status = 503, description = "Trigger recovery storage is not configured")
+    )
+)]
+async fn authorize_effect_reconciliation(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(launch_id): Path<String>,
+    headers: HeaderMap,
+    key: idempotency::IdempotencyKey,
+    body: Result<idempotency::RequestBody<AuthorizeEffectReconciliationRequest>, BodyProblem>,
+) -> Response {
+    let operation = format!("trigger-effect-recovery-authorize:{launch_id}");
+    let (guard, body, _) = match idempotency::required_command(
+        key,
+        Arc::clone(&state.operations),
+        &caller,
+        operation,
+        body,
+    )
+    .await
+    {
+        Ok(parts) => parts,
+        Err(response) => return response,
+    };
+    let result: Result<Response, Response> = async {
+        let body = body.map_err(|error| error.into_response())?;
+        let timestamp = layer2_core::rfc3339_at(SystemTime::now());
+        let launch = state
+            .triggers
+            .as_ref()
+            .ok_or_else(trigger_support_unavailable)?
+            .authorize_effect_reconciliation(
+                &caller,
+                &layer2_core::LaunchId::parse(launch_id)
+                    .map_err(|_| trigger_support_problem(TriggerServiceError::NotFound))?,
+                AuthorizeEffectReconciliationCommand {
+                    expected_revision: body.expected_revision,
+                    effect: body.effect,
+                    intent_key: body.intent_key,
+                    expected_fence: body.expected_fence,
+                    evidence_correlation_id: body.evidence_correlation_id,
+                    now: timestamp,
+                    correlation_id: super::request_id_from_headers(&headers)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                },
+            )
+            .await
+            .map_err(trigger_support_problem)?;
+        Ok(effect_reconciliation_accepted(&caller, launch.owner))
+    }
+    .await;
+    guard.finish(result).await
+}
+
+/// Return no contributor projection from a cross-owner recovery control.
+/// Ownership is retained only in the response extension consumed by audit.
+fn effect_reconciliation_accepted(caller: &Caller, owner: SubjectId) -> Response {
+    let mut response = StatusCode::ACCEPTED.into_response();
+    if caller.is_acting_for_another(&owner) {
+        response.extensions_mut().insert(ActedUpon(owner));
+    }
+    response
+}
+
+fn trigger_support_unavailable() -> Response {
+    let status = StatusCode::SERVICE_UNAVAILABLE;
+    problem_response(
+        status,
+        problem_document(
+            status,
+            "trigger-support-unavailable",
+            "GitHub Trigger support data is not configured in this deployment.",
+            "trigger_support_unavailable",
+        ),
+    )
+}
+
+fn invalid_support_lookup() -> Response {
+    let status = StatusCode::BAD_REQUEST;
+    problem_response(
+        status,
+        problem_document(
+            status,
+            "invalid-trigger-support-lookup",
+            "Provide exactly one valid launch_id or correlation_id.",
+            "invalid_trigger_support_lookup",
+        ),
+    )
+}
+
+fn trigger_support_problem(error: TriggerServiceError) -> Response {
+    match error {
+        TriggerServiceError::Forbidden => NotAnOperator.into_response(),
+        other => super::triggers::TriggerProblem(other).into_response(),
+    }
 }
 
 #[utoipa::path(

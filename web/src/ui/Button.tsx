@@ -47,13 +47,20 @@ export function Button({
    * once per row, beside the controls it explains, and never stacked into
    * each one — which made every disabled control taller than its neighbour.
    */
-  const classes = ['button', `button--${variant}`, `button--${size}`, placement ?? '']
+  const iconOnly = icon != null && children == null;
+  const classes = [
+    'button',
+    `button--${variant}`,
+    `button--${size}`,
+    iconOnly ? 'button--icon-only' : '',
+    placement ?? '',
+  ]
     .filter(Boolean)
     .join(' ');
 
   return (
     <button type={type} className={classes} {...rest}>
-      {icon === undefined ? null : (
+      {icon == null ? null : (
         <span className="button__icon" aria-hidden="true">
           {icon}
         </span>

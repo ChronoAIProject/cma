@@ -523,10 +523,10 @@ fn documented_profile(preferred: bool) -> EnvironmentProfile {
 
 fn environment_profile_documentation() -> &'static str {
     let (_, after_heading) = API_REST_DOCUMENTATION
-        .split_once("## 2. Environment Profiles")
+        .split_once("## 3. Environment Profiles")
         .expect("the environment-profile section exists");
     after_heading
-        .split_once("## 3. Sessions")
+        .split_once("## 4. Sessions")
         .expect("the profile section precedes sessions")
         .0
 }

@@ -11,7 +11,7 @@ four-layer architecture, the branch model, and the CI gates. Those rules are bin
 | Path | Contents |
 |---|---|
 | `api/` | Backend — a single Rust workspace. Layers 1–4. |
-| `web/` | Frontend — a single React project. Read-only dashboard plus the terminal surface. |
+| `web/` | Frontend — a single React project. Interactive session, Trigger, contribution, publishing, and terminal surfaces. |
 | `infra/` | Dockerfiles and Kubernetes manifests. Fixed file list; must never diverge from the code. |
 | `docs/` | All documentation, markdown only. |
 
@@ -37,6 +37,27 @@ cd api && cargo build --workspace --locked && cargo test --workspace
 # frontend
 cd web && npm ci && npm run dev
 ```
+
+## CMA GitHub Triggers
+
+A repository publisher can create an immutable CMA Trigger and place the
+generated link in a public README:
+
+```markdown
+[Open in CMA](https://cma.example.com/triggers/PUBLIC_TRIGGER_ID)
+```
+
+The link contains no API key or GitHub credential. It opens a read-only preview;
+the contributor signs in, selects their own NyxID GitHub connection, reviews or
+adjusts the permitted settings, and explicitly presses Start before CMA creates
+or reuses a fork and opens a managed session. Publishing a branch and opening or
+updating a pull request remain separate contributor confirmations.
+
+See [Publish and use a CMA GitHub Trigger](./docs/CMA_Trigger_Publishing.md) for
+the publisher and contributor flow, scope requirements, revision lifecycle,
+re-click behavior, failure handling, and MVP boundaries. The API contract is in
+[API_REST.md](./docs/API_REST.md), and operational recovery is in
+[CMA_Trigger_Operations.md](./docs/CMA_Trigger_Operations.md).
 
 ## Branches
 

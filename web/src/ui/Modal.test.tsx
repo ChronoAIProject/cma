@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -45,6 +46,19 @@ describe('the dialog', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it('holds an unresolved command dialog until its caller makes it dismissible', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<Modal open dismissible={false} title="Unresolved command" onClose={onClose} />);
+
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    await user.click(document.querySelector('.modal__mask') as HTMLElement);
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Unresolved command' })).toBeInTheDocument();
+  });
+
   it('closes on the close control', async () => {
     const user = userEvent.setup();
     const onClose = open();
@@ -79,6 +93,30 @@ describe('the dialog', () => {
 
     await user.tab({ shift: true });
     expect(screen.getByRole('button', { name: 'Save' })).toHaveFocus();
+  });
+
+  it('keeps focus inside a controlled field when its owner re-renders', async () => {
+    const user = userEvent.setup();
+
+    function ControlledDialog() {
+      const [value, setValue] = useState('');
+      return (
+        <Modal open title="Edit" onClose={() => undefined}>
+          <label>
+            Title
+            <input value={value} onChange={(event) => setValue(event.target.value)} />
+          </label>
+        </Modal>
+      );
+    }
+
+    render(<ControlledDialog />);
+    const title = screen.getByLabelText('Title');
+    await user.click(title);
+    await user.type(title, 'One retained title');
+
+    expect(title).toHaveFocus();
+    expect(title).toHaveValue('One retained title');
   });
 
   it('returns focus to whatever opened it', () => {

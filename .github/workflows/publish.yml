@@ -414,9 +414,288 @@ jobs:
           compression-level: 0
           overwrite: true
 
+  runtime-image-gate:
+    name: Runtime image D-09 gate
+    needs: [plan, images, image-exports]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      # This is deliberately first. Every dependency, checkout, artifact,
+      # registry, or campaign failure must still leave one closed record.
+      - name: Initialize closed release-image evidence
+        if: ${{ always() }}
+        env:
+          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09-release.json
+          D09_FALLBACK_PATH: ${{ runner.temp }}/cma-trigger-d09-release-fallback.json
+        run: |
+          set -euo pipefail
+          now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          jq -n \
+            --arg started_at "$now" \
+            --arg recorded_at "$now" \
+            --arg build_commit "$GITHUB_SHA" \
+            '{
+              schema: "cma-trigger-d09-v2",
+              evidenceClass: "D",
+              result: "inconclusive",
+              startedAt: $started_at,
+              recordedAt: $recorded_at,
+              buildCommit: $build_commit,
+              image: null,
+              artifacts: null,
+              failure: {code: "release_image_gate_incomplete"},
+              cleanup: {status: "not_started", failureCodes: []},
+              redaction: "Only closed outcomes, status classes, artifact hashes, synthetic identities, and counts are retained; provider bodies and credential values are discarded."
+            }' > "$D09_FALLBACK_PATH"
+          cp "$D09_FALLBACK_PATH" "$D09_EVIDENCE_PATH"
+
+      - name: Require successful image publication and export
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          IMAGES_RESULT: ${{ needs.images.result }}
+          EXPORTS_RESULT: ${{ needs['image-exports'].result }}
+        run: |
+          set -euo pipefail
+          for dependency in \
+            "plan:$PLAN_RESULT" \
+            "images:$IMAGES_RESULT" \
+            "image-exports:$EXPORTS_RESULT"; do
+            name=${dependency%%:*}
+            result=${dependency#*:}
+            if [ "$result" != success ]; then
+              echo "::error::$name did not complete successfully ($result)"
+              exit 1
+            fi
+          done
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+
+      - name: Resolve the exact runtime OCI artifact
+        id: runtime_artifact
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release planning returned a non-canonical version"
+            exit 1
+          fi
+          revision=${GITHUB_SHA:0:7}
+          base="cma-runtime-${VERSION}-${revision}"
+          {
+            echo "artifact_name=${base}-oci"
+            echo "metadata_path=$RUNNER_TEMP/runtime-export/${base}.json"
+            echo "archive_path=$RUNNER_TEMP/runtime-export/${base}.oci.tar"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download the exact runtime OCI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.runtime_artifact.outputs.artifact_name }}
+          path: ${{ runner.temp }}/runtime-export
+
+      - name: Validate the runtime OCI metadata and archive
+        id: runtime_identity
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          METADATA_PATH: ${{ steps.runtime_artifact.outputs.metadata_path }}
+          ARCHIVE_PATH: ${{ steps.runtime_artifact.outputs.archive_path }}
+        run: |
+          set -euo pipefail
+          revision=${GITHUB_SHA:0:7}
+          base="cma-runtime-${VERSION}-${revision}"
+          export_dir=$(dirname "$METADATA_PATH")
+          if [ ! -f "$METADATA_PATH" ] || [ -L "$METADATA_PATH" ]; then
+            echo "::error::runtime OCI metadata is missing or is not a regular file"
+            exit 1
+          fi
+          if [ ! -f "$ARCHIVE_PATH" ] || [ -L "$ARCHIVE_PATH" ]; then
+            echo "::error::runtime OCI archive is missing or is not a regular file"
+            exit 1
+          fi
+          entry_count=$(find "$export_dir" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
+          if [ "$entry_count" -ne 2 ]; then
+            echo "::error::runtime OCI artifact must contain exactly its archive and metadata"
+            exit 1
+          fi
+
+          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          expected_repository="ghcr.io/${owner}/cma-runtime"
+          jq -e \
+            --arg version "$VERSION" \
+            --arg revision "$revision" \
+            --arg full_revision "$GITHUB_SHA" \
+            --arg repository "$expected_repository" \
+            --arg archive "${base}.oci.tar" \
+            'type == "object"
+              and (keys == [
+                "archive", "archiveReference", "archiveSha256", "component",
+                "fullRevision", "platforms", "revision", "revisionReference",
+                "schemaVersion", "sourceDigest", "sourceReference",
+                "sourceRepository", "version", "versionReference"
+              ])
+              and (.schemaVersion == 1)
+              and (.component == "runtime")
+              and (.version == $version)
+              and (.revision == $revision)
+              and (.fullRevision == $full_revision)
+              and (.sourceRepository == $repository)
+              and (.versionReference == ($repository + ":" + $version))
+              and (.revisionReference == ($repository + ":" + $revision))
+              and ((.sourceDigest | type) == "string")
+              and (.sourceDigest | test("^sha256:[0-9a-f]{64}$"))
+              and (.sourceReference == ($repository + "@" + .sourceDigest))
+              and (.archive == $archive)
+              and (.archiveReference == $version)
+              and ((.archiveSha256 | type) == "string")
+              and (.archiveSha256 | test("^sha256:[0-9a-f]{64}$"))
+              and (.platforms == ["linux/amd64"])' \
+            "$METADATA_PATH" >/dev/null
+
+          actual_archive_sha="sha256:$(sha256sum "$ARCHIVE_PATH" | awk '{print $1}')"
+          expected_archive_sha=$(jq -er '.archiveSha256' "$METADATA_PATH")
+          if [ "$actual_archive_sha" != "$expected_archive_sha" ]; then
+            echo "::error::runtime OCI archive checksum does not match its metadata"
+            exit 1
+          fi
+          source_reference=$(jq -er '.sourceReference' "$METADATA_PATH")
+          echo "source_reference=$source_reference" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the immutable runtime image
+        env:
+          SOURCE_REFERENCE: ${{ steps.runtime_identity.outputs.source_reference }}
+        run: |
+          set -euo pipefail
+          docker pull "$SOURCE_REFERENCE"
+
+      - name: Prepare Codex bubblewrap AppArmor profile
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            apparmor-profiles \
+            apparmor-utils
+          sudo install -m 0644 \
+            /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+            /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          sudo grep -Fx 'bwrap (enforce)' /sys/kernel/security/apparmor/profiles
+          sudo grep -Fx 'unpriv_bwrap (enforce)' /sys/kernel/security/apparmor/profiles
+
+      - name: Prove the release runtime network boundary
+        env:
+          SOURCE_REFERENCE: ${{ steps.runtime_identity.outputs.source_reference }}
+          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09-release.json
+        run: |
+          set -euo pipefail
+          node --check .github/scripts/cma-trigger-runtime-image-smoke.mjs
+          node .github/scripts/cma-trigger-runtime-image-smoke.mjs --self-test
+          node .github/scripts/cma-trigger-runtime-image-smoke.mjs \
+            --image "$SOURCE_REFERENCE" \
+            --build-commit "$GITHUB_SHA" \
+            --expected-architecture amd64 \
+            --output "$D09_EVIDENCE_PATH"
+
+      - name: Close release-image evidence
+        if: ${{ always() }}
+        env:
+          SOURCE_REFERENCE: ${{ steps.runtime_identity.outputs.source_reference }}
+          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09-release.json
+          D09_FALLBACK_PATH: ${{ runner.temp }}/cma-trigger-d09-release-fallback.json
+        run: |
+          set -euo pipefail
+          if ! jq -e \
+            --arg build_commit "$GITHUB_SHA" \
+            --arg source_reference "$SOURCE_REFERENCE" \
+            'type == "object"
+              and (.schema == "cma-trigger-d09-v2")
+              and (.evidenceClass == "D")
+              and (.result == "pass" or .result == "fail" or .result == "inconclusive")
+              and ((.startedAt | type) == "string" and (.startedAt | length) > 0)
+              and ((.recordedAt | type) == "string" and (.recordedAt | length) > 0)
+              and (.buildCommit == $build_commit)
+              and (has("image"))
+              and (has("artifacts"))
+              and ((.cleanup | type) == "object")
+              and ((.cleanup.status | type) == "string")
+              and ((.cleanup.failureCodes | type) == "array")
+              and ((.redaction | type) == "string" and (.redaction | length) > 0)
+              and (if .result == "pass"
+                   then (((.image | type) == "object")
+                         and (.image.reference == $source_reference)
+                         and (.image.architecture == "amd64")
+                         and (.image.revision == $build_commit)
+                         and ((.artifacts | type) == "object")
+                         and ((.artifacts | keys) == [
+                           "acpHash", "acpVersion", "architecture",
+                           "bwrapHash", "bwrapPath", "bwrapVersion",
+                           "codexLauncherHash", "codexNativeHash", "codexVersion",
+                           "platform", "runtimeHash", "uid"
+                         ])
+                         and ((.artifacts.codexVersion | type) == "string"
+                              and (.artifacts.codexVersion | length) > 0)
+                         and ((.artifacts.acpVersion | type) == "string"
+                              and (.artifacts.acpVersion | length) > 0)
+                         and (.artifacts.acpHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.bwrapPath == "/usr/bin/bwrap")
+                         and (.artifacts.bwrapVersion | test("^bubblewrap [0-9]+\\.[0-9]+(\\.[0-9]+)?([-+~].*)?$"))
+                         and (.artifacts.bwrapHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.codexLauncherHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.codexNativeHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.runtimeHash | test("^[0-9a-f]{64}$"))
+                         and (.artifacts.uid == 10001)
+                         and (.artifacts.platform == "linux")
+                         and (.artifacts.architecture == "x64")
+                         and (.cleanup.status == "verified")
+                         and (.cleanup.failureCodes == [])
+                         and (has("failure") | not))
+                   else (((.failure | type) == "object")
+                         and ((.failure.code | type) == "string")
+                         and ((.failure.code | length) > 0))
+                   end)' \
+            "$D09_EVIDENCE_PATH" >/dev/null 2>&1; then
+            now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            jq \
+              --arg recorded_at "$now" \
+              '.recordedAt = $recorded_at | .failure.code = "evidence_record_invalid"' \
+              "$D09_FALLBACK_PATH" > "$D09_EVIDENCE_PATH"
+          fi
+
+      - name: Retain release runtime boundary evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cma-trigger-d09-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cma-trigger-d09-release.json
+          if-no-files-found: error
+          retention-days: 90
+
+      # Retention happens first so every non-pass remains reviewable while the
+      # GitHub Release stays blocked.
+      - name: Require passing release runtime evidence
+        if: ${{ always() }}
+        env:
+          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09-release.json
+        run: jq -e '.result == "pass"' "$D09_EVIDENCE_PATH" >/dev/null
+
   release:
     name: Tag and release
-    needs: [plan, images, image-exports]
+    needs: [plan, images, image-exports, runtime-image-gate]
     runs-on: ubuntu-latest
     permissions:
       actions: read

@@ -18,6 +18,8 @@ pub mod settings;
 pub mod skill_packs;
 pub mod tickets;
 pub mod token;
+pub mod trigger;
+pub mod trigger_workspace;
 
 use std::time::Duration;
 
@@ -35,6 +37,8 @@ pub use operation::MongoOperationStore;
 pub use settings::MongoPlatformSettingsStore;
 pub use skill_packs::ChronoStorageSkillPackStore;
 pub use tickets::MongoTerminalTicketStore;
+pub use trigger::MongoTriggerStore;
+pub use trigger_workspace::ChronoStorageTriggerWorkspaceStore;
 
 pub(crate) use encryption::AuthEncryptionKey;
 
@@ -60,6 +64,8 @@ pub struct MongoStores {
     pub auth: MongoAuthStore,
     /// Subject-scoped operation claims and their replay outcomes.
     pub operations: MongoOperationStore,
+    /// Publisher revisions and contributor Launch aggregates.
+    pub triggers: MongoTriggerStore,
 }
 
 #[async_trait]
@@ -137,6 +143,9 @@ pub async fn connect(
         tickets: MongoTerminalTicketStore::open(&client, database).await?,
         auth: MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
         operations: MongoOperationStore::open(&client, database).await?,
+        triggers: MongoTriggerStore::open(&client, database)
+            .await
+            .map_err(|error| StoreError::Unavailable(format!("open trigger store: {error}")))?,
     })
 }
 

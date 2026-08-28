@@ -42,7 +42,7 @@ impl ActivityService {
     /// notice it — never silently dropped — so a log that has stopped being
     /// written is visible in the process output rather than only discovered
     /// when somebody goes looking for an entry that was never kept.
-    pub async fn record(&self, record: ActivityRecord) {
+    pub async fn record(&self, record: ActivityRecord) -> bool {
         let actor = record
             .actor
             .as_ref()
@@ -58,7 +58,7 @@ impl ActivityService {
                 target,
                 "an action could not be recorded"
             );
-            return;
+            return false;
         }
         if record.outcome.is_notable() {
             // Refusals and failures are worth a line in the process log too:
@@ -72,6 +72,7 @@ impl ActivityService {
                 "an action was refused or failed"
             );
         }
+        true
     }
 
     /// Read the most recent entries, newest first.

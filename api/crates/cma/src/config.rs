@@ -8,6 +8,7 @@ use std::num::NonZeroU32;
 
 use axum::http::HeaderValue;
 use ipnet::IpNet;
+use layer2_core::{RequiredCapability, TriggerRolloutPolicy};
 
 use crate::auth::AuthMode;
 use crate::store::AuthEncryptionKey;
@@ -21,6 +22,212 @@ const CREATE_RATE_REQUESTS_PER_MINUTE: u32 = 10;
 const INPUT_RATE_REQUESTS_PER_MINUTE: u32 = 120;
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
 const MAX_TRUSTED_PROXY_HOPS: usize = 16;
+const DEFAULT_TRIGGER_CHANGED_FILE_LIMIT: usize = 1_000;
+const DEFAULT_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS: usize = 300;
+const MAX_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS: usize = 3_600;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriggerCleanupMode {
+    DryRun,
+    Execute,
+}
+
+impl TriggerCleanupMode {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::DryRun => "dry_run",
+            Self::Execute => "execute",
+        }
+    }
+}
+
+/// Deployment-owned Trigger rollout, scheduling, and retention controls.
+#[derive(Debug, Clone)]
+pub struct TriggerRuntimeConfig {
+    pub rollout: TriggerRolloutPolicy,
+    pub runtime_capabilities: Vec<RequiredCapability>,
+    pub cleanup_mode: TriggerCleanupMode,
+    pub changed_file_limit: u32,
+    pub fork_readiness_timeout: std::time::Duration,
+    pub interval: std::time::Duration,
+    pub page_size: u32,
+    pub max_pages: usize,
+    pub concurrency: usize,
+}
+
+impl TriggerRuntimeConfig {
+    fn from_env() -> Result<Self, String> {
+        let environment_enabled = strict_bool(
+            "CHRONO_TRIGGER_ENABLED",
+            &var_or("CHRONO_TRIGGER_ENABLED", "false"),
+        )?;
+        let orchestration_paused = strict_bool(
+            "CHRONO_TRIGGER_ORCHESTRATION_PAUSED",
+            &var_or("CHRONO_TRIGGER_ORCHESTRATION_PAUSED", "true"),
+        )?;
+        let capability_kill_switch = strict_bool(
+            "CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH",
+            &var_or("CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH", "true"),
+        )?;
+        let publisher_subject_ids = list_or("CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS", "");
+        let repository_ids = parse_u64_list(
+            "CHRONO_TRIGGER_REPOSITORY_IDS",
+            &var_or("CHRONO_TRIGGER_REPOSITORY_IDS", ""),
+        )?;
+        let user_cohort_percent = parse_bounded_usize(
+            "CHRONO_TRIGGER_USER_COHORT_PERCENT",
+            &var_or("CHRONO_TRIGGER_USER_COHORT_PERCENT", "0"),
+            0,
+            100,
+        )? as u8;
+        let rollout = TriggerRolloutPolicy::new(
+            environment_enabled,
+            orchestration_paused,
+            capability_kill_switch,
+            publisher_subject_ids,
+            repository_ids,
+            user_cohort_percent,
+        )
+        .map_err(|error| error.to_string())?;
+        let runtime_capabilities = parse_trigger_runtime_capabilities(
+            "CHRONO_TRIGGER_RUNTIME_CAPABILITIES",
+            &var_or("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", ""),
+        )?;
+        let cleanup_mode = parse_trigger_cleanup_mode(
+            "CHRONO_TRIGGER_CLEANUP_MODE",
+            &var_or("CHRONO_TRIGGER_CLEANUP_MODE", "dry_run"),
+        )?;
+        let changed_file_limit = parse_bounded_usize(
+            "CHRONO_TRIGGER_CHANGED_FILE_LIMIT",
+            &var_or(
+                "CHRONO_TRIGGER_CHANGED_FILE_LIMIT",
+                &DEFAULT_TRIGGER_CHANGED_FILE_LIMIT.to_string(),
+            ),
+            1,
+            layer2_core::MAX_DIFF_SUMMARY_FILES,
+        )? as u32;
+        let fork_readiness_timeout_seconds = parse_bounded_usize(
+            "CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS",
+            &var_or(
+                "CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS",
+                &DEFAULT_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS.to_string(),
+            ),
+            1,
+            MAX_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS,
+        )?;
+        /*
+         * Keep the scheduler's operation budget bounded independently of the
+         * number of stored Launches. Values outside these ceilings fail
+         * startup rather than turning a typo into an unbounded provider pass.
+         */
+        let interval_seconds = parse_bounded_usize(
+            "CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS",
+            &var_or("CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS", "5"),
+            1,
+            300,
+        )?;
+        let page_size = parse_bounded_usize(
+            "CHRONO_TRIGGER_WORKER_PAGE_SIZE",
+            &var_or("CHRONO_TRIGGER_WORKER_PAGE_SIZE", "50"),
+            1,
+            layer2_core::MAX_TRIGGER_PAGE_SIZE as usize,
+        )? as u32;
+        let max_pages = parse_bounded_usize(
+            "CHRONO_TRIGGER_WORKER_MAX_PAGES",
+            &var_or("CHRONO_TRIGGER_WORKER_MAX_PAGES", "20"),
+            1,
+            100,
+        )?;
+        let concurrency = parse_bounded_usize(
+            "CHRONO_TRIGGER_WORKER_CONCURRENCY",
+            &var_or("CHRONO_TRIGGER_WORKER_CONCURRENCY", "4"),
+            1,
+            32,
+        )?;
+        Ok(Self {
+            rollout,
+            runtime_capabilities,
+            cleanup_mode,
+            changed_file_limit,
+            fork_readiness_timeout: std::time::Duration::from_secs(
+                fork_readiness_timeout_seconds as u64,
+            ),
+            interval: std::time::Duration::from_secs(interval_seconds as u64),
+            page_size,
+            max_pages,
+            concurrency,
+        })
+    }
+
+    #[cfg(test)]
+    fn sample() -> Self {
+        Self {
+            rollout: TriggerRolloutPolicy::allow_all(),
+            runtime_capabilities: all_trigger_runtime_capabilities(),
+            cleanup_mode: TriggerCleanupMode::DryRun,
+            changed_file_limit: DEFAULT_TRIGGER_CHANGED_FILE_LIMIT as u32,
+            fork_readiness_timeout: std::time::Duration::from_secs(
+                DEFAULT_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS as u64,
+            ),
+            interval: std::time::Duration::from_secs(5),
+            page_size: 50,
+            max_pages: 20,
+            concurrency: 4,
+        }
+    }
+}
+
+fn parse_trigger_cleanup_mode(key: &str, raw: &str) -> Result<TriggerCleanupMode, String> {
+    match raw {
+        "dry_run" => Ok(TriggerCleanupMode::DryRun),
+        "execute" => Ok(TriggerCleanupMode::Execute),
+        other => Err(format!(
+            "{key} must be \"dry_run\" or \"execute\", got {other:?}"
+        )),
+    }
+}
+
+#[cfg(test)]
+fn all_trigger_runtime_capabilities() -> Vec<RequiredCapability> {
+    vec![
+        RequiredCapability::Conversation,
+        RequiredCapability::DurableConversation,
+        RequiredCapability::WorkspaceCheckpoint,
+        RequiredCapability::RestrictedServiceGateway,
+        RequiredCapability::CredentialRefresh,
+        RequiredCapability::CredentialRevocation,
+    ]
+}
+
+fn parse_trigger_runtime_capabilities(
+    key: &str,
+    raw: &str,
+) -> Result<Vec<RequiredCapability>, String> {
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut parsed = Vec::new();
+    for name in raw.split(',') {
+        let capability = match name {
+            "conversation" => RequiredCapability::Conversation,
+            "durable_conversation" => RequiredCapability::DurableConversation,
+            "workspace_checkpoint" => RequiredCapability::WorkspaceCheckpoint,
+            "restricted_service_gateway" => RequiredCapability::RestrictedServiceGateway,
+            "credential_refresh" => RequiredCapability::CredentialRefresh,
+            "credential_revocation" => RequiredCapability::CredentialRevocation,
+            _ => {
+                return Err(format!(
+                    "{key} contains unsupported capability {name:?}; use exact comma-separated canonical names"
+                ));
+            }
+        };
+        if parsed.contains(&capability) {
+            return Err(format!("{key} contains duplicate capability {name:?}"));
+        }
+        parsed.push(capability);
+    }
+    Ok(parsed)
+}
 
 /// A deliberately incomplete control-plane startup used at a recovery boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,6 +507,17 @@ pub struct Config {
     /// service ever addresses. It creates no bucket and holds no capability to
     /// create one; an absent name switches context storage off.
     pub context_bucket: String,
+    /// Bucket holding Trigger repository baselines and workspace checkpoints.
+    ///
+    /// Separate configuration from conversation context even when a deployment
+    /// deliberately selects the same owned bucket. Repository artifacts have
+    /// their own retention and deletion policy, and must never inherit the
+    /// transcript lifecycle merely because both use platform object storage.
+    pub trigger_workspace_bucket: String,
+    /// GitHub Trigger rollout and bounded worker controls.
+    pub trigger: TriggerRuntimeConfig,
+    /// Current Ed25519 signer for short-lived runtime policies, when enabled.
+    pub github_capability_signing: Option<GithubCapabilitySigningConfig>,
     /// This service's own machine identity on the identity platform, used to
     /// store session context.
     ///
@@ -314,6 +532,28 @@ pub struct Config {
     pub storage_client_secret: String,
     /// How callers are authenticated.
     pub auth_mode: AuthMode,
+}
+
+/// Secret signing material and public-key rotation inputs.
+#[derive(Clone)]
+pub struct GithubCapabilitySigningConfig {
+    pub key_id: String,
+    pub private_key_pkcs8_base64: String,
+    pub previous_verification_keys_json: String,
+}
+
+impl std::fmt::Debug for GithubCapabilitySigningConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GithubCapabilitySigningConfig")
+            .field("key_id", &self.key_id)
+            .field("private_key_pkcs8_base64", &"<redacted>")
+            .field(
+                "previous_verification_keys_json",
+                &self.previous_verification_keys_json,
+            )
+            .finish()
+    }
 }
 
 /// Services every session's credential may reach when a deployment names none.
@@ -452,6 +692,28 @@ impl Config {
         // platform, and every object this service writes lands in it, so
         // guessing a name would mean writing somewhere nobody chose.
         let context_bucket = var_or("CHRONO_CONTEXT_BUCKET", "");
+        let trigger_workspace_bucket = var_or("CHRONO_TRIGGER_WORKSPACE_BUCKET", "");
+        let trigger = TriggerRuntimeConfig::from_env()?;
+        let capability_key_id = var_or("CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_ID", "");
+        let capability_private_key = var_or("CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_PKCS8", "");
+        let previous_verification_keys_json =
+            var_or("CHRONO_GITHUB_CAPABILITY_PREVIOUS_VERIFY_KEYS", "{}");
+        let github_capability_signing = match (
+            capability_key_id.is_empty(),
+            capability_private_key.is_empty(),
+        ) {
+            (true, true) => None,
+            (false, false) => Some(GithubCapabilitySigningConfig {
+                key_id: capability_key_id,
+                private_key_pkcs8_base64: capability_private_key,
+                previous_verification_keys_json,
+            }),
+            _ => {
+                return Err("CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_ID and \
+                     CHRONO_GITHUB_CAPABILITY_SIGNING_KEY_PKCS8 must be set together"
+                    .into())
+            }
+        };
         let storage_client_id = var_or("CHRONO_STORAGE_CLIENT_ID", "");
         let storage_client_secret = var_or("CHRONO_STORAGE_CLIENT_SECRET", "");
         // The key is read from a file rather than an environment variable so it
@@ -535,6 +797,9 @@ impl Config {
             auth_encryption_key,
             activity_retention,
             context_bucket,
+            trigger_workspace_bucket,
+            trigger,
+            github_capability_signing,
             storage_client_id,
             storage_client_secret,
             auth_mode,
@@ -591,6 +856,34 @@ fn require(key: &str) -> Result<String, String> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| format!("{key} is required and was not set"))
+}
+
+fn strict_bool(key: &str, raw: &str) -> Result<bool, String> {
+    match raw {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!(
+            "{key} must be exactly \"true\" or \"false\", got {raw:?}"
+        )),
+    }
+}
+
+fn parse_u64_list(key: &str, raw: &str) -> Result<Vec<u64>, String> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    raw.split(',')
+        .map(|part| {
+            let part = part.trim();
+            let value = part.parse::<u64>().map_err(|error| {
+                format!("{key} contains invalid numeric identity {part:?}: {error}")
+            })?;
+            if value == 0 {
+                return Err(format!("{key} contains invalid numeric identity 0"));
+            }
+            Ok(value)
+        })
+        .collect()
 }
 
 fn positive_u32(key: &str, default: u32) -> Result<NonZeroU32, String> {
@@ -755,6 +1048,9 @@ impl Config {
             .expect("test key has 32 decoded bytes"),
             activity_retention: std::time::Duration::from_secs(90 * 86_400),
             context_bucket: "bkt".into(),
+            trigger_workspace_bucket: "trigger-bkt".into(),
+            trigger: TriggerRuntimeConfig::sample(),
+            github_capability_signing: None,
             storage_client_id: "sa-id".into(),
             storage_client_secret: "sa-secret".into(),
             auth_mode: AuthMode::Trusted {
@@ -776,6 +1072,41 @@ mod tests {
             .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
             .collect::<BTreeMap<_, _>>();
         MongoCutoverStageConfig::from_lookup(|key| Ok(values.get(key).cloned()))
+    }
+
+    #[test]
+    fn trigger_runtime_capabilities_accept_only_the_six_canonical_names() {
+        let raw = "conversation,durable_conversation,workspace_checkpoint,restricted_service_gateway,credential_refresh,credential_revocation";
+        assert_eq!(
+            parse_trigger_runtime_capabilities("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", raw)
+                .expect("the complete canonical inventory is usable"),
+            all_trigger_runtime_capabilities()
+        );
+        assert_eq!(
+            parse_trigger_runtime_capabilities("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", "")
+                .expect("an empty declaration deliberately admits no Trigger capability"),
+            Vec::<RequiredCapability>::new()
+        );
+    }
+
+    #[test]
+    fn trigger_runtime_capabilities_reject_duplicates_and_noncanonical_spelling() {
+        for raw in [
+            "conversation,conversation",
+            " conversation",
+            "conversation ",
+            "conversation, durable_conversation",
+            "Conversation",
+            "unknown_capability",
+        ] {
+            let error =
+                parse_trigger_runtime_capabilities("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", raw)
+                    .expect_err("ambiguous or noncanonical capability input must fail startup");
+            assert!(
+                error.contains("CHRONO_TRIGGER_RUNTIME_CAPABILITIES"),
+                "the startup error must name its deployment key: {error}"
+            );
+        }
     }
 
     #[test]
@@ -936,6 +1267,93 @@ mod tests {
     }
 
     #[test]
+    fn trigger_rollout_values_fail_closed_instead_of_guessing() {
+        assert!(strict_bool("TRIGGER_BOOL", "true").unwrap());
+        assert!(!strict_bool("TRIGGER_BOOL", "false").unwrap());
+        for raw in ["TRUE", "False", "1", "yes", " true", ""] {
+            assert!(
+                strict_bool("TRIGGER_BOOL", raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+
+        assert_eq!(
+            parse_u64_list("CHRONO_TRIGGER_REPOSITORY_IDS", " 17,42 ").unwrap(),
+            vec![17, 42]
+        );
+        assert!(parse_u64_list("CHRONO_TRIGGER_REPOSITORY_IDS", "")
+            .unwrap()
+            .is_empty());
+        for raw in ["0", "17,", "-1", "repo"] {
+            assert!(
+                parse_u64_list("CHRONO_TRIGGER_REPOSITORY_IDS", raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+
+        assert_eq!(
+            parse_trigger_cleanup_mode("CHRONO_TRIGGER_CLEANUP_MODE", "dry_run").unwrap(),
+            TriggerCleanupMode::DryRun
+        );
+        assert_eq!(
+            parse_trigger_cleanup_mode("CHRONO_TRIGGER_CLEANUP_MODE", "execute").unwrap(),
+            TriggerCleanupMode::Execute
+        );
+        for raw in ["delete", "DRY_RUN", " dry_run", ""] {
+            assert!(
+                parse_trigger_cleanup_mode("CHRONO_TRIGGER_CLEANUP_MODE", raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+
+        assert_eq!(
+            parse_bounded_usize(
+                "CHRONO_TRIGGER_CHANGED_FILE_LIMIT",
+                "1000",
+                1,
+                layer2_core::MAX_DIFF_SUMMARY_FILES,
+            )
+            .unwrap(),
+            1_000
+        );
+        for raw in ["0", "1001", "unbounded"] {
+            assert!(
+                parse_bounded_usize(
+                    "CHRONO_TRIGGER_CHANGED_FILE_LIMIT",
+                    raw,
+                    1,
+                    layer2_core::MAX_DIFF_SUMMARY_FILES,
+                )
+                .is_err(),
+                "accepted {raw:?}"
+            );
+        }
+
+        assert_eq!(
+            parse_bounded_usize(
+                "CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS",
+                "300",
+                1,
+                MAX_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS,
+            )
+            .unwrap(),
+            DEFAULT_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS
+        );
+        for raw in ["0", "3601", "five minutes"] {
+            assert!(
+                parse_bounded_usize(
+                    "CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS",
+                    raw,
+                    1,
+                    MAX_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS,
+                )
+                .is_err(),
+                "accepted {raw:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_legacy_cutover_stage_accepts_only_its_exact_flag_tuple() {
         let config = staged_config(&[
             (MONGODB_CUTOVER_STAGE, "legacy"),
@@ -979,6 +1397,33 @@ mod tests {
             assert!(
                 error.contains("CHRONO_MONGODB_COORDINATION_CUTOVER"),
                 "got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_trigger_runtime_key_is_pinned_in_the_fixed_configmap() {
+        let manifest = include_str!("../../../../infra/api/configmap.yaml");
+        for (key, value) in [
+            ("CHRONO_TRIGGER_ENABLED", "false"),
+            ("CHRONO_TRIGGER_ORCHESTRATION_PAUSED", "true"),
+            ("CHRONO_TRIGGER_CAPABILITY_KILL_SWITCH", "true"),
+            ("CHRONO_TRIGGER_RUNTIME_CAPABILITIES", ""),
+            ("CHRONO_TRIGGER_PUBLISHER_SUBJECT_IDS", ""),
+            ("CHRONO_TRIGGER_REPOSITORY_IDS", ""),
+            ("CHRONO_TRIGGER_USER_COHORT_PERCENT", "0"),
+            ("CHRONO_TRIGGER_CLEANUP_MODE", "dry_run"),
+            ("CHRONO_TRIGGER_CHANGED_FILE_LIMIT", "1000"),
+            ("CHRONO_TRIGGER_FORK_READINESS_TIMEOUT_SECONDS", "300"),
+            ("CHRONO_TRIGGER_WORKER_INTERVAL_SECONDS", "5"),
+            ("CHRONO_TRIGGER_WORKER_PAGE_SIZE", "50"),
+            ("CHRONO_TRIGGER_WORKER_MAX_PAGES", "20"),
+            ("CHRONO_TRIGGER_WORKER_CONCURRENCY", "4"),
+        ] {
+            let declaration = format!("  {key}: \"{value}\"");
+            assert!(
+                manifest.lines().any(|line| line == declaration),
+                "fixed ConfigMap is missing {declaration}"
             );
         }
     }

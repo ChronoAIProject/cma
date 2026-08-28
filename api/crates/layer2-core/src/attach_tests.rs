@@ -2284,6 +2284,7 @@ async fn a_restarted_rotation_stays_rotating_until_the_replacement_is_live() {
         claim: rotation_claim.clone(),
         snapshot_ref: snapshot_ref.clone(),
         snapshot_at: snapshot_at.clone(),
+        trigger_recovery: None,
         rotations_from: record.session.rotations,
         rotations_to: record.session.rotations.saturating_add(1),
         target: crate::store::PendingHandoverTarget::RuntimeVersion {
