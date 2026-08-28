@@ -126,12 +126,75 @@ function renderFrame(detailsOpen = true) {
 }
 
 describe('the page frame', () => {
+  it('measures once on mount before the observer reports a resize', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 1440,
+      height: 800,
+    } as DOMRect);
+
+    renderFrame(false);
+
+    expect(tracks()).toBe(`${SIDEBAR_DEFAULT}px ${1440 - SIDEBAR_DEFAULT}px 0px`);
+  });
+
   it('writes the solved widths as its own tracks', () => {
     renderFrame();
     measure(1600);
     expect(tracks()).toBe(
       `${SIDEBAR_DEFAULT}px ${1600 - SIDEBAR_DEFAULT - DETAILS_MIN}px ${DETAILS_MIN}px`,
     );
+  });
+
+  it('remeasures its box when a window resize arrives before the observer', () => {
+    let width = 1440;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ width, height: 800 }) as DOMRect,
+    );
+    renderFrame(false);
+    expect(tracks()).toBe(`${SIDEBAR_DEFAULT}px ${1440 - SIDEBAR_DEFAULT}px 0px`);
+
+    width = 900;
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+      vi.advanceTimersByTime(20);
+    });
+
+    expect(tracks()).toBe(`${SIDEBAR_COLLAPSED}px ${900 - SIDEBAR_COLLAPSED}px 0px`);
+  });
+
+  it('recovers immediately when a background-loaded frame returns to the foreground', () => {
+    let width = 0;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ width, height: 800 }) as DOMRect,
+    );
+    const visibility = vi.spyOn(document, 'visibilityState', 'get');
+    visibility.mockReturnValue('hidden');
+    renderFrame(false);
+    expect(tracks()).toBe(`${SIDEBAR_DEFAULT}px 0px 0px`);
+
+    width = 1440;
+    act(() => {
+      observed?.();
+    });
+    // The observer's animation frame is intentionally left throttled, as it
+    // can be in a real background tab.
+    expect(tracks()).toBe(`${SIDEBAR_DEFAULT}px 0px 0px`);
+
+    visibility.mockReturnValue('visible');
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(tracks()).toBe(`${SIDEBAR_DEFAULT}px ${1440 - SIDEBAR_DEFAULT}px 0px`);
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+
+    width = 900;
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(tracks()).toBe(`${SIDEBAR_COLLAPSED}px ${900 - SIDEBAR_COLLAPSED}px 0px`);
   });
 
   it('keeps the details column mounted when it is closed', () => {

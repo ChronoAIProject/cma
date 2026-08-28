@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionDrawer } from './SessionDrawer';
@@ -13,13 +13,15 @@ import type {
   DiffReview,
   Launch,
   LaunchCapabilityRevocationState,
+  PullRequestDraft,
+  PullRequestRecord,
   SessionSpend,
 } from '@chronoai/cma-sdk';
-import { listLaunchPage } from '../api/client';
+import { listLaunchPage, readLaunch } from '../api/client';
 
 vi.mock('../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/client')>();
-  return { ...actual, listLaunchPage: vi.fn() };
+  return { ...actual, listLaunchPage: vi.fn(), readLaunch: vi.fn() };
 });
 
 const launchFixture = JSON.parse(
@@ -28,6 +30,38 @@ const launchFixture = JSON.parse(
 const diffFixture = JSON.parse(
   readFileSync(resolve(process.cwd(), '../sdk/typescript/tests/fixtures/diff_review.json'), 'utf8'),
 ) as DiffReview;
+const pullRequestDraft = JSON.parse(
+  readFileSync(
+    resolve(process.cwd(), '../sdk/typescript/tests/fixtures/pull_request_draft.json'),
+    'utf8',
+  ),
+) as PullRequestDraft;
+
+function openPullRequest(): PullRequestRecord {
+  return {
+    ...pullRequestDraft,
+    provider_id: 101,
+    provider_node_id: 'PR_provider_node',
+    number: 17,
+    canonical_url: 'https://github.com/upstream-owner/project/pull/17',
+    state: 'open',
+    base_revision: pullRequestDraft.expected_base_revision,
+    head_revision: pullRequestDraft.expected_head_revision,
+    observed_title: pullRequestDraft.title,
+    observed_body_digest: pullRequestDraft.body_digest,
+    mergeability: 'mergeable',
+    checks: 'passing',
+    confirmation_snapshot_digest: pullRequestDraft.intent_digest,
+    confirmed_at: '2026-08-27T00:00:15Z',
+    created_at: '2026-08-27T00:00:15Z',
+    updated_at: '2026-08-27T00:00:15Z',
+    provider_created_at: '2026-08-27T00:00:15Z',
+    provider_updated_at: '2026-08-27T00:00:15Z',
+    status_failure: null,
+    provider_request_id: 'github-request-17',
+    head_matches_launch: true,
+  };
+}
 
 function owningLaunch(reach: LaunchCapabilityRevocationState | null = 'active'): Launch {
   const upstream = launchFixture.revision_content.upstream.repository;
@@ -94,6 +128,9 @@ beforeEach(() => {
   vi.mocked(listLaunchPage)
     .mockReset()
     .mockImplementation(() => new Promise(() => {}));
+  vi.mocked(readLaunch)
+    .mockReset()
+    .mockImplementation(() => new Promise(() => {}));
 });
 
 /**
@@ -132,9 +169,15 @@ function renderDrawer(
   lifecycle: SessionLifecycle,
   extra: Partial<Session> = {},
   readSpend?: (id: string) => Promise<SessionSpend>,
+  navigate?: Parameters<typeof SessionDrawer>[0]['navigate'],
 ) {
   return render(
-    <SessionDrawer session={session(lifecycle, extra)} onClose={vi.fn()} readSpend={readSpend} />,
+    <SessionDrawer
+      session={session(lifecycle, extra)}
+      onClose={vi.fn()}
+      readSpend={readSpend}
+      navigate={navigate}
+    />,
   );
 }
 
@@ -470,6 +513,10 @@ describe('the Trigger repository relationship', () => {
     renderDrawer('running');
 
     expect(await screen.findByText('upstream-owner/project')).toBeInTheDocument();
+    expect(listLaunchPage).toHaveBeenCalledWith(
+      { session_id: 'ses_test', limit: 1 },
+      expect.any(AbortSignal),
+    );
     expect(screen.getByText('contributor/project')).toBeInTheDocument();
     expect(screen.getByText('checkpoint-1')).toBeInTheDocument();
     expect(screen.getByText('write confirmed')).toBeInTheDocument();
@@ -483,22 +530,221 @@ describe('the Trigger repository relationship', () => {
     );
   });
 
-  it('continues through owner pages and matches only the exact session identifier', async () => {
+  it('keeps polling the exact session relationship until a Launch is associated', async () => {
+    vi.useFakeTimers();
     vi.mocked(listLaunchPage)
-      .mockResolvedValueOnce({
-        items: [{ ...owningLaunch(), session: { session_id: 'ses_other' } }],
-        next_cursor: 'page-2',
-      })
+      .mockResolvedValueOnce({ items: [], next_cursor: null })
       .mockResolvedValueOnce({ items: [owningLaunch()], next_cursor: null });
+    const view = renderDrawer('running');
+
+    try {
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(listLaunchPage).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText('upstream-owner/project')).toBeNull();
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+        await Promise.resolve();
+      });
+
+      expect(listLaunchPage).toHaveBeenCalledTimes(2);
+      expect(listLaunchPage).toHaveBeenLastCalledWith(
+        { session_id: 'ses_test', limit: 1 },
+        expect.any(AbortSignal),
+      );
+      expect(screen.getByText('upstream-owner/project')).toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries Launch discovery after a failed session lookup', async () => {
+    vi.useFakeTimers();
+    vi.mocked(listLaunchPage)
+      .mockRejectedValueOnce(new Error('inventory temporarily unavailable'))
+      .mockResolvedValueOnce({ items: [owningLaunch()], next_cursor: null });
+    const view = renderDrawer('running');
+
+    try {
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByText('Could not be read')).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+        await Promise.resolve();
+      });
+
+      expect(listLaunchPage).toHaveBeenCalledTimes(2);
+      expect(screen.getByText('upstream-owner/project')).toBeInTheDocument();
+      expect(screen.queryByText('Could not be read')).toBeNull();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the linked pull request target and complete observed provider status', async () => {
+    vi.mocked(listLaunchPage).mockResolvedValueOnce({
+      items: [{ ...owningLaunch(), pull_request: openPullRequest() }],
+      next_cursor: null,
+    });
 
     renderDrawer('running');
 
-    expect(await screen.findByText('upstream-owner/project')).toBeInTheDocument();
-    expect(listLaunchPage).toHaveBeenNthCalledWith(
-      2,
-      { limit: 100, cursor: 'page-2' },
-      expect.any(AbortSignal),
+    const heading = await screen.findByRole('heading', { name: 'Trigger repository' });
+    const section = heading.closest('section');
+    expect(section).not.toBeNull();
+    const repository = within(section as HTMLElement);
+    expect(repository.getByRole('link', { name: `#17 ${pullRequestDraft.title}` })).toHaveAttribute(
+      'href',
+      'https://github.com/upstream-owner/project/pull/17',
     );
+    expect(repository.getByText('PR state').closest('div')).toHaveTextContent('open');
+    expect(repository.getByText('PR base').closest('div')).toHaveTextContent(
+      pullRequestDraft.base_ref,
+    );
+    expect(repository.getByText('PR head').closest('div')).toHaveTextContent(
+      pullRequestDraft.head_ref,
+    );
+    expect(repository.getByText('Mergeability').closest('div')).toHaveTextContent('Mergeable');
+    expect(repository.getByText('Checks').closest('div')).toHaveTextContent('passing');
+    expect(repository.getByText('CMA head binding').closest('div')).toHaveTextContent(
+      'Matches Launch',
+    );
+    expect(repository.getByText('Status sync').closest('div')).toHaveTextContent('Current');
+    expect(repository.getByText('Provider request').closest('div')).toHaveTextContent(
+      'github-request-17',
+    );
+  });
+
+  it('keeps the drawer snapshot current while it remains open', async () => {
+    const initial = { ...owningLaunch(), pull_request: openPullRequest() };
+    const refreshed = {
+      ...initial,
+      revision_number: initial.revision_number + 1,
+      pull_request: {
+        ...openPullRequest(),
+        checks: 'failing' as const,
+        mergeability: 'conflicting' as const,
+        provider_request_id: 'github-request-poll',
+        updated_at: '2026-08-27T00:01:00Z',
+      },
+    };
+    vi.mocked(listLaunchPage).mockResolvedValueOnce({ items: [initial], next_cursor: null });
+    vi.mocked(readLaunch).mockResolvedValueOnce(refreshed);
+    renderDrawer('running');
+
+    expect(await screen.findByText('github-request-poll')).toBeInTheDocument();
+    expect(readLaunch).toHaveBeenCalledWith(initial.id, expect.any(AbortSignal));
+    expect(screen.getByText('failing')).toBeInTheDocument();
+    expect(screen.getByText('Conflicting')).toBeInTheDocument();
+  });
+
+  it('keeps stale repository facts readable but withholds Contribute after refresh failure', async () => {
+    const initial = owningLaunch();
+    vi.mocked(listLaunchPage).mockResolvedValueOnce({ items: [initial], next_cursor: null });
+    vi.mocked(readLaunch).mockRejectedValueOnce(new Error('Launch refresh unavailable'));
+
+    renderDrawer('running');
+
+    expect(
+      await screen.findByText('The latest Launch refresh failed; provider status may be stale.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('upstream-owner/project')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Launch progress' })).toHaveAttribute(
+      'href',
+      `/launches/${initial.id}`,
+    );
+    expect(screen.queryByRole('link', { name: 'Contribute' })).toBeNull();
+  });
+
+  it('shows manual head drift and safe paused-status remediation in the drawer', async () => {
+    vi.mocked(listLaunchPage).mockResolvedValueOnce({
+      items: [
+        {
+          ...owningLaunch(),
+          pull_request: {
+            ...openPullRequest(),
+            head_matches_launch: false,
+            status_failure: {
+              class: 'service_inactive',
+              code: 'github_service_inactive',
+              detail: 'The exact NyxID GitHub service is inactive.',
+              remediation: 'Enable that service in NyxID or select another active connection.',
+              correlation_id: 'correlation-inactive',
+              observed_at: '2026-08-27T00:00:00Z',
+            },
+          },
+        },
+      ],
+      next_cursor: null,
+    });
+
+    renderDrawer('running');
+
+    expect(await screen.findByText('Changed outside CMA')).toBeInTheDocument();
+    const status = screen.getByText('Status sync').closest('div');
+    expect(status).not.toBeNull();
+    expect(status).toHaveTextContent('Paused by CMA');
+    expect(status).toHaveTextContent('exact NyxID GitHub service is inactive');
+    expect(status).toHaveTextContent('Enable that service in NyxID');
+    expect(screen.queryByRole('link', { name: 'Contribute' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Launch progress' })).toBeInTheDocument();
+  });
+
+  it.each(['merged', 'closed_unmerged'] as const)(
+    'preserves %s pull-request history without offering a same-Launch contribution',
+    async (state) => {
+      vi.mocked(listLaunchPage).mockResolvedValueOnce({
+        items: [{ ...owningLaunch(), pull_request: { ...openPullRequest(), state } }],
+        next_cursor: null,
+      });
+
+      renderDrawer('running');
+
+      expect(
+        await screen.findByRole('link', { name: `#17 ${pullRequestDraft.title}` }),
+      ).toHaveAttribute('href', 'https://github.com/upstream-owner/project/pull/17');
+      expect(screen.getByText('PR state').closest('div')).toHaveTextContent(
+        state.replaceAll('_', ' '),
+      );
+      expect(screen.queryByRole('link', { name: 'Contribute' })).toBeNull();
+      expect(screen.getByRole('link', { name: 'Launch progress' })).toBeInTheDocument();
+    },
+  );
+
+  it('discloses ambiguous initial-task risk and links to the existing Launch recovery action', async () => {
+    const navigate = vi.fn();
+    const launch = owningLaunch();
+    if (launch.delivery === null) throw new Error('owning Launch fixture omitted delivery');
+    vi.mocked(listLaunchPage).mockResolvedValueOnce({
+      items: [
+        {
+          ...launch,
+          state: 'failed_retryable',
+          blocked_reason: 'recovery_required',
+          delivery: { ...launch.delivery, state: 'recovery_required' },
+        },
+      ],
+      next_cursor: null,
+    });
+
+    renderDrawer('running', {}, undefined, navigate);
+
+    expect(
+      await screen.findByText(/cannot determine whether the previous initial task started/i),
+    ).toHaveTextContent(/another dispatch may execute the task twice/i);
+    const recovery = screen.getByRole('link', { name: 'Review initial-task recovery' });
+    expect(recovery).toHaveAttribute('href', `/launches/${launch.id}`);
+    expect(screen.queryByRole('button', { name: 'Recover initial task' })).toBeNull();
+
+    await userEvent.click(recovery);
+    expect(navigate).toHaveBeenCalledWith({ kind: 'launch', launchId: launch.id });
   });
 
   it.each([

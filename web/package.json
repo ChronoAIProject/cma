@@ -14,6 +14,7 @@
     "test": "vitest run",
     "check:styles": "node scripts/computed-styles.mjs",
     "check:surfaces": "node scripts/signed-in-surfaces.mjs",
+    "check:trigger-journey": "node scripts/trigger-journey.mjs",
     "check:css": "node scripts/css-collisions.mjs"
   },
   "dependencies": {

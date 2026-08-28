@@ -1,9 +1,10 @@
 import type { ConnectionAuthorization, TriggerConnection } from '@chronoai/cma-sdk';
-import { ApiError } from '../api/client';
+import { ApiError, TransportError } from '../api/client';
 
 const DEFAULT_POLL_MS = 1_500;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1_000;
 const CLOSED_GRACE_MS = 12_000;
+const MAX_TRANSIENT_BACKOFF_MS = 30_000;
 
 export class ConnectionPopupBlocked extends Error {
   constructor() {
@@ -37,6 +38,8 @@ interface AuthorizeConnectionOptions {
   readonly now?: () => number;
   readonly pollMs?: number;
   readonly timeoutMs?: number;
+  /** A newly created NyxID service may be inactive until its first OAuth callback settles. */
+  readonly inactiveIsPending?: boolean;
 }
 
 function githubAuthorizationUrl(value: string): URL {
@@ -59,14 +62,46 @@ function githubAuthorizationUrl(value: string): URL {
   return url;
 }
 
-function pending(cause: unknown): boolean {
-  return (
-    cause instanceof ApiError &&
-    (cause.code === 'trigger_connection_inactive' ||
-      cause.code === 'trigger_reauthorization_required' ||
-      cause.status === 429 ||
-      cause.status >= 500)
-  );
+interface PendingRetry {
+  readonly delayMs: number;
+  readonly transientFailures: number;
+}
+
+function transientDelay(pollMs: number, failures: number): number {
+  const ceiling = Math.max(pollMs, MAX_TRANSIENT_BACKOFF_MS);
+  return Math.min(ceiling, pollMs * 2 ** Math.min(failures - 1, 10));
+}
+
+function pendingRetry(
+  cause: unknown,
+  inactiveIsPending: boolean,
+  pollMs: number,
+  transientFailures: number,
+): PendingRetry | null {
+  if (cause instanceof ApiError) {
+    if (
+      (inactiveIsPending && cause.code === 'trigger_connection_inactive') ||
+      cause.code === 'trigger_reauthorization_required'
+    ) {
+      return { delayMs: pollMs, transientFailures: 0 };
+    }
+    if (cause.status === 429 || cause.status >= 500) {
+      const failures = transientFailures + 1;
+      const backoff = transientDelay(pollMs, failures);
+      return {
+        delayMs:
+          cause.status === 429 && cause.retryAfterMs !== undefined
+            ? Math.max(pollMs, cause.retryAfterMs)
+            : backoff,
+        transientFailures: failures,
+      };
+    }
+  }
+  if (cause instanceof TransportError) {
+    const failures = transientFailures + 1;
+    return { delayMs: transientDelay(pollMs, failures), transientFailures: failures };
+  }
+  return null;
 }
 
 function wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -102,6 +137,7 @@ export async function authorizeTriggerConnection({
   now = Date.now,
   pollMs = DEFAULT_POLL_MS,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  inactiveIsPending = false,
 }: AuthorizeConnectionOptions): Promise<TriggerConnection> {
   const popup = open('about:blank', 'cma-github-authorization', 'popup,width=720,height=760');
   if (popup === null) throw new ConnectionPopupBlocked();
@@ -111,6 +147,7 @@ export async function authorizeTriggerConnection({
   signal?.addEventListener('abort', abort, { once: true });
   const startedAt = now();
   let closedAt: number | undefined;
+  let transientFailures = 0;
 
   try {
     const handoff = await begin();
@@ -119,6 +156,7 @@ export async function authorizeTriggerConnection({
     popup.location.href = githubAuthorizationUrl(handoff.authorization_url).href;
 
     while (now() - startedAt < timeoutMs) {
+      let delayMs = pollMs;
       try {
         const connection = await preflight(handoff.service_id, controller.signal);
         if (connection.service_id !== handoff.service_id) {
@@ -128,9 +166,13 @@ export async function authorizeTriggerConnection({
           if (!popup.closed) popup.close();
           return connection;
         }
+        transientFailures = 0;
       } catch (cause) {
         if (controller.signal.aborted) throw new ConnectionAuthorizationCancelled();
-        if (!pending(cause)) throw cause;
+        const retry = pendingRetry(cause, inactiveIsPending, pollMs, transientFailures);
+        if (retry === null) throw cause;
+        delayMs = retry.delayMs;
+        transientFailures = retry.transientFailures;
       }
 
       if (popup.closed) {
@@ -141,7 +183,14 @@ export async function authorizeTriggerConnection({
       } else {
         closedAt = undefined;
       }
-      await wait(pollMs, controller.signal);
+      const remaining = timeoutMs - (now() - startedAt);
+      if (remaining <= 0) break;
+      const closedGraceRemaining =
+        closedAt === undefined ? remaining : CLOSED_GRACE_MS - (now() - closedAt);
+      await wait(
+        Math.max(0, Math.min(delayMs, remaining, closedGraceRemaining)),
+        controller.signal,
+      );
     }
     throw new ConnectionAuthorizationTimedOut();
   } catch (cause) {
@@ -157,3 +206,15 @@ export function isActiveTriggerConnection(
 ): connection is TriggerConnection {
   return connection?.state === 'active' && connection.account_id !== null;
 }
+
+export function isReconnectableTriggerConnection(
+  connection: TriggerConnection | null | undefined,
+): connection is TriggerConnection {
+  return (
+    connection?.state === 'disconnected' ||
+    (connection?.state === 'active' && connection.account_id === null)
+  );
+}
+
+export const INACTIVE_TRIGGER_CONNECTION_GUIDANCE =
+  'CMA cannot reactivate this inactive UserService through GitHub OAuth. Enable this exact service in NyxID and check access again, or select another active connection.';

@@ -109,6 +109,14 @@
   overflow-wrap: anywhere;
 }
 
+.trigger-facts__detail {
+  display: block;
+  margin-top: 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .trigger-capabilities {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

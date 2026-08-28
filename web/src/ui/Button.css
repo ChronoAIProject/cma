@@ -45,12 +45,12 @@
 }
 
 /* An icon-only key is square at either shared height. */
-.button--md:has(> .button__icon:only-child) {
+.button--md.button--icon-only {
   width: 40px;
   padding: 0;
 }
 
-.button--sm:has(> .button__icon:only-child) {
+.button--sm.button--icon-only {
   width: 32px;
   padding: 0;
 }
