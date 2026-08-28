@@ -17,6 +17,7 @@ mod screen;
 mod skills;
 mod store;
 mod sweep;
+mod trigger;
 
 #[cfg(test)]
 mod pty_integration_tests;
@@ -46,7 +47,8 @@ use layer1_public::{
 };
 use layer2_core::{
     ActivityService, Baseline, EnvironmentProfileService, PlatformSettingsService, ScreenModel,
-    SessionService, SkillId, SoftwarePackage, TerminalGeometry, UserDirectory,
+    SessionService, SkillId, SoftwarePackage, TerminalGeometry, TriggerAuthorityVerifier,
+    TriggerConnectionManager, TriggerService, UserDirectory,
 };
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -64,6 +66,12 @@ const DEFAULT_LOG_FILTER: &str = "info";
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
     "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
+);
+
+type TriggerProviderPorts = (
+    Arc<dyn TriggerAuthorityVerifier>,
+    Arc<dyn TriggerConnectionManager>,
+    Option<Arc<trigger::github::GithubBroker>>,
 );
 
 fn interfaces() -> Vec<Box<dyn InterfaceProfile>> {
@@ -249,12 +257,14 @@ fn with_request_context(router: Router) -> Router {
 }
 
 async fn discard_unusable_request_id(mut request: Request, next: Next) -> Response {
-    let usable = request
-        .headers()
-        .get(&X_REQUEST_ID)
-        .is_none_or(|value| value.to_str().is_ok_and(|text| !text.trim().is_empty()));
-    if !usable {
-        request.headers_mut().remove(&X_REQUEST_ID);
+    let normalized = layer1_public::rest::request_id_from_headers(request.headers())
+        .and_then(|value| HeaderValue::from_bytes(value.as_bytes()).ok());
+    // Remove first so repeated values collapse to either one canonical value or
+    // no value; the outer UUID layer mints the latter without ever observing
+    // the caller's unusable bytes.
+    request.headers_mut().remove(&X_REQUEST_ID);
+    if let Some(normalized) = normalized {
+        request.headers_mut().insert(&X_REQUEST_ID, normalized);
     }
     next.run(request).await
 }
@@ -471,7 +481,37 @@ async fn serve_normal_control_plane() {
         }
     }
 
-    let adapters = crate::kernels::registry(&config).await;
+    let github_capability_signer = match config.github_capability_signing.as_ref() {
+        Some(signing) => {
+            match trigger::capability_signing::CapabilitySigner::from_config(signing) {
+                Ok(signer) => {
+                    tracing::info!(
+                        key_id = signer.key_id(),
+                        "GitHub runtime-policy signing is enabled"
+                    );
+                    Some(Arc::new(signer))
+                }
+                Err(error) => {
+                    tracing::error!(error = %error, "GitHub runtime-policy signing is not usable");
+                    std::process::exit(2);
+                }
+            }
+        }
+        None => {
+            tracing::warn!(
+                "GitHub runtime-policy signing is disabled; Trigger Launch execution will remain disabled"
+            );
+            None
+        }
+    };
+    let adapters = crate::kernels::registry(
+        &config,
+        github_capability_signer
+            .as_ref()
+            .map(|signer| signer.verification_keys_json())
+            .unwrap_or_default(),
+    )
+    .await;
 
     let screen_factory: layer2_core::ScreenFactory = Arc::new(|geometry: TerminalGeometry| {
         Box::new(VtScreen::new(geometry)) as Box<dyn ScreenModel>
@@ -501,6 +541,7 @@ async fn serve_normal_control_plane() {
     let profile_store = Arc::new(stores.profiles) as Arc<dyn layer2_core::EnvironmentProfileStore>;
     let settings_store = Arc::new(stores.settings) as Arc<dyn layer2_core::PlatformSettingsStore>;
     let operation_store = Arc::new(stores.operations) as Arc<dyn layer2_core::OperationStore>;
+    let trigger_store = Arc::new(stores.triggers);
     let ticket_store =
         Arc::new(stores.tickets) as Arc<dyn layer1_public::tickets::TerminalTicketStore>;
     let auth_store = Arc::new(stores.auth) as Arc<dyn auth::persistence::AuthStore>;
@@ -534,6 +575,7 @@ async fn serve_normal_control_plane() {
     // both act as this service against the same platform, and two machine
     // identities for one process is two things to rotate.
     let identity_for_catalog = identity.clone();
+    let identity_for_trigger_workspace = identity.clone();
     // The bucket is as load-bearing as the identity: this service writes only
     // into the one it is given and creates none, so an unnamed bucket is not a
     // default to fall back on.
@@ -575,6 +617,33 @@ async fn serve_normal_control_plane() {
         .map(|(store, _)| Arc::clone(store) as Arc<dyn layer2_core::store::HandoverStore>);
     let skill_packs = storage.map(|(_, store)| store as Arc<dyn layer2_core::SkillPackStore>);
 
+    let trigger_workspace_store: Option<Arc<crate::store::ChronoStorageTriggerWorkspaceStore>> =
+        match identity_for_trigger_workspace
+            .filter(|_| !config.trigger_workspace_bucket.trim().is_empty())
+        {
+            Some(tokens) => Some(Arc::new(
+                crate::store::ChronoStorageTriggerWorkspaceStore::new(
+                    format!(
+                        "{}/api/v1/proxy/s/chrono-storage-service",
+                        config.platform_base_url.trim_end_matches('/')
+                    ),
+                    config.trigger_workspace_bucket.clone(),
+                    tokens,
+                    trigger_store.clone() as Arc<dyn layer2_core::LaunchStore>,
+                ),
+            )),
+            None => {
+                tracing::warn!(
+                    "Trigger repository workspaces cannot be persisted. \
+                     CHRONO_PLATFORM_BASE_URL, CHRONO_STORAGE_CLIENT_ID, \
+                     CHRONO_STORAGE_CLIENT_SECRET and CHRONO_TRIGGER_WORKSPACE_BUCKET \
+                     are all required. No Trigger worker will be started without \
+                     this durable store."
+                );
+                None
+            }
+        };
+
     // Built before the service because the service asks it for an owner's
     // credential whenever it has to put a runtime back under a session that
     // nobody is currently watching.
@@ -586,6 +655,27 @@ async fn serve_normal_control_plane() {
         }),
         auth_store,
     );
+    let (trigger_authority, trigger_connections, trigger_github): TriggerProviderPorts =
+        match &config.auth_mode {
+            auth::AuthMode::Provider { base_url, .. } => {
+                let broker = match trigger::github::GithubBroker::new(
+                    base_url,
+                    Arc::clone(&auth_state),
+                    trigger_store.clone() as Arc<dyn layer2_core::ConnectionRevocationStore>,
+                ) {
+                    Ok(broker) => Arc::new(broker),
+                    Err(error) => {
+                        tracing::error!(error = %error, "cannot construct the GitHub authority broker");
+                        std::process::exit(2);
+                    }
+                };
+                (broker.clone(), broker.clone(), Some(broker))
+            }
+            auth::AuthMode::Trusted { .. } => {
+                let unavailable = Arc::new(trigger::UnavailableGithub);
+                (unavailable.clone(), unavailable, None)
+            }
+        };
     if !auth_state.requires_credential() {
         tracing::warn!(
             "running with a trusted fixed subject; every request is attributed \
@@ -668,6 +758,9 @@ async fn serve_normal_control_plane() {
             skills: catalog
                 .clone()
                 .map(|c| c as Arc<dyn layer2_core::SkillSource>),
+            workspaces: trigger_workspace_store
+                .clone()
+                .map(|store| store as Arc<dyn layer2_core::SessionWorkspaceSource>),
             skill_packs,
             settings: Some(Arc::clone(&settings)),
         },
@@ -680,7 +773,23 @@ async fn serve_normal_control_plane() {
             runtime_version: Some(config.sandbox_image.clone()),
             identity: Some(config.deployment_id.clone()),
             adopts_untagged: config.adopts_untagged_runtimes,
+            trigger_runtime_capabilities: config.trigger.runtime_capabilities.clone(),
+            // The versioned Trigger profile selects this adapter explicitly;
+            // Layer 2 treats the identifier as opaque and remains kernel-neutral.
+            trigger_kernel: Some(layer2_core::KernelId::new(trigger::TRIGGER_KERNEL_ID)),
         },
+    );
+    let trigger_service = Arc::new(
+        TriggerService::new(
+            trigger_store.clone() as Arc<dyn layer2_core::TriggerStore>,
+            trigger_store as Arc<dyn layer2_core::LaunchStore>,
+            trigger_authority,
+        )
+        .with_launch_admission(Arc::clone(&service) as Arc<dyn layer2_core::TriggerLaunchAdmission>)
+        .with_session_cancellation(
+            Arc::clone(&service) as Arc<dyn layer2_core::TriggerSessionCancellation>
+        )
+        .with_rollout(Arc::new(config.trigger.rollout.clone())),
     );
     tracing::info!(
         runtime_version = %config.sandbox_image,
@@ -689,11 +798,55 @@ async fn serve_normal_control_plane() {
         "sessions on any other runtime will be moved onto this one"
     );
 
-    // Keeps delegated credentials valid underneath running sessions, and pushes
-    // each renewal into the runtimes already using the old value.
-    // Per-session credentials are minted on the platform, so this only exists
-    // where a platform root is configured. Without one every session falls
-    // back to its owner's own token, which is what happened before scoping.
+    // Assembled only after the session service exists: Sandbox is the single
+    // creator of the deterministic Trigger session, and Session is its
+    // read-only attachment check. No partial worker starts: every closed effect
+    // shares one executor, so a missing provider, durable workspace store, or
+    // policy signer disables all three scheduler lanes by construction.
+    let mut missing_trigger_worker_prerequisites = Vec::new();
+    if trigger_github.is_none() {
+        missing_trigger_worker_prerequisites.push("provider_github_broker");
+    }
+    if trigger_workspace_store.is_none() {
+        missing_trigger_worker_prerequisites.push("durable_trigger_workspace_store");
+    }
+    if github_capability_signer.is_none() {
+        missing_trigger_worker_prerequisites.push("github_capability_signer");
+    }
+    let trigger_effect_executor = match (
+        trigger_github,
+        trigger_workspace_store.as_ref(),
+        github_capability_signer.as_ref(),
+    ) {
+        (Some(github), Some(workspace_store), Some(signer)) => {
+            let baseline_store: Arc<dyn layer2_core::BaselineObjectStore> =
+                Arc::clone(workspace_store) as Arc<dyn layer2_core::BaselineObjectStore>;
+            let checkpoint_store: Arc<dyn layer2_core::CheckpointObjectStore> =
+                Arc::clone(workspace_store) as Arc<dyn layer2_core::CheckpointObjectStore>;
+            let diff_store: Arc<dyn layer2_core::DiffArtifactObjectStore> =
+                Arc::clone(workspace_store) as Arc<dyn layer2_core::DiffArtifactObjectStore>;
+            Some(Arc::new(
+                trigger::github_effects::GithubEffectExecutor::with_runtime(
+                    github,
+                    baseline_store,
+                    checkpoint_store,
+                    diff_store,
+                    Arc::clone(&service),
+                    Arc::clone(signer),
+                    trigger::github_effects::GithubEffectRuntimeLimits {
+                        fork_readiness_timeout: config.trigger.fork_readiness_timeout,
+                        changed_file_limit: config.trigger.changed_file_limit,
+                    },
+                ),
+            ))
+        }
+        _ => None,
+    };
+
+    // Trigger's Session effect verifies exact delegated services. Install the
+    // issuer before any scheduler lane is spawned because Tokio intervals tick
+    // immediately and a restart must not spend an effect attempt against a
+    // transiently incomplete authentication runtime.
     if let Some(issuer) = issuer {
         auth_state.use_issuer(issuer).await;
         tracing::info!(
@@ -701,6 +854,29 @@ async fn serve_normal_control_plane() {
             services = ?config.baseline_services,
             "each session gets its own credential, reaching these services and whatever its profile adds"
         );
+    }
+
+    match trigger_effect_executor {
+        Some(executor) => {
+            if let Err(error) = trigger::scheduler::spawn(
+                Arc::clone(&trigger_service),
+                executor,
+                Arc::clone(&service),
+                Arc::clone(&activity),
+                &config.deployment_id,
+                &config.trigger,
+            ) {
+                tracing::error!(
+                    error = %error,
+                    "cannot construct the fenced Trigger scheduler"
+                );
+                std::process::exit(2);
+            }
+        }
+        None => tracing::warn!(
+            missing_prerequisites = ?missing_trigger_worker_prerequisites,
+            "Trigger provider workers are disabled"
+        ),
     }
 
     renewal::spawn(Arc::clone(&auth_state), Arc::clone(&service));
@@ -722,7 +898,15 @@ async fn serve_normal_control_plane() {
         users: Arc::clone(&users),
         tickets: Arc::clone(&tickets),
         environments: Arc::clone(&environments),
-        operations: operation_store,
+        operations: Arc::clone(&operation_store),
+        triggers: Some(layer1_public::rest::TriggersState {
+            triggers: Arc::clone(&trigger_service),
+            connections: trigger_connections,
+            operations: Arc::clone(&operation_store),
+            diff_artifacts: trigger_workspace_store
+                .clone()
+                .map(|store| store as Arc<dyn layer2_core::DiffArtifactObjectStore>),
+        }),
     };
     let rest = rest_api_router(
         public_state.clone(),
@@ -731,6 +915,8 @@ async fn serve_normal_control_plane() {
             activity: Arc::clone(&activity),
             users: Arc::clone(&users),
             settings: Arc::clone(&settings),
+            triggers: Some(trigger_service),
+            operations: operation_store,
         }),
     );
     let rate_limits =
@@ -1039,16 +1225,15 @@ mod tests {
                  ?ticket=pty-ticket-secret-488&code=oauth-code-secret-488\
                  &state=oauth-state-secret-488",
             )
-            .header("x-request-id", "support-case-488")
+            .header("x-request-id", "48800000-0000-4000-8000-000000000006")
             .body(axum::body::Body::empty())
             .expect("request builds");
             let _span = request_span(&request);
         });
         let fields = fields.lock().expect("capture lock is usable");
         assert!(
-            fields
-                .iter()
-                .any(|(name, value)| name == "request_id" && value.contains("support-case-488")),
+            fields.iter().any(|(name, value)| name == "request_id"
+                && value.contains("48800000-0000-4000-8000-000000000006")),
             "request span must carry the support correlation id: {fields:?}"
         );
         assert!(
@@ -1091,5 +1276,24 @@ mod tests {
                 iface.interface_id()
             );
         }
+    }
+
+    #[test]
+    fn delegated_issuer_is_installed_before_trigger_scheduler_spawn() {
+        let source = include_str!("main.rs");
+        let startup = source
+            .split_once("#[cfg(test)]\nmod tests")
+            .expect("main keeps one test module after startup")
+            .0;
+        let issuer = startup
+            .find("auth_state.use_issuer(issuer).await;")
+            .expect("normal startup installs the delegated issuer");
+        let scheduler = startup
+            .find("trigger::scheduler::spawn(")
+            .expect("normal startup constructs the Trigger scheduler");
+        assert!(
+            issuer < scheduler,
+            "an immediate scheduler tick must observe the installed issuer"
+        );
     }
 }

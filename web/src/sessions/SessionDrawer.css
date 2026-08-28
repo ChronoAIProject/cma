@@ -447,6 +447,13 @@
   line-height: 1.55;
 }
 
+.drawer__repository-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .drawer__ending {
   color: var(--dsw-alias-state-error-primary);
 }

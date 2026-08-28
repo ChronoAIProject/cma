@@ -22,9 +22,16 @@
  * call away; this module is only the one this app happens to hold.
  */
 
-import { createClient, type CreateSession } from '@chronoai/cma-sdk';
+import { createClient, ProtocolError, type CreateSession } from '@chronoai/cma-sdk';
 import type {
+  DiffReview,
+  CursorPage,
   KernelOffer,
+  Launch,
+  LaunchListRequest,
+  LaunchOverrides,
+  LaunchProgress,
+  PullRequestDraft,
   Session,
   SessionAllowance,
   SessionLifecycle,
@@ -32,6 +39,13 @@ import type {
   PricingQuote,
   SessionResourceStatus,
   SessionSpend,
+  TriggerCommandOptions,
+  TriggerConnection,
+  TriggerContentDraft,
+  TriggerDraft,
+  TriggerPreview,
+  TriggerRepositorySelection,
+  TriggerRevision,
 } from '@chronoai/cma-sdk';
 import { isStage, type Stage } from '../sessions/progress';
 import type { SignIn } from '@chronoai/cma-sdk';
@@ -41,13 +55,30 @@ export {
   CapabilityRefused,
   DeploymentAtCapacity,
   SessionLimitReached,
+  TransportError,
   toSession,
 } from '@chronoai/cma-sdk';
 export type {
+  DiffReview,
+  Launch,
+  LaunchListRequest,
+  LaunchOverrides,
+  LaunchProgress,
+  PullRequestDraft,
   PricingQuote,
   SessionAllowance,
   SessionResourceStatus,
   SessionSpend,
+  TriggerConnection,
+  TriggerContentDraft,
+  TriggerDraft,
+  TriggerInputFieldDefinition,
+  TriggerRepositoryAccessPolicy,
+  TriggerPreview,
+  TriggerRevision,
+  TriggerSessionPolicy,
+  TriggerSourceMode,
+  TriggerTask,
 } from '@chronoai/cma-sdk';
 
 /**
@@ -58,6 +89,288 @@ export type {
  * not a coincidence but the reason they are the defaults.
  */
 const bot = createClient();
+const CATALOG_PAGE_LIMIT = 200;
+const CATALOG_MAX_PAGES = 50;
+const CATALOG_MAX_ITEMS = CATALOG_PAGE_LIMIT * CATALOG_MAX_PAGES;
+
+async function collectCatalog<T extends { readonly id: string }>(
+  name: string,
+  load: (cursor?: string) => Promise<CursorPage<T>>,
+): Promise<readonly T[]> {
+  const items: T[] = [];
+  const itemIds = new Set<string>();
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+
+  for (let pageNumber = 0; pageNumber < CATALOG_MAX_PAGES; pageNumber += 1) {
+    const page = await load(cursor);
+    let added = 0;
+    for (const item of page.items) {
+      if (itemIds.has(item.id)) continue;
+      if (items.length >= CATALOG_MAX_ITEMS) {
+        throw new ProtocolError(`${name} exceeded the bounded catalogue size`);
+      }
+      itemIds.add(item.id);
+      items.push(item);
+      added += 1;
+    }
+    if (page.next_cursor === null) return items;
+    if (page.items.length === 0 || added === 0) {
+      throw new ProtocolError(`${name} pagination made no progress`);
+    }
+    if (page.next_cursor === cursor || cursors.has(page.next_cursor)) {
+      throw new ProtocolError(`${name} pagination repeated a cursor`);
+    }
+    cursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+
+  throw new ProtocolError(`${name} exceeded the bounded page count`);
+}
+
+/** Public, credential-suppressed README Trigger preview. */
+export function readTriggerPreview(
+  publicId: string,
+  signal?: AbortSignal,
+): Promise<TriggerPreview> {
+  return bot.readTriggerPreview(publicId, { signal });
+}
+
+export function createTrigger(
+  serviceId: string,
+  content: TriggerContentDraft,
+  options: TriggerCommandOptions,
+): Promise<TriggerDraft> {
+  return bot.createTrigger(serviceId, content, options);
+}
+
+export function listTriggers(signal?: AbortSignal): Promise<readonly TriggerDraft[]> {
+  return collectCatalog('Trigger drafts', (cursor) =>
+    bot.listTriggers(CATALOG_PAGE_LIMIT, cursor, { signal }),
+  );
+}
+
+export function readTrigger(id: string, signal?: AbortSignal): Promise<TriggerDraft> {
+  return bot.readTrigger(id, { signal });
+}
+
+export function updateTrigger(
+  id: string,
+  expectedVersion: number,
+  serviceId: string,
+  content: TriggerContentDraft,
+  options: TriggerCommandOptions,
+): Promise<TriggerDraft> {
+  return bot.updateTrigger(id, expectedVersion, serviceId, content, options);
+}
+
+export function publishTrigger(
+  id: string,
+  expectedVersion: number,
+  serviceId: string,
+  options: TriggerCommandOptions,
+): Promise<TriggerRevision> {
+  return bot.publishTrigger(id, expectedVersion, serviceId, options);
+}
+
+export function listTriggerRevisions(signal?: AbortSignal): Promise<readonly TriggerRevision[]> {
+  return collectCatalog('Trigger revisions', (cursor) =>
+    bot.listTriggerRevisions(CATALOG_PAGE_LIMIT, cursor, { signal }),
+  );
+}
+
+export function retireTriggerRevision(
+  id: string,
+  options: TriggerCommandOptions,
+): Promise<TriggerRevision> {
+  return bot.retireTriggerRevision(id, options);
+}
+
+export function listTriggerConnections(
+  signal?: AbortSignal,
+): Promise<readonly TriggerConnection[]> {
+  return bot.listTriggerConnections({ signal });
+}
+
+export function beginTriggerConnection(intentId: string, options: TriggerCommandOptions) {
+  return bot.beginTriggerConnection(intentId, options);
+}
+
+export function reconnectTriggerConnection(serviceId: string, options: TriggerCommandOptions) {
+  return bot.reconnectTriggerConnection(serviceId, options);
+}
+
+export function revokeTriggerConnection(
+  serviceId: string,
+  options: TriggerCommandOptions,
+): Promise<TriggerConnection> {
+  return bot.revokeTriggerConnection(serviceId, options);
+}
+
+export function preflightTriggerConnection(
+  serviceId: string,
+  signal?: AbortSignal,
+): Promise<TriggerConnection> {
+  return bot.preflightTriggerConnection(serviceId, { signal });
+}
+
+export function resolveTriggerRepository(
+  serviceId: string,
+  owner: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<TriggerRepositorySelection> {
+  return bot.resolveTriggerRepository(serviceId, owner, name, { signal });
+}
+
+export function createOrResumeLaunch(
+  publicId: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.createOrResumeLaunch(publicId, options);
+}
+
+export function createNewLaunch(publicId: string, options: TriggerCommandOptions): Promise<Launch> {
+  return bot.createNewLaunch(publicId, options);
+}
+
+export function listLaunches(page: LaunchListRequest = {}): Promise<readonly Launch[]> {
+  return bot.listLaunches(page).then((result) => result.items);
+}
+
+/** One owner-scoped Launch page, retained for bounded relationship lookups. */
+export function listLaunchPage(
+  page: LaunchListRequest = {},
+  signal?: AbortSignal,
+): Promise<CursorPage<Launch>> {
+  return bot.listLaunches(page, { signal });
+}
+
+export function readLaunch(id: string, signal?: AbortSignal): Promise<Launch> {
+  return bot.readLaunch(id, { signal });
+}
+
+export function updateLaunchOverrides(
+  id: string,
+  expectedRevision: number,
+  overrides: LaunchOverrides,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.updateLaunchOverrides(id, expectedRevision, overrides, options);
+}
+
+export function selectLaunchConnection(
+  id: string,
+  expectedRevision: number,
+  serviceId: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.selectLaunchConnection(id, expectedRevision, serviceId, options);
+}
+
+export function startLaunch(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  acknowledgeWorkflowRisk: boolean,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.startLaunch(id, expectedRevision, snapshotDigest, acknowledgeWorkflowRisk, options);
+}
+
+export function recoverInitialPrompt(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.recoverInitialPrompt(id, expectedRevision, snapshotDigest, options);
+}
+
+export function cancelLaunch(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.cancelLaunch(id, expectedRevision, snapshotDigest, options);
+}
+
+export function completeLaunch(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+) {
+  return bot.completeLaunch(id, expectedRevision, snapshotDigest, options);
+}
+
+export function readLaunchProgress(
+  id: string,
+  after: number,
+  signal?: AbortSignal,
+): Promise<LaunchProgress> {
+  return bot.readLaunchProgress(id, after, 100, { signal });
+}
+
+export function requestLaunchDiff(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.requestLaunchDiff(id, expectedRevision, snapshotDigest, options);
+}
+
+export function readLaunchDiff(id: string, signal?: AbortSignal): Promise<DiffReview> {
+  return bot.readLaunchDiff(id, { signal });
+}
+
+export function downloadDiffArtifact(
+  launchId: string,
+  artifactId: string,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  return bot.downloadDiffArtifact(launchId, artifactId, { signal });
+}
+
+export function publishLaunchBranch(
+  id: string,
+  expectedRevision: number,
+  snapshotDigest: string,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.publishLaunchBranch(id, expectedRevision, snapshotDigest, options);
+}
+
+export function reviewPullRequest(
+  id: string,
+  operation: 'open' | 'update',
+  edits: { readonly title?: string; readonly body?: string } = {},
+  signal?: AbortSignal,
+): Promise<PullRequestDraft> {
+  return bot.reviewPullRequest(id, operation, edits, { signal });
+}
+
+export function confirmPullRequest(
+  id: string,
+  operation: 'open' | 'update',
+  expectedRevision: number,
+  snapshotDigest: string,
+  edits: { readonly title?: string; readonly body?: string },
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.confirmPullRequest(id, operation, expectedRevision, snapshotDigest, edits, options);
+}
+
+/** Queue a fenced, read-only GitHub status observation for one open pull request. */
+export function refreshPullRequestStatus(
+  id: string,
+  expectedRevision: number,
+  options: TriggerCommandOptions,
+): Promise<Launch> {
+  return bot.refreshPullRequestStatus(id, expectedRevision, options);
+}
 
 /** Sessions belonging to the signed-in subject, newest first. */
 export function listSessions(): Promise<readonly Session[]> {

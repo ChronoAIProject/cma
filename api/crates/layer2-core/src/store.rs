@@ -15,10 +15,12 @@
 use std::{
     collections::HashSet,
     path::{Component, Path, PathBuf},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use sha2::{Digest, Sha256};
+
+use serde::{Deserialize, Serialize};
 
 use crate::activity::{ActivityQuery, ActivityRecord};
 use crate::capabilities::SessionCapabilities;
@@ -33,7 +35,8 @@ use crate::environment::{EnvironmentProfile, EnvironmentProfileSpec, ServiceId};
 use crate::event::{Event, StoredEvent};
 use crate::ids::{EnvironmentProfileId, SessionId, SubjectId};
 use crate::options::SessionMode;
-use crate::session::{Session, SessionStatus};
+use crate::session::{Session, SessionStatus, TriggerSessionOrigin};
+use crate::trigger::PromptDelivery;
 use crate::Reserved;
 
 /// Records one internal store read asks for while walking a complete set.
@@ -48,6 +51,22 @@ pub const DEFAULT_PAGE_SIZE: u32 = 50;
 
 /// No one store listing may ask persistence to materialize more than this many rows.
 pub const MAX_PAGE_SIZE: u32 = 200;
+
+/// Machine-owned initial Trigger prompt retained beside its public-safe status.
+///
+/// The raw payload never enters a Launch or public session projection. Keeping
+/// it here makes revision retirement and worker replay unable to rewrite what
+/// an already-started Launch will send.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitialPromptDispatch {
+    pub delivery: PromptDelivery,
+    pub payload: String,
+    /// Recovery generation whose owner-message boundary has already been
+    /// appended. Kept beside the private payload so a safe pre-write retry does
+    /// not duplicate the visible turn after a process restart.
+    #[serde(default)]
+    pub recorded_recovery_generation: u32,
+}
 
 /// Maximum bounded representation of all skill metadata and file bodies.
 pub const SKILL_PACK_PAYLOAD_LIMIT: usize = 4 * 1024 * 1024;
@@ -71,6 +90,13 @@ pub struct SessionRecord {
     pub runtime_id: Option<String>,
     /// Where this session's accumulated agent context is stored, if any.
     pub context_ref: Option<String>,
+    /// Trigger authority and repository workspace pinned at session creation.
+    ///
+    /// Kept off the public `Session`: clients receive the Launch/session link,
+    /// while only the control plane may resolve the machine-owned object.
+    pub trigger_origin: Option<TriggerSessionOrigin>,
+    /// Durable initial Trigger prompt reservation, absent on ordinary sessions.
+    pub initial_prompt: Option<InitialPromptDispatch>,
     /// Unique owner of an in-progress runtime handover.
     ///
     /// Kept on the durable record rather than the public session because it is
@@ -121,6 +147,8 @@ impl SessionRecord {
             session,
             runtime_id: None,
             context_ref: None,
+            trigger_origin: None,
+            initial_prompt: None,
             rotation_claim: None,
             pending_handover: None,
             skill_packs: SkillPackState::Legacy,
@@ -136,6 +164,26 @@ impl SessionRecord {
     pub(crate) fn is_effectively_rotating(&self) -> bool {
         self.session.status.is_rotating() || self.rotation_claim.is_some()
     }
+
+    /// Unsettled machine-owned Trigger prompt state that reserves owner input.
+    ///
+    /// Trigger records created before the durable outbox was installed still
+    /// reserve the first turn: absence of an outbox is the initial `Queued`
+    /// state, not permission for an owner message to race its creation.
+    pub(crate) fn reserved_initial_prompt_state(&self) -> Option<crate::PromptDeliveryState> {
+        self.trigger_origin.as_ref()?;
+        let state = self
+            .initial_prompt
+            .as_ref()
+            .map_or(crate::PromptDeliveryState::Queued, |prompt| {
+                prompt.delivery.state
+            });
+        (!matches!(
+            state,
+            crate::PromptDeliveryState::Completed | crate::PromptDeliveryState::Failed
+        ))
+        .then_some(state)
+    }
 }
 
 /// Durable instructions for completing one compatibility runtime handover.
@@ -147,6 +195,10 @@ pub struct PendingHandover {
     pub snapshot_ref: String,
     /// Conservative time at which the first usable snapshot was captured.
     pub snapshot_at: String,
+    /// Exact Launch-authorized workspace/conversation pair for a Trigger
+    /// handover. Ordinary sessions have no repository recovery authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_recovery: Option<crate::TriggerRecoveryPairRef>,
     /// Rotation count at the exact source boundary.
     pub rotations_from: u32,
     /// Rotation count to publish with the target semantics.
@@ -691,15 +743,18 @@ pub enum StoreError {
 /// One subject-scoped attempt to perform a named operation once.
 ///
 /// The name, key, and fingerprint are opaque to the core. The interface that
-/// accepts the request decides how to derive them; persistence only guarantees
-/// that one exact fingerprint can hold a key until the claim expires.
+/// accepts the request decides how to derive them. An unfinished generation
+/// remains fenced until it is reconciled; retention begins only after an exact
+/// opaque outcome is recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperationClaim {
+    claim_id: String,
     subject: SubjectId,
     operation: String,
     key: String,
     fingerprint: [u8; 32],
-    expires_at: SystemTime,
+    lease_expires_at: SystemTime,
+    outcome_retention: Duration,
 }
 
 impl OperationClaim {
@@ -709,15 +764,23 @@ impl OperationClaim {
         operation: impl Into<String>,
         key: impl Into<String>,
         fingerprint: [u8; 32],
-        expires_at: SystemTime,
+        lease_expires_at: SystemTime,
+        outcome_retention: Duration,
     ) -> Self {
         Self {
+            claim_id: uuid::Uuid::new_v4().simple().to_string(),
             subject,
             operation: operation.into(),
             key: key.into(),
             fingerprint,
-            expires_at,
+            lease_expires_at,
+            outcome_retention,
         }
+    }
+
+    /// Unique generation owned only by the process that acquired this claim.
+    pub fn claim_id(&self) -> &str {
+        &self.claim_id
     }
 
     /// The subject whose operation this is.
@@ -740,9 +803,17 @@ impl OperationClaim {
         &self.fingerprint
     }
 
-    /// When persistence may forget this claim and permit the key again.
-    pub fn expires_at(&self) -> SystemTime {
-        self.expires_at
+    /// The finite ownership window for the process executing this claim.
+    ///
+    /// Expiry never authorizes another execution. It only proves that a
+    /// missing outcome must be reconciled before the operation can progress.
+    pub fn lease_expires_at(&self) -> SystemTime {
+        self.lease_expires_at
+    }
+
+    /// How long an exact completed outcome remains replayable.
+    pub fn outcome_retention(&self) -> Duration {
+        self.outcome_retention
     }
 }
 
@@ -753,6 +824,11 @@ pub enum OperationReservation {
     Acquired,
     /// The same operation is still being performed elsewhere.
     Pending,
+    /// The execution lease ended without a replay outcome.
+    ///
+    /// The operation remains fenced: a caller must reconcile durable domain
+    /// state or let the original owner complete it, never execute it again.
+    RecoveryRequired,
     /// The operation finished and its opaque outcome can be replayed.
     Complete(Vec<u8>),
     /// This key already names a different request fingerprint.
@@ -769,7 +845,7 @@ pub trait OperationStore: Send + Sync {
     /// Atomically acquire a new claim or inspect the one already holding it.
     async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError>;
 
-    /// Replace a held claim's pending marker with its replayable outcome.
+    /// Replace this exact acquired generation with its replayable outcome.
     async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError>;
 }
 
@@ -781,20 +857,23 @@ mod operation_claim_tests {
 
     #[test]
     fn a_claim_preserves_every_part_of_its_durable_identity() {
-        let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
+        let lease_expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
         let claim = OperationClaim::new(
             SubjectId("subject-a".into()),
             "create-resource",
             "attempt-a",
             [9; 32],
-            expires_at,
+            lease_expires_at,
+            Duration::from_secs(86_400),
         );
 
         assert_eq!(claim.subject(), &SubjectId("subject-a".into()));
         assert_eq!(claim.operation(), "create-resource");
         assert_eq!(claim.key(), "attempt-a");
         assert_eq!(claim.fingerprint(), &[9; 32]);
-        assert_eq!(claim.expires_at(), expires_at);
+        assert!(!claim.claim_id().is_empty());
+        assert_eq!(claim.lease_expires_at(), lease_expires_at);
+        assert_eq!(claim.outcome_retention(), Duration::from_secs(86_400));
     }
 }
 
@@ -1223,7 +1302,11 @@ pub trait SessionStore: Send + Sync {
 /// hold a different opinion about who may read what.
 #[async_trait::async_trait]
 pub trait EnvironmentProfileStore: Send + Sync {
-    /// Create a profile with a new identifier.
+    /// Insert a profile with a new identifier.
+    ///
+    /// This operation must never replace an existing row. Identifier
+    /// collisions are failures, including when two control-plane replicas race
+    /// to create the same deterministic profile.
     async fn upsert(&self, profile: &EnvironmentProfile) -> Result<(), StoreError>;
 
     /// Atomically replace caller-controlled content on an existing profile.
@@ -1359,6 +1442,36 @@ pub trait UserDirectoryStore: Send + Sync {
 /// the core cannot know where credentials come from, so it asks through this.
 #[async_trait::async_trait]
 pub trait CredentialSource: Send + Sync {
+    /// Exact non-secret authority of the current provider credential.
+    ///
+    /// `Ok(None)` is deliberately conservative for sources without durable
+    /// provider-key custody and for legacy rows that predate exact authority
+    /// metadata. Callers must not infer authority from a mutable record CAS.
+    async fn credential_authority(
+        &self,
+        _session: &SessionId,
+    ) -> Result<Option<crate::SessionCredentialAuthority>, StoreError> {
+        Ok(None)
+    }
+
+    /// Prove that every named service is currently active for this subject.
+    ///
+    /// Ordinary profile provisioning may narrow when an optional service was
+    /// removed. Trigger provisioning cannot: its selected GitHub connection is
+    /// part of the reviewed authority and a session without it is a different,
+    /// degraded session. A source that cannot consult authoritative service
+    /// state must fail closed rather than treating absence of evidence as a
+    /// grant.
+    async fn exact_services_available(
+        &self,
+        _subject: &SubjectId,
+        _services: &[ServiceId],
+    ) -> Result<bool, StoreError> {
+        Err(StoreError::Unavailable(
+            "this credential source cannot verify exact service grants".into(),
+        ))
+    }
+
     /// The credential a session should present on its owner's behalf.
     ///
     /// Named per session rather than per subject because two of one owner's
@@ -1446,6 +1559,16 @@ pub trait CredentialSource: Send + Sync {
     /// reconciliation deliberately retry this call when a process can fail
     /// after durable runtime cleanup but before observing custody retirement.
     async fn release(&self, session: &SessionId) -> Result<(), StoreError>;
+
+    /// Whether retirement has durably settled every credential this session
+    /// could still present.
+    ///
+    /// The conservative default is false: a source that cannot prove provider
+    /// revocation must never let a caller report it as effective. Sources with
+    /// durable revoke custody may override this after their debt is empty.
+    async fn release_settled(&self, _session: &SessionId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
 }
 
 /// The agent's accumulated context, stored whole.
@@ -1463,6 +1586,139 @@ pub trait ContextStore: Send + Sync {
 
     /// Remove a session's context.
     async fn delete(&self, reference: &str) -> Result<(), StoreError>;
+}
+
+/// Loads a Trigger session's exact repository workspace for runtime handoff.
+///
+/// Implementations authorize the read from the session owner and the durable
+/// Launch identity. The sandbox receives only the returned bytes and integrity
+/// metadata, never object-storage authority.
+#[allow(clippy::too_many_arguments)] // Lifecycle commits carry one exact authority tuple.
+#[async_trait::async_trait]
+pub trait SessionWorkspaceSource: Send + Sync {
+    async fn load_workspace(
+        &self,
+        owner: &SubjectId,
+        origin: &TriggerSessionOrigin,
+    ) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Resolve the latest Launch-authorized recovery point for a Trigger
+    /// session. Sources that only know the immutable baseline retain the old
+    /// behavior; CMA's Launch-aware source overrides this to select the latest
+    /// complete checkpoint after its aggregate commit.
+    async fn resolve_workspace(
+        &self,
+        owner: &SubjectId,
+        origin: &TriggerSessionOrigin,
+    ) -> Result<Option<layer3_adapter::WorkspacePackage>, StoreError> {
+        Ok(self.load_workspace(owner, origin).await?.map(|archive| {
+            layer3_adapter::WorkspacePackage {
+                epoch: origin.workspace_epoch,
+                source_revision: origin.source_revision.clone(),
+                baseline_manifest_digest: origin.manifest_digest.clone(),
+                manifest_digest: origin.manifest_digest.clone(),
+                archive_sha256: origin.archive_sha256.clone(),
+                archive,
+            }
+        }))
+    }
+
+    /// Resolve one complete, immutable conversation/workspace pair. A
+    /// workspace-only legacy checkpoint is not a recovery point. When
+    /// `expected` is supplied, implementations must select exactly that
+    /// descriptor rather than silently advancing to another version.
+    async fn resolve_recovery_pair(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _expected: Option<&crate::TriggerRecoveryPairRef>,
+    ) -> Result<Option<crate::TriggerRecoveryPair>, StoreError> {
+        Ok(None)
+    }
+
+    /// Publish the exact runtime generation that became durably ready for a
+    /// Trigger session.
+    ///
+    /// The caller obtains this value from session runtime authority, not from
+    /// a browser or checkpoint request. Launch-aware implementations use it to
+    /// advance the cross-store session link after rotation or recovery. A
+    /// source that only serves immutable baseline bytes has no aggregate to
+    /// update and therefore keeps the no-op default.
+    async fn synchronize_runtime_generation(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _runtime_generation: u64,
+        _now: &str,
+    ) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    /// Durably reserve one monotonic checkpoint version before a runtime is
+    /// asked to seal bytes. Implementations return an existing matching intent
+    /// after process loss and never infer a second concurrent writer.
+    async fn reserve_checkpoint(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _runtime_generation: u64,
+        _purpose: crate::WorkspaceCheckpointPurpose,
+        _now: &str,
+    ) -> Result<crate::WorkspaceCheckpointReservation, StoreError> {
+        Err(StoreError::Malformed(
+            "this workspace source cannot reserve lifecycle checkpoints".into(),
+        ))
+    }
+
+    /// Verify, upload, and commit one runtime-sealed checkpoint. The previous
+    /// complete checkpoint remains authoritative until this method returns.
+    #[allow(clippy::too_many_arguments)]
+    async fn commit_checkpoint(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _intent: &crate::WorkspaceCheckpointIntent,
+        _runtime_generation: u64,
+        _checkpoint: &layer3_adapter::WorkspaceCheckpointPackage,
+        _conversation: &[u8],
+        _now: &str,
+    ) -> Result<crate::TriggerRecoveryPairCommitReceipt, StoreError> {
+        Err(StoreError::Malformed(
+            "this workspace source cannot commit lifecycle checkpoints".into(),
+        ))
+    }
+
+    /// Mark an already committed exact pair as requiring operator recovery.
+    /// Used when publication succeeded but the runtime's post-commit writer
+    /// state cannot be proven. Implementations must compare the complete pair
+    /// descriptor so a stale capture cannot fence a newer recovery point.
+    async fn mark_checkpoint_recovery_required(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _reference: &crate::TriggerRecoveryPairRef,
+        _failure: crate::WorkspaceCheckpointFailure,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Malformed(
+            "this workspace source cannot mark committed checkpoint recovery".into(),
+        ))
+    }
+
+    /// Record a capture failure proven to precede object upload. This is
+    /// separate from commit failure because an unknown upload must retain its
+    /// exact intent for idempotent reconciliation.
+    async fn fail_checkpoint(
+        &self,
+        _owner: &SubjectId,
+        _origin: &TriggerSessionOrigin,
+        _intent: &crate::WorkspaceCheckpointIntent,
+        _failure: crate::WorkspaceCheckpointFailure,
+        _recovery_required: bool,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Malformed(
+            "this workspace source cannot record lifecycle checkpoint failure".into(),
+        ))
+    }
 }
 
 /// Stable object storage for compatibility runtime handovers.

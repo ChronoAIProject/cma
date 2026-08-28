@@ -48,6 +48,9 @@ fn credential(id: &str, issued_at: SystemTime) -> DurableCredential {
         issued_at,
         expires_at: None,
         scope_fingerprint: "scope".into(),
+        custody_generation: 0,
+        provider_state_version: 0,
+        grant_fingerprint: String::new(),
         revocation_credential: None,
     }
 }
@@ -86,17 +89,28 @@ async fn two_instances_share_browser_sessions_and_consume_login_once() {
     assert!(second.browser_session(&browser_id).await.unwrap().is_some());
 
     let login_id = SecretDigest::identify("login-attempt", "state");
+    let browser_binding = SecretDigest::identify("login-browser-binding", "browser");
     first
         .put_login_attempt(LoginAttempt {
             id: login_id.clone(),
+            browser_binding: browser_binding.clone(),
             verifier: SecretValue::new("verifier".into()),
+            return_to: None,
             expires_at: SystemTime::now() + Duration::from_secs(60),
         })
         .await
         .unwrap();
+    assert!(first
+        .take_login_attempt(
+            &login_id,
+            &SecretDigest::identify("login-browser-binding", "other-browser"),
+        )
+        .await
+        .unwrap()
+        .is_none());
     let (left, right) = tokio::join!(
-        first.take_login_attempt(&login_id),
-        second.take_login_attempt(&login_id)
+        first.take_login_attempt(&login_id, &browser_binding),
+        second.take_login_attempt(&login_id, &browser_binding)
     );
     let winners = [left.unwrap(), right.unwrap()]
         .into_iter()

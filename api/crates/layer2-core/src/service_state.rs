@@ -44,6 +44,10 @@ pub(crate) struct Attachment {
 /// rebuilt when a client attaches.
 pub(crate) struct SessionEntry {
     pub(crate) session: Session,
+    /// Internal Trigger provenance retained across live-entry flushes.
+    pub(crate) trigger_origin: Option<crate::session::TriggerSessionOrigin>,
+    /// Durable Trigger prompt outbox state mirrored into the live entry.
+    pub(crate) initial_prompt: Option<crate::store::InitialPromptDispatch>,
     /// This session's durable FIFO, kept alive while its runtime is live.
     pub(crate) event_log: Arc<crate::log::SessionLog>,
     /// Owner-delegated credential last handed to the runtime. Held so a refresh
@@ -120,13 +124,14 @@ pub(crate) struct SessionEntry {
     pub(crate) readings_unreported: bool,
     /// Input toward the session's conversation, when it holds one.
     pub(crate) conversation: Option<layer3_adapter::ConversationInputSender>,
-    /// The message the agent is still assembling, and which one it is.
+    /// The message the agent is still assembling, which one it is, and whether
+    /// its adapter positively correlated it with a prompt on this link.
     ///
     /// A runtime streams a message in pieces and says nothing to mark the end
     /// of one; what marks it is the next message starting, or the turn ending.
     /// Held here so the finished message can be committed at that moment
     /// rather than each piece being written down as though it were history.
-    pub(crate) assembling: Option<(Option<String>, String)>,
+    pub(crate) assembling: Option<(Option<String>, String, bool)>,
     /// The last context reading this runtime gave, if it has given one.
     ///
     /// Held per entry rather than per session on purpose: an entry is built
@@ -179,6 +184,17 @@ pub struct Deployment {
     /// True for the deployment that owns a provider. False for any additional
     /// control plane sharing it, which must confine itself to what it created.
     pub adopts_untagged: bool,
+    /// Trigger capabilities declared by the exact pinned runtime image.
+    ///
+    /// Empty is fail-closed: ordinary sessions remain available, but no Trigger
+    /// Launch may claim a capability that the deployment did not explicitly pin.
+    pub trigger_runtime_capabilities: Vec<crate::RequiredCapability>,
+    /// Opaque kernel selected by the deployment for the closed Trigger profile.
+    ///
+    /// `None` disables Trigger session admission. The core never assigns a
+    /// product runtime itself; the composition root must bind this identifier
+    /// to an installed adapter.
+    pub trigger_kernel: Option<KernelId>,
 }
 
 /// Per-session operation gates.
@@ -284,6 +300,8 @@ pub struct SessionService {
     pub(crate) credentials: Option<Arc<dyn CredentialSource>>,
     /// Where this session's skills are fetched from, when anything can.
     pub(crate) skills: Option<Arc<dyn crate::store::SkillSource>>,
+    /// Repository bytes for Trigger sessions, reached only by the control plane.
+    pub(crate) workspaces: Option<Arc<dyn crate::store::SessionWorkspaceSource>>,
     /// Where the exact skill packs fetched for a session are kept.
     pub(crate) skill_packs: Option<Arc<dyn SkillPackStore>>,
     /// Sessions whose runtime has said it cannot be carried onto a newer one.
@@ -336,6 +354,9 @@ pub struct SessionService {
     /// on anything else is carried forward. `None` disables rotation entirely,
     /// which is what a deployment that does not version its runtime image wants.
     pub(crate) runtime_version: Option<String>,
+    pub(crate) trigger_runtime_capabilities: Vec<crate::RequiredCapability>,
+    /// Opaque deployment-selected kernel for Trigger-owned sessions.
+    pub(crate) trigger_kernel: Option<KernelId>,
     /// Sessions this process is currently bringing up.
     ///
     /// Detached bring-up can outlive its request while no live entry exists;
@@ -370,6 +391,8 @@ pub struct SessionPorts {
     pub credentials: Option<Arc<dyn CredentialSource>>,
     /// Where a session's skills are fetched from.
     pub skills: Option<Arc<dyn crate::store::SkillSource>>,
+    /// Exact Trigger workspace source used for every runtime generation.
+    pub workspaces: Option<Arc<dyn crate::store::SessionWorkspaceSource>>,
     /// Where a session's already-resolved skill packs are kept.
     pub skill_packs: Option<Arc<dyn SkillPackStore>>,
     /// The deployment's own settings, when this process has a store for them.

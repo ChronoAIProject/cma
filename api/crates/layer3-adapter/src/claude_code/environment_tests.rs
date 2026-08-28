@@ -22,8 +22,10 @@ fn adapter(base: &str) -> ClaudeCodeAdapter {
 fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
     RuntimeSpec {
         restore_from: None,
+        workspace: None,
         skills: Vec::new(),
         reaches: Vec::new(),
+        runtime_policy_required: false,
         platform_briefing: String::new(),
         created_by: None,
         environment,
@@ -32,6 +34,7 @@ fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
         reservation_token: None,
         size: TermSize { cols: 80, rows: 24 },
         capacity: None,
+        timeout_seconds: None,
         subject_credential: None,
         options: RuntimeOptions {
             mode: RuntimeMode::Conversation,

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { ReactNode, RefObject } from 'react';
 
 /**
@@ -51,6 +51,12 @@ export function PlateScrim({
  * came from when the plate leaves.
  */
 export function usePlateFocus(panelRef: RefObject<HTMLElement | null>, onClose: () => void): void {
+  const closeRef = useRef(onClose);
+
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     // Remembered before focus moves, so closing returns the user to the
     // control they opened this from rather than the top of the document.
@@ -62,7 +68,7 @@ export function usePlateFocus(panelRef: RefObject<HTMLElement | null>, onClose: 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
-        onClose();
+        closeRef.current();
         return;
       }
       if (event.key !== 'Tab' || panel === null) {
@@ -84,5 +90,5 @@ export function usePlateFocus(panelRef: RefObject<HTMLElement | null>, onClose: 
       document.removeEventListener('keydown', onKeyDown);
       opener?.focus();
     };
-  }, [onClose, panelRef]);
+  }, [panelRef]);
 }
